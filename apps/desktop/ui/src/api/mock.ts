@@ -684,7 +684,7 @@ export class MockApiClient extends ApiClient {
         // Review states for the server sign-in: ?signin=device|paste|verifying|done|failed|manual.
         const engine = seg[2] ?? "";
         const scenario = new URLSearchParams(window.location.search).get("signin") ?? (engine === "codex" ? "device" : "paste");
-        const base = { engine, flow: engine === "codex" ? "device_code" : "paste_code", url: null, code: null, error: null, command: null, installed: true, signed_in: false };
+        const base = { engine, job_id: "mock-job", flow: engine === "codex" ? "device_code" : "paste_code", url: null, code: null, error: null, command: null, installed: true, signed_in: false };
         if (engine === "opencode" || scenario === "manual") {
           if (method === "POST" && seg[4] === undefined) throw new ApiError(409, "login_manual", "run `opencode auth login` on the server");
           return ok({ ...base, state: "idle", flow: "manual", command: "opencode auth login" });

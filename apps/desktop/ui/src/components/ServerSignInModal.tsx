@@ -62,6 +62,7 @@ function Content({
   const [keySaved, setKeySaved] = useState(false);
   const started = useRef(false);
   const phase = signInPhase(job);
+  const jobId = job?.job_id ?? null;
 
   const start = useCallback(async () => {
     if (!client) {
@@ -77,7 +78,7 @@ function Content({
       if (h.code === "login_manual") {
         setManual(engine.login);
       } else {
-        setProblem(h.title);
+        setProblem(h.hint ? `${h.title} ${h.hint}` : h.title);
       }
     }
   }, [client, engine.id, engine.login]);
@@ -92,14 +93,14 @@ function Content({
 
   // Live status while the sign-in is in progress.
   useEffect(() => {
-    if (!client || !ACTIVE.has(phase)) {
+    if (!client || !jobId || !ACTIVE.has(phase)) {
       return undefined;
     }
     const timer = window.setInterval(() => {
-      void client.adminCliEngineLoginStatus(engine.id).then(setJob, () => {});
+      void client.adminCliEngineLoginStatus(engine.id, jobId).then(setJob, () => {});
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [client, engine.id, phase]);
+  }, [client, engine.id, phase, jobId]);
 
   // Signed in: the engine flips to Ready and its models appear without a reload.
   useEffect(() => {
@@ -111,20 +112,20 @@ function Content({
 
   // Closing while a sign-in runs stops it (the server kills the whole process tree).
   const close = () => {
-    if (client && ACTIVE.has(phase)) {
-      void client.adminCliEngineLoginCancel(engine.id).catch(() => {});
+    if (client && jobId && ACTIVE.has(phase)) {
+      void client.adminCliEngineLoginCancel(engine.id, jobId).catch(() => {});
     }
     onClose();
   };
 
   const sendCode = async () => {
-    if (!client || sending) {
+    if (!client || !jobId || sending) {
       return;
     }
     setSending(true);
     setProblem(null);
     try {
-      setJob(await client.adminCliEngineLoginCode(engine.id, pasted.trim()));
+      setJob(await client.adminCliEngineLoginCode(engine.id, jobId, pasted.trim()));
       setPasted("");
     } catch (e) {
       setProblem(humanError(e).title);

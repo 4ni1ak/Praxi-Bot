@@ -801,6 +801,10 @@ pub(crate) async fn install_cli_engine(
             error = result.err();
         }
         let _ = task.detector().detect(true).await;
+        if error.is_none() {
+            // The entry point as the install flow left it: a later sign-in runs nothing else.
+            crate::cli_login::record_install_pin(&task, spec.id).await;
+        }
         if let Some(run) = task.0.cli_installs.admin.lock().get_mut(spec.id) {
             run.state = if error.is_none() { "done" } else { "failed" };
             run.error = error;

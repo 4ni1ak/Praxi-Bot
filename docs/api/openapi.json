@@ -153,7 +153,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Where the sign-in above stands (poll while it is `starting`, `needs_*` or `verifying`).",
+        "summary": "Where the sign-in above stands (poll while it is `starting`, `needs_*` or `verifying`).\nNeeds the `job` id and the desktop that started it.",
         "operationId": "admin_cli_engine_login_status",
         "parameters": [
           {
@@ -162,6 +162,18 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "job",
+            "in": "path",
+            "description": "The `job_id` the sign-in was started with.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -185,6 +197,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -197,7 +219,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Start the engine's own sign-in ON THE HOST. Admin desktop only; one at a time.",
+        "summary": "Start the engine's own sign-in ON THE HOST. Admin desktop only; one at a time; the sign-in\nbelongs to the desktop that started it.",
         "operationId": "admin_cli_engine_login",
         "parameters": [
           {
@@ -251,7 +273,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Stop the sign-in (the whole process tree is killed).",
+        "summary": "Stop the sign-in (the whole process tree is killed). Needs the `job` id and the desktop that\nstarted it: a stale window cannot cancel a newer sign-in.",
         "operationId": "admin_cli_engine_login_cancel",
         "parameters": [
           {
@@ -260,6 +282,18 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "job",
+            "in": "path",
+            "description": "The `job_id` the sign-in was started with.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -283,6 +317,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -297,7 +341,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Hand the code the vendor's page showed to the waiting CLI. Exactly one code per sign-in.",
+        "summary": "Hand the code the vendor's page showed to the waiting CLI. Exactly one code per sign-in,\nand only from the desktop that started it, naming that very sign-in.",
         "operationId": "admin_cli_engine_login_code",
         "parameters": [
           {
@@ -9430,6 +9474,13 @@
             "type": "boolean",
             "description": "Found on the host right now."
           },
+          "job_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Unpredictable id of this sign-in; status, code and cancel must present it (and come from\nthe desktop that started it)."
+          },
           "signed_in": {
             "type": [
               "boolean",
@@ -9486,12 +9537,17 @@
         "type": "object",
         "description": "`POST .../login/code`: the code the vendor's page showed.",
         "required": [
+          "job_id",
           "code"
         ],
         "properties": {
           "code": {
             "type": "string",
-            "description": "One line, 8-1024 plain characters. Never logged, echoed or stored."
+            "description": "One line, 8-1024 plain characters. Never logged, echoed or stored; zeroised after use."
+          },
+          "job_id": {
+            "type": "string",
+            "description": "The sign-in this code is for (`job_id` of the start answer)."
           }
         },
         "additionalProperties": false

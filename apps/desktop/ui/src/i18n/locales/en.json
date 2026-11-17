@@ -1034,6 +1034,22 @@
         "title": "That schedule is not valid",
         "hint": "Check the time or repeat rule and try again."
       },
+      "login_files_changed": {
+        "title": "The engine's files changed since it was installed",
+        "hint": "Reinstall it on the server (Install on server), then sign in."
+      },
+      "login_untrusted_location": {
+        "title": "Praxi did not install this engine",
+        "hint": "Reinstall it with Install on server, or sign in over SSH."
+      },
+      "login_forbidden": {
+        "title": "This sign-in belongs to another desktop",
+        "hint": "Start your own sign-in."
+      },
+      "login_stale": {
+        "title": "This sign-in was replaced by a newer one",
+        "hint": "Close this window and start the sign-in again."
+      },
       "login_busy": {
         "title": "Another sign-in is running on the server",
         "hint": "Finish or cancel it, then try again."
@@ -1413,6 +1429,7 @@
       "runOnServer": "On the server run:",
       "officialPage": "Install {{name}} from the official page",
       "installOnServer": "Install on server",
+      "reinstall": "Reinstall on server",
       "installing": "Installing on the server (Node.js is downloaded first when it is missing)…",
       "installFailed": "The install did not finish ({{code}}). Check the output or run the command by hand.",
       "needNode": "The server has no Node.js (npm) and Praxi cannot install it on this system. Install Node.js 22 LTS by hand, then try again.",
@@ -3403,6 +3420,8 @@
       "device_auth_disabled": "Device sign-in is turned off for this account. Enable it in your account's security settings, then try again.",
       "login_expired": "The sign-in code expired. Start again for a new one.",
       "login_failed": "The sign-in did not finish. Try again.",
+      "login_files_changed": "The engine's files changed since it was installed. Reinstall it on the server, then sign in.",
+      "login_untrusted_location": "Praxi did not install this engine. Reinstall it with Install on server, or sign in over SSH.",
       "timed_out": "The sign-in was not finished within ten minutes. Start it again.",
       "cancelled": "The sign-in was cancelled."
     },

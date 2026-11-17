@@ -392,15 +392,16 @@ export class ApiClient {
   adminCliEngineLogin(id: string): Promise<AdminCliLogin> {
     return this.request("POST", `/admin/cli-engines/${encodeURIComponent(id)}/login`);
   }
-  adminCliEngineLoginStatus(id: string): Promise<AdminCliLogin> {
-    return this.request("GET", `/admin/cli-engines/${encodeURIComponent(id)}/login`);
+  /** A sign-in belongs to the desktop that started it and is named by the `job_id` of the start answer. */
+  adminCliEngineLoginStatus(id: string, job: string): Promise<AdminCliLogin> {
+    return this.request("GET", `/admin/cli-engines/${encodeURIComponent(id)}/login?job=${encodeURIComponent(job)}`);
   }
-  /** The code the vendor's page showed; goes to the waiting server process only. */
-  adminCliEngineLoginCode(id: string, code: string): Promise<AdminCliLogin> {
-    return this.request("POST", `/admin/cli-engines/${encodeURIComponent(id)}/login/code`, { body: { code } });
+  /** The code the vendor's page showed; goes to that sign-in's waiting server process only. */
+  adminCliEngineLoginCode(id: string, job: string, code: string): Promise<AdminCliLogin> {
+    return this.request("POST", `/admin/cli-engines/${encodeURIComponent(id)}/login/code`, { body: { job_id: job, code } });
   }
-  adminCliEngineLoginCancel(id: string): Promise<AdminCliLogin> {
-    return this.request("DELETE", `/admin/cli-engines/${encodeURIComponent(id)}/login`);
+  adminCliEngineLoginCancel(id: string, job: string): Promise<AdminCliLogin> {
+    return this.request("DELETE", `/admin/cli-engines/${encodeURIComponent(id)}/login?job=${encodeURIComponent(job)}`);
   }
   /** Pair with a host using the ticket from `bot host invite --role desktop`. */
   pairHost(ticket: string): Promise<HostLinkInfo> {

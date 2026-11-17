@@ -48,12 +48,21 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Where the sign-in above stands (poll while it is `starting`, `needs_*` or `verifying`). */
+        /**
+         * Where the sign-in above stands (poll while it is `starting`, `needs_*` or `verifying`).
+         *     Needs the `job` id and the desktop that started it.
+         */
         get: operations["admin_cli_engine_login_status"];
         put?: never;
-        /** Start the engine's own sign-in ON THE HOST. Admin desktop only; one at a time. */
+        /**
+         * Start the engine's own sign-in ON THE HOST. Admin desktop only; one at a time; the sign-in
+         *     belongs to the desktop that started it.
+         */
         post: operations["admin_cli_engine_login"];
-        /** Stop the sign-in (the whole process tree is killed). */
+        /**
+         * Stop the sign-in (the whole process tree is killed). Needs the `job` id and the desktop that
+         *     started it: a stale window cannot cancel a newer sign-in.
+         */
         delete: operations["admin_cli_engine_login_cancel"];
         options?: never;
         head?: never;
@@ -69,7 +78,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Hand the code the vendor's page showed to the waiting CLI. Exactly one code per sign-in. */
+        /**
+         * Hand the code the vendor's page showed to the waiting CLI. Exactly one code per sign-in,
+         *     and only from the desktop that started it, naming that very sign-in.
+         */
         post: operations["admin_cli_engine_login_code"];
         delete?: never;
         options?: never;
@@ -2796,6 +2808,11 @@ export interface components {
             flow: string;
             /** @description Found on the host right now. */
             installed: boolean;
+            /**
+             * @description Unpredictable id of this sign-in; status, code and cancel must present it (and come from
+             *     the desktop that started it).
+             */
+            job_id?: string | null;
             /** @description Signed in, when the CLI can say. */
             signed_in?: boolean | null;
             /**
@@ -2817,8 +2834,10 @@ export interface components {
         };
         /** @description `POST .../login/code`: the code the vendor's page showed. */
         AdminLoginCodeInput: {
-            /** @description One line, 8-1024 plain characters. Never logged, echoed or stored. */
+            /** @description One line, 8-1024 plain characters. Never logged, echoed or stored; zeroised after use. */
             code: string;
+            /** @description The sign-in this code is for (`job_id` of the start answer). */
+            job_id: string;
         };
         /** @description The provider as stored on the host. */
         AdminProviderDto: {
@@ -6325,6 +6344,8 @@ export interface operations {
             header?: never;
             path: {
                 id: string;
+                /** @description The `job_id` the sign-in was started with. */
+                job: string | null;
             };
             cookie?: never;
         };
@@ -6339,6 +6360,14 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6391,6 +6420,8 @@ export interface operations {
             header?: never;
             path: {
                 id: string;
+                /** @description The `job_id` the sign-in was started with. */
+                job: string | null;
             };
             cookie?: never;
         };
@@ -6405,6 +6436,14 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

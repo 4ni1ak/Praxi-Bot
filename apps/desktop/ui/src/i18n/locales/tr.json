@@ -1034,6 +1034,22 @@
         "title": "Bu zamanlama geçerli değil",
         "hint": "Saati ya da tekrar kuralını kontrol edip yeniden dene."
       },
+      "login_files_changed": {
+        "title": "Motorun dosyaları kurulumdan sonra değişmiş",
+        "hint": "Sunucuda yeniden kur (Sunucuya kur), sonra giriş yap."
+      },
+      "login_untrusted_location": {
+        "title": "Bu motoru Praxi kurmadı",
+        "hint": "Sunucuya kur ile yeniden kur ya da SSH ile giriş yap."
+      },
+      "login_forbidden": {
+        "title": "Bu giriş başka bir masaüstüne ait",
+        "hint": "Kendi girişini başlat."
+      },
+      "login_stale": {
+        "title": "Bu giriş daha yeni bir girişle değiştirildi",
+        "hint": "Bu pencereyi kapatıp girişi yeniden başlat."
+      },
       "login_busy": {
         "title": "Sunucuda başka bir giriş sürüyor",
         "hint": "Onu bitir ya da iptal et, sonra yeniden dene."
@@ -1412,6 +1428,7 @@
       "installedUnknown": "Kurulu · giriş durumu bilinmiyor",
       "runOnServer": "Sunucuda şunu çalıştır:",
       "officialPage": "{{name}} için resmî sayfadan kur",
+      "reinstall": "Sunucuda yeniden kur",
       "installOnServer": "Sunucuya kur",
       "installing": "Sunucuda kuruluyor (gerekirse önce Node.js indirilir)…",
       "installFailed": "Kurulum tamamlanamadı ({{code}}). Çıktıya bak ya da komutu elle çalıştır.",
@@ -3403,6 +3420,8 @@
       "device_auth_disabled": "Bu hesapta cihaz girişi kapalı. Hesabının güvenlik ayarlarında açıp yeniden dene.",
       "login_expired": "Giriş kodunun süresi doldu. Yeni kod için yeniden başlat.",
       "login_failed": "Giriş tamamlanmadı. Yeniden dene.",
+      "login_files_changed": "Motorun dosyaları kurulumdan sonra değişmiş. Sunucuda yeniden kurup giriş yap.",
+      "login_untrusted_location": "Bu motoru Praxi kurmadı. Sunucuya kur ile yeniden kur ya da SSH ile giriş yap.",
       "timed_out": "Giriş on dakika içinde bitirilmedi. Yeniden başlat.",
       "cancelled": "Giriş iptal edildi."
     },

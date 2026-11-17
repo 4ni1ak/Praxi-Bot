@@ -192,6 +192,17 @@ export function EngineSetup({ engine, onChanged }: { engine: AdminCliEngine; onC
           >
             {t("home.engines.signInOnServer", { server: serverName })}
           </button>
+          {engine.can_install ? (
+            <button
+              type="button"
+              className={styles.textBtn}
+              disabled={installing}
+              data-testid={`engine-reinstall-${engine.id}`}
+              onClick={() => void install()}
+            >
+              {installing ? t("home.engines.installing") : t("home.engines.reinstall")}
+            </button>
+          ) : null}
           <span className={styles.sub}>{t("home.engines.signIn")}</span>
           <CopyBlock text={engine.login} />
           <span className={styles.sub}>{t("home.engines.signInNote")}</span>

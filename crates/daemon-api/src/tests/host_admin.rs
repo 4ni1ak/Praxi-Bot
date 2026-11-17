@@ -1177,8 +1177,13 @@ fn login_fixture() -> std::path::PathBuf {
     ))
 }
 
-/// A host whose `claude` and `codex` are the hermetic fixture, with its own HOME.
-fn install_fake_clis(r: &Rig, mode: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+/// A host whose `claude` and `codex` are the hermetic fixture, with its own HOME. With `pin`,
+/// the install flow's record of their files is made (as it is right after "Install on server").
+async fn install_fake_clis(
+    r: &Rig,
+    mode: &str,
+    pin: bool,
+) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let bin = dir.path().join("bin");
     let home = dir.path().join("home");
@@ -1191,19 +1196,24 @@ fn install_fake_clis(r: &Rig, mode: &str) -> (tempfile::TempDir, std::path::Path
         )
         .unwrap();
     }
-    let env = cli_provider::detect::PathEnv::for_test(bin)
+    let env = cli_provider::detect::PathEnv::for_test(bin.clone())
         .with_env_var("HOME", home.to_string_lossy())
         .with_env_var("USERPROFILE", home.to_string_lossy())
         .with_env_var("FAKE_MODE", mode);
     r.t.state
         .set_detector(Arc::new(cli_provider::Detector::with_env(env)));
-    (dir, home)
+    if pin {
+        for engine in ["claude", "codex"] {
+            crate::cli_login::record_install_pin(&r.t.state, engine).await;
+        }
+    }
+    (dir, home, bin)
 }
 
-async fn admin_call(r: &Rig, method: Method, path: &str, body: Option<Value>) -> Resp {
+async fn as_admin(r: &Rig, key: &str, method: Method, path: &str, body: Option<Value>) -> Resp {
     peer_call(
         &r.t,
-        Some((&r.admin_key, crate::PeerRole::Desktop)),
+        Some((key, crate::PeerRole::Desktop)),
         method,
         path,
         body,
@@ -1211,16 +1221,32 @@ async fn admin_call(r: &Rig, method: Method, path: &str, body: Option<Value>) ->
     .await
 }
 
-async fn wait_login_state(r: &Rig, engine: &str, want: &[&str]) -> Value {
+async fn admin_call(r: &Rig, method: Method, path: &str, body: Option<Value>) -> Resp {
+    as_admin(r, &r.admin_key, method, path, body).await
+}
+
+/// Start a sign-in as the rig's admin desktop; returns its `job_id`.
+async fn start_job(r: &Rig, engine: &str) -> String {
+    let started = admin_call(
+        r,
+        Method::POST,
+        &format!("/v1/admin/cli-engines/{engine}/login"),
+        None,
+    )
+    .await;
+    assert_eq!(started.status, StatusCode::ACCEPTED, "{:?}", started.json());
+    started.json()["job_id"].as_str().unwrap().to_owned()
+}
+
+fn job_path(engine: &str, job: &str) -> String {
+    format!("/v1/admin/cli-engines/{engine}/login?job={job}")
+}
+
+async fn wait_login_state(r: &Rig, engine: &str, job: &str, want: &[&str]) -> Value {
     for _ in 0..200 {
-        let v = admin_call(
-            r,
-            Method::GET,
-            &format!("/v1/admin/cli-engines/{engine}/login"),
-            None,
-        )
-        .await
-        .json();
+        let v = admin_call(r, Method::GET, &job_path(engine, job), None)
+            .await
+            .json();
         if want.contains(&v["state"].as_str().unwrap_or("")) {
             return v;
         }
@@ -1269,14 +1295,14 @@ fn read_pid(home: &std::path::Path, name: &str) -> u32 {
 async fn a_paste_code_sign_in_shows_the_link_forwards_one_code_to_stdin_and_confirms() {
     let _turn = LOGIN_TURN.lock().await;
     let r = rig().await;
-    let (_dir, home) = install_fake_clis(&r, "");
+    let (_dir, home, _bin) = install_fake_clis(&r, "", true).await;
     let path = "/v1/admin/cli-engines/claude/login";
-    let started = admin_call(&r, Method::POST, path, None).await;
-    assert_eq!(started.status, StatusCode::ACCEPTED, "{:?}", started.json());
-    assert_eq!(started.json()["flow"], "paste_code");
+    let job = start_job(&r, "claude").await;
+    assert!(job.len() >= 32, "an unpredictable id");
 
     // The page is the vendor's; no code is wanted before it showed.
-    let waiting = wait_login_state(&r, "claude", &["needs_code"]).await;
+    let waiting = wait_login_state(&r, "claude", &job, &["needs_code"]).await;
+    assert_eq!(waiting["flow"], "paste_code");
     assert!(
         waiting["url"]
             .as_str()
@@ -1287,7 +1313,7 @@ async fn a_paste_code_sign_in_shows_the_link_forwards_one_code_to_stdin_and_conf
         &r,
         Method::POST,
         &format!("{path}/code"),
-        Some(json!({"code": "no way"})),
+        Some(json!({"job_id": job, "code": "no way"})),
     )
     .await;
     assert_eq!(bad.status, StatusCode::BAD_REQUEST);
@@ -1298,11 +1324,12 @@ async fn a_paste_code_sign_in_shows_the_link_forwards_one_code_to_stdin_and_conf
 
     // The pasted code goes to the process' stdin, once.
     let code = "GOODCODE#abc";
+    let body = json!({"job_id": job, "code": code});
     let sent = admin_call(
         &r,
         Method::POST,
         &format!("{path}/code"),
-        Some(json!({"code": code})),
+        Some(body.clone()),
     )
     .await;
     assert_eq!(sent.status, StatusCode::ACCEPTED, "{:?}", sent.json());
@@ -1310,15 +1337,9 @@ async fn a_paste_code_sign_in_shows_the_link_forwards_one_code_to_stdin_and_conf
         !String::from_utf8_lossy(&sent.body).contains(code),
         "never echoed"
     );
-    let again = admin_call(
-        &r,
-        Method::POST,
-        &format!("{path}/code"),
-        Some(json!({"code": code})),
-    )
-    .await;
+    let again = admin_call(&r, Method::POST, &format!("{path}/code"), Some(body)).await;
     assert_eq!(again.status, StatusCode::CONFLICT);
-    let done = wait_login_state(&r, "claude", &["done", "failed"]).await;
+    let done = wait_login_state(&r, "claude", &job, &["done", "failed"]).await;
     assert_eq!(done["state"], "done", "{done}");
     assert_eq!(done["signed_in"], true);
     assert_eq!(
@@ -1327,7 +1348,7 @@ async fn a_paste_code_sign_in_shows_the_link_forwards_one_code_to_stdin_and_conf
     );
 
     // Nothing secret anywhere we control: status, audit.
-    let status = admin_call(&r, Method::GET, path, None).await;
+    let status = admin_call(&r, Method::GET, &job_path("claude", &job), None).await;
     assert!(!String::from_utf8_lossy(&status.body).contains("GOODCODE"));
     let audit = format!(
         "{:?}",
@@ -1346,25 +1367,23 @@ async fn a_paste_code_sign_in_shows_the_link_forwards_one_code_to_stdin_and_conf
 async fn a_device_code_sign_in_shows_page_and_code_and_finishes_when_the_cli_does() {
     let _turn = LOGIN_TURN.lock().await;
     let r = rig().await;
-    let (_dir, home) = install_fake_clis(&r, "");
-    let path = "/v1/admin/cli-engines/codex/login";
-    let started = admin_call(&r, Method::POST, path, None).await;
-    assert_eq!(started.status, StatusCode::ACCEPTED, "{:?}", started.json());
-    let waiting = wait_login_state(&r, "codex", &["needs_browser"]).await;
+    let (_dir, home, _bin) = install_fake_clis(&r, "", true).await;
+    let job = start_job(&r, "codex").await;
+    let waiting = wait_login_state(&r, "codex", &job, &["needs_browser"]).await;
     assert_eq!(waiting["url"], "https://auth.openai.com/codex/device");
     assert_eq!(waiting["code"], "ABCD-1234");
     // This flow takes no pasted code.
     let paste = admin_call(
         &r,
         Method::POST,
-        &format!("{path}/code"),
-        Some(json!({"code": "ABCD1234XYZ"})),
+        "/v1/admin/cli-engines/codex/login/code",
+        Some(json!({"job_id": job, "code": "ABCD1234XYZ"})),
     )
     .await;
     assert_eq!(paste.status, StatusCode::CONFLICT);
     // The owner approves in the browser: the CLI exits 0 and the host confirms.
     std::fs::write(home.join("approve"), "yes").unwrap();
-    let done = wait_login_state(&r, "codex", &["done", "failed"]).await;
+    let done = wait_login_state(&r, "codex", &job, &["done", "failed"]).await;
     assert_eq!(done["state"], "done", "{done}");
     assert_eq!(done["signed_in"], true);
     r.net.shutdown().await;
@@ -1374,15 +1393,12 @@ async fn a_device_code_sign_in_shows_page_and_code_and_finishes_when_the_cli_doe
 async fn cancel_and_timeout_kill_the_whole_process_tree() {
     let _turn = LOGIN_TURN.lock().await;
     let r = rig().await;
-    let (_dir, home) = install_fake_clis(&r, "");
+    let (_dir, home, _bin) = install_fake_clis(&r, "", true).await;
     let path = "/v1/admin/cli-engines/claude/login";
 
     // Cancel while waiting for the code.
-    assert_eq!(
-        admin_call(&r, Method::POST, path, None).await.status,
-        StatusCode::ACCEPTED
-    );
-    wait_login_state(&r, "claude", &["needs_code"]).await;
+    let job = start_job(&r, "claude").await;
+    wait_login_state(&r, "claude", &job, &["needs_code"]).await;
     let (leader, child) = (
         read_pid(&home, "login-pid"),
         read_pid(&home, "grandchild-pid"),
@@ -1391,7 +1407,7 @@ async fn cancel_and_timeout_kill_the_whole_process_tree() {
     let busy = admin_call(&r, Method::POST, "/v1/admin/cli-engines/codex/login", None).await;
     assert_eq!(busy.status, StatusCode::CONFLICT, "one sign-in at a time");
     assert_eq!(busy.json()["error"]["code"], "login_busy");
-    let cancelled = admin_call(&r, Method::DELETE, path, None).await;
+    let cancelled = admin_call(&r, Method::DELETE, &job_path("claude", &job), None).await;
     assert_eq!(
         cancelled.json()["state"],
         "cancelled",
@@ -1403,20 +1419,18 @@ async fn cancel_and_timeout_kill_the_whole_process_tree() {
 
     // The overall limit: shortened for the test, same code path as the ten minutes.
     super::super::cli_login::LIFETIME_TEST_MS.store(1500, std::sync::atomic::Ordering::SeqCst);
-    assert_eq!(
-        admin_call(&r, Method::POST, path, None).await.status,
-        StatusCode::ACCEPTED
-    );
-    wait_login_state(&r, "claude", &["needs_code"]).await;
+    let job = start_job(&r, "claude").await;
+    wait_login_state(&r, "claude", &job, &["needs_code"]).await;
     let (leader, child) = (
         read_pid(&home, "login-pid"),
         read_pid(&home, "grandchild-pid"),
     );
-    let timed = wait_login_state(&r, "claude", &["timed_out", "failed"]).await;
+    let timed = wait_login_state(&r, "claude", &job, &["timed_out", "failed"]).await;
     super::super::cli_login::LIFETIME_TEST_MS.store(0, std::sync::atomic::Ordering::SeqCst);
     assert_eq!(timed["state"], "timed_out", "{timed}");
     expect_dead(leader).await;
     expect_dead(child).await;
+    let _ = path;
     r.net.shutdown().await;
 }
 
@@ -1424,14 +1438,10 @@ async fn cancel_and_timeout_kill_the_whole_process_tree() {
 async fn a_cli_that_never_shows_a_page_fails_and_its_tree_dies() {
     let _turn = LOGIN_TURN.lock().await;
     let r = rig().await;
-    let (_dir, home) = install_fake_clis(&r, "no-link");
+    let (_dir, home, _bin) = install_fake_clis(&r, "no-link", true).await;
     super::super::cli_login::STARTUP_TEST_MS.store(600, std::sync::atomic::Ordering::SeqCst);
-    let path = "/v1/admin/cli-engines/claude/login";
-    assert_eq!(
-        admin_call(&r, Method::POST, path, None).await.status,
-        StatusCode::ACCEPTED
-    );
-    let failed = wait_login_state(&r, "claude", &["failed"]).await;
+    let job = start_job(&r, "claude").await;
+    let failed = wait_login_state(&r, "claude", &job, &["failed"]).await;
     super::super::cli_login::STARTUP_TEST_MS.store(0, std::sync::atomic::Ordering::SeqCst);
     assert_eq!(failed["error"], "login_start_timeout");
     expect_dead(read_pid(&home, "login-pid")).await;
@@ -1443,7 +1453,7 @@ async fn a_cli_that_never_shows_a_page_fails_and_its_tree_dies() {
 async fn only_the_admin_desktop_can_sign_in_and_manual_engines_say_what_to_run() {
     let _turn = LOGIN_TURN.lock().await;
     let r = rig().await;
-    let (_dir, _home) = install_fake_clis(&r, "");
+    let (_dir, _home, _bin) = install_fake_clis(&r, "", true).await;
     let routes = [
         (Method::GET, "/v1/admin/cli-engines/claude/login"),
         (Method::POST, "/v1/admin/cli-engines/claude/login"),
@@ -1458,7 +1468,7 @@ async fn only_the_admin_desktop_can_sign_in_and_manual_engines_say_what_to_run()
         for (method, path) in &routes {
             let body = path
                 .ends_with("/code")
-                .then(|| json!({"code": "GOODCODE#abc"}));
+                .then(|| json!({"job_id": "x", "code": "GOODCODE#abc"}));
             let resp = peer_call(&r.t, peer, method.clone(), path, body).await;
             assert!(
                 matches!(
@@ -1505,16 +1515,127 @@ async fn only_the_admin_desktop_can_sign_in_and_manual_engines_say_what_to_run()
                 .unwrap()
                 .contains(command)
         );
-        let status = admin_call(
-            &r,
-            Method::GET,
-            &format!("/v1/admin/cli-engines/{engine}/login"),
-            None,
-        )
-        .await
-        .json();
-        assert_eq!(status["flow"], "manual");
-        assert_eq!(status["command"], command);
     }
+    r.net.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_sign_in_belongs_to_its_desktop_and_a_stale_window_cannot_reach_a_newer_one() {
+    let _turn = LOGIN_TURN.lock().await;
+    let r = rig().await;
+    let (_dir, home, _bin) = install_fake_clis(&r, "", true).await;
+    // A second paired desktop that holds host administration too.
+    let (_second, key_b) = joiner(&r.t, "j3", true, &r.net).await;
+    let path = "/v1/admin/cli-engines/claude/login";
+
+    let job1 = start_job(&r, "claude").await;
+    wait_login_state(&r, "claude", &job1, &["needs_code"]).await;
+    // Admin B sees nothing of A's sign-in and can neither feed nor stop it.
+    for (method, url, body) in [
+        (Method::GET, job_path("claude", &job1), None),
+        (Method::GET, path.to_owned(), None),
+        (Method::DELETE, job_path("claude", &job1), None),
+        (
+            Method::POST,
+            format!("{path}/code"),
+            Some(json!({"job_id": job1, "code": "GOODCODE#abc"})),
+        ),
+    ] {
+        let resp = as_admin(&r, &key_b, method, &url, body).await;
+        assert_eq!(resp.status, StatusCode::FORBIDDEN, "{url}");
+        assert_eq!(resp.json()["error"]["code"], "login_forbidden");
+        assert!(
+            !String::from_utf8_lossy(&resp.body).contains("claude.com"),
+            "the vendor page is not leaked"
+        );
+    }
+    assert!(!home.join("stdin-code").exists());
+
+    // A cancels; a newer sign-in replaces it.
+    let cancelled = admin_call(&r, Method::DELETE, &job_path("claude", &job1), None).await;
+    assert_eq!(cancelled.json()["state"], "cancelled");
+    let job2 = start_job(&r, "claude").await;
+    assert_ne!(job1, job2);
+    wait_login_state(&r, "claude", &job2, &["needs_code"]).await;
+
+    // The old window cannot deliver a code to, ask about, or cancel the new one.
+    let stale_code = admin_call(
+        &r,
+        Method::POST,
+        &format!("{path}/code"),
+        Some(json!({"job_id": job1, "code": "GOODCODE#abc"})),
+    )
+    .await;
+    assert_eq!(stale_code.status, StatusCode::CONFLICT);
+    assert_eq!(stale_code.json()["error"]["code"], "login_stale");
+    let stale_cancel = admin_call(&r, Method::DELETE, &job_path("claude", &job1), None).await;
+    assert_eq!(stale_cancel.status, StatusCode::CONFLICT);
+    let stale_get = admin_call(&r, Method::GET, &job_path("claude", &job1), None).await;
+    assert_eq!(stale_get.status, StatusCode::CONFLICT);
+    assert!(
+        !home.join("stdin-code").exists(),
+        "nothing reached the new CLI"
+    );
+    let still = wait_login_state(&r, "claude", &job2, &["needs_code"]).await;
+    assert_eq!(
+        still["state"], "needs_code",
+        "the newer sign-in is untouched"
+    );
+
+    // The newer window can finish it.
+    let sent = admin_call(
+        &r,
+        Method::POST,
+        &format!("{path}/code"),
+        Some(json!({"job_id": job2, "code": "GOODCODE#abc"})),
+    )
+    .await;
+    assert_eq!(sent.status, StatusCode::ACCEPTED, "{:?}", sent.json());
+    wait_login_state(&r, "claude", &job2, &["done"]).await;
+    r.net.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_engine_whose_files_changed_since_installation_is_refused_before_anything_runs() {
+    let _turn = LOGIN_TURN.lock().await;
+    let r = rig().await;
+    let (_dir, home, bin) = install_fake_clis(&r, "", true).await;
+    let path = "/v1/admin/cli-engines/claude/login";
+    let exe = bin.join(format!("claude{}", std::env::consts::EXE_SUFFIX));
+
+    // A replaced executable (a bot with a shell rewrote it): refused, nothing was started.
+    let mut bytes = std::fs::read(&exe).unwrap();
+    bytes.extend_from_slice(b"tampered");
+    std::fs::write(&exe, bytes).unwrap();
+    let refused = admin_call(&r, Method::POST, path, None).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{:?}", refused.json());
+    assert_eq!(refused.json()["error"]["code"], "login_files_changed");
+    assert!(
+        refused.json()["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("reinstall")
+    );
+    assert!(!home.join("login-pid").exists(), "no process was started");
+    let audit = format!(
+        "{:?}",
+        r.t.state.storage().list_audit(r.t.state.user_id()).unwrap()
+    );
+    assert!(!audit.contains("provider.cli_login.admin_started"));
+
+    // Reinstalling records the new files; the sign-in then runs.
+    crate::cli_login::record_install_pin(&r.t.state, "claude").await;
+    let job = start_job(&r, "claude").await;
+    wait_login_state(&r, "claude", &job, &["needs_code"]).await;
+    admin_call(&r, Method::DELETE, &job_path("claude", &job), None).await;
+    r.net.shutdown().await;
+
+    // An engine nobody pinned that is not in a system location is refused too.
+    let r = rig().await;
+    let (_dir, home, _bin) = install_fake_clis(&r, "", false).await;
+    let refused = admin_call(&r, Method::POST, path, None).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{:?}", refused.json());
+    assert_eq!(refused.json()["error"]["code"], "login_untrusted_location");
+    assert!(!home.join("login-pid").exists());
     r.net.shutdown().await;
 }

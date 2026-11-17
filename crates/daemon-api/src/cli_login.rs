@@ -77,7 +77,54 @@ struct Job {
     code: Option<String>,
     error: Option<&'static str>,
     cancel: CancellationToken,
-    code_tx: Option<tokio::sync::mpsc::Sender<String>>,
+    /// Unpredictable id returned to the initiating desktop; every later call must present it.
+    token: String,
+    /// The paired desktop (peer key) that started this sign-in; nobody else may touch it.
+    owner: String,
+    code_tx: Option<tokio::sync::mpsc::Sender<zeroize::Zeroizing<String>>>,
+}
+
+fn new_token() -> Result<String, ApiError> {
+    use base64::Engine as _;
+    let mut bytes = [0u8; 24];
+    getrandom::fill(&mut bytes).map_err(|_| ApiError::internal("no randomness"))?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// The job `token` of `engine` as seen by `device`, or why it may not be touched. The caller
+/// holds the book's lock, so the check and whatever follows are one atomic step.
+fn owned_job<'a>(
+    jobs: &'a mut HashMap<String, Job>,
+    engine: &str,
+    device: &str,
+    token: &str,
+) -> Result<&'a mut Job, ApiError> {
+    let stale = || {
+        ApiError::new(
+            StatusCode::CONFLICT,
+            "login_stale",
+            "this sign-in is no longer the current one; start it again",
+        )
+    };
+    let job = jobs.get_mut(engine).ok_or_else(stale)?;
+    if job.owner != device {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "login_forbidden",
+            "this sign-in belongs to another desktop",
+        ));
+    }
+    if job.token != token {
+        return Err(stale());
+    }
+    Ok(job)
+}
+
+/// `?job=` of the status and cancel calls.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct JobQuery {
+    /// The `job_id` the sign-in was started with.
+    pub job: Option<String>,
 }
 
 pub(crate) struct LoginBook {
@@ -118,14 +165,25 @@ pub struct AdminCliLoginDto {
     pub installed: bool,
     /// Signed in, when the CLI can say.
     pub signed_in: Option<bool>,
+    /// Unpredictable id of this sign-in; status, code and cancel must present it (and come from
+    /// the desktop that started it).
+    pub job_id: Option<String>,
 }
 
 /// `POST .../login/code`: the code the vendor's page showed.
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AdminLoginCodeInput {
-    /// One line, 8-1024 plain characters. Never logged, echoed or stored.
+    /// The sign-in this code is for (`job_id` of the start answer).
+    pub job_id: String,
+    /// One line, 8-1024 plain characters. Never logged, echoed or stored; zeroised after use.
     pub code: String,
+}
+
+impl Drop for AdminLoginCodeInput {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.code);
+    }
 }
 
 impl std::fmt::Debug for AdminLoginCodeInput {
@@ -151,8 +209,8 @@ fn flow_name(engine: &str) -> &'static str {
 async fn dto(
     s: &AppState,
     engine: &'static cli_provider::registry::CliEngineSpec,
+    job: Option<Job>,
 ) -> AdminCliLoginDto {
-    let job = s.0.cli_logins.jobs.lock().get(engine.id).cloned();
     let row = s
         .detector()
         .detect(false)
@@ -168,6 +226,7 @@ async fn dto(
         code: job.as_ref().and_then(|j| j.code.clone()),
         error: job.as_ref().and_then(|j| j.error).map(str::to_owned),
         command: (flow == "manual").then(|| engine.login.to_owned()),
+        job_id: job.as_ref().map(|j| j.token.clone()),
         installed: row.as_ref().is_some_and(|r| r.installed),
         signed_in: row.and_then(|r| match r.auth {
             cli_provider::AuthState::SignedIn => Some(true),
@@ -224,13 +283,14 @@ async fn run_job(
     spec: &'static LoginSpec,
     id: u64,
     cancel: CancellationToken,
-    mut code_rx: tokio::sync::mpsc::Receiver<String>,
+    mut code_rx: tokio::sync::mpsc::Receiver<zeroize::Zeroizing<String>>,
 ) {
     let engine = spec.engine;
     let shutdown = s.shutdown_token();
     let deadline = tokio::time::Instant::now() + lifetime();
     let detector = s.detector();
-    let mut run = match login::start(spec, detector.environment()) {
+    let pins = read_pins(&s.data_dir()).remove(engine);
+    let mut run = match login::start(spec, detector.environment(), pins.as_deref()) {
         Ok(run) => run,
         Err(login::StartError::NotInstalled) => {
             finish(&s, engine, id, "failed", Some("not_installed"));
@@ -238,6 +298,14 @@ async fn run_job(
         }
         Err(login::StartError::SpawnFailed) => {
             finish(&s, engine, id, "failed", Some("spawn_failed"));
+            return;
+        }
+        Err(login::StartError::FilesChanged) => {
+            finish(&s, engine, id, "failed", Some("login_files_changed"));
+            return;
+        }
+        Err(login::StartError::UntrustedLocation) => {
+            finish(&s, engine, id, "failed", Some("login_untrusted_location"));
             return;
         }
     };
@@ -288,7 +356,7 @@ async fn run_job(
             }
             Some(pasted) = code_rx.recv(), if paste && sent_at.is_none() => {
                 // Straight to the process' stdin; the value is dropped right after.
-                if run.send_line(&pasted).await.is_err() {
+                if run.send_line(pasted.as_str()).await.is_err() {
                     run.terminate().await;
                     finish(&s, engine, id, "failed", Some("login_failed"));
                     return;
@@ -324,10 +392,87 @@ async fn run_job(
     }
 }
 
-/// Start the engine's own sign-in ON THE HOST. Admin desktop only; one at a time.
+// ------------------------------------------------------------------ install pins
+
+const PINS_FILE: &str = "cli-install-pins.json";
+
+/// What the install flow recorded of each engine's entry point (real path, size, SHA-256).
+/// The file lives in the daemon's data directory, which the bots' file tools cannot write.
+pub(crate) fn read_pins(data: &std::path::Path) -> HashMap<String, Vec<login::FilePin>> {
+    std::fs::read(data.join(PINS_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn write_pins(
+    data: &std::path::Path,
+    pins: &HashMap<String, Vec<login::FilePin>>,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let path = data.join(PINS_FILE);
+    let tmp = path.with_extension("json.tmp");
+    let mut file = std::fs::File::create(&tmp)?;
+    file.write_all(&serde_json::to_vec(pins)?)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&tmp, &path)
+}
+
+/// Called by the install flow right after a successful install: pin the engine's files as they
+/// are now. A later sign-in refuses to run anything else.
+pub(crate) async fn record_install_pin(s: &AppState, engine: &'static str) {
+    let env = s.detector().environment().clone();
+    let data = s.data_dir();
+    let pinned = tokio::task::spawn_blocking(move || login::pin_installed(engine, &env))
+        .await
+        .ok()
+        .and_then(Result::ok);
+    let mut pins = read_pins(&data);
+    match pinned {
+        Some(files) => {
+            pins.insert(engine.to_owned(), files);
+        }
+        None => {
+            pins.remove(engine);
+        }
+    }
+    let _ = write_pins(&data, &pins);
+}
+
+fn trust_error(e: login::TrustError) -> ApiError {
+    match e {
+        login::TrustError::FilesChanged => ApiError::new(
+            StatusCode::CONFLICT,
+            "login_files_changed",
+            "the engine's files changed since installation: reinstall it (Install on server) before signing in",
+        ),
+        login::TrustError::UntrustedLocation => ApiError::new(
+            StatusCode::CONFLICT,
+            "login_untrusted_location",
+            "this engine was not installed by Praxi and is not in a system location: reinstall it with Install on server, or sign in over SSH",
+        ),
+        login::TrustError::NotInstalled => ApiError::new(
+            StatusCode::CONFLICT,
+            "not_installed",
+            "install this engine on the server first",
+        ),
+        login::TrustError::Unreadable => ApiError::new(
+            StatusCode::CONFLICT,
+            "login_files_changed",
+            "the engine's files could not be read: reinstall it before signing in",
+        ),
+    }
+}
+
+// ------------------------------------------------------------------ routes
+
+/// Start the engine's own sign-in ON THE HOST. Admin desktop only; one at a time; the sign-in
+/// belongs to the desktop that started it.
 #[utoipa::path(post, operation_id = "admin_cli_engine_login", path = "/v1/admin/cli-engines/{id}/login", tag = "admin", security(("bearer" = [])),
     params(("id" = String, Path)),
     responses((status = 202, body = AdminCliLoginDto), (status = 403, body = crate::error::ErrorBody), (status = 409, body = crate::error::ErrorBody)))]
+#[allow(clippy::too_many_lines)] // one admission sequence: engine, trust, slot, audit, spawn
 pub(crate) async fn start_login(
     State(s): State<AppState>,
     peer: Option<Extension<PeerIdentity>>,
@@ -335,6 +480,7 @@ pub(crate) async fn start_login(
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<AdminCliLoginDto>), ApiError> {
     let admin = require_admin(&s, peer.as_ref().map(|p| &p.0))?;
+    let device = peer.as_ref().map(|p| p.0.key.clone()).unwrap_or_default();
     let engine = spec_of(&id)?;
     let Some(spec) = login::login_spec(engine.id) else {
         return Err(ApiError::new(
@@ -359,6 +505,7 @@ pub(crate) async fn start_login(
             "install this engine on the server first",
         ));
     }
+    let token = new_token()?;
     // A working sign-in is never replaced from here.
     if row.is_some_and(|r| r.auth == cli_provider::AuthState::SignedIn) {
         let job = Job {
@@ -372,10 +519,25 @@ pub(crate) async fn start_login(
             code: None,
             error: None,
             cancel: CancellationToken::new(),
+            token,
+            owner: device,
             code_tx: None,
         };
-        s.0.cli_logins.jobs.lock().insert(engine.id.to_owned(), job);
-        return Ok((StatusCode::ACCEPTED, Json(dto(&s, engine).await)));
+        s.0.cli_logins
+            .jobs
+            .lock()
+            .insert(engine.id.to_owned(), job.clone());
+        return Ok((StatusCode::ACCEPTED, Json(dto(&s, engine, Some(job)).await)));
+    }
+    // The executable must be the one the install flow pinned (or a system install).
+    {
+        let env = s.detector().environment().clone();
+        let pinned = read_pins(&s.data_dir()).remove(engine.id);
+        let name = engine.id;
+        tokio::task::spawn_blocking(move || login::verify_engine(name, &env, pinned.as_deref()))
+            .await
+            .map_err(ApiError::internal)?
+            .map_err(trust_error)?;
     }
     let permit = Arc::clone(&s.0.cli_logins.running)
         .try_acquire_owned()
@@ -398,18 +560,21 @@ pub(crate) async fn start_login(
         s.0.cli_logins
             .next
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    s.0.cli_logins.jobs.lock().insert(
-        engine.id.to_owned(),
-        Job {
-            id: job_id,
-            state: "starting",
-            url: None,
-            code: None,
-            error: None,
-            cancel: cancel.clone(),
-            code_tx: Some(tx),
-        },
-    );
+    let job = Job {
+        id: job_id,
+        state: "starting",
+        url: None,
+        code: None,
+        error: None,
+        cancel: cancel.clone(),
+        token,
+        owner: device,
+        code_tx: Some(tx),
+    };
+    s.0.cli_logins
+        .jobs
+        .lock()
+        .insert(engine.id.to_owned(), job.clone());
     let task = s.clone();
     tokio::spawn(async move {
         let _permit = permit;
@@ -430,24 +595,45 @@ pub(crate) async fn start_login(
             &serde_json::json!({"engine": spec.engine, "state": outcome.map(|o| o.0), "error": outcome.and_then(|o| o.1)}),
         );
     });
-    Ok((StatusCode::ACCEPTED, Json(dto(&s, engine).await)))
+    Ok((StatusCode::ACCEPTED, Json(dto(&s, engine, Some(job)).await)))
 }
 
 /// Where the sign-in above stands (poll while it is `starting`, `needs_*` or `verifying`).
+/// Needs the `job` id and the desktop that started it.
 #[utoipa::path(get, operation_id = "admin_cli_engine_login_status", path = "/v1/admin/cli-engines/{id}/login", tag = "admin", security(("bearer" = [])),
-    params(("id" = String, Path)),
-    responses((status = 200, body = AdminCliLoginDto), (status = 403, body = crate::error::ErrorBody)))]
+    params(("id" = String, Path), JobQuery),
+    responses((status = 200, body = AdminCliLoginDto), (status = 403, body = crate::error::ErrorBody), (status = 409, body = crate::error::ErrorBody)))]
 pub(crate) async fn login_status(
     State(s): State<AppState>,
     peer: Option<Extension<PeerIdentity>>,
     _gate: Gate,
     Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<JobQuery>,
 ) -> Result<Json<AdminCliLoginDto>, ApiError> {
     require_admin(&s, peer.as_ref().map(|p| &p.0))?;
-    Ok(Json(dto(&s, spec_of(&id)?).await))
+    let device = peer.as_ref().map(|p| p.0.key.clone()).unwrap_or_default();
+    let engine = spec_of(&id)?;
+    let job = {
+        let mut jobs = s.0.cli_logins.jobs.lock();
+        if jobs.contains_key(engine.id) {
+            Some(
+                owned_job(
+                    &mut jobs,
+                    engine.id,
+                    &device,
+                    query.job.as_deref().unwrap_or_default(),
+                )?
+                .clone(),
+            )
+        } else {
+            None
+        }
+    };
+    Ok(Json(dto(&s, engine, job).await))
 }
 
-/// Hand the code the vendor's page showed to the waiting CLI. Exactly one code per sign-in.
+/// Hand the code the vendor's page showed to the waiting CLI. Exactly one code per sign-in,
+/// and only from the desktop that started it, naming that very sign-in.
 #[utoipa::path(post, operation_id = "admin_cli_engine_login_code", path = "/v1/admin/cli-engines/{id}/login/code", tag = "admin", security(("bearer" = [])),
     params(("id" = String, Path)), request_body = AdminLoginCodeInput,
     responses((status = 202, body = AdminCliLoginDto), (status = 403, body = crate::error::ErrorBody), (status = 409, body = crate::error::ErrorBody)))]
@@ -459,41 +645,53 @@ pub(crate) async fn login_code(
     ApiJson(input): ApiJson<AdminLoginCodeInput>,
 ) -> Result<(StatusCode, Json<AdminCliLoginDto>), ApiError> {
     require_admin(&s, peer.as_ref().map(|p| &p.0))?;
+    let device = peer.as_ref().map(|p| p.0.key.clone()).unwrap_or_default();
     let engine = spec_of(&id)?;
-    let code = login::valid_code(&input.code)
-        .ok_or_else(|| ApiError::bad_request("paste the whole code shown on the vendor's page"))?
-        .to_owned();
-    let tx = {
+    let code = zeroize::Zeroizing::new(
+        login::valid_code(&input.code)
+            .ok_or_else(|| {
+                ApiError::bad_request("paste the whole code shown on the vendor's page")
+            })?
+            .to_owned(),
+    );
+    // One atomic step: this device, this very sign-in, waiting for a code, sender not yet taken.
+    let (tx, job) = {
         let mut jobs = s.0.cli_logins.jobs.lock();
-        let job = jobs
-            .get_mut(engine.id)
-            .filter(|j| j.state == "needs_code")
-            .ok_or_else(|| ApiError::conflict("no sign-in is waiting for a code"))?;
-        // One code per sign-in: the channel is consumed here.
-        job.code_tx.take()
+        let job = owned_job(&mut jobs, engine.id, &device, &input.job_id)?;
+        if job.state != "needs_code" {
+            return Err(ApiError::conflict("no sign-in is waiting for a code"));
+        }
+        let tx = job
+            .code_tx
+            .take()
+            .ok_or_else(|| ApiError::conflict("a code was already sent for this sign-in"))?;
+        (tx, job.clone())
     };
-    let tx = tx.ok_or_else(|| ApiError::conflict("a code was already sent for this sign-in"))?;
     tx.send(code)
         .await
         .map_err(|_| ApiError::conflict("the sign-in is no longer running"))?;
-    Ok((StatusCode::ACCEPTED, Json(dto(&s, engine).await)))
+    Ok((StatusCode::ACCEPTED, Json(dto(&s, engine, Some(job)).await)))
 }
 
-/// Stop the sign-in (the whole process tree is killed).
+/// Stop the sign-in (the whole process tree is killed). Needs the `job` id and the desktop that
+/// started it: a stale window cannot cancel a newer sign-in.
 #[utoipa::path(delete, operation_id = "admin_cli_engine_login_cancel", path = "/v1/admin/cli-engines/{id}/login", tag = "admin", security(("bearer" = [])),
-    params(("id" = String, Path)),
-    responses((status = 200, body = AdminCliLoginDto), (status = 403, body = crate::error::ErrorBody)))]
+    params(("id" = String, Path), JobQuery),
+    responses((status = 200, body = AdminCliLoginDto), (status = 403, body = crate::error::ErrorBody), (status = 409, body = crate::error::ErrorBody)))]
 pub(crate) async fn cancel_login(
     State(s): State<AppState>,
     peer: Option<Extension<PeerIdentity>>,
     _gate: Gate,
     Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<JobQuery>,
 ) -> Result<Json<AdminCliLoginDto>, ApiError> {
     require_admin(&s, peer.as_ref().map(|p| &p.0))?;
+    let device = peer.as_ref().map(|p| p.0.key.clone()).unwrap_or_default();
     let engine = spec_of(&id)?;
-    if let Some(job) = s.0.cli_logins.jobs.lock().get(engine.id) {
-        job.cancel.cancel();
-    }
+    let token = query.job.unwrap_or_default();
+    owned_job(&mut s.0.cli_logins.jobs.lock(), engine.id, &device, &token)?
+        .cancel
+        .cancel();
     // Give the task a moment to kill the tree and record the state.
     for _ in 0..50 {
         let state = s.0.cli_logins.jobs.lock().get(engine.id).map(|j| j.state);
@@ -505,5 +703,8 @@ pub(crate) async fn cancel_login(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    Ok(Json(dto(&s, engine).await))
+    let job = owned_job(&mut s.0.cli_logins.jobs.lock(), engine.id, &device, &token)
+        .ok()
+        .map(|j| j.clone());
+    Ok(Json(dto(&s, engine, job).await))
 }

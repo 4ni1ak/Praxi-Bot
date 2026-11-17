@@ -713,9 +713,33 @@ const DAEMON_STATE_NAMES: &[&str] = &[
     "secrets.enc",
 ];
 
+/// Where the coding CLIs the daemon signs in and runs live, and where they keep their sign-in:
+/// the CLIs Praxi installs itself (`<data>/runtimes/...`) and their credential / config
+/// directories. A shell command that names one (to replace an engine's executable, read its
+/// token or change its hooks) always needs approval, with this reason, even at level Full.
+/// Damping, not a boundary: a name can be assembled at run time, and a bot the owner gave an
+/// unrestricted shell as the same OS user can still reach these files.
+const CLI_AUTHORITY_NAMES: &[&str] = &[
+    "runtimes/node-v",
+    "runtimes/npm-global",
+    "runtimes\\node-v",
+    "runtimes\\npm-global",
+    ".claude",
+    ".codex",
+    ".cursor",
+    ".gemini",
+    ".config/opencode",
+    ".local/share/opencode",
+    "appdata\\roaming\\opencode",
+    "appdata\\local\\opencode",
+];
+
 fn names_daemon_state(raw_command: &str) -> bool {
     let lower = raw_command.to_lowercase();
-    DAEMON_STATE_NAMES.iter().any(|name| lower.contains(name))
+    DAEMON_STATE_NAMES
+        .iter()
+        .chain(CLI_AUTHORITY_NAMES)
+        .any(|name| lower.contains(name))
 }
 
 impl NeverList {
@@ -788,6 +812,29 @@ mod tests {
     }
 
     // ── Must match ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn matches_commands_that_name_installed_clis_and_their_sign_in_stores() {
+        for command in [
+            "cp /tmp/evil ~/.praxi/runtimes/npm-global/bin/claude",
+            r"copy x C:\Users\me\AppData\Roaming\praxi\runtimes\npm-global\bin\claude.cmd",
+            "echo hi >> /var/lib/praxi/runtimes/node-v22.1.0-linux-x64/bin/npm",
+            "cat ~/.claude/.credentials.json",
+            "cat $HOME/.codex/auth.json",
+            "cat ~/.local/share/opencode/auth.json",
+        ] {
+            assert!(check(command), "{command}");
+        }
+        // Ordinary work is unaffected.
+        for command in [
+            "cargo build",
+            "ls runtimes",
+            "cat notes/claude-code.md",
+            "git status",
+        ] {
+            assert!(!check(command), "{command}");
+        }
+    }
 
     #[test]
     fn matches_commands_that_name_daemon_credentials_or_control_files() {

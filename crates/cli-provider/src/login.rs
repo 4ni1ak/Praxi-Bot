@@ -199,22 +199,180 @@ pub enum StartError {
     NotInstalled,
     /// Refused by the shim rules or could not be spawned.
     SpawnFailed,
+    /// The engine's files are not the ones that were pinned at install time.
+    FilesChanged,
+    /// Not pinned and not in a system location.
+    UntrustedLocation,
 }
 
-/// Start the registry's login command. `env` decides where the CLI finds its home: the sanitized
-/// environment keeps HOME / USERPROFILE of the service user, so the credential lands where the
-/// engine's turns will read it.
-///
-/// # Errors
-/// See [`StartError`].
-pub fn start(spec: &'static LoginSpec, env: &PathEnv) -> Result<LoginRun, StartError> {
-    let engine = crate::engine_spec(spec.engine).ok_or(StartError::SpawnFailed)?;
-    let candidate = crate::search::find_engine(engine, env).ok_or(StartError::NotInstalled)?;
+/// One file of an engine's entry point (the program, and the script it runs when it is a
+/// shim), pinned at install time.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FilePin {
+    /// Real path (symlinks resolved).
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
+}
+
+/// Why a login executable is not trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustError {
+    /// The engine is not on the search path.
+    NotInstalled,
+    /// The entry point is not the one that was pinned at install time, or its bytes changed.
+    FilesChanged,
+    /// No pin exists and the engine does not live in a system location.
+    UntrustedLocation,
+    /// The shim could not be resolved or hashed.
+    Unreadable,
+}
+
+fn resolve(engine: &str, env: &PathEnv) -> Result<crate::detect::ResolvedCommand, StartError> {
+    let spec = crate::engine_spec(engine).ok_or(StartError::SpawnFailed)?;
+    let candidate = crate::search::find_engine(spec, env).ok_or(StartError::NotInstalled)?;
     let resolved =
         resolve_spawn(&candidate, env).map_err(|ShimError::Refused| StartError::SpawnFailed)?;
     if crate::detect::is_batch_file(&resolved.program) {
         return Err(StartError::SpawnFailed);
     }
+    Ok(resolved)
+}
+
+fn sha256_file(path: &std::path::Path) -> std::io::Result<(u64, String)> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut size = 0u64;
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        size += n as u64;
+        hasher.update(&buf[..n]);
+    }
+    let digest = hasher.finalize();
+    let hex = digest.iter().fold(String::new(), |mut s, b| {
+        use std::fmt::Write as _;
+        let _ = write!(s, "{b:02x}");
+        s
+    });
+    Ok((size, hex))
+}
+
+/// The files that make up the engine's entry point right now: the program and any argument that
+/// is an existing file (an npm shim runs `node <script>`), each by real path with size and hash.
+fn current_files(resolved: &crate::detect::ResolvedCommand) -> Result<Vec<FilePin>, TrustError> {
+    let mut paths = vec![resolved.program.clone()];
+    paths.extend(
+        resolved
+            .args
+            .iter()
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_absolute() && p.is_file()),
+    );
+    paths
+        .into_iter()
+        .map(|p| {
+            let real = std::fs::canonicalize(&p)
+                .map(crate::search::plain_path)
+                .map_err(|_| TrustError::Unreadable)?;
+            let (size, sha256) = sha256_file(&real).map_err(|_| TrustError::Unreadable)?;
+            Ok(FilePin {
+                path: real.to_string_lossy().into_owned(),
+                size,
+                sha256,
+            })
+        })
+        .collect()
+}
+
+/// Record the engine's entry point as it is NOW (called right after the install flow finished).
+///
+/// # Errors
+/// The engine cannot be found or its files cannot be read.
+pub fn pin_installed(engine: &str, env: &PathEnv) -> Result<Vec<FilePin>, TrustError> {
+    let resolved = resolve(engine, env).map_err(|e| match e {
+        StartError::NotInstalled => TrustError::NotInstalled,
+        _ => TrustError::Unreadable,
+    })?;
+    current_files(&resolved)
+}
+
+/// System locations that a bot working as the service user cannot write to.
+fn system_location(path: &str) -> bool {
+    let lower = path.replace('\\', "/").to_ascii_lowercase();
+    [
+        "/usr/bin/",
+        "/usr/local/bin/",
+        "/usr/lib/",
+        "/usr/local/lib/",
+        "/bin/",
+        "/opt/",
+        "/snap/",
+    ]
+    .iter()
+    .any(|p| lower.starts_with(p))
+        || lower.contains(":/program files")
+        || lower.contains(":/windows/")
+}
+
+/// Is the executable the login would run the one that was installed (or a system install)?
+/// With a pin, the search must still resolve to the same real files with the same bytes: a
+/// file that shadows or replaces it is refused. Without one, only system locations pass.
+///
+/// # Errors
+/// See [`TrustError`].
+pub fn verify_engine(
+    engine: &str,
+    env: &PathEnv,
+    pinned: Option<&[FilePin]>,
+) -> Result<(), TrustError> {
+    let resolved = resolve(engine, env).map_err(|e| match e {
+        StartError::NotInstalled => TrustError::NotInstalled,
+        _ => TrustError::Unreadable,
+    })?;
+    let now = current_files(&resolved)?;
+    match pinned {
+        Some(pins) if !pins.is_empty() => {
+            if pins == now.as_slice() {
+                Ok(())
+            } else {
+                Err(TrustError::FilesChanged)
+            }
+        }
+        _ => {
+            if now.iter().all(|f| system_location(&f.path)) {
+                Ok(())
+            } else {
+                Err(TrustError::UntrustedLocation)
+            }
+        }
+    }
+}
+
+/// Start the registry's login command. `env` decides where the CLI finds its home: the sanitized
+/// environment keeps HOME / USERPROFILE of the service user, so the credential lands where the
+/// engine's turns will read it. The executable is verified against `pinned` (see
+/// [`verify_engine`]) immediately before it is spawned.
+///
+/// # Errors
+/// See [`StartError`].
+pub fn start(
+    spec: &'static LoginSpec,
+    env: &PathEnv,
+    pinned: Option<&[FilePin]>,
+) -> Result<LoginRun, StartError> {
+    verify_engine(spec.engine, env, pinned).map_err(|e| match e {
+        TrustError::NotInstalled => StartError::NotInstalled,
+        TrustError::FilesChanged => StartError::FilesChanged,
+        TrustError::UntrustedLocation => StartError::UntrustedLocation,
+        TrustError::Unreadable => StartError::SpawnFailed,
+    })?;
+    let resolved = resolve(spec.engine, env)?;
     let mut cmd = tokio::process::Command::new(&resolved.program);
     cmd.args(&resolved.args)
         .args(spec.args)
@@ -342,6 +500,7 @@ mod tests {
 
     #[test]
     fn the_registry_is_fixed_argv_with_no_shell_and_no_client_input() {
+        // (see also the pin tests below)
         for spec in LOGIN_SPECS {
             assert!(crate::engine_spec(spec.engine).is_some(), "{}", spec.engine);
             assert_ne!(spec.args.len(), 0);
