@@ -7,6 +7,7 @@ import {
   type AppearanceSettings
 } from "../lib/appearance";
 import { parseBotOrder } from "../lib/botOrder";
+import { type MessageTimes, parseMessageTimes } from "../lib/messageTime";
 import {
   type ComputerTarget,
   parseComputerTarget,
@@ -41,6 +42,8 @@ export interface AppSettings extends AppearanceSettings {
   windowFrame: boolean;
   /** Key chord that sends a chat message. */
   sendWith: SendWith;
+  /** How message times show in the chat. */
+  messageTimes: MessageTimes;
   /** Where the bot's computer / browser runs. */
   computerTarget: ComputerTarget;
   /** Sidebar bot order (bot ids); the first bot is the main bot. Empty = daemon order. */
@@ -67,6 +70,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   accountName: "",
   windowFrame: true,
   sendWith: "enter",
+  messageTimes: "minutes",
   computerTarget: "this-pc",
   botOrder: []
 };
@@ -115,6 +119,7 @@ export function loadSettingsSync(): AppSettings | null {
       ...parsed,
       ...normalizeAppearance(parsed as Record<string, unknown>),
       computerTarget: parseComputerTarget(parsed.computerTarget),
+      messageTimes: parseMessageTimes(parsed.messageTimes),
       botOrder: parseBotOrder(parsed.botOrder)
     };
   } catch {
@@ -183,6 +188,7 @@ export async function loadSettings(): Promise<AppSettings> {
         (await store.get<boolean>("windowFrame")) ??
         DEFAULT_SETTINGS.windowFrame;
       const sendWith = parseSendWith(await store.get<string>("sendWith"));
+      const messageTimes = parseMessageTimes(await store.get<string>("messageTimes"));
       const computerTarget = parseComputerTarget(
         await store.get<string>("computerTarget")
       );
@@ -209,6 +215,7 @@ export async function loadSettings(): Promise<AppSettings> {
         accountName,
         windowFrame,
         sendWith,
+        messageTimes,
         computerTarget,
         botOrder
       };
@@ -251,6 +258,7 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
       await store.set("accountName", settings.accountName);
       await store.set("windowFrame", settings.windowFrame);
       await store.set("sendWith", settings.sendWith);
+      await store.set("messageTimes", settings.messageTimes);
       await store.set("computerTarget", settings.computerTarget);
       await store.set("botOrder", settings.botOrder);
       await store.save();

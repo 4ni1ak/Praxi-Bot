@@ -109,6 +109,14 @@
   font-size: var(--font-size-xs);
 }
 
+.stepTime {
+  margin-left: auto;
+  color: var(--color-text-faint);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .more {
   display: inline-grid;
   place-items: center;

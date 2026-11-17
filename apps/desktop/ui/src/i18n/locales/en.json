@@ -531,6 +531,7 @@
       "noMatch": "No match"
     },
     "conversationLabel": "Today",
+    "yesterdayLabel": "Yesterday",
     "openBot": "Open {{name}}",
     "emptyTitle": "What shall we work on?",
     "emptyGreeting": "Hi, I'm {{name}}",
@@ -548,6 +549,8 @@
       "thought": "Thought for {{duration}}",
       "working": "Working step by step",
       "details": "Details",
+      "started": "Started {{start}}",
+      "startedFinished": "Started {{start}} · finished {{end}}",
       "problems_one": "{{count}} step failed",
       "problems_other": "{{count}} steps failed"
     },
@@ -555,7 +558,9 @@
       "seconds_one": "{{count}} second",
       "seconds_other": "{{count}} seconds",
       "minutes_one": "{{count}} minute",
-      "minutes_other": "{{count}} minutes"
+      "minutes_other": "{{count}} minutes",
+      "shortSeconds": "s",
+      "shortMinutes": "min"
     },
     "menu": {
       "navigate": "navigate",
@@ -1849,6 +1854,13 @@
         "description": "Which key sends a chat message.",
         "enter": "Enter",
         "ctrl-enter": "Ctrl+Enter"
+      },
+      "times": {
+        "title": "Show message times",
+        "description": "A small time next to each message. Hover it for the seconds and the full date.",
+        "off": "Off",
+        "minutes": "Hour:minute",
+        "seconds": "With seconds"
       }
     },
     "ai": {

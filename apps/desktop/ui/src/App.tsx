@@ -954,6 +954,7 @@ function AppShell() {
             onSwitchChat={openChat}
             showAgentRoute={settings.showAgentRoute}
             sendWith={settings.sendWith}
+            messageTimes={settings.messageTimes}
           />
         ) : null}
         {route.kind === "needs" ? <NeedsYouView onOpenChat={openChat} /> : null}

@@ -35,6 +35,7 @@ import {
   ToolCard
 } from "../components/ChatCards";
 import { Markdown } from "../components/Markdown";
+import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
 import { RunBar } from "../components/RunBar";
 import { RunChangesGate } from "../components/RunChangesGate";
@@ -54,6 +55,7 @@ import {
 } from "../lib/chatLogic";
 import { botWriteMessage, writeBotProfile } from "../lib/botWrite";
 import { splitMentions } from "../lib/mentionText";
+import { dayHeader, type MessageTimes } from "../lib/messageTime";
 import { modelGroups } from "../lib/modelPicker";
 import { type ChatRunPhase, runBarModel, singleRunStop } from "../lib/runBar";
 import {
@@ -148,13 +150,6 @@ function canOfferRemember(run: RunState): boolean {
   );
 }
 
-/** "Bugün 13:34" / "15 Kasım 13:34" (v6 date separator). */
-function dayLabel(ts: number, today: string, mock: boolean): string {
-  const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(ts);
-  const isToday = mock || new Date(ts).toDateString() === new Date().toDateString();
-  const day = isToday ? today : new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long" }).format(ts);
-  return `${day} ${time}`;
-}
 
 export function ChatView({
   chatId,
@@ -163,7 +158,8 @@ export function ChatView({
   onControl,
   onSwitchChat,
   showAgentRoute = false,
-  sendWith = "enter"
+  sendWith = "enter",
+  messageTimes = "minutes"
 }: {
   chatId: string;
   /** Present only when there is a page to go back to; without it the header has no arrow. */
@@ -177,8 +173,10 @@ export function ChatView({
   showAgentRoute?: boolean;
   /** Key chord that sends the message (Settings, General). */
   sendWith?: SendWith;
+  /** Settings, General: per-message times off / HH:mm / HH:mm:ss. */
+  messageTimes?: MessageTimes;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const toast = useToast();
   const {
     client,
@@ -783,6 +781,11 @@ export function ChatView({
               {guestName(runGuest(runId))}
               <Markdown text={item.text} />
             </div>
+            <MessageTime
+              ts={item.ts}
+              mode={messageTimes}
+              finishedTs={run?.finishedMs}
+            />
           </div>
         );
       case "tool": {
@@ -921,10 +924,21 @@ export function ChatView({
               !prev || prev.kind === "user" || prev.kind === "day";
             switch (e.kind) {
               case "day":
-                return <div key={e.key} className={styles.conversationLabel}>{dayLabel(e.ts, t("chat.conversationLabel"), isMockMode())}</div>;
+                return (
+                  <div key={e.key} className={styles.conversationLabel}>
+                    {dayHeader(
+                      e.ts,
+                      isMockMode() ? e.ts : Date.now(),
+                      i18n.language,
+                      { today: t("chat.conversationLabel"), yesterday: t("chat.yesterdayLabel") },
+                      messageTimes === "off"
+                    )}
+                  </div>
+                );
               case "user":
                 return (
                   <div key={e.key} className={styles.userRow}>
+                    <MessageTime ts={e.ts} mode={messageTimes} />
                     <div className={styles.userBubble}>
                       {splitMentions(e.text, mentionBots).map((part, i) =>
                         part.color ? (
@@ -943,6 +957,7 @@ export function ChatView({
                       {lead ? guestName(guestBot(e.botId)) : null}
                       <Markdown text={e.text} />
                     </div>
+                    <MessageTime ts={e.ts} mode={messageTimes} />
                   </div>
                 );
               case "runError":
@@ -1024,7 +1039,7 @@ export function ChatView({
               case "chain":
                 return (
                   <div key={e.key} className={styles.chainRow}>
-                    <ThinkingChain chain={e.chain} avatar={lead ? botAvatarFor(true, "xs", runGuest(e.runId)) : undefined} />
+                    <ThinkingChain chain={e.chain} times={messageTimes} avatar={lead ? botAvatarFor(true, "xs", runGuest(e.runId)) : undefined} />
                   </div>
                 );
               case "item":

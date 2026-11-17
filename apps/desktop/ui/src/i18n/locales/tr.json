@@ -531,6 +531,7 @@
       "noMatch": "Eşleşme yok"
     },
     "conversationLabel": "Bugün",
+    "yesterdayLabel": "Dün",
     "openBot": "{{name}} ayrıntılarını aç",
     "emptyTitle": "Birlikte ne yapalım?",
     "emptyGreeting": "Merhaba, ben {{name}}",
@@ -548,6 +549,8 @@
       "thought": "{{duration}} düşündü",
       "working": "Adım adım ilerliyor",
       "details": "Ayrıntılar",
+      "started": "Başlangıç {{start}}",
+      "startedFinished": "Başlangıç {{start}} · bitiş {{end}}",
       "problems_one": "{{count}} adım başarısız",
       "problems_other": "{{count}} adım başarısız"
     },
@@ -555,7 +558,9 @@
       "seconds_one": "{{count}} saniye",
       "seconds_other": "{{count}} saniye",
       "minutes_one": "{{count}} dakika",
-      "minutes_other": "{{count}} dakika"
+      "minutes_other": "{{count}} dakika",
+      "shortSeconds": "sn",
+      "shortMinutes": "dk"
     },
     "menu": {
       "navigate": "gezin",
@@ -1849,6 +1854,13 @@
         "description": "Sohbet mesajını hangi tuş gönderir.",
         "enter": "Enter",
         "ctrl-enter": "Ctrl+Enter"
+      },
+      "times": {
+        "title": "Mesaj saatlerini göster",
+        "description": "Her mesajın yanında küçük bir saat. Üzerine gelince saniye ve tam tarih görünür.",
+        "off": "Kapalı",
+        "minutes": "Saat:dakika",
+        "seconds": "Saniyeyle"
       }
     },
     "ai": {
