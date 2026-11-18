@@ -123,3 +123,42 @@ async fn shipped_agent_searches_only_the_enabled_scoped_index_without_an_embedde
         .unwrap();
     assert!(!tool.visible_to(Some(&bot.to_string())));
 }
+
+#[test]
+fn shipped_agent_wires_default_memory_store_with_local_hash_embedder() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(storage::Storage::open(dir.path()).unwrap());
+    let user = UserId::new();
+    let bot = BotId::new();
+    let other = BotId::new();
+    insert_fixture(&storage, user, [bot, other]);
+    let agent = crate::serve::build_agent(
+        &storage,
+        agent_core::Providers::unconfigured(),
+        dir.path(),
+        None,
+    );
+    let store = agent.memory_store().expect("default memory store wired");
+    let created = store
+        .add(
+            &memory_store::NewMemory::new(
+                user,
+                Some(bot),
+                memory_store::Kind::Bot,
+                "Release freeze is every Thursday afternoon.",
+            ),
+            "test",
+        )
+        .unwrap();
+    let preview = store
+        .preview_recall(user, bot, "Thursday release", 800)
+        .unwrap();
+    assert_eq!(preview.len(), 1);
+    assert_eq!(preview[0].0.id, created.id);
+    assert!(
+        store
+            .preview_recall(user, other, "Thursday release", 800)
+            .unwrap()
+            .is_empty()
+    );
+}
