@@ -94,6 +94,7 @@ import type {
   ScheduleInput,
   Scope,
   ScreenPrivilegesInput,
+  RunUsage,
   SendMode,
   SendResponse,
   SessionInfo,
@@ -608,6 +609,10 @@ export class ApiClient {
    */
   stopRuns(body: StopRunsInput, signal?: AbortSignal): Promise<StopRunsResponse> {
     return this.request("POST", "/runs/stop", { body, signal });
+  }
+  /** Model and token usage of one run (read-only; the message info popover). */
+  getRunUsage(runId: string): Promise<RunUsage> {
+    return this.request("GET", `/runs/${encodeURIComponent(runId)}/usage`);
   }
   resumeRun(runId: string): Promise<Run> {
     return this.request("POST", `/runs/${runId}/resume`);

@@ -60,6 +60,9 @@ const ATLAS = "11111111-1111-4111-8111-111111111111";
 const NOVA = "22222222-2222-4222-8222-222222222222";
 
 function bot(id: string, name: string, color: string, shape: string, model: string): Bot {
+  // Design review (mock mode only): `?botcolor=%23f4f4f5` recolours the first bot (the gradient is built from it).
+  const forced = typeof window !== "undefined" && id === ATLAS ? new URLSearchParams(window.location.search).get("botcolor") : null;
+  if (forced && /^#[0-9a-f]{6}$/i.test(forced)) color = forced;
   return {
     id,
     name,
@@ -994,7 +997,7 @@ export class MockApiClient extends ApiClient {
         return ok({
           local_version: "0.1.0-mock",
           local_api_version: "1",
-          hosts: mockHostScenario() ? [{ id: MOCK_HOST_ID, name: "Praxi host", state: mockHostScenario() === "offline" || mockHostScenario() === "dropped" ? "offline" : "connected", detail: null }] : []
+          hosts: mockHostScenario() ? [{ id: MOCK_HOST_ID, name: "Praxi host", state: mockHostScenario() === "offline" || mockHostScenario() === "dropped" ? "offline" : "connected", detail: null, computer_access: true }] : []
         });
       case "GET /skills":
         return ok(structuredClone(MOCK_SKILLS_CATALOG));
@@ -1015,7 +1018,7 @@ export class MockApiClient extends ApiClient {
             "Can you prepare this week's work summary? I'd like to see what shipped and what's next.",
             "## A good week of progress.\n\nI reviewed the latest changes in GitHub and your workspace. Here is your weekly summary:\n\n| Workstream | Delivered | Status |\n| --- | --- | --- |\n| Desktop experience | Settings, chat and model selection | Ready |\n| Integrations | 5 connected apps | Ready |\n| Quality checks | Types and interface tests | Complete |\n\n### Next up\n\nAfter reviewing open tasks, we can run the release checks.\n\n```sh\npnpm typecheck\npnpm --dir apps/desktop/ui test\n```\n\nI can turn this into a report to share with your team.",
           ];
-          const seeded = content.map((text, index): Message => ({ id: `mock-message-${index}`, chat_id: CHAT_ID, content: text, role: index % 2 === 0 ? "user" : "assistant", created_at_ms: NOW + index * 1000 }));
+          const seeded = content.map((text, index): Message => ({ id: `mock-message-${index}`, chat_id: CHAT_ID, content: text, role: index % 2 === 0 ? "user" : "assistant", created_at_ms: NOW + index * 1000, ...(index % 2 === 0 ? { source: "owner" } : { run_id: "mock-info-run" }) }));
           if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("screen") === "mention") {
             // Review screen: an @mention and the mentioned bot's own reply.
             seeded.push(
@@ -1049,6 +1052,9 @@ export class MockApiClient extends ApiClient {
           ? [{ call_id: "mock-sch", run_id: "mock-live", requested_at_ms: Date.now() - 3000, decision: null, tool_name: "schedule_create", summary: "Create a schedule" }]
           : []);
       case "GET /runs":
+        if (seg[2] === "usage") {
+          return ok({ model: "gemini/gemini-3.5-flash-lite", prompt_tokens: 4210, completion_tokens: 388, model_calls: 3 });
+        }
         if (seg[2] === "changes") {
           const runId = seg[1] ?? "";
           if (seg[4] === "preview") {
@@ -1081,10 +1087,14 @@ export class MockApiClient extends ApiClient {
         }
         {
           const live = mockLiveRunId();
-          return ok(live ? [{
+          const past = {
+            id: "mock-info-run", bot_id: "11111111-1111-4111-8111-111111111111", chat_id: CHAT_ID, kind: "turn",
+            state: "succeeded", error: null, created_at_ms: NOW - 11400, updated_at_ms: NOW + 1000, computer_node_name: "Praxi host", parent_run_id: null
+          };
+          return ok(live ? [past, {
             id: live, bot_id: "11111111-1111-4111-8111-111111111111", chat_id: CHAT_ID,
             state: "running", created_at_ms: Date.now() - 6000, parent_run_id: null
-          }] : []);
+          }] : [past]);
         }
       case "GET /usage":
         return ok(USAGE);

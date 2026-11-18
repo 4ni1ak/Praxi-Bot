@@ -1002,6 +1002,7 @@ pub fn serve(
     let composio_tools = mcp_tools.clone();
     let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
         .map(|(host, _)| host);
+    crate::calendar_host::start_calendar(data_dir, &mcp_tools, telegram_store.as_ref());
     register_web(data_dir, port, &mcp_tools, telegram_store.as_ref());
     step("web tools registered");
     let web_host =

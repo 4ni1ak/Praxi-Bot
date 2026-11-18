@@ -8675,6 +8675,54 @@
         ]
       }
     },
+    "/v1/runs/{id}/usage": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Model and token usage of one run (read-only; feeds the chat's message info).",
+        "operationId": "run_usage",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunUsageDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/schedules": {
       "get": {
         "tags": [
@@ -17149,6 +17197,13 @@
             ],
             "format": "uuid",
             "description": "Run that produced / carried it."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where a user message came from (`owner` = this app, `telegram`, `peer`,\n`local_api`); absent for older messages and for replies."
           }
         }
       },
@@ -18228,6 +18283,42 @@
             "type": "integer",
             "format": "int64",
             "description": "Last state change."
+          }
+        }
+      },
+      "RunUsageDto": {
+        "type": "object",
+        "description": "What a run cost, read from the usage ledger (`GET /v1/runs/{id}/usage`).",
+        "required": [
+          "prompt_tokens",
+          "completion_tokens",
+          "model_calls"
+        ],
+        "properties": {
+          "completion_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Completion tokens of the run's own model calls.",
+            "minimum": 0
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`provider/model` the run's turn used (the last executor call); absent\nwhen no model call was recorded."
+          },
+          "model_calls": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of model calls of the run.",
+            "minimum": 0
+          },
+          "prompt_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Prompt tokens of the run's own model calls (reported by the provider).",
+            "minimum": 0
           }
         }
       },

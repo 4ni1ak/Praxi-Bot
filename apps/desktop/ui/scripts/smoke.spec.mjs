@@ -398,13 +398,14 @@ export async function flows(ctx) {
   const abortCount = () => ctx.stubLog.filter((l) => l === 'MODEL_ABORTED').length;
   /** Press Stop, then within 3 s: run cancelled in the daemon, UI out of the running state, composer usable. */
   const stopAndCheck = async (page, before, { appearWithin = 15000 } = {}) => {
-    const stopBtn = page.getByTestId('run-bar-stop');
+    // The send button is the Stop button (a rounded square) while the bot works and the box is empty.
+    const stopBtn = page.locator('[data-testid="send-button"][data-mode="stop"]');
     await stopBtn.waitFor({ timeout: appearWithin });
     const t0 = Date.now();
     await stopBtn.click();
     await until('run reaches "cancelled" in the daemon', async () => (await runsNow()).find((r) => !before.has(r.id) && !r.parent_run_id && r.state === 'cancelled'), STOP_WITHIN);
-    await page.getByTestId('run-bar').waitFor({ state: 'hidden', timeout: Math.max(STOP_WITHIN - (Date.now() - t0), 500) });
-    if (await page.getByTestId('run-bar-stop').isVisible()) throw new Error('the Stop button is still shown after the run stopped');
+    await page.getByTestId('run-status').waitFor({ state: 'hidden', timeout: Math.max(STOP_WITHIN - (Date.now() - t0), 500) });
+    if (await stopBtn.isVisible()) throw new Error('the Stop button is still shown after the run stopped');
     const c = composer(page);
     await c.fill('x');
     await page.getByRole('button', { name: /^send$/i }).and(page.locator(':enabled')).waitFor({ timeout: 3000 });
@@ -413,7 +414,7 @@ export async function flows(ctx) {
   const gotoBot = async (page, name) => {
     await page.locator('[class*="railItem"]', { hasText: name }).first().click();
     await openFirstChat(page);
-    await page.getByTestId('run-bar').waitFor({ state: 'hidden', timeout: 30000 }).catch(() => {});
+    await page.getByTestId('run-status').waitFor({ state: 'hidden', timeout: 30000 }).catch(() => {});
   };
   await run(s, 'Stop (a): during a slow model response the request is aborted and the run is cancelled', async (page) => {
     await gotoBot(page, 'Fulla');
