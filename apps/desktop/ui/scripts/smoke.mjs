@@ -30,8 +30,8 @@ const args = process.argv.slice(2);
 const flag = (name) => args.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
 const root = fileURLToPath(new URL('../', import.meta.url));
 const repo = resolve(root, '../../..');
-const shots = process.env.SMOKE_SHOTS ?? 'C:/Users/emreo/OneDrive/Masaüstü/emre/bot/tasks/shots-263';
-const targetDir = process.env.CARGO_TARGET_DIR ?? 'D:/praxi-target-shared';
+const shots = process.env.SMOKE_SHOTS ?? join(tmpdir(), 'praxi-smoke-shots');
+const targetDir = process.env.CARGO_TARGET_DIR ?? join(repo, 'target');
 const exe = process.platform === 'win32' ? 'bot.exe' : 'bot';
 const bot = join(targetDir, 'debug', exe);
 const CHROMES = [process.env.CHROME_BIN, 'C:/Program Files/Google/Chrome/Application/chrome.exe',
