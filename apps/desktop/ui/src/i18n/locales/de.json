@@ -2114,7 +2114,8 @@
       "usage": "Nutzung",
       "diagnostics": "Diagnose",
       "updates": "Updates",
-      "appearance": "Darstellung"
+      "appearance": "Darstellung",
+      "mail": "E-Mail"
     },
     "general": {
       "account": {
@@ -2372,6 +2373,15 @@
           "nameHint": "Verwende Buchstaben, Ziffern, Punkte, Bindestriche oder Unterstriche, beginnend mit einem Buchstaben oder einer Ziffer (höchstens 32).",
           "bot": "Wähle den Bot oder wähle einen beliebigen Bot."
         }
+      },
+      "next": {
+        "ok": "Verbunden. Ein Bot, der E-Mail nutzen darf, kann dieses Postfach verwenden.",
+        "authFailed": "Der Server hat die Anmeldung abgelehnt. Gmail, Outlook, Yahoo und iCloud verlangen ein App-Passwort, nicht dein normales Passwort. Bearbeite das Postfach und gib es erneut ein.",
+        "apiKey": "AgentMail hat den API-Schlüssel abgelehnt. Erstelle in deiner AgentMail-Konsole einen neuen Schlüssel und füge ihn erneut ein.",
+        "unreachable": "Der Mailserver ist nicht erreichbar. Prüfe deine Internetverbindung und die Servernamen und versuche es erneut.",
+        "tls": "Die sichere Verbindung ist fehlgeschlagen. Prüfe Servernamen, Port und Sicherheitseinstellung.",
+        "protocol": "Dieser Server antwortet nicht wie ein Mailserver. Prüfe Servernamen und Port.",
+        "timeout": "Der Server hat nicht rechtzeitig geantwortet. Versuche es gleich noch einmal."
       }
     },
     "webSearch": {
@@ -2888,7 +2898,25 @@
     "needsDesktop": "{{name}} hat keine Desktop-Sitzung, daher gibt es keinen Bildschirm zum Anzeigen. Um eine hinzuzufügen, führe auf diesem Computer aus:",
     "pausedIdle": "Zum Ressourcensparen pausiert - zum Fortsetzen klicken",
     "showScreen": "Bildschirm anzeigen",
-    "screenListFailed": "Die Bildschirmliste von {{name}} konnte nicht geladen werden. Es wird gleich noch einmal versucht."
+    "screenListFailed": "Die Bildschirmliste von {{name}} konnte nicht geladen werden. Es wird gleich noch einmal versucht.",
+    "mail": {
+      "heading": "E-Mail",
+      "loading": "Postfächer werden gesucht…",
+      "loadError": "Die Postfächer konnten nicht geladen werden: {{message}}",
+      "empty": "{{name}} hat noch kein Postfach. Verbinde dein eigenes Postfach oder gib dem Bot eine eigene Adresse.",
+      "connect": "Postfach verbinden",
+      "manage": "Postfächer verwalten",
+      "shared": "Für alle Bots freigegeben",
+      "own": "Nur {{name}}",
+      "agentmail": "Eigene Adresse",
+      "check": "Verbindung prüfen",
+      "checking": "Wird geprüft…",
+      "checked": "Geprüft um {{time}}",
+      "toolsLabel": "{{name}} darf E-Mail nutzen",
+      "toolsOnHint": "Lesen ist erlaubt. Senden richtet sich immer nach dem Berechtigungsmodus dieses Bots und fragt standardmäßig zuerst nach.",
+      "toolsOffHint": "Das Postfach ist verbunden, aber {{name}} sieht noch keine E-Mail-Werkzeuge. Schalte dies ein, damit der Bot E-Mails lesen und schreiben kann.",
+      "toolsError": "Der E-Mail-Zugriff konnte nicht geändert werden: {{message}}"
+    }
   },
   "terminal": {
     "title": "Terminal - {{name}}",

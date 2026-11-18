@@ -2114,7 +2114,8 @@
       "usage": "Kullanım",
       "diagnostics": "Tanılama",
       "updates": "Güncellemeler",
-      "appearance": "Görünüm"
+      "appearance": "Görünüm",
+      "mail": "E-posta"
     },
     "general": {
       "account": {
@@ -2372,6 +2373,15 @@
           "nameHint": "Harf, rakam, nokta, tire veya alt çizgi kullan; harf ya da rakamla başla (en fazla 32).",
           "bot": "Botu seç ya da herhangi bir bot seç."
         }
+      },
+      "next": {
+        "ok": "Bağlandı. E-postaya izni olan bir bot bu posta kutusunu kullanabilir.",
+        "authFailed": "Sunucu girişi reddetti. Gmail, Outlook, Yahoo ve iCloud normal şifreni değil, uygulama şifresini ister. Posta kutusunu düzenleyip yeniden gir.",
+        "apiKey": "AgentMail API anahtarını reddetti. AgentMail konsolunda yeni bir anahtar oluşturup yeniden yapıştır.",
+        "unreachable": "Posta sunucusuna ulaşılamadı. İnternet bağlantını ve sunucu adlarını kontrol edip yeniden dene.",
+        "tls": "Güvenli bağlantı kurulamadı. Sunucu adını, portu ve güvenlik ayarını kontrol et.",
+        "protocol": "Bu sunucu bir posta sunucusu gibi yanıt vermedi. Sunucu adını ve portu kontrol et.",
+        "timeout": "Sunucu zamanında yanıt vermedi. Biraz sonra yeniden dene."
       }
     },
     "webSearch": {
@@ -2888,7 +2898,25 @@
     "needsDesktop": "{{name}} sunucusunda masaüstü oturumu yok, bu yüzden gösterilecek ekran yok. Eklemek için bu bilgisayarda şunu çalıştır:",
     "pausedIdle": "Kaynak tasarrufu için duraklatıldı - devam etmek için tıkla",
     "showScreen": "Ekranı göster",
-    "screenListFailed": "{{name}} ekran listesi yüklenemedi. Birazdan yeniden denenecek."
+    "screenListFailed": "{{name}} ekran listesi yüklenemedi. Birazdan yeniden denenecek.",
+    "mail": {
+      "heading": "E-posta",
+      "loading": "Posta kutuları aranıyor…",
+      "loadError": "Posta kutuları yüklenemedi: {{message}}",
+      "empty": "{{name}} için henüz posta kutusu yok. Kendi posta kutunu bağla ya da bota kendi adresini ver.",
+      "connect": "Posta kutusu bağla",
+      "manage": "Posta kutularını yönet",
+      "shared": "Tüm botlarla paylaşılıyor",
+      "own": "Yalnızca {{name}}",
+      "agentmail": "Kendi adresi",
+      "check": "Bağlantıyı denetle",
+      "checking": "Denetleniyor…",
+      "checked": "{{time}} tarihinde denetlendi",
+      "toolsLabel": "{{name}} e-posta kullanabilsin",
+      "toolsOnHint": "Okumaya izin var. Göndermek her zaman bu botun izin moduna uyar ve varsayılan olarak önce sorar.",
+      "toolsOffHint": "Posta kutusu bağlı ama {{name}} henüz hiçbir e-posta aracını göremiyor. E-postayı okuyup yazabilmesi için bunu aç.",
+      "toolsError": "E-posta erişimi değiştirilemedi: {{message}}"
+    }
   },
   "terminal": {
     "title": "Terminal - {{name}}",

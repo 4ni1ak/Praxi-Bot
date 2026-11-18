@@ -730,6 +730,7 @@ function AppShell() {
               onOpenSettings={() => setBotEditOpen(true)}
               onManageSkills={() => setSkillsOpen(true)}
               onAddSkill={() => setAddSkillOpen(true)}
+              onOpenMail={() => setSettingsOpen("mail")}
             />
           ) : null}
         </SidePanel>
