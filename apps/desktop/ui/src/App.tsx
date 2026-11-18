@@ -46,6 +46,7 @@ import { Popover } from "./components/Popover";
 import { HealthIndicator } from "./components/HealthIndicator";
 import { HelpModal } from "./components/HelpModal";
 import { chatTitleLabel } from "./lib/chatTitle";
+import { APP_COMMAND_EVENT, type AppCommandTarget } from "./lib/slash";
 import { editorSection } from "./lib/botEditor";
 import { BOT_COLORS, botView, draftFromBot } from "./lib/botProfile";
 import {
@@ -93,6 +94,7 @@ import { useBotReorder } from "./components/useBotReorder";
 import { setBotOrderSnapshot } from "./store/botOrderStore";
 import { computerScopePlan } from "./lib/hostState";
 import { ComputerPicker } from "./components/ComputerPicker";
+import { ServerTerminalProvider } from "./state/ServerTerminalContext";
 import { ComputerRequestModal } from "./components/ComputerAccess";
 import { HostEmptyState } from "./components/HostEmptyState";
 import { HostStateBanner } from "./components/HostStateBanner";
@@ -277,7 +279,7 @@ function AppShell() {
       const params = new URLSearchParams(window.location.search);
       const mock = isMockMode();
       const merged: AppSettings = { ...loaded, autostart: osAutostart,
-        ...(mock ? { onboardingCompleted: true, language: params.get("lang") === "en" ? "en" as const : "tr" as const } : {}),
+        ...(mock ? { onboardingCompleted: true, language: (["en", "de"] as const).find((l) => l === params.get("lang")) ?? ("tr" as const) } : {}),
       };
       if (mock) Object.assign(merged, appearanceFromQuery(params, merged));
       if (mock) {
@@ -522,6 +524,18 @@ function AppShell() {
       setHelpOpen(true);
     }
   };
+
+  // Composer commands (/help, /settings ...) ask the shell to open the same places as the profile menu.
+  const accountActionRef = useRef(handleAccountAction);
+  accountActionRef.current = handleAccountAction;
+  useEffect(() => {
+    const onCommand = (e: Event) => {
+      const target = (e as CustomEvent<AppCommandTarget>).detail;
+      accountActionRef.current(target);
+    };
+    window.addEventListener(APP_COMMAND_EVENT, onCommand);
+    return () => window.removeEventListener(APP_COMMAND_EVENT, onCommand);
+  }, []);
 
   // Ctrl/Cmd + , opens settings (the shortcut the profile menu advertises).
   useEffect(() => {
@@ -1088,14 +1102,16 @@ export function App() {
   return (
     <ToastProvider>
       <DaemonProvider>
-        <ComputerRequestModal />
-        <ComputerScope>
-          <LeaveGuardProvider>
-            <EngineConsentProvider>
-              <AppShell />
-            </EngineConsentProvider>
-          </LeaveGuardProvider>
-        </ComputerScope>
+        <ServerTerminalProvider>
+          <ComputerRequestModal />
+          <ComputerScope>
+            <LeaveGuardProvider>
+              <EngineConsentProvider>
+                <AppShell />
+              </EngineConsentProvider>
+            </LeaveGuardProvider>
+          </ComputerScope>
+        </ServerTerminalProvider>
       </DaemonProvider>
     </ToastProvider>
   );
