@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ArrowUp,
   Bookmark,
+  Paperclip,
   Plus,
   Square,
   Terminal,
@@ -64,6 +65,8 @@ import { dayHeader, type MessageTimes } from "../lib/messageTime";
 import { modelGroups } from "../lib/modelPicker";
 import { type ChatRunPhase, runBarModel, runStopUi, STOP_CONFIRM_MS } from "../lib/runBar";
 import { sendButtonDisabled, sendButtonMode } from "../lib/composerRun";
+import { type PendingFile, MAX_ATTACHMENT_BYTES, filesOf, room, uploadErrorKey } from "../lib/attachments";
+import { ComposerFiles, MessageFiles } from "../components/Attachments";
 import { enqueue, putBack, removeQueued, takeForNow, takeForRunEnd } from "../lib/messageQueue";
 import { toolSentence } from "../lib/runSentence";
 import { useChatQueue } from "../state/useChatQueue";
@@ -135,7 +138,7 @@ interface MenuBot {
 
 type Entry =
   | { kind: "day"; key: string; ts: number }
-  | { kind: "user"; key: string; ts: number; text: string; source?: string | null }
+  | { kind: "user"; key: string; ts: number; text: string; source?: string | null; attachments?: Message["attachments"] }
   | { kind: "assistant"; key: string; ts: number; text: string; live: boolean; botId?: string | null; runId?: string | null }
   | { kind: "item"; key: string; ts: number; item: TimelineItem; runId: string }
   | { kind: "chain"; key: string; ts: number; chain: Chain; runId: string }
@@ -258,6 +261,9 @@ export function ChatView({
   const [nav, setNav] = useState<HistoryNav>(FRESH);
   const pendingCaret = useRef<number | null>(null);
   const [sending, setSending] = useState(false);
+  const [files, setFiles] = useState<PendingFile[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   /** The run the daemon named for the message just sent, until the run list shows it. */
   const [ackedRunId, setAckedRunId] = useState<string | null>(null);
   /** Stop was pressed while the send was still unanswered: it is applied when the run is named. */
@@ -388,7 +394,8 @@ export function ChatView({
           key: `m-${m.id}`,
           ts: m.created_at_ms,
           text: m.content,
-          source: m.source
+          source: m.source,
+          attachments: m.attachments
         });
       } else if (
         m.role === "assistant" &&
@@ -488,7 +495,12 @@ export function ChatView({
 
   const lastItem = entries[entries.length - 1];
   // The button is the stop button from the moment a message is sent (before any run event) while the box is empty.
-  const sendMode = sendButtonMode({ runActive: running, hasText: !sending && text.trim().length > 0 });
+  const readyFiles = files.filter((f) => f.state === "ready");
+  const uploadingFiles = files.some((f) => f.state === "uploading");
+  const sendMode = sendButtonMode({
+    runActive: running,
+    hasText: !sending && (text.trim().length > 0 || readyFiles.length > 0)
+  });
   // ---- follow new content unless the user scrolled up
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const lastTop = useRef(0);
@@ -638,13 +650,76 @@ export function ChatView({
     });
   };
 
+  const dropFiles = (list: PendingFile[]) => {
+    for (const f of list) {
+      if (f.preview) {
+        URL.revokeObjectURL(f.preview);
+      }
+    }
+  };
+
+  // A different chat starts with an empty tray.
+  useEffect(
+    () => () => {
+      setFiles((prev) => {
+        dropFiles(prev);
+        return [];
+      });
+    },
+    [chatId]
+  );
+
+  const removeFile = (key: string) => {
+    setFiles((prev) => {
+      dropFiles(prev.filter((f) => f.key === key));
+      return prev.filter((f) => f.key !== key);
+    });
+  };
+
+  const addFiles = (incoming: File[]) => {
+    if (!client || incoming.length === 0) {
+      return;
+    }
+    const taken = files.filter((f) => f.state !== "failed").length;
+    const accepted = incoming.slice(0, room(taken, incoming.length));
+    if (accepted.length < incoming.length) {
+      toast.show(t("chat.attach.tooMany"), "info");
+    }
+    for (const file of accepted) {
+      const key = crypto.randomUUID();
+      const name = file.name || t("chat.attach.pastedName");
+      const base: PendingFile = {
+        key,
+        name,
+        size: file.size,
+        state: "uploading",
+        preview: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined
+      };
+      setFiles((prev) => [...prev, base]);
+      const patch = (p: Partial<PendingFile>) =>
+        setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, ...p } : f)));
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        patch({ state: "failed", errorKey: "chat.attach.tooLarge" });
+        continue;
+      }
+      client
+        .uploadAttachment(chatId, file, name)
+        .then((att) => patch({ state: "ready", id: att.id, kind: att.kind }))
+        .catch((e: unknown) => {
+          const err = e as { code?: string; status?: number };
+          patch({ state: "failed", errorKey: uploadErrorKey(err.code, err.status) });
+        });
+    }
+  };
+
   const send = async () => {
     const body = text.trim();
-    if (!client || !body || sending) {
+    const attachmentIds = readyFiles.flatMap((f) => (f.id ? [f.id] : []));
+    if (!client || (!body && attachmentIds.length === 0) || sending || uploadingFiles) {
       return;
     }
     // "/help", "/settings" ...: the app opens the place itself; nothing is sent to the bot.
-    const appCommand = appCommandFor(body);
+    const appCommand = attachmentIds.length === 0 ? appCommandFor(body) : null;
     if (appCommand) {
       setText("");
       window.dispatchEvent(new CustomEvent(APP_COMMAND_EVENT, { detail: appCommand.target }));
@@ -652,7 +727,7 @@ export function ChatView({
     }
     // A message typed while the bot works joins the queue as a "Sirada." bubble (slash commands such
     // as /stop still go straight to the daemon). It is delivered when the run ends or by "Simdi gonder".
-    if (active && !body.startsWith("/")) {
+    if (active && !body.startsWith("/") && attachmentIds.length === 0) {
       updateQueue((q) => enqueue(q, body, crypto.randomUUID(), Date.now()));
       setText("");
       scrollToEnd();
@@ -667,7 +742,8 @@ export function ChatView({
         chatId,
         body,
         undefined,
-        await ownerKey(client.baseUrl)
+        await ownerKey(client.baseUrl),
+        attachmentIds
       );
       if (res.run_id) {
         setAckedRunId(res.run_id);
@@ -686,6 +762,10 @@ export function ChatView({
         toast.show(t("chat.stopped"), "info");
       }
       setText("");
+      setFiles((prev) => {
+        dropFiles(prev);
+        return [];
+      });
       setNav(FRESH);
       scrollToEnd();
       await Promise.all([loadMessages(), refreshRuns()]);
@@ -1145,6 +1225,7 @@ export function ChatView({
                     <MessageTime ts={e.ts} mode={messageTimes} />
                     <MessageInfo side="me" ts={e.ts} source={e.source} />
                     <div className={styles.userBubble}>
+                      <MessageFiles client={client} chatId={chatId} attachments={e.attachments ?? []} />
                       {splitMentions(e.text, mentionBots).map((part, i) =>
                         part.color ? (
                           <span key={i} className={styles.mention} style={{ "--mention-color": part.color } as CSSProperties}>{part.text}</span>
@@ -1289,7 +1370,29 @@ export function ChatView({
       ) : null}
       </div>
 
-      <footer className={styles.composer}>
+      <footer
+        className={styles.composer}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes("Files")) {
+            e.preventDefault();
+            setDragOver(true);
+          }
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+            setDragOver(false);
+          }
+        }}
+        onDrop={(e) => {
+          const dropped = filesOf(e.dataTransfer);
+          setDragOver(false);
+          if (dropped.length > 0) {
+            e.preventDefault();
+            addFiles(dropped);
+          }
+        }}
+        data-dragover={dragOver ? "true" : undefined}
+      >
         {error ? (
           <p className={styles.error} role="alert">
             {error}
@@ -1395,6 +1498,7 @@ export function ChatView({
             </div>
           ) : null}
           <div className={styles.box}>
+          <ComposerFiles files={files} onRemove={removeFile} />
           <div className={styles.inputWrap}>
           {paintsMentions ? (
             <div className={styles.mirror} aria-hidden="true">
@@ -1433,6 +1537,13 @@ export function ChatView({
               setCaret(e.target.selectionStart);
               setMenuIdx(0);
             }}
+            onPaste={(e) => {
+              const pasted = filesOf(e.clipboardData);
+              if (pasted.length > 0) {
+                e.preventDefault();
+                addFiles(pasted);
+              }
+            }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
             onKeyDown={onKeyDown}
             onFocus={() => setMenuDismissed(null)}
@@ -1465,6 +1576,28 @@ export function ChatView({
             >
               <Plus />
             </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              data-testid="attach-input"
+              onChange={(e) => {
+                addFiles(Array.from(e.target.files ?? []));
+                e.target.value = "";
+              }}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              className={styles.plus}
+              title={t("chat.attach.add")}
+              aria-label={t("chat.attach.add")}
+              disabled={!client}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Paperclip />
+            </Button>
             {bot ? (
               <div>
                 <ModelPicker
@@ -1485,7 +1618,7 @@ export function ChatView({
               className={styles.send}
               data-mode={sendMode}
               data-testid="send-button"
-              disabled={sendButtonDisabled({ mode: sendMode, sending, stopping: false })}
+              disabled={sendButtonDisabled({ mode: sendMode, sending: sending || uploadingFiles, stopping: false })}
               title={sendMode === "stop" ? t(stopUi ? "chat.runBar.forceStop" : "chat.stop") : t("chat.send")}
               aria-label={sendMode === "stop" ? t(stopUi ? "chat.runBar.forceStop" : "chat.stop") : t("chat.send")}
               onClick={() => (sendMode === "stop" ? void stopRun() : void send())}
