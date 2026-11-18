@@ -533,13 +533,18 @@ mod tests {
     async fn dropping_script_call_cancels_in_flight_tool() {
         let (reg, _gate, _calls) = setup(vec![]);
         let effect = Arc::new(WaitingEffect {
-            spec: spec(
-                "delayed_effect",
-                "d",
-                json!({"type":"object"}),
-                Effect::Write,
-                PermissionCategory::Fs,
-            ),
+            spec: {
+                let mut spec = spec(
+                    "delayed_effect",
+                    "d",
+                    json!({"type":"object"}),
+                    Effect::Write,
+                    PermissionCategory::Fs,
+                );
+                // A test double: declare it as touching nothing so the registry accepts it.
+                spec.content = tool_registry::ContentClass::none();
+                spec
+            },
             entered: Notify::new(),
             release: Notify::new(),
             dropped: Arc::new(Notify::new()),
