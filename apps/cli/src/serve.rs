@@ -321,6 +321,7 @@ fn build_agent_with_skills(
         LoopConfig {
             redactor: Some(redactor),
             max_computer_runs,
+            memory: agent_core::MemoryConfig::open_default(storage.data_dir()),
             knowledge_decider: Some(Arc::new(agent_core::HeuristicKnowledgeDecider::new(
                 Arc::clone(storage),
             ))),
@@ -330,6 +331,7 @@ fn build_agent_with_skills(
     .with_builtin_tools(tools)
     .with_subagents()
     .with_skills(skills)
+    .with_memory_tools()
     .with_workflows(
         WorkflowStore::new(data_dir),
         Handles {

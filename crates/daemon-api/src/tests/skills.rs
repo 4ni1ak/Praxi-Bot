@@ -1,5 +1,6 @@
 //! Tests for `/v1/skills`, `/v1/bots/{id}/skills`, and peer role guards.
 
+mod hub;
 mod management;
 
 use std::fs;

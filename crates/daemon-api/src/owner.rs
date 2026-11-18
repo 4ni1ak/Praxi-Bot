@@ -110,6 +110,8 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/bots/{}/knowledge/embedding-cooldown/reset"),
     ("POST", "/v1/skills"),
     ("POST", "/v1/skills/import"),
+    ("POST", "/v1/skills/hub/preview"),
+    ("POST", "/v1/skills/hub/install"),
     ("PUT", "/v1/skills/{}"),
     ("DELETE", "/v1/skills/{}"),
     ("POST", "/v1/schedules"),
