@@ -3783,5 +3783,17 @@
       "sign_in": "{{cli}} oturumu kapalı. Ayarlar, Yapay zeka'dan oturum aç.",
       "unsupported": "Praxi bu bilgisayarda {{cli}} çalıştıramıyor."
     }
+  },
+  "voice": {
+    "speak": "Sesli oku",
+    "stop": "Okumayı durdur",
+    "codeOmitted": "(kod atlandı)",
+    "tableOmitted": "(tablo atlandı)",
+    "title": "Sesli cevaplar",
+    "description": "Sesli oku düğmesinin sesi ve hızı. Sistemin konuşma motorunu kullanır.",
+    "auto": "Otomatik (uygulama diline göre)",
+    "online": "çevrimiçi",
+    "speed": "Hız",
+    "unsupported": "Bu sistemde konuşma sesi yok."
   }
 }

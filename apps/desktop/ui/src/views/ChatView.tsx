@@ -39,6 +39,7 @@ import { Markdown } from "../components/Markdown";
 import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
 import { MessageInfo } from "../components/MessageInfo";
+import { SpeakButton } from "../components/SpeakButton";
 import { QueuedMessages } from "../components/QueuedMessages";
 import { RunStatusLine } from "../components/RunStatusLine";
 import { RunChangesGate } from "../components/RunChangesGate";
@@ -980,6 +981,7 @@ export function ChatView({
               {guestName(runGuest(runId))}
               <Markdown text={item.text} />
             </div>
+            <SpeakButton id={`${runId}:${item.ts}`} text={item.text} />
             <MessageInfo side="bot" ts={item.ts} runId={runId} run={run} runDto={runs.find((r) => r.id === runId)} />
             <MessageTime
               ts={item.ts}
@@ -1162,6 +1164,7 @@ export function ChatView({
                       {lead ? guestName(guestBot(e.botId)) : null}
                       <Markdown text={e.text} />
                     </div>
+                    <SpeakButton id={e.key} text={e.text} />
                     <MessageInfo side="bot" ts={e.ts} runId={e.runId} run={e.runId ? events.runs[e.runId] : undefined} runDto={runs.find((r) => r.id === e.runId)} />
                     <MessageTime ts={e.ts} mode={messageTimes} />
                   </div>
