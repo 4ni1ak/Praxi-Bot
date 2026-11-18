@@ -104,6 +104,39 @@ test("the mock client serves the same typed calls in memory", async () => {
   assert.equal(m.secrets.size, 1);
 });
 
+test("view quota retries cleanup only for abandoned sessions owned by the client", async () => {
+  const replies = [
+    [503, { error: { code: "unavailable" } }],
+    [429, { error: { code: "view_quota" } }],
+    [204, null],
+    [201, { session_id: "fresh" }]
+  ] as const;
+  const calls: string[] = [];
+  globalThis.fetch = (async (url: URL | string, init?: RequestInit) => {
+    const [status, body] = replies[calls.length];
+    calls.push(`${init?.method} ${new URL(url).pathname}`);
+    return new Response(body ? JSON.stringify(body) : null, { status });
+  }) as typeof fetch;
+
+  const c = client();
+  await assert.rejects(c.deleteViewSession("abandoned"), ApiError);
+  const session = await c.createViewSession({
+    client_id: "client",
+    target_id: "target",
+    profile: "watch",
+    codecs: ["jpeg"],
+    max_width: 960,
+    max_height: 600
+  });
+  assert.equal(session.session_id, "fresh");
+  assert.deepEqual(calls, [
+    "DELETE /v1/view/sessions/abandoned",
+    "POST /v1/view/sessions",
+    "DELETE /v1/view/sessions/abandoned",
+    "POST /v1/view/sessions"
+  ]);
+});
+
 test("live-view and control routes send Bearer header, Accept media type, no query tokens", async () => {
   const calls = stubFetch(200, {
     app_connected: true,

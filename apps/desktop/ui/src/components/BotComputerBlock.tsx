@@ -85,6 +85,11 @@ export function BotComputerBlock({
       ? t("computerCard.status.local", { system })
       : t("computerCard.status.localNoSystem");
   const { key: rk, detail } = reasonKey(view.unavailable);
+  const reason = t(rk, {
+    name: serverName || t("computerPicker.host"),
+    detail: detail ? t(detail) : "",
+    defaultValue: t("computerCard.reason.failed")
+  });
 
   // Control can outlive the view (a paused latch, a failed hand-back): never leave the bot paused
   // with nothing to press, so these recovery actions stay on the card whatever the view says.
@@ -103,9 +108,9 @@ export function BotComputerBlock({
         ? t("computerCard.hint.starting")
         : view.kind === "paused"
           ? t("computerCard.hint.paused")
-          : view.kind === "unavailable" || view.kind === "timeout"
-            ? t(rk, { name: serverName || t("computerPicker.host"), detail: detail ? t(detail) : "", defaultValue: t("computerCard.reason.failed") })
-            : "";
+          : view.kind === "timeout"
+            ? view.unavailable === "timeout" ? reason : `${t("computerCard.reason.timeout")}. ${reason}`
+            : view.kind === "unavailable" ? reason : "";
 
   let body: ReactNode = null;
   if (view.kind === "idle") {
