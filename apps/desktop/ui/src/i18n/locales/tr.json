@@ -2020,6 +2020,14 @@
         "timeout": "Kurulum çok uzun sürdü ve durduruldu.",
         "unavailable": "Kurulum başlatılamadı."
       }
+    },
+    "tools": {
+      "label": "Botların kullanabileceği araçlar",
+      "restricted": "Bazı araçlar özel bir izin listesiyle sınırlı; sunucu ayarlarından düzenleyin.",
+      "effect": {
+        "write": "veri değiştirir",
+        "destructive": "silebilir veya gönderebilir"
+      }
     }
   },
   "help": {
