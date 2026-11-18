@@ -12,6 +12,7 @@
 
 mod agent;
 mod approval;
+pub mod attachments;
 mod cli;
 mod compaction;
 mod config;

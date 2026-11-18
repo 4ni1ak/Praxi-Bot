@@ -47,6 +47,7 @@ mod json_query;
 mod pdf;
 mod pdf_budget;
 mod pdf_cmap;
+mod pptx;
 mod xlsx;
 
 use std::fmt::Write as _;
@@ -123,6 +124,67 @@ pub fn extract_bytes(
     }
     reply.markdown = complete;
     Ok(reply)
+}
+
+/// Which Office format a zip file is (`docx`, `xlsx` or `pptx`), judged by its entries
+/// rather than any file name; `None` for other archives.
+#[must_use]
+pub fn office_extension(bytes: &[u8]) -> Option<&'static str> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+    [
+        ("word/document.xml", "docx"),
+        ("xl/workbook.xml", "xlsx"),
+        ("ppt/presentation.xml", "pptx"),
+    ]
+    .into_iter()
+    .find(|(entry, _)| zip.by_name(entry).is_ok())
+    .map(|(_, ext)| ext)
+}
+
+/// Plain text of a user-attached document (`pdf`, `docx`, `xlsx`, `pptx`), at most
+/// `max_bytes` long (cut on a character boundary, with a marker). Bounded like the
+/// document tools; malformed or oversized files are an error, never a panic.
+///
+/// # Errors
+/// Unsupported extension, oversized input or a document that cannot be parsed.
+pub fn attachment_text(
+    cfg: &DocToolsConfig,
+    extension: &str,
+    label: &str,
+    bytes: &[u8],
+    max_bytes: usize,
+) -> Result<String, ToolError> {
+    if bytes.len() as u64 > cfg.max_input_bytes {
+        return Err(ToolError::InvalidInput(
+            "document exceeds input limit".into(),
+        ));
+    }
+    let mut text = match extension {
+        "pdf" | "docx" => {
+            let mut big = cfg.clone();
+            big.max_preview_chars = max_bytes.saturating_mul(4);
+            extract_bytes(&big, extension, label, bytes).map(|r| r.markdown)?
+        }
+        "xlsx" | "pptx" => std::panic::catch_unwind(|| match extension {
+            "xlsx" => xlsx::plain_text(bytes.to_vec(), max_bytes),
+            _ => pptx::plain_text(bytes, max_bytes),
+        })
+        .map_err(|_| ToolError::Execution("document parser failed".into()))??,
+        _ => {
+            return Err(ToolError::InvalidInput(
+                "unsupported document format".into(),
+            ));
+        }
+    };
+    if text.len() > max_bytes {
+        let mut cut = max_bytes;
+        while !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        text.truncate(cut);
+        text.push_str("\n[truncated]");
+    }
+    Ok(text)
 }
 
 fn complete_docx_text(data: &Value) -> Result<String, ToolError> {

@@ -90,6 +90,8 @@ impl Modify for Security {
         routes::create_chat,
         routes::list_messages,
         routes::send_message,
+        crate::attachment_routes::upload,
+        crate::attachment_routes::download,
         routes::list_approvals,
         routes::decide_approval,
         routes::answer_question,
@@ -180,7 +182,7 @@ impl Modify for Security {
     components(schemas(
         terminal::OpenTerminalInput, terminal::TerminalInfo, terminal::TerminalOutput, terminal::TerminalInput, terminal::TerminalResize, ::live_view::ScreenStatus, ::live_view::ScreenStreamState, ::live_view::RecordHeader, ::live_view::FrameMetadata, ::live_view::SourceRect,
         dto::ReleaseResult, dto::ControlStateChanged, dto::ScreenPrivilegesInput, sse::SseStatus, sse::Gap, dto::Health, dto::HostInfo, dto::BotDto, dto::BotInput, dto::BotPatchInput, dto::BotPatchOp, dto::BotPatchKind, dto::BotConflictBody, dto::RuntimeConfigDto, dto::ChatDto, dto::CreateChat,
-        dto::MessageDto, dto::RunUsageDto, dto::Mode, dto::SendMessage, dto::DeliveryKind, dto::SendResponse,
+        dto::MessageDto, dto::RunUsageDto, dto::Mode, dto::SendMessage, dto::AttachmentDto, dto::DeliveryKind, dto::SendResponse,
         dto::ApprovalDto, dto::Decision, dto::Scope, dto::DecideApproval,
         dto::DecisionResponse, dto::RunDto, dto::StopScope, dto::StopRunsInput, dto::StopOutcome, dto::StopRunResult, dto::StopRunsResponse, dto::UsageTotals, dto::BotUsage,
         dto::UsageSummary, dto::AnswerQuestion, dto::AnswerResponse, dto::GrantDto,
