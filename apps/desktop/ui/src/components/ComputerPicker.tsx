@@ -8,7 +8,7 @@ import { hostAcceptsWork } from "../lib/hostState";
 import { lastSyncParts, readLastSync } from "../lib/lastSync";
 import { useDaemon } from "../state/DaemonContext";
 import { useLiveView } from "../state/LiveViewContext";
-import { openServerTerminal, SERVER_TERMINAL_AVAILABLE } from "../state/useComputerView";
+import { useServerTerminal } from "../state/ServerTerminalContext";
 import styles from "./ComputerPicker.module.css";
 import { AddServerModal } from "./AddServerModal";
 import { setHostComputerAccess } from "./ComputerAccess";
@@ -28,6 +28,7 @@ export function ComputerPicker() {
   const toast = useToast();
   const { home, workLocalNow, setWorkLocalNow, hostState, hostList, stopHostRuns, localApi, refreshHosts } = useDaemon();
   const { openViewer } = useLiveView();
+  const serverTerminal = useServerTerminal();
   // Design review (mock mode only): `?menu=1` opens the menu.
   const [open, setOpen] = useState(() => isMockMode() && new URLSearchParams(window.location.search).get("menu") === "1");
   const [addOpen, setAddOpen] = useState(false);
@@ -148,23 +149,9 @@ export function ComputerPicker() {
             {status === "online"
               ? item("home-view-screen", <Eye aria-hidden="true" className={styles.icon} />, t("home.menu.viewScreen"), () => openViewer())
               : null}
-            <button
-              type="button"
-              role="menuitem"
-              className={styles.item}
-              aria-disabled={!SERVER_TERMINAL_AVAILABLE}
-              title={SERVER_TERMINAL_AVAILABLE ? undefined : t("computerCard.terminalSoon")}
-              data-testid="home-terminal"
-              onClick={() => {
-                setOpen(false);
-                openServerTerminal();
-              }}
-            >
-              <Terminal aria-hidden="true" className={styles.icon} />
-              <span className={styles.itemText}>
-                <b>{t("computerCard.terminal")}</b>
-              </span>
-            </button>
+            {serverTerminal.available && status === "online"
+              ? item("home-terminal", <Terminal aria-hidden="true" className={styles.icon} />, t("home.menu.terminal"), () => serverTerminal.open())
+              : null}
           </>
         ) : null}
         {home.kind === "host"

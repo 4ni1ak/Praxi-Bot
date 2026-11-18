@@ -4,8 +4,6 @@
  * thumbnail session, stop = release it, a client-side three-minute quiet timer pauses it). The
  * daemon-driven on-demand streaming (idle stop, automatic screen permission) swaps its states in
  * HERE and nowhere else; the card renders `ComputerViewModel` only.
- *
- * `openServerTerminal()` is the other seam: the in-app server terminal is not here yet.
  */
 import { isMockMode } from "../api/mockMode";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -15,13 +13,6 @@ import { type ComputerView, deriveView, IDLE_PAUSE_MS, measureFps } from "../lib
 import { summarizeTarget } from "../lib/liveViewState";
 import { LOCAL_COMPUTER, useDaemon } from "./DaemonContext";
 import { useLiveView, useLocalLiveView } from "./LiveViewContext";
-
-/** Whether the in-app server terminal exists. A placeholder until that lands. */
-export const SERVER_TERMINAL_AVAILABLE = false;
-/** Opens the server terminal inside the app: the one function to replace when it exists. */
-export function openServerTerminal(): void {
-  // Intentionally empty: the card shows the link disabled with a "soon" tooltip.
-}
 
 export function useComputerView(opts: {
   /** The panel is on screen: closing it ends the view. */

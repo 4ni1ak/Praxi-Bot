@@ -8,7 +8,8 @@ import { type ComputerSide, hasBothComputers } from "../lib/botComputer";
 import { formatLive, type ComputerView, type UnavailableReason } from "../lib/computerView";
 import { noScreenDetailKey } from "../lib/computerLabel";
 import { useDaemon } from "../state/DaemonContext";
-import { openServerTerminal, SERVER_TERMINAL_AVAILABLE, useComputerView } from "../state/useComputerView";
+import { useServerTerminal } from "../state/ServerTerminalContext";
+import { useComputerView } from "../state/useComputerView";
 import { BotGradient } from "./BotGradient";
 import styles from "./BotComputerBlock.module.css";
 
@@ -58,6 +59,7 @@ export function BotComputerBlock({
   visible: boolean;
 }) {
   const { t } = useTranslation();
+  const serverTerminal = useServerTerminal();
   const { home, workLocalNow, hostList, activeHostName } = useDaemon();
   const both = hasBothComputers(home, workLocalNow);
   const homeLink = home.kind === "host" ? (hostList?.hosts.find((h) => h.id === home.hostId) ?? null) : null;
@@ -126,7 +128,6 @@ export function BotComputerBlock({
     );
   }
 
-  const terminalTip = SERVER_TERMINAL_AVAILABLE ? undefined : t("computerCard.terminalSoon");
   return (
     <section
       className={styles.block}
@@ -230,14 +231,12 @@ export function BotComputerBlock({
         ) : null}
 
         <div className={styles.foot}>
-          {server ? (
+          {server && serverTerminal.available ? (
             <button
               type="button"
               className={styles.lnk}
-              aria-disabled={!SERVER_TERMINAL_AVAILABLE}
-              title={terminalTip}
               data-testid="bot-computer-terminal"
-              onClick={openServerTerminal}
+              onClick={() => serverTerminal.open()}
             >
               <Terminal aria-hidden="true" />
               {t("computerCard.terminal")}
