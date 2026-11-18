@@ -1061,6 +1061,10 @@
         "title": "Gerade nichts zu installieren",
         "hint": "Es ist bereits installiert oder wird gerade installiert, oder auf diesem Computer ist kein Installationsprogramm verfügbar."
       },
+      "attachment_too_large": {
+        "title": "Dieser Anhang ist zu groß",
+        "hint": "Entferne ihn oder wähle eine kleinere Datei und versuche es dann erneut."
+      },
       "approval_once_only": {
         "title": "Diese Genehmigung kann nur einmal erteilt werden",
         "hint": "Erlaube sie nur für diesen Schritt oder lehne sie ab."
@@ -1316,6 +1320,10 @@
       "unavailable": {
         "title": "Das ist gerade nicht verfügbar",
         "hint": "Versuche es gleich noch einmal."
+      },
+      "unsupported_attachment": {
+        "title": "Dieser Anhang wird nicht unterstützt",
+        "hint": "Prüfe, ob die Datei nicht leer oder beschädigt ist, oder versuche eine andere Datei."
       },
       "unsupported_media_type": {
         "title": "Dieser Dateityp wird nicht unterstützt",

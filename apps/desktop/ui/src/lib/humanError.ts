@@ -15,7 +15,7 @@ import { hostRefusalKey } from "./hostMode.ts";
 
 /** Every `code` the daemon can put in its error envelope (checked against the Rust sources by a test). */
 export const DAEMON_ERROR_CODES = [
-  "admin_rate_limit", "approval_once_only", "bad_composio_request", "bad_email_config", "bad_engine", "bad_mcp_config",
+  "admin_rate_limit", "approval_once_only", "attachment_too_large", "bad_composio_request", "bad_email_config", "bad_engine", "bad_mcp_config",
   "bad_profile", "bad_request", "bad_schedule", "bad_web_config", "busy", "composio_error",
   "composio_not_configured", "component_conflict", "composio_rate_limited", "conflict", "could_not_verify", "disabled",
   "email_provider_error", "engine_owner_only", "forbidden", "host_link_failed", "host_setup_conflict",
@@ -25,7 +25,7 @@ export const DAEMON_ERROR_CODES = [
   "reload_failed", "repair_failed", "restore_in_progress", "resync_required", "run_files_in_use",
   "session_expired", "setup_required", "skill_changed", "skill_conflict", "skill_contains_secret", "skill_not_found",
   "skill_source_unreachable", "skill_storage", "skill_too_large", "too_many_requests", "too_many_skills", "too_many_streams",
-  "unauthorized", "unavailable", "unsupported_media_type", "version_conflict", "view_media_type",
+  "unauthorized", "unavailable", "unsupported_attachment", "unsupported_media_type", "version_conflict", "view_media_type",
   "view_quota", "schedule_moved", "host_unreachable", "login_busy", "login_manual", "not_installed", "login_files_changed", "login_untrusted_location", "login_forbidden", "login_stale",
   "prerequisite_missing", "install_copy_only", "host_admin_forbidden", "host_admin_required", "secrets_unavailable", "secret_store_failed", "owner_key_required",
   "terminal_unsupported", "terminal_start_failed", "terminal_busy", "terminal_gone"

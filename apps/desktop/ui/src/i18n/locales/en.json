@@ -1061,6 +1061,10 @@
         "title": "Nothing to install right now",
         "hint": "It is already installed or being installed, or no installer is available on this computer."
       },
+      "attachment_too_large": {
+        "title": "That attachment is too large",
+        "hint": "Remove it or pick a smaller file, then try again."
+      },
       "approval_once_only": {
         "title": "This approval can only be given once",
         "hint": "Allow it for this step only, or deny it."
@@ -1316,6 +1320,10 @@
       "unavailable": {
         "title": "That is not available right now",
         "hint": "Try again in a moment."
+      },
+      "unsupported_attachment": {
+        "title": "That attachment is not supported",
+        "hint": "Make sure the file is not empty or damaged, or try another file."
       },
       "unsupported_media_type": {
         "title": "That file type is not supported",
