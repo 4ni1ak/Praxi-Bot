@@ -973,7 +973,7 @@
     "runs": "Runs",
     "modelCalls": "Model calls",
     "tokens": "Tokens",
-    "empty": "No usage yet.",
+    "empty": "No usage yet. Send a message to a bot and its token use shows up here.",
     "bot": "Bot",
     "calls": "Calls",
     "prompt": "Prompt",
@@ -987,7 +987,7 @@
   "needs": {
     "title": "Needs you",
     "subtitle": "Approvals and questions waiting across all chats.",
-    "empty": "Nothing is waiting for you.",
+    "empty": "Nothing is waiting for you. When a bot needs an approval or has a question, it appears here.",
     "kind": {
       "approval": "Approval",
       "question": "Question"
