@@ -39,6 +39,7 @@ import { Markdown } from "../components/Markdown";
 import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
 import { MessageInfo } from "../components/MessageInfo";
+import { useAutoSpeak } from "../components/useAutoSpeak";
 import { SpeakButton } from "../components/SpeakButton";
 import { QueuedMessages } from "../components/QueuedMessages";
 import { RunStatusLine } from "../components/RunStatusLine";
@@ -307,6 +308,7 @@ export function ChatView({
     () => topLevelRuns(events, chatId),
     [events, chatId]
   );
+  useAutoSpeak(chatId, chatRuns);
   const finishedCount = chatRuns.filter(
     (r) => r.finishedMs !== undefined
   ).length;
