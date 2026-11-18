@@ -16,6 +16,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
+    env:
+      # Keep file and line information in backtraces while reducing the debug
+      # data Cargo writes, links, and restores from the dependency cache.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
     steps:
       - name: Checkout
