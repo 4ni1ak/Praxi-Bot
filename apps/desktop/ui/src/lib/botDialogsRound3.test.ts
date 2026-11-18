@@ -141,3 +141,18 @@ test("inert content is excluded from the focus trap; with nothing usable focus s
 test("the 'different skill' message translates the scope", () => {
   assert.match(read("../components/AddSkillModal.tsx"), /t\(`bots\.skills\.scope\.\$\{check\.existing\?\.scope/);
 });
+
+// --- engine consent dialog: one column ------------------------------------------------------------
+
+test("the engine consent dialog stacks body above footer inside a column root (the Modal frame is a row)", () => {
+  const modalCss = read("../components/Modal.module.css");
+  assert.match(modalCss, /\.dialog \{[^}]*display: flex;/, "the frame is a flex row");
+  const tsx = read("../state/EngineConsent.tsx");
+  const root = tsx.indexOf("dialogStyles.root");
+  const body = tsx.indexOf("styles.body");
+  const footer = tsx.indexOf("<DialogFooter>");
+  assert.ok(root > 0 && root < body && body < footer, "body and footer sit inside the column root, never directly in the Modal");
+  const dialogCss = read("../components/Dialog.module.css");
+  assert.match(dialogCss, /\.root \{[^}]*flex-direction: column;/);
+  assert.match(read("../state/EngineConsent.module.css"), /\.body \{[^}]*flex: 1;[^}]*min-height: var\(--space-0\);/);
+});
