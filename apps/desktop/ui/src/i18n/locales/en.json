@@ -1029,6 +1029,18 @@
         "title": "The terminal session ended",
         "hint": "Open the terminal again."
       },
+      "bad_voice_config": {
+        "title": "Dictation settings were not accepted",
+        "hint": "Check the transcription service address, model and key in Settings, then try again."
+      },
+      "voice_not_configured": {
+        "title": "Dictation is not set up",
+        "hint": "Add a transcription service in Settings to dictate messages."
+      },
+      "voice_upstream_failed": {
+        "title": "The transcription service did not answer",
+        "hint": "Your recording was not turned into text. Check the service and your key in Settings, then try again."
+      },
       "provider_endpoint": {
         "title": "The provider endpoint could not be found",
         "hint": "Check the base URL and its API path in Settings → AI."

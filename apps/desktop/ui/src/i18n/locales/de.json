@@ -1029,6 +1029,18 @@
         "title": "Die Terminal-Sitzung wurde beendet",
         "hint": "Öffne das Terminal erneut."
       },
+      "bad_voice_config": {
+        "title": "Die Diktier-Einstellungen wurden nicht akzeptiert",
+        "hint": "Prüfe in den Einstellungen Adresse, Modell und Schlüssel des Transkriptionsdienstes und versuche es erneut."
+      },
+      "voice_not_configured": {
+        "title": "Diktieren ist nicht eingerichtet",
+        "hint": "Füge in den Einstellungen einen Transkriptionsdienst hinzu, um Nachrichten zu diktieren."
+      },
+      "voice_upstream_failed": {
+        "title": "Der Transkriptionsdienst hat nicht geantwortet",
+        "hint": "Deine Aufnahme wurde nicht in Text umgewandelt. Prüfe den Dienst und deinen Schlüssel in den Einstellungen und versuche es erneut."
+      },
       "provider_endpoint": {
         "title": "Der Anbieter-Endpunkt wurde nicht gefunden",
         "hint": "Prüfe die Basis-URL und ihren API-Pfad unter Einstellungen → KI."
