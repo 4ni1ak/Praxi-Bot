@@ -8293,6 +8293,148 @@
         ]
       }
     },
+    "/v1/skills/hub/install": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Install the previewed content when it is still exactly what the owner accepted.",
+        "operationId": "hub_install",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HubInstallInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedSkillDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/skills/hub/preview": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Fetch a repository into a private staging folder and scan it; nothing is installed.",
+        "operationId": "hub_preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HubSourceInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubPreviewDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/skills/import": {
       "post": {
         "tags": [
@@ -13591,6 +13733,153 @@
             "type": "string"
           }
         }
+      },
+      "HubFindingDto": {
+        "type": "object",
+        "description": "One scan finding. The text never contains a matched secret.",
+        "required": [
+          "severity",
+          "kind",
+          "file",
+          "message"
+        ],
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`script`, `network`, `credential`, `obfuscation`, `injection` or `oversized`."
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "description": "`info`, `warn` or `high`."
+          }
+        }
+      },
+      "HubInstallInput": {
+        "type": "object",
+        "description": "Install request: the source plus the fingerprint of the previewed content.",
+        "required": [
+          "url",
+          "accept"
+        ],
+        "properties": {
+          "accept": {
+            "type": "string",
+            "description": "`fingerprint` from the preview the owner accepted."
+          },
+          "rev": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Branch, tag or full commit; the default branch when absent."
+          },
+          "subdir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Folder of the skill inside the repository; the repository root when absent."
+          },
+          "url": {
+            "type": "string",
+            "description": "`https://` clone URL of a public repository."
+          }
+        },
+        "additionalProperties": false
+      },
+      "HubPreviewDto": {
+        "type": "object",
+        "description": "What the scan found, shown before anything is installed.",
+        "required": [
+          "name",
+          "description",
+          "version",
+          "risk",
+          "active",
+          "files",
+          "total_bytes",
+          "fingerprint",
+          "findings"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "True when the folder holds scripts or other active files (stored, never run)."
+          },
+          "description": {
+            "type": "string"
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HubFindingDto"
+            }
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "Pass this back as `accept` to install exactly this content."
+          },
+          "name": {
+            "type": "string"
+          },
+          "risk": {
+            "type": "string",
+            "description": "`low`, `medium` or `high`."
+          },
+          "total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "HubSourceInput": {
+        "type": "object",
+        "description": "Where the skill lives.",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "rev": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Branch, tag or full commit; the default branch when absent."
+          },
+          "subdir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Folder of the skill inside the repository; the repository root when absent."
+          },
+          "url": {
+            "type": "string",
+            "description": "`https://` clone URL of a public repository."
+          }
+        },
+        "additionalProperties": false
       },
       "HumanAction": {
         "type": "string",

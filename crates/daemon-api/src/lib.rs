@@ -55,6 +55,7 @@ pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod routes;
 mod schedule;
 mod schedule_tools;
+pub mod skill_hub;
 pub mod skill_management;
 pub mod skills;
 mod sse;
@@ -1136,6 +1137,8 @@ fn api_routes() -> Router<AppState> {
             post(skill_management::import)
                 .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024)),
         )
+        .route("/v1/skills/hub/preview", post(skill_hub::hub_preview))
+        .route("/v1/skills/hub/install", post(skill_hub::hub_install))
         .route(
             "/v1/skills/{name}",
             axum::routing::put(skill_management::update).delete(skill_management::delete),
