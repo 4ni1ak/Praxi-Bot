@@ -544,53 +544,56 @@
   margin: 0 auto;
 }
 
-/* "While the bot is working": Queue / Steer, inside the composer, only during a run. */
-.mode {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--size-border-thick);
-  margin-left: var(--space-2);
-  padding: var(--size-border-thick);
-  border-radius: var(--radius-pill);
-  background-color: color-mix(in srgb, var(--color-text) 7%, transparent);
-}
-
-.modeOption {
-  padding: var(--space-1) var(--space-3);
+/* The round send button; while the bot works and the box is empty it is a rounded-square stop. */
+.send {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--size-send);
+  height: var(--size-send);
+  padding: var(--space-0);
   border: none;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
+  border-radius: 50%;
+  background-color: var(--color-primary);
+  color: var(--color-primary-contrast);
   cursor: pointer;
   transition:
-    background-color var(--motion-duration-fast) var(--motion-easing-standard),
-    color var(--motion-duration-fast) var(--motion-easing-standard);
+    border-radius var(--motion-duration-normal) var(--motion-easing-standard),
+    background-color var(--motion-duration-normal) var(--motion-easing-standard);
 }
 
-.modeOption:hover {
-  color: var(--color-text);
+.send > svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
 }
 
-.modeOption[aria-checked="true"] {
-  background-color: var(--color-surface-active);
-  box-shadow: var(--shadow-sm);
-  color: var(--color-text);
+.send[data-mode="stop"] {
+  border-radius: calc(var(--radius-md) * 1.125);
+  background-color: var(--color-danger);
+  color: var(--color-danger-contrast);
 }
 
-.modeOption:focus-visible {
+.send:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.send:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
 }
 
-.send {
-  width: var(--size-control-sm);
-  height: var(--size-control-sm);
-  padding: var(--space-0);
-  border-radius: var(--radius-pill);
-  flex: none;
+.stopMark {
+  width: calc(var(--space-1) * 2.5);
+  height: calc(var(--space-1) * 2.5);
+  border-radius: var(--size-border-thick);
+  background-color: currentColor;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .send {
+    transition: none;
+  }
 }
 
 .plus {

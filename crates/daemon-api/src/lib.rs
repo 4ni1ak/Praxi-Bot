@@ -1186,6 +1186,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/runs/{id}/cancel", post(r::cancel_run))
         .route("/v1/runs/{id}/resume", post(r::resume_run))
         .route("/v1/runs/{id}/remember", post(r::remember_run))
+        .route("/v1/runs/{id}/usage", get(r::run_usage))
         .route("/v1/runs/{id}/changes", get(changes::get_run_changes))
         .route(
             "/v1/runs/{id}/changes/{cp}/preview",

@@ -304,7 +304,7 @@
     },
     "placeholder": "Mesaj yaz…  / komutlar · @ botlar",
     "addCommand": "Komut veya bot ekle",
-    "placeholderBusy": "Bot çalışıyor — sıraya al veya yönlendir…",
+    "placeholderBusy": "Bot çalışıyor. Yazarsan mesaj sıraya girer…",
     "send": "Gönder",
     "subagent": {
       "title": "Alt ajan",
@@ -2718,7 +2718,109 @@
     "railGrip": "Kenar şeridini boyutlandır (ok tuşları)",
     "panelGrip": "Bot panelini boyutlandır (ok tuşları)"
   },
+  "computerCard": {
+    "title": "Bilgisayarı",
+    "thisComputer": "Bu bilgisayar",
+    "sideBot": "Botun",
+    "sideMine": "Benim",
+    "live": "CANLI",
+    "big": "Büyüt",
+    "take": "Kontrolü al",
+    "close": "Kapat",
+    "show": "Ekranı göster",
+    "resume": "Devam et",
+    "retry": "Yeniden dene",
+    "connecting": "Bağlanıyor",
+    "frameAlt": "{{name}} canlı ekranı",
+    "terminal": "Terminal",
+    "terminalSoon": "Yakında",
+    "browser": "Tarayıcı",
+    "fps": "{{fps}} kare/sn",
+    "pausedNote": "duraklatıldı",
+    "hint": {
+      "idle": "Görüntü yalnızca sen bakarken üretilir",
+      "starting": "Ekran başlatılıyor…",
+      "paused": "3 dakikadır bakılmadığı için duraklatıldı"
+    },
+    "status": {
+      "serverOnline": "Sunucu · çevrimiçi",
+      "serverOffline": "yanıt vermiyor · yeniden deneniyor",
+      "local": "{{system}} · bot burada çalışıyor",
+      "localNoSystem": "Bot burada çalışıyor"
+    },
+    "reason": {
+      "connecting": "{{name}} sunucusuna bağlanılıyor…",
+      "offline": "Sunucuya ulaşılamıyor",
+      "notPaired": "Sunucu bu bilgisayarı artık kabul etmiyor",
+      "version": "Uygulama ile sunucunun sürümleri farklı",
+      "permission": "Bu bilgisayar sunucunun ekranını henüz izleyemiyor",
+      "failed": "Ekran alınamadı",
+      "noScreen": "Ekran yok: {{detail}}"
+    }
+  },
+  "homeMenu": {
+    "lives": {
+      "local": "Botların burada yaşıyor",
+      "online": "Botların burada yaşıyor · çevrimiçi",
+      "connecting": "Botların burada yaşıyor · bağlanıyor",
+      "offline": "Botların burada yaşıyor · çevrimdışı",
+      "temporary": "Şimdilik botların bu bilgisayarda çalışıyor"
+    },
+    "sync": "Kurulumumu eşitle",
+    "lastSync": "Son eşitleme: {{when}}",
+    "today": "bugün {{time}}",
+    "pcOn": "Her işlem burada sana sorulur",
+    "pcOff": "Botların bu bilgisayarı kullanamaz"
+  },
+  "runStatus": {
+    "working": "Çalışıyor…",
+    "stopping": "Durduruluyor…",
+    "waiting": "Onayını bekliyor: {{step}}"
+  },
+  "queued": {
+    "label": "Sırada.",
+    "sendNow": "Şimdi gönder",
+    "remove": "Sıradaki mesajı kaldır"
+  },
+  "messageInfo": {
+    "label": "Mesaj bilgisi",
+    "title": "Mesaj ayrıntıları",
+    "steps": "{{count}} araç",
+    "steps_one": "{{count}} araç",
+    "steps_other": "{{count}} araç",
+    "unit": {
+      "s": "sn",
+      "m": "dk"
+    },
+    "rows": {
+      "model": "Model",
+      "source": "Kaynak",
+      "duration": "Süre",
+      "started": "Başladı",
+      "finished": "Bitti",
+      "steps": "Adım",
+      "where": "Nerede",
+      "tokens": "Jeton",
+      "sent": "Gönderildi"
+    },
+    "sources": {
+      "app": "bu uygulama",
+      "telegram": "Telegram",
+      "peer": "başka bir bilgisayar",
+      "api": "yerel API",
+      "unknown": "bilinmiyor"
+    }
+  },
   "botPanel": {
+    "now": {
+      "waiting": "Onayını bekliyor",
+      "thinking": "Düşünüyor…",
+      "subagents": "{{count}} alt ajan",
+      "subagents_one": "{{count}} alt ajan",
+      "subagents_other": "{{count}} alt ajan",
+      "open": "Ayrıntıyı aç",
+      "detailTitle": "Şu anki çalışma"
+    },
     "toggle": "Bot paneli",
     "close": "Paneli kapat",
     "profile": "Bot profili",

@@ -65,8 +65,8 @@ test("sections without data are not rendered", () => {
   assert.deepEqual(activitySections({ subagents: 0, upcoming: 0, quota: 0 }), ["computer"]);
   assert.deepEqual(activitySections({ subagents: 3, upcoming: 1, quota: 2 }), [
     "subagents",
-    "upcoming",
     "computer",
+    "upcoming",
     "quota"
   ]);
   assert.deepEqual(librarySections({ chats: 0 }), ["skills"]);
