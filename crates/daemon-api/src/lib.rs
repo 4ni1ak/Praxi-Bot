@@ -718,7 +718,7 @@ impl AppState {
         let store = Arc::new(
             memory_store::MemoryStore::open(
                 self.data_dir(),
-                Arc::new(memory_store::HashEmbedder::default()),
+                Arc::new(memory_store::HashEmbedder::new(384)),
             )
             .map_err(|_| ApiError::internal("memory store unavailable"))?,
         );

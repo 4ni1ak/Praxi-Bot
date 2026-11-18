@@ -733,6 +733,31 @@
         "done": "Looked up a skill",
         "failed": "Couldn't look up a skill"
       },
+      "memory_search": {
+        "running": "Searching memory",
+        "done": "Searched memory",
+        "failed": "Couldn't search memory"
+      },
+      "session_search": {
+        "running": "Searching past conversations",
+        "done": "Searched past conversations",
+        "failed": "Couldn't search past conversations"
+      },
+      "memory_save": {
+        "running": "Saving to memory",
+        "done": "Saved to memory",
+        "failed": "Didn't save to memory"
+      },
+      "memory_forget": {
+        "running": "Forgetting a memory",
+        "done": "Forgot a memory",
+        "failed": "Didn't forget a memory"
+      },
+      "knowledge_search": {
+        "running": "Searching knowledge sources",
+        "done": "Searched knowledge sources",
+        "failed": "Couldn't search knowledge sources"
+      },
       "workflow": {
         "running": "Running a workflow",
         "done": "Ran a workflow",
@@ -3832,5 +3857,17 @@
       "user": "User-verified",
       "untrusted": "Untrusted data"
     }
+  },
+  "voice": {
+    "speak": "Read aloud",
+    "stop": "Stop reading",
+    "codeOmitted": "(code omitted)",
+    "tableOmitted": "(table omitted)",
+    "title": "Spoken replies",
+    "description": "Reply voice and speed for the read-aloud button. Uses your system's speech engine.",
+    "auto": "Automatic (matches the app language)",
+    "online": "online",
+    "speed": "Speed",
+    "unsupported": "This system offers no speech voices."
   }
 }

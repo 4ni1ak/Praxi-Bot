@@ -338,6 +338,7 @@ fn build_agent_with_skills(
     .with_builtin_tools(tools)
     .with_subagents()
     .with_skills(skills)
+    .with_memory_tools()
     .with_workflows(
         WorkflowStore::new(data_dir),
         Handles {
