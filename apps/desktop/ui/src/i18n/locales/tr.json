@@ -327,6 +327,11 @@
       "input": "Girdi",
       "result": "Sonuç",
       "denyReason": "Gerekçe: {{reason}}",
+      "citations": "Kaynaklar ({{count}})",
+      "searchMode": {
+        "lexical": "Sözcüksel arama",
+        "hybrid": "Hibrit arama"
+      },
       "status": {
         "requested": "İstendi",
         "awaiting_approval": "Onay bekliyor",
@@ -1352,6 +1357,26 @@
     "hostManaged": {
       "title": "Bu öbür bilgisayarda yönetiliyor",
       "hint": "Botun çalıştığı bilgisayardaki Praxi'den değiştir."
+    },
+    "knowledgeTooLarge": {
+      "title": "Bu bilgi kaynağı çok büyük",
+      "hint": "Her dosya veya kayıt en fazla 4 MB (çıkarılan metin 1 MB), klasörler en fazla 4.096 öğe olabilir. Dosyayı bölün veya daha küçük bir kaynak seçin."
+    },
+    "knowledgeChunkLimit": {
+      "title": "Bu botun bilgi dizini dolu",
+      "hint": "Bir bot en fazla 250.000 dizinlenmiş parça saklayabilir. Yeni kaynak eklemeden önce kullanılmayan kaynakları kaldırın."
+    },
+    "knowledgeSecret": {
+      "title": "Bu kaynak parola veya gizli anahtar içeriyor gibi görünüyor",
+      "hint": "Kimlik bilgilerini, API anahtarlarını veya gizli klasörleri (.ssh, .aws, vault, tarayıcı profilleri) çıkarıp yeniden deneyin."
+    },
+    "knowledgePathInvalid": {
+      "title": "Bu yol bilgi kaynağı olarak kullanılamaz",
+      "hint": "Praxi'nin kendi veri klasörü dışında, sembolik bağlantı içermeyen tam bir yerel dosya veya klasör yolu seçin."
+    },
+    "knowledgeUnsupportedFile": {
+      "title": "Bu dosya biçimi dizinlenemiyor",
+      "hint": "UTF-8 kodlamalı bir Markdown, metin, HTML, PDF, Word (.docx) veya kaynak kodu dosyası seçin."
     },
     "sendFailed": {
       "title": "Mesajın gönderilmedi",
@@ -2997,7 +3022,11 @@
     "resetCooldown": "Sağlayıcı beklemesini sıfırla",
     "embeddingSkipped": "{{count}} parça atlandı",
     "queryConsentDescription": "Aşağıdaki sağlayıcı, özel konuşma bağlamı içerebilen arama sorgularını alacak. Bu izin bu bot ve bu hedef/model için geçerlidir. Belge metni için ayrıca kaynak izni gerekir.",
-    "confirmQuery": "Arama sorgularına izin ver"
+    "confirmQuery": "Arama sorgularına izin ver",
+    "importLocalFile": "Yerel dosyadan yükle",
+    "sizeLimitHint": "Sınırlar: dosya veya kaydedilmiş sayfa başına en fazla 4 MB (1 MB çıkarılan metin), klasör başına 4.096 öğe ve bot başına 250.000 parça.",
+    "fileTooLarge": "Bu dosya 4 MB kaynak sınırını (veya 1 MB çıkarılan metin sınırını) aşıyor. Daha küçük bir dosya seçin.",
+    "fileUnsupported": "Desteklenmeyen dosya türü. Bir Markdown, metin, HTML, JSON, CSV veya kod dosyası seçin."
   },
   "liveView": {
     "title": "Canlı ekran görünümü",

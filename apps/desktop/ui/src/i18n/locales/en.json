@@ -327,6 +327,11 @@
       "input": "Input",
       "result": "Result",
       "denyReason": "Reason: {{reason}}",
+      "citations": "Citations ({{count}})",
+      "searchMode": {
+        "lexical": "Lexical search",
+        "hybrid": "Hybrid search"
+      },
       "status": {
         "requested": "Requested",
         "awaiting_approval": "Needs approval",
@@ -1352,6 +1357,26 @@
     "hostManaged": {
       "title": "This is managed on the other computer",
       "hint": "Change it in Praxi on the computer that runs the bot."
+    },
+    "knowledgeTooLarge": {
+      "title": "This knowledge source is too large",
+      "hint": "Each file or snapshot can be up to 4 MB (1 MB of extracted text) and folders up to 4,096 items. Split it or choose a smaller source."
+    },
+    "knowledgeChunkLimit": {
+      "title": "This bot's knowledge index is full",
+      "hint": "A bot can store up to 250,000 indexed chunks. Remove unused sources before adding more."
+    },
+    "knowledgeSecret": {
+      "title": "This source looks like a credential or secret",
+      "hint": "Remove credentials, API keys, or secret folders (.ssh, .aws, vault, browser profiles) and try again."
+    },
+    "knowledgePathInvalid": {
+      "title": "This path cannot be used as a knowledge source",
+      "hint": "Choose an absolute local folder or file outside Praxi's own state directory and without symbolic links."
+    },
+    "knowledgeUnsupportedFile": {
+      "title": "This file format cannot be indexed",
+      "hint": "Choose a Markdown, text, HTML, PDF, Word (.docx), or source code file encoded as UTF-8."
     },
     "sendFailed": {
       "title": "Your message was not sent",
@@ -2997,7 +3022,11 @@
     "resetCooldown": "Reset provider cooldown",
     "embeddingSkipped": "{{count}} chunks skipped",
     "queryConsentDescription": "The provider below will receive retrieval queries, which may contain private conversation context. This permission applies to this bot and this destination/model. Document text needs its own source permission.",
-    "confirmQuery": "Allow retrieval queries"
+    "confirmQuery": "Allow retrieval queries",
+    "importLocalFile": "Load from local file",
+    "sizeLimitHint": "Limits: up to 4 MB per file or saved page (1 MB extracted text), 4,096 entries per folder, and 250,000 chunks per bot.",
+    "fileTooLarge": "This file exceeds the 4 MB source limit (or 1 MB extracted text limit). Choose a smaller file.",
+    "fileUnsupported": "Unsupported file type. Choose a Markdown, text, HTML, JSON, CSV, or code file."
   },
   "liveView": {
     "title": "Computer live view",

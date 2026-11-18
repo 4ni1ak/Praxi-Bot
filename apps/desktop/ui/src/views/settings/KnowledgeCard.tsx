@@ -5,6 +5,11 @@ import type { Chat, KnowledgeEmailCapture, KnowledgeEmbeddingProgress, Knowledge
 import { useDaemon } from "../../state/DaemonContext";
 import { useProviders } from "../../state/useProviders";
 import { advanceKnowledgeEmbeddings } from "../../lib/knowledgeEmbedding";
+import {
+  defaultKnowledgeSourceLabel,
+  MAX_KNOWLEDGE_TEXT_BYTES,
+  validateLocalKnowledgeFile
+} from "../../lib/knowledgeCitations";
 import form from "../../components/Form.module.css";
 import styles from "./KnowledgeCard.module.css";
 import { humanLine } from "../../lib/humanError";
@@ -46,6 +51,17 @@ export function KnowledgeCard() {
   const [embeddingProgress, setEmbeddingProgress] = useState<Record<string, KnowledgeEmbeddingProgress>>({});
   const epoch = useRef(0);
   const approvalRef = useRef<HTMLElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const selectedChat = chats.find((item) => item.id === chatId);
+  const selectedCapture = captures.find((item) => item.tool_call_id === captureId);
+  const effectiveLabel = defaultKnowledgeSourceLabel(kind, {
+    label,
+    path,
+    url,
+    chatTitle: selectedChat?.title,
+    emailAccount: selectedCapture?.account,
+    defaultBrainName: t("knowledge.defaultBrainName")
+  });
   useEffect(() => { if (grant) { approvalRef.current?.focus(); approvalRef.current?.scrollIntoView({ block: "nearest" }); } }, [grant]);
 
   const reload = useCallback(async () => {
@@ -76,7 +92,7 @@ export function KnowledgeCard() {
     if (!client) return;
     const capture = captures.find((item) => item.tool_call_id === captureId);
     const result = await client.createKnowledgeSource(activeBot, {
-      kind, label: kind === "shared_brain" ? label.trim() || t("knowledge.defaultBrainName") : label, path: kind === "file" || kind === "folder" ? path : null,
+      kind, label: effectiveLabel, path: kind === "file" || kind === "folder" ? path : null,
       content: kind === "note" || kind === "saved_web" ? content : null,
       url: kind === "saved_web" ? url : null, html,
       chat_id: kind === "conversation" ? chatId : null,
@@ -187,14 +203,48 @@ export function KnowledgeCard() {
         <summary>{t("knowledge.add")}</summary>
         <div className={styles.form}>
           <label className={form.field}>{t("knowledge.kind")}<select className={form.select} value={kind} onChange={(e) => setKind(e.target.value as KnowledgeSourceKind)}>{KINDS.map((item) => <option key={item} value={item}>{t(`knowledge.kinds.${item}`)}</option>)}</select></label>
-          <label className={form.field}>{t("knowledge.label")}<input className={form.input} value={label} placeholder={kind === "shared_brain" ? t("knowledge.defaultBrainName") : undefined} maxLength={200} onChange={(e) => setLabel(e.target.value)} /></label>
+          <label className={form.field}>{t("knowledge.label")}<input className={form.input} value={label} placeholder={effectiveLabel || undefined} maxLength={200} onChange={(e) => setLabel(e.target.value)} /></label>
           {kind === "file" || kind === "folder" ? <label className={form.field}>{t("knowledge.path")}<input className={form.input} value={path} onChange={(e) => setPath(e.target.value)} /><span className={form.hint}>{t("knowledge.pathHint")}</span></label> : null}
           {kind === "saved_web" ? <><label className={form.field}>{t("knowledge.url")}<input className={form.input} type="url" value={url} onChange={(e) => setUrl(e.target.value)} /></label><label><input type="checkbox" checked={html} onChange={(e) => setHtml(e.target.checked)} /> {t("knowledge.html")}</label><p className={form.hint}>{t("knowledge.savedWebHint")}</p></> : null}
-          {kind === "saved_web" || kind === "note" ? <label className={form.field}>{t("knowledge.content")}<textarea className={form.textarea} value={content} onChange={(e) => setContent(e.target.value)} /></label> : null}
+          {kind === "saved_web" || kind === "note" ? <>
+            <label className={form.field}>{t("knowledge.content")}<textarea className={form.textarea} value={content} onChange={(e) => setContent(e.target.value)} /></label>
+            <div className={styles.actions}>
+              <input
+                ref={fileInputRef}
+                type="file"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  const check = validateLocalKnowledgeFile(file.name, file.size);
+                  if (!check.ok) {
+                    setError(t(check.reason === "too_large" ? "knowledge.fileTooLarge" : "knowledge.fileUnsupported"));
+                    return;
+                  }
+                  void file.text().then(
+                    (text) => {
+                      if (new TextEncoder().encode(text).length > MAX_KNOWLEDGE_TEXT_BYTES) {
+                        setError(t("knowledge.fileTooLarge"));
+                        return;
+                      }
+                      setError(null);
+                      setContent(text);
+                      if (kind === "saved_web") setHtml(check.html);
+                      setLabel((prev) => (prev.trim() ? prev : file.name));
+                    },
+                    (err: unknown) => setError(message(err))
+                  );
+                }}
+              />
+              <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => fileInputRef.current?.click()}>{t("knowledge.importLocalFile")}</Button>
+            </div>
+          </> : null}
           {kind === "conversation" ? <label className={form.field}>{t("knowledge.conversation")}<select className={form.select} value={chatId} onChange={(e) => setChatId(e.target.value)}><option value="">{t("knowledge.select")}</option>{chats.map((chat) => <option key={chat.id} value={chat.id}>{chat.title}</option>)}</select></label> : null}
           {kind === "email" ? <><p className={form.hint}>{t("knowledge.emailHint")}</p>{emailError ? <p role="status" className={form.error}>{t("knowledge.emailUnavailable", { error: emailError })}</p> : null}<label className={form.field}>{t("knowledge.emailCapture")}<select className={form.select} value={captureId} disabled={Boolean(emailError)} onChange={(e) => setCaptureId(e.target.value)}><option value="">{t("knowledge.select")}</option>{captures.map((capture) => <option key={capture.tool_call_id} value={capture.tool_call_id}>{capture.account} · {new Date(capture.created_ms).toLocaleString()}</option>)}</select></label></> : null}
           {kind === "shared_brain" ? <p className={form.hint}>{t("knowledge.brainHint")}</p> : null}
-          <Button disabled={busy || (kind !== "shared_brain" && !label.trim())} onClick={() => void add()}>{t("knowledge.add")}</Button>
+          <p className={form.hint}>{t("knowledge.sizeLimitHint")}</p>
+          <Button disabled={busy || !effectiveLabel.trim()} onClick={() => void add()}>{t("knowledge.add")}</Button>
         </div>
       </details>
       {settings ? <EmbeddingSettings key={activeBot + JSON.stringify(settings)} settings={settings} providerIds={providers?.configured.filter((p) => p.enabled && (p.custom || providers.catalog.some((entry) => entry.id === p.id && ["gemini", "openai_compatible"].includes(entry.kind)))).map((p) => p.id) ?? []} busy={busy} save={(value) => act(() => client!.updateKnowledgeSettings(activeBot, value))} queryApproval={() => requestApproval({ kind: "queries" })} revokeQuery={() => act(() => client!.revokeKnowledgeEmbeddingGrant(activeBot, { kind: "queries" }))} resetCooldown={() => act(() => client!.resetKnowledgeEmbeddingCooldown(activeBot))} /> : null}

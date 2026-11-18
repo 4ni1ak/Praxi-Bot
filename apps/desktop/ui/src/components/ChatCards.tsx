@@ -28,6 +28,7 @@ import {
   type ScheduleApprovalDetails
 } from "../lib/approvalDetails";
 import { brandIcon } from "../lib/brandIcons";
+import { parseKnowledgeCitations } from "../lib/knowledgeCitations";
 import { describeTool, isSendTool } from "../lib/toolLabels";
 import { StepIcon } from "./StepIcon";
 import formStyles from "./Form.module.css";
@@ -134,6 +135,9 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
 /** Input, summary and result of one tool call (shared by the card and the chain step). */
 export function ToolBody({ tool }: { tool: ToolItem }) {
   const { t } = useTranslation();
+  const citations = !tool.error
+    ? parseKnowledgeCitations(tool.name, tool.input, tool.outputPreview)
+    : null;
   return (
     <>
       <span className={styles.bodyLabel}>{t("chat.tool.input")}</span>
@@ -148,6 +152,25 @@ export function ToolBody({ tool }: { tool: ToolItem }) {
         <>
           <ErrorNotice compact error={humanToolError(tool.error)} />
         </>
+      ) : null}
+      {citations && citations.hits.length > 0 ? (
+        <div data-testid="knowledge-citations">
+          <span className={styles.bodyLabel}>
+            {t("chat.tool.citations", { count: citations.hits.length })} ·{" "}
+            {t(`chat.tool.searchMode.${citations.mode}`)}
+          </span>
+          {citations.hits.map((hit) => (
+            <div key={hit.id} className={styles.scheduleWas}>
+              <span className={styles.bodyLabel}>
+                {hit.sourceLabel} · {hit.displayLocator} ({hit.lineRange})
+                {hit.section ? ` · ${hit.section}` : ""}
+              </span>
+              {hit.snippet ? (
+                <p className={styles.bodyText}>{hit.snippet}</p>
+              ) : null}
+            </div>
+          ))}
+        </div>
       ) : null}
       {!tool.error && tool.outputPreview ? (
         <>

@@ -327,6 +327,11 @@
       "input": "Eingabe",
       "result": "Ergebnis",
       "denyReason": "Grund: {{reason}}",
+      "citations": "Quellenangaben ({{count}})",
+      "searchMode": {
+        "lexical": "Lexikalische Suche",
+        "hybrid": "Hybride Suche"
+      },
       "status": {
         "requested": "Angefordert",
         "awaiting_approval": "Braucht Genehmigung",
@@ -1352,6 +1357,26 @@
     "hostManaged": {
       "title": "Das wird auf dem anderen Computer verwaltet",
       "hint": "Ändere es in Praxi auf dem Computer, auf dem der Bot läuft."
+    },
+    "knowledgeTooLarge": {
+      "title": "Diese Wissensquelle ist zu groß",
+      "hint": "Jede Datei oder Aufnahme darf bis zu 4 MB groß sein (1 MB extrahierter Text) und Ordner bis zu 4.096 Einträge enthalten. Teile sie auf oder wähle eine kleinere Quelle."
+    },
+    "knowledgeChunkLimit": {
+      "title": "Der Wissensindex dieses Bots ist voll",
+      "hint": "Ein Bot kann bis zu 250.000 indizierte Chunks speichern. Entferne nicht benötigte Quellen, bevor du weitere hinzufügst."
+    },
+    "knowledgeSecret": {
+      "title": "Diese Quelle sieht wie Zugangsdaten oder ein Geheimnis aus",
+      "hint": "Entferne Zugangsdaten, API-Schlüssel oder geheime Ordner (.ssh, .aws, vault, Browserprofile) und versuche es erneut."
+    },
+    "knowledgePathInvalid": {
+      "title": "Dieser Pfad kann nicht als Wissensquelle verwendet werden",
+      "hint": "Wähle einen absoluten lokalen Datei- oder Ordnerpfad außerhalb des Praxi-Datenverzeichnisses und ohne symbolische Links."
+    },
+    "knowledgeUnsupportedFile": {
+      "title": "Dieses Dateiformat kann nicht indiziert werden",
+      "hint": "Wähle eine UTF-8-codierte Markdown-, Text-, HTML-, PDF-, Word- (.docx) oder Quellcodedatei."
     },
     "sendFailed": {
       "title": "Deine Nachricht wurde nicht gesendet",
@@ -2997,7 +3022,11 @@
     "resetCooldown": "Abkühlzeit des Anbieters zurücksetzen",
     "embeddingSkipped": "{{count}} Chunks übersprungen",
     "queryConsentDescription": "Der unten genannte Anbieter erhält Abrufanfragen, die privaten Unterhaltungskontext enthalten können. Diese Berechtigung gilt für diesen Bot und dieses Ziel/Modell. Dokumenttext braucht eine eigene Quellenberechtigung.",
-    "confirmQuery": "Abrufanfragen erlauben"
+    "confirmQuery": "Abrufanfragen erlauben",
+    "importLocalFile": "Aus lokaler Datei laden",
+    "sizeLimitHint": "Limits: bis zu 4 MB pro Datei oder gespeicherter Seite (1 MB extrahierter Text), 4.096 Einträge pro Ordner und 250.000 Chunks pro Bot.",
+    "fileTooLarge": "Diese Datei überschreitet das Quellenlimit von 4 MB (oder 1 MB extrahierter Text). Wähle eine kleinere Datei.",
+    "fileUnsupported": "Nicht unterstützter Dateityp. Wähle eine Markdown-, Text-, HTML-, JSON-, CSV- oder Codedatei."
   },
   "liveView": {
     "title": "Live-Ansicht des Computers",

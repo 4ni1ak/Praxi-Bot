@@ -110,6 +110,11 @@ const PATTERNS: ReadonlyArray<readonly [RegExp, string, ((m: RegExpExecArray) =>
   [/waiting for the pc|pc desktop unavailable|computer is offline|desktop backend is unavailable|peer is not connected/i, "toolTargetOffline"],
   [/`?([\w.-]+)`? was not found on path|command not found: ?`?([\w.-]+)/i, "toolMissingProgram", (m) => ({ name: m[1] ?? m[2] ?? "" })],
   [/managed on the host itself/i, "hostManaged"],
+  [/exceeds (?:input |index |text )?byte limit|within the byte limit|exceeds snapshot limit|exceeds entry limit|exceeds depth limit/i, "knowledgeTooLarge"],
+  [/knowledge chunk quota reached/i, "knowledgeChunkLimit"],
+  [/source label or locator contains a secret|credential directories are not knowledge sources|without credentials|credential query parameter/i, "knowledgeSecret"],
+  [/choose an absolute local (?:path|directory)|UNC and device paths are not knowledge sources|daemon state and folders containing it are not knowledge sources|path traversal is not allowed/i, "knowledgePathInvalid"],
+  [/unsupported knowledge file|document extraction failed|text source must be UTF-8|knowledge source must be a regular file/i, "knowledgeUnsupportedFile"],
   [/no such file or directory|cannot find the (file|path)|os error 2(?![0-9])/i, "toolNotFound"],
   [/expected_version|reload and retry/i, "codes.version_conflict"],
   [/providers_require_app_daemon|_outside_tauri|daemon_unavailable/i, "desktop_only"],
@@ -182,16 +187,20 @@ export function humanError(err: unknown): HumanError {
   if (code === "network") {
     return pack("network", "network", details);
   }
-  if (code && (DAEMON_ERROR_CODES as readonly string[]).includes(code)) {
+  const genericDaemonCode = code === "bad_request" || code === "conflict";
+  if (code && !genericDaemonCode && (DAEMON_ERROR_CODES as readonly string[]).includes(code)) {
     return pack(`codes.${code}`, code, details);
   }
   // Pattern match first: it is more specific than a bare status class (a tool failure inside a 200,
-  // a Tauri string error, a message that names the program that is missing).
+  // a Tauri string error, a message that names the program that is missing, or a 400/409 knowledge error).
   for (const [re, key, params] of PATTERNS) {
     const m = re.exec(raw);
     if (m) {
       return pack(key, key.replace("codes.", ""), details, params?.(m));
     }
+  }
+  if (code && (DAEMON_ERROR_CODES as readonly string[]).includes(code)) {
+    return pack(`codes.${code}`, code, details);
   }
   if (status !== undefined && status > 0) {
     const mapped = STATUS_CODE[status] ?? (status >= 500 ? "internal" : undefined);

@@ -152,3 +152,24 @@ test("a service that does not start is worded by its cause, with the exit code a
   }
   await i18n.changeLanguage("en");
 });
+
+test("knowledge size limits, credential refusals and unsupported files map to clear human messages", async () => {
+  const cases = [
+    [{ status: 409, code: "conflict", message: "source exceeds input byte limit" }, "knowledgeTooLarge"],
+    [{ status: 400, code: "bad_request", message: "source snapshot exceeds text byte limit" }, "knowledgeTooLarge"],
+    [{ status: 409, code: "conflict", message: "knowledge chunk quota reached" }, "knowledgeChunkLimit"],
+    [{ status: 409, code: "conflict", message: "credential directories are not knowledge sources" }, "knowledgeSecret"],
+    [{ status: 409, code: "conflict", message: "daemon state and folders containing it are not knowledge sources" }, "knowledgePathInvalid"],
+    [{ status: 409, code: "conflict", message: "unsupported knowledge file" }, "knowledgeUnsupportedFile"]
+  ] as const;
+  for (const lng of ["en", "tr", "de"]) {
+    await i18n.changeLanguage(lng);
+    for (const [err, expectedCode] of cases) {
+      const h = layer.humanError(err);
+      assert.equal(h.code, expectedCode, `${lng}: ${err.message}`);
+      assert.ok(h.title && !h.title.startsWith("errors."), `${lng}/${expectedCode} title`);
+      assert.ok(h.hint && !h.hint.startsWith("errors."), `${lng}/${expectedCode} hint`);
+    }
+  }
+  await i18n.changeLanguage("en");
+});

@@ -744,6 +744,58 @@ pub(crate) async fn list_sources(
     .await
 }
 
+fn default_source_label(
+    kind: SourceKind,
+    raw_label: &str,
+    locator: &str,
+    doc_title: Option<&str>,
+) -> String {
+    if !raw_label.trim().is_empty() {
+        return raw_label.to_owned();
+    }
+    let derived = match kind {
+        SourceKind::SharedBrain => "Shared brain".to_owned(),
+        SourceKind::File | SourceKind::Folder => locator
+            .rsplit(['/', '\\'])
+            .find(|s| !s.trim().is_empty())
+            .unwrap_or(if kind == SourceKind::File {
+                "File"
+            } else {
+                "Folder"
+            })
+            .to_owned(),
+        SourceKind::SavedWeb => {
+            let trimmed = locator.trim();
+            let without_scheme = trimmed
+                .strip_prefix("https://")
+                .or_else(|| trimmed.strip_prefix("http://"))
+                .unwrap_or(trimmed);
+            let without_query = without_scheme
+                .split(['?', '#'])
+                .next()
+                .unwrap_or(without_scheme)
+                .trim_end_matches('/');
+            if without_query.is_empty() {
+                trimmed.to_owned()
+            } else {
+                without_query.to_owned()
+            }
+        }
+        SourceKind::Conversation => doc_title
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .unwrap_or("Conversation")
+            .to_owned(),
+        SourceKind::Email => doc_title
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .unwrap_or("Email snapshot")
+            .to_owned(),
+        SourceKind::Note => String::new(),
+    };
+    derived.chars().take(200).collect()
+}
+
 #[utoipa::path(post, path = "/v1/bots/{bot}/knowledge/sources", tag = "knowledge", security(("bearer" = [])), params(("bot" = Uuid, Path)), request_body = KnowledgeSourceInput, responses((status = 201, body = KnowledgeMutation), (status = 409, body = ErrorBody)))]
 #[allow(clippy::too_many_lines)] // One match arm per source kind.
 pub(crate) async fn create_source(
@@ -757,11 +809,7 @@ pub(crate) async fn create_source(
         let _authority = authority;
         s.agent().refresh_external_redactor();
         let kind = SourceKind::from(input.kind);
-        let label = if kind == SourceKind::SharedBrain && input.label.trim().is_empty() {
-            "Shared brain".to_owned()
-        } else {
-            input.label
-        };
+        let raw_label = input.label;
         let mut document = None;
         let locator = match kind {
             SourceKind::File | SourceKind::Folder => {
@@ -802,7 +850,7 @@ pub(crate) async fn create_source(
                 let locator = format!("note:{}", Uuid::now_v7());
                 document = Some(DocumentInput {
                     locator: locator.clone(),
-                    title: label.clone(),
+                    title: raw_label.clone(),
                     content: bounded_text(&required(input.content.as_deref(), "content")?)?,
                     format: DocumentFormat::Markdown,
                     mtime_ms: None,
@@ -830,6 +878,12 @@ pub(crate) async fn create_source(
                 serde_json::to_string(&locator).map_err(|_| ApiError::internal("email locator"))?
             }
         };
+        let label = default_source_label(
+            kind,
+            &raw_label,
+            &locator,
+            document.as_ref().map(|d| d.title.as_str()),
+        );
         safe_metadata(&s, &label)?;
         safe_metadata(&s, &locator)?;
         let store = store(&s, owner)?;
@@ -1241,4 +1295,60 @@ pub(crate) fn remove_bot_index(s: &AppState, bot: &storage::Bot) -> std::io::Res
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_source_label_derives_from_path_url_or_document_title_when_blank() {
+        assert_eq!(
+            default_source_label(
+                SourceKind::File,
+                "",
+                r"C:\Users\alice\docs\runbook.md",
+                None
+            ),
+            "runbook.md"
+        );
+        assert_eq!(
+            default_source_label(SourceKind::Folder, "  ", "/home/alice/handbook/", None),
+            "handbook"
+        );
+        assert_eq!(
+            default_source_label(
+                SourceKind::SavedWeb,
+                "",
+                "https://docs.example.com/guides/setup/",
+                None
+            ),
+            "docs.example.com/guides/setup"
+        );
+        assert_eq!(
+            default_source_label(
+                SourceKind::Conversation,
+                "",
+                "chat:123",
+                Some("Deploy sprint")
+            ),
+            "Deploy sprint"
+        );
+        assert_eq!(
+            default_source_label(SourceKind::Email, "", "{}", Some("Email snapshot · work")),
+            "Email snapshot · work"
+        );
+        assert_eq!(
+            default_source_label(SourceKind::SharedBrain, "", "/data/brain", None),
+            "Shared brain"
+        );
+        assert_eq!(
+            default_source_label(SourceKind::Note, "", "note:123", None),
+            ""
+        );
+        assert_eq!(
+            default_source_label(SourceKind::File, "Custom label", "/tmp/a.md", None),
+            "Custom label"
+        );
+    }
 }
