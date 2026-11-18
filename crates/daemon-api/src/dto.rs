@@ -32,12 +32,18 @@ pub struct HostInfo {
     pub has_browser: bool,
     /// Physical memory in MiB (1024 * 1024 bytes).
     pub total_ram_mb: u64,
+    pub mode: crate::host::HostMode,
+    pub state: crate::host::HostState,
+    pub epoch: u64,
 }
 
 impl HostInfo {
     #[must_use]
     pub fn detect() -> Self {
         Self {
+            mode: crate::host::HostMode::default(),
+            state: crate::host::HostState::default(),
+            epoch: 0,
             os: std::env::consts::OS.into(),
             arch: std::env::consts::ARCH.into(),
             has_display: browser_cdp::host::has_display(),
@@ -47,7 +53,14 @@ impl HostInfo {
     }
 }
 
-/// A bot.
+/// Bot `[runtime]` settings (ADR-0027 §7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RuntimeConfigDto {
+    /// Configured computer target (`auto`, `pc`, `host`, `browser`, `off`, or `node:<id>`).
+    pub computer: String,
+}
+
+/// Public bot representation.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct BotDto {
     /// Bot id.
@@ -58,10 +71,17 @@ pub struct BotDto {
     pub config: Value,
     /// Creation time.
     pub created_at_ms: i64,
+    /// Bot revision: starts at 1; profile writes and skill assignment changes
+    /// advance it in the write transaction. Send the loaded value back as
+    /// `expected_version` to both PUT and PATCH.
+    pub version: i64,
     /// The truth about what the bot may do: its stored policy merged with its
     /// persisted "always allow" grants.  Only present in `GET /v1/bots/{id}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_policy: Option<EffectivePolicyDto>,
+    /// Parsed `[runtime]` computer target settings (`auto` when omitted in profile).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<RuntimeConfigDto>,
 }
 
 /// A bot's permission picture (`GET /v1/bots/{id}`).
@@ -84,6 +104,10 @@ pub struct CategoryDecisionDto {
     pub decision: String,
     /// `true` when `allow` holds only because of a category grant.
     pub via_grant: bool,
+    /// Computers where a category grant allows this category. The decision
+    /// stays `ask` for every computer not listed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
 }
 
 /// What an "always allow" grant covers.
@@ -106,10 +130,17 @@ pub enum GrantTargetDto {
 /// A persisted "always allow" rule of a bot.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct GrantDto {
+    /// Computer scope of this grant, when it controls a desktop/browser.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub computer: Option<String>,
     /// What it covers.
     pub target: GrantTargetDto,
     /// When it was granted.
     pub granted_at_ms: i64,
+    /// Legacy desktop/browser rule with no computer. It does not authorize
+    /// anything; it is listed so the user can see that it stopped applying.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inert: bool,
 }
 
 /// `DELETE /v1/bots/{id}/grants`.
@@ -137,6 +168,10 @@ pub struct AnswerResponse {
 /// one of `config` / `profile_toml` is required.
 #[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
 pub struct BotInput {
+    /// Required for PUT: version of the profile being replaced. Missing is 428;
+    /// stale is 409 with the current bot. Not used when creating a bot.
+    #[serde(default)]
+    pub expected_version: Option<i64>,
     /// Display name (defaults to the profile's `[bot].name`).
     #[serde(default)]
     pub name: Option<String>,
@@ -146,6 +181,60 @@ pub struct BotInput {
     /// Profile as TOML text (the contents of a bot profile file).
     #[serde(default)]
     pub profile_toml: Option<String>,
+    /// Optional `[runtime]` declaration. Must agree with `config` / `profile_toml`
+    /// when both are supplied. Omission on update preserves the stored target.
+    #[serde(default)]
+    pub runtime: Option<RuntimeConfigDto>,
+}
+
+/// How one [`BotPatchOp`] changes the profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BotPatchKind {
+    /// Set the value at `path` (missing parent objects are created).
+    Set,
+    /// Remove the key at `path` (no effect when it is absent).
+    Unset,
+}
+
+/// One field-level change of a bot profile.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BotPatchOp {
+    /// `set` or `unset`.
+    pub op: BotPatchKind,
+    /// RFC 6901 JSON Pointer into the profile (`config`), e.g. `/models/planner`,
+    /// `/permissions/categories/fs/level`, `/runtime/computer`.  Object keys
+    /// only: a path through an array or a scalar is refused. At most 32 segments
+    /// and 4096 bytes; resulting profile depth at most 32.
+    pub path: String,
+    /// The new value (`set` only).
+    #[serde(default)]
+    pub value: Value,
+}
+
+/// `PATCH /v1/bots/{id}`: change only the listed fields of a bot, atomically.
+/// Every field not named - including unknown keys - stays exactly as stored.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct BotPatchInput {
+    /// The version the client loaded (`BotDto::version`).  A different current
+    /// version refuses the whole patch with `409` and returns the current bot.
+    pub expected_version: i64,
+    /// New display name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Profile changes, applied in order (at most 128). Values/result use a
+    /// conservative 1 MiB escaped JSON budget; excessive input is 400.
+    #[serde(default)]
+    pub ops: Vec<BotPatchOp>,
+}
+
+/// `409` body of `PATCH /v1/bots/{id}`: the usual error plus the bot as stored now.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BotConflictBody {
+    /// `version_conflict`.
+    pub error: crate::error::ErrorDetail,
+    /// The current bot, with its current version.
+    pub current: BotDto,
 }
 
 /// A chat thread.
@@ -183,6 +272,10 @@ pub struct MessageDto {
     pub chat_id: Uuid,
     /// Run that produced / carried it.
     pub run_id: Option<Uuid>,
+    /// Bot that ran `run_id` (the author of an assistant message). It differs
+    /// from the chat's bot when another bot answered an `@mention`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_id: Option<Uuid>,
     /// `user` / `assistant` / `system` / `tool`.
     pub role: String,
     /// Text.
@@ -287,6 +380,10 @@ pub enum Scope {
     /// The tool's whole permission category for this bot, persisted.  Money and
     /// never-list floors still ask.
     AlwaysCategory,
+    /// Typing, keys, value setting and dragging into the one program the card
+    /// names, for the rest of this run only. Accepted only on a card whose
+    /// `details.control_grant.offered` is true; refused everywhere else.
+    RunControl,
 }
 
 /// `POST /v1/approvals/{call_id}`.
@@ -340,6 +437,21 @@ pub struct RunDto {
     /// The schedule that started this run (`null` for runs the user started).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule_id: Option<Uuid>,
+    /// Resolved computer target label fixed at run start (`pc`, `host`, `browser`, `off`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computer_target: Option<String>,
+    /// Stable key of the PC used by this run (`local` for the daemon desktop).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub computer_node: Option<String>,
+    /// Display name captured at target binding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub computer_node_name: Option<String>,
+    /// Start of the current pause in Unix milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_at_ms: Option<i64>,
+    /// Reason the run is currently `paused` (e.g. `waiting_for_pc`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause_reason: Option<String>,
 }
 
 /// Token totals.
@@ -378,6 +490,9 @@ pub struct UsageSummary {
     pub total: UsageTotals,
     /// Per bot.
     pub by_bot: Vec<BotUsage>,
+    /// Per-purpose totals, including invocations that report no tokens.
+    #[serde(default)]
+    pub by_purpose: std::collections::BTreeMap<String, UsageTotals>,
 }
 
 // ---------------------------------------------------------- control bridge
@@ -528,10 +643,52 @@ pub struct ConfiguredProviderDto {
     pub custom: bool,
     /// Loaded in the running loop (a restart or `reload` picks up changes).
     pub active: bool,
-    /// Model ids the provider reports (empty without a listing).
+    /// Model ids in the same order as `model_details`. By default only current
+    /// chat candidates are shown; `?chat_only=false` includes everything.
     pub models: Vec<String>,
+    /// Presentation metadata: recommended models first by rank, then the rest
+    /// by display name. Split on `recommended` for an "All models" expander.
+    /// No model is added just because it appears in the curated table.
+    #[serde(default)]
+    pub model_details: Vec<ModelMetadataDto>,
     /// Why the model list could not be fetched.
     pub models_error: Option<String>,
+    /// Coding CLIs only: where the list came from (`cli`, `local_cache` or `bundled`, the
+    /// last-resort fallback the UI marks as such).
+    #[serde(default)]
+    pub models_source: Option<String>,
+    /// Coding CLIs only: when the list was fetched (ms since the epoch; absent for `bundled`).
+    #[serde(default)]
+    pub models_fetched_at_ms: Option<i64>,
+}
+
+/// Presentation only: never changes execution capabilities or configured ids.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ModelMetadataDto {
+    pub id: String,
+    pub display_name: String,
+    /// `chat`, `reasoning`, `vision_capable`, `embedding`, `image`, `audio`,
+    /// `video`, or `other`. Kind describes primary use, not input modalities.
+    pub kind: String,
+    pub recommended: bool,
+    pub recommended_rank: Option<u8>,
+    pub deprecated: bool,
+    /// A short annotation such as `preview` or a live `OpenRouter` `free` id.
+    pub note: Option<String>,
+}
+
+impl From<provider_catalog::ModelMetadata> for ModelMetadataDto {
+    fn from(model: provider_catalog::ModelMetadata) -> Self {
+        Self {
+            id: model.id,
+            display_name: model.display_name,
+            kind: model.kind.as_str().into(),
+            recommended: model.recommended,
+            recommended_rank: model.recommended_rank,
+            deprecated: model.deprecated,
+            note: model.note,
+        }
+    }
 }
 
 /// A catalog entry.
@@ -587,7 +744,7 @@ impl From<cli_provider::AuthState> for CliAuthState {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct DetectedProviderDto {
-    /// Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `chatgpt-plan`).
+    /// Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `agy`).
     pub id: String,
     /// Display name.
     pub display_name: String,
@@ -665,9 +822,23 @@ pub struct ScheduleDto {
     /// A webhook trigger is configured (`POST /v1/webhooks/{id}`); the secret
     /// is never returned.
     pub has_webhook: bool,
+    /// Non-webhook trigger definition; never includes webhook secrets.
+    pub trigger: Option<Value>,
+    /// Read-only deterministic condition, including full script source.
+    pub precheck: Option<Value>,
+    /// Firings skipped before an agent run was created.
+    #[serde(default)]
+    pub skipped_by_precheck: u64,
+    /// Consecutive precheck/polling failures (ten pauses the schedule).
+    #[serde(default)]
+    pub consecutive_errors: u32,
     /// Who created it: `user`, or `bot` (a bot's schedule tools, after you
     /// approved it). A bot may change only its own `bot` schedules.
     pub origin: String,
+    /// Name of the server this schedule was moved to. The local copy is then disabled
+    /// (not deleted) so nothing runs twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moved_to: Option<String>,
 }
 
 /// Body of `POST /v1/schedules` and `PUT /v1/schedules/{id}`.
@@ -694,6 +865,16 @@ pub struct ScheduleInput {
     /// the empty string removes the trigger.
     #[serde(default)]
     pub webhook_secret: Option<String>,
+    /// File-watch or email trigger. Absent keeps it; null removes it.
+    #[serde(default, deserialize_with = "present_json")]
+    pub trigger: Option<Value>,
+    /// `HashChanged` or Script precheck. Absent keeps it; null removes it.
+    #[serde(default, deserialize_with = "present_json")]
+    pub precheck: Option<Value>,
+}
+
+fn present_json<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
 }
 
 /// Body of `POST /v1/schedules/parse`.
@@ -739,6 +920,8 @@ pub struct ChannelDto {
     pub running: bool,
     /// Number of paired (allowed) remote users.
     pub paired_users: usize,
+    /// Polling lifecycle, including a persistent Telegram conflict notification.
+    pub status: Option<String>,
 }
 
 /// A one-time pairing code (`POST /v1/channels/telegram/pair-code`).
@@ -845,4 +1028,104 @@ pub struct ReleaseResult {
     pub takeover_id: Uuid,
     pub request_id: Uuid,
     pub state: String,
+}
+
+/// Which runs a Stop targets (`POST /v1/runs/stop`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StopScope {
+    /// Every non-terminal run of the user that exists when the daemon first
+    /// receives the `stop_id`, plus the listed ids. Local user only.
+    AllExisting,
+    /// Exactly the listed ids that exist and are cancellable.
+    Listed,
+}
+
+/// Body of `POST /v1/runs/stop`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct StopRunsInput {
+    /// One user decision to stop, minted by the caller. The daemon fixes the
+    /// target set the first time it sees this id; a repeat never changes it.
+    pub stop_id: Uuid,
+    /// Runs the caller knew about (at most 1024). Only the first receipt reads them.
+    #[serde(default)]
+    pub run_ids: Vec<Uuid>,
+    /// Which runs the Stop targets besides `run_ids`.
+    pub scope: StopScope,
+    /// Hard stop: besides firing the cancel token, abort the run's task so a
+    /// run stuck in work that ignores the token still ends (its process
+    /// trees and requests are dropped). Applies to this receipt and to repeats.
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// What happened to one run of a Stop's target set.
+///
+/// `cancelled` is the only outcome that means the run has stopped. For a live
+/// run the daemon can only fire the run's cancel token: `cancel_requested`
+/// says it did so, and the run's effects (a tool call, a shell child, a
+/// browser or desktop action) have ceased only once its `state` is terminal or
+/// `run_finished` arrives. A human takeover is not touched by this route
+/// (`/v1/control/override` handles it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StopOutcome {
+    /// The run is cancelled (terminal) because of this Stop.
+    Cancelled,
+    /// The cancel was issued but the run is not terminal yet. A repeat of the
+    /// same `stop_id` re-issues it and updates this outcome once the run ended.
+    CancelRequested,
+    /// The run was already finished when the Stop reached the daemon (or ended
+    /// by itself before the cancel took effect).
+    AlreadyTerminal,
+    /// The id is not a run of this user. Never cancelled later, even if a run
+    /// with that id appears.
+    NotFound,
+    /// The cancel failed; a repeat of the same `stop_id` retries it.
+    Failed,
+}
+
+/// One member of a Stop's target set.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StopRunResult {
+    /// Run id.
+    pub run_id: Uuid,
+    /// Cancel outcome.
+    pub outcome: StopOutcome,
+    /// Current run state, if the run exists.
+    pub state: Option<String>,
+    /// Why the cancel failed.
+    pub error: Option<String>,
+}
+
+/// Response of `POST /v1/runs/stop`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StopRunsResponse {
+    /// Echo of the request's `stop_id`.
+    pub stop_id: Uuid,
+    /// `true` when this call fixed the target set, `false` for a repeat.
+    pub first_seen: bool,
+    /// `true` when this `stop_id` was seen before but its target set is no
+    /// longer kept (expired or evicted): nothing was cancelled and `results`
+    /// is empty. The original target set is unknown, so the daemon will not
+    /// guess it. To retry, send a NEW `stop_id` with `scope: listed` and the
+    /// run ids the client still holds as stop-held. `all_existing` with a new
+    /// `stop_id` sweeps every run open now, including runs started after the
+    /// original Stop: use it only for a new user decision. The client should
+    /// tell the user that the Stop expired.
+    #[serde(default)]
+    pub expired: bool,
+    /// `false` when the audit row of this call could not be written. Only the
+    /// local user's Stop proceeds without it (peers fail with 500).
+    #[serde(default = "audited_default")]
+    pub audited: bool,
+    /// Every member of the target set. A run that is not listed was not
+    /// targeted (it was created after the first receipt). A repeat retries
+    /// `failed` members and re-issues the cancel of `cancel_requested` ones;
+    /// terminal and unknown members are never touched again.
+    pub results: Vec<StopRunResult>,
+}
+
+fn audited_default() -> bool {
+    true
 }

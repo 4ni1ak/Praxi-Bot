@@ -35,6 +35,7 @@ impl Reply {
                 ContentPart::Json { data: self.data },
             ],
             spill: None,
+            exposure: None,
         }
     }
 }
@@ -81,6 +82,9 @@ pub(crate) fn write_file(
             bytes.len(),
             cfg.max_output_bytes
         )));
+    }
+    if let Some(guard) = &cfg.write_guard {
+        guard.check(path).map_err(exec)?;
     }
     let p = Path::new(path);
     if p.is_dir() {

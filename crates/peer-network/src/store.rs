@@ -94,6 +94,14 @@ pub struct Device {
     pub addr: Option<EndpointAddr>,
     /// Unix seconds when pairing completed.
     pub paired_at: u64,
+    /// Unique incarnation of the pairing, renewed on every successful pair.
+    #[serde(default)]
+    pub pairing_generation: String,
+    /// Host administration: set only on the side that issued the invite (or
+    /// by its local owner afterwards), never taken from what the peer claims.
+    /// Lets a paired desktop send keys and settings to this daemon.
+    #[serde(default)]
+    pub admin: bool,
 }
 
 impl Device {
@@ -188,7 +196,8 @@ impl DeviceStore {
     /// # Errors
     ///
     /// Returns an error if the list cannot be persisted. Memory is unchanged.
-    pub fn upsert(&self, device: Device) -> Result<()> {
+    pub fn upsert(&self, mut device: Device) -> Result<()> {
+        device.pairing_generation = iroh::SecretKey::generate().public().to_string();
         let mut guard = self.devices.lock();
         let mut next = guard.clone();
         match next.iter_mut().find(|d| d.id == device.id) {
@@ -219,6 +228,28 @@ impl DeviceStore {
         }
         let mut next = guard.clone();
         next[index].addr = Some(addr);
+        self.persist(&next)?;
+        *guard = next;
+        Ok(true)
+    }
+
+    /// Grant or withdraw host administration for a device; returns `false`
+    /// if the device is unknown.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the list cannot be persisted. Memory is unchanged.
+    pub fn set_admin(&self, key: &PublicKey, admin: bool) -> Result<bool> {
+        let id = key_to_string(key);
+        let mut guard = self.devices.lock();
+        let Some(index) = guard.iter().position(|d| d.id == id) else {
+            return Ok(false);
+        };
+        if guard[index].admin == admin {
+            return Ok(true);
+        }
+        let mut next = guard.clone();
+        next[index].admin = admin;
         self.persist(&next)?;
         *guard = next;
         Ok(true)
@@ -258,7 +289,24 @@ mod tests {
             capabilities: vec!["desktop".into()],
             addr: None,
             paired_at: 1,
+            pairing_generation: String::new(),
+            admin: false,
         }
+    }
+
+    #[test]
+    fn re_pair_in_same_second_always_changes_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = DeviceStore::open(dir.path().join("devices.json")).unwrap();
+        let key = iroh::SecretKey::generate().public();
+        store.upsert(dev(&key, Role::Desktop)).unwrap();
+        let first = store.get(&key).unwrap();
+        store.remove(&key).unwrap();
+        store.upsert(dev(&key, Role::Desktop)).unwrap();
+        let second = store.get(&key).unwrap();
+        assert_eq!(first.paired_at, second.paired_at);
+        assert_ne!(first.pairing_generation, "");
+        assert_ne!(first.pairing_generation, second.pairing_generation);
     }
 
     #[test]

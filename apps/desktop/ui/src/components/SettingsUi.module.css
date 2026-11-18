@@ -167,4 +167,3 @@
 @media (width <= 56em) { .row { flex-wrap: wrap; gap: var(--space-3); } .rowControl { max-width: 100%; } }
 
 .group { background-image: var(--surface-sheen); }
-:global(:root[data-style="glass"]) .group { backdrop-filter: blur(var(--blur-glass)) saturate(1.5); }

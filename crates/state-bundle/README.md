@@ -38,6 +38,8 @@ define the format's filesystem policy.
 | `memory.db` (optional) | Semantic memory and indexes, stored separately by memory-store |
 | `schedules.db` (optional) | Schedules and triggers; the current scheduler uses a separate DB |
 | `bots/`, `profiles/` | Optional file-based bot profiles |
+| `bots/<bot-uuid>/knowledge.db` | Per-bot knowledge sources, chunks, lexical index and embedding generations |
+| `brain/` | Human-editable, source-labelled shared Markdown notes |
 | `skills/` | User skills, including nested `SKILL.md` files |
 | `workflows/` | Saved TOML workflows and their index |
 | `providers.toml` | Provider configuration and secret references |
@@ -54,6 +56,29 @@ Always excluded, case insensitively at every depth: `api-token`, `identity.key`,
 `browser-profiles/`, `browser_profiles/`, `logs/`, `backup-*`, `import-staging/`.
 All other non-allowlisted roots are excluded too, including run event logs.
 Unknown and machine-local target roots are preserved during replacement.
+
+### Knowledge sources after import
+
+Each canonical nested `knowledge.db` is snapshotted with SQLite's online backup
+API, declared in `db_schemas`, validated and matched to its user/bot owner in the
+staged `bot.db`. Knowledge WAL, SHM and journal files are excluded. The local
+`knowledge-runtime.db` quota ledger is excluded and the destination's ledger is
+preserved, so an import cannot reset provider request budgets.
+The complete migrated `bot.db` schema is compared with the application's own
+migrations before sanitization. Extra triggers, views, tables or altered schema
+objects are rejected, including dormant triggers that could restore permissions.
+
+Imported knowledge content stays available on disk, but every source is
+disabled and every remote document grant is cleared. Automatic retrieval is
+disabled and every embedding configuration is removed, for remote and local
+providers alike. The owner must select the provider/model through knowledge
+settings again; that derives its endpoint and credential quota group locally.
+Local native runtime/model files must also be selected and hashed again. Then
+re-enable individual sources after reviewing their file, conversation or mailbox
+binding, and grant document/query access separately.
+Shared Markdown remains untrusted source data and is never imported into the
+skills instruction library. New shared notes still require a complete-content
+approval, including the destination and source revisions.
 
 ## Global permission policy
 
@@ -147,6 +172,12 @@ old secret values all precede target writes. Import rewrites host `mode` and
 `state` from options (defaults: `standalone` and `standby`), sets the received
 epoch, and removes the source's `leader`. Other host settings are retained.
 Explicit activation/epoch advancement is the handover caller's responsibility.
+
+The primary database must also contain the tables and columns used by storage,
+with valid foreign-key references. Its run ancestry must be rooted, acyclic and
+within the agent runtime's existing subagent depth limit (root 0, maximum 2).
+These checks run only on staged imports, before installation; ordinary database
+opening is unchanged. Valid older schemas are migrated before these checks.
 
 The install phase has no async cancellation points. Original values are retained
 in memory for secret rollback; old portable roots and DB sidecars are renamed

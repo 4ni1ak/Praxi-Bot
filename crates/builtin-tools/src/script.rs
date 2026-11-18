@@ -17,8 +17,8 @@ use script_runtime::{Limits, ScriptError, ScriptHost, ScriptRuntime};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tool_registry::{
-    ContentPart, Effect, PermissionCategory, Tool, ToolContext, ToolError, ToolOutput,
-    ToolRegistry, ToolSpec,
+    ContentClass, ContentPart, Effect, PermissionCategory, Tool, ToolContext, ToolError,
+    ToolOutput, ToolRegistry, ToolSpec,
 };
 
 use crate::util::{exec_err, parse, spec};
@@ -41,6 +41,13 @@ pub struct GateRequest {
     pub raw_command: String,
     /// The call's input.
     pub input: Value,
+    /// Classification of the tool being called. The loop records taint from
+    /// this after a successful authorization.
+    pub content: ContentClass,
+    /// The program a desktop input call would reach, resolved by the caller
+    /// (workflow replay). `None` for script calls: a script never gets a
+    /// run-scoped control grant.
+    pub control: Option<tool_registry::ControlTarget>,
 }
 
 /// Permission check for tool calls issued from scripts.
@@ -55,6 +62,60 @@ pub trait ToolGate: Send + Sync {
     /// # Errors
     /// A human-readable denial reason.
     async fn authorize(&self, req: &GateRequest) -> Result<(), String>;
+
+    /// [`Self::authorize`] for a caller that sends the input itself (workflow
+    /// replay). Returns the program the caller must pass to the backend's
+    /// guarded path when a run-scoped control grant covers the call, `None`
+    /// otherwise. The default has no grants.
+    ///
+    /// # Errors
+    /// A human-readable denial reason.
+    async fn authorize_control(
+        &self,
+        req: &GateRequest,
+    ) -> Result<Option<tool_registry::ControlIdentity>, String> {
+        self.authorize(req).await.map(|()| None)
+    }
+
+    /// Authorize a registry tool call whose caller forwards the origin to `ToolContext`.
+    /// # Errors
+    /// A human-readable denial reason.
+    async fn authorize_page(&self, req: &GateRequest) -> Result<Option<String>, String> {
+        self.authorize(req).await.map(|()| None)
+    }
+
+    /// Withdraw every task-wide permission of `run_id`. A caller that sent a
+    /// guarded call itself (workflow replay) calls this when that send stopped
+    /// or failed, as the agent loop does for its own tool calls. The default
+    /// has no grants.
+    fn revoke_control(&self, _run_id: &str) {}
+
+    /// Record content consumed by a composite tool before its inner calls run.
+    /// Only host code supplies this classification; model input cannot clear it.
+    fn note_exposure(&self, _run_id: &str, _content: ContentClass, _label: &str) {}
+
+    /// Record trusted host metadata carried by a tool result, including a folder trust offer.
+    fn note_output_exposure(&self, run_id: &str, exposure: &tool_registry::OutputExposure) {
+        self.note_exposure(
+            run_id,
+            ContentClass::declared(exposure.ingests_untrusted, exposure.reads_private, false),
+            &exposure.label,
+        );
+    }
+
+    /// Whether `run_id` has already read untrusted or private content.
+    ///
+    /// Skill writes use this to store the skill as untrusted data. The default
+    /// is false: a gate that does not track taint does not mark skills.
+    fn content_tainted(&self, _run_id: &str) -> bool {
+        false
+    }
+
+    /// Whether the run holds UNTRUSTED content: files a tool writes in such a run get an
+    /// untrusted-origin mark. Default false.
+    fn content_untrusted(&self, _run_id: &str) -> bool {
+        false
+    }
 }
 
 /// Non-interactive [`ToolGate`] backed by [`PermissionResolver`]: `Allow` passes,
@@ -88,6 +149,7 @@ impl ResolverGate {
 impl ToolGate for ResolverGate {
     async fn authorize(&self, req: &GateRequest) -> Result<(), String> {
         let action = ActionRequest {
+            cwd: cwd_for(&req.tool, &req.input),
             category: req.category,
             raw_command: req.raw_command.clone(),
             initiator: self.initiator,
@@ -130,6 +192,16 @@ pub fn raw_command_for(tool: &str, input: &Value) -> String {
         }
         _ => String::new(),
     }
+}
+
+/// The working directory a `shell_run` call names (absolute only), for path resolution in the
+/// permission layer.
+pub fn cwd_for(tool: &str, input: &Value) -> Option<String> {
+    (tool == "shell_run")
+        .then(|| input.get("cwd").and_then(Value::as_str))
+        .flatten()
+        .filter(|c| !c.is_empty())
+        .map(str::to_owned)
 }
 
 /// Convert a tool output into the JSON a script sees.
@@ -213,18 +285,33 @@ impl ScriptHost for GateHost {
             effect: spec.effect,
             raw_command: raw_command_for(name, &input),
             input: input.clone(),
+            content: spec.content,
+            control: None,
         };
-        self.gate.authorize(&req).await?;
+        let expected_origin = self.gate.authorize_page(&req).await?;
         let ctx = ToolContext {
             run_id: self.run_id.clone(),
             max_inline_bytes: self.max_inline_bytes,
             bot_id: self.bot_id.clone(),
+            content_tainted: self.gate.content_tainted(&self.run_id),
+            exposure_untrusted: self.gate.content_untrusted(&self.run_id),
+            expected_origin,
+            // A script is never covered by a run-scoped control grant.
+            control_guard: None,
         };
         let out = if let Some(action) = &self.action {
             crate::control::scope_action(action.clone(), tool.call(&ctx, input)).await
         } else {
             tool.call(&ctx, input).await
         };
+        // The output's own exposure replaces the static class for the calls
+        // that follow, as it does between model turns (a listing that
+        // contains an untrusted skill, for example).
+        if let Ok(o) = &out
+            && let Some(exposure) = &o.exposure
+        {
+            self.gate.note_output_exposure(&self.run_id, exposure);
+        }
         out.map(|o| output_to_json(&o)).map_err(|e| e.to_string())
     }
 }
@@ -395,10 +482,13 @@ mod tests {
     }
 
     fn echo(name: &str, cat: PermissionCategory, calls: Arc<Mutex<Vec<Value>>>) -> Arc<dyn Tool> {
-        Arc::new(Echo {
-            spec: spec(name, "d", json!({"type":"object"}), Effect::Read, cat),
-            calls,
-        })
+        let mut spec = spec(name, "d", json!({"type":"object"}), Effect::Read, cat);
+        // Test doubles are not built-ins. Declare them as touching nothing so
+        // the registry accepts them; the test is about the gate, not taint.
+        if !spec.content.is_declared() {
+            spec.content = tool_registry::ContentClass::none();
+        }
+        Arc::new(Echo { spec, calls })
     }
 
     /// Fake gate recording what it was asked and denying configured tools.
@@ -589,6 +679,8 @@ mod tests {
             effect: Effect::Write,
             raw_command: raw.into(),
             input: Value::Null,
+            content: ContentClass::none(),
+            control: None,
         };
         assert!(
             gate.authorize(&req("fs_write", PermissionCategory::Fs, ""))

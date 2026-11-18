@@ -127,10 +127,13 @@ struct Feed {
     // ---- global form ----
     /// `schedule_changed` notifications (global stream only).
     sched_rx: Option<broadcast::Receiver<ScheduleChanged>>,
+    host_rx: Option<broadcast::Receiver<crate::host::HostEvent>>,
     /// `mcp_server_changed` notifications (global stream only).
     mcp_rx: Option<broadcast::Receiver<McpServerChanged>>,
     /// `control_state_changed` notifications (global stream only).
     control_rx: Option<broadcast::Receiver<crate::dto::ControlStateChanged>>,
+    /// `view_targets_changed` notifications (global stream only).
+    targets_rx: Option<broadcast::Receiver<()>>,
     // ---- both ----
     storage: Arc<Storage>,
     data_dir: PathBuf,
@@ -425,6 +428,7 @@ impl Feed {
         true
     }
 
+    #[allow(clippy::too_many_lines)] // independent notification streams share the replay-aware select
     async fn next_global_item(&mut self) -> Option<Out> {
         loop {
             if self.cancel.is_cancelled() {
@@ -463,6 +467,13 @@ impl Feed {
             );
             let received = tokio::select! {
                 () = self.cancel.cancelled() => return None,
+                h = async {
+                    match &mut self.host_rx { Some(rx) => rx.recv().await, None => std::future::pending().await }
+                } => match h {
+                    Ok(event) => return Some(Out::Host(event)),
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => { self.host_rx = None; continue; }
+                },
                 r = rx.recv() => r,
                 s = async {
                     match sched_rx {
@@ -504,6 +515,19 @@ impl Feed {
                         continue;
                     }
                 },
+                t = async {
+                    match &mut self.targets_rx {
+                        Some(r) => r.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => match t {
+                    // A lost hint still means "something changed": refetch.
+                    Ok(()) | Err(RecvError::Lagged(_)) => return Some(Out::TargetsChanged),
+                    Err(RecvError::Closed) => {
+                        self.targets_rx = None;
+                        continue;
+                    }
+                },
             };
             match received {
                 Ok(item) => {
@@ -533,8 +557,10 @@ impl Feed {
 pub(crate) enum Out {
     Run(StreamItem),
     Schedule(ScheduleChanged),
+    Host(crate::host::HostEvent),
     Mcp(McpServerChanged),
     Control(crate::dto::ControlStateChanged),
+    TargetsChanged,
     Gap(Gap),
     Unavailable(u64),
 }
@@ -908,6 +934,20 @@ fn event_stream(feed: Feed, local: bool) -> impl Stream<Item = Result<SseEvent, 
         };
         let ev = match out {
             Out::Run(item) => to_sse(&item, feed.scoped),
+            Out::Host(event) => {
+                let (name, data) = match event {
+                    crate::host::HostEvent::HostStateChanged(data) => {
+                        ("host_state_changed", serde_json::to_value(data))
+                    }
+                    crate::host::HostEvent::HostConflict(data) => {
+                        ("host_conflict", serde_json::to_value(data))
+                    }
+                };
+                SseEvent::default()
+                    .event(name)
+                    .json_data(data.unwrap_or_default())
+                    .unwrap_or_else(|_| SseEvent::default().comment("unserialisable event"))
+            }
             Out::Schedule(change) => SseEvent::default()
                 .event("schedule_changed")
                 .json_data(&change)
@@ -930,6 +970,11 @@ fn event_stream(feed: Feed, local: bool) -> impl Stream<Item = Result<SseEvent, 
             Out::Control(change) => SseEvent::default()
                 .event("control_state_changed")
                 .json_data(&change)
+                .unwrap_or_else(|_| SseEvent::default().comment("unserialisable event")),
+            // Fixed, pixel-free shape: "refetch GET /v1/view/targets".
+            Out::TargetsChanged => SseEvent::default()
+                .event("view_targets_changed")
+                .json_data(serde_json::json!({"type": "view_targets_changed"}))
                 .unwrap_or_else(|_| SseEvent::default().comment("unserialisable event")),
         };
         Some((Ok(ev), (feed, local)))
@@ -984,6 +1029,7 @@ pub(crate) async fn events(
         gaps_total: Arc::clone(&state.0.sse_gaps_total),
         audited_gaps: Arc::clone(&state.0.sse_audited_gaps),
         _slot: Some(slot),
+        host_rx: scoped_run.is_none().then(|| state.leader().subscribe()),
         sched_rx: scoped_run
             .is_none()
             .then(|| state.subscribe_schedule_events()),
@@ -992,6 +1038,9 @@ pub(crate) async fn events(
             .then(|| state.mcp().map(|m| m.subscribe()))
             .flatten(),
         control_rx: scoped_run.is_none().then(|| state.hub().subscribe_events()),
+        targets_rx: scoped_run
+            .is_none()
+            .then(|| state.live_view().registry.subscribe_changes()),
         storage: state.storage_arc(),
         data_dir: state.data_dir(),
         logs: Arc::default(),
@@ -1305,8 +1354,10 @@ mod tests {
             audited_gaps: Arc::default(),
             _slot: None,
             sched_rx: None,
+            host_rx: None,
             mcp_rx: None,
             control_rx: None,
+            targets_rx: None,
             storage: Arc::clone(&storage),
             data_dir: dir.path().to_owned(),
             logs: Arc::default(),

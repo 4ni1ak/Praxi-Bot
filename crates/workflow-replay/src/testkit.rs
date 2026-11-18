@@ -56,6 +56,10 @@ pub struct FakeDesktop {
     pub launched: Mutex<Vec<String>>,
     /// Window that appears when something is launched.
     pub on_launch: Mutex<Option<WindowInfo>>,
+    /// The program input would reach now; `None` = cannot be named.
+    pub input: Mutex<Option<desktop_api::InputTarget>>,
+    /// Actions that passed `act_guarded` and ran.
+    pub guarded: Mutex<Vec<Action>>,
     generation: Mutex<u64>,
 }
 
@@ -67,13 +71,57 @@ impl FakeDesktop {
             actions: Mutex::new(Vec::new()),
             launched: Mutex::new(Vec::new()),
             on_launch: Mutex::new(None),
+            input: Mutex::new(None),
+            guarded: Mutex::new(Vec::new()),
             generation: Mutex::new(0),
         })
+    }
+
+    /// A program with a complete identity, for the run-control tests.
+    pub fn notepad_target() -> desktop_api::InputTarget {
+        desktop_api::InputTarget {
+            window_id: 1,
+            title: "A - App".into(),
+            class: "Notepad".into(),
+            identity: desktop_api::ProcessIdentity {
+                image_path: "C:\\Windows\\notepad.exe".into(),
+                pid: 101,
+                start_time: 77,
+            },
+            elevated: Some(false),
+            password_focus: false,
+            owned: false,
+        }
     }
 }
 
 #[async_trait]
 impl DesktopBackend for FakeDesktop {
+    async fn input_target(&self) -> Result<Option<desktop_api::InputTarget>, DesktopError> {
+        Ok(self.input.lock().clone())
+    }
+
+    async fn act_guarded(
+        &self,
+        action: Action,
+        guard: desktop_api::ActGuard,
+    ) -> Result<ActionResult, DesktopError> {
+        let now = self.input.lock().clone().ok_or_else(|| {
+            DesktopError::GuardRefused(format!(
+                "not sent: {}",
+                desktop_api::Refusal::NoIdentity.code()
+            ))
+        })?;
+        desktop_api::guard::check_guard(&guard, &now)
+            .map_err(|r| DesktopError::GuardRefused(format!("not sent: {}", r.code())))?;
+        self.guarded.lock().push(action.clone());
+        self.act(action).await
+    }
+
+    fn key_chord_refusal(&self, keys: &[String]) -> Option<desktop_api::Refusal> {
+        (!desktop_api::guarded::chord_allowed(keys)).then_some(desktop_api::Refusal::Chord)
+    }
+
     async fn snapshot(&self, scope: Option<u64>) -> Result<Snapshot, DesktopError> {
         let mut g = self.generation.lock();
         *g += 1;
@@ -148,6 +196,10 @@ pub struct FakeBrowser {
     pub page: Mutex<String>,
     pub calls: Mutex<Vec<String>>,
     pub eval_result: Mutex<Value>,
+    /// Where each ref lives (frame / top origin) for `field_target`.
+    pub targets: Mutex<std::collections::HashMap<String, builtin_tools::browser::FieldTarget>>,
+    /// What reached the page through `fill_secret`.
+    pub typed_secrets: Mutex<Vec<String>>,
 }
 
 impl FakeBrowser {
@@ -156,6 +208,8 @@ impl FakeBrowser {
             page: Mutex::new(page.to_owned()),
             calls: Mutex::new(Vec::new()),
             eval_result: Mutex::new(json!(1)),
+            targets: Mutex::new(std::collections::HashMap::new()),
+            typed_secrets: Mutex::new(Vec::new()),
         })
     }
 
@@ -179,6 +233,31 @@ impl BrowserDriver for FakeBrowser {
     }
     async fn fill(&self, r: &str, t: &str) -> Result<String, String> {
         self.rec(format!("fill:{r}:{t}"))
+    }
+    async fn field_target(&self, r: &str) -> Result<builtin_tools::browser::FieldTarget, String> {
+        self.targets
+            .lock()
+            .get(r)
+            .cloned()
+            .ok_or_else(|| format!("unknown ref {r}"))
+    }
+    async fn fill_secret(
+        &self,
+        r: &str,
+        text: &str,
+        accept: &(dyn Fn(Option<String>) -> bool + Send + Sync),
+    ) -> Result<String, String> {
+        let live = self
+            .targets
+            .lock()
+            .get(r)
+            .and_then(|t| t.frame_origin.clone());
+        if !accept(live) {
+            return Err("refused: nothing was typed".into());
+        }
+        self.calls.lock().push(format!("fill_secret:{r}"));
+        self.typed_secrets.lock().push(text.to_owned());
+        Ok(format!("filled {r}; shows {text}"))
     }
     async fn select(&self, r: &str, v: &str) -> Result<String, String> {
         self.rec(format!("select:{r}:{v}"))
@@ -245,6 +324,33 @@ impl ToolGate for RecordingGate {
     }
 }
 
+/// A gate that behaves as if a run-scoped control grant covered every eligible
+/// target it is shown, and records what it was shown.
+#[derive(Default)]
+pub struct CoveringGate {
+    pub requests: Mutex<Vec<GateRequest>>,
+}
+
+#[async_trait]
+impl ToolGate for CoveringGate {
+    async fn authorize(&self, req: &GateRequest) -> Result<(), String> {
+        self.requests.lock().push(req.clone());
+        Ok(())
+    }
+
+    async fn authorize_control(
+        &self,
+        req: &GateRequest,
+    ) -> Result<Option<tool_registry::ControlIdentity>, String> {
+        self.authorize(req).await?;
+        Ok(req
+            .control
+            .as_ref()
+            .filter(|t| t.eligible())
+            .map(|t| t.identity.clone()))
+    }
+}
+
 /// A tool that stores the inputs it was called with.
 pub struct CaptureTool {
     spec: ToolSpec,
@@ -261,6 +367,8 @@ impl CaptureTool {
                 effect: Effect::Write,
                 category: PermissionCategory::Fs,
                 platforms: vec![Platform::All],
+
+                content: tool_registry::ContentClass::none(),
             },
             inputs: Mutex::new(Vec::new()),
         })

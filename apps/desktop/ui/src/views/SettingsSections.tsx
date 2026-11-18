@@ -11,7 +11,8 @@ import {
 import { isTauriRuntime } from "../overlay/events";
 import formStyles from "../components/Form.module.css";
 import { botView } from "../lib/botProfile";
-import { addProvider, setDefaultProvider, testProvider } from "../lib/providers";
+import { testProvider } from "../lib/providers";
+import { canManageProviders } from "../lib/providerConnection";
 import {
   canTestProvider,
   isCliProvider,
@@ -20,6 +21,9 @@ import {
 import { useDaemon } from "../state/DaemonContext";
 import { notifyProvidersChanged, useProviders } from "../state/useProviders";
 import styles from "./SettingsSections.module.css";
+import { humanLine } from "../lib/humanError";
+import { useBotsHome } from "../state/useBotsHome";
+import { HomeHint } from "../components/HomeHint";
 
 const CUSTOM = "__custom__";
 
@@ -39,7 +43,12 @@ export function ProvidersSection() {
   const { t } = useTranslation();
   const { client, conn, restartDaemon } = useDaemon();
   const native = isTauriRuntime();
-  const canView = native || client?.baseUrl === MOCK_BASE_URL;
+  const providerTarget = { connection: conn, baseUrl: client?.baseUrl };
+  const home = useBotsHome();
+  const onHome = home.target === "host";
+  // On a host-home the write goes through the bots' home (host administration), not the local CLI.
+  const canManage = onHome || (native && canManageProviders(providerTarget));
+  const canView = native || onHome || client?.baseUrl === MOCK_BASE_URL;
   const { dto, error: loadError, reload } = useProviders();
   const view = useMemo(() => providersView(dto), [dto]);
   const list = view.configured;
@@ -76,7 +85,7 @@ export function ProvidersSection() {
         setNeedsRestart(!reloaded);
       }
     } catch (e) {
-      setOutcome({ ok: false, text: e instanceof Error ? e.message : String(e) });
+      setOutcome({ ok: false, text: humanLine(e) });
     } finally {
       setBusy(false);
       await reload();
@@ -86,18 +95,19 @@ export function ProvidersSection() {
 
   const isCustom = choice === CUSTOM;
   const id = isCustom ? customId.trim() : choice;
-  const canAdd = native && id !== "" && (!isCustom || baseUrl.trim() !== "") && !busy;
+  const canAdd = canManage && id !== "" && (!isCustom || baseUrl.trim() !== "") && !busy;
 
   return (
     <Card padding="md" className={styles.card}>
       <div className={styles.info}>
-        <h2 className={styles.heading}>{t("settings.providers.title")}</h2>
+        <h2 className={styles.heading}>{t("settings.providers.title")} <HomeHint /></h2>
         <p className={formStyles.hint}>{t("settings.providers.description")}</p>
       </div>
       {!canView ? (
         <p className={formStyles.hint}>{t("settings.providers.nativeOnly")}</p>
       ) : (
         <>
+          {native && !canManage && !onHome ? <p className={formStyles.hint}>{t("settings.providers.localDaemonOnly")}</p> : null}
           {loadError ? <p className={formStyles.error}>{loadError}</p> : null}
           {list.length === 0 && !loadError ? (
             <p className={formStyles.hint}>{t("settings.providers.none")}</p>
@@ -141,10 +151,10 @@ export function ProvidersSection() {
                         <Button
                           size="sm"
                           variant="secondary"
-                          disabled={busy}
+                          disabled={busy || !canManage || onHome}
                           onClick={() =>
                             void run(
-                              async () => outcomeOf(await testProvider(p.id)),
+                              async () => outcomeOf(await testProvider(p.id, providerTarget)),
                               false
                             )
                           }
@@ -156,10 +166,13 @@ export function ProvidersSection() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          disabled={busy}
+                          disabled={busy || !canManage}
                           onClick={() =>
                             void run(
-                              async () => outcomeOf(await setDefaultProvider(p.id)),
+                              async () => {
+                                await home.setDefaultModel(p.id);
+                                return { ok: true, text: t("home.saved") };
+                              },
                               true
                             )
                           }
@@ -256,18 +269,13 @@ export function ProvidersSection() {
                 disabled={!canAdd}
                 onClick={() =>
                   void run(async () => {
-                    const o = outcomeOf(
-                      await addProvider({
-                        id,
-                        baseUrl: isCustom ? baseUrl.trim() : undefined,
-                        model: model.trim() || undefined,
-                        apiKey: apiKey || undefined
-                      })
-                    );
-                    if (o.ok) {
-                      setApiKey("");
-                    }
-                    return o;
+                    await home.saveProvider(id, {
+                      baseUrl: isCustom ? baseUrl.trim() : undefined,
+                      model: model.trim() || undefined,
+                      apiKey: apiKey || undefined
+                    });
+                    setApiKey("");
+                    return { ok: true, text: t("home.saved") };
                   }, true)
                 }
               >
@@ -331,7 +339,7 @@ function BotPermissions({ bot }: { bot: Bot }) {
       setDetail(await client.getBot(bot.id));
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     }
   }, [client, bot.id]);
 
@@ -347,7 +355,7 @@ function BotPermissions({ bot }: { bot: Bot }) {
       await client.revokeGrant(bot.id, target);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     }
   };
 
@@ -366,7 +374,15 @@ function BotPermissions({ bot }: { bot: Bot }) {
               <li
                 key={cat}
                 className={[styles.chip, styles[`chip_${d.decision}`]].join(" ")}
-                title={d.via_grant ? t("settings.permissions.viaGrant") : undefined}
+                title={
+                  d.scopes && d.scopes.length > 0
+                    ? t("settings.permissions.scopedAllow", {
+                        scopes: d.scopes.join(", ")
+                      })
+                    : d.via_grant
+                      ? t("settings.permissions.viaGrant")
+                      : undefined
+                }
               >
                 <span>{t(`botForm.category.${cat}`, cat)}</span>
                 <span className={styles.chipLevel}>
@@ -381,7 +397,10 @@ function BotPermissions({ bot }: { bot: Bot }) {
           ) : (
             <ul className={styles.list}>
               {eff.grants.map((g) => (
-                <li key={grantLabel(g.target)} className={styles.listRow}>
+                <li
+                  key={`${grantLabel(g.target)}:${g.computer ?? ""}:${g.inert ? "inert" : "live"}`}
+                  className={styles.listRow}
+                >
                   <span className={styles.rowMain}>
                     <span className={styles.rowName}>
                       {g.target.kind === "category"
@@ -392,6 +411,14 @@ function BotPermissions({ bot }: { bot: Bot }) {
                             name: g.target.name
                           })}
                     </span>
+                    {g.computer ? (
+                      <span className={styles.rowMeta}>{g.computer}</span>
+                    ) : null}
+                    {g.inert ? (
+                      <span className={styles.rowMeta}>
+                        {t("settings.permissions.inertGrant")}
+                      </span>
+                    ) : null}
                   </span>
                   <span className={styles.rowMeta}>
                     {new Date(g.granted_at_ms).toLocaleString()}
@@ -437,7 +464,7 @@ function WorkspacePolicy() {
       .getPolicy()
       .then(setPolicy)
       .catch((e: unknown) =>
-        setMessage({ ok: false, text: e instanceof Error ? e.message : String(e) })
+        setMessage({ ok: false, text: humanLine(e) })
       );
   }, [client]);
 
@@ -451,7 +478,7 @@ function WorkspacePolicy() {
       setPolicy(await client.putPolicy(input));
       setMessage({ ok: true, text: t("settings.permissions.workspace.saved") });
     } catch (e) {
-      setMessage({ ok: false, text: e instanceof Error ? e.message : String(e) });
+      setMessage({ ok: false, text: humanLine(e) });
     } finally {
       setBusy(false);
     }

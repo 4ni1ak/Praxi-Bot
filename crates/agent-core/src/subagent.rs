@@ -28,7 +28,8 @@ use serde_json::{Value, json};
 use storage::Run;
 use task_runtime::{RunState, Runtime};
 use tool_registry::{
-    Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError, ToolOutput, ToolSpec,
+    ContentClass, Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError, ToolOutput,
+    ToolSpec,
 };
 
 use crate::agent::{AgentLoop, Start};
@@ -40,7 +41,7 @@ use crate::shared::{ModelOut, RunCtx, STEP_MODEL, Shared, kind_for};
 /// Name of the tool.
 pub(crate) const SPAWN_SUBAGENT: &str = "spawn_subagent";
 /// A run at this depth may not spawn (top-level = 0, child = 1, grandchild = 2).
-pub(crate) const MAX_DEPTH: u32 = 2;
+pub const MAX_DEPTH: u32 = 2;
 /// Children one run may have running at once.
 pub(crate) const MAX_CHILDREN: usize = 3;
 /// `max_steps` of a child that does not ask for another value.
@@ -194,6 +195,9 @@ pub(crate) fn tool() -> Arc<dyn Tool> {
             effect: Effect::Read,
             category: PermissionCategory::Meta,
             platforms: vec![Platform::All],
+            // The child inherits the parent's taint; this spec does not itself
+            // read or send. The child's answer is folded back into the parent.
+            content: ContentClass::none(),
         },
     })
 }
@@ -339,6 +343,18 @@ impl TurnExecutor {
         }
         let state = self.wait_child(&rt, run.id, child).await?;
         let (text, is_error) = self.child_result(child, state);
+        // Copy the live exposure first. CLI calls and a child that is about
+        // to drop its context are already on this value; the step scan below
+        // covers a restart, where the context is already gone.
+        let live = sh
+            .runs
+            .lock()
+            .get(&child)
+            .map(|child_ctx| child_ctx.taint.lock().clone());
+        if let Some(live) = live {
+            ctx.taint.lock().inherit(&live);
+        }
+        crate::shared::absorb_run_history(&mut ctx.taint.lock(), sh, child, 0);
         if adopted && state.is_terminal() {
             // No `conclude` ran for a child that finished before the restart.
             let ev = finished_event(child, run.id, state.as_str(), &text, Some(call));
@@ -387,6 +403,11 @@ impl TurnExecutor {
                 Some(serde_json::to_value(&spec).map_err(|e| e.to_string())?),
             )
             .map_err(|e| e.to_string())?;
+        sh.bind_computer(id, &ctx.resolved_computer)
+            .map_err(|e| e.to_string())?;
+        sh.run_computers
+            .lock()
+            .insert(id, ctx.resolved_computer.clone());
         Ok((id, false))
     }
 
@@ -484,8 +505,11 @@ pub(crate) fn model_tokens(steps: &[storage::RunStep]) -> u64 {
         .filter(|s| s.name == STEP_MODEL)
         .filter_map(step_output::<ModelOut>)
         .filter_map(|m| m.usage)
-        .map(|u| u.prompt_tokens + u.completion_tokens)
-        .sum()
+        .fold(0_u64, |total, usage| {
+            total
+                .saturating_add(usage.prompt_tokens)
+                .saturating_add(usage.completion_tokens)
+        })
 }
 
 /// Tokens spent by every descendant of `run_id` (children, grandchildren, ...),
@@ -610,14 +634,14 @@ impl AgentLoop {
                 continue;
             }
             let live = self.rt.active_runs().contains(&kid.id);
-            if self.rt.cancel(kid.id).is_ok()
-                && !live
-                && let Some(pctx) = self.ctx_of(run_id)
-            {
-                self.sh.emit(
-                    &pctx,
-                    finished_event(kid.id, run_id, "cancelled", "cancelled", None),
-                );
+            if self.rt.cancel(kid.id).is_ok() {
+                crate::usage::finish(&self.sh, kid.id);
+                if !live && let Some(pctx) = self.ctx_of(run_id) {
+                    self.sh.emit(
+                        &pctx,
+                        finished_event(kid.id, run_id, "cancelled", "cancelled", None),
+                    );
+                }
             }
         }
     }

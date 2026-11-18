@@ -14,8 +14,8 @@ use secret_store::{Redactor, SecretRef, SecretStore, resolve};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tool_registry::{
-    ContentPart, Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError, ToolOutput,
-    ToolRegistry, ToolSpec,
+    ContentClass, ContentPart, Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError,
+    ToolOutput, ToolRegistry, ToolSpec,
 };
 
 use crate::error::OpenApiError;
@@ -252,6 +252,9 @@ fn tool_spec(op: &Operation, api: &ApiSpec, category: PermissionCategory) -> Too
         effect: effect_for(op.method),
         category,
         platforms: vec![Platform::All],
+        // Every operation contacts the API host (egress) and the response can
+        // be both private account data and untrusted third-party text.
+        content: ContentClass::all().with_external_metadata(),
     }
 }
 
@@ -567,6 +570,12 @@ impl Tool for OpenApiTool {
         &self.spec
     }
 
+    fn egress_host(&self, _input: &Value) -> Option<String> {
+        Url::parse(&self.shared.base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+    }
+
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         let rb = self.build(input)?;
         let mut redactor = Redactor::new();
@@ -673,6 +682,7 @@ impl Tool for OpenApiTool {
                 data: Value::Object(out),
             }],
             spill: None,
+            exposure: None,
         })
     }
 }

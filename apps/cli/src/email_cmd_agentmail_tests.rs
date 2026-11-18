@@ -46,11 +46,17 @@ async fn daemon(server: &MockServer) -> (tempfile::TempDir, Arc<dyn SecretStore>
     )
     .unwrap();
     let state = AppState::new(agent, storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(crate::client::TEST_OWNER_KEY.into());
     state.set_email(host);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(daemon_api::serve(listener, state, std::future::pending()));
-    (dir, store, Client::new(&url, TOKEN.to_owned()))
+    (
+        dir,
+        store,
+        Client::new(&url, TOKEN.to_owned())
+            .with_owner_key(Some(crate::client::TEST_OWNER_KEY.to_owned())),
+    )
 }
 
 #[test]

@@ -77,7 +77,9 @@ struct Disk {
 /// How long a takeover may stay `Acquiring` (drain 10 s plus the activation).
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(20);
 
-pub(super) fn restore(st: &mut State, path: &Path) {
+/// Returns `true` when the file held a stale `human_driving` latch that was healed.
+pub(super) fn restore(st: &mut State, path: &Path) -> bool {
+    let mut healed = false;
     match std::fs::read(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Ok(bytes) => {
@@ -100,6 +102,22 @@ pub(super) fn restore(st: &mut State, path: &Path) {
                     disk.latch_by_local && disk.owned.is_none() && disk.latched.is_some();
                 st.latched = disk.latched;
                 st.owned = disk.owned;
+                match (st.latched, st.owned.is_some()) {
+                    // The reporter of an ownerless `human_driving` claim is gone after a
+                    // restart: heal the stale file (observation must not stay refused).
+                    (Some(ControlMode::HumanDriving), false) => {
+                        st.latched = None;
+                        st.latch_by_local = false;
+                        healed = true;
+                    }
+                    // A takeover that was running when the daemon stopped is over: actions stay
+                    // paused until the explicit recovery, but nobody is typing any more.
+                    (Some(ControlMode::HumanDriving), true) => {
+                        st.latched = Some(ControlMode::Paused);
+                        healed = true;
+                    }
+                    _ => {}
+                }
                 st.epoch = disk.epoch;
                 st.releases = disk.releases;
                 // Only a latch that had a takeover owner needs explicit recovery;
@@ -138,15 +156,19 @@ pub(super) fn restore(st: &mut State, path: &Path) {
                 // reset is decided from the reason read before that.
                 st.reset_pending = reset_pending && owes_reset;
                 st.audit_pending = audit_pending && overridden;
-                return;
+                return healed;
             }
-            // Old scalar latch is deliberately ownerless after restart.
-            st.latched = Some(
-                serde_json::from_slice::<ControlMode>(&bytes)
-                    .ok()
-                    .filter(|m| super::refused_while(*m).is_some())
-                    .unwrap_or(ControlMode::Paused),
-            );
+            // Old scalar latch is deliberately ownerless after restart; an old
+            // `human_driving` one is stale (its reporter is gone) and is dropped.
+            let old = serde_json::from_slice::<ControlMode>(&bytes)
+                .ok()
+                .filter(|m| super::refused_while(*m).is_some())
+                .unwrap_or(ControlMode::Paused);
+            if old == ControlMode::HumanDriving {
+                healed = true;
+            } else {
+                st.latched = Some(old);
+            }
             // No owner is recorded: the local user may release it.
             st.require_recovery = false;
         }
@@ -156,6 +178,7 @@ pub(super) fn restore(st: &mut State, path: &Path) {
             st.persistence_error = true;
         }
     }
+    healed
 }
 pub(super) fn persist(st: &State, path: &Path) -> std::io::Result<()> {
     use std::io::Write;
@@ -1063,7 +1086,7 @@ mod tests {
     }
     #[test]
     fn old_format_corrupt_latch_and_restart_stay_paused_and_takeover_needs_privileged_recovery() {
-        for bytes in [b"\"human_driving\"".as_slice(), b"corrupt".as_slice()] {
+        for bytes in [b"\"paused\"".as_slice(), b"corrupt".as_slice()] {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("control-latch.json");
             std::fs::write(&path, bytes).unwrap();
@@ -1200,7 +1223,8 @@ mod tests {
     }
     #[test]
     fn restored_ownerless_pause_is_releasable_without_any_view_session() {
-        for mode in [ControlMode::Paused, ControlMode::HumanDriving] {
+        {
+            let mode = ControlMode::Paused;
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("control-latch.json");
             ControlHub::with_latch_file(super::super::ControlConfig::default(), path.clone())

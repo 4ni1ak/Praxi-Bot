@@ -33,6 +33,10 @@ pub enum SchedulerError {
     #[error("schedule {0} is disabled")]
     Disabled(String),
 
+    /// The schedule moved to a server and is frozen on this computer.
+    #[error("schedule {0} is frozen: it moved to a server")]
+    Frozen(String),
+
     /// Schedule already has a run in flight (per-schedule concurrency limit is 1).
     #[error("schedule {0} is already running")]
     Busy(String),

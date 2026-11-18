@@ -23,9 +23,10 @@ import { useToast } from "../../components/Toast";
 import { applyWebSearchUpdate } from "../../lib/webSearchDraft";
 import { useDaemon } from "../../state/DaemonContext";
 import styles from "./WebSearchCard.module.css";
+import { humanLine } from "../../lib/humanError";
 
 function errorText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return humanLine(e);
 }
 
 type KeylessBackendId = "duckduckgo" | "duckduckgo_lite" | "bing";

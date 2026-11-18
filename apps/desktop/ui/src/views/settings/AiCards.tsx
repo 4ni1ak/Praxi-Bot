@@ -6,25 +6,31 @@ import { ModelPicker } from "../../components/ModelPicker";
 import { useToast } from "../../components/Toast";
 import { modelGroups } from "../../lib/modelPicker";
 import { defaultModelRef } from "../../lib/providerView";
-import { setDefaultProvider } from "../../lib/providers";
+import { canManageProviders } from "../../lib/providerConnection";
 import { isTauriRuntime } from "../../overlay/events";
 import { useDaemon } from "../../state/DaemonContext";
 import { useProviders } from "../../state/useProviders";
 import pageStyles from "./AiPage.module.css";
 import { ProvidersSection } from "../SettingsSections";
 import { ApiKeyPaste } from "./ApiKeyPaste";
-import { DetectedAccountsBlock } from "./DetectedAccountsBlock";
+import { EnginesCard } from "./HomeCards";
+import { KnowledgeCard } from "./KnowledgeCard";
 import type { CardDef } from "./types";
+import { humanLine } from "../../lib/humanError";
+import { useBotsHome } from "../../state/useBotsHome";
+import { HomeHint } from "../../components/HomeHint";
 
 /** Default provider + model: a searchable dropdown grouped by provider. */
 function DefaultModelRow() {
   const { t } = useTranslation();
   const toast = useToast();
-  const { client } = useDaemon();
+  const { client, conn } = useDaemon();
   const { dto, reload } = useProviders();
   const [override, setOverride] = useState<string | null>(null);
   const mock = client?.baseUrl === MOCK_BASE_URL;
-  const canChange = isTauriRuntime() || mock;
+  const providerTarget = { connection: conn, baseUrl: client?.baseUrl };
+  const home = useBotsHome();
+  const canChange = (isTauriRuntime() && canManageProviders(providerTarget)) || mock || home.target === "host";
 
   const current = useMemo(() => defaultModelRef(dto), [dto]);
   const groups = useMemo(() => modelGroups(dto, current), [dto, current]);
@@ -38,15 +44,12 @@ function DefaultModelRow() {
       return;
     }
     try {
-      const r = await setDefaultProvider(provider, model);
-      if (r.code !== 0) {
-        throw new Error((r.stderr || r.stdout).trim());
-      }
-      await client?.reloadProviders().catch(() => undefined);
+      await home.setDefaultModel(provider, model);
+      await client?.reloadProviders().catch(() => {});
       await reload();
       toast.show(t("modelPicker.switchedDefault", { model: ref }), "success");
     } catch (e) {
-      toast.show(e instanceof Error ? e.message : String(e), "danger");
+      toast.show(humanLine(e), "danger");
     }
   };
 
@@ -54,6 +57,7 @@ function DefaultModelRow() {
     <section className={pageStyles.sec} aria-labelledby="ai-default-h">
       <div className={pageStyles.head}>
         <h3 id="ai-default-h">{t("settingsModal.ai.defaultModel.heading")}</h3>
+        <HomeHint />
       </div>
       <div className={`${pageStyles.card} ${pageStyles.item}`}>
         <div className={pageStyles.text}>
@@ -61,7 +65,7 @@ function DefaultModelRow() {
           <span className={pageStyles.sub}>
             {canChange
               ? t("settingsModal.ai.defaultModel.description")
-              : t("settings.providers.nativeOnly")}
+              : t("settings.providers.localDaemonOnly")}
           </span>
         </div>
         <ModelPicker
@@ -89,6 +93,7 @@ function AdvancedProviders() {
 /** Cards of the "AI" section: found on this computer, API key, default, advanced. */
 export function aiCards(t: TFunction): CardDef[] {
   return [
+    { id: "knowledge", section: "ai", kind: "block", title: t("knowledge.title"), description: t("knowledge.description"), keywords: "rag memory knowledge kaynak hafiza bilgi brain beyin", node: <KnowledgeCard /> },
     {
       id: "detectedAccounts",
       section: "ai",
@@ -96,7 +101,7 @@ export function aiCards(t: TFunction): CardDef[] {
       title: t("settingsModal.ai.detected.title"),
       description: t("settingsModal.ai.detected.description"),
       keywords: "cli claude codex cursor gemini opencode chatgpt account hesap algilanan bulunan",
-      node: <DetectedAccountsBlock />
+      node: <EnginesCard />
     },
     {
       id: "keys",

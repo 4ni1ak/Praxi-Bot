@@ -1,20 +1,22 @@
 //! `bot doctor`: environment self-check with fix hints.
 //!
-//! [`run_checks`] is pure over a [`DoctorEnv`] (everything that touches the
-//! host, such as the secret store, the browser lookup and the network, is
-//! injected), so tests drive it with temp dirs. Secrets are never read into
-//! the output: only their presence is checked, and the `--report` bundle is
-//! redacted ([`redact`]).
+//! The checks shared with the daemon (`GET /v1/doctor`) live in
+//! [`daemon_api::doctor`]; this module adds the ones only a terminal run can
+//! do (port probe, browser launch, `--online` probes, MCP / web / Telegram
+//! files) and renders the same typed [`Check`] data.  [`run_checks`] is pure
+//! over a [`DoctorEnv`] (everything that touches the host is injected), so
+//! tests drive it with temp dirs. Secrets are never read into the output:
+//! only their presence is checked, and the `--report` bundle is redacted
+//! ([`redact`]).
 
-use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use daemon_api::doctor as core;
+pub use daemon_api::doctor::{Check, Status, render_table, to_json};
 use mcp_bridge::{McpConfigStore, TomlFileStore};
-use provider_catalog::{
-    Auth, Catalog, OpenAiCompatConfig, ProviderConfig, config_path, test_connection,
-};
+use provider_catalog::{Catalog, OpenAiCompatConfig, ProviderConfig, config_path, test_connection};
 use secret_store::SecretStore;
 use serde_json::{Value, json};
 
@@ -22,80 +24,6 @@ use crate::Result;
 
 /// File name of the MCP server configuration in the data dir.
 pub const MCP_FILE: &str = "mcp.toml";
-/// Free space below which the disk check warns.
-const DISK_WARN_BYTES: u64 = 1 << 30;
-/// Free space below which the disk check fails.
-const DISK_FAIL_BYTES: u64 = 100 << 20;
-
-/// Result class of one check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Status {
-    /// Fine.
-    Ok,
-    /// Works, but worth a look (optional part missing, low space).
-    Warn,
-    /// Broken; the bot will not work properly.
-    Fail,
-}
-
-impl Status {
-    fn symbol(self) -> &'static str {
-        match self {
-            Self::Ok => "\u{2713}",
-            Self::Warn => "!",
-            Self::Fail => "\u{2717}",
-        }
-    }
-
-    fn word(self) -> &'static str {
-        match self {
-            Self::Ok => "ok",
-            Self::Warn => "warn",
-            Self::Fail => "fail",
-        }
-    }
-}
-
-/// One line of the report.
-#[derive(Debug, Clone)]
-pub struct Check {
-    /// Short name (`data dir`, `providers`, ...).
-    pub name: &'static str,
-    /// Result class.
-    pub status: Status,
-    /// What was found.
-    pub detail: String,
-    /// How to fix it (for warn / fail).
-    pub hint: Option<String>,
-}
-
-impl Check {
-    fn new(name: &'static str, status: Status, detail: impl Into<String>) -> Self {
-        Self {
-            name,
-            status,
-            detail: detail.into(),
-            hint: None,
-        }
-    }
-
-    fn ok(name: &'static str, detail: impl Into<String>) -> Self {
-        Self::new(name, Status::Ok, detail)
-    }
-
-    fn warn(name: &'static str, detail: impl Into<String>, hint: impl Into<String>) -> Self {
-        Self::new(name, Status::Warn, detail).hint(hint)
-    }
-
-    fn fail(name: &'static str, detail: impl Into<String>, hint: impl Into<String>) -> Self {
-        Self::new(name, Status::Fail, detail).hint(hint)
-    }
-
-    fn hint(mut self, h: impl Into<String>) -> Self {
-        self.hint = Some(h.into());
-        self
-    }
-}
 
 /// Everything the checks look at.
 pub struct DoctorEnv<'a> {
@@ -113,29 +41,175 @@ pub struct DoctorEnv<'a> {
     pub browser: Option<PathBuf>,
     /// Discovery failure for an unusable configured or snap-only browser.
     pub browser_error: Option<String>,
+    /// Coding CLIs found on this machine (`None` = detection did not run).
+    pub detected: Option<Vec<cli_provider::DetectedCli>>,
+    /// Capabilities of the desktop automation backend, if one loads.
+    pub desktop: Option<desktop_api::Capabilities>,
 }
 
-/// Run every check.
+/// Run every check.  The order of the original `bot doctor` lines is kept;
+/// checks added later are appended.
 #[must_use]
 pub fn run_checks(env: &DoctorEnv<'_>) -> Vec<Check> {
+    let online: core::OnlineProbe<'_> = &online_test;
+    let detected = env.detected.as_deref();
     vec![
-        check_data_dir(env.data_dir),
-        check_config(env.data_dir),
-        check_secrets(env),
-        check_providers(env),
-        check_catalog(env),
+        core::check_host(env.data_dir),
+        check_peer_relay(env),
+        check_host_display(env),
+        check_free_ram(),
+        core::check_data_dir(env.data_dir),
+        core::check_config(env.data_dir),
+        core::check_secrets(&env.store),
+        core::check_providers(&core::ProviderInputs {
+            data_dir: env.data_dir,
+            catalog: env.catalog.clone(),
+            store: &env.store,
+            detected,
+            online: env.online.then_some(online),
+        }),
+        core::check_catalog(env.data_dir, &env.catalog),
         check_daemon(env.data_dir, env.port),
         env.browser_error.as_ref().map_or_else(
             || check_browser(env.browser.as_deref()),
-            |e| Check::fail("browser", e, "install a non-snap browser or set BOT_BROWSER_PATH; use `sudo praxi doctor` for service-context validation"),
+            |e| Check::fail("browser", "browser", e, "install a non-snap browser or set BOT_BROWSER_PATH; use `sudo praxi doctor` for service-context validation"),
         ),
         check_mcp(env.data_dir),
         check_web(env),
-        check_schedule_tools(env.data_dir),
-        check_disk(env.data_dir),
+        core::check_schedule_tools(env.data_dir),
+        core::check_disk(env.data_dir),
         check_resources(),
         check_telegram(env),
+        core::check_unicode_path(env.data_dir),
+        core::check_cli_accounts(detected),
+        core::check_peer_link(env.data_dir, &core::LinkRuntime::Unknown),
+        core::check_desktop_automation(std::env::consts::OS, env.desktop.as_ref()),
+        core::check_clock(std::time::SystemTime::now(), core::newest_mtime(env.data_dir)),
     ]
+}
+
+fn check_host_display(env: &DoctorEnv<'_>) -> Check {
+    if !daemon_api::host::HostConfig::load(env.data_dir)
+        .is_ok_and(|c| c.mode == daemon_api::host::HostMode::Host)
+    {
+        return Check::ok("host_display", "host display", "not in host mode");
+    }
+    if browser_cdp::host::has_display() && env.browser.is_some() && env.browser_error.is_none() {
+        Check::ok(
+            "host_display",
+            "host display",
+            "display reachable and browser discovered; see browser launch check",
+        )
+    } else {
+        Check::warn(
+            "host_display",
+            "host display",
+            "host display or usable browser missing",
+            "configure Xvfb :99 and a non-snap Chromium; run doctor in the service environment",
+        )
+    }
+}
+
+fn check_free_ram() -> Check {
+    #[cfg(target_os = "linux")]
+    {
+        let available = std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|text| {
+                text.lines()
+                    .find(|l| l.starts_with("MemAvailable:"))
+                    .and_then(|line| line.split_whitespace().nth(1)?.parse::<u64>().ok())
+            });
+        if let Some(kib) = available {
+            let mib = kib / 1024;
+            return if mib < 512 {
+                Check::warn(
+                    "free_ram",
+                    "free RAM",
+                    format!("{mib} MiB available"),
+                    "stop unused processes or lower limits.max_computer_runs in host.toml",
+                )
+            } else {
+                Check::ok("free_ram", "free RAM", format!("{mib} MiB available"))
+            };
+        }
+    }
+    Check::warn(
+        "free_ram",
+        "free RAM",
+        "available memory is not exposed by this platform probe",
+        "check available RAM with the operating system monitor",
+    )
+}
+
+fn check_peer_relay(env: &DoctorEnv<'_>) -> Check {
+    if !env.online {
+        return Check::warn(
+            "peer_relay",
+            "peer relay",
+            "external reachability not probed",
+            "run bot doctor --online to probe the daemon through its advertised relay",
+        );
+    }
+    let probe = || -> Result<()> {
+        let token = daemon_api::read_token(env.data_dir)?;
+        let rt = crate::current_thread_runtime()?;
+        rt.block_on(async {
+            let client =
+                crate::client::Client::new(&format!("http://127.0.0.1:{}", env.port), token);
+            let status = client
+                .request(reqwest::Method::GET, "/v1/host", None)
+                .await?;
+            let key = peer_network::key_from_string(
+                status["endpoint_id"]
+                    .as_str()
+                    .ok_or("peer endpoint disabled")?,
+            )?;
+            let peer_network::RelayConfig::Custom(relay) = status["relay_url"]
+                .as_str()
+                .ok_or("no relay advertised")?
+                .parse::<peer_network::RelayConfig>()?
+            else {
+                return Err("invalid advertised relay".into());
+            };
+            // A throwaway identity cannot redeem invites. An authenticated pairing
+            // rejection proves the endpoint answers via the advertised relay route.
+            let dir = tempfile::tempdir()?;
+            let mut config = peer_network::PeerConfig::new(dir.path().to_path_buf());
+            config.local_role = peer_network::Role::Node;
+            config.relay = peer_network::RelayConfig::Custom(relay.clone());
+            let net = peer_network::PeerNetwork::start(config, None).await?;
+            let ticket = peer_network::PairTicket {
+                addr: key.into(),
+                secret: "0".repeat(64),
+                code: "000000".into(),
+                role: peer_network::Role::Node,
+            };
+            let ticket = peer_network::PairTicket {
+                addr: ticket.addr.with_relay_url(relay),
+                ..ticket
+            };
+            let result = tokio::time::timeout(Duration::from_secs(15), net.pair(&ticket)).await;
+            net.shutdown().await;
+            match result {
+                Ok(Err(peer_network::PeerError::PairingRejected(_))) => Ok(()),
+                _ => Err("endpoint did not answer the relay probe".into()),
+            }
+        })
+    };
+    match probe() {
+        Ok(()) => Check::ok(
+            "peer_relay",
+            "peer relay",
+            "daemon pairing endpoint answered using its advertised relay",
+        ),
+        Err(e) => Check::warn(
+            "peer_relay",
+            "peer relay",
+            e.to_string(),
+            "check outbound relay access and run bot serve --peer; no inbound port is required",
+        ),
+    }
 }
 
 fn check_resources() -> Check {
@@ -156,141 +230,7 @@ fn check_resources() -> Check {
         }
     }
     detail.push_str("; doctor process only; measure the complete daemon + Xvfb + Chromium process tree on the host");
-    Check::ok("resources", detail)
-}
-
-fn check_data_dir(dir: &Path) -> Check {
-    const N: &str = "data dir";
-    if !dir.exists() {
-        return Check::warn(
-            N,
-            format!("{} does not exist yet", dir.display()),
-            "it is created by `bot setup` or `bot serve`",
-        );
-    }
-    let probe = dir.join(format!(".doctor-probe-{}", std::process::id()));
-    match std::fs::write(&probe, b"ok").and_then(|()| std::fs::remove_file(&probe)) {
-        Ok(()) => Check::ok(N, format!("{} (writable)", dir.display())),
-        Err(e) => Check::fail(
-            N,
-            format!("{} is not writable: {e}", dir.display()),
-            "fix the folder permissions or pass another --data-dir",
-        ),
-    }
-}
-
-fn check_config(dir: &Path) -> Check {
-    const N: &str = "config";
-    let path = config_path(dir);
-    if !path.exists() {
-        return Check::warn(
-            N,
-            "providers.toml not found",
-            "run `bot setup` to add a provider",
-        );
-    }
-    match ProviderConfig::load(&path) {
-        Ok(c) => Check::ok(
-            N,
-            format!("providers.toml parses ({} provider(s))", c.providers.len()),
-        ),
-        Err(e) => Check::fail(
-            N,
-            format!("providers.toml: {e}"),
-            "fix the file by hand or move it away and run `bot setup`",
-        ),
-    }
-}
-
-fn check_secrets(env: &DoctorEnv<'_>) -> Check {
-    const N: &str = "secret backend";
-    match &env.store {
-        Ok((store, kind)) => match store.list_names() {
-            Ok(names) => Check::ok(N, format!("{kind} ({} secret(s))", names.len())),
-            Err(e) => Check::fail(
-                N,
-                format!("{kind}: {e}"),
-                "check BOT_SECRETS_BACKEND / BOT_SECRETS_PASSPHRASE",
-            ),
-        },
-        Err(e) => Check::fail(
-            N,
-            e.clone(),
-            "set BOT_SECRETS_PASSPHRASE for the encrypted file, or use BOT_SECRETS_BACKEND=keyring",
-        ),
-    }
-}
-
-fn check_providers(env: &DoctorEnv<'_>) -> Check {
-    const N: &str = "providers";
-    let Ok(cfg) = ProviderConfig::load(&config_path(env.data_dir)) else {
-        return Check::warn(N, "no readable provider config", "see the config check");
-    };
-    let enabled: Vec<_> = cfg.providers.iter().filter(|p| p.enabled).collect();
-    if enabled.is_empty() {
-        return Check::fail(
-            N,
-            "setup required: no enabled provider",
-            "run `bot setup` or `bot providers add`",
-        );
-    }
-    let mut problems = Vec::new();
-    let mut notes = Vec::new();
-    for p in &enabled {
-        let entry = p.custom.clone().or_else(|| {
-            env.catalog
-                .as_ref()
-                .ok()
-                .and_then(|c| c.get(&p.id).cloned())
-        });
-        let Some(entry) = entry else {
-            problems.push(format!("{}: not in the catalog", p.id));
-            continue;
-        };
-        let key_ok = match (&p.key, &entry.auth) {
-            (Some(r), _) => match &env.store {
-                Ok((s, _)) => s.get(r.name()).ok().flatten().is_some(),
-                Err(_) => false,
-            },
-            (None, Auth::None) => true,
-            (None, Auth::ApiKeyEnv(var)) => std::env::var(var).is_ok_and(|v| !v.is_empty()),
-        };
-        if !key_ok {
-            problems.push(format!("{}: API key not available", p.id));
-            continue;
-        }
-        if env.online {
-            match &env.store {
-                Ok((s, _)) => match online_test(p, &entry, *s) {
-                    Ok(n) => notes.push(format!("{}: reachable ({n} models)", p.id)),
-                    Err(e) => problems.push(format!("{}: {e}", p.id)),
-                },
-                Err(_) => problems.push(format!("{}: secret store unavailable", p.id)),
-            }
-        } else {
-            notes.push(format!("{}: configured", p.id));
-        }
-    }
-    let detail = notes
-        .iter()
-        .chain(problems.iter())
-        .cloned()
-        .collect::<Vec<_>>()
-        .join("; ");
-    if problems.is_empty() {
-        let c = Check::ok(N, detail);
-        if env.online {
-            c
-        } else {
-            c.hint("add --online to test the connections")
-        }
-    } else {
-        Check::fail(
-            N,
-            detail,
-            "`bot secrets set provider.<id>.api_key` or `bot providers add <id>` to fix the key",
-        )
-    }
+    Check::ok("resources", "resources", detail)
 }
 
 fn online_test(
@@ -318,50 +258,8 @@ fn online_test(
     .map_err(|e| e.to_string())
 }
 
-fn check_catalog(env: &DoctorEnv<'_>) -> Check {
-    const N: &str = "model catalog";
-    let catalog = match &env.catalog {
-        Ok(c) => c,
-        Err(e) => {
-            return Check::fail(
-                N,
-                e.clone(),
-                "fix or unset BOT_CATALOG_DIR to use the built-in catalog",
-            );
-        }
-    };
-    if catalog.is_empty() {
-        return Check::fail(N, "catalog is empty", "unset BOT_CATALOG_DIR");
-    }
-    let n_models: usize = catalog.all().map(|e| e.models.len()).sum();
-    let detail = format!("{} provider(s), {n_models} known model(s)", catalog.len());
-    if let Ok(cfg) = ProviderConfig::load(&config_path(env.data_dir))
-        && let Some(def) = cfg.effective_default()
-    {
-        match &def.default_model {
-            None => {
-                return Check::warn(
-                    N,
-                    format!("{detail}; default provider {} has no model", def.id),
-                    "`bot providers default <id> --model <model>`",
-                );
-            }
-            Some(m) => {
-                let entry = def.custom.as_ref().or_else(|| catalog.get(&def.id));
-                if entry.is_some_and(|e| !e.models.is_empty() && e.model(m).is_none()) {
-                    return Check::warn(
-                        N,
-                        format!("{detail}; default model {m} is not in the catalog"),
-                        "prices and limits are unknown for it; check the model id",
-                    );
-                }
-            }
-        }
-    }
-    Check::ok(N, detail)
-}
-
 fn check_daemon(dir: &Path, port: u16) -> Check {
+    const ID: &str = "daemon";
     const N: &str = "daemon";
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let token = daemon_api::token_path(dir);
@@ -374,6 +272,7 @@ fn check_daemon(dir: &Path, port: u16) -> Check {
     let up = TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok();
     if !up {
         return Check::warn(
+            ID,
             N,
             format!("not running on port {port}; {token_note}"),
             "start it with `bot serve`",
@@ -381,13 +280,19 @@ fn check_daemon(dir: &Path, port: u16) -> Check {
     }
     let health = daemon_health(port);
     match (health, token_bad) {
-        (Some(v), false) => Check::ok(N, format!("running on port {port} (v{v}); {token_note}")),
+        (Some(v), false) => Check::ok(
+            ID,
+            N,
+            format!("running on port {port} (v{v}); {token_note}"),
+        ),
         (Some(_), true) => Check::fail(
+            ID,
             N,
             format!("running on port {port}; {token_note}"),
             "delete the api-token file and restart `bot serve`",
         ),
         (None, _) => Check::fail(
+            ID,
             N,
             format!("port {port} is in use but does not answer like the daemon"),
             "stop the other program or use --port / BOT_PORT",
@@ -415,11 +320,13 @@ fn daemon_health(port: u16) -> Option<String> {
 }
 
 fn check_browser(found: Option<&Path>) -> Check {
+    const ID: &str = "browser";
     const N: &str = "browser";
     match found {
         Some(p) => {
             if browser_cdp::launch::is_snap_browser(p) {
                 return Check::fail(
+                    ID,
                     N,
                     "snap browser is unsupported under the hardened service",
                     "install non-snap Chrome/Chromium or set BOT_BROWSER_PATH",
@@ -448,6 +355,7 @@ fn check_browser(found: Option<&Path>) -> Check {
                 });
             match result {
                 Ok(()) => Check::ok(
+                    ID,
                     N,
                     format!(
                         "{} (headless launch passed in current user/env)",
@@ -455,6 +363,7 @@ fn check_browser(found: Option<&Path>) -> Check {
                     ),
                 ),
                 Err(e) => Check::fail(
+                    ID,
                     N,
                     format!("{}: {e}", p.display()),
                     "install a non-snap browser or set BOT_BROWSER_PATH; on systemd use `sudo praxi doctor` to probe with the service user, environment and hardening",
@@ -462,6 +371,7 @@ fn check_browser(found: Option<&Path>) -> Check {
             }
         }
         None => Check::warn(
+            ID,
             N,
             "no usable non-snap browser found (snap-only installs are unsupported)",
             "install a non-snap Chrome/Chromium or set BOT_BROWSER_PATH",
@@ -470,34 +380,15 @@ fn check_browser(found: Option<&Path>) -> Check {
 }
 
 fn check_mcp(dir: &Path) -> Check {
+    const ID: &str = "mcp_config";
     const N: &str = "mcp config";
     let path = dir.join(MCP_FILE);
     if !path.exists() {
-        return Check::ok(N, "no MCP servers configured");
+        return Check::ok(ID, N, "no MCP servers configured");
     }
     match TomlFileStore::new(&path).load() {
-        Ok(s) => Check::ok(N, format!("{} server(s)", s.len())),
-        Err(e) => Check::fail(N, e.to_string(), format!("fix {}", path.display())),
-    }
-}
-
-/// `schedule tools`: whether `schedule.toml` is usable. A broken one switches
-/// the bots' schedule tools off (they never fall back to looser defaults).
-fn check_schedule_tools(dir: &Path) -> Check {
-    const N: &str = "schedule tools";
-    match daemon_api::load_schedule_limits(dir) {
-        Ok(l) => Check::ok(
-            N,
-            format!(
-                "max {} per bot, minimum interval {} s",
-                l.max_per_bot, l.min_interval_secs
-            ),
-        ),
-        Err(e) => Check::fail(
-            N,
-            format!("{e}; schedule tools are disabled until it is fixed"),
-            format!("fix or delete {}", dir.join("schedule.toml").display()),
-        ),
+        Ok(s) => Check::ok(ID, N, format!("{} server(s)", s.len())),
+        Err(e) => Check::fail(ID, N, e.to_string(), format!("fix {}", path.display())),
     }
 }
 
@@ -520,6 +411,7 @@ fn web_probe_timeout(cfg: &web_tools::WebToolsConfig, backend_count: usize) -> D
 /// whether a live search answers. A failing probe is a warning, never a fail:
 /// the bot still works without web search.
 fn check_web(env: &DoctorEnv<'_>) -> Check {
+    const ID: &str = "web_search";
     const N: &str = "web search";
     let (file, mut notes) = crate::serve::load_web_file(env.data_dir);
     // The doctor holds the store by reference only: copy the Brave / Tavily keys
@@ -560,7 +452,7 @@ fn check_web(env: &DoctorEnv<'_>) -> Check {
     };
     let hint = "configure Brave, Tavily, or SearXNG in Settings -> Web search or <data_dir>/web.toml (see docs/guide/web.md)";
     if !env.online {
-        let c = Check::ok(N, detail("not probed".into()));
+        let c = Check::ok(ID, N, detail("not probed".into()));
         return if notes.is_empty() {
             c.hint("add --online to test that a search answers")
         } else {
@@ -573,7 +465,7 @@ fn check_web(env: &DoctorEnv<'_>) -> Check {
     }
     match probe_web_search(&cfg) {
         Ok(backend) => {
-            let c = Check::ok(N, detail(format!("{backend} answered")));
+            let c = Check::ok(ID, N, detail(format!("{backend} answered")));
             if notes.is_empty() {
                 c
             } else {
@@ -584,7 +476,7 @@ fn check_web(env: &DoctorEnv<'_>) -> Check {
                 .hint(hint)
             }
         }
-        Err(e) => Check::warn(N, detail(format!("no answer: {e}")), hint),
+        Err(e) => Check::warn(ID, N, detail(format!("no answer: {e}")), hint),
     }
 }
 
@@ -620,45 +512,15 @@ fn probe_web_search(cfg: &web_tools::WebToolsConfig) -> std::result::Result<Stri
     })
 }
 
-fn check_disk(dir: &Path) -> Check {
-    const N: &str = "disk space";
-    let mut probe = dir;
-    while !probe.exists() {
-        match probe.parent() {
-            Some(p) if !p.as_os_str().is_empty() => probe = p,
-            _ => break,
-        }
-    }
-    match fs4::available_space(probe) {
-        Ok(free) => {
-            let detail = format!("{} MiB free", free >> 20);
-            if free < DISK_FAIL_BYTES {
-                Check::fail(
-                    N,
-                    detail,
-                    "free some disk space; runs and logs cannot be saved",
-                )
-            } else if free < DISK_WARN_BYTES {
-                Check::warn(N, detail, "less than 1 GiB left; free some space")
-            } else {
-                Check::ok(N, detail)
-            }
-        }
-        Err(e) => Check::warn(
-            N,
-            format!("cannot read free space: {e}"),
-            "ignore if unsure",
-        ),
-    }
-}
-
 fn check_telegram(env: &DoctorEnv<'_>) -> Check {
+    const ID: &str = "telegram";
     const N: &str = "telegram";
     let path = env.data_dir.join(crate::channels::CHANNELS_FILE);
     if path.exists()
         && std::fs::read_to_string(&path).map_or(true, |s| s.parse::<toml::Table>().is_err())
     {
         return Check::fail(
+            ID,
             N,
             "channels.toml does not parse",
             "delete it, then `bot channels telegram setup`",
@@ -671,97 +533,56 @@ fn check_telegram(env: &DoctorEnv<'_>) -> Check {
     };
     match (configured, enabled) {
         (None, _) => Check::warn(
+            ID,
             N,
             "cannot read the bot token (secret store unavailable)",
             "see the secret backend check",
         ),
-        (Some(false), _) => Check::ok(N, "not configured (optional)"),
+        (Some(false), _) => Check::ok(ID, N, "not configured (optional)"),
         (Some(true), true) => {
             let paired = crate::channels::paired_users_on_disk(env.data_dir);
             if paired == 0 {
                 Check::warn(
+                    ID,
                     N,
                     "token stored, enabled, nobody paired",
                     "run `bot channels telegram pair` and send /pair to the bot",
                 )
             } else {
-                Check::ok(N, format!("enabled, {paired} paired user(s)"))
+                Check::ok(ID, N, format!("enabled, {paired} paired user(s)"))
             }
         }
-        (Some(true), false) => Check::ok(N, "token stored, channel switched off"),
+        (Some(true), false) => Check::ok(ID, N, "token stored, channel switched off"),
     }
 }
 
-/// Render the checks as a table.
-pub fn render_table(checks: &[Check], out: &mut dyn Write) -> std::io::Result<()> {
-    let w = checks.iter().map(|c| c.name.len()).max().unwrap_or(0);
-    for c in checks {
-        writeln!(out, " {}  {:w$}  {}", c.status.symbol(), c.name, c.detail)?;
-        if let (Some(h), true) = (&c.hint, c.status != Status::Ok) {
-            writeln!(out, "    {:w$}  fix: {h}", "")?;
-        }
-    }
-    let fails = checks.iter().filter(|c| c.status == Status::Fail).count();
-    let warns = checks.iter().filter(|c| c.status == Status::Warn).count();
-    writeln!(
-        out,
-        "\n{fails} failed, {warns} warning(s), {} ok",
-        checks.len() - fails - warns
+/// Pattern masking only (no secret list): the home directory, e-mail
+/// addresses, user / host names and anything that looks like a key or token.
+#[must_use]
+#[cfg(test)]
+pub fn redact(s: &str) -> String {
+    let home = core::home_dir();
+    core::redact_report(
+        s,
+        &core::Scrub {
+            secrets: None,
+            home: home.as_deref(),
+            identities: core::machine_identities(),
+            known: core::KnownIds::default(),
+        },
     )
 }
 
-/// The checks as JSON.
-#[must_use]
-pub fn to_json(checks: &[Check]) -> Value {
-    json!({
-        "ok": checks.iter().all(|c| c.status != Status::Fail),
-        "checks": checks.iter().map(|c| json!({
-            "name": c.name,
-            "status": c.status.word(),
-            "detail": c.detail,
-            "hint": c.hint,
-        })).collect::<Vec<_>>(),
-    })
-}
-
-/// Mask home directory paths and anything that looks like a key or token
-/// (24+ characters of `[A-Za-z0-9_-]`).
-#[must_use]
-pub fn redact(s: &str) -> String {
-    let mut s = s.to_string();
-    if let Some(home) = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(|h| h.to_string_lossy().into_owned())
-        .filter(|h| h.len() > 3)
-    {
-        s = s.replace(&home, "~").replace(&home.replace('\\', "/"), "~");
-    }
-    let mut out = String::with_capacity(s.len());
-    let mut run = String::new();
-    let flush = |run: &mut String, out: &mut String| {
-        if run.len() >= 24 {
-            out.push_str("[redacted]");
-        } else {
-            out.push_str(run);
-        }
-        run.clear();
-    };
-    for ch in s.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
-            run.push(ch);
-        } else {
-            flush(&mut run, &mut out);
-            out.push(ch);
-        }
-    }
-    flush(&mut run, &mut out);
-    out
-}
-
 /// A redacted diagnostic bundle: versions, OS, check results and provider
-/// ids. No keys, tokens, secret names or file contents.
+/// ids. No keys, tokens, secret names or file contents.  `secrets` is the
+/// production redactor's secret list (see [`crate::serve::report_redactor`]);
+/// model and provider ids from the catalog and the config stay readable.
 #[must_use]
-pub fn report_bundle(env: &DoctorEnv<'_>, checks: &[Check]) -> Value {
+pub fn report_bundle(
+    env: &DoctorEnv<'_>,
+    checks: &[Check],
+    secrets: &agent_core::SharedRedactor,
+) -> Value {
     let providers: Vec<Value> = ProviderConfig::load(&config_path(env.data_dir))
         .map(|c| {
             c.providers
@@ -788,27 +609,48 @@ pub fn report_bundle(env: &DoctorEnv<'_>, checks: &[Check]) -> Value {
         "providers": providers,
         "doctor": to_json(checks),
     });
-    redact_value(&mut v);
+    let home = core::home_dir();
+    let redact = |t: &str| secrets.redact(t);
+    let scrub = core::Scrub {
+        secrets: Some(&redact),
+        home: home.as_deref(),
+        identities: core::machine_identities(),
+        known: core::KnownIds::collect(env.data_dir, env.catalog.as_ref().ok().copied()),
+    };
+    redact_value(&mut v, &scrub);
     v
 }
 
-fn redact_value(v: &mut Value) {
+fn redact_value(v: &mut Value, scrub: &core::Scrub<'_>) {
     match v {
-        Value::String(s) => *s = redact(s),
-        Value::Array(a) => a.iter_mut().for_each(redact_value),
-        Value::Object(o) => o.values_mut().for_each(redact_value),
+        Value::String(s) => *s = core::redact_report(s, scrub),
+        Value::Array(a) => a.iter_mut().for_each(|x| redact_value(x, scrub)),
+        Value::Object(o) => o.values_mut().for_each(|x| redact_value(x, scrub)),
         _ => {}
     }
 }
 
-/// Write the report bundle to `path`.
+/// Write the report bundle to `path`, redacted with the same secret list as
+/// the daemon's support report.  Refuses (and writes nothing) when the
+/// secret store cannot be opened or read: without the secret list the report
+/// could carry a stored secret in clear.
 ///
 /// # Errors
-/// The file cannot be written.
+/// The secret store is unavailable, or the file cannot be written.
 pub fn write_report(env: &DoctorEnv<'_>, checks: &[Check], path: &Path) -> Result<()> {
+    let store = env.store.as_ref().map_err(|e| {
+        format!(
+            "not writing the report: the secret store cannot be opened ({e}), so stored secrets could not be masked; fix the secret backend (see the secret backend check) and try again"
+        )
+    })?;
+    let secrets = crate::serve::report_redactor(env.data_dir, store.0).map_err(|e| {
+        format!(
+            "not writing the report: the secret store cannot be read ({e}), so stored secrets could not be masked; fix the secret backend (see the secret backend check) and try again"
+        )
+    })?;
     std::fs::write(
         path,
-        serde_json::to_string_pretty(&report_bundle(env, checks))?,
+        serde_json::to_string_pretty(&report_bundle(env, checks, &secrets))?,
     )?;
     Ok(())
 }
@@ -870,7 +712,7 @@ id = "m1"
     }
 
     fn get<'a>(checks: &'a [Check], name: &str) -> &'a Check {
-        checks.iter().find(|c| c.name == name).unwrap()
+        checks.iter().find(|c| c.title == name).unwrap()
     }
 
     fn env<'a>(dir: &'a Path, cat: &'a Catalog, store: &'a MemStore, port: u16) -> DoctorEnv<'a> {
@@ -882,6 +724,8 @@ id = "m1"
             online: false,
             browser: None,
             browser_error: None,
+            detected: None,
+            desktop: None,
         }
     }
 
@@ -909,7 +753,7 @@ id = "m1"
         assert!(
             checks
                 .iter()
-                .all(|c| c.status == Status::Ok || c.hint.is_some())
+                .all(|c| matches!(c.status, Status::Ok | Status::Skipped) || c.hint.is_some())
         );
     }
 
@@ -1020,10 +864,61 @@ id = "m1"
             online: false,
             browser: None,
             browser_error: None,
+            detected: None,
+            desktop: None,
         };
         let checks = run_checks(&e);
         assert_eq!(get(&checks, "secret backend").status, Status::Fail);
         assert_eq!(get(&checks, "telegram").status, Status::Warn);
+    }
+
+    struct FailingStore;
+
+    impl SecretStore for FailingStore {
+        fn get(
+            &self,
+            _: &str,
+        ) -> std::result::Result<Option<SecretValue>, secret_store::SecretError> {
+            Err(secret_store::SecretError::Unavailable("injected".into()))
+        }
+        fn set(&self, _: &str, _: &str) -> std::result::Result<(), secret_store::SecretError> {
+            Err(secret_store::SecretError::Unavailable("injected".into()))
+        }
+        fn delete(&self, _: &str) -> std::result::Result<bool, secret_store::SecretError> {
+            Err(secret_store::SecretError::Unavailable("injected".into()))
+        }
+        fn list_names(&self) -> std::result::Result<Vec<String>, secret_store::SecretError> {
+            Err(secret_store::SecretError::Unavailable("injected".into()))
+        }
+    }
+
+    #[test]
+    fn report_is_refused_when_the_secrets_cannot_be_read() {
+        let d = tempfile::tempdir().unwrap();
+        let cat = catalog();
+        let path = d.path().join("report.json");
+        // The store does not open.
+        let mut e = DoctorEnv {
+            data_dir: d.path(),
+            catalog: Ok(&cat),
+            store: Err("passphrase needed".into()),
+            port: free_port(),
+            online: false,
+            browser: None,
+            browser_error: None,
+            detected: None,
+            desktop: None,
+        };
+        let checks = run_checks(&e);
+        let err = write_report(&e, &checks, &path).unwrap_err().to_string();
+        assert!(err.contains("not writing the report"), "{err}");
+        assert!(!path.exists());
+        // The store opens, but cannot be read.
+        let failing = FailingStore;
+        e.store = Ok((&failing, "failing".into()));
+        let err = write_report(&e, &checks, &path).unwrap_err().to_string();
+        assert!(err.contains("cannot be read"), "{err}");
+        assert!(!path.exists());
     }
 
     #[test]
@@ -1037,6 +932,10 @@ id = "m1"
         assert!(r.contains("short-id"));
     }
 
+    /// A stored secret no pattern recognises: short segments, no key shape,
+    /// no percent-escape.
+    const PLAIN_SECRET: &str = "vault pass 9|9";
+
     #[test]
     fn report_has_no_secrets() {
         let d = tempfile::tempdir().unwrap();
@@ -1047,18 +946,25 @@ id = "m1"
                 "sk-supersecretvalue-0123456789abcdef",
             )
             .unwrap();
+        store.set("vault.note", PLAIN_SECRET).unwrap();
         std::fs::write(daemon_api::token_path(d.path()), "b".repeat(64)).unwrap();
         let mut s = ProviderSettings::new("alpha", 1);
         s.key = Some(SecretRef::new("provider.alpha.api_key").unwrap());
         let mut cfg = ProviderConfig::default();
         cfg.upsert(s);
+        // A provider id equal to a stored secret: copied into the provider
+        // list and the check details; only the secret list can mask it.
+        cfg.upsert(ProviderSettings::new(PLAIN_SECRET, 2));
         cfg.save(&config_path(d.path())).unwrap();
+        // The patterns alone do not catch it.
+        assert!(redact(PLAIN_SECRET).contains("vault pass"));
         let e = env(d.path(), &cat, &store, free_port());
         let checks = run_checks(&e);
         let path = d.path().join("report.json");
         write_report(&e, &checks, &path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains("supersecret"));
+        assert!(!text.contains("vault pass"), "{text}");
         assert!(!text.contains(&"b".repeat(64)));
         assert!(!text.contains("provider.alpha.api_key"));
         let v: Value = serde_json::from_str(&text).unwrap();

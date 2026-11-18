@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import { useDaemon } from "../state/DaemonContext";
 import { healthStripMode } from "../lib/health";
+import { humanService } from "../lib/humanError";
 import styles from "./HealthIndicator.module.css";
 
 type Level = "ok" | "wait" | "bad";
@@ -9,7 +10,7 @@ type Level = "ok" | "wait" | "bad";
 /** Daemon health in the sidebar header: dot + label (+ retry when it failed). */
 export function HealthIndicator() {
   const { t } = useTranslation();
-  const { phase, health, eventsConnected, error, conn, retry, restartDaemon } =
+  const { phase, health, eventsConnected, error, conn, retry, restartDaemon, serviceProblem } =
     useDaemon();
 
   let level: Level;
@@ -37,7 +38,7 @@ export function HealthIndicator() {
         uptime: health.uptime_secs,
         mode: conn?.fake_provider ? t("health.fakeProvider") : ""
       })
-    : (error ?? label);
+    : (error ? humanService(serviceProblem ?? "down").title : label);
 
   const mode = healthStripMode(level, Boolean(conn?.fake_provider));
   if (mode === "hidden") return null;

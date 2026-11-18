@@ -1575,11 +1575,6 @@ fn poll_error_backoff_policy() {
     use crate::TelegramError;
     use crate::bridge::poll_error_delay;
     let base = Duration::from_millis(100);
-    let conflict = TelegramError::TelegramApi {
-        error_code: Some(409),
-        description: "Conflict: terminated by other getUpdates request".into(),
-    };
-    assert!(poll_error_delay(&conflict, 1, base) >= Duration::from_secs(10));
     let limited = TelegramError::RateLimited {
         retry_after_secs: 7,
     };
@@ -3234,6 +3229,51 @@ async fn schedule_approval_shows_everything_without_always_and_chunks_long_promp
 }
 
 #[tokio::test]
+async fn an_approval_too_large_for_telegram_is_not_offered() {
+    let marker = "PAYLOAD-MARKER-XYZ";
+    let payload = marker.repeat(40 * 3500);
+    let msgs = approval_messages(Some(json!({
+        "kind": "egress",
+        "reason": "send",
+        "host": "example.test",
+        "payload": payload,
+        "payload_kind": "body",
+    })))
+    .await;
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    let text = msgs[0]["text"].as_str().unwrap();
+    assert!(text.contains("desktop app"), "{text}");
+    assert!(msgs[0].get("reply_markup").is_none(), "{:?}", msgs[0]);
+    assert!(!text.contains(marker), "{text}");
+}
+
+#[tokio::test]
+async fn an_egress_card_shows_the_computer_target() {
+    let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let msgs = approval_messages(Some(json!({
+        "kind": "egress",
+        "reason": "typing after a read",
+        "host": "the desktop",
+        "payload": "hello",
+        "payload_kind": "body",
+        "computer_target": {"kind": "pc", "node_id": id, "node_name": "Work PC"},
+    })))
+    .await;
+    let all: String = msgs
+        .iter()
+        .map(|m| m["text"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(
+        all.contains(&format!("COMPUTER: pc \"Work PC\" (id {id})")),
+        "{all}"
+    );
+    assert!(
+        msgs.last().unwrap().get("reply_markup").is_some(),
+        "{msgs:?}"
+    );
+}
+
+#[tokio::test]
 async fn unrenderable_details_leave_approval_to_the_desktop_app() {
     let msgs = approval_messages(Some(json!({"kind": "future-thing"}))).await;
     assert_eq!(msgs.len(), 1);
@@ -3251,6 +3291,122 @@ async fn plain_approvals_keep_their_three_buttons() {
             .unwrap()
             .len(),
         3
+    );
+}
+
+fn control_card_json(offered: bool, payload: &str) -> serde_json::Value {
+    json!({
+        "kind": "egress", "reason": "this run read file a.txt and now wants to type",
+        "read": ["file a.txt"], "host": "keyboard", "payload": payload, "payload_kind": "text",
+        "control_grant": {
+            "offered": offered, "refusal": if offered { Value::Null } else { json!("terminal") },
+            "program": "notepad.exe", "image_path": "C:\\Windows\\notepad.exe",
+            "window_title": "Untitled - Notepad", "pid": 7
+        }
+    })
+}
+
+#[tokio::test]
+async fn a_control_card_that_fits_one_message_gets_a_this_task_button() {
+    let msgs = approval_messages(Some(control_card_json(true, "hello"))).await;
+    assert_eq!(msgs.len(), 1);
+    let text = msgs[0]["text"].as_str().unwrap();
+    assert!(text.contains("This task: notepad.exe"), "{text}");
+    assert!(text.contains("Bu görev: notepad.exe"), "{text}");
+    let row = msgs[0]["reply_markup"]["inline_keyboard"][0]
+        .as_array()
+        .unwrap();
+    let labels: Vec<&str> = row.iter().map(|b| b["text"].as_str().unwrap()).collect();
+    assert_eq!(labels, ["Approve once", "This task: notepad.exe", "Deny"]);
+    assert!(
+        row[1]["callback_data"]
+            .as_str()
+            .unwrap()
+            .starts_with("approve:run:")
+    );
+}
+
+#[tokio::test]
+async fn a_control_card_that_does_not_offer_the_grant_has_no_this_task_button() {
+    let msgs = approval_messages(Some(control_card_json(false, "hello"))).await;
+    let text = msgs[0]["text"].as_str().unwrap();
+    assert!(text.contains("NO CONTROL GRANT"), "{text}");
+    let row = msgs[0]["reply_markup"]["inline_keyboard"][0]
+        .as_array()
+        .unwrap();
+    assert_eq!(row.len(), 2, "approve once and deny only");
+}
+
+#[tokio::test]
+async fn a_control_card_longer_than_one_message_offers_only_once() {
+    let long = "x".repeat(6000);
+    let msgs = approval_messages(Some(control_card_json(true, &long))).await;
+    assert!(msgs.len() >= 2);
+    let last = msgs.last().unwrap();
+    let row = last["reply_markup"]["inline_keyboard"][0]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        row.len(),
+        2,
+        "no run-control button when the card does not fit one message"
+    );
+}
+
+#[tokio::test]
+async fn a_crafted_run_callback_is_refused_unless_the_card_offered_it() {
+    let server = MockServer::start().await;
+    mount_telegram_mocks(&server).await;
+    let bot = BotSummary {
+        id: BotId::new(),
+        name: "Mira".into(),
+    };
+    let daemon = Arc::new(FakeDaemon::new(vec![bot]));
+    let cfg = TelegramConfig::with_in_memory_token(TEST_BOT_TOKEN)
+        .with_api_base_url(server.uri())
+        .with_paired_users([PAIRED_USER_ID]);
+    let channel = TelegramChannel::new(cfg, daemon.clone()).unwrap();
+    let (run_id, call_id) = once_only_cb_args();
+    let (tx, rx) = mpsc::unbounded_channel::<Envelope>();
+    tx.send(Envelope::new(
+        0,
+        Event::ApprovalNeeded(ApprovalNeeded {
+            run_id,
+            call_id,
+            tool_name: "desktop_type".into(),
+            input: json!({}),
+            summary: "s".into(),
+            details: Some(control_card_json(false, "hello")),
+        }),
+    ))
+    .unwrap();
+    daemon.queue_run_stream(
+        run_id,
+        Box::pin(futures::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|item| (item, rx))
+        })),
+    );
+    channel
+        .handle_update(
+            serde_json::from_value(text_update(1, PAIRED_USER_ID, TEST_CHAT_ID, "go")).unwrap(),
+        )
+        .await
+        .unwrap();
+    let u: Update = serde_json::from_value(callback_update(
+        10,
+        PAIRED_USER_ID,
+        TEST_CHAT_ID,
+        "cb-run",
+        &format_approval_callback(call_id, "run"),
+    ))
+    .unwrap();
+    channel.handle_update(u).await.unwrap();
+    assert!(daemon.approvals.lock().is_empty(), "no decision was sent");
+    let reqs = server.received_requests().await.unwrap();
+    assert!(
+        callback_answers(&reqs)
+            .iter()
+            .any(|a| a.to_string().contains("only be approved once"))
     );
 }
 
@@ -3431,4 +3587,183 @@ async fn details_this_channel_would_mask_are_not_offered_for_approval_here() {
     assert!(text.contains("desktop app"), "{text}");
     assert!(!text.contains(TEST_BOT_TOKEN));
     assert!(msgs[0].get("reply_markup").is_none(), "no approve button");
+}
+
+#[tokio::test]
+async fn telegram_409_stops_only_after_three_bounded_retries() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(format!("/bot{TEST_BOT_TOKEN}/getUpdates")))
+        .respond_with(
+            ResponseTemplate::new(409)
+                .set_body_json(json!({"ok":false,"error_code":409,"description":"another poller"})),
+        )
+        .expect(4)
+        .mount(&server)
+        .await;
+    let conflicts = Arc::new(AtomicUsize::new(0));
+    let mut config = TelegramConfig::with_in_memory_token(TEST_BOT_TOKEN)
+        .with_api_base_url(server.uri())
+        .with_poll_backoff(Duration::from_millis(1));
+    config.conflict_backoff = Duration::from_millis(1);
+    let counter = conflicts.clone();
+    config.on_conflict = Some(Arc::new(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    let channel = TelegramChannel::start(config, Arc::new(FakeDaemon::new(vec![]))).unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while channel.status() != crate::ChannelStatus::Conflict {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    assert_eq!(conflicts.load(Ordering::SeqCst), 1);
+    channel.shutdown().await;
+    assert_eq!(channel.status(), crate::ChannelStatus::Conflict);
+    assert_eq!(server.received_requests().await.unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn telegram_get_updates_maps_a_json_409_even_with_http_200() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"ok":false,"error_code":409})),
+        )
+        .mount(&server)
+        .await;
+    let client = crate::BotApiClient::with_base_url(SecretValue::new(TEST_BOT_TOKEN), server.uri());
+    assert!(matches!(
+        client.get_updates(None, 0).await,
+        Err(crate::TelegramError::Conflict)
+    ));
+}
+
+#[tokio::test]
+async fn telegram_409_clears_on_second_poll_without_stopping_channel() {
+    let server = MockServer::start().await;
+    let polls = Arc::new(AtomicUsize::new(0));
+    let counter = polls.clone();
+    Mock::given(method("POST"))
+        .and(path(format!("/bot{TEST_BOT_TOKEN}/getUpdates")))
+        .respond_with(move |_: &wiremock::Request| {
+            if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                ResponseTemplate::new(409).set_body_json(json!({"ok":false,"error_code":409}))
+            } else {
+                ResponseTemplate::new(200).set_body_json(json!({"ok":true,"result":[]}))
+            }
+        })
+        .mount(&server)
+        .await;
+    let mut config = TelegramConfig::with_in_memory_token(TEST_BOT_TOKEN)
+        .with_api_base_url(server.uri())
+        .with_poll_backoff(Duration::from_millis(1));
+    config.conflict_backoff = Duration::from_millis(1);
+    let channel = TelegramChannel::start(config, Arc::new(FakeDaemon::new(vec![]))).unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while polls.load(Ordering::SeqCst) < 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(channel.status(), crate::ChannelStatus::Running);
+    channel.shutdown().await;
+}
+
+#[test]
+fn conflict_recovery_delay_is_exponential_and_capped() {
+    let config = TelegramConfig::with_in_memory_token("token");
+    assert!(config.conflict_recovery_base >= Duration::from_secs(30));
+    assert!(config.conflict_recovery_max >= Duration::from_secs(5 * 60));
+    assert!(config.conflict_recovery_max <= Duration::from_secs(10 * 60));
+    let mut previous = Duration::ZERO;
+    for step in 1..=12 {
+        let delay = crate::bridge::conflict_recovery_delay(
+            step,
+            config.conflict_recovery_base,
+            config.conflict_recovery_max,
+        );
+        assert!(delay >= config.conflict_recovery_base);
+        assert!(delay <= config.conflict_recovery_max);
+        assert!(delay >= previous);
+        assert!(!delay.is_zero());
+        previous = delay;
+    }
+    assert_eq!(previous, config.conflict_recovery_max);
+    assert_eq!(
+        crate::bridge::conflict_recovery_delay(1, Duration::ZERO, Duration::from_secs(1)),
+        Duration::from_secs(30)
+    );
+}
+
+#[tokio::test]
+async fn telegram_409_resumes_after_capped_backoff_once_conflict_clears() {
+    let server = MockServer::start().await;
+    let polls = Arc::new(AtomicUsize::new(0));
+    let counter = polls.clone();
+    Mock::given(method("POST"))
+        .and(path(format!("/bot{TEST_BOT_TOKEN}/getUpdates")))
+        .respond_with(move |_: &wiremock::Request| {
+            if counter.fetch_add(1, Ordering::SeqCst) < 4 {
+                ResponseTemplate::new(409).set_body_json(json!({"ok":false,"error_code":409}))
+            } else {
+                ResponseTemplate::new(200).set_body_json(json!({"ok":true,"result":[]}))
+            }
+        })
+        .mount(&server)
+        .await;
+    let conflicts = Arc::new(AtomicUsize::new(0));
+    let mut config = TelegramConfig::with_in_memory_token(TEST_BOT_TOKEN)
+        .with_api_base_url(server.uri())
+        .with_poll_backoff(Duration::from_millis(1))
+        .with_poll_timeout_secs(0);
+    config.conflict_backoff = Duration::from_millis(1);
+    config.conflict_recovery_base = Duration::from_millis(15);
+    config.conflict_recovery_max = Duration::from_millis(60);
+    let seen = conflicts.clone();
+    config.on_conflict = Some(Arc::new(move || {
+        seen.fetch_add(1, Ordering::SeqCst);
+    }));
+    let channel = TelegramChannel::start(config, Arc::new(FakeDaemon::new(vec![]))).unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while channel.status() != crate::ChannelStatus::Running || polls.load(Ordering::SeqCst) < 5
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("polling resumes after the conflict clears");
+    assert_eq!(conflicts.load(Ordering::SeqCst), 1);
+    assert!(polls.load(Ordering::SeqCst) >= 5);
+    channel.shutdown().await;
+}
+
+#[tokio::test]
+async fn app_approval_sends_all_arguments_before_the_only_approval_buttons() {
+    let body = format!("{}RECIPIENT-AT-END", "x".repeat(6000));
+    let messages = approval_messages(Some(json!({"kind":"app_action","app_name":"GitHub","action_slug":"GITHUB_SEND","version":"20260901_00","arguments":{"body":body}}))).await;
+    let all: String = messages
+        .iter()
+        .map(|m| m["text"].as_str().unwrap())
+        .collect();
+    assert!(all.contains(&body) && all.contains("via Composio") && all.contains("GITHUB_SEND"));
+    assert!(messages.len() > 1);
+    assert!(
+        messages[..messages.len() - 1]
+            .iter()
+            .all(|m| m.get("reply_markup").is_none())
+    );
+    let buttons = messages.last().unwrap()["reply_markup"]["inline_keyboard"][0]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        buttons
+            .iter()
+            .map(|b| b["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["Approve once", "Deny"]
+    );
 }

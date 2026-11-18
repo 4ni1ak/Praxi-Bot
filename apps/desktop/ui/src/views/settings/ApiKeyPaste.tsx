@@ -1,6 +1,7 @@
 import { Check, KeyRound } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { MOCK_BASE_URL } from "../../api/mockMode";
 import { BrandIcon } from "../../components/BrandIcon";
 import { useToast } from "../../components/Toast";
 import {
@@ -10,9 +11,14 @@ import {
   resolveKeyTarget,
   scrubSecret
 } from "../../lib/apiKey";
+import { canManageProviders } from "../../lib/providerConnection";
+import { isTauriRuntime } from "../../overlay/events";
 import { useDaemon } from "../../state/DaemonContext";
 import { notifyProvidersChanged, useProviders } from "../../state/useProviders";
 import styles from "./AiPage.module.css";
+import { humanLine } from "../../lib/humanError";
+import { useBotsHome } from "../../state/useBotsHome";
+import { HomeHint } from "../../components/HomeHint";
 
 /** Open the collapsed "advanced providers" block (custom OpenAI-compatible servers). */
 function openAdvanced() {
@@ -27,13 +33,18 @@ function openAdvanced() {
  * One paste box for an API key.  The provider is read off the key prefix;
  * when that is ambiguous or unknown the user picks one of the chips.
  * Write-only: the key is held in this component until it is saved through
- * `POST /v1/secrets/{name}`, then dropped.  It is never shown again, logged,
- * or put in a URL.
+ * the native provider setup command, then dropped. That command also writes
+ * the provider's secret reference and configuration. It is never shown again,
+ * logged, or put in a URL.
  */
 export function ApiKeyPaste() {
   const { t } = useTranslation();
   const toast = useToast();
-  const { client } = useDaemon();
+  const { client, conn } = useDaemon();
+  const mock = client?.baseUrl === MOCK_BASE_URL;
+  const providerTarget = { connection: conn, baseUrl: client?.baseUrl };
+  const home = useBotsHome();
+  const canConfigure = mock || home.target === "host" || (isTauriRuntime() && canManageProviders(providerTarget));
   const { dto, reload } = useProviders();
   const [value, setValue] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
@@ -48,22 +59,22 @@ export function ApiKeyPaste() {
     dto?.configured.some((p) => p.id === id && p.has_key) === true;
 
   const save = async () => {
-    if (!client || !target || !ready || busy) {
+    if (!client || !canConfigure || !target || !ready || busy) {
       return;
     }
     const secret = value.trim();
     setBusy(true);
     setError(null);
     try {
-      await client.setSecret(target.keyEnv, secret);
+      // The bots' home decides where the key goes (the host, or this computer's keychain).
+      await home.saveProvider(target.id, { apiKey: secret, keyEnv: target.keyEnv });
       setValue("");
       setPicked(null);
-      await client.reloadProviders().catch(() => undefined);
       await reload();
       notifyProvidersChanged();
       toast.show(t("settingsModal.ai.keys.saved", { provider: target.id }), "success");
     } catch (e) {
-      const msg = scrubSecret(e instanceof Error ? e.message : String(e), secret);
+      const msg = scrubSecret(humanLine(e), secret);
       setError(msg);
       toast.show(msg, "danger");
     } finally {
@@ -81,6 +92,7 @@ export function ApiKeyPaste() {
     <section className={styles.sec} data-testid="api-key-paste" aria-labelledby="ai-key-h">
       <div className={styles.head}>
         <h3 id="ai-key-h">{t("settingsModal.ai.keys.title")}</h3>
+        <HomeHint />
       </div>
       <form
         className={`${styles.card} ${styles.paste}`}
@@ -101,7 +113,7 @@ export function ApiKeyPaste() {
           aria-label={t("settingsModal.ai.keys.pasteLabel")}
           placeholder={t("settingsModal.ai.keys.placeholder")}
           value={value}
-          disabled={!client}
+          disabled={!client || !canConfigure}
           onChange={(e) => {
             setValue(e.target.value);
             if (e.target.value.trim() === "") {
@@ -114,7 +126,7 @@ export function ApiKeyPaste() {
           <button
             type="submit"
             className={`${styles.pill} ${styles.pillPri}`}
-            disabled={!target || busy || !client}
+            disabled={!target || busy || !client || !canConfigure}
           >
             {target
               ? t("settingsModal.ai.keys.addTo", { provider: target.id })
@@ -122,6 +134,7 @@ export function ApiKeyPaste() {
           </button>
         ) : null}
       </form>
+      {!canConfigure ? <p className={styles.sub}>{t("settings.providers.localDaemonOnly")}</p> : null}
 
       <div className={styles.provs} role="group" aria-label={t("settingsModal.ai.keys.providers")}>
         {targets.map((p) => {

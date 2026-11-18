@@ -45,6 +45,13 @@ pub struct Guards {
     pub spill_threshold_bytes: usize,
     /// Bytes of a spilled output kept inline as a preview.
     pub spill_preview_bytes: usize,
+    /// Per observation scope (page, window, listing) this many of the newest
+    /// tool results are re-sent in full on later model calls of a turn; older
+    /// ones become a one-line marker. `0` turns the compaction off.
+    pub keep_observations: usize,
+    /// When the messages of a model call exceed this many bytes, the oldest
+    /// tool results are cut to a short preview. `0` turns the budget off.
+    pub turn_context_soft_bytes: usize,
 }
 
 impl Default for Guards {
@@ -58,6 +65,8 @@ impl Default for Guards {
             max_tokens_per_turn: 2_000_000,
             spill_threshold_bytes: 16 * 1024,
             spill_preview_bytes: 2 * 1024,
+            keep_observations: 2,
+            turn_context_soft_bytes: 96 * 1024,
         }
     }
 }
@@ -120,6 +129,10 @@ struct RedactorInner {
     /// Values registered by hand (`register`); they survive a refresh.
     pinned: parking_lot::Mutex<Vec<String>>,
     refresher: RwLock<Option<RedactorRefreshFn>>,
+    #[cfg(test)]
+    before_replace_publish: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    #[cfg(test)]
+    register_contended: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 /// A [`Redactor`] that can be replaced while the loop runs (secrets are added
@@ -163,10 +176,18 @@ impl SharedRedactor {
 
     /// Replace the redactor atomically (pinned values are kept).
     pub fn replace(&self, mut r: Redactor) {
-        for v in self.0.pinned.lock().iter() {
+        // Serialize copying and publication with registration. Releasing this
+        // lock before the swap could overwrite a just-registered value.
+        let pinned = self.0.pinned.lock();
+        for v in pinned.iter() {
             add_with_variants(&mut r, v);
         }
+        #[cfg(test)]
+        if let Some(hook) = self.0.before_replace_publish.lock().take() {
+            hook();
+        }
         *self.0.redactor.write() = r;
+        drop(pinned);
     }
 
     /// Mask `value` (and its encoded forms) from now on, immediately and
@@ -176,7 +197,15 @@ impl SharedRedactor {
             return;
         }
         {
+            #[cfg(not(test))]
             let mut pinned = self.0.pinned.lock();
+            #[cfg(test)]
+            let mut pinned = self.0.pinned.try_lock().unwrap_or_else(|| {
+                if let Some(hook) = self.0.register_contended.lock().take() {
+                    hook();
+                }
+                self.0.pinned.lock()
+            });
             if !pinned.iter().any(|p| p == value) {
                 pinned.push(value.to_owned());
             }
@@ -270,6 +299,9 @@ impl JournalSlot {
     }
 }
 
+/// Default max time a run waits for an offline PC node before failing (24 hours).
+pub const DEFAULT_WAIT_FOR_PC_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+
 /// Configuration of an [`AgentLoop`](crate::AgentLoop).
 #[derive(Debug, Clone)]
 pub struct LoopConfig {
@@ -303,9 +335,14 @@ pub struct LoopConfig {
     pub redactor: Option<SharedRedactor>,
     /// Memory hook; `None` = no memory.
     pub memory: Option<MemoryConfig>,
+    /// Optional bounded pre-retrieval decision; `None` adds no automatic search.
+    pub knowledge_decider: Option<Arc<dyn crate::KnowledgeDecider>>,
     /// How long a schedule-started run waits for an approval (or a question
     /// answer) before it pauses (default [`DEFAULT_SCHEDULE_APPROVAL_TIMEOUT`]).
     pub schedule_approval_timeout: Duration,
+    /// How long a run configured with `runtime.computer = "pc"` waits for a
+    /// paired PC node before failing (default [`DEFAULT_WAIT_FOR_PC_TIMEOUT`]).
+    pub wait_for_pc_timeout: Duration,
     /// Where events are journaled.  Empty by default: the loop then creates a
     /// background writer over its own storage on first use.
     pub journal: JournalSlot,
@@ -332,7 +369,9 @@ impl Default for LoopConfig {
             router_budget: Duration::from_secs(2),
             redactor: None,
             memory: None,
+            knowledge_decider: None,
             schedule_approval_timeout: DEFAULT_SCHEDULE_APPROVAL_TIMEOUT,
+            wait_for_pc_timeout: DEFAULT_WAIT_FOR_PC_TIMEOUT,
             journal: JournalSlot::default(),
         }
     }
@@ -341,6 +380,54 @@ impl Default for LoopConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concurrent_refresh_cannot_forget_a_newly_registered_secret() {
+        use std::sync::mpsc;
+        use std::thread;
+
+        let handle = SharedRedactor::default();
+        let secret = "new-credential-with-no-key-shaped-prefix";
+        let (copied_tx, copied_rx) = mpsc::channel();
+        let (publish_tx, publish_rx) = mpsc::channel();
+        // Pause a real replace after it has copied the pinned values, before
+        // publication. This forces the exact refresh/registration interleave.
+        *handle.0.before_replace_publish.lock() = Some(Box::new(move || {
+            copied_tx.send(()).unwrap();
+            publish_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        }));
+        let (progress_tx, progress_rx) = mpsc::channel();
+        let blocked_tx = progress_tx.clone();
+        *handle.0.register_contended.lock() = Some(Box::new(move || {
+            // A correct refresh serializes registration until it publishes.
+            // Signal contention so the test needs no sleep or race lottery.
+            blocked_tx.send(()).unwrap();
+        }));
+        thread::scope(|scope| {
+            let refreshing = handle.clone();
+            let refresh = scope.spawn(move || refreshing.replace(Redactor::new()));
+            copied_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let registering = handle.clone();
+            let registration = scope.spawn(move || {
+                registering.register(secret);
+                // In the broken implementation registration can finish while
+                // replace is paused; the old snapshot then loses the secret.
+                let _ = progress_tx.send(());
+            });
+            progress_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            publish_tx.send(()).unwrap();
+            refresh.join().unwrap();
+            registration.join().unwrap();
+        });
+        assert!(handle.contains_secret(secret));
+        assert_eq!(handle.redact(secret), secret_store::REDACTED);
+        for variant in secret_variants(secret) {
+            assert!(handle.contains_secret(&variant), "variant was forgotten");
+        }
+        // Registration remains pinned across later refreshes as well.
+        handle.replace(Redactor::new());
+        assert!(handle.contains_secret(secret));
+    }
 
     #[test]
     fn cost_splits_cached_tokens() {

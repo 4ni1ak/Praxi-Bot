@@ -704,12 +704,221 @@ pub struct NeverList {
 /// be assembled at run time).
 const DAEMON_STATE_NAMES: &[&str] = &[
     "api-token",
+    "owner-key",
     "control-latch",
+    "view-privileges",
     "bot.db",
     "policy.json",
     "identity.key",
     "secrets.enc",
 ];
+
+/// The CLI sign-in / config stores and the installed runtimes, as canonical locations. A command
+/// that names one of them (to replace an engine's executable, read its token or change its hooks)
+/// always needs approval, even at level Full. Only the REAL stores match: the service user's
+/// home-level directories (`~/.claude`, `~/.codex`, the opencode / cursor config and data dirs
+/// under home, XDG and `%APPDATA%` / `%LOCALAPPDATA%`) and `<data>/runtimes`. A project's own
+/// `.claude/` or `.codex/` folder in any other directory is ordinary work and does not match.
+/// Damping, not a boundary: a name can be assembled at run time, and a bot the owner gave an
+/// unrestricted shell as the same OS user can still reach these files.
+#[derive(Debug, Clone, Default)]
+pub struct CliStores {
+    /// Normalised absolute store roots (directories or single files).
+    roots: Vec<String>,
+    /// Normalised home directories (for `~` / `$HOME` spellings).
+    homes: Vec<String>,
+}
+
+/// Home-level store locations, relative to a home directory (lower case, `/` separated).
+const HOME_STORES: &[&str] = &[
+    ".claude",
+    ".claude.json",
+    ".codex",
+    ".cursor",
+    ".cursor-agent",
+    ".gemini",
+    ".config/opencode",
+    ".config/claude",
+    ".config/cursor",
+    ".config/cursor-agent",
+    ".local/share/opencode",
+    ".local/share/cursor-agent",
+    "appdata/roaming/opencode",
+    "appdata/roaming/cursor",
+    "appdata/local/opencode",
+    "appdata/local/cursor",
+    "appdata/local/cursor-agent",
+];
+
+/// Spellings of the home directory before shell expansion (lower case).
+const HOME_SPELLINGS: &[&str] = &[
+    "~",
+    "$home",
+    "${home}",
+    "$env:home",
+    "$env:userprofile",
+    "${env:userprofile}",
+    "%userprofile%",
+    "%home%",
+];
+
+static DATA_DIR: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Tell the never-list where the daemon's data directory is, so `<data>/runtimes` (the CLIs
+/// Praxi installed itself) is protected by location.
+pub fn set_data_dir(dir: &std::path::Path) {
+    if let Ok(mut slot) = DATA_DIR.write() {
+        *slot = Some(norm_path(&dir.to_string_lossy()));
+    }
+}
+
+/// Lower-case, `/`-separated, `.` and `..` resolved lexically, no trailing slash.
+fn norm_path(raw: &str) -> String {
+    let unified = raw.replace('\\', "/").to_lowercase();
+    let (prefix, rest) = match unified.find(':') {
+        Some(1) => (&unified[..2], &unified[2..]),
+        _ => ("", unified.as_str()),
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    for part in rest.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    format!("{prefix}/{}", parts.join("/"))
+}
+
+fn is_absolute(raw: &str) -> bool {
+    let b = raw.as_bytes();
+    raw.starts_with('/')
+        || raw.starts_with('\\')
+        || (b.len() >= 3 && b[1] == b':' && (b[2] == b'/' || b[2] == b'\\'))
+}
+
+fn env_dir(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|v| !v.is_empty() && is_absolute(v))
+        .map(|v| norm_path(&v))
+}
+
+impl CliStores {
+    /// The stores of the process' own user, from its environment.
+    #[must_use]
+    pub fn from_env() -> Self {
+        let homes: Vec<String> = ["HOME", "USERPROFILE"]
+            .iter()
+            .filter_map(|k| env_dir(k))
+            .collect();
+        let mut roots = Vec::new();
+        for home in &homes {
+            roots.extend(HOME_STORES.iter().map(|s| format!("{home}/{s}")));
+        }
+        for key in ["CODEX_HOME", "CLAUDE_CONFIG_DIR"] {
+            roots.extend(env_dir(key));
+        }
+        if let Some(dir) = env_dir("XDG_CONFIG_HOME") {
+            roots.extend(
+                ["opencode", "claude", "cursor", "cursor-agent"].map(|n| format!("{dir}/{n}")),
+            );
+        }
+        if let Some(dir) = env_dir("XDG_DATA_HOME") {
+            roots.extend(["opencode", "cursor-agent"].map(|n| format!("{dir}/{n}")));
+        }
+        for key in ["APPDATA", "LOCALAPPDATA"] {
+            if let Some(dir) = env_dir(key) {
+                roots.extend(["opencode", "cursor", "cursor-agent"].map(|n| format!("{dir}/{n}")));
+            }
+        }
+        if let Ok(slot) = DATA_DIR.read()
+            && let Some(data) = slot.as_ref()
+        {
+            roots.push(format!("{data}/runtimes"));
+        }
+        Self { roots, homes }
+    }
+
+    /// Stores for explicit homes (tests, or a caller that knows the service user).
+    #[must_use]
+    pub fn for_homes(homes: &[&str], data_dir: Option<&str>) -> Self {
+        let homes: Vec<String> = homes.iter().map(|h| norm_path(h)).collect();
+        let mut roots: Vec<String> = homes
+            .iter()
+            .flat_map(|h| HOME_STORES.iter().map(move |s| format!("{h}/{s}")))
+            .collect();
+        if let Some(data) = data_dir {
+            roots.push(format!("{}/runtimes", norm_path(data)));
+        }
+        Self { roots, homes }
+    }
+
+    fn contains(&self, path: &str) -> bool {
+        self.roots.iter().any(|root| {
+            path == root
+                || path
+                    .strip_prefix(root.as_str())
+                    .is_some_and(|r| r.starts_with('/'))
+        })
+    }
+
+    /// Whether one token of a command names a store. `cwd` resolves a relative token; without
+    /// one a relative token cannot be placed and does not match.
+    fn token_names_store(&self, token: &str, cwd: Option<&str>) -> bool {
+        let lower = token.to_lowercase();
+        // The home spellings expand to every known home.
+        for spelling in HOME_SPELLINGS {
+            if let Some(rest) = lower.strip_prefix(spelling)
+                && (rest.is_empty() || rest.starts_with('/') || rest.starts_with('\\'))
+            {
+                return self
+                    .homes
+                    .iter()
+                    .any(|h| self.contains(&norm_path(&format!("{h}{rest}"))));
+            }
+        }
+        if lower.contains('$') || lower.contains('%') || lower.contains('`') {
+            // Any other variable cannot be resolved here.
+            return false;
+        }
+        if is_absolute(token) {
+            return self.contains(&norm_path(token));
+        }
+        cwd.is_some_and(|cwd| self.contains(&norm_path(&format!("{cwd}/{token}"))))
+    }
+
+    /// Whether `command` (run in `cwd`, when known) names a store.
+    #[must_use]
+    pub fn names_store(&self, command: &str, cwd: Option<&str>) -> bool {
+        let cwd = cwd.filter(|c| is_absolute(c)).map(norm_path);
+        let lower = command.to_lowercase();
+        // The runtime directories Praxi installs have specific names that no project uses.
+        if [
+            "runtimes/node-v",
+            "runtimes/npm-global",
+            "runtimes\\node-v",
+            "runtimes\\npm-global",
+        ]
+        .iter()
+        .any(|n| lower.contains(n))
+        {
+            return true;
+        }
+        command
+            .split(|c: char| {
+                c.is_whitespace()
+                    || matches!(
+                        c,
+                        ';' | '|' | '&' | '<' | '>' | '(' | ')' | '"' | '\'' | '=' | ','
+                    )
+            })
+            .filter(|t| !t.is_empty())
+            .any(|t| self.token_names_store(t, cwd.as_deref()))
+    }
+}
 
 fn names_daemon_state(raw_command: &str) -> bool {
     let lower = raw_command.to_lowercase();
@@ -755,10 +964,18 @@ impl NeverList {
     /// - any user-defined extra pattern matches the full normalised command.
     #[must_use]
     pub fn matches(&self, raw_command: &str) -> bool {
+        self.matches_in(raw_command, None)
+    }
+
+    /// [`Self::matches`] for a command run in `cwd`: a relative path argument is placed there
+    /// before it is compared with the CLI sign-in stores.
+    #[must_use]
+    pub fn matches_in(&self, raw_command: &str, cwd: Option<&str>) -> bool {
         // The structural check is case-preserving (wrapper options such as
         // `sudo -S` vs `-s` differ); extra glob patterns use the normalised form.
         structural_match(raw_command.trim(), 0)
             || names_daemon_state(raw_command)
+            || CliStores::from_env().names_store(raw_command, cwd)
             || self.extra_set.is_match(Self::normalize(raw_command))
     }
 
@@ -786,6 +1003,62 @@ mod tests {
     }
 
     // ── Must match ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn matches_commands_that_name_installed_clis_and_their_sign_in_stores() {
+        // Home-level stores and the installed runtimes, by explicit location.
+        let stores = CliStores::for_homes(&["/home/praxi", r"C:\Users\me"], Some("/var/lib/praxi"));
+        for (command, cwd) in [
+            ("cat /home/praxi/.claude/.credentials.json", None),
+            ("cat ~/.claude/.credentials.json", None),
+            ("cat $HOME/.codex/auth.json", None),
+            ("cat ${HOME}/.codex/auth.json", None),
+            (r"type %USERPROFILE%\.codex\auth.json", None),
+            ("cat $env:USERPROFILE/.claude.json", None),
+            (r"copy x C:\Users\me\.claude\settings.json", None),
+            ("cat ~/.local/share/opencode/auth.json", None),
+            ("cat ../.codex/auth.json", Some("/home/praxi/work")),
+            (
+                "cp /tmp/evil /var/lib/praxi/runtimes/npm-global/bin/claude",
+                None,
+            ),
+            (
+                "echo hi >> /var/lib/praxi/runtimes/node-v22.1.0-linux-x64/bin/npm",
+                None,
+            ),
+            // cwd = home: a relative store path is the real store
+            ("cat .claude/.credentials.json", Some("/home/praxi")),
+            ("cat .codex/auth.json", Some("/home/praxi")),
+        ] {
+            assert!(stores.names_store(command, cwd), "{command} in {cwd:?}");
+        }
+    }
+
+    #[test]
+    fn a_project_local_cli_folder_is_ordinary_work() {
+        let stores = CliStores::for_homes(&["/home/praxi"], Some("/var/lib/praxi"));
+        for (command, cwd) in [
+            // inside a repository, absolute or relative
+            ("cat /home/praxi/work/app/.claude/settings.json", None),
+            ("cat .claude/settings.json", Some("/home/praxi/work/app")),
+            ("ls .codex .cursor", Some("/srv/repo")),
+            ("cat .claude/settings.json", None),
+            (
+                "git add .claude/commands/review.md",
+                Some("/home/praxi/work/app"),
+            ),
+            // look-alike names that are not the stores
+            ("cat /home/praxi/work/.claude/x", None),
+            ("cat ../app/.claude/x", Some("/home/praxi/work/other")),
+            ("cargo build", None),
+            ("ls runtimes", None),
+            ("cat notes/claude-code.md", None),
+            // an unresolved variable that is not a home spelling is never guessed
+            ("cat $PROJECT/.claude/x", None),
+        ] {
+            assert!(!stores.names_store(command, cwd), "{command} in {cwd:?}");
+        }
+    }
 
     #[test]
     fn matches_commands_that_name_daemon_credentials_or_control_files() {

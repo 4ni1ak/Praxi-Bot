@@ -2,6 +2,7 @@ import { useEffect, useRef, type CSSProperties } from "react";
 import { deriveTheme, type Theme } from "ui";
 import { backdropInfo, backdropSize } from "../lib/backdropCatalog";
 import { drawBackdrop, sceneScale, type SceneColors } from "../lib/backdropDraw";
+import { publishSceneSource, sampleCanvasSource } from "../lib/backdropTone";
 import styles from "./Backdrop.module.css";
 
 /** Theme colours a scene may read; the memo key of the canvas. */
@@ -39,6 +40,8 @@ export function Backdrop({
     const paint = () => {
       const { w, h } = backdropSize(window.innerWidth, window.innerHeight, k);
       drawBackdrop(cv, scene, w, h, colors);
+      // Read the drawn scene once so the panels can be exactly as clear as legibility allows.
+      publishSceneSource(scene, sampleCanvasSource(cv, window.innerWidth));
     };
     paint();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -49,6 +52,7 @@ export function Backdrop({
     window.addEventListener("resize", onResize);
     return () => {
       clearTimeout(timer);
+      publishSceneSource(scene, null);
       window.removeEventListener("resize", onResize);
     };
     // `colors` is represented by `colorKey` (only theme-aware scenes depend on it).

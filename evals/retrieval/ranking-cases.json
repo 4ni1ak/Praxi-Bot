@@ -1,0 +1,17 @@
+[
+  {"id":"natural-release","query":"How does the deployment controller publish a verified release and handle a failed health probe?","expected_sources":["releases.md"],"expected_first":"releases.md"},
+  {"id":"natural-deadlock","query":"After a MySQL deadlock, should the whole transaction be retried or only the final UPDATE?","expected_sources":["mysql.md"],"expected_first":"mysql.md"},
+  {"id":"natural-restore","query":"What must the restore rehearsal verify before opening the application?","expected_sources":["backups.md"],"expected_first":"backups.md"},
+  {"id":"natural-cache","query":"How does the tenant cache namespace prevent another tenant's page fragment being returned?","expected_sources":["cache.md"],"expected_first":"cache.md"},
+  {"id":"natural-focus","query":"Which theme token should the warm palette use for the keyboard focus outline?","expected_sources":["themes.md"],"expected_first":"themes.md"},
+  {"id":"natural-embedding","query":"Can document embedding consent also authorize sending every conversational query?","expected_sources":["embeddings.md"],"expected_first":"embeddings.md"},
+  {"id":"natural-brain","query":"What does the approval fingerprint bind before creating a shared Markdown note?","expected_sources":["shared-brain.md"],"expected_first":"shared-brain.md"},
+  {"id":"natural-recovery","query":"When may the recovery cursor advance after a workflow checkpoint?","expected_sources":["recovery.md"],"expected_first":"recovery.md"},
+  {"id":"natural-email-tr","query":"E-posta kaynağında ileti kimliği hangi klasör ve UID alanları kullanılarak oluşturulur?","expected_sources":["email.md"],"expected_first":"email.md"},
+  {"id":"clock-question","query":"What is the time?","expected_sources":[]},
+  {"id":"weather-question","query":"Will it rain tomorrow?","expected_sources":[]},
+  {"id":"greeting-question","query":"How are you doing today?","expected_sources":[]},
+  {"id":"umbrella-question","query":"Where did I leave my umbrella?","expected_sources":[]},
+  {"id":"weather-tr","query":"Bugün hava nasıl?","expected_sources":[]},
+  {"id":"irrelevant-fact","query":"Which planets have methane oceans?","expected_sources":[]}
+]

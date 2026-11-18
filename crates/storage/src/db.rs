@@ -1,5 +1,6 @@
 //! The [`Storage`] repository.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -11,7 +12,10 @@ use uuid::Uuid;
 
 use crate::error::{Result, StorageError};
 use crate::migrate;
-use crate::records::{Approval, AuditEntry, Bot, Chat, EventIndexRow, Message, Run, RunStep, User};
+use crate::records::{
+    Approval, AuditEntry, Bot, BotPatch, BotSkillAssignment, Chat, EventIndexRow, Message, Run,
+    RunStep, SkillAssignmentMode, User,
+};
 
 /// Current Unix time in milliseconds.
 #[must_use]
@@ -65,6 +69,75 @@ pub struct Storage {
 }
 
 impl Storage {
+    /// Validate and migrate an existing staged database without creating it.
+    /// Checks the columns used by this repository and foreign-key consistency;
+    /// a schema version and SQLite page integrity alone do not establish either.
+    /// Normal [`Self::open`] behavior is unchanged.
+    ///
+    /// # Errors
+    /// Fails on corruption, an incompatible schema, or migration errors.
+    pub fn validate_and_migrate(path: impl AsRef<Path>) -> Result<u32> {
+        let mut conn =
+            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        let integrity: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+        if integrity != "ok" {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+                Some(integrity),
+            )
+            .into());
+        }
+        migrate::migrate(&mut conn)?;
+        for select in [
+            "SELECT id, name, created_at_ms FROM users",
+            "SELECT id, user_id, name, config_json, created_at_ms, version FROM bots",
+            "SELECT id, user_id, bot_id, title, created_at_ms FROM chats",
+            "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms FROM messages",
+            RUN_SELECT,
+            STEP_SELECT,
+            APPROVAL_SELECT,
+            "SELECT id, user_id, run_id, actor, action, detail_json, ts_ms FROM audit_log",
+            "SELECT gseq, run_id, seq FROM event_index",
+            "SELECT bot_id, mode, names_json, updated_at_ms, version FROM bot_skill_assignment",
+            "SELECT id, generation FROM bot_skill_assignment_state",
+        ] {
+            conn.prepare(select)?;
+        }
+        {
+            let mut st = conn.prepare(
+                "SELECT bot_id, mode, names_json, updated_at_ms, version FROM bot_skill_assignment",
+            )?;
+            let mut rows = st.query([])?;
+            while let Some(row) = rows.next()? {
+                let _ = skill_assignment_row(row)?;
+            }
+        }
+        let version_column_valid: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('bots') WHERE name='version' AND upper(type)='INTEGER' AND \"notnull\"=1)",
+            [], |r| r.get(0),
+        )?;
+        let malformed_version: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM bots WHERE typeof(version) != 'integer' OR version < 1)",
+            [],
+            |r| r.get(0),
+        )?;
+        if !version_column_valid || malformed_version {
+            return Err(StorageError::Conflict(
+                "invalid bots.version: required positive INTEGER NOT NULL".into(),
+            ));
+        }
+        if conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY),
+                Some("database contains invalid foreign-key references".into()),
+            )
+            .into());
+        }
+        migrate::current_version(&conn)
+    }
+
     /// Open (creating if needed) `<data_dir>/bot.db`, enable WAL + foreign
     /// keys and run pending migrations.
     ///
@@ -73,6 +146,9 @@ impl Storage {
     pub fn open(data_dir: impl Into<PathBuf>) -> Result<Self> {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir)?;
+        // Resolve host-selected relative paths and symlinked home directories
+        // once, before any knowledge capability treats this root as trusted.
+        let data_dir = crate::paths::without_verbatim_prefix(std::fs::canonicalize(data_dir)?);
         let conn = Connection::open(data_dir.join("bot.db"))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
@@ -199,27 +275,353 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Replace a bot's name and configuration.  Returns `false` if it does not exist.
+    /// Replace a profile only when its revision still matches the caller's snapshot.
     ///
     /// # Errors
     /// Fails on SQLite/JSON errors.
-    pub fn update_bot(&self, id: BotId, name: &str, config: &Value) -> Result<bool> {
-        let n = self.conn().execute(
-            "UPDATE bots SET name = ?2, config_json = ?3 WHERE id = ?1",
-            params![id.to_string(), name, serde_json::to_string(config)?],
-        )?;
-        Ok(n > 0)
+    pub fn update_bot(
+        &self,
+        id: BotId,
+        name: &str,
+        config: &Value,
+        expected_version: i64,
+    ) -> Result<BotPatch> {
+        self.patch_bot(id, expected_version, |_, _| {
+            Ok((name.to_owned(), config.clone()))
+        })
     }
 
-    /// Delete a bot.  Returns `false` if it does not exist.
+    /// Read a profile and revision in one SQLite statement.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn get_bot_versioned(&self, id: BotId) -> Result<Option<(Bot, i64)>> {
+        Ok(self.conn().query_row(
+            "SELECT id, user_id, name, config_json, created_at_ms, version FROM bots WHERE id = ?1",
+            [id.to_string()], |r| Ok((bot_row(r)?, r.get(5)?)),
+        ).optional()?)
+    }
+
+    /// Read a user's profiles and revisions in one SQLite statement.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn list_bots_versioned(&self, user_id: UserId) -> Result<Vec<(Bot, i64)>> {
+        let conn = self.conn();
+        let mut st = conn.prepare("SELECT id, user_id, name, config_json, created_at_ms, version FROM bots WHERE user_id = ?1 ORDER BY id")?;
+        Ok(st
+            .query_map([user_id.to_string()], |r| Ok((bot_row(r)?, r.get(5)?)))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The profile version of a bot (bumped by every write), `None` if it does not exist.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn bot_version(&self, id: BotId) -> Result<Option<i64>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT version FROM bots WHERE id = ?1",
+                [id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// The profile versions of all of a user's bots.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn bot_versions(&self, user_id: UserId) -> Result<std::collections::HashMap<BotId, i64>> {
+        let conn = self.conn();
+        let mut st = conn.prepare("SELECT id, version FROM bots WHERE user_id = ?1")?;
+        let rows = st.query_map([user_id.to_string()], |r| {
+            Ok((BotId(uuid_at(r, 0)?), r.get::<_, i64>(1)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Change a bot's name and profile atomically if its version is still
+    /// `expected_version`.  `apply` receives the stored name and profile and
+    /// returns the new ones (or a refusal); it runs inside the transaction, so
+    /// no other write can land between the read and the write.  The version is
+    /// bumped on success.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn patch_bot<F>(&self, id: BotId, expected_version: i64, apply: F) -> Result<BotPatch>
+    where
+        F: FnOnce(&str, &Value) -> std::result::Result<(String, Value), String>,
+    {
+        self.write_bot(id, Some(expected_version), apply)
+    }
+
+    /// Atomically derive the next name/profile from the stored one and write it,
+    /// advancing the bot revision, WITHOUT a version precondition. For writers
+    /// that own one field (the dedicated knowledge settings) and must not
+    /// overwrite the rest of a profile with a stale full copy.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn modify_bot<F>(&self, id: BotId, apply: F) -> Result<BotPatch>
+    where
+        F: FnOnce(&str, &Value) -> std::result::Result<(String, Value), String>,
+    {
+        self.write_bot(id, None, apply)
+    }
+
+    fn write_bot<F>(&self, id: BotId, expected_version: Option<i64>, apply: F) -> Result<BotPatch>
+    where
+        F: FnOnce(&str, &Value) -> std::result::Result<(String, Value), String>,
+    {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let stored = tx
+            .query_row(
+                "SELECT id, user_id, name, config_json, created_at_ms, version FROM bots WHERE id = ?1",
+                [id.to_string()],
+                |r| Ok((bot_row(r)?, r.get::<_, i64>(5)?)),
+            )
+            .optional()?;
+        let Some((bot, version)) = stored else {
+            return Ok(BotPatch::Missing);
+        };
+        if expected_version.is_some_and(|expected| expected != version) {
+            return Ok(BotPatch::Stale { bot, version });
+        }
+        let (name, config) = match apply(&bot.name, &bot.config) {
+            Ok(next) => next,
+            Err(why) => return Ok(BotPatch::Rejected(why)),
+        };
+        tx.execute(
+            "UPDATE bots SET name = ?2, config_json = ?3, version = version + 1 WHERE id = ?1",
+            params![id.to_string(), name, serde_json::to_string(&config)?],
+        )?;
+        tx.commit()?;
+        Ok(BotPatch::Applied {
+            bot: Bot {
+                name,
+                config,
+                ..bot
+            },
+            version: version + 1,
+        })
+    }
+
+    /// Delete a bot and its skill assignment row in the same transaction.
+    /// Returns `false` if it does not exist.
     ///
     /// # Errors
     /// Fails on SQLite errors, in particular a foreign-key violation while
     /// chats or runs still reference the bot.
     pub fn delete_bot(&self, id: BotId) -> Result<bool> {
-        let n = self
+        self.delete_bot_with_cleanup(id, || Ok(()))
+    }
+
+    /// Delete a bot and run bounded local cleanup before committing its removal.
+    /// Foreign-key checks run first. A cleanup error keeps the owning row, and
+    /// concurrent chat/run insertion cannot race the transaction. The closure
+    /// must not reenter this storage connection or wait for asynchronous work.
+    ///
+    /// # Errors
+    /// SQLite constraints, storage failure, or the supplied cleanup error.
+    pub fn delete_bot_with_cleanup(
+        &self,
+        id: BotId,
+        cleanup: impl FnOnce() -> Result<()>,
+    ) -> Result<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let bid = id.to_string();
+        tx.execute("DELETE FROM bot_skill_assignment WHERE bot_id = ?1", [&bid])?;
+        let n = tx.execute("DELETE FROM bots WHERE id = ?1", [&bid])?;
+        if n > 0 {
+            cleanup()?;
+        }
+        tx.commit()?;
+        Ok(n > 0)
+    }
+
+    // ---- bot_skill_assignment ----
+
+    /// Fetch a bot's skill assignment row, or `None` when the bot uses the
+    /// default (`all` shared and bundled skills).
+    ///
+    /// # Errors
+    /// Fails on SQLite or malformed row errors.
+    pub fn get_bot_skill_assignment(&self, bot_id: BotId) -> Result<Option<BotSkillAssignment>> {
+        Ok(self
             .conn()
-            .execute("DELETE FROM bots WHERE id = ?1", [id.to_string()])?;
+            .query_row(
+                "SELECT bot_id, mode, names_json, updated_at_ms, version FROM bot_skill_assignment WHERE bot_id = ?1",
+                [bot_id.to_string()],
+                skill_assignment_row,
+            )
+            .optional()?)
+    }
+
+    /// Inspect a bot's skill assignment row without failing on malformed row
+    /// contents, so management surfaces can report and repair corrupt rows
+    /// while runtime callers continue to fail closed.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn inspect_bot_skill_assignment(&self, bot_id: BotId) -> Result<SkillAssignmentLookup> {
+        let conn = self.conn();
+        let bid = bot_id.to_string();
+        let res = conn
+            .query_row(
+                "SELECT bot_id, mode, names_json, updated_at_ms, version FROM bot_skill_assignment WHERE bot_id = ?1",
+                [&bid],
+                skill_assignment_row,
+            )
+            .optional();
+        match res {
+            Ok(row) => Ok(SkillAssignmentLookup::Ok(row)),
+            Err(rusqlite::Error::FromSqlConversionFailure(_, _, err)) => {
+                let raw_ver: Option<i64> = conn
+                    .query_row(
+                        "SELECT version FROM bot_skill_assignment WHERE bot_id = ?1",
+                        [&bid],
+                        |r| r.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+                let version = raw_ver.and_then(|v| u64::try_from(v).ok()).unwrap_or(0);
+                Ok(SkillAssignmentLookup::Corrupt {
+                    version,
+                    reason: err.to_string(),
+                })
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Current DB-backed generation counter incremented on every insert, update,
+    /// or delete on `bot_skill_assignment`.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn bot_skill_assignment_generation(&self) -> Result<u64> {
+        let gen_val: i64 = self.conn().query_row(
+            "SELECT generation FROM bot_skill_assignment_state WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(u64::try_from(gen_val).unwrap_or(0))
+    }
+
+    /// Set a bot's skill assignment. `SkillAssignmentMode::All` deletes any
+    /// existing row (restoring the default).
+    ///
+    /// # Errors
+    /// Fails on invalid skill names, too many names (> 200), SQLite/JSON
+    /// errors, or a missing bot foreign key.
+    pub fn set_bot_skill_assignment(
+        &self,
+        bot_id: BotId,
+        mode: SkillAssignmentMode,
+        names: &[String],
+    ) -> Result<BotSkillAssignment> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let row = write_skill_assignment_tx(&tx, bot_id, mode, names, None)?;
+        tx.commit()?;
+        Ok(row)
+    }
+
+    /// Write a `bot.skills_assigned` audit entry and update the bot's skill
+    /// assignment in a single transaction, ensuring the audit record is
+    /// persisted before the change takes effect.
+    ///
+    /// # Errors
+    /// Fails on invalid skill names, too many names (> 200), or SQLite/JSON
+    /// errors.
+    pub fn set_bot_skill_assignment_audited(
+        &self,
+        user_id: UserId,
+        bot_id: BotId,
+        mode: SkillAssignmentMode,
+        names: &[String],
+        actor: &str,
+        detail: &Value,
+    ) -> Result<BotSkillAssignment> {
+        self.set_bot_skill_assignment_audited_versioned(
+            user_id, bot_id, mode, names, actor, detail, None,
+        )
+    }
+
+    /// Version-checked variant of [`Self::set_bot_skill_assignment_audited`].
+    /// The audit diff is derived from the stored assignment inside the transaction;
+    /// caller-supplied `bot_id`, `mode`, `added` and `removed` are replaced.
+    ///
+    /// # Errors
+    /// Fails with [`StorageError::Conflict`] if `expected_version` is `Some`
+    /// and does not match the stored row's version (`0` when no row exists).
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_bot_skill_assignment_audited_versioned(
+        &self,
+        user_id: UserId,
+        bot_id: BotId,
+        mode: SkillAssignmentMode,
+        names: &[String],
+        actor: &str,
+        detail: &Value,
+        expected_version: Option<u64>,
+    ) -> Result<BotSkillAssignment> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let previous = tx.query_row(
+            "SELECT bot_id, mode, names_json, updated_at_ms, version FROM bot_skill_assignment WHERE bot_id = ?1",
+            [bot_id.to_string()],
+            skill_assignment_row,
+        ).optional();
+        let previous_names: BTreeSet<String> = match previous {
+            Ok(Some(row)) if row.mode == SkillAssignmentMode::Selected => {
+                row.names.into_iter().collect()
+            }
+            Ok(_) | Err(rusqlite::Error::FromSqlConversionFailure(..)) => BTreeSet::default(),
+            Err(error) => return Err(error.into()),
+        };
+        let row = write_skill_assignment_tx(&tx, bot_id, mode, names, expected_version)?;
+        let next_names: BTreeSet<String> = row.names.iter().cloned().collect();
+        let added: Vec<_> = next_names.difference(&previous_names).collect();
+        let removed: Vec<_> = previous_names.difference(&next_names).collect();
+        let mut detail = detail.as_object().cloned().unwrap_or_default();
+        detail.insert("bot_id".into(), serde_json::json!(bot_id.to_string()));
+        detail.insert(
+            "mode".into(),
+            serde_json::json!(match mode {
+                SkillAssignmentMode::All => "all",
+                SkillAssignmentMode::Selected => "selected",
+            }),
+        );
+        detail.insert("added".into(), serde_json::json!(added));
+        detail.insert("removed".into(), serde_json::json!(removed));
+        tx.execute(
+            "INSERT INTO audit_log (user_id, run_id, actor, action, detail_json, ts_ms) VALUES (?1, NULL, ?2, ?3, ?4, ?5)",
+            params![
+                user_id.to_string(),
+                actor,
+                "bot.skills_assigned",
+                serde_json::to_string(&detail)?,
+                now_ms()
+            ],
+        )?;
+        tx.commit()?;
+        Ok(row)
+    }
+
+    /// Delete a bot's skill assignment row, returning `true` if one existed.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn delete_bot_skill_assignment(&self, bot_id: BotId) -> Result<bool> {
+        let n = self.conn().execute(
+            "DELETE FROM bot_skill_assignment WHERE bot_id = ?1",
+            [bot_id.to_string()],
+        )?;
         Ok(n > 0)
     }
 
@@ -280,7 +682,7 @@ impl Storage {
     /// Fails on SQLite errors.
     pub fn insert_message(&self, m: &Message) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO messages (id, user_id, chat_id, run_id, role, content, created_at_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO messages (id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 m.id.to_string(),
                 m.user_id.to_string(),
@@ -288,7 +690,10 @@ impl Storage {
                 m.run_id.map(|r| r.to_string()),
                 m.role,
                 m.content,
-                m.created_at_ms
+                m.created_at_ms,
+                i64::from(m.exposure_untrusted),
+                i64::from(m.exposure_private),
+                serde_json::to_string(&m.exposure_sources)?,
             ],
         )?;
         Ok(())
@@ -302,7 +707,7 @@ impl Storage {
         Ok(self
             .conn()
             .query_row(
-                "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms FROM messages WHERE id = ?1",
+                "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources FROM messages WHERE id = ?1",
                 [id.to_string()],
                 message_row,
             )
@@ -316,7 +721,7 @@ impl Storage {
     pub fn list_messages(&self, chat_id: ChatId) -> Result<Vec<Message>> {
         let conn = self.conn();
         let mut st = conn.prepare(
-            "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms FROM messages WHERE chat_id = ?1 ORDER BY created_at_ms, id",
+            "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources FROM messages WHERE chat_id = ?1 ORDER BY created_at_ms, id",
         )?;
         Ok(st
             .query_map([chat_id.to_string()], message_row)?
@@ -344,7 +749,7 @@ impl Storage {
     ) -> Result<(Vec<Message>, bool)> {
         let conn = self.conn();
         let mut st = conn.prepare(
-            "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, length(CAST(content AS BLOB)) \
+            "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources, length(CAST(content AS BLOB)) \
              FROM messages WHERE chat_id = ?1 AND (?2 IS NULL OR run_id IS NULL OR run_id <> ?2) \
              ORDER BY created_at_ms DESC, id DESC LIMIT ?3",
         )?;
@@ -358,7 +763,7 @@ impl Storage {
         let mut used = 0usize;
         let mut omitted = false;
         while let Some(row) = rows.next()? {
-            let bytes = usize::try_from(row.get::<_, i64>(7)?).map_err(|e| conv_err(7, e))?;
+            let bytes = usize::try_from(row.get::<_, i64>(10)?).map_err(|e| conv_err(10, e))?;
             if messages.len() == max_messages || bytes > max_bytes.saturating_sub(used) {
                 omitted = true;
                 break;
@@ -378,7 +783,7 @@ impl Storage {
     /// Fails on SQLite errors.
     pub fn insert_run(&self, r: &Run) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO runs (id, user_id, bot_id, chat_id, kind, state, error, created_at_ms, updated_at_ms, parent_run_id, spec_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO runs (id, user_id, bot_id, chat_id, kind, state, error, created_at_ms, updated_at_ms, parent_run_id, spec_json, computer_target, pause_reason, computer_node, computer_node_name, paused_at_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 r.id.to_string(),
                 r.user_id.to_string(),
@@ -391,6 +796,9 @@ impl Storage {
                 r.updated_at_ms,
                 r.parent_run_id.map(|p| p.to_string()),
                 r.spec.as_ref().map(serde_json::to_string).transpose()?,
+                r.computer_target,
+                r.pause_reason,
+                r.computer_node, r.computer_node_name, r.paused_at_ms,
             ],
         )?;
         Ok(())
@@ -423,6 +831,41 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Ids and states of the user's runs that are not terminal (`queued`,
+    /// `running`, `waiting_approval`, `paused`): one statement, no spec
+    /// payloads, so it is cheap on a long history and a consistent snapshot.
+    /// The state list is a literal: `daemon-api` tests pin it against
+    /// `RunState::ALL` minus the terminal states.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn list_open_run_states(&self, user_id: UserId) -> Result<Vec<(RunId, String)>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
+            "SELECT id, state FROM runs WHERE user_id = ?1 AND state IN ('queued', 'running', 'waiting_approval', 'paused') ORDER BY id",
+        )?;
+        Ok(st
+            .query_map([user_id.to_string()], |r| {
+                Ok((RunId(uuid_at(r, 0)?), r.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The state of one run of `user_id` (`None`: no such run for that user).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn run_state_of_user(&self, user_id: UserId, id: RunId) -> Result<Option<String>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT state FROM runs WHERE id = ?1 AND user_id = ?2",
+                [id.to_string(), user_id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
     /// The direct children (subagent runs) of a run, oldest first.
     ///
     /// # Errors
@@ -450,19 +893,85 @@ impl Storage {
     }
 
     /// Set a run's state (and error text).  Transition legality is the
-    /// caller's responsibility.
+    /// caller's responsibility. Transitions out of `paused` clear `pause_reason`.
     ///
     /// # Errors
     /// Fails on SQLite errors or if the run does not exist.
     pub fn update_run_state(&self, id: RunId, state: &str, error: Option<&str>) -> Result<()> {
         let n = self.conn().execute(
-            "UPDATE runs SET state = ?2, error = ?3, updated_at_ms = ?4 WHERE id = ?1",
+            "UPDATE runs SET state = ?2, error = ?3, updated_at_ms = ?4, paused_at_ms = CASE WHEN ?2 = 'paused' THEN COALESCE(paused_at_ms, ?4) ELSE NULL END, pause_reason = CASE WHEN ?2 = 'paused' THEN pause_reason ELSE NULL END WHERE id = ?1",
             params![id.to_string(), state, error, now_ms()],
         )?;
         if n == 0 {
             return Err(StorageError::NotFound(format!("run {id}")));
         }
         Ok(())
+    }
+
+    /// Record the resolved computer target label (`pc`, `host`, `browser`,
+    /// `off`) fixed at run start.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors or if the run does not exist.
+    pub fn set_run_computer_target(&self, id: RunId, target: Option<&str>) -> Result<()> {
+        let n = self.conn().execute(
+            "UPDATE runs SET computer_target = ?2, updated_at_ms = ?3 WHERE id = ?1",
+            params![id.to_string(), target, now_ms()],
+        )?;
+        if n == 0 {
+            return Err(StorageError::NotFound(format!("run {id}")));
+        }
+        Ok(())
+    }
+
+    /// Persist label and concrete target together before any tool can run.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors or if the run does not exist.
+    pub fn bind_run_computer(
+        &self,
+        id: RunId,
+        label: &str,
+        node: Option<&str>,
+        name: Option<&str>,
+    ) -> Result<()> {
+        let n = self.conn().execute(
+            "UPDATE runs SET computer_target = ?2, computer_node = ?3, computer_node_name = ?4 WHERE id = ?1 AND (computer_target IS NULL OR computer_target = ?2) AND (computer_node IS NULL OR computer_node = ?3)",
+            params![id.to_string(), label, node, name],
+        )?;
+        if n == 0 {
+            return Err(StorageError::NotFound(format!("run {id}")));
+        }
+        Ok(())
+    }
+
+    /// Update the pause reason on a paused run (e.g. `waiting_for_pc`).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors or if the run does not exist.
+    pub fn set_run_pause_reason(&self, id: RunId, reason: Option<&str>) -> Result<()> {
+        let n = self.conn().execute(
+            "UPDATE runs SET pause_reason = ?2, updated_at_ms = ?3 WHERE id = ?1",
+            params![id.to_string(), reason, now_ms()],
+        )?;
+        if n == 0 {
+            return Err(StorageError::NotFound(format!("run {id}")));
+        }
+        Ok(())
+    }
+
+    /// List all runs currently in `paused` state with the given `pause_reason`.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn list_paused_runs_with_reason(&self, reason: &str) -> Result<Vec<Run>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(&format!(
+            "{RUN_SELECT} WHERE state = 'paused' AND pause_reason = ?1 ORDER BY id"
+        ))?;
+        Ok(st
+            .query_map([reason], run_row)?
+            .collect::<rusqlite::Result<_>>()?)
     }
 
     // ---- run_steps ----
@@ -519,6 +1028,46 @@ impl Storage {
         Ok(st
             .query_map([run_id.to_string()], step_row)?
             .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Recent tool executions owned by one user and bot, optionally one run.
+    /// Row and aggregate JSON byte limits are checked before copying payloads
+    /// into Rust. Oversized rows are omitted; callers must not infer permission
+    /// from the absence of a record.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn knowledge_tool_steps(
+        &self,
+        user_id: UserId,
+        bot_id: BotId,
+        run_id: Option<RunId>,
+        max_rows: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<RunStep>> {
+        let conn = self.conn();
+        let select = STEP_SELECT.replacen(" FROM ", ", length(CAST(input_json AS BLOB)) + coalesce(length(CAST(output_json AS BLOB)), 0) + coalesce(length(CAST(retry_json AS BLOB)), 0) + coalesce(length(CAST(error AS BLOB)), 0) + length(CAST(status AS BLOB)) FROM ", 1);
+        let mut statement = conn.prepare(&format!(
+            "{select} WHERE name='tools' AND user_id=?1 AND run_id IN (SELECT id FROM runs WHERE user_id=?1 AND bot_id=?2) AND (?3 IS NULL OR run_id=?3) ORDER BY started_at_ms DESC,id DESC LIMIT ?4"
+        ))?;
+        let mut rows = statement.query(params![
+            user_id.to_string(),
+            bot_id.to_string(),
+            run_id.map(|id| id.to_string()),
+            i64::try_from(max_rows.min(200)).unwrap_or(200)
+        ])?;
+        let mut remaining = max_bytes.min(8 * 1024 * 1024);
+        let mut found = Vec::new();
+        while let Some(row) = rows.next()? {
+            let bytes =
+                usize::try_from(row.get::<_, i64>(14)?).map_err(|error| conv_err(14, error))?;
+            if bytes > remaining {
+                continue;
+            }
+            found.push(step_row(row)?);
+            remaining -= bytes;
+        }
+        Ok(found)
     }
 
     /// Update a step's status/attempt/result.  `finished_at_ms` is set to now
@@ -585,6 +1134,158 @@ impl Storage {
             ],
         )?;
         Ok(())
+    }
+
+    /// Treat the folder (normalised path) as the owner's own content.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn trust_folder(&self, path: &str) -> Result<()> {
+        self.conn().execute(
+            "INSERT OR IGNORE INTO trusted_folders (path, added_at_ms) VALUES (?1, ?2)",
+            params![path, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    /// Stop trusting the folder. Returns whether it was listed.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn untrust_folder(&self, path: &str) -> Result<bool> {
+        Ok(self
+            .conn()
+            .execute("DELETE FROM trusted_folders WHERE path = ?1", params![path])?
+            > 0)
+    }
+
+    /// The trusted folders, oldest first.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn trusted_folders(&self) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt =
+            conn.prepare("SELECT path FROM trusted_folders ORDER BY added_at_ms, path")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Whether `path` (normalised) is a trusted folder or lies inside one.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn is_trusted_path(&self, path: &str) -> Result<bool> {
+        let conn = self.conn();
+        let mut probe = Some(path);
+        while let Some(p) = probe {
+            let hit: Option<i64> = conn
+                .query_row(
+                    "SELECT 1 FROM trusted_folders WHERE path = ?1",
+                    params![p],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if hit.is_some() {
+                return Ok(true);
+            }
+            probe = p.rfind('/').filter(|i| *i > 0).map(|i| &p[..i]);
+        }
+        Ok(false)
+    }
+
+    /// Record authenticated message origin before the message can drive a tool call.
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn set_message_source(&self, id: Uuid, source: &str) -> Result<()> {
+        self.conn().execute(
+            "UPDATE messages SET source = ?2 WHERE id = ?1",
+            params![id.to_string(), source],
+        )?;
+        Ok(())
+    }
+
+    /// The recorded origin of a message (`owner`, `imported`, `imported_foreign:<name>`, ...).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn message_source(&self, id: Uuid) -> Result<String> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT source FROM messages WHERE id = ?1",
+                [id.to_string()],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_default())
+    }
+
+    /// Texts of the user messages of `chat` that the owner typed in the desktop app.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn owner_message_texts(&self, chat: ChatId) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT content FROM messages WHERE chat_id = ?1 AND role = 'user' AND source = 'owner'
+             ORDER BY created_at_ms DESC LIMIT 200",
+        )?;
+        let rows = stmt.query_map(params![chat.to_string()], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Record that the file (or, with `tree`, everything under the directory) at the already
+    /// normalised `path` has an untrusted origin. Idempotent; a tree mark is never downgraded.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn mark_untrusted_path(&self, path: &str, tree: bool, origin: &str) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO file_provenance (path, tree, origin, recorded_at_ms) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(path) DO UPDATE SET tree = MAX(tree, excluded.tree)",
+            params![path, i64::from(tree), origin, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    /// Recorded provenance spellings, including entries written before canonical identities.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn untrusted_paths(&self) -> Result<Vec<(String, bool)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT path, tree FROM file_provenance")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Whether `path` (normalised: `/` separators, no trailing slash) is marked, itself or through
+    /// a marked ancestor directory.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn is_untrusted_path(&self, path: &str) -> Result<bool> {
+        let conn = self.conn();
+        let mut probe = Some(path);
+        let mut first = true;
+        while let Some(p) = probe {
+            let hit: Option<i64> = conn
+                .query_row(
+                    "SELECT tree FROM file_provenance WHERE path = ?1",
+                    params![p],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(tree) = hit
+                && (first || tree == 1)
+            {
+                return Ok(true);
+            }
+            first = false;
+            probe = p.rfind('/').filter(|i| *i > 0).map(|i| &p[..i]);
+        }
+        Ok(false)
     }
 
     /// Fetch an approval.
@@ -672,6 +1373,26 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// The newest audit row of one action for a user (indexed by `id`, no full scan).
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn last_audit_by_action(
+        &self,
+        user_id: UserId,
+        action: &str,
+    ) -> Result<Option<AuditEntry>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
+            "SELECT id, user_id, run_id, actor, action, detail_json, ts_ms FROM audit_log WHERE user_id = ?1 AND action = ?2 ORDER BY id DESC LIMIT 1",
+        )?;
+        Ok(st
+            .query_map(params![user_id.to_string(), action], audit_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .next())
+    }
+
     // ---- global event order ----
 
     /// Highest `gseq` handed out so far (`0` when no event was indexed yet).
@@ -734,7 +1455,7 @@ impl Storage {
     }
 }
 
-const RUN_SELECT: &str = "SELECT id, user_id, bot_id, chat_id, kind, state, error, created_at_ms, updated_at_ms, parent_run_id, spec_json FROM runs";
+const RUN_SELECT: &str = "SELECT id, user_id, bot_id, chat_id, kind, state, error, created_at_ms, updated_at_ms, parent_run_id, spec_json, computer_target, pause_reason, computer_node, computer_node_name, paused_at_ms FROM runs";
 const STEP_SELECT: &str = "SELECT id, run_id, user_id, idx, name, input_json, idempotent, retry_json, status, attempt, output_json, error, started_at_ms, finished_at_ms FROM run_steps";
 const APPROVAL_SELECT: &str = "SELECT id, user_id, run_id, step_id, summary, decision, requested_at_ms, decided_at_ms FROM approvals";
 
@@ -743,6 +1464,147 @@ fn user_row(r: &Row<'_>) -> rusqlite::Result<User> {
         id: UserId(uuid_at(r, 0)?),
         name: r.get(1)?,
         created_at_ms: r.get(2)?,
+    })
+}
+
+/// Outcome of inspecting a bot's skill assignment row for UI/management repair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkillAssignmentLookup {
+    /// Well-formed row, or `None` when the bot uses the default (`All`).
+    Ok(Option<BotSkillAssignment>),
+    /// Row exists in `bot_skill_assignment` but its mode or `names_json` is
+    /// malformed; runtime enforcement fails closed while management surfaces can
+    /// overwrite it.
+    Corrupt {
+        /// Stored row version (or `0` if unreadable).
+        version: u64,
+        /// Validation/parse error.
+        reason: String,
+    },
+}
+
+const MAX_SKILL_ASSIGNMENTS: usize = 200;
+const MAX_SKILL_NAME_LEN: usize = 64;
+
+/// Validate a skill name using the same grammar as `skills::validate_name`.
+#[must_use]
+pub fn is_valid_skill_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_SKILL_NAME_LEN
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'))
+        && name.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && !name.contains("..")
+        && !name.ends_with('.')
+}
+
+fn normalize_skill_names(names: &[String]) -> std::result::Result<Vec<String>, String> {
+    if names.len() > MAX_SKILL_ASSIGNMENTS {
+        return Err(format!(
+            "at most {MAX_SKILL_ASSIGNMENTS} assigned skills are allowed"
+        ));
+    }
+    let mut set = std::collections::BTreeSet::new();
+    for name in names {
+        if !is_valid_skill_name(name) {
+            return Err(format!("invalid skill name `{name}`"));
+        }
+        set.insert(name.clone());
+    }
+    Ok(set.into_iter().collect())
+}
+
+fn write_skill_assignment_tx(
+    tx: &rusqlite::Transaction<'_>,
+    bot_id: BotId,
+    mode: SkillAssignmentMode,
+    names: &[String],
+    expected_version: Option<u64>,
+) -> Result<BotSkillAssignment> {
+    let bid = bot_id.to_string();
+    if let Some(expected) = expected_version {
+        let current_raw: Option<i64> = tx
+            .query_row(
+                "SELECT version FROM bot_skill_assignment WHERE bot_id = ?1",
+                [&bid],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let current = current_raw.and_then(|v| u64::try_from(v).ok()).unwrap_or(0);
+        if current != expected {
+            return Err(StorageError::Conflict(format!(
+                "bot skill assignment changed (expected version {expected}, current {current})"
+            )));
+        }
+    }
+    let ts = now_ms();
+    let clean = normalize_skill_names(names)
+        .map_err(|msg| std::io::Error::new(std::io::ErrorKind::InvalidInput, msg))?;
+    match mode {
+        SkillAssignmentMode::All => {
+            tx.execute("DELETE FROM bot_skill_assignment WHERE bot_id = ?1", [&bid])?;
+            Ok(BotSkillAssignment {
+                bot_id,
+                mode,
+                names: Vec::new(),
+                updated_at_ms: ts,
+                version: 0,
+            })
+        }
+        SkillAssignmentMode::Selected => {
+            let json = serde_json::to_string(&clean)?;
+            let cur_gen: i64 = tx.query_row(
+                "SELECT generation FROM bot_skill_assignment_state WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )?;
+            let next_ver = cur_gen.saturating_add(1);
+            tx.execute(
+                "INSERT INTO bot_skill_assignment (bot_id, mode, names_json, updated_at_ms, version) \
+                 VALUES (?1, 'selected', ?2, ?3, ?4) \
+                 ON CONFLICT(bot_id) DO UPDATE SET \
+                 mode = excluded.mode, names_json = excluded.names_json, updated_at_ms = excluded.updated_at_ms, version = excluded.version",
+                params![bid, json, ts, next_ver],
+            )?;
+            Ok(BotSkillAssignment {
+                bot_id,
+                mode,
+                names: clean,
+                updated_at_ms: ts,
+                version: u64::try_from(next_ver).unwrap_or(1),
+            })
+        }
+    }
+}
+
+fn skill_assignment_row(r: &Row<'_>) -> rusqlite::Result<BotSkillAssignment> {
+    let bot_id = BotId(uuid_at(r, 0)?);
+    let mode_str: String = r.get(1)?;
+    let mode = match mode_str.as_str() {
+        "all" => SkillAssignmentMode::All,
+        "selected" => SkillAssignmentMode::Selected,
+        other => {
+            return Err(conv_err(
+                1,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("invalid skill assignment mode `{other}`"),
+                ),
+            ));
+        }
+    };
+    let names_raw: String = r.get(2)?;
+    let parsed: Vec<String> = serde_json::from_str(&names_raw).map_err(|e| conv_err(2, e))?;
+    let names = normalize_skill_names(&parsed)
+        .map_err(|msg| conv_err(2, std::io::Error::new(std::io::ErrorKind::InvalidData, msg)))?;
+    let ver: i64 = r.get(4)?;
+    Ok(BotSkillAssignment {
+        bot_id,
+        mode,
+        names,
+        updated_at_ms: r.get(3)?,
+        version: u64::try_from(ver).unwrap_or(0),
     })
 }
 
@@ -775,6 +1637,9 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<Message> {
         role: r.get(4)?,
         content: r.get(5)?,
         created_at_ms: r.get(6)?,
+        exposure_untrusted: r.get::<_, i64>(7)? != 0,
+        exposure_private: r.get::<_, i64>(8)? != 0,
+        exposure_sources: serde_json::from_str(&r.get::<_, String>(9)?).unwrap_or_default(),
     })
 }
 
@@ -791,6 +1656,11 @@ fn run_row(r: &Row<'_>) -> rusqlite::Result<Run> {
         updated_at_ms: r.get(8)?,
         parent_run_id: opt_uuid_at(r, 9)?.map(RunId),
         spec: opt_json_at(r, 10)?,
+        computer_target: r.get(11)?,
+        computer_node: r.get(13)?,
+        computer_node_name: r.get(14)?,
+        paused_at_ms: r.get(15)?,
+        pause_reason: r.get(12)?,
     })
 }
 
@@ -842,6 +1712,17 @@ fn audit_row(r: &Row<'_>) -> rusqlite::Result<AuditEntry> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn data_dir_is_canonical_but_never_a_verbatim_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Storage::open(dir.path().join("nested").join("..")).unwrap();
+        assert!(!st.data_dir().to_string_lossy().starts_with("\\\\?\\"));
+        assert_eq!(
+            std::fs::canonicalize(st.data_dir()).unwrap(),
+            std::fs::canonicalize(dir.path()).unwrap()
+        );
+    }
 
     struct Fx {
         st: Storage,
@@ -895,6 +1776,11 @@ mod tests {
             updated_at_ms: 4,
             parent_run_id: None,
             spec: None,
+            computer_target: None,
+            computer_node: None,
+            computer_node_name: None,
+            paused_at_ms: None,
+            pause_reason: None,
         };
         f.st.insert_run(&r).unwrap();
         r
@@ -918,6 +1804,9 @@ mod tests {
             role: "user".into(),
             content: "hi".into(),
             created_at_ms: 5,
+            exposure_untrusted: false,
+            exposure_private: false,
+            exposure_sources: Vec::new(),
         };
         f.st.insert_message(&m).unwrap();
         assert_eq!(f.st.get_message(m.id).unwrap().unwrap(), m);
@@ -954,6 +1843,9 @@ mod tests {
                 content: format!("message {i}"),
                 // Equal timestamps exercise the deterministic id tie-break.
                 created_at_ms: 10,
+                exposure_untrusted: false,
+                exposure_private: false,
+                exposure_sources: Vec::new(),
             })
             .unwrap();
         }
@@ -992,6 +1884,9 @@ mod tests {
                 role: "user".into(),
                 content: "é🙂".into(),
                 created_at_ms: i64::from(i),
+                exposure_untrusted: false,
+                exposure_private: false,
+                exposure_sources: Vec::new(),
             })
             .unwrap();
         }
@@ -1028,18 +1923,156 @@ mod tests {
     }
 
     #[test]
+    fn patch_bot_is_atomic_and_versioned() {
+        let f = fx();
+        let v0 = f.st.bot_version(f.bot.id).unwrap().unwrap();
+        // A plain replace bumps the version too, so a patch built on the old one is stale.
+        assert!(matches!(
+            f.st.update_bot(f.bot.id, "n", &json!({"a": 1}), v0)
+                .unwrap(),
+            BotPatch::Applied { .. }
+        ));
+        let v1 = f.st.bot_version(f.bot.id).unwrap().unwrap();
+        assert_eq!(v1, v0 + 1);
+        match f
+            .st
+            .patch_bot(f.bot.id, v0, |_, _| Ok(("x".into(), json!({}))))
+            .unwrap()
+        {
+            BotPatch::Stale { bot, version } => {
+                assert_eq!(version, v1);
+                assert_eq!(bot.name, "n");
+            }
+            other => panic!("expected stale, got {other:?}"),
+        }
+        assert_eq!(f.st.get_bot(f.bot.id).unwrap().unwrap().name, "n");
+        match f
+            .st
+            .patch_bot(f.bot.id, v1, |name, cfg| {
+                let mut c = cfg.clone();
+                c["b"] = json!(2);
+                Ok((format!("{name}!"), c))
+            })
+            .unwrap()
+        {
+            BotPatch::Applied { bot, version } => {
+                assert_eq!(version, v1 + 1);
+                assert_eq!(
+                    (bot.name.as_str(), bot.config),
+                    ("n!", json!({"a": 1, "b": 2}))
+                );
+            }
+            other => panic!("expected applied, got {other:?}"),
+        }
+        // A refusal writes nothing and keeps the version.
+        assert_eq!(
+            f.st.patch_bot(f.bot.id, v1 + 1, |_, _| Err("no".into()))
+                .unwrap(),
+            BotPatch::Rejected("no".into())
+        );
+        assert_eq!(f.st.bot_version(f.bot.id).unwrap(), Some(v1 + 1));
+        assert_eq!(
+            f.st.patch_bot(BotId::new(), 1, |_, _| Err("x".into()))
+                .unwrap(),
+            BotPatch::Missing
+        );
+        assert_eq!(f.st.bot_versions(f.user.id).unwrap()[&f.bot.id], v1 + 1);
+    }
+
+    #[test]
+    fn review95_all_profile_and_skill_writers_bump_one_bot_revision_transactionally() {
+        let f = fx();
+        let bid = f.bot.id.to_string();
+        let assert_revision = |expected| {
+            assert_eq!(
+                f.st.get_bot_versioned(f.bot.id).unwrap().unwrap().1,
+                expected
+            );
+        };
+        assert_revision(1);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::Selected, &["one".into()])
+            .unwrap();
+        assert_revision(2);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::Selected, &["two".into()])
+            .unwrap();
+        assert_revision(3);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::All, &[])
+            .unwrap();
+        assert_revision(4);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::Selected, &[])
+            .unwrap();
+        assert_revision(5);
+        f.st.delete_bot_skill_assignment(f.bot.id).unwrap();
+        assert_revision(6);
+        assert!(!f.st.delete_bot_skill_assignment(f.bot.id).unwrap());
+        assert_revision(6); // No changed assignment, no revision.
+        {
+            let mut conn = f.st.conn();
+            let tx = conn.transaction().unwrap();
+            tx.execute("UPDATE bots SET config_json='{}' WHERE id=?1", [&bid])
+                .unwrap();
+            assert_eq!(
+                tx.query_row("SELECT version FROM bots WHERE id=?1", [&bid], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                7
+            );
+            // Rollback includes both the profile and its revision.
+        }
+        assert_revision(6);
+        f.st.conn()
+            .execute("UPDATE bots SET name='sql writer' WHERE id=?1", [&bid])
+            .unwrap();
+        assert_revision(7);
+        assert!(matches!(
+            f.st.update_bot(f.bot.id, "stale", &json!({}), 6).unwrap(),
+            BotPatch::Stale { version: 7, .. }
+        ));
+        assert_revision(7);
+        let list = f.st.list_bots_versioned(f.user.id).unwrap();
+        assert_eq!(list[0].1, 7);
+        assert_eq!(list[0].0.name, "sql writer");
+    }
+
+    #[test]
+    fn review95_modify_bot_changes_one_field_of_the_stored_profile_and_bumps_the_revision() {
+        let f = fx();
+        f.st.update_bot(f.bot.id, "n", &json!({"a": 1, "b": 2}), 1)
+            .unwrap();
+        // A concurrent profile write lands before the dedicated writer runs.
+        let out =
+            f.st.modify_bot(f.bot.id, |name, stored| {
+                let mut next = stored.clone();
+                next["knowledge"] = json!({"auto_retrieve": true});
+                Ok((name.to_owned(), next))
+            })
+            .unwrap();
+        assert!(matches!(out, BotPatch::Applied { version: 3, .. }));
+        let (bot, v) = f.st.get_bot_versioned(f.bot.id).unwrap().unwrap();
+        assert_eq!(v, 3);
+        assert_eq!(
+            bot.config,
+            json!({"a": 1, "b": 2, "knowledge": {"auto_retrieve": true}})
+        );
+    }
+
+    #[test]
     fn update_and_delete_bot() {
         let f = fx();
-        assert!(
-            f.st.update_bot(f.bot.id, "renamed", &json!({"a": 1}))
-                .unwrap()
-        );
+        assert!(matches!(
+            f.st.update_bot(f.bot.id, "renamed", &json!({"a": 1}), 1)
+                .unwrap(),
+            BotPatch::Applied { .. }
+        ));
         let got = f.st.get_bot(f.bot.id).unwrap().unwrap();
         assert_eq!(
             (got.name.as_str(), got.config),
             ("renamed", json!({"a": 1}))
         );
-        assert!(!f.st.update_bot(BotId::new(), "x", &json!({})).unwrap());
+        assert_eq!(
+            f.st.update_bot(BotId::new(), "x", &json!({}), 1).unwrap(),
+            BotPatch::Missing
+        );
         // The fixture chat still references the bot.
         assert!(f.st.delete_bot(f.bot.id).is_err());
         let spare = Bot {
@@ -1052,6 +2085,42 @@ mod tests {
         f.st.insert_bot(&spare).unwrap();
         assert!(f.st.delete_bot(spare.id).unwrap());
         assert!(!f.st.delete_bot(spare.id).unwrap());
+    }
+
+    #[test]
+    fn bot_cleanup_happens_after_constraints_and_before_commit() {
+        let f = fx();
+        assert!(
+            f.st.delete_bot_with_cleanup(f.bot.id, || panic!(
+                "referenced bot must never be cleaned"
+            ))
+            .is_err()
+        );
+        let empty = Bot {
+            id: BotId::new(),
+            user_id: f.user.id,
+            name: "Empty".into(),
+            config: json!({}),
+            created_at_ms: 1,
+        };
+        f.st.insert_bot(&empty).unwrap();
+        assert!(
+            f.st.delete_bot_with_cleanup(empty.id, || Err(crate::StorageError::Io(
+                std::io::Error::other("cleanup failed")
+            )))
+            .is_err()
+        );
+        assert!(f.st.get_bot(empty.id).unwrap().is_some());
+        let mut cleaned = false;
+        assert!(
+            f.st.delete_bot_with_cleanup(empty.id, || {
+                cleaned = true;
+                Ok(())
+            })
+            .unwrap()
+        );
+        assert!(cleaned);
+        assert!(f.st.get_bot(empty.id).unwrap().is_none());
     }
 
     #[test]
@@ -1122,6 +2191,67 @@ mod tests {
         assert_eq!(got.output, Some(json!("ok")));
         assert!(got.finished_at_ms.is_some());
         assert_eq!(f.st.relabel_steps(r.id, "succeeded", "x").unwrap(), 1);
+    }
+
+    #[test]
+    fn knowledge_steps_enforce_owner_row_and_aggregate_byte_bounds() {
+        let f = fx();
+        let run = run(&f);
+        for index in 0..3 {
+            f.st.insert_step(&RunStep {
+                id: Uuid::now_v7(),
+                run_id: run.id,
+                user_id: f.user.id,
+                idx: index,
+                name: "tools".into(),
+                input: json!({}),
+                idempotent: true,
+                retry: None,
+                status: "succeeded".into(),
+                attempt: 1,
+                output: Some(json!(if index == 2 {
+                    "x".repeat(1024)
+                } else {
+                    "small".into()
+                })),
+                error: None,
+                started_at_ms: i64::from(index),
+                finished_at_ms: Some(4),
+            })
+            .unwrap();
+        }
+        let found =
+            f.st.knowledge_tool_steps(f.user.id, f.bot.id, Some(run.id), 3, 40)
+                .unwrap();
+        assert_eq!(
+            found.len(),
+            2,
+            "oversized latest row must not consume the budget"
+        );
+        assert_eq!(
+            f.st.knowledge_tool_steps(f.user.id, f.bot.id, Some(run.id), 3, 20)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            f.st.knowledge_tool_steps(f.user.id, f.bot.id, Some(run.id), 1, 40)
+                .unwrap()
+                .is_empty(),
+            "row cap applies before filtering oversized payloads"
+        );
+        for (user, bot, run) in [
+            (UserId::new(), f.bot.id, run.id),
+            (f.user.id, BotId::new(), run.id),
+            (f.user.id, f.bot.id, RunId::new()),
+        ] {
+            assert_eq!(
+                f.st.knowledge_tool_steps(user, bot, Some(run), 3, 2048)
+                    .unwrap()
+                    .len(),
+                0
+            );
+        }
     }
 
     #[test]
@@ -1205,5 +2335,376 @@ mod tests {
         }
         let st = Storage::open(dir.path()).unwrap();
         assert_eq!(st.get_user(user.id).unwrap().unwrap(), user);
+    }
+
+    #[test]
+    fn untrusted_file_marks_cover_the_file_or_a_whole_tree_and_survive_a_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Storage::open(dir.path()).unwrap();
+        st.mark_untrusted_path("c:/docs/page.txt", false, "write")
+            .unwrap();
+        st.mark_untrusted_path("c:/work/clone", true, "git clone")
+            .unwrap();
+        assert!(st.is_untrusted_path("c:/docs/page.txt").unwrap());
+        assert!(!st.is_untrusted_path("c:/docs/own.txt").unwrap());
+        assert!(
+            !st.is_untrusted_path("c:/docs/page.txt/x").unwrap(),
+            "a file mark is not a tree"
+        );
+        assert!(st.is_untrusted_path("c:/work/clone/src/readme.md").unwrap());
+        assert!(!st.is_untrusted_path("c:/work/clone2/readme.md").unwrap());
+        drop(st);
+        let st = Storage::open(dir.path()).unwrap();
+        assert!(st.is_untrusted_path("c:/work/clone/a/b").unwrap());
+    }
+
+    #[test]
+    fn bot_skill_assignment_migration_and_crud() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = User {
+            id: UserId::new(),
+            name: "u".into(),
+            created_at_ms: 1,
+        };
+        let existing_bot = Bot {
+            id: BotId::new(),
+            user_id: user.id,
+            name: "preexisting".into(),
+            config: json!({}),
+            created_at_ms: 2,
+        };
+        // Simulate a pre-existing v3 database with an existing bot.
+        {
+            let conn = Connection::open(dir.path().join("bot.db")).unwrap();
+            conn.execute_batch(include_str!("../migrations/0001_init.sql"))
+                .unwrap();
+            conn.execute_batch(include_str!("../migrations/0002_event_index.sql"))
+                .unwrap();
+            conn.execute_batch(include_str!("../migrations/0003_subagents.sql"))
+                .unwrap();
+            conn.execute_batch("PRAGMA user_version = 3").unwrap();
+            conn.execute(
+                "INSERT INTO users (id, name, created_at_ms) VALUES (?1, ?2, ?3)",
+                params![user.id.to_string(), user.name, user.created_at_ms],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO bots (id, user_id, name, config_json, created_at_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    existing_bot.id.to_string(),
+                    existing_bot.user_id.to_string(),
+                    existing_bot.name,
+                    "{}",
+                    existing_bot.created_at_ms
+                ],
+            )
+            .unwrap();
+        }
+        let st = Storage::open(dir.path()).unwrap();
+        assert_eq!(
+            migrate::current_version(&st.conn()).unwrap(),
+            migrate::latest_version()
+        );
+        // Existing bot has no row => defaults to all.
+        assert_eq!(st.get_bot_skill_assignment(existing_bot.id).unwrap(), None);
+
+        // Set selected (deduplicates and sorts).
+        let saved = st
+            .set_bot_skill_assignment_audited(
+                user.id,
+                existing_bot.id,
+                SkillAssignmentMode::Selected,
+                &["zeta".into(), "alpha".into(), "zeta".into()],
+                "user",
+                &json!({"bot_id": existing_bot.id.to_string(), "mode": "selected"}),
+            )
+            .unwrap();
+        assert_eq!(saved.mode, SkillAssignmentMode::Selected);
+        assert_eq!(saved.names, vec!["alpha", "zeta"]);
+        assert_eq!(
+            st.get_bot_skill_assignment(existing_bot.id)
+                .unwrap()
+                .unwrap()
+                .names,
+            vec!["alpha", "zeta"]
+        );
+        assert_eq!(st.list_audit(user.id).unwrap().len(), 1);
+
+        // If the bot has a chat, delete_bot fails and rolls back the skill-assignment delete too.
+        let chat = Chat {
+            id: ChatId::new(),
+            user_id: user.id,
+            bot_id: existing_bot.id,
+            title: "c".into(),
+            created_at_ms: 3,
+        };
+        st.insert_chat(&chat).unwrap();
+        assert!(st.delete_bot(existing_bot.id).is_err());
+        assert!(
+            st.get_bot_skill_assignment(existing_bot.id)
+                .unwrap()
+                .is_some()
+        );
+
+        // Setting mode = All deletes the row.
+        st.set_bot_skill_assignment(existing_bot.id, SkillAssignmentMode::All, &[])
+            .unwrap();
+        assert_eq!(st.get_bot_skill_assignment(existing_bot.id).unwrap(), None);
+
+        // Deleting a bot with a skill assignment removes the assignment row atomically.
+        let spare = Bot {
+            id: BotId::new(),
+            user_id: user.id,
+            name: "spare".into(),
+            config: json!({}),
+            created_at_ms: 4,
+        };
+        st.insert_bot(&spare).unwrap();
+        st.set_bot_skill_assignment(spare.id, SkillAssignmentMode::Selected, &["alpha".into()])
+            .unwrap();
+        assert!(st.delete_bot(spare.id).unwrap());
+        assert_eq!(st.get_bot_skill_assignment(spare.id).unwrap(), None);
+        assert!(!st.delete_bot_skill_assignment(spare.id).unwrap());
+    }
+
+    #[test]
+    fn bot_skill_assignment_generation_tracks_db_writes_and_version_conflicts() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Storage::open(dir.path()).unwrap();
+        let user = User {
+            id: UserId::new(),
+            name: "u".into(),
+            created_at_ms: 1,
+        };
+        let bot = Bot {
+            id: BotId::new(),
+            user_id: user.id,
+            name: "b".into(),
+            config: json!({}),
+            created_at_ms: 2,
+        };
+        st.insert_user(&user).unwrap();
+        st.insert_bot(&bot).unwrap();
+
+        let g0 = st.bot_skill_assignment_generation().unwrap();
+        assert_eq!(g0, 1);
+
+        // First write from expected_version = 0 (no row) succeeds and bumps DB generation.
+        let r1 = st
+            .set_bot_skill_assignment_audited_versioned(
+                user.id,
+                bot.id,
+                SkillAssignmentMode::Selected,
+                &["alpha".into()],
+                "user",
+                &json!({}),
+                Some(0),
+            )
+            .unwrap();
+        let g1 = st.bot_skill_assignment_generation().unwrap();
+        assert_eq!(r1.version, g1);
+        assert!(g1 > g0);
+
+        // Stale expected_version (0 instead of r1.version) returns Conflict without modifying row.
+        let err = st
+            .set_bot_skill_assignment_audited_versioned(
+                user.id,
+                bot.id,
+                SkillAssignmentMode::Selected,
+                &["beta".into()],
+                "user",
+                &json!({}),
+                Some(0),
+            )
+            .unwrap_err();
+        assert!(matches!(err, StorageError::Conflict(_)), "{err:?}");
+        assert_eq!(
+            st.get_bot_skill_assignment(bot.id).unwrap().unwrap().names,
+            vec!["alpha"]
+        );
+
+        // External SQLite writer on the same DB file bumps generation via trigger.
+        let external = Storage::open(dir.path()).unwrap();
+        external
+            .set_bot_skill_assignment(bot.id, SkillAssignmentMode::Selected, &["gamma".into()])
+            .unwrap();
+        let g2 = st.bot_skill_assignment_generation().unwrap();
+        assert!(g2 > g1);
+
+        // Corrupt row: get_bot_skill_assignment fails, inspect_bot_skill_assignment reports Corrupt
+        // with raw version so management UI can overwrite and repair it.
+        st.conn()
+            .execute(
+                "UPDATE bot_skill_assignment SET names_json = 'not-json' WHERE bot_id = ?1",
+                [bot.id.to_string()],
+            )
+            .unwrap();
+        assert!(st.get_bot_skill_assignment(bot.id).is_err());
+        let inspected = st.inspect_bot_skill_assignment(bot.id).unwrap();
+        match inspected {
+            SkillAssignmentLookup::Corrupt { version, .. } => {
+                assert_eq!(version, g2);
+                let repaired = st
+                    .set_bot_skill_assignment_audited_versioned(
+                        user.id,
+                        bot.id,
+                        SkillAssignmentMode::All,
+                        &[],
+                        "user",
+                        &json!({"repaired": true}),
+                        Some(version),
+                    )
+                    .unwrap();
+                assert_eq!(repaired.version, 0);
+            }
+            other @ SkillAssignmentLookup::Ok(_) => panic!("expected Corrupt, got {other:?}"),
+        }
+        assert_eq!(st.get_bot_skill_assignment(bot.id).unwrap(), None);
+        assert!(st.bot_skill_assignment_generation().unwrap() > g2);
+    }
+
+    #[test]
+    fn assignment_audit_diff_uses_current_database_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Storage::open(dir.path()).unwrap();
+        let user = User {
+            id: UserId::new(),
+            name: "u".into(),
+            created_at_ms: 1,
+        };
+        let bot = Bot {
+            id: BotId::new(),
+            user_id: user.id,
+            name: "b".into(),
+            config: json!({}),
+            created_at_ms: 1,
+        };
+        st.insert_user(&user).unwrap();
+        st.insert_bot(&bot).unwrap();
+        st.set_bot_skill_assignment(bot.id, SkillAssignmentMode::Selected, &["stale".into()])
+            .unwrap();
+        let external = Storage::open(dir.path()).unwrap();
+        external
+            .set_bot_skill_assignment(
+                bot.id,
+                SkillAssignmentMode::Selected,
+                &["current".into(), "keep".into()],
+            )
+            .unwrap();
+        st.set_bot_skill_assignment_audited_versioned(
+            user.id,
+            bot.id,
+            SkillAssignmentMode::Selected,
+            &["next".into(), "keep".into(), "next".into()],
+            "user",
+            &json!({"added": ["stale"], "removed": [], "custom": true}),
+            None,
+        )
+        .unwrap();
+        let audit = st.list_audit(user.id).unwrap().pop().unwrap();
+        assert_eq!(audit.detail["added"], json!(["next"]));
+        assert_eq!(audit.detail["removed"], json!(["current"]));
+        assert_eq!(audit.detail["custom"], true);
+        st.set_bot_skill_assignment_audited_versioned(
+            user.id,
+            bot.id,
+            SkillAssignmentMode::All,
+            &[],
+            "user",
+            &json!({}),
+            None,
+        )
+        .unwrap();
+        let audit = st.list_audit(user.id).unwrap().pop().unwrap();
+        assert_eq!(audit.detail["added"], json!([]));
+        assert_eq!(audit.detail["removed"], json!(["keep", "next"]));
+    }
+
+    #[test]
+    fn computer_target_and_pause_reason_persist_and_clear() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_id;
+        {
+            let st = Storage::open(dir.path()).unwrap();
+            let u = User {
+                id: UserId::new(),
+                name: "u".into(),
+                created_at_ms: 1,
+            };
+            st.insert_user(&u).unwrap();
+            let b = Bot {
+                id: BotId::new(),
+                user_id: u.id,
+                name: "b".into(),
+                config: json!({}),
+                created_at_ms: 1,
+            };
+            st.insert_bot(&b).unwrap();
+            let r = Run {
+                id: RunId::new(),
+                user_id: u.id,
+                bot_id: b.id,
+                chat_id: None,
+                kind: "turn".into(),
+                state: "queued".into(),
+                error: None,
+                created_at_ms: 2,
+                updated_at_ms: 2,
+                parent_run_id: None,
+                spec: None,
+                computer_target: None,
+                computer_node: None,
+                computer_node_name: None,
+                paused_at_ms: None,
+                pause_reason: None,
+            };
+            run_id = r.id;
+            st.insert_run(&r).unwrap();
+            st.bind_run_computer(run_id, "pc", Some("pc-A"), Some("My PC"))
+                .unwrap();
+            st.update_run_state(run_id, "paused", None).unwrap();
+            st.set_run_pause_reason(run_id, Some("waiting_for_pc"))
+                .unwrap();
+            assert_eq!(
+                st.list_paused_runs_with_reason("waiting_for_pc")
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        let st = Storage::open(dir.path()).unwrap();
+        let got = st.get_run(run_id).unwrap().unwrap();
+        assert_eq!(got.computer_target.as_deref(), Some("pc"));
+        assert_eq!(got.pause_reason.as_deref(), Some("waiting_for_pc"));
+        assert_eq!(got.computer_node.as_deref(), Some("pc-A"));
+        assert_eq!(got.computer_node_name.as_deref(), Some("My PC"));
+        assert!(
+            st.bind_run_computer(run_id, "pc", Some("pc-B"), Some("Other PC"))
+                .is_err()
+        );
+        assert_eq!(
+            st.get_run(run_id)
+                .unwrap()
+                .unwrap()
+                .computer_node
+                .as_deref(),
+            Some("pc-A")
+        );
+        assert!(got.paused_at_ms.is_some());
+        st.conn()
+            .execute(
+                "UPDATE runs SET paused_at_ms = 123 WHERE id = ?1",
+                [run_id.to_string()],
+            )
+            .unwrap();
+        st.set_run_computer_target(run_id, Some("pc")).unwrap();
+        st.set_run_pause_reason(run_id, Some("waiting_for_pc"))
+            .unwrap();
+        st.update_run_state(run_id, "paused", None).unwrap();
+        assert_eq!(st.get_run(run_id).unwrap().unwrap().paused_at_ms, Some(123));
+        st.update_run_state(run_id, "running", None).unwrap();
+        let running = st.get_run(run_id).unwrap().unwrap();
+        assert_eq!(running.pause_reason, None);
+        assert_eq!(running.paused_at_ms, None);
     }
 }

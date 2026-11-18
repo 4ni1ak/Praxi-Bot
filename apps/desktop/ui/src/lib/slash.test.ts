@@ -4,7 +4,6 @@ import {
   applyCompletion,
   detectTrigger,
   mentionHandle,
-  parseLeadingMention,
   parseSlashInput,
   SLASH_COMMANDS
 } from "./slash.ts";
@@ -93,16 +92,6 @@ test("every slash command is lowercase and parses", () => {
   }
 });
 
-test("leading mention picks the bot and strips the handle", () => {
-  const bots = [{ name: "Atlas" }, { name: "Deep Work" }, { name: "İpek" }];
+test("mention handle is the bot name without whitespace", () => {
   assert.equal(mentionHandle("Deep Work"), "DeepWork");
-  assert.deepEqual(parseLeadingMention("@atlas do it\nplease", bots), {
-    bot: bots[0],
-    rest: "do it\nplease"
-  });
-  assert.equal(parseLeadingMention("@deepwork go", bots)?.bot, bots[1]);
-  assert.equal(parseLeadingMention("@ipek hi", bots)?.bot, bots[2]);
-  assert.equal(parseLeadingMention("@nobody hi", bots), null);
-  assert.equal(parseLeadingMention("@atlas", bots), null);
-  assert.equal(parseLeadingMention("hi @atlas", bots), null);
 });

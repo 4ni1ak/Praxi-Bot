@@ -49,9 +49,10 @@ import {
 } from "../../lib/emailAccounts";
 import { useDaemon } from "../../state/DaemonContext";
 import styles from "./EmailCard.module.css";
+import { humanLine } from "../../lib/humanError";
 
 function errorText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return humanLine(e);
 }
 
 const PRESET_IDS: readonly EmailPresetId[] = [

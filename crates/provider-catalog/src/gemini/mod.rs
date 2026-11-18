@@ -23,6 +23,7 @@
 //!   `InvalidRequest`, 429 -> `RateLimited` (from `Retry-After` or the
 //!   `RetryInfo` detail), 5xx -> `Upstream`; 429/`Upstream` are retried.
 
+mod embedding;
 mod request;
 mod schema;
 mod stream;

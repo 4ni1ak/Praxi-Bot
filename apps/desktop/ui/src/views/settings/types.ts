@@ -8,6 +8,7 @@ export type SettingsSectionId =
   | "ai"
   | "computer"
   | "usage"
+  | "diagnostics"
   | "updates";
 
 export const SETTINGS_SECTIONS: readonly SettingsSectionId[] = [
@@ -16,6 +17,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionId[] = [
   "ai",
   "computer",
   "usage",
+  "diagnostics",
   "updates"
 ];
 
