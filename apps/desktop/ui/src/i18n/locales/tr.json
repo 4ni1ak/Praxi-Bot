@@ -1244,6 +1244,10 @@
         "title": "Önce Praxi'ye bir beyin gerekiyor",
         "hint": "Ayarlardan bir model bağlayıp yeniden dene."
       },
+      "skill_changed": {
+        "title": "Depo önizlemeden sonra değişti",
+        "hint": "Beceriyi eklemeden önce yeniden incele."
+      },
       "skill_conflict": {
         "title": "Bu adda bir beceri zaten var",
         "hint": "Başka bir ad seç ya da eskisini değiştir."
@@ -1255,6 +1259,10 @@
       "skill_not_found": {
         "title": "Bu beceri artık yok",
         "hint": "Listeyi yenile."
+      },
+      "skill_source_unreachable": {
+        "title": "Depoya ulaşılamadı",
+        "hint": "Adresi ve bağlantını kontrol edip yeniden dene."
       },
       "skill_storage": {
         "title": "Beceri kaydedilemedi",

@@ -1244,6 +1244,10 @@
         "title": "Praxi needs a brain first",
         "hint": "Connect a model in Settings, then try again."
       },
+      "skill_changed": {
+        "title": "The repository changed since the preview",
+        "hint": "Review it again before you add the skill."
+      },
       "skill_conflict": {
         "title": "A skill with that name already exists",
         "hint": "Pick another name or replace the old one."
@@ -1255,6 +1259,10 @@
       "skill_not_found": {
         "title": "That skill no longer exists",
         "hint": "Reload the list."
+      },
+      "skill_source_unreachable": {
+        "title": "The repository could not be reached",
+        "hint": "Check the address and your connection, then try again."
       },
       "skill_storage": {
         "title": "The skill could not be saved",

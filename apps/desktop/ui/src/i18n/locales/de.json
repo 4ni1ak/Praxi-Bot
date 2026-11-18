@@ -1244,6 +1244,10 @@
         "title": "Praxi braucht zuerst ein Gehirn",
         "hint": "Verbinde in den Einstellungen ein Modell und versuche es dann erneut."
       },
+      "skill_changed": {
+        "title": "Das Repository hat sich seit der Vorschau geändert",
+        "hint": "Sieh es dir noch einmal an, bevor du den Skill hinzufügst."
+      },
       "skill_conflict": {
         "title": "Ein Skill mit diesem Namen existiert bereits",
         "hint": "Wähle einen anderen Namen oder ersetze den alten."
@@ -1255,6 +1259,10 @@
       "skill_not_found": {
         "title": "Dieser Skill existiert nicht mehr",
         "hint": "Lade die Liste neu."
+      },
+      "skill_source_unreachable": {
+        "title": "Das Repository ist nicht erreichbar",
+        "hint": "Prüfe die Adresse und deine Verbindung und versuche es dann erneut."
       },
       "skill_storage": {
         "title": "Der Skill konnte nicht gespeichert werden",
