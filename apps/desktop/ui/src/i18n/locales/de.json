@@ -3069,6 +3069,14 @@
     "confirmQuery": "Abrufanfragen erlauben"
   },
   "liveView": {
+    "chat": {
+      "title": "Mit dem Bot chatten",
+      "collapse": "Chat einklappen",
+      "replying": "Bot antwortet…",
+      "working": "Bot arbeitet…",
+      "approve": "Genehmigen",
+      "reject": "Ablehnen"
+    },
     "title": "Live-Ansicht des Computers",
     "expand": "Große Ansicht öffnen",
     "close": "Ansicht schließen",

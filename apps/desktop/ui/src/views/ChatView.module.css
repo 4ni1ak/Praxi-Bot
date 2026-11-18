@@ -748,3 +748,16 @@
   color: color-mix(in srgb, var(--mention-color) 55%, var(--color-text));
   font-weight: 600;
 }
+
+.composer[data-live-view="true"] {
+  padding: var(--space-0);
+}
+
+.liveReplyStatus {
+  overflow: hidden;
+  margin: var(--space-0);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -3069,6 +3069,14 @@
     "confirmQuery": "Allow retrieval queries"
   },
   "liveView": {
+    "chat": {
+      "title": "Chat with bot",
+      "collapse": "Collapse chat",
+      "replying": "Bot is replying…",
+      "working": "Bot is working…",
+      "approve": "Approve",
+      "reject": "Reject"
+    },
     "title": "Computer live view",
     "expand": "Open large viewer",
     "close": "Close viewer",

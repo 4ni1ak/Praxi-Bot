@@ -3069,6 +3069,14 @@
     "confirmQuery": "Arama sorgularına izin ver"
   },
   "liveView": {
+    "chat": {
+      "title": "Botla sohbet",
+      "collapse": "Sohbeti daralt",
+      "replying": "Bot yanıt yazıyor…",
+      "working": "Bot çalışıyor…",
+      "approve": "Onayla",
+      "reject": "Reddet"
+    },
     "title": "Canlı ekran görünümü",
     "expand": "Büyük görünümü aç",
     "close": "Görünümü kapat",
