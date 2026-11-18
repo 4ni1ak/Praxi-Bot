@@ -733,6 +733,31 @@
         "done": "Looked up a skill",
         "failed": "Couldn't look up a skill"
       },
+      "memory_search": {
+        "running": "Searching memory",
+        "done": "Searched memory",
+        "failed": "Couldn't search memory"
+      },
+      "session_search": {
+        "running": "Searching past conversations",
+        "done": "Searched past conversations",
+        "failed": "Couldn't search past conversations"
+      },
+      "memory_save": {
+        "running": "Saving to memory",
+        "done": "Saved to memory",
+        "failed": "Didn't save to memory"
+      },
+      "memory_forget": {
+        "running": "Forgetting a memory",
+        "done": "Forgot a memory",
+        "failed": "Didn't forget a memory"
+      },
+      "knowledge_search": {
+        "running": "Searching knowledge sources",
+        "done": "Searched knowledge sources",
+        "failed": "Couldn't search knowledge sources"
+      },
       "workflow": {
         "running": "Running a workflow",
         "done": "Ran a workflow",
@@ -2027,6 +2052,14 @@
         "not_detected": "The installer finished but the program was not found yet. Press Reconnect, or restart Praxi-Bot once.",
         "timeout": "The installer took too long and was stopped.",
         "unavailable": "The installer could not be started."
+      }
+    },
+    "tools": {
+      "label": "Tools bots may use",
+      "restricted": "Some tools are limited by a custom allow-list; edit it in the server settings.",
+      "effect": {
+        "write": "changes data",
+        "destructive": "can delete or send"
       }
     }
   },
@@ -3783,5 +3816,17 @@
       "sign_in": "{{cli}} is signed out. Sign in to it in Settings, AI.",
       "unsupported": "Praxi cannot run {{cli}} on this computer."
     }
+  },
+  "voice": {
+    "speak": "Read aloud",
+    "stop": "Stop reading",
+    "codeOmitted": "(code omitted)",
+    "tableOmitted": "(table omitted)",
+    "title": "Spoken replies",
+    "description": "Reply voice and speed for the read-aloud button. Uses your system's speech engine.",
+    "auto": "Automatic (matches the app language)",
+    "online": "online",
+    "speed": "Speed",
+    "unsupported": "This system offers no speech voices."
   }
 }
