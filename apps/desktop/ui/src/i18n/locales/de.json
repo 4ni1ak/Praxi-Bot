@@ -561,6 +561,11 @@
     "slash": {
       "new": "Neuen Chat starten",
       "stop": "Aktuellen Lauf stoppen",
+      "help": "Hilfe und Tastenkürzel öffnen",
+      "settings": "Einstellungen öffnen",
+      "models": "KI-Modelleinstellungen öffnen",
+      "apps": "Apps öffnen",
+      "schedules": "Zeitpläne öffnen",
       "menu": "Befehle",
       "mentionMenu": "Bots",
       "noMatch": "Keine Treffer"
@@ -727,6 +732,31 @@
         "running": "Schlägt einen Skill nach",
         "done": "Einen Skill nachgeschlagen",
         "failed": "Ein Skill konnte nicht nachgeschlagen werden"
+      },
+      "memory_search": {
+        "running": "Durchsucht das Gedächtnis",
+        "done": "Das Gedächtnis durchsucht",
+        "failed": "Das Gedächtnis konnte nicht durchsucht werden"
+      },
+      "session_search": {
+        "running": "Durchsucht frühere Unterhaltungen",
+        "done": "Frühere Unterhaltungen durchsucht",
+        "failed": "Frühere Unterhaltungen konnten nicht durchsucht werden"
+      },
+      "memory_save": {
+        "running": "Speichert im Gedächtnis",
+        "done": "Im Gedächtnis gespeichert",
+        "failed": "Nicht im Gedächtnis gespeichert"
+      },
+      "memory_forget": {
+        "running": "Löscht eine Erinnerung",
+        "done": "Eine Erinnerung gelöscht",
+        "failed": "Eine Erinnerung wurde nicht gelöscht"
+      },
+      "knowledge_search": {
+        "running": "Durchsucht Wissensquellen",
+        "done": "Wissensquellen durchsucht",
+        "failed": "Wissensquellen konnten nicht durchsucht werden"
       },
       "workflow": {
         "running": "Führt einen Workflow aus",

@@ -4769,6 +4769,7 @@ dependencies = [
  "tokenizers",
  "tokio",
  "tokio-util",
+ "tool-registry",
  "unicode-normalization",
  "url",
  "uuid",

@@ -307,6 +307,8 @@ pub(crate) fn source_label(name: &str, input: &Value) -> String {
         "skill_read" | "skill_list" | "skill_write" | "skill_publish" => {
             format!("file skill {}", str_field("name").unwrap_or("a skill"))
         }
+        "memory_search" | "memory_save" | "memory_forget" => "memory".to_owned(),
+        "session_search" => "past conversation".to_owned(),
         "workflow_run" | "workflow_list" => "workflow replay".to_owned(),
         other if other.starts_with("desktop_") => format!(
             "window {}",
@@ -380,6 +382,7 @@ pub(crate) fn egress_payload(name: &str, input: &Value) -> (String, String, &'st
         "schedule_create" | "schedule_update" | "schedule_resume" => {
             ("this bot's scheduler".to_owned(), "body")
         }
+        "memory_save" | "memory_forget" => ("this bot's memory".to_owned(), "body"),
         other if other.starts_with("desktop_") => ("the desktop".to_owned(), "body"),
         _ => {
             if input.get("url").and_then(Value::as_str).is_some() {
