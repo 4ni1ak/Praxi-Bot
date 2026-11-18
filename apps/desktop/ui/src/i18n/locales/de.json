@@ -2749,6 +2749,7 @@
       "localNoSystem": "Der Bot arbeitet hier"
     },
     "reason": {
+      "timeout": "Der Bildschirm konnte nicht rechtzeitig gestartet werden",
       "connecting": "Verbindung zu {{name}} wird hergestellt …",
       "offline": "Server nicht erreichbar",
       "notPaired": "Der Server akzeptiert diesen Computer nicht mehr",

@@ -21,7 +21,9 @@ function thisSystem(): string {
 
 function reasonKey(reason: UnavailableReason | null): { key: string; detail?: string } {
   if (reason && typeof reason === "object") {
-    return { key: "computerCard.reason.noScreen", detail: noScreenDetailKey(reason.noScreen) };
+    return "noScreen" in reason
+      ? { key: "computerCard.reason.noScreen", detail: noScreenDetailKey(reason.noScreen) }
+      : { key: `liveView.reasons.${reason.targetReason}` };
   }
   return { key: `computerCard.reason.${reason ?? "failed"}` };
 }
@@ -99,7 +101,7 @@ export function BotComputerBlock({
         ? t("computerCard.hint.starting")
         : view.kind === "paused"
           ? t("computerCard.hint.paused")
-          : view.kind === "unavailable"
+          : view.kind === "unavailable" || view.kind === "timeout"
             ? t(rk, { name: serverName || t("computerPicker.host"), detail: detail ? t(detail) : "" })
             : "";
 
@@ -120,7 +122,7 @@ export function BotComputerBlock({
         {t("computerCard.resume")}
       </button>
     );
-  } else if (view.kind === "unavailable") {
+  } else if (view.kind === "unavailable" || view.kind === "timeout") {
     body = (
       <button type="button" className={styles.cta} data-testid="bot-computer-retry" onClick={view.start}>
         {t("computerCard.retry")}
@@ -171,7 +173,7 @@ export function BotComputerBlock({
         <div className={styles.view} data-kind={view.kind} data-testid="bot-computer-view">
           {view.kind === "live" && view.frameUrl ? (
             <>
-              <img className={styles.frame} src={view.frameUrl} alt={t("computerCard.frameAlt", { name })} draggable={false} />
+              <img className={styles.frame} src={view.frameUrl} alt={t("computerCard.frameAlt", { name })} title={t("liveView.privacyNotice")} draggable={false} />
               <LiveClock since={view.liveSinceMs} />
               <div className={styles.over}>
                 <button type="button" data-testid="bot-computer-big" onClick={view.bigView}>
@@ -188,7 +190,7 @@ export function BotComputerBlock({
             </>
           ) : (
             <>
-              <BotGradient color={botColor} still={view.kind === "paused" || view.kind === "unavailable"} />
+              <BotGradient color={botColor} still={view.kind === "paused" || view.kind === "unavailable" || view.kind === "timeout"} />
               {body}
               {hint ? <div className={styles.hint}>{hint}</div> : null}
             </>

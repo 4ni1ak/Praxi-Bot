@@ -2749,6 +2749,7 @@
       "localNoSystem": "The bot works here"
     },
     "reason": {
+      "timeout": "The screen took too long to start",
       "connecting": "Connecting to {{name}}…",
       "offline": "Cannot reach the server",
       "notPaired": "The server no longer accepts this computer",

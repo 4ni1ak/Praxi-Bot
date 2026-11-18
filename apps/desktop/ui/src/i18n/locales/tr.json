@@ -2749,6 +2749,7 @@
       "localNoSystem": "Bot burada çalışıyor"
     },
     "reason": {
+      "timeout": "Ekran zamanında başlatılamadı",
       "connecting": "{{name}} sunucusuna bağlanılıyor…",
       "offline": "Sunucuya ulaşılamıyor",
       "notPaired": "Sunucu bu bilgisayarı artık kabul etmiyor",

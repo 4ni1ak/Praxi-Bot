@@ -9,7 +9,8 @@ const base: ViewInputs = {
   issue: null,
   targetsStatus: "unknown",
   hasTarget: false,
-  targetUnavailable: false,
+  targetUnavailable: null,
+  startFailure: null,
   noScreen: null,
   permissionRefused: false,
   hasFrame: false
@@ -26,6 +27,19 @@ test("the computer card never starts a view by itself: idle until asked, then st
   assert.equal(paused.kind, "paused");
   assert.equal(paused.paused, "idle");
   assert.equal(IDLE_PAUSE_MS, 180_000);
+});
+
+test("a card start resolves to a frame, an unavailable reason, or a retryable timeout", () => {
+  const starting: ViewInputs = { ...base, wanted: true, hasTarget: true, targetsStatus: "ok" };
+  assert.equal(deriveView(starting).kind, "starting");
+  assert.equal(deriveView({ ...starting, hasFrame: true }).kind, "live");
+  assert.deepEqual(deriveView({ ...starting, startFailure: "permission" }), {
+    kind: "unavailable", unavailable: "permission", paused: null
+  });
+  assert.deepEqual(deriveView({ ...starting, startFailure: "timeout" }), {
+    kind: "timeout", unavailable: "timeout", paused: null
+  });
+  assert.equal(deriveView({ ...starting, startFailure: null }).kind, "starting");
 });
 
 test("an unreachable server or a refused screen is 'unavailable' with a reason, not a spinner", () => {

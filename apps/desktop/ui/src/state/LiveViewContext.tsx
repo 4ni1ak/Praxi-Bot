@@ -52,8 +52,6 @@ import {
   pickDefaultTarget,
   planViewerClose,
   sessionProfile,
-  THUMBNAIL_REFRESH_MS,
-  thumbnailDue,
   type RecoveryPrompt,
   shouldOverrideOnStop,
   type LiveViewControllerState
@@ -93,15 +91,8 @@ interface LiveViewContextValue {
   controlState: ControlStateDto | null;
   state: LiveViewControllerState;
   frameUrl: string | null;
-  /**
-   * One still image of the screen for the card (never a live stream): fetched when the panel
-   * opens and at most once a minute while it is visible and the window is focused.
-   */
-  thumbUrl: string | null;
-  /** The host's own idle/starting/live/paused/unavailable answer; `null` until asked. */
-  screenStatus: ScreenStatus | null;
-  /** The host stopped the stream to save resources: show "click to resume". */
-  pausedIdle: boolean;
+  streamFailure: "permission" | "failed" | null;
+  streamPaused: boolean;
   viewerOpen: boolean;
   loadingTargets: boolean;
   targetsStatus: TargetsStatus;
@@ -113,7 +104,7 @@ interface LiveViewContextValue {
   closeViewer: () => Promise<void>;
   selectTarget: (targetId: string) => void;
   refreshTargets: () => Promise<void>;
-  setThumbnailDemand: (active: boolean, botId: string | null) => void;
+  setCardDemand: (active: boolean, botId: string | null) => void;
   requestTakeover: () => Promise<void>;
   releaseTakeover: (humanAction?: HumanAction | null) => Promise<void>;
   retryRelease: () => Promise<void>;
@@ -221,7 +212,7 @@ export function LiveViewProvider({
   const takeoverStopRef = useRef<TakeoverStop<ApiClient> | null>(null);
   const applyOverrideRef = useRef<(dto: ControlStateDto) => void>(() => {});
   const [viewerOpen, setViewerOpen] = useState<boolean>(initialMockViewerOpen);
-  const [thumbDemand, setThumbDemand] = useState<{
+  const [cardDemand, setCardDemandState] = useState<{
     active: boolean;
     botId: string | null;
   }>({ active: false, botId: null });
@@ -229,8 +220,8 @@ export function LiveViewProvider({
     typeof document !== "undefined" ? document.visibilityState === "hidden" : false
   );
   const [frameUrl, setFrameUrl] = useState<string | null>(null);
-  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
-  const [screenStatus, setScreenStatus] = useState<ScreenStatus | null>(null);
+  const [streamPaused, setStreamPaused] = useState(false);
+  const [streamFailure, setStreamFailure] = useState<"permission" | "failed" | null>(null);
   const [panelAction, setPanelAction] = useState<PanelActionHighlight | null>(
     null
   );
@@ -374,10 +365,13 @@ export function LiveViewProvider({
         takeoverStopRef.current?.pump();
       }
     } catch {
-      // keep existing snapshot; next poll/action retries
-      setTargetsStatus("failed");
+      if (clientRef.current === client) {
+        setTargetsStatus("failed");
+      }
     } finally {
-      setLoadingTargets(false);
+      if (clientRef.current === client) {
+        setLoadingTargets(false);
+      }
     }
   }, [client, registry, sequencer, updateState]);
 
@@ -432,19 +426,22 @@ export function LiveViewProvider({
   }, [client, ingestControlSnapshot, registry, sequencer]);
 
   useEffect(() => {
-    if (client && (viewerOpen || thumbDemand.active)) {
+    if (client && (viewerOpen || cardDemand.active)) {
       void refreshTargets();
     }
-  }, [client, viewerOpen, thumbDemand.active, refreshTargets]);
+  }, [client, viewerOpen, cardDemand.active, refreshTargets]);
 
-  const botFocus = thumbDemand.botId ?? (bots.length > 0 ? bots[0].id : null);
+  const botFocus = cardDemand.botId ?? (bots.length > 0 ? bots[0].id : null);
+  const preferDesktop = cardDemand.active && !viewerOpen && !isControlBusy(state);
+  const preferredTargetId = preferDesktop ? null : selectedTargetId;
   const selectedTarget = useMemo(
     () =>
       pickDefaultTarget(targets, {
-        preferredTargetId: selectedTargetId,
-        botId: botFocus
+        preferredTargetId,
+        botId: botFocus,
+        preferDesktop
       }),
-    [targets, selectedTargetId, botFocus]
+    [targets, preferredTargetId, botFocus, preferDesktop]
   );
 
   // While holding/acquiring control the target must not follow chat/bot focus.
@@ -485,7 +482,8 @@ export function LiveViewProvider({
     hasClient: Boolean(client),
     documentHidden,
     target: selectedTarget,
-    viewerOpen
+    viewerOpen,
+    cardRequested: cardDemand.active
   });
 
   const refreshStatus = useCallback(async (): Promise<ScreenStatus | null> => {
@@ -494,95 +492,11 @@ export function LiveViewProvider({
     }
     try {
       const status = await client.viewStatus();
-      if (clientRef.current === client) {
-        setScreenStatus(status);
-      }
       return status;
     } catch {
       return null;
     }
   }, [client]);
-
-  // The card's still image: one when the panel opens, then at most one a minute while the panel is
-  // visible and the window focused. No session: the host captures a single frame each time and
-  // produces nothing in between.
-  const thumbTargetId = computeWantSession({
-    hasClient: Boolean(client),
-    documentHidden: false,
-    target: selectedTarget,
-    viewerOpen: true
-  })
-    ? (selectedTarget?.target_id ?? null)
-    : null;
-  useEffect(() => {
-    if (!client || !thumbDemand.active || !thumbTargetId || viewerOpen) {
-      return undefined;
-    }
-    let stopped = false;
-    let last: number | null = null;
-    let current: string | null = null;
-    const abort = new AbortController();
-    const windowActive = () => document.visibilityState === "visible" && document.hasFocus();
-    const tick = async () => {
-      if (
-        stopped ||
-        !thumbnailDue({
-          panelVisible: true,
-          viewerOpen: false,
-          windowActive: windowActive(),
-          lastFetchMs: last,
-          nowMs: Date.now()
-        })
-      ) {
-        return;
-      }
-      last = Date.now();
-      try {
-        const blob = await client.viewThumbnail(thumbTargetId, abort.signal);
-        if (stopped) {
-          return;
-        }
-        const url = URL.createObjectURL(blob);
-        const old = current;
-        current = url;
-        setThumbUrl(url);
-        if (old) {
-          URL.revokeObjectURL(old);
-        }
-      } catch {
-        // The placeholder stays.
-      }
-    };
-    void tick();
-    // Look often, fetch rarely: `thumbnailDue` holds the one-minute spacing.
-    const id = window.setInterval(() => void tick(), Math.min(15_000, THUMBNAIL_REFRESH_MS));
-    const onFocus = () => void tick();
-    window.addEventListener("focus", onFocus);
-    return () => {
-      stopped = true;
-      abort.abort();
-      window.clearInterval(id);
-      window.removeEventListener("focus", onFocus);
-      if (current) {
-        URL.revokeObjectURL(current);
-      }
-      setThumbUrl(null);
-    };
-  }, [client, thumbDemand.active, thumbTargetId, viewerOpen]);
-
-  // Where the host stands with the stream (idle / live / paused to save resources / unavailable).
-  useEffect(() => {
-    if (!client || !(thumbDemand.active || viewerOpen)) {
-      return undefined;
-    }
-    void refreshStatus();
-    const id = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void refreshStatus();
-      }
-    }, 20_000);
-    return () => window.clearInterval(id);
-  }, [client, thumbDemand.active, viewerOpen, refreshStatus]);
 
   const owning = isActivelyOwningTakeover(state);
   const desiredProfile = sessionProfile(state);
@@ -598,6 +512,7 @@ export function LiveViewProvider({
       const stale = activeSessionRef.current;
       activeSessionRef.current = null;
       setFrameUrl(null);
+      setStreamFailure(null);
       if (stale && client) {
         void client.deleteViewSession(stale.session_id).catch(() => undefined);
       }
@@ -609,6 +524,7 @@ export function LiveViewProvider({
       return undefined;
     }
 
+    setStreamPaused(false);
     const abort = new AbortController();
     const inputQueue = inputQueueRef.current;
     let mountedSessionId: string | null = null;
@@ -648,7 +564,7 @@ export function LiveViewProvider({
           try {
             const img = new Image();
             img.src = url;
-            await img.decode().catch(() => undefined);
+            await img.decode();
             return url;
           } catch (err) {
             activeUrlsRef.current.delete(url);
@@ -684,6 +600,7 @@ export function LiveViewProvider({
           );
         },
         onFramePresented: (frame, url, metrics) => {
+          setStreamFailure(null);
           setFrameUrl(url);
           const nowMs = Date.now();
           updateState((prev) => applyFrameRendered(prev, frame.header, nowMs));
@@ -724,7 +641,7 @@ export function LiveViewProvider({
             max_height: viewerOpen ? 1000 : 600,
             // An automatically chosen screen is bound to the focused bot: the
             // daemon refuses another bot's browser. An explicit pick is not.
-            ...(selectedTargetId === null && botFocus ? { bot_id: botFocus } : {})
+            ...(preferredTargetId === null && botFocus ? { bot_id: botFocus } : {})
           }),
         openStream,
         deleteSession: (id) => client.deleteViewSession(id)
@@ -737,9 +654,30 @@ export function LiveViewProvider({
           lastGeometrySentRef.current = null;
           updateState((prev) => applySessionCreated(prev, selectedTarget, session));
         },
-        onDisconnected: () => {
+        onDisconnected: (err) => {
+          if (err instanceof ApiError) {
+            if (err.status === 401 || err.status === 403) {
+              setStreamFailure("permission");
+            } else if (err.status === 429 || err.status === 503) {
+              setStreamFailure("failed");
+            }
+          }
           inputQueueRef.current.clear();
           updateState((prev) => applyStreamDisconnected(prev));
+        },
+        shouldReplaceSession: async () => {
+          if (!mountedSessionId) {
+            return true;
+          }
+          const status = await refreshStatus();
+          if (abort.signal.aborted || status?.state !== "paused_idle") {
+            return !abort.signal.aborted;
+          }
+          setStreamPaused(true);
+          if (!isActivelyOwningTakeover(stateRef.current)) {
+            setViewerOpen(false);
+          }
+          return false;
         },
         beforeRetry: () => {
           void refreshTargets();
@@ -752,6 +690,7 @@ export function LiveViewProvider({
       abort.abort();
       activeSessionRef.current = null;
       setFrameUrl(null);
+      setStreamFailure(null);
       inputQueue.clear();
       if (mountedSessionId) {
         void client.deleteViewSession(mountedSessionId).catch(() => undefined);
@@ -1203,9 +1142,9 @@ export function LiveViewProvider({
     setSelectedTargetId(targetId);
   }, []);
 
-  const setThumbnailDemand = useCallback(
+  const setCardDemand = useCallback(
     (active: boolean, botId: string | null) => {
-      setThumbDemand((prev) =>
+      setCardDemandState((prev) =>
         prev.active === active && prev.botId === botId
           ? prev
           : { active, botId }
@@ -1228,9 +1167,8 @@ export function LiveViewProvider({
       controlState,
       state,
       frameUrl,
-      thumbUrl,
-      screenStatus,
-      pausedIdle: screenStatus?.state === "paused_idle" && !viewerOpen,
+      streamFailure,
+      streamPaused,
       viewerOpen,
       loadingTargets,
       targetsStatus,
@@ -1241,7 +1179,7 @@ export function LiveViewProvider({
       closeViewer,
       selectTarget,
       refreshTargets,
-      setThumbnailDemand,
+      setCardDemand,
       requestTakeover,
       releaseTakeover,
       retryRelease,
@@ -1264,8 +1202,8 @@ export function LiveViewProvider({
       controlState,
       state,
       frameUrl,
-      thumbUrl,
-      screenStatus,
+      streamFailure,
+      streamPaused,
       viewerOpen,
       loadingTargets,
       targetsStatus,
@@ -1276,7 +1214,7 @@ export function LiveViewProvider({
       closeViewer,
       selectTarget,
       refreshTargets,
-      setThumbnailDemand,
+      setCardDemand,
       requestTakeover,
       releaseTakeover,
       retryRelease,

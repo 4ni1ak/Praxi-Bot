@@ -2,13 +2,12 @@
  * The computer card's view states (design v7). The card never opens a live session by itself:
  * the view is idle until the owner asks for it, runs while they look, and pauses again after a
  * quiet spell. These are the states the card is built against; `state/useComputerView.ts` is the
- * one place that decides them (today from the client's view session, later from the daemon's
- * on-demand streaming).
+ * one place that decides them from the watch session.
  */
 import type { TargetsStatus } from "./computerLabel.ts";
 import type { ServerScreenIssue } from "./botComputer.ts";
 
-export type ComputerViewKind = "idle" | "starting" | "live" | "paused" | "unavailable";
+export type ComputerViewKind = "idle" | "starting" | "live" | "paused" | "unavailable" | "timeout";
 
 /** Why a view is `paused` (design: "3 dakikadır bakılmadığı için duraklatıldı"). */
 export type PausedReason = "idle";
@@ -21,6 +20,8 @@ export type UnavailableReason =
   | "version"
   | "permission"
   | "failed"
+  | "timeout"
+  | { targetReason: string }
   | { noScreen: string };
 
 export interface ComputerViewModel {
@@ -56,6 +57,7 @@ export type ComputerView = ComputerViewModel & ComputerViewActions;
 
 /** No interaction for this long ends a view (the design says three minutes). */
 export const IDLE_PAUSE_MS = 3 * 60 * 1000;
+export const SCREEN_START_TIMEOUT_MS = 15_000;
 
 export interface ViewInputs {
   /** The owner pressed start and has not stopped it. */
@@ -67,7 +69,8 @@ export interface ViewInputs {
   targetsStatus: TargetsStatus;
   hasTarget: boolean;
   /** The target exists but cannot be viewed. */
-  targetUnavailable: boolean;
+  targetUnavailable: string | null;
+  startFailure: UnavailableReason | null;
   /** Code of the host's "no screen" note, if any. */
   noScreen: string | null;
   /** The computer is a server and the screen list was refused (no screen permission). */
@@ -95,13 +98,19 @@ export function deriveView(i: ViewInputs): DerivedView {
     return out("unavailable", "connecting");
   }
   if (i.wanted) {
+    if (i.startFailure) {
+      return out(i.startFailure === "timeout" ? "timeout" : "unavailable", i.startFailure);
+    }
     if (i.permissionRefused) {
       return out("unavailable", "permission");
     }
     if (i.targetsStatus === "failed") {
       return out("unavailable", "failed");
     }
-    if (i.targetUnavailable || (i.targetsStatus === "ok" && !i.hasTarget)) {
+    if (i.targetUnavailable) {
+      return out("unavailable", { targetReason: i.targetUnavailable });
+    }
+    if (i.targetsStatus === "ok" && !i.hasTarget) {
       return out("unavailable", i.noScreen ? { noScreen: i.noScreen } : "failed");
     }
     return i.hasFrame ? out("live") : out("starting");
