@@ -545,9 +545,9 @@ async fn subscribe_before_start_and_single_tab_close_never_falls_back() {
         .find(|c| c.method == "Page.startScreencast")
         .expect("startScreencast recorded");
     assert_eq!(start_cmd.params["format"], "jpeg");
-    assert_eq!(start_cmd.params["quality"], 45);
-    assert_eq!(start_cmd.params["maxWidth"], 960);
-    assert_eq!(start_cmd.params["maxHeight"], 600);
+    assert_eq!(start_cmd.params["quality"], 85);
+    assert_eq!(start_cmd.params["maxWidth"], 1920);
+    assert_eq!(start_cmd.params["maxHeight"], 1080);
     assert_eq!(start_cmd.params["everyNthFrame"], 10);
     assert_eq!(start_cmd.session_id.as_deref(), Some(sess_a.as_str()));
 

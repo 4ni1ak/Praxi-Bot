@@ -767,9 +767,10 @@ pub(crate) async fn update_session(
     let unhealthy =
         i.decode_ms.is_some_and(|v| v > 100) || i.buffered_frames.is_some_and(|v| v > 1);
     if unhealthy {
-        p.quality = p.quality.min(35);
-        p.max_width = p.max_width.min(640);
-        p.max_height = p.max_height.min(400);
+        // A viewer that cannot keep up gets fewer, smaller frames, but stays readable (720p).
+        p.quality = p.quality.min(50);
+        p.max_width = p.max_width.min(1280);
+        p.max_height = p.max_height.min(720);
         p.max_fps = p.max_fps.min(4);
     }
     {
