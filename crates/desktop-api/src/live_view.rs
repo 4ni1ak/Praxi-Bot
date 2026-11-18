@@ -829,13 +829,19 @@ pub fn resize_bgra_into(
     }
 }
 
-/// Quality used for the one refinement frame sent once a live screen stops moving.
-pub const SETTLED_QUALITY: u8 = 90;
-/// Below this quality the client asked for a cheap stream (slow viewer): keep 4:2:0 and
-/// never refine above the requested quality.
+/// The encoder never goes below this quality to fit a byte budget (it drops chroma
+/// resolution first and, as a last resort for pathological content, the size); a slow link
+/// lowers the frame rate instead.
+pub const QUALITY_FLOOR: u8 = 55;
+/// JPEG quality of the static refinement frame when it is not lossless WebP.
+pub const REFINE_JPEG_QUALITY: u8 = 92;
+/// Below this requested quality the client asked for a cheap stream (slow viewer): keep 4:2:0
+/// and send no refinement frame.
 const COMPACT_QUALITY_BELOW: u8 = 50;
-/// Consecutive unchanged captures before a live screen counts as settled.
-pub const SETTLE_CAPTURES: u32 = 2;
+/// How long the screen must stay unchanged before one refinement frame is sent.
+pub const SETTLE_AFTER: Duration = Duration::from_millis(400);
+/// Wait before retrying a refinement frame that the byte budget could not afford yet.
+const REFINE_RETRY: Duration = Duration::from_secs(1);
 
 /// JPEG parameters chosen for one frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -848,29 +854,28 @@ pub struct EncodeSettings {
     pub filter: ResizeFilter,
 }
 
-/// Pick encoder settings for a frame (pure). A `Watch` stream runs at about one frame every
-/// few seconds, so every frame is encoded for sharpness. A `Live` stream encodes moving
-/// content cheaply (`profile.quality`, 4:2:0) and spends the extra bytes once, on the frame
-/// sent after the screen settled. A client that asked for a compact stream (quality below
-/// 50, for example a slow viewer) always gets exactly what it asked for.
+/// Encoder settings for a frame that is being sent while the screen changes (pure): the
+/// requested quality with full-resolution chroma. A client that asked for a compact stream
+/// (quality below 50) gets exactly that, in 4:2:0.
 #[must_use]
-pub fn select_encode_settings(profile: &EffectiveProfile, settled: bool) -> EncodeSettings {
+pub fn select_encode_settings(profile: &EffectiveProfile) -> EncodeSettings {
     let base = profile.quality.clamp(10, 95);
-    let sharp = (profile.profile == Profile::Watch || settled) && base >= COMPACT_QUALITY_BELOW;
-    let quality = if sharp && profile.profile == Profile::Live {
-        base.max(SETTLED_QUALITY)
-    } else {
-        base
-    };
     EncodeSettings {
-        quality,
-        chroma_444: sharp,
-        filter: if sharp {
+        quality: base,
+        chroma_444: base >= COMPACT_QUALITY_BELOW,
+        filter: if profile.profile == Profile::Watch {
             ResizeFilter::Lanczos3
         } else {
             ResizeFilter::CatmullRom
         },
     }
+}
+
+/// Whether a still screen gets one refinement frame (lossless WebP, or JPEG q92 4:4:4 when the
+/// lossless image is too big for the burst) (pure).
+#[must_use]
+pub fn refine_enabled(profile: &EffectiveProfile) -> bool {
+    profile.quality >= COMPACT_QUALITY_BELOW
 }
 
 fn encode_jpeg_once(
@@ -924,26 +929,27 @@ pub fn encode_jpeg_within_budget(
     let (mut cur_w, mut cur_h) =
         compute_target_dimensions(src_w, src_h, profile.max_width, profile.max_height)?;
     let mut quality = settings.quality.clamp(10, 95);
+    let floor = QUALITY_FLOOR.min(quality);
     let mut chroma_444 = settings.chroma_444;
     let mut scaled_for: Option<(u16, u16)> = None;
 
     loop {
-        let pixel_slice: &[u8] = if src_w == u32::from(cur_w) && src_h == u32::from(cur_h) {
+        let pixel_slice: &[u8] = if scaled_for == Some((cur_w, cur_h)) {
+            // The resampled image does not depend on quality: reuse it across retries.
+            scratch_scaled.as_slice()
+        } else if src_w == u32::from(cur_w) && src_h == u32::from(cur_h) {
             &bgra[..needed]
         } else {
-            // The resampled image does not depend on quality: reuse it across retries.
-            if scaled_for != Some((cur_w, cur_h)) {
-                resize_bgra_into(
-                    bgra,
-                    src_w,
-                    src_h,
-                    cur_w,
-                    cur_h,
-                    settings.filter,
-                    scratch_scaled,
-                );
-                scaled_for = Some((cur_w, cur_h));
-            }
+            resize_bgra_into(
+                bgra,
+                src_w,
+                src_h,
+                cur_w,
+                cur_h,
+                settings.filter,
+                scratch_scaled,
+            );
+            scaled_for = Some((cur_w, cur_h));
             scratch_scaled.as_slice()
         };
         encode_jpeg_once(pixel_slice, cur_w, cur_h, quality, chroma_444, out_jpeg)?;
@@ -952,17 +958,14 @@ pub fn encode_jpeg_within_budget(
             return Ok((u32::from(cur_w), u32::from(cur_h)));
         }
 
-        // Over budget: drop chroma resolution first (cheapest loss), then quality, then size.
+        // Over budget: drop chroma resolution first (cheapest loss), then quality down to the
+        // floor, and only then (pathological content, tiny burst) the size.
         if chroma_444 {
             chroma_444 = false;
             continue;
         }
-        if quality > 15 {
-            quality = (quality * 3 / 4).max(15);
-            continue;
-        }
-        if quality > 10 {
-            quality = 10;
+        if quality > floor {
+            quality = (quality / 5 * 4).max(floor);
             continue;
         }
 
@@ -980,10 +983,88 @@ pub fn encode_jpeg_within_budget(
         if nw == cur_w && nh == cur_h {
             return Err(ViewError::LimitExceeded);
         }
+        // Shrink from the picture already at hand (cheap), not from the full-size source.
+        let mut next = Vec::new();
+        {
+            let (src_px, sw, sh): (&[u8], u32, u32) = if scaled_for == Some((cur_w, cur_h)) {
+                (
+                    scratch_scaled.as_slice(),
+                    u32::from(cur_w),
+                    u32::from(cur_h),
+                )
+            } else {
+                (&bgra[..needed], src_w, src_h)
+            };
+            resize_bgra_into(src_px, sw, sh, nw, nh, settings.filter, &mut next);
+        }
+        *scratch_scaled = next;
+        scaled_for = Some((nw, nh));
         cur_w = nw;
         cur_h = nh;
-        quality = 35;
+        quality = floor;
     }
+}
+
+/// Encode the settled screen losslessly (WebP, in RAM) at the output size; when that is
+/// bigger than the burst allows, fall back to JPEG q92 4:4:4.
+///
+/// # Errors
+///
+/// Same as [`encode_jpeg_within_budget`].
+pub fn encode_refined(
+    bgra: &[u8],
+    src_w: u32,
+    src_h: u32,
+    profile: &EffectiveProfile,
+    scratch_scaled: &mut Vec<u8>,
+    scratch_rgb: &mut Vec<u8>,
+    out: &mut Vec<u8>,
+) -> Result<(Codec, u32, u32), ViewError> {
+    validate_raw_dimensions(src_w, src_h)?;
+    let needed = (src_w as usize) * (src_h as usize) * 4;
+    if bgra.len() < needed {
+        return Err(ViewError::InvalidRecord);
+    }
+    let burst_cap = usize::try_from(profile.burst_bytes).unwrap_or(usize::MAX);
+    let max_payload = burst_cap.saturating_sub(MAX_HEADER).min(MAX_PAYLOAD);
+    let (w, h) = compute_target_dimensions(src_w, src_h, profile.max_width, profile.max_height)?;
+    let pixels: &[u8] = if src_w == u32::from(w) && src_h == u32::from(h) {
+        &bgra[..needed]
+    } else {
+        resize_bgra_into(
+            bgra,
+            src_w,
+            src_h,
+            w,
+            h,
+            ResizeFilter::Lanczos3,
+            scratch_scaled,
+        );
+        scratch_scaled.as_slice()
+    };
+    scratch_rgb.clear();
+    scratch_rgb.reserve(usize::from(w) * usize::from(h) * 3);
+    for px in pixels.chunks_exact(4) {
+        scratch_rgb.extend_from_slice(&[px[2], px[1], px[0]]);
+    }
+    out.clear();
+    let lossless = image_webp::WebPEncoder::new(&mut *out).encode(
+        scratch_rgb,
+        u32::from(w),
+        u32::from(h),
+        image_webp::ColorType::Rgb8,
+    );
+    if lossless.is_ok() && !out.is_empty() && out.len() <= max_payload {
+        return Ok((Codec::Webp, u32::from(w), u32::from(h)));
+    }
+    let settings = EncodeSettings {
+        quality: REFINE_JPEG_QUALITY,
+        chroma_444: true,
+        filter: ResizeFilter::Lanczos3,
+    };
+    let (jw, jh) =
+        encode_jpeg_within_budget(bgra, src_w, src_h, profile, settings, scratch_scaled, out)?;
+    Ok((Codec::Jpeg, jw, jh))
 }
 
 // ── Content-free stats ────────────────────────────────────────────────────────
@@ -1799,7 +1880,7 @@ impl ViewTarget for DesktopViewTarget {
                 capabilities: LiveCapabilities {
                     view: available,
                     input: st.input_available && available,
-                    codecs: vec![Codec::Jpeg],
+                    codecs: vec![Codec::Jpeg, Codec::Webp],
                     reason: st
                         .unavailable_reason
                         .clone()
@@ -2073,10 +2154,14 @@ struct CaptureSessionCache {
     cached_payload: Option<Arc<[u8]>>,
     cached_dims: (u32, u32),
     cached_captured_at_ms: u64,
-    /// The cached payload was encoded with the sharp (settled) settings.
-    cached_settled: bool,
-    /// Consecutive captures identical to the previous one.
-    static_streak: u32,
+    /// The cached payload is the refinement frame of the current still screen.
+    cached_refined: bool,
+    /// Codec of the cached payload.
+    cached_codec: Codec,
+    /// Since when the screen has been unchanged.
+    static_since: Option<Instant>,
+    /// No refinement attempt before this instant (budget could not afford it yet).
+    refine_retry_at: Option<Instant>,
     last_geom: Option<GeometrySnapshot>,
     frame_seq: u64,
     last_capture: Instant,
@@ -2093,8 +2178,10 @@ impl CaptureSessionCache {
             cached_payload: None,
             cached_dims: (0, 0),
             cached_captured_at_ms: 0,
-            cached_settled: false,
-            static_streak: 0,
+            cached_refined: false,
+            cached_codec: Codec::Jpeg,
+            static_since: None,
+            refine_retry_at: None,
             last_geom: None,
             frame_seq: 0,
             last_capture: now.checked_sub(Duration::from_secs(60)).unwrap_or(now),
@@ -2118,8 +2205,10 @@ impl CaptureSessionCache {
         self.cached_payload = None;
         self.cached_dims = (0, 0);
         self.cached_captured_at_ms = 0;
-        self.cached_settled = false;
-        self.static_streak = 0;
+        self.cached_refined = false;
+        self.cached_codec = Codec::Jpeg;
+        self.static_since = None;
+        self.refine_retry_at = None;
     }
 }
 
@@ -2160,12 +2249,9 @@ fn try_finish_capture_worker(core: &Arc<TargetCore>, allow_restart: bool) -> boo
 }
 
 fn periodic_interval(profile: &EffectiveProfile) -> Duration {
-    if profile.profile == Profile::Watch {
-        WATCH_IDLE_INTERVAL
-    } else {
-        let fps = profile.max_fps.clamp(1, LIVE_MAX_FPS_CAP);
-        Duration::from_secs_f64(1.0 / f64::from(fps))
-    }
+    // Capture is change-driven: an unchanged screen costs one hash, not an encode.
+    let fps = profile.max_fps.clamp(1, LIVE_MAX_FPS_CAP);
+    Duration::from_secs_f64(1.0 / f64::from(fps))
 }
 
 fn send_init(
@@ -2218,6 +2304,7 @@ struct WorkerBuffers {
     raw: Vec<u8>,
     bgra: Vec<u8>,
     scaled: Vec<u8>,
+    rgb: Vec<u8>,
     jpeg: Vec<u8>,
 }
 
@@ -2324,7 +2411,7 @@ fn publish_reused_frame(
             captured_at_ms,
             cause,
             action_seq: refresh_seq.filter(|&s| s > 0),
-            codec: Codec::Jpeg,
+            codec: cache.cached_codec.clone(),
             width: cache.cached_dims.0,
             height: cache.cached_dims.1,
             source_rect: geom.rect.to_source_rect(),
@@ -2352,7 +2439,7 @@ fn encode_and_publish_frame(
     profile: &EffectiveProfile,
     geom: &GeometrySnapshot,
     hash: u64,
-    settled: bool,
+    refine: bool,
     refresh_seq: Option<u64>,
     generation: u64,
     geometry_revision: u64,
@@ -2364,15 +2451,29 @@ fn encode_and_publish_frame(
         None => Cause::Idle,
     };
     cache.refill_tokens(profile);
-    let Ok((out_w, out_h)) = encode_jpeg_within_budget(
-        &bufs.bgra,
-        geom.rect.width,
-        geom.rect.height,
-        profile,
-        select_encode_settings(profile, settled),
-        &mut bufs.scaled,
-        &mut bufs.jpeg,
-    ) else {
+    let encoded = if refine {
+        encode_refined(
+            &bufs.bgra,
+            geom.rect.width,
+            geom.rect.height,
+            profile,
+            &mut bufs.scaled,
+            &mut bufs.rgb,
+            &mut bufs.jpeg,
+        )
+    } else {
+        encode_jpeg_within_budget(
+            &bufs.bgra,
+            geom.rect.width,
+            geom.rect.height,
+            profile,
+            select_encode_settings(profile),
+            &mut bufs.scaled,
+            &mut bufs.jpeg,
+        )
+        .map(|(w, h)| (Codec::Jpeg, w, h))
+    };
+    let Ok((codec, out_w, out_h)) = encoded else {
         core.stats
             .frames_skipped_budget
             .fetch_add(1, Ordering::Relaxed);
@@ -2390,6 +2491,9 @@ fn encode_and_publish_frame(
         // Record the fingerprint of the skipped screen so subsequent periodic ticks on
         // the same static screen do not re-encode the identical BGRA buffer.
         cache.last_hash = Some(hash);
+        if refine {
+            cache.refine_retry_at = Some(Instant::now() + REFINE_RETRY);
+        }
         core.stats
             .frames_skipped_budget
             .fetch_add(1, Ordering::Relaxed);
@@ -2407,7 +2511,7 @@ fn encode_and_publish_frame(
             captured_at_ms,
             cause,
             action_seq: refresh_seq.filter(|&s| s > 0),
-            codec: Codec::Jpeg,
+            codec: codec.clone(),
             width: out_w,
             height: out_h,
             source_rect: geom.rect.to_source_rect(),
@@ -2424,7 +2528,8 @@ fn encode_and_publish_frame(
         cache.cached_payload = Some(payload);
         cache.cached_dims = (out_w, out_h);
         cache.cached_captured_at_ms = captured_at_ms;
-        cache.cached_settled = settled || profile.profile == Profile::Watch;
+        cache.cached_refined = refine;
+        cache.cached_codec = codec;
         cache.last_publish = Instant::now();
         core.stats.frames_encoded.fetch_add(1, Ordering::Relaxed);
         Ok(())
@@ -2492,16 +2597,23 @@ fn execute_capture_step(
 
     let hash = bgra_fingerprint(&bufs.bgra);
     if !geom_changed && cache.last_hash == Some(hash) {
-        cache.static_streak = cache.static_streak.saturating_add(1);
+        cache.static_since.get_or_insert_with(Instant::now);
     } else {
-        cache.static_streak = 0;
+        cache.static_since = None;
     }
-    let settled = cache.static_streak >= SETTLE_CAPTURES;
-    // A live screen that stopped moving gets one sharp frame (4:4:4, high quality) on top of
-    // the cheap frames sent while it moved; a watch stream is always encoded sharp.
-    let needs_refine = profile.profile == Profile::Live && settled && !cache.cached_settled;
+    // A screen that stayed still for `SETTLE_AFTER` gets ONE refinement frame (lossless WebP at
+    // the output size, JPEG q92 4:4:4 if that is too big) on top of the frames sent while it
+    // moved.
+    let refine_due = !profile_dirty
+        && refine_enabled(profile)
+        && !cache.cached_refined
+        && cache.cached_payload.is_some()
+        && cache
+            .static_since
+            .is_some_and(|t| t.elapsed() >= SETTLE_AFTER)
+        && cache.refine_retry_at.is_none_or(|t| Instant::now() >= t);
     let can_reuse = !profile_dirty
-        && !needs_refine
+        && !refine_due
         && !geom_changed
         && cache.last_hash == Some(hash)
         && cache.cached_payload.is_some()
@@ -2528,7 +2640,7 @@ fn execute_capture_step(
         profile,
         &raw_info.geometry,
         hash,
-        settled,
+        refine_due,
         refresh_seq,
         generation,
         geometry_revision,
@@ -2568,6 +2680,7 @@ fn run_capture_worker(
         raw: Vec::new(),
         bgra: Vec::new(),
         scaled: Vec::new(),
+        rgb: Vec::new(),
         jpeg: Vec::new(),
     };
     let mut saw_error = false;
@@ -3167,7 +3280,7 @@ mod tests {
             width,
             height,
             &profile,
-            select_encode_settings(&profile, false),
+            select_encode_settings(&profile),
             &mut scratch,
             &mut out,
         )
@@ -3184,7 +3297,7 @@ mod tests {
                 width,
                 height,
                 &profile,
-                select_encode_settings(&profile, false),
+                select_encode_settings(&profile),
                 &mut scratch,
                 &mut out
             ),
@@ -3193,27 +3306,29 @@ mod tests {
     }
 
     #[test]
-    fn encode_settings_are_sharp_for_watch_and_settled_live_and_compact_on_request() {
-        let watch = select_encode_settings(&EffectiveProfile::watch(), false);
+    fn encode_settings_keep_full_colour_and_compact_streams_stay_compact() {
+        let watch = select_encode_settings(&EffectiveProfile::watch());
         assert_eq!(watch.quality, EffectiveProfile::watch().quality);
         assert!(watch.chroma_444);
         assert_eq!(watch.filter, ResizeFilter::Lanczos3);
+        assert!(refine_enabled(&EffectiveProfile::watch()));
 
         let live = EffectiveProfile::live();
-        let moving = select_encode_settings(&live, false);
+        let moving = select_encode_settings(&live);
         assert_eq!(moving.quality, live.quality);
-        assert!(!moving.chroma_444);
+        assert!(
+            moving.chroma_444,
+            "coloured text must not smear while moving"
+        );
         assert_eq!(moving.filter, ResizeFilter::CatmullRom);
-        let settled = select_encode_settings(&live, true);
-        assert_eq!(settled.quality, SETTLED_QUALITY);
-        assert!(settled.chroma_444);
 
-        // A slow viewer asked for a compact stream: never refined beyond the request.
+        // A slow viewer asked for a compact stream: 4:2:0 and no refinement frame.
         let mut slow = EffectiveProfile::live();
         slow.quality = 35;
-        let slow_settled = select_encode_settings(&slow, true);
-        assert_eq!(slow_settled.quality, 35);
-        assert!(!slow_settled.chroma_444);
+        let slow_settings = select_encode_settings(&slow);
+        assert_eq!(slow_settings.quality, 35);
+        assert!(!slow_settings.chroma_444);
+        assert!(!refine_enabled(&slow));
 
         // The output cap is the native size up to 1920x1080, never an upscale.
         assert_eq!(
@@ -3327,20 +3442,90 @@ mod tests {
     }
 
     #[test]
+    fn budget_fit_never_drops_below_the_quality_floor_before_shrinking() {
+        let (w, h) = (1280u32, 720u32);
+        let page = synthetic_text_page(w, h);
+        let mut profile = EffectiveProfile::watch();
+        profile.burst_bytes = u32::try_from(MAX_HEADER + 150 * 1024).unwrap();
+        let (mut scratch, mut out) = (Vec::new(), Vec::new());
+        let (ow, oh) = encode_jpeg_within_budget(
+            &page,
+            w,
+            h,
+            &profile,
+            select_encode_settings(&profile),
+            &mut scratch,
+            &mut out,
+        )
+        .unwrap();
+        assert!(out.len() + MAX_HEADER <= profile.burst_bytes as usize);
+        // Whatever it took, the picture was never encoded below the floor: decoding it and
+        // comparing with the (possibly reduced) source stays well above a q10 result.
+        let (dec, dw, dh) = decode_to_bgra(&out);
+        assert_eq!((dw, dh), (ow, oh));
+        let reference = if (ow, oh) == (w, h) {
+            page.clone()
+        } else {
+            let mut r = Vec::new();
+            resize_bgra_into(
+                &page,
+                w,
+                h,
+                u16::try_from(ow).unwrap(),
+                u16::try_from(oh).unwrap(),
+                ResizeFilter::Lanczos3,
+                &mut r,
+            );
+            r
+        };
+        assert!(psnr_db(&reference, &dec) > 24.0);
+    }
+
+    #[test]
+    fn still_screen_refinement_is_lossless_webp_or_a_q92_jpeg() {
+        let (w, h) = (1280u32, 720u32);
+        let page = synthetic_text_page(w, h);
+        let (mut scratch, mut rgb, mut out) = (Vec::new(), Vec::new(), Vec::new());
+        let profile = EffectiveProfile::watch();
+        let (codec, rw, rh) =
+            encode_refined(&page, w, h, &profile, &mut scratch, &mut rgb, &mut out).unwrap();
+        assert_eq!((rw, rh), (w, h));
+        assert_eq!(codec, Codec::Webp);
+        let webp_bytes = out.len();
+        let mut dec = image_webp::WebPDecoder::new(std::io::Cursor::new(out.clone())).unwrap();
+        let mut rgb_back = vec![0u8; dec.output_buffer_size().unwrap()];
+        dec.read_image(&mut rgb_back).unwrap();
+        let exact = page
+            .chunks_exact(4)
+            .zip(rgb_back.chunks_exact(3))
+            .all(|(p, r)| p[2] == r[0] && p[1] == r[1] && p[0] == r[2]);
+        assert!(exact, "lossless refinement must reproduce every pixel");
+        println!("refinement 1280x720 text page: lossless WebP = {webp_bytes} B");
+
+        // A burst too small for the lossless image falls back to a JPEG.
+        let mut tight = EffectiveProfile::watch();
+        tight.burst_bytes = u32::try_from(MAX_HEADER + 64 * 1024).unwrap();
+        let (codec, _, _) =
+            encode_refined(&page, w, h, &tight, &mut scratch, &mut rgb, &mut out).unwrap();
+        assert_eq!(codec, Codec::Jpeg);
+        assert!(out.len() + MAX_HEADER <= tight.burst_bytes as usize);
+    }
+
+    #[test]
     fn new_defaults_reproduce_small_text_far_better_than_the_old_960_q45_stream() {
         let (w, h) = (1920u32, 1080u32);
         let page = synthetic_text_page(w, h);
         let mut scratch = Vec::new();
         let mut out = Vec::new();
 
-        // New default: native 1920x1080, watch profile, 4:4:4, quality 85.
+        // New default: native 1920x1080, watch profile, 4:4:4, quality 70.
         let watch = EffectiveProfile::watch();
         let (nw, nh) = encode_jpeg_within_budget(
             &page,
             w,
             h,
             &watch,
-            select_encode_settings(&watch, false),
+            select_encode_settings(&watch),
             &mut scratch,
             &mut out,
         )
@@ -3381,7 +3566,7 @@ mod tests {
 
         println!(
             "text page 1920x1080: old 960x540 q45 4:2:0 = {old_bytes} B, {old_psnr:.2} dB; \
-             new 1920x1080 q85 4:4:4 = {new_bytes} B, {new_psnr:.2} dB"
+             new 1920x1080 q70 4:4:4 = {new_bytes} B, {new_psnr:.2} dB"
         );
         assert!(
             new_psnr > old_psnr + 6.0,
@@ -4298,7 +4483,8 @@ mod tests {
         tight.burst_bytes = u32::try_from(MAX_HEADER + 32).unwrap();
         let err = src.subscribe(tight).await.err();
         assert_eq!(err, Some(ViewError::LimitExceeded));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        // One capture; a slow debug build may just reach the 500 ms retry, never a tight loop.
+        assert!(calls.load(Ordering::SeqCst) <= 2);
         assert_eq!(
             target.stats().last_unavailable_reason,
             Some(Reason::FrameBudgetExceeded)
@@ -4315,6 +4501,7 @@ mod tests {
             raw: Vec::new(),
             bgra: Vec::new(),
             scaled: Vec::new(),
+            rgb: Vec::new(),
             jpeg: Vec::new(),
         };
         let mut drv: Option<Box<dyn CaptureDriver>> = Some(Box::new(NoisyCapture {

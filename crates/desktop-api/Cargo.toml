@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 async-trait.workspace = true
+image-webp.workspace = true
 jpeg-encoder.workspace = true
 live-view.workspace = true
 parking_lot.workspace = true
