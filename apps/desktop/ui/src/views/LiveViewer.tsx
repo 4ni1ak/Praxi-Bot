@@ -40,6 +40,7 @@ import {
 import { viewerKeyAction } from "../lib/liveViewLayers";
 import { layerStack } from "../lib/modalStack";
 import { useDaemon } from "../state/DaemonContext";
+import { LiveViewerChat, type LiveChatSlots } from "./LiveViewerChat";
 import { useLiveView, useLocalLiveView } from "../state/LiveViewContext";
 import { requestStop } from "../state/appStop";
 import styles from "./LiveViewer.module.css";
@@ -69,9 +70,16 @@ function targetOptionHint(
  * The screen viewer. `source="local"` is the one of THIS computer while a server is home (the
  * right panel's "my computer" screen); by default it follows the views' computer.
  */
-export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = {}) {
+export function LiveViewer({
+  source = "home",
+  onChatSlots
+}: {
+  source?: "home" | "local";
+  onChatSlots?: (slots: LiveChatSlots | null) => void;
+} = {}) {
   const { t } = useTranslation();
   const { bots, needs } = useDaemon();
+  const questionCount = needs.filter((item) => item.kind === "question").length;
   const homeView = useLiveView();
   const localView = useLocalLiveView();
   const view = source === "local" ? localView : homeView;
@@ -471,13 +479,13 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
         </div>
       ) : null}
 
-      {needs.length > 0 ? (
+      {questionCount > 0 ? (
         <div
           className={styles.approvalBar}
           role="status"
           data-testid="live-viewer-approvals"
         >
-          <span>{t("liveView.approvalsWaiting", { count: needs.length })}</span>
+          <span>{t("liveView.approvalsWaiting", { count: questionCount })}</span>
           <Button
             variant="secondary"
             size="sm"
@@ -634,6 +642,7 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
           <Info aria-hidden="true" />
           <span>{t("liveView.privacyNotice")}</span>
         </p>
+        <LiveViewerChat onChatSlots={onChatSlots} />
       </div>
 
       <div className={styles.bottomDock} data-testid="live-view-bar">

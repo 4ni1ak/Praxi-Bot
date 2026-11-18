@@ -918,15 +918,15 @@
       },
       "approve-destructive": {
         "name": "Zerstörerisches genehmigen",
-        "hint": "Lesen ist frei; alles, was etwas ändert oder sendet, fragt dich zuerst."
+        "hint": "Lesen, Surfen, Änderungen im Arbeitsbereich und der eigene Computer des Bots laufen frei; Löschen, Senden, Geld und dein eigener PC fragen zuerst."
       },
       "full": {
         "name": "Voll",
-        "hint": "Läuft ohne Nachfrage (einschließlich normalem Löschen von Dateien und Senden), außer Geld, Aktivierung von Zeitplänen und katastrophalen Befehlen auf der Verbotsliste."
+        "hint": "Läuft ohne Nachfrage (auch Löschen und Senden), außer bei Geld, Aktivierung von Zeitplänen und katastrophalen Befehlen auf der Verbotsliste. Nach dem Lesen nicht vertrauenswürdiger Inhalte fragt es weiterhin vor dem Senden von Daten oder dem Start eines Programms."
       },
       "read-and-draft": {
         "name": "Lesen & entwerfen",
-        "hint": "Lesen ist frei; Entwürfe, Dateiänderungen, Seitenabrufe, Klicks, Befehle und Sendungen fragen alle zuerst (gleiche wirksame Richtlinie wie „Zerstörerisches genehmigen“)."
+        "hint": "Lesen ist frei; jede Änderung, jedes Senden, jeder Seitenabruf, Klick und Befehl fragt zuerst."
       },
       "custom": {
         "name": "Benutzerdefiniert",
@@ -2159,7 +2159,8 @@
       "usage": "Nutzung",
       "diagnostics": "Diagnose",
       "updates": "Updates",
-      "appearance": "Darstellung"
+      "appearance": "Darstellung",
+      "mail": "E-Mail"
     },
     "general": {
       "account": {
@@ -2417,6 +2418,15 @@
           "nameHint": "Verwende Buchstaben, Ziffern, Punkte, Bindestriche oder Unterstriche, beginnend mit einem Buchstaben oder einer Ziffer (höchstens 32).",
           "bot": "Wähle den Bot oder wähle einen beliebigen Bot."
         }
+      },
+      "next": {
+        "ok": "Verbunden. Ein Bot, der E-Mail nutzen darf, kann dieses Postfach verwenden.",
+        "authFailed": "Der Server hat die Anmeldung abgelehnt. Gmail, Outlook, Yahoo und iCloud verlangen ein App-Passwort, nicht dein normales Passwort. Bearbeite das Postfach und gib es erneut ein.",
+        "apiKey": "AgentMail hat den API-Schlüssel abgelehnt. Erstelle in deiner AgentMail-Konsole einen neuen Schlüssel und füge ihn erneut ein.",
+        "unreachable": "Der Mailserver ist nicht erreichbar. Prüfe deine Internetverbindung und die Servernamen und versuche es erneut.",
+        "tls": "Die sichere Verbindung ist fehlgeschlagen. Prüfe Servernamen, Port und Sicherheitseinstellung.",
+        "protocol": "Dieser Server antwortet nicht wie ein Mailserver. Prüfe Servernamen und Port.",
+        "timeout": "Der Server hat nicht rechtzeitig geantwortet. Versuche es gleich noch einmal."
       }
     },
     "webSearch": {
@@ -2754,9 +2764,9 @@
       "auto": "Frei"
     },
     "autonomyHints": {
-      "ask": "Liest Dateien, prüft den Bildschirm und durchsucht das Web ohne Nachfrage; fragt vor dem Entwerfen, Senden, Ändern oder Löschen von Dateien, dem Abrufen von Seiten, Klicken oder Ausführen von Befehlen (gleiche wirksame Richtlinie wie „Ausgewogen“).",
-      "balanced": "Liest Dateien, prüft den Bildschirm und durchsucht das Web frei; fragt vor jedem Schreiben oder Löschen von Dateien, Entwurf, Senden, Seitenabruf, Klick oder Befehl (gleiche wirksame Richtlinie wie „Fragen“).",
-      "auto": "Läuft ohne Nachfrage – einschließlich Löschen gewöhnlicher Dateien, Ausführen von Shell-Befehlen und Senden von Nachrichten – und hält nur bei Geld, Aktivierung von Zeitplänen und Befehlen auf der Verbotsliste an (Datenträger formatieren, System-/Home-Löschungen, Zugangsdatenpfade)."
+      "ask": "Liest Dateien, prüft den Bildschirm und durchsucht das Web ohne Nachfrage; fragt vor jeder Änderung, jedem Senden, Seitenabruf, Klick oder Befehl.",
+      "balanced": "Liest, surft, bearbeitet Dateien im Arbeitsbereich und arbeitet auf dem eigenen Computer des Bots ohne Nachfrage; fragt vor dem Löschen von Dateien, dem Senden, Geldausgaben oder Eingriffen in deinen PC.",
+      "auto": "Läuft ohne Nachfrage, auch bei Löschen, Befehlen und Senden. Fragt weiterhin bei Geld, Aktivierung von Zeitplänen und katastrophalen Befehlen sowie nach dem Lesen nicht vertrauenswürdiger Inhalte vor dem Senden von Daten oder dem Start eines Programms."
     },
     "autonomyCustom": "Verwendet die Berechtigungsvorlage {{preset}}.",
     "advanced": "Erweiterte Einstellungen",
@@ -2933,7 +2943,25 @@
     "needsDesktop": "{{name}} hat keine Desktop-Sitzung, daher gibt es keinen Bildschirm zum Anzeigen. Um eine hinzuzufügen, führe auf diesem Computer aus:",
     "pausedIdle": "Zum Ressourcensparen pausiert - zum Fortsetzen klicken",
     "showScreen": "Bildschirm anzeigen",
-    "screenListFailed": "Die Bildschirmliste von {{name}} konnte nicht geladen werden. Es wird gleich noch einmal versucht."
+    "screenListFailed": "Die Bildschirmliste von {{name}} konnte nicht geladen werden. Es wird gleich noch einmal versucht.",
+    "mail": {
+      "heading": "E-Mail",
+      "loading": "Postfächer werden gesucht…",
+      "loadError": "Die Postfächer konnten nicht geladen werden: {{message}}",
+      "empty": "{{name}} hat noch kein Postfach. Verbinde dein eigenes Postfach oder gib dem Bot eine eigene Adresse.",
+      "connect": "Postfach verbinden",
+      "manage": "Postfächer verwalten",
+      "shared": "Für alle Bots freigegeben",
+      "own": "Nur {{name}}",
+      "agentmail": "Eigene Adresse",
+      "check": "Verbindung prüfen",
+      "checking": "Wird geprüft…",
+      "checked": "Geprüft um {{time}}",
+      "toolsLabel": "{{name}} darf E-Mail nutzen",
+      "toolsOnHint": "Lesen ist erlaubt. Senden richtet sich immer nach dem Berechtigungsmodus dieses Bots und fragt standardmäßig zuerst nach.",
+      "toolsOffHint": "Das Postfach ist verbunden, aber {{name}} sieht noch keine E-Mail-Werkzeuge. Schalte dies ein, damit der Bot E-Mails lesen und schreiben kann.",
+      "toolsError": "Der E-Mail-Zugriff konnte nicht geändert werden: {{message}}"
+    }
   },
   "terminal": {
     "title": "Terminal - {{name}}",
@@ -3053,6 +3081,14 @@
     "confirmQuery": "Abrufanfragen erlauben"
   },
   "liveView": {
+    "chat": {
+      "title": "Mit dem Bot chatten",
+      "collapse": "Chat einklappen",
+      "replying": "Bot antwortet…",
+      "working": "Bot arbeitet…",
+      "approve": "Genehmigen",
+      "reject": "Ablehnen"
+    },
     "title": "Live-Ansicht des Computers",
     "expand": "Große Ansicht öffnen",
     "close": "Ansicht schließen",
