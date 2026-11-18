@@ -1373,6 +1373,20 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// The audit rows of one run, oldest first.
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn list_audit_for_run(&self, user_id: UserId, run_id: RunId) -> Result<Vec<AuditEntry>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
+            "SELECT id, user_id, run_id, actor, action, detail_json, ts_ms FROM audit_log WHERE user_id = ?1 AND run_id = ?2 ORDER BY id",
+        )?;
+        Ok(st
+            .query_map([user_id.to_string(), run_id.to_string()], audit_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
     /// The newest audit row of one action for a user (indexed by `id`, no full scan).
     ///
     /// # Errors

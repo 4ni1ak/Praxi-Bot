@@ -1288,12 +1288,16 @@ async fn expect_dead(pid: u32) {
     panic!("process {pid} survived");
 }
 
-fn read_pid(home: &std::path::Path, name: &str) -> u32 {
+fn try_read_pid(home: &std::path::Path, name: &str) -> Option<u32> {
     std::fs::read_to_string(home.join(name))
-        .unwrap()
+        .ok()?
         .trim()
         .parse()
-        .unwrap()
+        .ok()
+}
+
+fn read_pid(home: &std::path::Path, name: &str) -> u32 {
+    try_read_pid(home, name).unwrap_or_else(|| panic!("fixture did not write a PID to {name}"))
 }
 
 #[tokio::test]
@@ -1444,13 +1448,27 @@ async fn a_cli_that_never_shows_a_page_fails_and_its_tree_dies() {
     let _turn = LOGIN_TURN.lock().await;
     let r = rig().await;
     let (_dir, home, _bin) = install_fake_clis(&r, "no-link", true).await;
-    super::super::cli_login::STARTUP_TEST_MS.store(600, std::sync::atomic::Ordering::SeqCst);
     let job = start_job(&r, "claude").await;
+    // Wait for the real subprocesses to start before expiring the Tokio timer.
+    let (leader, child) = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            let leader = try_read_pid(&home, "login-pid");
+            let child = try_read_pid(&home, "grandchild-pid");
+            if let (Some(leader), Some(child)) = (leader, child) {
+                break (leader, child);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("login fixture started both processes");
+    tokio::time::pause();
+    tokio::time::advance(super::super::cli_login::STARTUP).await;
+    tokio::time::resume();
     let failed = wait_login_state(&r, "claude", &job, &["failed"]).await;
-    super::super::cli_login::STARTUP_TEST_MS.store(0, std::sync::atomic::Ordering::SeqCst);
     assert_eq!(failed["error"], "login_start_timeout");
-    expect_dead(read_pid(&home, "login-pid")).await;
-    expect_dead(read_pid(&home, "grandchild-pid")).await;
+    expect_dead(leader).await;
+    expect_dead(child).await;
     r.net.shutdown().await;
 }
 

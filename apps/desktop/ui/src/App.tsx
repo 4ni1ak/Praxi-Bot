@@ -173,7 +173,7 @@ function AppShell() {
     retryInSeconds,
     activeComputerId
   } = useDaemon();
-  const { setThumbnailDemand, openViewer } = useLiveView();
+  const { openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
   // Every route change goes through this gate: a bot dialog with unsaved data asks first, and one
@@ -634,9 +634,7 @@ function AppShell() {
   }, [dialogOpen]);
   const mini = isMiniRail(railWidth);
 
-  useEffect(() => {
-    setThumbnailDemand(panelVisible, selectedBot?.id ?? null);
-  }, [panelVisible, selectedBot?.id, setThumbnailDemand]);
+  // The computer card asks for the screen itself, only when the owner presses "show screen".
   const closePanel = () =>
     leave.attempt(() => {
       setPanelOpen(false);
@@ -724,6 +722,7 @@ function AppShell() {
               runs={runs}
               skills={botSkills}
               newChatBusy={newChatBusy}
+              visible={panelVisible}
               onOpenChat={openChat}
               onNewChat={() => void startChat(selectedBot.id)}
               onOpenProfile={() => setBotProfileOpen(true)}

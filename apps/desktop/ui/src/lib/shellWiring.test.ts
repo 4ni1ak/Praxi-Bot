@@ -79,7 +79,9 @@ test("the hooks exist and keep their contract", () => {
 
 test("the live-view block in the narrow panel wraps instead of overflowing (card 233 x PR 56)", () => {
   const css = read("../components/BotComputerBlock.module.css");
-  assert.match(css, /\.head \{[^}]*flex-wrap: wrap;/);
-  assert.match(css, /\.release \{[^}]*flex-wrap: wrap;[^}]*gap: var\(--space-2\);/);
-  assert.doesNotMatch(css, /\.release > \* \+ \* \{/, "sibling margins misplace the second row once the buttons wrap");
+  // v7 card: the name ellipsizes in the head row, the recovery buttons and the footer links wrap.
+  assert.match(css, /\.title \{[^}]*min-width: var\(--space-0\);/);
+  assert.match(css, /\.title b \{[^}]*text-overflow: ellipsis;/);
+  assert.match(css, /\.control \{[^}]*flex-wrap: wrap;[^}]*gap: var\(--space-2\);/);
+  assert.doesNotMatch(css, /\.control > \* \+ \* \{/, "sibling margins misplace the second row once the buttons wrap");
 });

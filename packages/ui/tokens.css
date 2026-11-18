@@ -84,6 +84,24 @@
   --motion-duration-ripple: 650ms;
   --motion-duration-pulse: 1400ms;
   --motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  /* v7 bot panel (card 281): sizes the design fixes in pixels. */
+  --size-avatar-panel: 68px;
+  --size-computer-view: 132px;
+  --size-panel-button: 34px;
+  --size-send: 32px;
+  --size-info-button: 20px;
+  --size-pulse-dot: 7px;
+  --size-info-popover: 232px;
+  --size-menu-width: 300px;
+  --size-switch-track: 30px;
+  --size-switch-thumb: 14px;
+  --font-size-micro: 10.5px;
+  --font-size-2xs: 11px;
+  --font-size-caption: 11.5px;
+  --font-size-ui-sm: 12.5px;
+  --font-size-name: 16px;
+  --color-on-media: #ffffff;
+  --color-media-scrim: #0a0a0e;
 }
 
 /* Appearance axes (card 198-A). Set as data attributes on <html> by applyTheme. */
