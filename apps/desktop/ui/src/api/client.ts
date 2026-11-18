@@ -87,6 +87,7 @@ import type {
   TakeoverRequest,
   TargetInfo,
   TargetUnavailable,
+  PeerLink,
   ScreenStatus,
   TerminalInfo,
   TerminalOutput,
@@ -696,6 +697,10 @@ export class ApiClient {
     return this.request("GET", "/view/availability");
   }
   /** Idle / starting / live / paused-idle / unavailable, and the host's idle limit. */
+  peerLink(signal?: AbortSignal): Promise<PeerLink | null> {
+    return this.request("GET", "/peer/link", { signal });
+  }
+
   viewStatus(): Promise<ScreenStatus> {
     return this.request("GET", "/view/status");
   }

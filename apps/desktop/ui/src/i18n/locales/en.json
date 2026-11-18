@@ -3387,6 +3387,10 @@
     "stopAllNow": "Stop all now",
     "letContinue": "Let them continue"
   },
+  "peerLink": {
+    "direct": "Direct · {{rtt}} ms",
+    "relay": "Relay · {{rtt}} ms"
+  },
   "computerPicker": {
     "label": "Computer: {{name}}",
     "menu": "Computer",

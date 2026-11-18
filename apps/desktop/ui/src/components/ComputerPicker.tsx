@@ -1,5 +1,5 @@
 import { ArrowLeft, ChevronDown, Eye, House, Monitor, Plus, RefreshCw, Server, Square, Terminal } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { isMockMode } from "../api/mockMode";
 import { humanLine } from "../lib/humanError";
@@ -15,6 +15,7 @@ import { setHostComputerAccess } from "./ComputerAccess";
 import { CopySetupModal } from "./CopySetupModal";
 import { PairHostModal } from "./PairHostModal";
 import { Popover } from "./Popover";
+import { PeerLinkBadge } from "./PeerLinkBadge";
 import { useToast } from "./Toast";
 
 /**
@@ -27,7 +28,7 @@ export function ComputerPicker() {
   const { t, i18n } = useTranslation();
   const toast = useToast();
   const { home, workLocalNow, setWorkLocalNow, hostState, hostList, stopHostRuns, localApi, refreshHosts } = useDaemon();
-  const { openViewer } = useLiveView();
+  const { openViewer, viewerOpen } = useLiveView();
   const serverTerminal = useServerTerminal();
   // Design review (mock mode only): `?menu=1` opens the menu.
   const [open, setOpen] = useState(() => isMockMode() && new URLSearchParams(window.location.search).get("menu") === "1");
@@ -36,6 +37,7 @@ export function ComputerPicker() {
   const [syncHost, setSyncHost] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
+  const linkId = useId();
   const close = useCallback(() => setOpen(false), []);
 
   const status = homeStatus(home, workLocalNow, hostState);
@@ -114,6 +116,7 @@ export function ComputerPicker() {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={t("computerPicker.label", { name: label })}
+        aria-describedby={linkId}
         title={t("computerPicker.label", { name: label })}
         data-testid="computer-picker"
         data-computer={home.kind === "host" ? "host" : "local"}
@@ -123,6 +126,7 @@ export function ComputerPicker() {
         <i className={styles.dot} data-tone={tone} aria-hidden="true" />
         <Icon aria-hidden="true" className={styles.icon} />
         <span className={styles.name}>{label}</span>
+        <PeerLinkBadge enabled={status === "online" && !viewerOpen} id={linkId} />
         <ChevronDown aria-hidden="true" className={styles.chevron} />
       </button>
       <Popover
