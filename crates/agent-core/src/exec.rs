@@ -1064,14 +1064,20 @@ impl TurnExecutor {
                 knowledge_requests.insert(call_uuid, request);
             }
             let decision = match &resolved.spec {
-                Some(spec) => self.sh.decide_with_target(
-                    &ctx,
-                    &resolved.name,
-                    spec.effect,
-                    spec.category,
-                    &resolved.input,
-                    target.as_ref(),
-                ),
+                Some(spec) => {
+                    let (decision, reason) = self.sh.decide_with_reason(
+                        &ctx,
+                        &resolved.name,
+                        spec.effect,
+                        spec.category,
+                        &resolved.input,
+                        target.as_ref(),
+                    );
+                    if let Some(reason) = reason {
+                        self.sh.audit_auto_allow(&ctx, &resolved.name, reason);
+                    }
+                    decision
+                }
                 // Malformed `use_tool`: executes nothing, only reports the error.
                 None => Decision::Allow,
             };
