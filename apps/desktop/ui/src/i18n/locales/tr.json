@@ -918,15 +918,15 @@
       },
       "approve-destructive": {
         "name": "Yıkıcı işlemlerde onay",
-        "hint": "Okumalar serbest; değiştiren veya gönderen her şey önce sana sorar."
+        "hint": "Okuma, gezinme, çalışma alanı düzenlemeleri ve botun kendi bilgisayarı serbest; silme, gönderme, para ve kendi bilgisayarın önce sorar."
       },
       "full": {
         "name": "Tam",
-        "hint": "Sormadan çalışır (sıradan dosya silme ve gönderimler dahil); yalnızca Para, zamanlanmış görev etkinleştirme ve yasaklı listedeki yıkıcı komutlarda sorar."
+        "hint": "Sormadan çalışır (silme ve gönderim dahil); yalnızca Para, zamanlanmış görev etkinleştirme ve yasaklı listedeki yıkıcı komutlarda sorar. Güvenilmeyen içerik okuduktan sonra veri göndermeden veya program çalıştırmadan önce yine sorar."
       },
       "read-and-draft": {
         "name": "Oku ve taslak hazırla",
-        "hint": "Okumalar serbest; taslaklar, dosya değişiklikleri, sayfa açma, tıklama, komutlar ve gönderimler önce sorar (Yıkıcı işlemlerde onay ile aynı etkili politika)."
+        "hint": "Okumalar serbest; her değişiklik, gönderim, sayfa açma, tıklama ve komut önce sorar."
       },
       "custom": {
         "name": "Özel",
@@ -2734,9 +2734,9 @@
       "auto": "Serbest"
     },
     "autonomyHints": {
-      "ask": "Dosya okuma, ekran görüntüsü ve web aramasını sormadan yapar; taslak hazırlama, gönderme, dosya değiştirme veya silme, sayfa açma, tıklama ve komut çalıştırma dahil diğer tüm işlemlerde sorar (Dengeli ile aynı etkili politika).",
-      "balanced": "Dosya okuma, ekran görüntüsü ve web aramasını serbestçe yapar; her dosya yazma veya silme, taslak, gönderim, sayfa açma, tıklama ve komutta önce sorar (Sorar ile aynı etkili politika).",
-      "auto": "Sormadan çalışır—sıradan dosya silme, kabuk komutu çalıştırma ve ileti gönderme dahil—yalnızca Para işlemleri, zamanlanmış görev etkinleştirme ve yasaklı liste komutlarında (disk biçimlendirme, sistem/ev dizini silme, kimlik bilgisi yolları) onay ister."
+      "ask": "Dosya okuma, ekran görüntüsü ve web aramasını sormadan yapar; her değişiklik, gönderim, sayfa açma, tıklama ve komuttan önce sorar.",
+      "balanced": "Okur, gezinir, çalışma alanındaki dosyaları düzenler ve botun kendi bilgisayarında sormadan çalışır; dosya silmeden, göndermeden, para harcamadan ve senin bilgisayarına dokunmadan önce sorar.",
+      "auto": "Silme, komut ve gönderim dahil sormadan çalışır. Para, zamanlanmış görev etkinleştirme ve yıkıcı komutlarda, ayrıca güvenilmeyen içerik okuduktan sonra veri göndermeden veya program çalıştırmadan önce yine sorar."
     },
     "autonomyCustom": "{{preset}} izin profili kullanılıyor.",
     "advanced": "Gelişmiş ayarlar",
