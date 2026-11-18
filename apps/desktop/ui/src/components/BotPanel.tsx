@@ -15,6 +15,7 @@ import { BotAvatar, type BotAvatarState, type BotIdentity } from "ui";
 import { activitySections, librarySections, subagentRows } from "../lib/activityPanel";
 import { type PermissionTone, permissionTone } from "../lib/botEditor";
 import { chatActivity, chatDateLabel } from "../lib/botLanding";
+import { chatTitleLabel } from "../lib/chatTitle";
 import type { PresetChoice } from "../lib/botProfile";
 import { modelLine } from "../lib/modelName";
 import { cancelRun } from "../state/appStop";
@@ -258,7 +259,7 @@ export function BotPanel({
                   >
                     <MessageSquare aria-hidden="true" />
                     <span className={styles.chatText}>
-                      <span className={styles.chatTitle}>{c.title || t("botPanel.untitled")}</span>
+                      <span className={styles.chatTitle}>{chatTitleLabel(c.title, t("botPanel.untitled"))}</span>
                       <span className={styles.chatDate} data-testid="bot-panel-chat-date">
                         {chatDateLabel(c.createdAtMs, i18n.language)}
                       </span>
