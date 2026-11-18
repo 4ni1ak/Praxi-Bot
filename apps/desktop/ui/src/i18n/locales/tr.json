@@ -733,6 +733,31 @@
         "done": "Beceriye bakıldı",
         "failed": "Beceriye bakılamadı"
       },
+      "memory_search": {
+        "running": "Hafızada aranıyor",
+        "done": "Hafızada arandı",
+        "failed": "Hafızada aranamadı"
+      },
+      "session_search": {
+        "running": "Geçmiş sohbetlerde aranıyor",
+        "done": "Geçmiş sohbetlerde arandı",
+        "failed": "Geçmiş sohbetlerde aranamadı"
+      },
+      "memory_save": {
+        "running": "Hafızaya kaydediliyor",
+        "done": "Hafızaya kaydedildi",
+        "failed": "Hafızaya kaydedilmedi"
+      },
+      "memory_forget": {
+        "running": "Hafıza kaydı siliniyor",
+        "done": "Hafıza kaydı silindi",
+        "failed": "Hafıza kaydı silinmedi"
+      },
+      "knowledge_search": {
+        "running": "Bilgi kaynaklarında aranıyor",
+        "done": "Bilgi kaynaklarında arandı",
+        "failed": "Bilgi kaynaklarında aranamadı"
+      },
       "workflow": {
         "running": "İş akışı çalıştırılıyor",
         "done": "İş akışı çalıştırıldı",
@@ -2027,6 +2052,14 @@
         "not_detected": "Kurulum bitti ama program henüz bulunamadı. Yeniden bağlan'a bas ya da Praxi-Bot'u bir kez yeniden başlat.",
         "timeout": "Kurulum çok uzun sürdü ve durduruldu.",
         "unavailable": "Kurulum başlatılamadı."
+      }
+    },
+    "tools": {
+      "label": "Botların kullanabileceği araçlar",
+      "restricted": "Bazı araçlar özel bir izin listesiyle sınırlı; sunucu ayarlarından düzenleyin.",
+      "effect": {
+        "write": "veri değiştirir",
+        "destructive": "silebilir veya gönderebilir"
       }
     }
   },
@@ -3783,5 +3816,17 @@
       "sign_in": "{{cli}} oturumu kapalı. Ayarlar, Yapay zeka'dan oturum aç.",
       "unsupported": "Praxi bu bilgisayarda {{cli}} çalıştıramıyor."
     }
+  },
+  "voice": {
+    "speak": "Sesli oku",
+    "stop": "Okumayı durdur",
+    "codeOmitted": "(kod atlandı)",
+    "tableOmitted": "(tablo atlandı)",
+    "title": "Sesli cevaplar",
+    "description": "Sesli oku düğmesinin sesi ve hızı. Sistemin konuşma motorunu kullanır.",
+    "auto": "Otomatik (uygulama diline göre)",
+    "online": "çevrimiçi",
+    "speed": "Hız",
+    "unsupported": "Bu sistemde konuşma sesi yok."
   }
 }

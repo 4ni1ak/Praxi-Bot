@@ -32,6 +32,7 @@ const FAMILIES: &[(&[&str], &str)] = &[
     (&["calendar_"], "calendar (events)"),
     (&["docx_", "xlsx_", "pdf_"], "documents (Word, Excel, PDF)"),
     (&["knowledge_"], "knowledge search"),
+    (&["memory_", "session_"], "memory and past conversations"),
     (&["schedule_"], "schedules and reminders"),
     (&["skill_"], "skills"),
     (&["workflow_"], "workflows"),

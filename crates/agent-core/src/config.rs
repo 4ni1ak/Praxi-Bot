@@ -118,6 +118,17 @@ impl MemoryConfig {
             recall_budget_tokens: 800,
         }
     }
+
+    /// Open `<data_dir>/memory.db` with the keyless local [`memory_store::HashEmbedder`]
+    /// fallback (384 dimensions) so memory works out of the box without API keys.
+    #[must_use]
+    pub fn open_default(data_dir: &std::path::Path) -> Option<Self> {
+        let embedder: Arc<dyn memory_store::Embedder> =
+            Arc::new(memory_store::HashEmbedder::new(384));
+        MemoryStore::open(data_dir, embedder)
+            .ok()
+            .map(|store| Self::new(Arc::new(store)))
+    }
 }
 
 /// Refresh callback of a [`SharedRedactor`] (re-reads the secret sources).
