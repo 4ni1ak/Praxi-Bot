@@ -141,7 +141,7 @@ pub struct DeleteSkillResult {
     pub used_by: Vec<SkillUsingBotDto>,
 }
 
-fn local_owner(peer: Option<&Extension<PeerIdentity>>) -> Result<(), ApiError> {
+pub(crate) fn local_owner(peer: Option<&Extension<PeerIdentity>>) -> Result<(), ApiError> {
     if peer.is_some() {
         Err(ApiError::forbidden(
             "only the local owner may manage shared skills",
@@ -151,7 +151,7 @@ fn local_owner(peer: Option<&Extension<PeerIdentity>>) -> Result<(), ApiError> {
     }
 }
 
-fn owner_error(error: OwnerError) -> ApiError {
+pub(crate) fn owner_error(error: OwnerError) -> ApiError {
     let (status, code) = match error {
         OwnerError::Invalid => (StatusCode::UNPROCESSABLE_ENTITY, "invalid_skill"),
         OwnerError::TooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "skill_too_large"),
@@ -162,7 +162,7 @@ fn owner_error(error: OwnerError) -> ApiError {
     ApiError::new(status, code, error.to_string())
 }
 
-fn input<T>(json: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
+pub(crate) fn input<T>(json: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
     json.map(|Json(value)| value)
         .map_err(|_| ApiError::bad_request("invalid skill request body"))
 }
@@ -210,7 +210,7 @@ fn check_secrets(state: &AppState, prepared: &PreparedSkill) -> Result<(), ApiEr
     Ok(())
 }
 
-fn create_prepared(
+pub(crate) fn create_prepared(
     state: &AppState,
     prepared: &PreparedSkill,
     action: &str,

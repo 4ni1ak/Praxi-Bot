@@ -321,6 +321,7 @@ fn build_agent_with_skills(
         LoopConfig {
             redactor: Some(redactor),
             max_computer_runs,
+            memory: agent_core::MemoryConfig::open_default(storage.data_dir()),
             knowledge_decider: Some(Arc::new(agent_core::HeuristicKnowledgeDecider::new(
                 Arc::clone(storage),
             ))),
@@ -330,6 +331,7 @@ fn build_agent_with_skills(
     .with_builtin_tools(tools)
     .with_subagents()
     .with_skills(skills)
+    .with_memory_tools()
     .with_workflows(
         WorkflowStore::new(data_dir),
         Handles {
@@ -995,6 +997,7 @@ pub fn serve(
     let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
         .map(|(host, _)| host);
     crate::homeassistant_host::start_homeassistant(data_dir, &mcp_tools, telegram_store.as_ref());
+    crate::calendar_host::start_calendar(data_dir, &mcp_tools, telegram_store.as_ref());
     register_web(data_dir, port, &mcp_tools, telegram_store.as_ref());
     step("web tools registered");
     let web_host =

@@ -45,6 +45,8 @@ import { AccountMenu, type AccountAction } from "./components/AccountMenu";
 import { Popover } from "./components/Popover";
 import { HealthIndicator } from "./components/HealthIndicator";
 import { HelpModal } from "./components/HelpModal";
+import { chatTitleLabel } from "./lib/chatTitle";
+import { APP_COMMAND_EVENT, type AppCommandTarget } from "./lib/slash";
 import { editorSection } from "./lib/botEditor";
 import { BOT_COLORS, botView, draftFromBot } from "./lib/botProfile";
 import {
@@ -172,7 +174,7 @@ function AppShell() {
     retryInSeconds,
     activeComputerId
   } = useDaemon();
-  const { setThumbnailDemand, openViewer } = useLiveView();
+  const { openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
   // Every route change goes through this gate: a bot dialog with unsaved data asks first, and one
@@ -523,6 +525,18 @@ function AppShell() {
     }
   };
 
+  // Composer commands (/help, /settings ...) ask the shell to open the same places as the profile menu.
+  const accountActionRef = useRef(handleAccountAction);
+  accountActionRef.current = handleAccountAction;
+  useEffect(() => {
+    const onCommand = (e: Event) => {
+      const target = (e as CustomEvent<AppCommandTarget>).detail;
+      accountActionRef.current(target);
+    };
+    window.addEventListener(APP_COMMAND_EVENT, onCommand);
+    return () => window.removeEventListener(APP_COMMAND_EVENT, onCommand);
+  }, []);
+
   // Ctrl/Cmd + , opens settings (the shortcut the profile menu advertises).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -621,9 +635,7 @@ function AppShell() {
   }, [dialogOpen]);
   const mini = isMiniRail(railWidth);
 
-  useEffect(() => {
-    setThumbnailDemand(panelVisible, selectedBot?.id ?? null);
-  }, [panelVisible, selectedBot?.id, setThumbnailDemand]);
+  // The computer card asks for the screen itself, only when the owner presses "show screen".
   const closePanel = () =>
     leave.attempt(() => {
       setPanelOpen(false);
@@ -711,6 +723,7 @@ function AppShell() {
               runs={runs}
               skills={botSkills}
               newChatBusy={newChatBusy}
+              visible={panelVisible}
               onOpenChat={openChat}
               onNewChat={() => void startChat(selectedBot.id)}
               onOpenProfile={() => setBotProfileOpen(true)}
@@ -765,7 +778,7 @@ function AppShell() {
               return <div key={bot.id} className={styles.botRow} data-dragging={drag?.id === bot.id ? "true" : undefined} data-drop={dropEdge} {...(canReorder ? reorder.rowProps(bot.id) : { "data-bot-id": bot.id })}>
                 <SidebarItem className={styles.railItem} active={routeBotId === bot.id} title={view.name} aria-label={mini ? view.name : undefined} onClick={() => goToBot(bot.id)}>
                   <BotAvatar bot={view} size="md" state={avatarState} decorative />
-                  <div className={`${styles.botMeta} ${styles.railText}`}><span className={styles.botName}>{view.name}{index === 0 && botIds.length > 1 ? <span className={styles.mainMark} title={t("sidebar.mainBotHint")}><Star aria-hidden="true" />{t("sidebar.mainBot")}</span> : null}</span><span className={styles.botRole}>{(isMockMode() ? config.bot?.preview : undefined) ?? latest?.title ?? t("bots.newChat")}</span></div>
+                  <div className={`${styles.botMeta} ${styles.railText}`}><span className={styles.botName}>{view.name}{index === 0 && botIds.length > 1 ? <span className={styles.mainMark} title={t("sidebar.mainBotHint")}><Star aria-hidden="true" />{t("sidebar.mainBot")}</span> : null}</span><span className={styles.botRole}>{(isMockMode() ? config.bot?.preview : undefined) ?? chatTitleLabel(latest?.title, t("bots.newChat"))}</span></div>
                 </SidebarItem>
                 {canReorder && !mini && botIds.length > 1 ? <button type="button" className={styles.grip} aria-label={t("sidebar.reorderBot", { name: view.name })} title={t("sidebar.reorderHint")} {...reorder.gripProps(bot.id)}><GripVertical aria-hidden="true" /></button> : null}
               </div>;

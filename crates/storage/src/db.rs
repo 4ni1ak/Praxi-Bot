@@ -17,6 +17,39 @@ use crate::records::{
     RunStep, SkillAssignmentMode, User,
 };
 
+/// How many pre-upgrade database copies are kept under `<data_dir>/backups`.
+const KEPT_UPGRADE_BACKUPS: usize = 3;
+
+/// Before an upgrade changes the schema of an existing database, write a
+/// consistent copy (`VACUUM INTO`, safe with WAL) to
+/// `<data_dir>/backups/bot-v<old>-<unix ms>.db` and keep the newest few, so a
+/// failed or unwanted upgrade can be rolled back by hand. A fresh or
+/// already-current database is not copied. A newer-than-supported database is
+/// left for the migrator to reject.
+fn backup_before_migration(conn: &Connection, data_dir: &Path) -> Result<()> {
+    let current = migrate::current_version(conn)?;
+    if current == 0 || current >= migrate::latest_version() {
+        return Ok(());
+    }
+    let dir = data_dir.join("backups");
+    std::fs::create_dir_all(&dir)?;
+    let target = dir.join(format!("bot-v{current}-{}.db", now_ms()));
+    conn.execute("VACUUM INTO ?1", [target.to_string_lossy().as_ref()])?;
+    let mut copies: Vec<PathBuf> = std::fs::read_dir(&dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("bot-v"))
+        })
+        .collect();
+    copies.sort_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+    while copies.len() > KEPT_UPGRADE_BACKUPS {
+        let _ = std::fs::remove_file(copies.remove(0));
+    }
+    Ok(())
+}
+
 /// Current Unix time in milliseconds.
 #[must_use]
 pub fn now_ms() -> i64 {
@@ -150,6 +183,7 @@ impl Storage {
         // once, before any knowledge capability treats this root as trusted.
         let data_dir = crate::paths::without_verbatim_prefix(std::fs::canonicalize(data_dir)?);
         let conn = Connection::open(data_dir.join("bot.db"))?;
+        backup_before_migration(&conn, &data_dir)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         Self::init(conn, data_dir)
@@ -1373,6 +1407,20 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// The audit rows of one run, oldest first.
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn list_audit_for_run(&self, user_id: UserId, run_id: RunId) -> Result<Vec<AuditEntry>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
+            "SELECT id, user_id, run_id, actor, action, detail_json, ts_ms FROM audit_log WHERE user_id = ?1 AND run_id = ?2 ORDER BY id",
+        )?;
+        Ok(st
+            .query_map([user_id.to_string(), run_id.to_string()], audit_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
     /// The newest audit row of one action for a user (indexed by `id`, no full scan).
     ///
     /// # Errors
@@ -1710,6 +1758,35 @@ fn audit_row(r: &Row<'_>) -> rusqlite::Result<AuditEntry> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn upgrade_of_an_older_database_is_backed_up_first() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let conn = Connection::open(dir.path().join("bot.db")).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE marker (x); INSERT INTO marker VALUES (1); PRAGMA user_version = 3;",
+            )
+            .unwrap();
+        }
+        // user_version 3 without a ledger bootstraps and then migrates.
+        let _ = Storage::open(dir.path());
+        let backups: Vec<_> = std::fs::read_dir(dir.path().join("backups"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(backups.len(), 1, "{backups:?}");
+        assert!(backups[0].starts_with("bot-v3-"));
+        let copy = Connection::open(dir.path().join("backups").join(&backups[0])).unwrap();
+        let n: i64 = copy
+            .query_row("SELECT x FROM marker", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        // Fresh database: no backups directory content added on reopen at latest.
+        let fresh = tempfile::tempdir().unwrap();
+        Storage::open(fresh.path()).unwrap();
+        assert!(!fresh.path().join("backups").exists());
+    }
+
     use super::*;
     use serde_json::json;
 

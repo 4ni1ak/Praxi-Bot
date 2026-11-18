@@ -12,7 +12,7 @@ use crate::{
     changes, cli_login, components, composio, composio_routes, doctor, doctor_routes, dto, email,
     email_routes, error, file_access, fill_routes, host, host_admin, host_copy, host_import,
     host_links, host_setup, knowledge, knowledge_settings, live_view, mcp, mcp_routes, mcp_server,
-    routes, skill_management, skills, sse, terminal, trusted_folders, web, web_routes,
+    routes, skill_hub, skill_management, skills, sse, terminal, trusted_folders, web, web_routes,
 };
 
 struct Security;
@@ -79,6 +79,8 @@ impl Modify for Security {
         skills::put_bot_skills,
         skill_management::create,
         skill_management::import,
+        skill_hub::hub_preview,
+        skill_hub::hub_install,
         skill_management::update,
         skill_management::delete,
         routes::update_bot,
@@ -97,6 +99,7 @@ impl Modify for Security {
         crate::stop::stop_runs,
         routes::resume_run,
         routes::remember_run,
+        routes::run_usage,
         changes::get_run_changes,
         changes::preview_restore,
         changes::restore_changes,
@@ -177,7 +180,7 @@ impl Modify for Security {
     components(schemas(
         terminal::OpenTerminalInput, terminal::TerminalInfo, terminal::TerminalOutput, terminal::TerminalInput, terminal::TerminalResize, ::live_view::ScreenStatus, ::live_view::ScreenStreamState, ::live_view::RecordHeader, ::live_view::FrameMetadata, ::live_view::SourceRect,
         dto::ReleaseResult, dto::ControlStateChanged, dto::ScreenPrivilegesInput, sse::SseStatus, sse::Gap, dto::Health, dto::HostInfo, dto::BotDto, dto::BotInput, dto::BotPatchInput, dto::BotPatchOp, dto::BotPatchKind, dto::BotConflictBody, dto::RuntimeConfigDto, dto::ChatDto, dto::CreateChat,
-        dto::MessageDto, dto::Mode, dto::SendMessage, dto::DeliveryKind, dto::SendResponse,
+        dto::MessageDto, dto::RunUsageDto, dto::Mode, dto::SendMessage, dto::DeliveryKind, dto::SendResponse,
         dto::ApprovalDto, dto::Decision, dto::Scope, dto::DecideApproval,
         dto::DecisionResponse, dto::RunDto, dto::StopScope, dto::StopRunsInput, dto::StopOutcome, dto::StopRunResult, dto::StopRunsResponse, dto::UsageTotals, dto::BotUsage,
         dto::UsageSummary, dto::AnswerQuestion, dto::AnswerResponse, dto::GrantDto,
@@ -214,7 +217,8 @@ impl Modify for Security {
         skills::SkillScope, skills::SkillIssueScope, skills::SkillRequiresDto, skills::SkillHubInfoDto,
         skills::CatalogSkillDto, skills::SkillIssueDto, skills::SkillsCatalogDto,
         skills::SkillLocationsDto,
-        skill_management::SkillDocumentInput, skill_management::SkillImportInput,
+        skill_hub::HubSourceInput, skill_hub::HubInstallInput, skill_hub::HubPreviewDto,
+        skill_hub::HubFindingDto, skill_management::SkillDocumentInput, skill_management::SkillImportInput,
         skill_management::ManagedSkillDto, skill_management::DeleteSkillQuery,
         skill_management::SkillUsingBotDto, skill_management::DeleteSkillResult,
         skills::SkillAssignmentModeDto, skills::AssignedSkillState, skills::AssignedSkillDto,

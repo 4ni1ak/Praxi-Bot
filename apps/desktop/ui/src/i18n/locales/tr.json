@@ -304,7 +304,7 @@
     },
     "placeholder": "Mesaj yaz…  / komutlar · @ botlar",
     "addCommand": "Komut veya bot ekle",
-    "placeholderBusy": "Bot çalışıyor — sıraya al veya yönlendir…",
+    "placeholderBusy": "Bot çalışıyor. Yazarsan mesaj sıraya girer…",
     "send": "Gönder",
     "subagent": {
       "title": "Alt ajan",
@@ -561,6 +561,11 @@
     "slash": {
       "new": "Yeni bir sohbet başlat",
       "stop": "Çalışan işi durdur",
+      "help": "Yardımı ve kısayolları aç",
+      "settings": "Ayarları aç",
+      "models": "Yapay zekâ modeli ayarlarını aç",
+      "apps": "Uygulamaları aç",
+      "schedules": "Zamanlamaları aç",
       "menu": "Komutlar",
       "mentionMenu": "Botlar",
       "noMatch": "Eşleşme yok"
@@ -727,6 +732,31 @@
         "running": "Beceriye bakılıyor",
         "done": "Beceriye bakıldı",
         "failed": "Beceriye bakılamadı"
+      },
+      "memory_search": {
+        "running": "Hafızada aranıyor",
+        "done": "Hafızada arandı",
+        "failed": "Hafızada aranamadı"
+      },
+      "session_search": {
+        "running": "Geçmiş sohbetlerde aranıyor",
+        "done": "Geçmiş sohbetlerde arandı",
+        "failed": "Geçmiş sohbetlerde aranamadı"
+      },
+      "memory_save": {
+        "running": "Hafızaya kaydediliyor",
+        "done": "Hafızaya kaydedildi",
+        "failed": "Hafızaya kaydedilmedi"
+      },
+      "memory_forget": {
+        "running": "Hafıza kaydı siliniyor",
+        "done": "Hafıza kaydı silindi",
+        "failed": "Hafıza kaydı silinmedi"
+      },
+      "knowledge_search": {
+        "running": "Bilgi kaynaklarında aranıyor",
+        "done": "Bilgi kaynaklarında arandı",
+        "failed": "Bilgi kaynaklarında aranamadı"
       },
       "workflow": {
         "running": "İş akışı çalıştırılıyor",
@@ -1239,6 +1269,10 @@
         "title": "Önce Praxi'ye bir beyin gerekiyor",
         "hint": "Ayarlardan bir model bağlayıp yeniden dene."
       },
+      "skill_changed": {
+        "title": "Depo önizlemeden sonra değişti",
+        "hint": "Beceriyi eklemeden önce yeniden incele."
+      },
       "skill_conflict": {
         "title": "Bu adda bir beceri zaten var",
         "hint": "Başka bir ad seç ya da eskisini değiştir."
@@ -1250,6 +1284,10 @@
       "skill_not_found": {
         "title": "Bu beceri artık yok",
         "hint": "Listeyi yenile."
+      },
+      "skill_source_unreachable": {
+        "title": "Depoya ulaşılamadı",
+        "hint": "Adresi ve bağlantını kontrol edip yeniden dene."
       },
       "skill_storage": {
         "title": "Beceri kaydedilemedi",
@@ -1704,6 +1742,7 @@
     "nextRun": "Sonraki çalışma",
     "lastRun": "Son çalışma",
     "never": "Hiç",
+    "missed": "Kapalıyken kaçırılan",
     "payload": {
       "workflow": "{{name}} iş akışını çalıştırır",
       "tool": "{{name}} aracını çağırır",
@@ -2013,6 +2052,14 @@
         "not_detected": "Kurulum bitti ama program henüz bulunamadı. Yeniden bağlan'a bas ya da Praxi-Bot'u bir kez yeniden başlat.",
         "timeout": "Kurulum çok uzun sürdü ve durduruldu.",
         "unavailable": "Kurulum başlatılamadı."
+      }
+    },
+    "tools": {
+      "label": "Botların kullanabileceği araçlar",
+      "restricted": "Bazı araçlar özel bir izin listesiyle sınırlı; sunucu ayarlarından düzenleyin.",
+      "effect": {
+        "write": "veri değiştirir",
+        "destructive": "silebilir veya gönderebilir"
       }
     }
   },
@@ -2712,7 +2759,109 @@
     "railGrip": "Kenar şeridini boyutlandır (ok tuşları)",
     "panelGrip": "Bot panelini boyutlandır (ok tuşları)"
   },
+  "computerCard": {
+    "title": "Bilgisayarı",
+    "thisComputer": "Bu bilgisayar",
+    "sideBot": "Botun",
+    "sideMine": "Benim",
+    "live": "CANLI",
+    "big": "Büyüt",
+    "take": "Kontrolü al",
+    "close": "Kapat",
+    "show": "Ekranı göster",
+    "resume": "Devam et",
+    "retry": "Yeniden dene",
+    "connecting": "Bağlanıyor",
+    "frameAlt": "{{name}} canlı ekranı",
+    "terminal": "Terminal",
+    "terminalSoon": "Yakında",
+    "browser": "Tarayıcı",
+    "fps": "{{fps}} kare/sn",
+    "pausedNote": "duraklatıldı",
+    "hint": {
+      "idle": "Görüntü yalnızca sen bakarken üretilir",
+      "starting": "Ekran başlatılıyor…",
+      "paused": "3 dakikadır bakılmadığı için duraklatıldı"
+    },
+    "status": {
+      "serverOnline": "Sunucu · çevrimiçi",
+      "serverOffline": "yanıt vermiyor · yeniden deneniyor",
+      "local": "{{system}} · bot burada çalışıyor",
+      "localNoSystem": "Bot burada çalışıyor"
+    },
+    "reason": {
+      "connecting": "{{name}} sunucusuna bağlanılıyor…",
+      "offline": "Sunucuya ulaşılamıyor",
+      "notPaired": "Sunucu bu bilgisayarı artık kabul etmiyor",
+      "version": "Uygulama ile sunucunun sürümleri farklı",
+      "permission": "Bu bilgisayar sunucunun ekranını henüz izleyemiyor",
+      "failed": "Ekran alınamadı",
+      "noScreen": "Ekran yok: {{detail}}"
+    }
+  },
+  "homeMenu": {
+    "lives": {
+      "local": "Botların burada yaşıyor",
+      "online": "Botların burada yaşıyor · çevrimiçi",
+      "connecting": "Botların burada yaşıyor · bağlanıyor",
+      "offline": "Botların burada yaşıyor · çevrimdışı",
+      "temporary": "Şimdilik botların bu bilgisayarda çalışıyor"
+    },
+    "sync": "Kurulumumu eşitle",
+    "lastSync": "Son eşitleme: {{when}}",
+    "today": "bugün {{time}}",
+    "pcOn": "Her işlem burada sana sorulur",
+    "pcOff": "Botların bu bilgisayarı kullanamaz"
+  },
+  "runStatus": {
+    "working": "Çalışıyor…",
+    "stopping": "Durduruluyor…",
+    "waiting": "Onayını bekliyor: {{step}}"
+  },
+  "queued": {
+    "label": "Sırada.",
+    "sendNow": "Şimdi gönder",
+    "remove": "Sıradaki mesajı kaldır"
+  },
+  "messageInfo": {
+    "label": "Mesaj bilgisi",
+    "title": "Mesaj ayrıntıları",
+    "steps": "{{count}} araç",
+    "steps_one": "{{count}} araç",
+    "steps_other": "{{count}} araç",
+    "unit": {
+      "s": "sn",
+      "m": "dk"
+    },
+    "rows": {
+      "model": "Model",
+      "source": "Kaynak",
+      "duration": "Süre",
+      "started": "Başladı",
+      "finished": "Bitti",
+      "steps": "Adım",
+      "where": "Nerede",
+      "tokens": "Jeton",
+      "sent": "Gönderildi"
+    },
+    "sources": {
+      "app": "bu uygulama",
+      "telegram": "Telegram",
+      "peer": "başka bir bilgisayar",
+      "api": "yerel API",
+      "unknown": "bilinmiyor"
+    }
+  },
   "botPanel": {
+    "now": {
+      "waiting": "Onayını bekliyor",
+      "thinking": "Düşünüyor…",
+      "subagents": "{{count}} alt ajan",
+      "subagents_one": "{{count}} alt ajan",
+      "subagents_other": "{{count}} alt ajan",
+      "open": "Ayrıntıyı aç",
+      "detailTitle": "Şu anki çalışma"
+    },
     "toggle": "Bot paneli",
     "close": "Paneli kapat",
     "profile": "Bot profili",
@@ -3667,5 +3816,17 @@
       "sign_in": "{{cli}} oturumu kapalı. Ayarlar, Yapay zeka'dan oturum aç.",
       "unsupported": "Praxi bu bilgisayarda {{cli}} çalıştıramıyor."
     }
+  },
+  "voice": {
+    "speak": "Sesli oku",
+    "stop": "Okumayı durdur",
+    "codeOmitted": "(kod atlandı)",
+    "tableOmitted": "(tablo atlandı)",
+    "title": "Sesli cevaplar",
+    "description": "Sesli oku düğmesinin sesi ve hızı. Sistemin konuşma motorunu kullanır.",
+    "auto": "Otomatik (uygulama diline göre)",
+    "online": "çevrimiçi",
+    "speed": "Hız",
+    "unsupported": "Bu sistemde konuşma sesi yok."
   }
 }

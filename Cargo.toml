@@ -39,6 +39,7 @@ members = [
     "crates/daemon-api",
     "crates/connector-email",
     "crates/connector-homeassistant",
+    "crates/connector-calendar",
     "crates/web-tools",
     "crates/openapi-tools",
     "crates/composio",
