@@ -183,6 +183,9 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
+  /* Drawn as is: the host sends the screen at its native size (up to 1920x1080)
+     and the browser reduces it once, at the display's pixel density. */
+  image-rendering: auto;
   display: block;
   user-select: none;
 }

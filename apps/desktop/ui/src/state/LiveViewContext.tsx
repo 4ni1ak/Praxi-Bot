@@ -79,6 +79,7 @@ import {
 } from "./controlBridge.ts";
 import { useDaemon } from "./DaemonContext.tsx";
 import { TakeoverStop } from "./takeoverStop.ts";
+import { sessionRequest } from "./liveViewRequest.ts";
 import { humanLine } from "../lib/humanError";
 
 const SESSION_HEARTBEAT_MS = 5000;
@@ -586,9 +587,11 @@ export function LiveViewProvider({
 
   const owning = isActivelyOwningTakeover(state);
   const desiredProfile = sessionProfile(state);
-  const desiredMaxWidth = viewerOpen ? 1600 : 960;
-  const desiredMaxHeight = viewerOpen ? 1000 : 600;
-  const desiredQuality = owning ? 78 : viewerOpen ? 72 : 55;
+  const {
+    maxWidth: desiredMaxWidth,
+    maxHeight: desiredMaxHeight,
+    quality: desiredQuality
+  } = sessionRequest({ viewerOpen, owning });
 
   const activeSessionRef = useRef<SessionInfo | null>(null);
 
@@ -720,8 +723,8 @@ export function LiveViewProvider({
             target_id: selectedTarget.target_id,
             profile: sessionProfile(stateRef.current),
             codecs: selectedTarget.capabilities.codecs,
-            max_width: viewerOpen ? 1600 : 960,
-            max_height: viewerOpen ? 1000 : 600,
+            max_width: sessionRequest({ viewerOpen, owning: false }).maxWidth,
+            max_height: sessionRequest({ viewerOpen, owning: false }).maxHeight,
             // An automatically chosen screen is bound to the focused bot: the
             // daemon refuses another bot's browser. An explicit pick is not.
             ...(selectedTargetId === null && botFocus ? { bot_id: botFocus } : {})
