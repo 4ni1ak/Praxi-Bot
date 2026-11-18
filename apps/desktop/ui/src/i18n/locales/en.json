@@ -1405,7 +1405,28 @@
       "openLogs": "Open log folder",
       "logTitle": "Last lines of the service log",
       "waited": "Waiting for {{seconds}} s"
-    }
+    },
+    "engineNeedsNative": {
+      "title": "This model needs your OK first",
+      "hint": "It works with its own tools. Press Fix to allow that for this bot."
+    },
+    "cliSignedOut": {
+      "title": "That coding CLI is signed out",
+      "hint": "Sign in to it in Settings, AI, then try again."
+    },
+    "cliNotInstalled": {
+      "title": "That coding CLI is not installed or needs an update",
+      "hint": "Install or update it in Settings, AI, then try again."
+    },
+    "cliQuota": {
+      "title": "That subscription has reached its usage limit",
+      "hint": "Wait until it resets or pick another model."
+    },
+    "modelFailed": {
+      "title": "The model could not answer",
+      "hint": "Try again, or pick another model. The details below say what the model reported."
+    },
+    "fixEngine": "Fix"
   },
   "home": {
     "hint": "on {{name}}",
@@ -1995,7 +2016,13 @@
     },
     "notOnServer": "{{name}} · not on {{server}} yet",
     "howToInstall": "How to install",
-    "noteLocalClis": "Subscription CLIs on this computer are used when a bot runs on \"this computer\"."
+    "noteLocalClis": "Subscription CLIs on this computer are used when a bot runs on \"this computer\".",
+    "blocked": {
+      "not_installed": "Not installed",
+      "outdated": "Update needed",
+      "sign_in": "Sign in first",
+      "unsupported": "Not supported here"
+    }
   },
   "settingsModal": {
     "title": "Settings",
@@ -2109,7 +2136,8 @@
           "timeout": "Installation exceeded ten minutes and was stopped. Check the output before retrying.",
           "output_limit": "Installer output exceeded the limit and installation was stopped. Use your terminal to continue.",
           "install_failed": "Installation did not finish successfully. Check the output or run the command in your terminal."
-        }
+        },
+        "onThisComputer": "On this computer"
       },
       "advanced": "Advanced provider settings"
     },
@@ -3007,7 +3035,12 @@
       "off": "Off"
     },
     "deleteBlocked": "This bot still has chats ({{count}}), so it cannot be deleted. Only a bot without chats or runs can be removed.",
-    "deleteBlockedRuns": "This bot still has {{count}} retained run(s), so it cannot be deleted. Only a bot without chats or runs can be removed."
+    "deleteBlockedRuns": "This bot still has {{count}} retained run(s), so it cannot be deleted. Only a bot without chats or runs can be removed.",
+    "cliNote": {
+      "planner": "A coding CLI starts a whole session per call, too slow and costly for a short planning step. Use \"Same as main model\" or an API model.",
+      "classifier": "A coding CLI starts a whole session per call, too slow and costly for routing. Use \"Same as main model\" or an API model.",
+      "fallback": "A coding CLI cannot be a fallback: it needs its own consent and folder per bot. Pick an API model."
+    }
   },
   "addSkill": {
     "open": "Add skill",
@@ -3270,7 +3303,7 @@
       "notOffered": "{{cli}} cannot hold this level ({{setting}}); it would run as {{applied}}, so it is not offered."
     },
     "workspace": "Workspace folder",
-    "workspacePlaceholder": "Absolute path, for example C:/Projects/my-app",
+    "workspacePlaceholder": "Empty: Praxi makes a folder for this bot. Or type a path such as C:/Projects/my-app",
     "workspaceHint": "The CLI works in this folder. Praxi's data folder, your home folder, drive roots and credential or CLI settings folders are refused.",
     "consentNative": "I understand {{cli}} will run file and shell actions on this computer, in this folder, and Praxi will not control them.",
     "consentFull": "I understand Full access means {{cli}} will not ask before changing files or running commands.",
@@ -3516,5 +3549,39 @@
     "empty": "No trusted folders yet. Trust a folder from an approval card after reading it.",
     "remove": "Remove trust for {{folder}}",
     "ownerRequired": "Open the desktop app on this computer to change folder trust."
+  },
+  "engineConsent": {
+    "title": "{{cli}} will work with its own tools",
+    "text": "{{cli}} reads, edits and runs commands itself, in a folder Praxi makes for this bot. Praxi's own tools (browser, apps, memory) keep Praxi's approvals.",
+    "levelLabel": "How much it may do without asking",
+    "level": {
+      "ask": {
+        "name": "Ask",
+        "text": "{{cli}} asks before it changes anything. Each question appears as an approval card."
+      },
+      "accept_edits": {
+        "name": "Accept edits",
+        "text": "File edits in its folder go through; commands and everything else still ask."
+      },
+      "auto": {
+        "name": "Auto",
+        "text": "The automatic reviewer of {{cli}} decides what is safe."
+      },
+      "full": {
+        "name": "Full access",
+        "text": "No approval prompts. {{cli}} can change files and run commands without asking."
+      }
+    },
+    "onlyFull": "{{cli}} cannot ask before changes, so Full access is the only way it works with its own tools.",
+    "fullConsent": "I understand {{cli}} will not ask before changing files or running commands on this computer.",
+    "notNow": "Not now",
+    "allow": "Allow {{cli}}",
+    "fixed": "Done. Send your message again.",
+    "blocked": {
+      "not_installed": "{{cli}} is not installed here. Install it in Settings, AI.",
+      "outdated": "{{cli}} needs an update before Praxi can use it. Update it in Settings, AI.",
+      "sign_in": "{{cli}} is signed out. Sign in to it in Settings, AI.",
+      "unsupported": "Praxi cannot run {{cli}} on this computer."
+    }
   }
 }

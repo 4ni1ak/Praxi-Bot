@@ -376,5 +376,36 @@ export async function flows(ctx) {
     }
   });
   await s.context.close();
+
+  // ---- a coding CLI that only works with its own tools (a fake `cursor-agent` on PATH speaking ACP; the harness
+  // cannot use real subscriptions): pick it in the wizard, give the one consent, the reply arrives.
+  const cli = await newSession(ctx, { onboarded: false });
+  await run(cli, 'a CLI model that needs its own tools: one consent step, then its reply arrives', async (page) => {
+    await page.goto(ctx.uiUrl);
+    await page.getByTestId('onboarding-view').waitFor(T);
+    await page.getByTestId('fr-cli-cursor').click();
+    await page.getByTestId('fr-connected').waitFor({ timeout: 60000 });
+    await page.getByTestId('fr-next').click();
+    await page.getByTestId('fr-level-balanced').waitFor(T);
+    await page.getByTestId('fr-next').click();
+    await page.getByTestId('new-bot-name').fill('Cliy');
+    await page.getByTestId('fr-next').click();
+    // The consent is asked here, with Ask preselected, not as an error after the first message.
+    await page.getByTestId('engine-consent').waitFor(T);
+    if (!(await page.getByTestId('engine-consent-level-ask').locator('input').isChecked())) throw new Error('Ask is not preselected');
+    await page.getByTestId('engine-consent-allow').click();
+    await page.getByTestId('bot-empty-state').waitFor(T);
+    const bots = await (await fetch(`${ctx.base}/v1/bots`, { headers: { authorization: `Bearer ${ctx.token}` } })).json();
+    const engine = bots.find((x) => x.name === 'Cliy')?.config?.engine;
+    if (engine?.mode !== 'native_tools' || engine?.approval_level !== 'ask') throw new Error(`the bot was stored as ${JSON.stringify(engine)}`);
+    await openFirstChat(page);
+    await send(page, 'hello cli');
+    await page.getByText(/native acp/).first().waitFor(SLOW);
+    // The fake CLI asks to run a command at the Ask level: the question is a Praxi approval card.
+    const allow = page.getByRole('button', { name: /allow once|^allow/i }).first();
+    await allow.waitFor(T);
+    await allow.click();
+  });
+  await cli.context.close();
   return results;
 }

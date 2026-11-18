@@ -2981,7 +2981,10 @@ export interface components {
             consent_native_tools?: boolean;
             /** @description `praxi_governed` (Praxi runs files and shell) or `native_tools` (the CLI does). */
             mode: string;
-            /** @description Absolute workspace folder; required for `native_tools`. */
+            /**
+             * @description Absolute workspace folder for `native_tools`; when omitted the daemon creates
+             *     `<home>/Praxi/<bot>` for the bot.
+             */
             workspace?: string | null;
         };
         /**
