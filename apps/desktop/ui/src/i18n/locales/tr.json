@@ -850,6 +850,8 @@
       }
     },
     "timelineLabel": "Sohbet",
+    "copyMessage": "Mesajı kopyala",
+    "messageCopied": "Kopyalandı",
     "jumpToLatest": "En sona git",
     "runBar": {
       "label": "Çalışma kontrolleri",

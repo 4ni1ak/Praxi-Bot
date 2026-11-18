@@ -850,6 +850,8 @@
       }
     },
     "timelineLabel": "Unterhaltung",
+    "copyMessage": "Nachricht kopieren",
+    "messageCopied": "Kopiert",
     "jumpToLatest": "Zum Neuesten springen",
     "runBar": {
       "label": "Lauf-Steuerung",

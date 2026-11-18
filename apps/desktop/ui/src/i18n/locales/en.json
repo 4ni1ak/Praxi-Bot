@@ -850,6 +850,8 @@
       }
     },
     "timelineLabel": "Conversation",
+    "copyMessage": "Copy message",
+    "messageCopied": "Copied",
     "jumpToLatest": "Jump to latest",
     "runBar": {
       "label": "Run controls",
