@@ -2713,6 +2713,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/skills/hub/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install the previewed content when it is still exactly what the owner accepted. */
+        post: operations["hub_install"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/hub/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fetch a repository into a private staging folder and scan it; nothing is installed. */
+        post: operations["hub_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/skills/import": {
         parameters: {
             query?: never;
@@ -4712,6 +4746,52 @@ export interface components {
             /** Format: int64 */
             total_ram_mb: number;
             version: string;
+        };
+        /** @description One scan finding. The text never contains a matched secret. */
+        HubFindingDto: {
+            file: string;
+            /** @description `script`, `network`, `credential`, `obfuscation`, `injection` or `oversized`. */
+            kind: string;
+            line?: number | null;
+            message: string;
+            /** @description `info`, `warn` or `high`. */
+            severity: string;
+        };
+        /** @description Install request: the source plus the fingerprint of the previewed content. */
+        HubInstallInput: {
+            /** @description `fingerprint` from the preview the owner accepted. */
+            accept: string;
+            /** @description Branch, tag or full commit; the default branch when absent. */
+            rev?: string | null;
+            /** @description Folder of the skill inside the repository; the repository root when absent. */
+            subdir?: string | null;
+            /** @description `https://` clone URL of a public repository. */
+            url: string;
+        };
+        /** @description What the scan found, shown before anything is installed. */
+        HubPreviewDto: {
+            /** @description True when the folder holds scripts or other active files (stored, never run). */
+            active: boolean;
+            description: string;
+            files: number;
+            findings: components["schemas"]["HubFindingDto"][];
+            /** @description Pass this back as `accept` to install exactly this content. */
+            fingerprint: string;
+            name: string;
+            /** @description `low`, `medium` or `high`. */
+            risk: string;
+            /** Format: int64 */
+            total_bytes: number;
+            version: string;
+        };
+        /** @description Where the skill lives. */
+        HubSourceInput: {
+            /** @description Branch, tag or full commit; the default branch when absent. */
+            rev?: string | null;
+            /** @description Folder of the skill inside the repository; the repository root when absent. */
+            subdir?: string | null;
+            /** @description `https://` clone URL of a public repository. */
+            url: string;
         };
         /** @enum {string} */
         HumanAction: "login_completed" | "application_opened" | "other";
@@ -12873,6 +12953,108 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hub_install: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HubInstallInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSkillDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hub_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HubSourceInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HubPreviewDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

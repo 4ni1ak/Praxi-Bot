@@ -12,7 +12,8 @@ use crate::{
     changes, cli_login, components, composio, composio_routes, doctor, doctor_routes, dto, email,
     email_routes, error, file_access, fill_routes, host, host_admin, host_copy, host_import,
     host_links, host_setup, knowledge, knowledge_settings, live_view, mcp, mcp_routes, mcp_server,
-    memory, routes, skill_management, skills, sse, terminal, trusted_folders, web, web_routes,
+    memory, routes, skill_hub, skill_management, skills, sse, terminal, trusted_folders, web,
+    web_routes,
 };
 
 struct Security;
@@ -81,6 +82,8 @@ impl Modify for Security {
         skills::put_bot_skills,
         skill_management::create,
         skill_management::import,
+        skill_hub::hub_preview,
+        skill_hub::hub_install,
         skill_management::update,
         skill_management::delete,
         routes::update_bot,
@@ -217,7 +220,8 @@ impl Modify for Security {
         skills::SkillScope, skills::SkillIssueScope, skills::SkillRequiresDto, skills::SkillHubInfoDto,
         skills::CatalogSkillDto, skills::SkillIssueDto, skills::SkillsCatalogDto,
         skills::SkillLocationsDto,
-        skill_management::SkillDocumentInput, skill_management::SkillImportInput,
+        skill_hub::HubSourceInput, skill_hub::HubInstallInput, skill_hub::HubPreviewDto,
+        skill_hub::HubFindingDto, skill_management::SkillDocumentInput, skill_management::SkillImportInput,
         skill_management::ManagedSkillDto, skill_management::DeleteSkillQuery,
         skill_management::SkillUsingBotDto, skill_management::DeleteSkillResult,
         skills::SkillAssignmentModeDto, skills::AssignedSkillState, skills::AssignedSkillDto,
