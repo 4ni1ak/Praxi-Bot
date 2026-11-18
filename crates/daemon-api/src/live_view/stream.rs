@@ -103,7 +103,7 @@ pub(crate) async fn frames(
         .map_err(|_| {
             ApiError::new(
                 StatusCode::GATEWAY_TIMEOUT,
-                "timeout",
+                "unavailable",
                 "the screen backend did not start capture in time",
             )
         })
