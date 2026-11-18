@@ -17,6 +17,7 @@ import {
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
+import { PendingDecisions } from "../components/PendingDecisions";
 import { TargetPicker } from "../components/TargetPicker";
 import type { HumanAction, TargetInfo } from "../api/types";
 import {
@@ -477,15 +478,19 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
           role="status"
           data-testid="live-viewer-approvals"
         >
-          <span>{t("liveView.approvalsWaiting", { count: needs.length })}</span>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void closeViewer()}
-            data-testid="live-viewer-approvals-open"
-          >
-            {t("liveView.reviewApprovals")}
-          </Button>
+          <div className={styles.approvalHead}>
+            <span>{t("liveView.approvalsWaiting", { count: needs.length })}</span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void closeViewer()}
+              data-testid="live-viewer-approvals-open"
+            >
+              {t("liveView.reviewApprovals")}
+            </Button>
+          </div>
+          {/* The same cards as in the chat: decide right here, one card per counted item. */}
+          <PendingDecisions entries={needs} />
         </div>
       ) : null}
 

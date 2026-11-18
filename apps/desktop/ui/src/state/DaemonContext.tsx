@@ -42,7 +42,10 @@ import {
   markAnswered,
   type NeedsYouEntry,
   needsYou,
-  reconcile
+  type PendingApprovalFact,
+  reconcile,
+  restorePending,
+  type RunFact
 } from "./timeline";
 import { humanLine, type ServiceProblem } from "../lib/humanError";
 
@@ -75,6 +78,9 @@ type Action =
       approvals: ReadonlySet<string>;
       live: ReadonlySet<string>;
       asOfMs: number;
+      /** The daemon's own pending list and run list: cards it holds that the events lost come back. */
+      pending: readonly PendingApprovalFact[];
+      runs: readonly RunFact[];
     };
 
 function reducer(state: EventsState, action: Action): EventsState {
@@ -84,7 +90,12 @@ function reducer(state: EventsState, action: Action): EventsState {
     case "answered":
       return markAnswered(state, action.runId, action.callId, action.answer);
     case "reconcile":
-      return reconcile(state, action.approvals, action.live, action.asOfMs);
+      return restorePending(
+        reconcile(state, action.approvals, action.live, action.asOfMs),
+        action.pending,
+        action.runs,
+        action.asOfMs
+      );
   }
 }
 
@@ -314,7 +325,9 @@ function useDaemonData(conn: Connection | null): DaemonData {
           live: new Set(
             runList.filter((r) => LIVE_RUN_STATES.has(r.state)).map((r) => r.id)
           ),
-          asOfMs: startedAt - 1500
+          asOfMs: startedAt - 1500,
+          pending: approvals,
+          runs: runList
         });
       } catch {
         if (!stopped) {
@@ -349,7 +362,7 @@ function useDaemonData(conn: Connection | null): DaemonData {
       dispatch({ type: "answered", runId, callId, answer }),
     []
   );
-  const needs = useMemo(() => needsYou(events), [events]);
+  const needs = useMemo(() => needsYou(events, runs), [events, runs]);
 
   return {
     client,

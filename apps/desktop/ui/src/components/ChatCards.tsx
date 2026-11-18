@@ -426,6 +426,7 @@ export function ApprovalCard({
       role="group"
       aria-label={t(outbound ? "chat.approval.sendTitle" : "chat.approval.title")}
       data-testid={outbound ? "approval-card-outbound" : "approval-card"}
+      data-call-id={tool.callId}
     >
       <span className={styles.approvalIcon}>
         <StepIcon icon={glyph.icon} brand={glyph.brand} size={22} />
@@ -612,7 +613,7 @@ export function QuestionCard({
   };
 
   return (
-    <div className={styles.question} data-testid="question-card">
+    <div className={styles.question} data-testid="question-card" data-call-id={q.callId}>
       <span className={styles.approvalTitle}>{t("chat.question.title")}</span>
       <p className={styles.approvalSummary}>{q.question}</p>
       {answered ? (
@@ -735,8 +736,11 @@ export function SubagentCard({ run, renderItem, onCancel }: SubagentCardProps) {
   const [error, setError] = useState<string | null>(null);
   const status = subagentStatus(run);
   const waiting = status === "waiting_approval";
-  // an approval inside the card must never stay hidden
-  const expanded = open || waiting;
+  // an approval or a question inside the card must never stay hidden
+  const asking = run.items.some(
+    (i) => i.kind === "question" && i.answer === undefined && !i.closed
+  );
+  const expanded = open || waiting || asking;
   const cancellable = status === "running" || waiting;
   const task = run.task ?? "";
 
