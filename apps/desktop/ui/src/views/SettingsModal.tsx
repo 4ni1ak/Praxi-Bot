@@ -1,4 +1,4 @@
-import { BrainCircuit, ChartNoAxesCombined, Monitor, Palette, Search, Settings2, RefreshCw, Stethoscope, X } from "lucide-react";
+import { BrainCircuit, ChartNoAxesCombined, Mail, Monitor, Palette, Search, Settings2, RefreshCw, Stethoscope, X } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Modal } from "../components/Modal";
@@ -8,6 +8,7 @@ import { aiCards } from "./settings/AiCards";
 import { appearanceCards } from "./settings/AppearanceCards";
 import { computerCards } from "./settings/ComputerCards";
 import { generalCards } from "./settings/GeneralCards";
+import { mailCards } from "./settings/MailCards";
 import { otherCards } from "./settings/OtherCards";
 import {
   type CardDef,
@@ -17,7 +18,7 @@ import {
 } from "./settings/types";
 import styles from "./SettingsModal.module.css";
 
-const SECTION_ICONS = { general: Settings2, appearance: Palette, ai: BrainCircuit, computer: Monitor, usage: ChartNoAxesCombined, diagnostics: Stethoscope, updates: RefreshCw };
+const SECTION_ICONS = { general: Settings2, appearance: Palette, ai: BrainCircuit, computer: Monitor, mail: Mail, usage: ChartNoAxesCombined, diagnostics: Stethoscope, updates: RefreshCw };
 
 
 /** Consecutive `row` cards share one rounded group; `block` cards stand alone. */
@@ -90,6 +91,7 @@ export function SettingsModal({
       ...appearanceCards(bridge, t),
       ...aiCards(t),
       ...computerCards(bridge, t),
+      ...mailCards(t),
       ...otherCards(t)
     ],
     // `bridge` changes on every settings update: cards must follow it.

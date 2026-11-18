@@ -30,8 +30,8 @@ use crate::dto::{
     Decision, DecisionResponse, DeliveryKind, DetectedProviderDto, EffectivePolicyDto,
     EnableCliProviderInput, GrantDto, GrantTargetDto, Health, LatestCursor, MessageDto, Mode,
     ParseSchedule, ParsedSchedule, PolicyDto, PolicyInput, ProvidersDto, ReloadResponse,
-    RememberResponse, RevokeGrant, RunDto, RuntimeConfigDto, ScheduleChangeKind, ScheduleDto,
-    ScheduleInput, Scope, SendMessage, SendResponse, UsageSummary, UsageTotals,
+    RememberResponse, RevokeGrant, RunDto, RunUsageDto, RuntimeConfigDto, ScheduleChangeKind,
+    ScheduleDto, ScheduleInput, Scope, SendMessage, SendResponse, UsageSummary, UsageTotals,
 };
 use crate::error::{ApiError, ErrorBody};
 
@@ -936,14 +936,19 @@ pub(crate) async fn list_messages(
                 .or_insert_with(|| s.storage().get_run(run).ok().flatten().map(|r| r.bot_id.0)),
             None => None,
         };
+        let source = (m.role == "user")
+            .then(|| s.storage().message_source(m.id).ok())
+            .flatten()
+            .filter(|v| !v.is_empty());
         out.push(MessageDto {
             id: m.id,
             chat_id: m.chat_id.0,
             run_id: m.run_id.map(|r| r.0),
             bot_id,
             role: m.role,
-            content: m.content,
             created_at_ms: m.created_at_ms,
+            source,
+            content: m.content,
         });
     }
     Ok(Json(out))
@@ -1287,6 +1292,63 @@ pub(crate) async fn usage(
             .map(|(bot_id, totals)| BotUsage { bot_id, totals })
             .collect(),
     }))
+}
+
+/// Model and token usage of one run (read-only; feeds the chat's message info).
+#[utoipa::path(get, path = "/v1/runs/{id}/usage", tag = "runs", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Run id")),
+    responses((status = 200, body = RunUsageDto), (status = 404, body = ErrorBody)))]
+pub(crate) async fn run_usage(
+    State(s): State<AppState>,
+    Path(rid): Path<String>,
+) -> Result<Json<RunUsageDto>, ApiError> {
+    let run = s.run_of_user(RunId(id(&rid)?))?;
+    let st = s.storage();
+    let mut out = RunUsageDto {
+        model: None,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        model_calls: 0,
+    };
+    let audit = st.list_audit_for_run(s.user_id(), run.id)?;
+    let calls = agent_core::usage::calls_from_audit(&audit);
+    let mut recorded_steps = std::collections::HashSet::new();
+    for call in calls.get(&run.id).into_iter().flatten() {
+        if !matches!(
+            call.purpose,
+            agent_core::CallPurpose::Executor | agent_core::CallPurpose::GuardClose
+        ) {
+            continue;
+        }
+        recorded_steps.insert(call.step_n);
+        out.model = Some(call.model.clone());
+        out.model_calls += 1;
+        if let Some(u) = call.tokens {
+            out.prompt_tokens = out.prompt_tokens.saturating_add(u.prompt_tokens);
+            out.completion_tokens = out.completion_tokens.saturating_add(u.completion_tokens);
+        }
+    }
+    // Pre-ledger runs: the model step carries the model and usage.
+    for step in st.list_steps(run.id)? {
+        if step.name != "model" || recorded_steps.contains(&step.idx) {
+            continue;
+        }
+        let Some(output) = step.output.as_ref() else {
+            continue;
+        };
+        if let Some(m) = output.get("model").and_then(Value::as_str) {
+            out.model = Some(m.to_owned());
+        }
+        out.model_calls += 1;
+        if let Some(u) = output
+            .get("usage")
+            .and_then(|u| serde_json::from_value::<Usage>(u.clone()).ok())
+        {
+            out.prompt_tokens = out.prompt_tokens.saturating_add(u.prompt_tokens);
+            out.completion_tokens = out.completion_tokens.saturating_add(u.completion_tokens);
+        }
+    }
+    Ok(Json(out))
 }
 
 // --------------------------------------------------------------- control

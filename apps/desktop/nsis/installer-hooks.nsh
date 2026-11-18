@@ -2,7 +2,7 @@
 ; - Per-user install (no administrator privileges required)
 ; - Start-menu shortcut managed by NSIS startMenuFolder = "Praxi-Bot"
 ; - Optional autostart toggle: off by default (can be enabled via /AUTOSTART=1 or from Settings in the app)
-; - Uninstaller preserves user data (%APPDATA%\praxibot and %LOCALAPPDATA%\praxibot)
+; - Uninstaller preserves user data (%APPDATA%\praxi\praxi-bot)
 ;   unless the user explicitly checks "Delete application data" ($DeleteAppDataCheckboxState) or confirms removal.
 
 !include "FileFunc.nsh"
@@ -32,14 +32,18 @@
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  ; Keep user data (%APPDATA%\praxibot and %LOCALAPPDATA%\praxibot) by default!
+  ; Keep user data (%APPDATA%\praxi\praxi-bot) by default!
   ; Only remove Praxi-Bot user data if the user ticked Tauri's "Delete application data" checkbox
   ; ($DeleteAppDataCheckboxState == 1) and was not running a silent update.
   ${If} $UpdateMode <> 1
     ${If} $DeleteAppDataCheckboxState == 1
       SetShellVarContext current
-      RMDir /r "$APPDATA\praxibot"
-      RMDir /r "$LOCALAPPDATA\praxibot"
+      ; The daemon keeps bot.db, logs, config and backups under
+      ; %APPDATA%\praxi\praxi-bot (storage::data_dir, ProjectDirs "dev"/"praxi"/"praxi-bot").
+      RMDir /r "$APPDATA\praxi\praxi-bot"
+      RMDir "$APPDATA\praxi"
+      RMDir /r "$LOCALAPPDATA\praxi\praxi-bot"
+      RMDir "$LOCALAPPDATA\praxi"
     ${EndIf}
   ${EndIf}
 !macroend

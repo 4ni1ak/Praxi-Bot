@@ -1,10 +1,10 @@
 //! Print the AT-SPI snapshot of the active window (or a launched app) with timings.
 //!
-//! Usage: `inspect [--launch <exe>] [--arg <path>] [--title <substring>] [--screenshot <file.jpg>]`
+//! Usage: `inspect-linux [--launch <exe>] [--arg <path>] [--title <substring>] [--screenshot <file.jpg>]`
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
-    eprintln!("inspect is only available on Linux");
+    eprintln!("inspect-linux is only available on Linux");
 }
 
 #[cfg(target_os = "linux")]

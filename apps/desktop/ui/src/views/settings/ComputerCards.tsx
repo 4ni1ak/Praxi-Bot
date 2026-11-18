@@ -13,7 +13,6 @@ import { useLiveView } from "../../state/LiveViewContext";
 import styles from "../SettingsModal.module.css";
 import { PermissionsSection } from "../SettingsSections";
 import { ComputerAccessCard } from "../../components/ComputerAccess";
-import { EmailCard } from "./EmailCard";
 import { WebSearchCard } from "./WebSearchCard";
 import type { CardDef, SettingsBridge } from "./types";
 
@@ -139,15 +138,6 @@ export function computerCards(b: SettingsBridge, t: TFunction): CardDef[] {
       description: t("settings.permissions.description"),
       keywords: "policy permission izin",
       node: <PermissionsSection />
-    },
-    {
-      id: "email",
-      section: "computer",
-      kind: "block",
-      title: t("settingsModal.email.title"),
-      description: t("settingsModal.email.description"),
-      keywords: "mail e-posta eposta imap smtp gmail outlook yahoo icloud mailbox posta kutusu",
-      node: <EmailCard />
     },
     {
       id: "web-search",
