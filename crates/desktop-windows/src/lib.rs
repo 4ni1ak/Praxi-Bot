@@ -5,12 +5,17 @@
 //! keyboard and mouse actions. On other platforms this crate only exposes the
 //! platform-independent helpers in [`pure`].
 
+pub mod live_view_win;
 pub mod pure;
 
 #[cfg(windows)]
 mod backend;
 #[cfg(windows)]
 mod capture;
+#[cfg(any(windows, test))]
+mod guard_glue;
+#[cfg(windows)]
+mod identity;
 #[cfg(windows)]
 mod input;
 #[cfg(windows)]

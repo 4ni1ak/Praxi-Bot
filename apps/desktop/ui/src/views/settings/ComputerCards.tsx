@@ -1,16 +1,39 @@
+import { TrustedFolders } from "../../components/TrustedFolders";
+import { Monitor } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
+import { Button } from "ui";
 import {
   COMPUTER_TARGETS,
   isComputerTargetAvailable,
   parseComputerTarget,
   type ComputerTarget
 } from "../../lib/settingsPrefs";
+import { useLiveView } from "../../state/LiveViewContext";
 import styles from "../SettingsModal.module.css";
 import { PermissionsSection } from "../SettingsSections";
+import { ComputerAccessCard } from "../../components/ComputerAccess";
 import { EmailCard } from "./EmailCard";
 import { WebSearchCard } from "./WebSearchCard";
 import type { CardDef, SettingsBridge } from "./types";
+
+function OpenLiveViewerRow() {
+  const { t } = useTranslation();
+  const { openViewer } = useLiveView();
+  return (
+    <div>
+      <Button
+        variant="secondary"
+        size="sm"
+        data-testid="computer-open-live-view"
+        onClick={() => openViewer()}
+      >
+        <Monitor />
+        <span>{t("liveView.expand")}</span>
+      </Button>
+    </div>
+  );
+}
 
 /** The connected computer; alternate targets stay unavailable until daemon support exists. */
 export function ComputerTargetBlock({
@@ -86,8 +109,27 @@ export function computerCards(b: SettingsBridge, t: TFunction): CardDef[] {
             value={b.settings.computerTarget}
             onChange={(computerTarget) => b.update({ computerTarget })}
           />
+          <OpenLiveViewerRow />
         </div>
       )
+    },
+    {
+      id: "my-computer",
+      section: "computer",
+      kind: "block",
+      title: t("computerAccess.title"),
+      description: t("computerAccess.description"),
+      keywords: "bots use computer server host bilgisayar sunucu botlarim izin",
+      node: <ComputerAccessCard />
+    },
+    {
+      id: "trusted-folders",
+      section: "computer",
+      kind: "block",
+      title: t("folderTrust.title"),
+      description: t("folderTrust.description"),
+      keywords: "trust folder repository klasor guven depo",
+      node: <TrustedFolders />
     },
     {
       id: "permissions",

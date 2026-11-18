@@ -64,7 +64,41 @@ pub fn read_token(data_dir: &Path) -> std::io::Result<String> {
 /// I/O errors, no OS randomness, or an existing token file that is a symlink,
 /// owned by someone else, or whose permissions cannot be repaired.
 pub fn load_or_create_token(data_dir: &Path) -> std::io::Result<TokenInfo> {
-    if let Some(info) = existing_token(data_dir)? {
+    load_or_create_named(data_dir, TOKEN_FILE_NAME)
+}
+
+/// File of the headless host's owner key (distinct from `api-token`).
+pub const OWNER_KEY_FILE_NAME: &str = "owner-key";
+
+/// The headless host's owner key, created `0600` on first use like the token.
+/// It authorises exactly the owner-only operations (key export, administration
+/// grants) and is never given to bots, engines or the MCP facade.
+///
+/// # Errors
+/// As [`load_or_create_token`].
+pub fn load_or_create_owner_key(data_dir: &Path) -> std::io::Result<String> {
+    load_or_create_named(data_dir, OWNER_KEY_FILE_NAME).map(|i| i.token)
+}
+
+/// Read the owner key file (for the host's own `bot host ...` commands).
+///
+/// # Errors
+/// I/O errors, or a malformed file.
+pub fn read_owner_key(data_dir: &Path) -> std::io::Result<String> {
+    let s = std::fs::read_to_string(data_dir.join(OWNER_KEY_FILE_NAME))?;
+    let s = s.trim();
+    if valid_token(s) {
+        Ok(s.to_owned())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "owner-key file is malformed",
+        ))
+    }
+}
+
+fn load_or_create_named(data_dir: &Path, name: &str) -> std::io::Result<TokenInfo> {
+    if let Some(info) = existing_token(data_dir, name)? {
         return Ok(info);
     }
     std::fs::create_dir_all(data_dir)?;
@@ -75,15 +109,15 @@ pub fn load_or_create_token(data_dir: &Path) -> std::io::Result<TokenInfo> {
         use std::fmt::Write as _;
         let _ = write!(token, "{b:02x}");
     }
-    let path = token_path(data_dir);
+    let path = data_dir.join(name);
     let restricted = write_private(&path, &token)?;
     Ok(TokenInfo { token, restricted })
 }
 
 /// The token of an existing, usable file with its permissions verified;
 /// `None` when there is none or it is malformed (a new one replaces it).
-fn existing_token(data_dir: &Path) -> std::io::Result<Option<TokenInfo>> {
-    let path = token_path(data_dir);
+fn existing_token(data_dir: &Path, name: &str) -> std::io::Result<Option<TokenInfo>> {
+    let path = data_dir.join(name);
     match std::fs::symlink_metadata(&path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e),
@@ -320,8 +354,21 @@ pub(crate) async fn guard(State(state): State<AppState>, mut req: Request, next:
             None if is_events_route(&req) => query_token(req.uri().query()),
             None => None,
         };
-        let ok = presented.is_some_and(|t| ct_eq(t.as_bytes(), state.token().as_bytes()));
-        if !ok {
+        let scoped = presented.filter(|t| crate::mcp_server::looks_scoped(t));
+        if let Some(token) = scoped {
+            let Some(principal) = crate::mcp_server::authenticate(&state, token) else {
+                return with_cors(ApiError::unauthorized().into_response(), origin, false);
+            };
+            if !crate::mcp_server::scoped_path_allowed(req.method(), req.uri().path()) {
+                return with_cors(
+                    ApiError::forbidden("scoped MCP token does not allow this endpoint")
+                        .into_response(),
+                    origin,
+                    false,
+                );
+            }
+            req.extensions_mut().insert(principal);
+        } else if !presented.is_some_and(|t| ct_eq(t.as_bytes(), state.token().as_bytes())) {
             return with_cors(ApiError::unauthorized().into_response(), origin, false);
         }
     }
@@ -361,7 +408,9 @@ fn with_cors(mut resp: Response, origin: Option<HeaderValue>, preflight: bool) -
         );
         h.insert(
             header::ACCESS_CONTROL_ALLOW_HEADERS,
-            HeaderValue::from_static("authorization, content-type, last-event-id"),
+            HeaderValue::from_static(
+                "authorization, content-type, last-event-id, x-praxi-owner-key, x-praxi-message-source",
+            ),
         );
         h.insert(
             header::ACCESS_CONTROL_MAX_AGE,

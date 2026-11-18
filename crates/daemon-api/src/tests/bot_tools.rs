@@ -24,7 +24,7 @@ fn caller_config(preset: &str, allow: &[&str], manage: bool) -> Value {
         "models": {"executor": "fake/echo"},
         "permissions": {"preset": preset},
         "tools": tools,
-        "runtime": {"computer": "local", "browser": "local"}
+        "runtime": {"computer": "browser", "browser": "local"}
     })
 }
 
@@ -133,7 +133,7 @@ async fn a_new_bot_defaults_to_approve_destructive_at_most_and_is_stamped() {
         made.config["tools"]["allow"],
         json!(["fs_read", "web_search", "bot_*"])
     );
-    assert_eq!(made.config["runtime"]["computer"], "local");
+    assert_eq!(made.config["runtime"]["computer"], "browser");
     // `manage_bots` is never inherited: the new bot cannot make bots.
     assert!(made.config["tools"].get("manage_bots").is_none());
     assert!(!host.may_manage_bots(&v.id));
@@ -208,6 +208,7 @@ async fn a_change_of_circumstances_after_the_preview_voids_it() {
             b.id,
             "Boss",
             &caller_config("read-only", &["fs_read", "web_search", "bot_*"], true),
+            current_version(&t, b.id),
         )
         .unwrap();
     let e = host.create(&c, &r).await.unwrap_err();
@@ -358,7 +359,10 @@ async fn an_update_can_only_lower_permissions_and_narrow_tools() {
     // A harmless edit works and keeps keys the tools do not know.
     let mut cfg = stored(&t, &v.id).config;
     cfg["custom_ui_key"] = json!(7);
-    t.state.storage().update_bot(bid(&v.id), "W", &cfg).unwrap();
+    t.state
+        .storage()
+        .update_bot(bid(&v.id), "W", &cfg, current_version(&t, bid(&v.id)))
+        .unwrap();
     let r = req(json!({"name":"W2","persona":"newer"}));
     let ch = BotChange::Update {
         id: v.id.clone(),
@@ -384,7 +388,10 @@ async fn a_bot_the_user_widened_is_read_only_to_its_maker() {
         .unwrap();
     let mut cfg = stored(&t, &v.id).config;
     cfg["permissions"] = json!({"preset": "full"});
-    t.state.storage().update_bot(bid(&v.id), "W", &cfg).unwrap();
+    t.state
+        .storage()
+        .update_bot(bid(&v.id), "W", &cfg, current_version(&t, bid(&v.id)))
+        .unwrap();
     let e = host
         .preview(
             &c,
@@ -518,6 +525,7 @@ async fn bot_create_always_asks_and_is_never_a_standing_grant() {
     let chat = r.json()["id"].as_str().unwrap().to_owned();
     let msg = r#"call:bot_create {"name":"Inbox","persona":"Summarise my inbox every morning."}"#;
     send_msg(&t, &chat, msg, "queue").await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
     let (call_id, run) = pending_call(&t).await;
     for scope in ["always", "always_category", "this_chat"] {
         let r = call(
@@ -600,4 +608,8 @@ async fn the_daemon_token_file_is_protected_from_the_file_tools_and_named_in_the
     ] {
         assert!(never.matches(&cmd), "{cmd}");
     }
+}
+
+fn current_version(t: &T, id: BotId) -> i64 {
+    t.state.storage().get_bot_versioned(id).unwrap().unwrap().1
 }

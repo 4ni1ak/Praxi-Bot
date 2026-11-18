@@ -128,6 +128,11 @@ impl Runtime {
             updated_at_ms: now,
             parent_run_id: parent,
             spec,
+            computer_target: None,
+            computer_node: None,
+            computer_node_name: None,
+            paused_at_ms: None,
+            pause_reason: None,
         };
         self.storage.insert_run(&run)?;
         Ok(run.id)
@@ -156,6 +161,41 @@ impl Runtime {
         }
         self.transition(run_id, RunState::Running, None)?;
         self.drive(run_id, None).await
+    }
+
+    /// Move a `Queued` run into `Paused` with an optional durable
+    /// `pause_reason` (for example `waiting_for_pc`) before executing any step.
+    ///
+    /// # Errors
+    /// Fails if the run is not `Queued` or on storage errors.
+    pub fn pause_queued(&self, run_id: RunId, reason: Option<&str>) -> Result<RunState> {
+        let state = self.state(run_id)?;
+        if state != RunState::Queued {
+            return Err(RuntimeError::IllegalTransition {
+                from: state,
+                to: RunState::Paused,
+            });
+        }
+        self.transition(run_id, RunState::Running, None)?;
+        self.transition(run_id, RunState::Paused, None)?;
+        self.storage.set_run_pause_reason(run_id, reason)?;
+        Ok(RunState::Paused)
+    }
+
+    /// Transition an idle `Paused` run to `Failed` with an error message
+    /// (for example after waiting-for-PC times out).
+    ///
+    /// # Errors
+    /// Fails if the run is not `Paused` or on storage errors.
+    pub fn fail_paused(&self, run_id: RunId, error: &str) -> Result<RunState> {
+        let state = self.state(run_id)?;
+        if state != RunState::Paused {
+            return Err(RuntimeError::IllegalTransition {
+                from: state,
+                to: RunState::Failed,
+            });
+        }
+        self.transition(run_id, RunState::Failed, Some(error))
     }
 
     /// Explicitly resume a `Paused` run.  An interrupted idempotent step is
@@ -188,6 +228,9 @@ impl Runtime {
         }
         let last = self.storage.list_steps(run_id)?.pop();
         let pending = match last {
+            // Planning completed before a pause, but execution never began.
+            // This is safe even for a non-idempotent step and is not skipped.
+            Some(s) if StepStatus::parse(&s.status) == Some(StepStatus::Intent) => Some(s),
             Some(s) if !skip && StepStatus::parse(&s.status) == Some(StepStatus::Interrupted) => {
                 if s.idempotent {
                     Some(s)
@@ -216,6 +259,31 @@ impl Runtime {
         }
         self.transition(run_id, RunState::Cancelled, None)?;
         Ok(())
+    }
+
+    /// Finish a run whose drive task was aborted (a hard stop): its token is
+    /// dropped, unfinished steps become `Interrupted` and a non-terminal run is
+    /// set to `Cancelled` without waiting for the task. Returns `true` when the
+    /// state changed.
+    ///
+    /// # Errors
+    /// Fails if the run is missing or storage fails.
+    pub fn finish_aborted(&self, run_id: RunId) -> Result<bool> {
+        self.tokens.lock().remove(&run_id);
+        self.pausing.lock().remove(&run_id);
+        let run = self.require_run(run_id)?;
+        let from = RunState::parse(&run.state).ok_or(RuntimeError::UnknownState(run.state))?;
+        if from.is_terminal() {
+            return Ok(false);
+        }
+        self.storage.relabel_steps(
+            run_id,
+            StepStatus::Intent.as_str(),
+            StepStatus::Interrupted.as_str(),
+        )?;
+        self.storage
+            .update_run_state(run_id, RunState::Cancelled.as_str(), None)?;
+        Ok(true)
     }
 
     /// Runs currently driven by this runtime (a task is executing them).
@@ -325,7 +393,11 @@ impl Runtime {
             }
             let run = self.require_run(run_id)?;
             let (step_id, spec, mut attempt) = if let Some(prev) = pending.take() {
-                let attempt = prev.attempt + 1;
+                let attempt = if StepStatus::parse(&prev.status) == Some(StepStatus::Intent) {
+                    prev.attempt
+                } else {
+                    prev.attempt + 1
+                };
                 st.update_step(
                     prev.id,
                     StepStatus::Intent.as_str(),
@@ -337,7 +409,26 @@ impl Runtime {
                 (prev.id, StepSpec::from_row(&prev), attempt)
             } else {
                 let history = st.list_steps(run_id)?;
-                match self.executor.next_step(&run, &history).await {
+                // Planning can await providers too (for example the routing
+                // classifier). Stop must cancel that work before execution
+                // or a terminal result is committed.
+                let next = tokio::select! {
+                    biased;
+                    () = token.cancelled() => {
+                        return self.transition(run_id, self.stop_state(run_id), None);
+                    }
+                    next = self.executor.next_step(&run, &history) => next,
+                };
+                // Planning may consume queued input. Preserve a completed
+                // plan as an unexecuted intent on pause so resume cannot lose
+                // it. Cancellation still discards the plan.
+                let stopped = token.is_cancelled() || self.pausing.lock().contains(&run_id);
+                if stopped
+                    && (self.stop_state(run_id) != RunState::Paused || !matches!(next, Ok(Some(_))))
+                {
+                    return self.transition(run_id, self.stop_state(run_id), None);
+                }
+                match next {
                     Ok(None) => return self.transition(run_id, RunState::Succeeded, None),
                     Err(e) => return self.transition(run_id, RunState::Failed, Some(&e.0)),
                     Ok(Some(spec)) => {
@@ -359,6 +450,9 @@ impl Runtime {
                         };
                         // Intent is durable before the step runs.
                         st.insert_step(&row)?;
+                        if stopped {
+                            return self.transition(run_id, self.stop_state(run_id), None);
+                        }
                         (row.id, spec, 1)
                     }
                 }
@@ -763,6 +857,122 @@ mod tests {
         assert!(rt.cancel(run).is_err(), "already terminal");
     }
 
+    struct Planning {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        next: Option<StepSpec>,
+        executed: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl StepExecutor for Planning {
+        async fn next_step(
+            &self,
+            _: &Run,
+            history: &[RunStep],
+        ) -> std::result::Result<Option<StepSpec>, ExecError> {
+            if !history.is_empty() {
+                return Ok(None);
+            }
+            self.entered.notify_one();
+            self.release.notified().await;
+            Ok(self.next.clone())
+        }
+
+        async fn execute(
+            &self,
+            _: &Run,
+            step: &StepSpec,
+            _: &CancellationToken,
+        ) -> std::result::Result<Value, ExecError> {
+            self.executed.lock().push(step.name.clone());
+            Ok(Value::Null)
+        }
+    }
+
+    async fn stop_during_planning(pause: bool, interrupt: bool, next: Option<StepSpec>) {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, u, b) = setup(dir.path());
+        let preserves_intent = pause && !interrupt && next.is_some();
+        let planner = Arc::new(Planning {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+            next,
+            executed: Mutex::new(Vec::new()),
+        });
+        let rt = Arc::new(Runtime::new(st.clone(), planner.clone()));
+        let run = rt.create_run(u, b, None, "turn").unwrap();
+        let mut handle = tokio::spawn({
+            let rt = rt.clone();
+            async move { rt.start(run).await }
+        });
+        tokio::time::timeout(Duration::from_secs(5), planner.entered.notified())
+            .await
+            .expect("planner never entered");
+        if pause {
+            assert!(rt.request_pause(run, interrupt));
+        } else {
+            rt.cancel(run).unwrap();
+        }
+        if !interrupt {
+            // A graceful pause lets planning finish, but cannot execute its
+            // answer or report success after that pause was requested.
+            planner.release.notify_one();
+        }
+        let outcome = tokio::time::timeout(Duration::from_secs(5), &mut handle).await;
+        if outcome.is_err() {
+            handle.abort();
+        }
+        assert_eq!(
+            outcome
+                .expect("planning ignored the stop")
+                .unwrap()
+                .unwrap(),
+            if pause {
+                RunState::Paused
+            } else {
+                RunState::Cancelled
+            }
+        );
+        assert!(planner.executed.lock().is_empty());
+        let steps = st.list_steps(run).unwrap();
+        if preserves_intent {
+            assert_eq!(steps.len(), 1);
+            assert_eq!(steps[0].status, StepStatus::Intent.as_str());
+            assert!(!steps[0].idempotent);
+            // Skipping interrupted work must not skip an unexecuted intent.
+            assert_eq!(
+                rt.resume_skipping_interrupted(run).await.unwrap(),
+                RunState::Succeeded
+            );
+            assert_eq!(*planner.executed.lock(), vec![steps[0].name.clone()]);
+            assert_eq!(st.list_steps(run).unwrap()[0].attempt, 1);
+        } else {
+            assert_eq!(steps.len(), 0);
+        }
+        assert_eq!(rt.active_runs(), Vec::<RunId>::new());
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_pending_planning() {
+        stop_during_planning(false, true, None).await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_pause_interrupts_pending_planning() {
+        stop_during_planning(true, true, None).await;
+    }
+
+    #[tokio::test]
+    async fn graceful_pause_during_planning_does_not_start_a_step() {
+        stop_during_planning(true, false, Some(spec("write", false))).await;
+    }
+
+    #[tokio::test]
+    async fn graceful_pause_during_planning_does_not_report_success() {
+        stop_during_planning(true, false, None).await;
+    }
+
     #[tokio::test]
     async fn pause_with_interrupt_abandons_the_step_and_pauses() {
         let dir = tempfile::tempdir().unwrap();
@@ -837,5 +1047,31 @@ mod tests {
         let run = rt.create_run(u, b, None, "turn").unwrap();
         rt.cancel(run).unwrap();
         assert_eq!(rt.state(run).unwrap(), RunState::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn pause_queued_and_fail_paused_preserve_and_clear_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, u, b) = setup(dir.path());
+        let rt = Runtime::new(st.clone(), Arc::new(Fake::new(vec![spec("a", true)])));
+        let run1 = rt.create_run(u, b, None, "turn").unwrap();
+        assert_eq!(
+            rt.pause_queued(run1, Some("waiting_for_pc")).unwrap(),
+            RunState::Paused
+        );
+        let row = st.get_run(run1).unwrap().unwrap();
+        assert_eq!(row.pause_reason.as_deref(), Some("waiting_for_pc"));
+        assert_eq!(rt.resume(run1).await.unwrap(), RunState::Succeeded);
+        assert_eq!(st.get_run(run1).unwrap().unwrap().pause_reason, None);
+
+        let run2 = rt.create_run(u, b, None, "turn").unwrap();
+        rt.pause_queued(run2, Some("waiting_for_pc")).unwrap();
+        assert_eq!(
+            rt.fail_paused(run2, "pc timeout").unwrap(),
+            RunState::Failed
+        );
+        let row2 = st.get_run(run2).unwrap().unwrap();
+        assert_eq!(row2.error.as_deref(), Some("pc timeout"));
+        assert_eq!(row2.pause_reason, None);
     }
 }

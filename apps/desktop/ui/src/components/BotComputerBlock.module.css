@@ -1,0 +1,246 @@
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.label {
+  margin: var(--space-0);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-muted);
+}
+
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) + calc(var(--space-1) / 2));
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.dot {
+  width: calc(var(--space-1) + calc(var(--space-1) / 2));
+  height: calc(var(--space-1) + calc(var(--space-1) / 2));
+  border-radius: var(--radius-pill);
+  background-color: var(--color-text-faint);
+  flex-shrink: 0;
+}
+
+.dot[data-tone="watch"] {
+  background-color: var(--color-success);
+}
+
+.dot[data-tone="active"],
+.dot[data-tone="acquiring"] {
+  background-color: var(--color-accent);
+}
+
+.dot[data-tone="paused"] {
+  background-color: var(--color-warning);
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: var(--space-0);
+  border: var(--size-border) solid var(--color-border);
+  border-radius: var(--radius-card);
+  background-color: var(--color-surface);
+  background-image: var(--surface-sheen);
+  color: var(--color-text);
+  font-family: inherit;
+  text-align: left;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+:global(:root[data-style="line"]) .card {
+  background: transparent;
+  border-color: var(--color-border-strong);
+}
+
+.card:hover {
+  border-color: var(--color-border-strong);
+  background-color: var(--color-surface-elevated);
+}
+
+.preview {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  background-color: var(--color-background);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.actionDot {
+  position: absolute;
+  width: var(--space-4);
+  height: var(--space-4);
+  border-radius: var(--radius-pill);
+  border: var(--size-border-thick) solid var(--color-accent);
+  background-color: color-mix(in srgb, var(--color-accent) 26%, transparent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.expandTag {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  border-radius: var(--radius-md);
+  background-color: color-mix(in srgb, var(--color-background) 78%, transparent);
+  color: var(--color-text);
+  border: var(--size-border) solid var(--color-border);
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) ease-out;
+}
+
+.card:hover .expandTag,
+.card:focus-visible .expandTag {
+  opacity: 1;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: var(--size-border) solid var(--color-border);
+  font-size: var(--font-size-xs);
+}
+
+.meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: var(--space-0);
+  color: var(--color-text-secondary);
+}
+
+.host {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cap {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+/* The narrowest panel (260px) leaves ~226px: Turkish "Kontrolü yeniden al" + "Duraklatmayı kaldır" fill it exactly, so wrap instead of overflowing. */
+.release {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.where {
+  min-width: var(--space-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.where[data-computer="host"] {
+  color: var(--color-accent-text);
+  font-weight: var(--font-weight-medium);
+}
+
+.where[data-computer="mine"] {
+  color: var(--color-text);
+}
+
+.switcher {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+  padding: var(--space-1);
+  border: var(--size-border) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-surface-elevated);
+}
+
+.switchBtn {
+  flex: 1;
+  min-width: var(--space-0);
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.switchBtn[aria-pressed="true"] {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent-text);
+  font-weight: var(--font-weight-medium);
+}
+
+.note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--size-border) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-elevated);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.command {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}

@@ -4,6 +4,252 @@
  */
 
 export interface paths {
+    "/v1/admin/cli-engines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_cli_engines"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/cli-engines/{id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Progress of the install above (poll while `state` is `installing`). */
+        get: operations["admin_cli_engine_install_status"];
+        put?: never;
+        /**
+         * Install one CLI engine ON THE HOST with the registry's fixed command.
+         *     Admin desktop only; one install at a time; output bounded.
+         */
+        post: operations["admin_cli_engine_install"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/cli-engines/{id}/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where the sign-in above stands (poll while it is `starting`, `needs_*` or `verifying`).
+         *     Needs the `job` id and the desktop that started it.
+         */
+        get: operations["admin_cli_engine_login_status"];
+        put?: never;
+        /**
+         * Start the engine's own sign-in ON THE HOST. Admin desktop only; one at a time; the sign-in
+         *     belongs to the desktop that started it.
+         */
+        post: operations["admin_cli_engine_login"];
+        /**
+         * Stop the sign-in (the whole process tree is killed). Needs the `job` id and the desktop that
+         *     started it: a stale window cannot cancel a newer sign-in.
+         */
+        delete: operations["admin_cli_engine_login_cancel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/cli-engines/{id}/login/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hand the code the vendor's page showed to the waiting CLI. Exactly one code per sign-in,
+         *     and only from the desktop that started it, naming that very sign-in.
+         */
+        post: operations["admin_cli_engine_login_code"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/default-provider": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["admin_set_default_provider"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/home": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["admin_set_home"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/import/bots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_import_bot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/import/bots/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** What would happen to each bot, so the dialog can ask before anything is sent. */
+        post: operations["admin_check_bots"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/import/chats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_import_chats"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/import/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_import_schedules"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/import/schedules/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_activate_schedules"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/import/schedules/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_release_schedules"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/providers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["admin_put_provider"];
+        post?: never;
+        delete: operations["admin_delete_provider"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_state"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/approvals": {
         parameters: {
             query?: never;
@@ -56,6 +302,197 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{bot}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The bot's file access mode. */
+        get: operations["get_files"];
+        /** Set the bot's file access mode. Local owner only. */
+        put: operations["put_files"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/email-captures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent successful, explicitly scoped mailbox reads available to this bot. */
+        get: operations["email_captures"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/embedding-approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask policy for an owner-reviewable destination and source snapshot. Merely
+         *     opening the card grants no authority and starts no provider request.
+         */
+        post: operations["request_embedding_approval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/embedding-approvals/{approval}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm exactly the server snapshot the local owner reviewed. A changed
+         *     profile/source, expired card or replay requires a fresh owner decision.
+         */
+        post: operations["confirm_embedding_approval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/embedding-cooldown/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Explicit owner recovery for a provider's shared retry delay; quota usage and
+         *     per-source failure records remain intact.
+         */
+        post: operations["reset_embedding_cooldown"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/embedding-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["revoke_embedding_grant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_settings"];
+        put: operations["put_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_sources"];
+        put?: never;
+        post: operations["create_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/sources/{source}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["update_source"];
+        post?: never;
+        delete: operations["delete_source"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/sources/{source}/embed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["embed_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/sources/{source}/reindex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reindex_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots/{id}": {
         parameters: {
             query?: never;
@@ -68,11 +505,46 @@ export interface paths {
          *     the persisted grants).
          */
         get: operations["get_bot"];
-        /** Replace a bot's name and profile. */
+        /** Replace a bot profile using its loaded `expected_version` (required; missing is 428). */
         put: operations["update_bot"];
         post?: never;
         /** Delete a bot that has no chats or runs. */
         delete: operations["delete_bot"];
+        options?: never;
+        head?: never;
+        /** Change only the listed fields of a bot, atomically, if `expected_version` is current. */
+        patch: operations["patch_bot"];
+        trace?: never;
+    };
+    "/v1/bots/{id}/engine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set a bot's engine mode, approval level and workspace (local owner only). */
+        put: operations["put_engine"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{id}/engine/kill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Kill switch: back to Praxi-governed and end the bot's running CLI processes. */
+        post: operations["kill_engine"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -94,6 +566,27 @@ export interface paths {
         post?: never;
         /** Revoke one grant (audited); the next matching call asks again. */
         delete: operations["revoke_grant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Effective skill assignment, available catalog, and bot-learned skills for one bot. */
+        get: operations["get_bot_skills"];
+        /**
+         * Assign shared/bundled skills to a bot (`mode: "all"` restores the default).
+         *     Local user or paired desktop only; peer phones are refused.
+         */
+        put: operations["put_bot_skills"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -169,6 +662,218 @@ export interface paths {
          *     id); otherwise `mode` decides between steering and queueing.
          */
         post: operations["send_message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/components": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Components local apps may need and whether each is installed. */
+        get: operations["list_components"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/components/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One component (poll this while an install runs). */
+        get: operations["get_component"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/components/{id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run the official installer for a component (the client confirmed the
+         *     command first).  Returns at once; poll `GET /v1/components/{id}`.
+         */
+        post: operations["install_component"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Key status. */
+        get: operations["composio_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Apps the owner connected or started to connect. */
+        get: operations["composio_list_apps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio/apps/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One app, refreshed from Composio (poll this while sign-in is pending). */
+        get: operations["composio_get_app"];
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect an app: deletes the Composio-side account when possible and
+         *     always forgets the app locally.
+         */
+        delete: operations["composio_disconnect"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio/apps/{slug}/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start connecting an app: returns the Composio-hosted consent link, valid
+         *     once.  The caller opens it in the system browser.  Connecting is the
+         *     owner's opt-in for that app.
+         */
+        post: operations["composio_connect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio/apps/{slug}/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Switch an app's tools on or off. */
+        put: operations["composio_set_enabled"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio/key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Validate (one cheap authenticated call to Composio) and store the project
+         *     API key in the OS secret store.  **Write-only**: no route returns it.
+         */
+        put: operations["composio_set_key"];
+        post?: never;
+        /** Delete the key; every Composio tool disappears. */
+        delete: operations["composio_remove_key"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** State of the browser login (poll while it is `pending`). */
+        get: operations["composio_login_status"];
+        put?: never;
+        /**
+         * Start the one-time browser login: Composio makes a session, the caller
+         *     opens `login_url` in the system browser and polls `GET /v1/composio/login`.
+         *     No key is typed or copied.
+         */
+        post: operations["composio_login_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/composio/toolkits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Composio's toolkit catalog (searchable, paged), with this installation's
+         *     state per toolkit.  Served from the local cache and the bundled popular
+         *     apps: it never waits for the network, a stale cache is refreshed in the
+         *     background.
+         */
+        get: operations["composio_catalog"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -292,6 +997,69 @@ export interface paths {
          *     overlay highlight) or `refuse` it.
          */
         post: operations["decide_control"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/doctor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Run the read-only diagnostics. */
+        get: operations["get_doctor"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/doctor/repair/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run one allow-listed repair.  The request is the local user's click in
+         *     Settings (bots have no API token; paired peers are refused by the peer
+         *     router).  An attributed `doctor.repair_requested` audit record is written
+         *     before anything runs (no record, no repair), and `doctor.repair` records
+         *     the outcome.
+         */
+        post: operations["repair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/doctor/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A redacted Markdown support report: versions, platform, check results and
+         *     config file names (never contents).  The home directory becomes `~`;
+         *     secrets known to the daemon (and their encoded forms), the API token,
+         *     key-shaped strings, credentials in URLs and assignments, host names, user
+         *     names and e-mail addresses are masked.  Ends within 15 s.
+         */
+        get: operations["report"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -442,6 +1210,11 @@ export interface paths {
          *     `{"type":"control_state_changed","state","owner","target_id","reason"}`) when
          *     a screen takeover is acquired, becomes active, is interrupted, released or
          *     recovered (no ids, epochs, pixels or text); not replayed.
+         *
+         *     And `view_targets_changed` events (`{"type":"view_targets_changed"}`) when a screen
+         *     target appears, goes idle, attaches to a page or closes, or a missing-screen
+         *     reason changes: a pixel-free hint to refetch `/v1/view/targets` and
+         *     `/v1/view/availability`; not replayed.
          */
         get: operations["events_doc"];
         put?: never;
@@ -485,6 +1258,77 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/fill-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the standing grants. */
+        get: operations["list_fill_grants"];
+        put?: never;
+        /** Create a standing grant: "this secret on this exact origin without asking". */
+        post: operations["create_fill_grant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/fill-grants/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a standing grant. */
+        delete: operations["revoke_fill_grant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/fill-secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the fill secrets: names and allow-lists, never values. */
+        get: operations["list_fill_secrets"];
+        put?: never;
+        /** Create a fill secret with its allow-lists. The value is write-only. */
+        post: operations["create_fill_secret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/fill-secrets/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Change a fill secret's value and/or allow-lists. */
+        put: operations["update_fill_secret"];
+        post?: never;
+        /** Delete a fill secret, its value and its standing grants. */
+        delete: operations["delete_fill_secret"];
         options?: never;
         head?: never;
         patch?: never;
@@ -555,6 +1399,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/host/devices/{key}/admin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * The owner of this installation (not a paired peer) grants or withdraws host
+         *     administration for a paired desktop. This is the one confirmation step for a
+         *     desktop that was paired before the capability existed. Audited.
+         */
+        put: operations["host_set_admin"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/host/invite": {
         parameters: {
             query?: never;
@@ -597,6 +1462,298 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["host_update"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/computer-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_computer_requests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/computer-requests/{rid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_decide_computer_request"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/home": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_home"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/pair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_pair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_setup_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup/ssh-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_setup_ssh_keys"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup/{job}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_setup_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup/{job}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_setup_cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup/{job}/host-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_setup_host_key"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["hosts_forget"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{id}/computer-access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["hosts_set_computer_access"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{id}/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_connect"];
+        delete: operations["hosts_disconnect"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/{id}/copy-setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_copy_plan"];
+        put?: never;
+        post: operations["hosts_copy_setup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp-server/call": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dispatch a scoped task/computer operation through the ordinary agent loop. */
+        post: operations["call_tool"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp-server/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a bot-bound token in the secret store (local owner only). */
+        post: operations["create_token"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp-server/tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a token and cancel its outstanding tasks (local owner only). */
+        delete: operations["revoke_token"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp-server/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List only explicitly enabled tools within the scoped token. */
+        get: operations["list_tools"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -665,6 +1822,91 @@ export interface paths {
         post?: never;
         /** Disconnect and remove a server (its tools disappear) and save `mcp.toml`. */
         delete: operations["delete_mcp_server"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{name}/auth/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finish a pending sign-in with a pasted redirect URL (host without a browser). */
+        post: operations["complete_mcp_auth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{name}/auth/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Close the one-shot listener and cancel a pending token exchange. */
+        post: operations["cancel_mcp_auth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{name}/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel sign-in and forget stored tokens before disconnecting. */
+        post: operations["logout_mcp_auth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{name}/auth/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a sign-in from an authenticated local user's explicit action. */
+        post: operations["start_mcp_auth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{name}/auth/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read authentication state, never credentials. */
+        get: operations["mcp_auth_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -753,6 +1995,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/providers/cli": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/providers/cli/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch a coding CLI provider off and remember that: it is not turned on again
+         *     automatically when it is detected.
+         */
+        post: operations["disable_cli_provider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/providers/cli/enable": {
         parameters: {
             query?: never;
@@ -770,6 +2048,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/providers/cli/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Creates an expiring approval; never starts a process. */
+        post: operations["preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/providers/cli/install/{approval_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve once (or deny). SSE `output` is untrusted text; `done` includes a
+         *     stable error code and follows re-detection. Disconnect cancels the owned tree.
+         */
+        post: operations["decide"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/providers/cli/{id}/models/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** `POST /v1/providers/cli/{id}/models/refresh`: ask the CLI again now. */
+        post: operations["refresh_models_route"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/providers/detected": {
         parameters: {
             query?: never;
@@ -777,7 +2109,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Detect installed, signed-in coding CLIs. */
+        /**
+         * Detect installed, signed-in coding CLIs. Local owner only: the rows carry
+         *     the signed-in account label (an email or organisation) and install state.
+         */
         get: operations["detect_providers"];
         put?: never;
         post?: never;
@@ -842,6 +2177,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop runs: cancel a target set that is fixed at the first receipt of
+         *     `stop_id`. Idempotent per `stop_id`.
+         */
+        post: operations["stop_runs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runs/{id}": {
         parameters: {
             query?: never;
@@ -870,6 +2225,60 @@ export interface paths {
         put?: never;
         /** Cancel a run. */
         post: operations["cancel_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{id}/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List net file changes made by a run's file tools, with capped inline diffs. */
+        get: operations["get_run_changes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{id}/changes/{cp}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Dry-run preview of restoring checkpoint `cp` (or `"all"` across the run). */
+        get: operations["preview_restore"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{id}/changes/{cp}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore checkpoint `cp` (or `"all"` across the run), refusing with `409 modified_since`
+         *     unless `force: true` is provided.
+         */
+        post: operations["restore_changes"];
         delete?: never;
         options?: never;
         head?: never;
@@ -971,6 +2380,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/schedules/{id}/reclaim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/schedules/{id}/reclaim`: "bring this schedule back to this computer". Owner key
+         *     only. The server's copy is switched off FIRST; when it cannot be reached the owner must
+         *     confirm explicitly and is told that the copy there may still be active.
+         */
+        post: operations["schedule_reclaim"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/schedules/{id}/run-now": {
         parameters: {
             query?: never;
@@ -1011,6 +2441,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Catalog of shared and bundled skills (metadata only, never bodies). */
+        get: operations["list_skills"];
+        put?: never;
+        /** Create a trusted shared skill authored by the local owner. */
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import a complete bounded skill tree; no imported code is executed. */
+        post: operations["import"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Atomically update SKILL.md and retain auxiliary files. */
+        put: operations["update"];
+        post?: never;
+        /** Refuse assigned skills unless force is explicit; report their bot IDs/names. */
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/trusted-folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The folders Praxi treats as the owner's own content. */
+        get: operations["list_trusted_folders"];
+        put?: never;
+        /** Trust a folder ("I trust this folder"). Owner key required. */
+        post: operations["trust_folder"];
+        /** Stop trusting a folder. Owner key required. */
+        delete: operations["untrust_folder"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/usage": {
         parameters: {
             query?: never;
@@ -1018,8 +2520,29 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Token usage summed over the model steps of all runs. */
+        /** Invocation usage, with legacy model-step fallback for pre-ledger runs. */
         get: operations["usage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/view/availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Which kinds of screen this host cannot offer and why (empty when none is
+         *     missing), so the panel can say "No screen: <reason>". Same access rule as
+         *     `GET /v1/view/targets`; no pixels, no paths.
+         */
+        get: operations["availability"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1239,6 +2762,113 @@ export interface components {
         ActivateInput: {
             force: boolean;
         };
+        /** @description What the host reports about one CLI engine, as installed THERE. */
+        AdminCliEngineDto: {
+            /** @description The host can run that command itself (a verified, fixed installer). */
+            can_install: boolean;
+            docs_url: string;
+            id: string;
+            /** @description Command that installs it on the host, when one is known. */
+            install_command?: string | null;
+            installed: boolean;
+            /** @description How to sign in on the host. */
+            login: string;
+            name: string;
+            /** @description `None` when the CLI offers no safe way to check. */
+            signed_in?: boolean | null;
+            version?: string | null;
+        };
+        /** @description `GET/POST /v1/admin/cli-engines/{id}/install`: where the install stands. */
+        AdminCliInstallDto: {
+            engine: string;
+            /** @description Stable code of the last failure (`exit`, `timeout`, `npm_missing`...). */
+            error?: string | null;
+            /** @description Found on the host right now. */
+            installed: boolean;
+            /** @description Last lines of installer output (untrusted text, bounded). */
+            output: string;
+            /** @description Signed in, when the CLI can say. */
+            signed_in?: boolean | null;
+            /** @description `idle`, `installing`, `done` or `failed`. */
+            state: string;
+        };
+        /** @description `GET/POST/DELETE /v1/admin/cli-engines/{id}/login`: where the sign-in stands. */
+        AdminCliLoginDto: {
+            /** @description The one-time code to type on that page (device-code flow). */
+            code?: string | null;
+            /** @description The exact command to run over SSH for a `manual` engine. */
+            command?: string | null;
+            engine: string;
+            /** @description Stable code of the failure (`login_start_timeout`, `login_code_rejected`, ...). */
+            error?: string | null;
+            /**
+             * @description How this engine can be signed in from the desktop: `device_code`, `paste_code` or
+             *     `manual` (it cannot be driven remotely: run `command` over SSH).
+             */
+            flow: string;
+            /** @description Found on the host right now. */
+            installed: boolean;
+            /**
+             * @description Unpredictable id of this sign-in; status, code and cancel must present it (and come from
+             *     the desktop that started it).
+             */
+            job_id?: string | null;
+            /** @description Signed in, when the CLI can say. */
+            signed_in?: boolean | null;
+            /**
+             * @description `idle`, `starting`, `needs_browser`, `needs_code`, `verifying`, `done`, `failed`,
+             *     `timed_out` or `cancelled`.
+             */
+            state: string;
+            /** @description The vendor's sign-in page (verified against its allow-listed hosts). */
+            url?: string | null;
+        };
+        /** @description `PUT /v1/admin/default-provider`. */
+        AdminDefaultInput: {
+            id: string;
+            model?: string | null;
+        };
+        /** @description `PUT /v1/admin/home`. */
+        AdminHomeInput: {
+            adopted: boolean;
+        };
+        /** @description `POST .../login/code`: the code the vendor's page showed. */
+        AdminLoginCodeInput: {
+            /** @description One line, 8-1024 plain characters. Never logged, echoed or stored; zeroised after use. */
+            code: string;
+            /** @description The sign-in this code is for (`job_id` of the start answer). */
+            job_id: string;
+        };
+        /** @description The provider as stored on the host. */
+        AdminProviderDto: {
+            has_key: boolean;
+            id: string;
+            is_default: boolean;
+            model?: string | null;
+        };
+        /** @description Add or update a provider. The key is write-only. */
+        AdminProviderInput: {
+            /** @description Never echoed, logged or audited. */
+            api_key?: string | null;
+            /** @description Only for a custom OpenAI-compatible endpoint. */
+            base_url?: string | null;
+            /** @description Make this the host's default provider. */
+            make_default?: boolean;
+            model?: string | null;
+        };
+        /** @description `GET /v1/admin/state`. */
+        AdminStateDto: {
+            /** @description The owner made this host the bots' home (setup moved here). */
+            adopted: boolean;
+            /** @description The command the owner runs on the host when `granted` is false. */
+            confirm_command?: string | null;
+            /** @description This desktop holds host administration. */
+            granted: boolean;
+            /** @description Whether the host can store an API key. */
+            secrets_available: boolean;
+            /** @description What to do when `secrets_available` is false. */
+            secrets_hint?: string | null;
+        };
         /** @description `POST /v1/questions/{call_id}`. */
         AnswerQuestion: {
             /** @description The user's answer (free text, or one of the offered options). */
@@ -1281,7 +2911,41 @@ export interface components {
             /** @description Tool the model wants to call. */
             tool_name: string;
         };
-        /** @description A bot. */
+        /** @description One explicitly assigned skill name and whether it is currently installed. */
+        AssignedSkillDto: {
+            /** @description Assigned skill name. */
+            name: string;
+            /** @description `ok` when present in catalog, `missing` otherwise. */
+            state: components["schemas"]["AssignedSkillState"];
+        };
+        /**
+         * @description Availability of an assigned skill name in the current catalog.
+         * @enum {string}
+         */
+        AssignedSkillState: "ok" | "missing";
+        /** @description Catalog skill entry annotated with whether it is assigned to the bot. */
+        AvailableSkillDto: {
+            /** @description True when this skill is visible to the bot under its current assignment. */
+            assigned: boolean;
+            /** @description One-line description from frontmatter. */
+            description: string;
+            hub?: null | components["schemas"]["SkillHubInfoDto"];
+            /** @description Unique skill name. */
+            name: string;
+            requires?: null | components["schemas"]["SkillRequiresDto"];
+            /** @description Skill scope (`shared` or `bundled`). */
+            scope: components["schemas"]["SkillScope"];
+            /** @description Skill version string. */
+            version: string;
+        };
+        /** @description `409` body of `PATCH /v1/bots/{id}`: the usual error plus the bot as stored now. */
+        BotConflictBody: {
+            /** @description The current bot, with its current version. */
+            current: components["schemas"]["BotDto"];
+            /** @description `version_conflict`. */
+            error: components["schemas"]["ErrorDetail"];
+        };
+        /** @description Public bot representation. */
         BotDto: {
             /** @description Bot profile (ADR-0011) as JSON. */
             config: unknown;
@@ -1298,6 +2962,30 @@ export interface components {
             id: string;
             /** @description Display name. */
             name: string;
+            runtime?: null | components["schemas"]["RuntimeConfigDto"];
+            /**
+             * Format: int64
+             * @description Bot revision: starts at 1; profile writes and skill assignment changes
+             *     advance it in the write transaction. Send the loaded value back as
+             *     `expected_version` to both PUT and PATCH.
+             */
+            version: number;
+        };
+        /** @description New engine settings for one bot. */
+        BotEngineInput: {
+            /** @description `ask` (default), `accept_edits`, `auto` or `full`. */
+            approval_level?: string | null;
+            /** @description The owner confirms Full access (no approval prompts) for this bot. */
+            consent_full_access?: boolean;
+            /** @description The owner confirms that a CLI runs this bot's file and shell actions. */
+            consent_native_tools?: boolean;
+            /** @description `praxi_governed` (Praxi runs files and shell) or `native_tools` (the CLI does). */
+            mode: string;
+            /**
+             * @description Absolute workspace folder for `native_tools`; when omitted the daemon creates
+             *     `<home>/Praxi/<bot>` for the bot.
+             */
+            workspace?: string | null;
         };
         /**
          * @description Create (`POST /v1/bots`) or replace (`PUT /v1/bots/{id}`) a bot.  Exactly
@@ -1306,10 +2994,73 @@ export interface components {
         BotInput: {
             /** @description Profile as a JSON object. */
             config?: unknown;
+            /**
+             * Format: int64
+             * @description Required for PUT: version of the profile being replaced. Missing is 428;
+             *     stale is 409 with the current bot. Not used when creating a bot.
+             */
+            expected_version?: number | null;
             /** @description Display name (defaults to the profile's `[bot].name`). */
             name?: string | null;
             /** @description Profile as TOML text (the contents of a bot profile file). */
             profile_toml?: string | null;
+            runtime?: null | components["schemas"]["RuntimeConfigDto"];
+        };
+        /**
+         * @description `PATCH /v1/bots/{id}`: change only the listed fields of a bot, atomically.
+         *     Every field not named - including unknown keys - stays exactly as stored.
+         */
+        BotPatchInput: {
+            /**
+             * Format: int64
+             * @description The version the client loaded (`BotDto::version`).  A different current
+             *     version refuses the whole patch with `409` and returns the current bot.
+             */
+            expected_version: number;
+            /** @description New display name. */
+            name?: string | null;
+            /**
+             * @description Profile changes, applied in order (at most 128). Values/result use a
+             *     conservative 1 MiB escaped JSON budget; excessive input is 400.
+             */
+            ops?: components["schemas"]["BotPatchOp"][];
+        };
+        /**
+         * @description How one [`BotPatchOp`] changes the profile.
+         * @enum {string}
+         */
+        BotPatchKind: "set" | "unset";
+        /** @description One field-level change of a bot profile. */
+        BotPatchOp: {
+            /** @description `set` or `unset`. */
+            op: components["schemas"]["BotPatchKind"];
+            /**
+             * @description RFC 6901 JSON Pointer into the profile (`config`), e.g. `/models/planner`,
+             *     `/permissions/categories/fs/level`, `/runtime/computer`.  Object keys
+             *     only: a path through an array or a scalar is refused. At most 32 segments
+             *     and 4096 bytes; resulting profile depth at most 32.
+             */
+            path: string;
+            /** @description The new value (`set` only). */
+            value?: unknown;
+        };
+        /** @description Response of `GET /v1/bots/{id}/skills` and `PUT /v1/bots/{id}/skills`. */
+        BotSkillsDto: {
+            /** @description Explicitly assigned names when `mode == "selected"`. */
+            assigned: components["schemas"]["AssignedSkillDto"][];
+            /** @description Shared + bundled catalog entries with `assigned` state. */
+            available: components["schemas"]["AvailableSkillDto"][];
+            /** @description Current assignment mode (`all` or `selected`). */
+            mode: components["schemas"]["SkillAssignmentModeDto"];
+            /** @description Skills learned by this bot (`bots/<id>/skills/`), read-only. */
+            own: components["schemas"]["OwnSkillDto"][];
+            /**
+             * Format: int64
+             * @description Version of the stored assignment (`0` when none). Send it back as
+             *     `expected_version` on `PUT` so a stale dialog gets `409` instead of
+             *     overwriting a newer assignment.
+             */
+            version: number;
         };
         /** @description Usage of one bot. */
         BotUsage: components["schemas"]["UsageTotals"] & {
@@ -1346,15 +3097,43 @@ export interface components {
             /** @description Supports image input. */
             vision: boolean;
         };
+        /** @description Catalog entry for a shared or bundled skill (metadata only, never the body). */
+        CatalogSkillDto: {
+            /**
+             * @description Hex SHA-256 of the Markdown body (the part after the frontmatter, trimmed): lets a
+             *     client tell whether the catalog lists the file it just wrote or an older one.
+             */
+            body_sha256: string;
+            /** @description One-line description from frontmatter. */
+            description: string;
+            hub?: null | components["schemas"]["SkillHubInfoDto"];
+            /** @description Unique skill name. */
+            name: string;
+            requires?: null | components["schemas"]["SkillRequiresDto"];
+            /** @description Skill scope (`shared` or `bundled`). */
+            scope: components["schemas"]["SkillScope"];
+            /** @description Skill version string. */
+            version: string;
+        };
         /** @description Effective decision of one permission category. */
         CategoryDecisionDto: {
             /** @description `allow`, `ask` or `deny`. */
             decision: string;
+            /**
+             * @description Computers where a category grant allows this category. The decision
+             *     stays `ask` for every computer not listed.
+             */
+            scopes?: string[];
             /** @description `true` when `allow` holds only because of a category grant. */
             via_grant: boolean;
         };
         /** @enum {string} */
         Cause: "idle" | "action" | "refresh";
+        /**
+         * @description Net file change classification.
+         * @enum {string}
+         */
+        ChangeKindDto: "created" | "modified" | "deleted" | "moved";
         /** @description A messaging channel (e.g. Telegram) as seen by the daemon. */
         ChannelDto: {
             /** @description Credentials are stored. */
@@ -1396,13 +3175,291 @@ export interface components {
             /** @description Title. */
             title: string;
         };
+        /** @description One diagnostic result. */
+        Check: {
+            /** @description What was found. */
+            detail: string;
+            /** @description How to fix it by hand (for warn / fail). */
+            hint?: string | null;
+            /** @description Stable id (`data_dir`, `providers`, ...). */
+            id: string;
+            repair?: null | components["schemas"]["Repair"];
+            /** @description Result class. */
+            status: components["schemas"]["Status"];
+            /** @description Short human name (`data dir`, `providers`, ...), as `bot doctor` prints it. */
+            title: string;
+        };
+        CheckBotItem: {
+            name: string;
+            /** Format: uuid */
+            source_bot_id: string;
+        };
+        CheckBotResult: {
+            /** Format: uuid */
+            source_bot_id: string;
+            /**
+             * @description `mapped` (linked to a server bot already), `name_taken` (a bot with this name that this
+             *     flow did not create exists: ask the owner) or `free`.
+             */
+            state: string;
+        };
+        CheckBotsInput: {
+            bots: components["schemas"]["CheckBotItem"][];
+        };
+        CheckBotsReport: {
+            items: components["schemas"]["CheckBotResult"][];
+        };
+        /**
+         * @description Run computer binding and the actual location of its file checkpoints.
+         *     Computer targeting routes desktop/browser actions only. Built-in file tools
+         *     always execute in this daemon, even when the run uses a remote desktop node.
+         *     Any future remote file-tool dispatch must add checkpoint origin validation
+         *     and refuse local restore of remote-origin entries before enabling that path.
+         */
+        CheckpointComputerDto: {
+            checkpoint_location: components["schemas"]["CheckpointLocationDto"];
+            computer_node?: string | null;
+            computer_node_name?: string | null;
+            computer_target?: string | null;
+        };
+        /** @enum {string} */
+        CheckpointLocationDto: "daemon_local";
         /**
          * @description Authentication status reported by a CLI provider (`GET /v1/providers/detected`).
          * @enum {string}
          */
         CliAuthState: "signed_in" | "signed_out" | "unknown";
+        CliEngineDto: {
+            /** @description Empty when no safe, locally verified CLI auth-status command is known. */
+            auth_args: string[];
+            detected: components["schemas"]["DetectedProviderDto"];
+            docs_url: string;
+            /** @description `cli:<id>` is switched on in `providers.toml`. */
+            enabled: boolean;
+            executable_names: string[];
+            install?: null | components["schemas"]["CliInstallDto"];
+            limitation?: string | null;
+            login: string;
+            minimum_version?: string | null;
+            native?: null | components["schemas"]["CliNativeDto"];
+            outdated: boolean;
+            path?: string | null;
+            /**
+             * @description The owner switched this engine off. Recorded as a `cli:<id>` entry with
+             *     `enabled = false` in `providers.toml`; such an engine is never auto-enabled.
+             */
+            user_disabled: boolean;
+            version_args: string[];
+        };
+        CliInstallApproval: {
+            /** Format: uuid */
+            approval_id: string;
+            command: string;
+            engine_id: string;
+            /** Format: int64 */
+            expires_at_ms: number;
+        };
+        CliInstallDecision: {
+            decision: components["schemas"]["Decision"];
+        };
+        CliInstallDto: {
+            args: string[];
+            command: string;
+            executable: boolean;
+            program: string;
+            verified: boolean;
+        };
+        CliInstallInput: {
+            id: string;
+        };
+        /** @description One approval level for a CLI that runs with its own tools. */
+        CliLevelDto: {
+            applied: string;
+            /** @description `ask`, `accept_edits`, `auto` or `full`. */
+            level: string;
+            /** @description The CLI's own setting this level maps to (shown to the owner). */
+            native_setting: string;
+            /** @description `false` when the CLI has no such mode: it would run as `applied`. */
+            offered: boolean;
+        };
+        /** @description Native-tools mode of a CLI: the CLI runs files and shell itself. */
+        CliNativeDto: {
+            levels: components["schemas"]["CliLevelDto"][];
+            /** @description `verified` (flags confirmed in the installed CLI) or `experimental`. */
+            support: string;
+        };
         /** @enum {string} */
         Codec: "jpeg" | "webp";
+        /** @description One component. */
+        ComponentDto: {
+            /** @description The app can run an official installer here. */
+            can_install: boolean;
+            /** @description The exact command that would run (display only; empty when not possible). */
+            command: string;
+            /** @description Why the last install failed: `exit`, `not_detected`, `timeout` or `unavailable`. */
+            error?: string | null;
+            /** @description Id. */
+            id: components["schemas"]["ComponentId"];
+            /** @description The launcher is found (checked now, without restarting the app). */
+            installed: boolean;
+            /** @description What to run by hand when `can_install` is false. */
+            manual_command: string;
+            /** @description Where it comes from (shown in the confirm dialog). */
+            source: string;
+            /** @description Install progress. */
+            state: components["schemas"]["ComponentInstallState"];
+        };
+        /**
+         * @description A component Praxi can install (fixed list).
+         * @enum {string}
+         */
+        ComponentId: "uv" | "node";
+        /**
+         * @description Progress of an install.
+         * @enum {string}
+         */
+        ComponentInstallState: "idle" | "installing" | "done" | "failed";
+        /** @description A connected (or connecting) app. */
+        ComposioAppDto: {
+            /** @description Bots allowed; `null` = all. */
+            bots?: string[] | null;
+            /** @description The owner enabled it (tools exist only while enabled and active). */
+            enabled: boolean;
+            /** @description Display name. */
+            name: string;
+            /** @description Praxi connects it directly. */
+            native_first: boolean;
+            /** @description Toolkit slug. */
+            slug: string;
+            /** @description State. */
+            state: components["schemas"]["ComposioConnState"];
+            /**
+             * Format: int32
+             * @description Direct tools currently offered to the model.
+             */
+            tools: number;
+        };
+        /** @description `GET /v1/composio/toolkits`. */
+        ComposioCatalogDto: {
+            /**
+             * @description Why the last refresh failed: `offline`, `unauthorized`,
+             *     `rate_limited` or `failed`.  The list above is still usable.
+             */
+            error?: string | null;
+            /** @description The page: popular apps first, then Composio's popularity order. */
+            items: components["schemas"]["ComposioToolkitDto"][];
+            /** @description Cursor of the next page. */
+            next_cursor?: string | null;
+            /** @description A background refresh is running. */
+            refreshing: boolean;
+            /** @description `bundled` (only the apps shipped with Praxi so far) or `cache`. */
+            source: string;
+            /**
+             * Format: int64
+             * @description Unix seconds of the disk cache, when there is one.
+             */
+            updated_at?: number | null;
+        };
+        /**
+         * @description Connection state of an app.
+         * @enum {string}
+         */
+        ComposioConnState: "not_connected" | "pending" | "active" | "expired" | "failed";
+        /** @description `POST /v1/composio/apps/{slug}/connect`: the one-time consent link. */
+        ComposioConnectDto: {
+            /** @description When the link expires (ISO timestamp, may be empty). */
+            expires_at: string;
+            /** @description https URL on Composio's domain; open it in the system browser. */
+            redirect_url: string;
+        };
+        /** @description `DELETE /v1/composio/apps/{slug}` result. */
+        ComposioDisconnectDto: {
+            /**
+             * @description The account was deleted on Composio's side too.  When `false` the app
+             *     is forgotten locally and the owner can remove it in Composio's dashboard.
+             */
+            remote_removed: boolean;
+        };
+        /** @description Body of `PUT /v1/composio/apps/{slug}/enabled`. */
+        ComposioEnabledInput: {
+            /** @description New value. */
+            enabled: boolean;
+        };
+        /** @description Body of `PUT /v1/composio/key`.  Write-only. */
+        ComposioKeyInput: {
+            /** @description The Composio project API key. */
+            value: string;
+        };
+        /**
+         * @description How Praxi is linked to Composio.
+         * @enum {string}
+         */
+        ComposioLinkMode: "none" | "login" | "project_key";
+        /** @description `POST /v1/composio/login`: the one-time browser login. */
+        ComposioLoginDto: {
+            /** @description When the login expires (ISO timestamp, may be empty). */
+            expires_at: string;
+            /** @description https URL on Composio's dashboard; open it in the system browser. */
+            login_url: string;
+        };
+        /**
+         * @description State of the one-time browser login.
+         * @enum {string}
+         */
+        ComposioLoginState: "idle" | "pending" | "linked" | "failed";
+        /** @description `GET /v1/composio/login`. */
+        ComposioLoginStatusDto: {
+            /** @description State of the login. */
+            state: components["schemas"]["ComposioLoginState"];
+        };
+        /** @description `GET /v1/composio`. */
+        ComposioStatusDto: {
+            /** @description Praxi is linked to Composio (the credential itself is never returned). */
+            configured: boolean;
+            /** @description Where an owner who wants their own project key creates it (advanced). */
+            key_setup_url: string;
+            /** @description How it is linked. */
+            mode: components["schemas"]["ComposioLinkMode"];
+        };
+        /** @description One toolkit of the Composio catalog. */
+        ComposioToolkitDto: {
+            /** @description Category names. */
+            categories: string[];
+            /** @description Short description (third-party text). */
+            description: string;
+            /** @description The owner enabled it. */
+            enabled: boolean;
+            /**
+             * @description Chip group: `communication`, `social`, `productivity`, `dev`,
+             *     `finance`, `business` or `other`.
+             */
+            group: string;
+            /** @description Logo URL (https), when Composio gives one. */
+            logo?: string | null;
+            /** @description Display name. */
+            name: string;
+            /**
+             * @description Praxi connects it directly (always `false` until a zero-setup direct
+             *     path exists); the UI notes it but never blocks the choice.
+             */
+            native_first: boolean;
+            /** @description Toolkit slug. */
+            slug: string;
+            /** @description State for this installation. */
+            state: components["schemas"]["ComposioConnState"];
+            /**
+             * Format: int64
+             * @description Number of actions, when Composio reports it.
+             */
+            tools_count?: number | null;
+        };
+        /** @description Switches for one host. */
+        ComputerAccessInput: {
+            /** @description Do not ask before the first look at the screen each session. */
+            always_read?: boolean;
+            /** @description Let this host's bots use this computer. */
+            enabled: boolean;
+        };
         /** @description A configured provider (never carries a key). */
         ConfiguredProviderDto: {
             /** @description Loaded in the running loop (a restart or `reload` picks up changes). */
@@ -1419,10 +3476,29 @@ export interface components {
             id: string;
             /** @description Is the configured default. */
             is_default: boolean;
-            /** @description Model ids the provider reports (empty without a listing). */
+            /**
+             * @description Presentation metadata: recommended models first by rank, then the rest
+             *     by display name. Split on `recommended` for an "All models" expander.
+             *     No model is added just because it appears in the curated table.
+             */
+            model_details?: components["schemas"]["ModelMetadataDto"][];
+            /**
+             * @description Model ids in the same order as `model_details`. By default only current
+             *     chat candidates are shown; `?chat_only=false` includes everything.
+             */
             models: string[];
             /** @description Why the model list could not be fetched. */
             models_error?: string | null;
+            /**
+             * Format: int64
+             * @description Coding CLIs only: when the list was fetched (ms since the epoch; absent for `bundled`).
+             */
+            models_fetched_at_ms?: number | null;
+            /**
+             * @description Coding CLIs only: where the list came from (`cli`, `local_cache` or `bundled`, the
+             *     last-resort fallback the UI marks as such).
+             */
+            models_source?: string | null;
         };
         /** @description `POST /v1/control/{request_id}`. */
         ControlDecisionInput: {
@@ -1500,6 +3576,113 @@ export interface components {
          * @enum {string}
          */
         ControlVerdict: "proceed" | "refuse";
+        CopyBotRow: {
+            /** @description The bot cannot be copied (it runs on a CLI engine). */
+            blocked?: string | null;
+            /**
+             * Format: int32
+             * @description Chats of this bot on this computer, and their messages.
+             */
+            chats?: number;
+            /**
+             * @description What the server says about this bot: `mapped` (already linked), `name_taken` (a bot of
+             *     that name that this flow did not create exists there: the owner must choose), `free`,
+             *     `separate` (the owner chose to keep them apart) or absent (the server was not asked).
+             */
+            host_state?: string | null;
+            id: string;
+            /** Format: int32 */
+            messages?: number;
+            model?: string | null;
+            name: string;
+            /**
+             * Format: int32
+             * @description Schedules of this bot on this computer (270-B).
+             */
+            schedules?: number;
+        };
+        CopyItemResult: {
+            code?: string | null;
+            /**
+             * Format: int32
+             * @description For `schedules` / `chats`: how many items moved now (messages for chats) ...
+             */
+            count?: number | null;
+            /**
+             * Format: int32
+             * @description ... were already on the server ...
+             */
+            existing?: number | null;
+            /**
+             * Format: int32
+             * @description ... or failed.
+             */
+            failed?: number | null;
+            id: string;
+            /** @description `provider`, `bot` or `default`. */
+            kind: string;
+            name: string;
+            /**
+             * Format: int32
+             * @description ... were left behind (webhook secret, too long, bot not moved) ...
+             */
+            skipped?: number | null;
+            /** @description `done`, `skipped` or `failed`. */
+            status: string;
+        };
+        /** @description What a copy could send. Names only; no secret value. */
+        CopyPlanDto: {
+            bots: components["schemas"]["CopyBotRow"][];
+            default_model?: string | null;
+            default_provider?: string | null;
+            /** @description What the host says about this computer: `true` when it may receive. */
+            host_accepts?: boolean | null;
+            /** @description Stable code from the host when it would refuse (`host_admin_required`, `secrets_unavailable`). */
+            host_code?: string | null;
+            /** @description Command for the owner to run on the host, when one is needed. */
+            host_command?: string | null;
+            providers: components["schemas"]["CopyProviderRow"][];
+        };
+        CopyProviderRow: {
+            custom: boolean;
+            has_key: boolean;
+            id: string;
+            model?: string | null;
+        };
+        CopyReport: {
+            items: components["schemas"]["CopyItemResult"][];
+        };
+        CopyRequest: {
+            /**
+             * @description Local bot ids the owner explicitly wants bound to the server bot that already has the
+             *     same name (otherwise a name collision is refused).
+             */
+            adopt?: string[];
+            bots?: string[];
+            /**
+             * @description Also move the chat history of the moved bots (messages and run metadata; files and
+             *     attachments named in them are not copied).
+             */
+            chats?: boolean;
+            /** @description Also set the host's default provider and model to this computer's. */
+            default_model?: boolean;
+            providers?: string[];
+            /**
+             * @description Also move the schedules and triggers of the moved bots (the local copies are then
+             *     disabled and marked "moved to <server>").
+             */
+            schedules?: boolean;
+            /**
+             * @description Local bot ids the owner chose to keep separate from the server's same-named bot: they
+             *     are skipped, with everything that belongs to them, and the answer is remembered.
+             */
+            separate?: string[];
+            /**
+             * @description Record the host as the bots' home on both sides when something moved.
+             *     Nothing is deleted on this computer: it stays a working fallback.
+             */
+            set_home?: boolean;
+        };
         /** @description `POST /v1/chats`. */
         CreateChat: {
             /**
@@ -1510,7 +3693,42 @@ export interface components {
             /** @description Title (default `New chat`). */
             title?: string | null;
         };
+        /** @description Body of `POST /v1/fill-grants`. */
+        CreateFillGrant: {
+            /** @description The exact origin; it must already be on the secret's allowed list. */
+            origin: string;
+            /** @description The secret. */
+            secret: string;
+        };
+        /** @description Body of `POST /v1/fill-secrets`. */
+        CreateFillSecret: {
+            /** @description Name, letters/digits/`.`/`_`/`-` with `/` separators, at most 64 bytes. */
+            name: string;
+            /** @description Exact origins like `https://github.com` (scheme, host, port; no wildcard). */
+            origins?: string[];
+            /** @description Verified desktop program identities. */
+            programs?: string[];
+            /** @description The value. Write-only: no route returns it. */
+            value: string;
+        };
+        /**
+         * @description Owner request: create a credential in the secret store. Only its id is
+         *     returned; `bot mcp serve` reads that one scoped credential by id.
+         */
+        CreateMcpToken: {
+            bots: string[];
+            scopes: components["schemas"]["McpScope"][];
+            /** Format: int64 */
+            ttl_seconds?: number;
+        };
         CreateSession: {
+            /**
+             * Format: uuid
+             * @description The bot whose panel asks. When set, the target must be this bot's own
+             *     browser or a shared desktop; another bot's browser is refused (403), so
+             *     a bot-scoped view can never resolve to someone else's screen.
+             */
+            bot_id?: string | null;
             /** Format: uuid */
             client_id: string;
             codecs: components["schemas"]["Codec"][];
@@ -1546,6 +3764,18 @@ export interface components {
             /** @description The decision taken. */
             decision: components["schemas"]["Decision"];
         };
+        /** @description Explicit opt-in for deleting an assigned skill. */
+        DeleteSkillQuery: {
+            force?: boolean;
+        };
+        /**
+         * @description Deletion result or assignment conflict. Force keeps explicit assignments as
+         *     missing, so a reinstall restores the owner's selected set.
+         */
+        DeleteSkillResult: {
+            deleted: boolean;
+            used_by: components["schemas"]["SkillUsingBotDto"][];
+        };
         /**
          * @description How a sent message was delivered.
          * @enum {string}
@@ -1561,7 +3791,7 @@ export interface components {
             detail?: string | null;
             /** @description Display name. */
             display_name: string;
-            /** @description Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `chatgpt-plan`). */
+            /** @description Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `agy`). */
             id: string;
             /** @description Whether the CLI binary was found on PATH and `--version` succeeded. */
             installed: boolean;
@@ -1571,6 +3801,18 @@ export interface components {
             runnable: boolean;
             /** @description CLI version (first line, trimmed, max 80 chars, or null). */
             version?: string | null;
+        };
+        /**
+         * @description Why inline text diffing was omitted for a changed path.
+         * @enum {string}
+         */
+        DiffOmittedReasonDto: "binary" | "too_large" | "run_budget_exceeded" | "directory" | "symlink" | "not_accessible" | "line_endings";
+        /** @description `GET /v1/doctor` response. */
+        DoctorReport: {
+            /** @description Results, in display order. */
+            checks: components["schemas"]["Check"][];
+            /** @description `false` when any check failed. */
+            ok: boolean;
         };
         /** @description A bot's permission picture (`GET /v1/bots/{id}`). */
         EffectivePolicyDto: {
@@ -1764,6 +4006,28 @@ export interface components {
             /** @description SMTP (sending mail); authentication only, nothing is sent. */
             smtp: components["schemas"]["EmailProbeStatus"];
         };
+        EmbeddingApprovalChallenge: {
+            endpoint_identity: string;
+            /** Format: int64 */
+            expires_at_ms: number;
+            /** Format: uuid */
+            id: string;
+            model: string;
+            policy_decision: string;
+            profile_fingerprint: string;
+            provider_id: string;
+            source_label?: string | null;
+            target: components["schemas"]["EmbeddingGrantTarget"];
+        };
+        EmbeddingGrantTarget: {
+            /** @enum {string} */
+            kind: "queries";
+        } | {
+            /** @enum {string} */
+            kind: "documents";
+            /** Format: uuid */
+            source_id: string;
+        };
         /** @description Request body for `POST /v1/providers/cli/enable`. */
         EnableCliProviderInput: {
             /** @description Engine id (`claude` is currently runnable). */
@@ -1780,6 +4044,74 @@ export interface components {
             code: string;
             /** @description Human-readable message. */
             message: string;
+        };
+        /** @description MCP tool metadata. All returned text is untrusted data. */
+        ExportedMcpTool: {
+            description: string;
+            input_schema: unknown;
+            name: string;
+            read_only: boolean;
+            untrusted_output: boolean;
+        };
+        /** @description A bot's file access mode. */
+        FileAccessDto: {
+            /** @description Absolute folders for `folder` mode. */
+            folders?: string[];
+            /** @description `computer` (This computer, default) or `folder` (Folder only). */
+            mode: string;
+        };
+        /** @description One collapsed file change recorded during a run. */
+        FileChangeDto: {
+            accessible: boolean;
+            /** Format: int64 */
+            after_size?: number | null;
+            /** Format: int64 */
+            before_size?: number | null;
+            /** Format: uuid */
+            changed_by_run?: string | null;
+            checkpoint_id: string;
+            current_matches_after: boolean;
+            diff_omitted_reason?: null | components["schemas"]["DiffOmittedReasonDto"];
+            existed: boolean;
+            is_dir: boolean;
+            is_link: boolean;
+            kind: components["schemas"]["ChangeKindDto"];
+            moved_from?: string | null;
+            op: string;
+            path: string;
+            text?: null | components["schemas"]["UnifiedDiffDto"];
+            verification: components["schemas"]["VerificationDto"];
+            via_link_of?: string | null;
+        };
+        /** @description A standing grant: this secret on this exact origin without asking. */
+        FillGrantDto: {
+            /**
+             * Format: int64
+             * @description Creation time, milliseconds since the epoch.
+             */
+            created_at_ms: number;
+            /** @description Id used to revoke it. */
+            id: string;
+            /** @description The exact origin. */
+            origin: string;
+            /** @description The secret. */
+            secret: string;
+        };
+        /** @description One fill secret as the owner sees it. Never the value. */
+        FillSecretDto: {
+            /** @description Whether a value is stored. */
+            has_value: boolean;
+            /** @description Name the assistant writes in `secret` (for example `login/github`). */
+            name: string;
+            /** @description Exact web origins the secret may be typed on. */
+            origins: string[];
+            /** @description Verified desktop program identities the secret may be typed into. */
+            programs: string[];
+            /**
+             * Format: int64
+             * @description Last change, milliseconds since the epoch.
+             */
+            updated_at_ms: number;
         };
         FrameMetadata: {
             /** Format: int64 */
@@ -1816,11 +4148,18 @@ export interface components {
         GapReason: "log_line_missing" | "log_unreadable";
         /** @description A persisted "always allow" rule of a bot. */
         GrantDto: {
+            /** @description Computer scope of this grant, when it controls a desktop/browser. */
+            computer?: string | null;
             /**
              * Format: int64
              * @description When it was granted.
              */
             granted_at_ms: number;
+            /**
+             * @description Legacy desktop/browser rule with no computer. It does not authorize
+             *     anything; it is listed so the user can see that it stopped applying.
+             */
+            inert?: boolean;
             /** @description What it covers. */
             target: components["schemas"]["GrantTargetDto"];
         };
@@ -1860,6 +4199,14 @@ export interface components {
             control_epoch?: number | null;
             /** Format: uuid */
             takeover_id?: string | null;
+        };
+        /** @description `GET /v1/hosts/home`: the host adopted as the bots' home, if any. */
+        HomeDto: {
+            host_id?: string | null;
+        };
+        /** @description `PUT /v1/host/devices/{key}/admin`. */
+        HostAdminInput: {
+            enabled: boolean;
         };
         HostConfig: {
             /**
@@ -1914,9 +4261,25 @@ export interface components {
             ticket: string;
         };
         HostInviteInput: {
+            /**
+             * @description Pair a desktop WITH host administration (default: yes for a desktop
+             *     invite created by the local owner; a paired peer can never set it).
+             */
+            admin?: boolean | null;
             role: components["schemas"]["InviteRole"];
             /** Format: int64 */
             ttl_secs?: number | null;
+        };
+        /** @description `POST /v1/hosts/setup/{job}/host-key`. */
+        HostKeyAnswer: {
+            accept: boolean;
+        };
+        /** @description The server's SSH host key, shown on first use. */
+        HostKeyPrompt: {
+            fingerprint: string;
+            host: string;
+            /** Format: int32 */
+            port: number;
         };
         HostLimits: {
             /**
@@ -1927,9 +4290,50 @@ export interface components {
             /** @default null */
             max_computer_runs: number | null;
         };
+        /**
+         * @description An open channel: a loopback endpoint that forwards to the host's API over
+         *     the paired connection. `token` is a bearer for that proxy only, valid while
+         *     the channel lives; it is never logged.
+         */
+        HostLinkConnection: {
+            base_url: string;
+            id: string;
+            name: string;
+            state: components["schemas"]["HostLinkState"];
+            token: string;
+        };
+        /** @description A paired host. */
+        HostLinkInfo: {
+            /** @description The owner lets this host's bots use THIS computer (off by default). */
+            computer_access?: boolean;
+            /** @description ... and may look at the screen without asking first each session. */
+            computer_access_always?: boolean;
+            /** @description One short, path-free sentence for `offline` / `unreachable`. */
+            detail?: string | null;
+            /** @description Paired device key (public, not a secret). */
+            id: string;
+            /** @description Display name the host announced at pairing. */
+            name: string;
+            state: components["schemas"]["HostLinkState"];
+        };
+        /** @description `GET /v1/hosts`. */
+        HostLinkList: {
+            hosts: components["schemas"]["HostLinkInfo"][];
+            /** @description HTTP API version of this computer's daemon. */
+            local_api_version: string;
+            /** @description Version of this computer's daemon. */
+            local_version: string;
+        };
+        /**
+         * @description Connection state of one paired host as seen from this computer.
+         * @enum {string}
+         */
+        HostLinkState: "idle" | "connecting" | "connected" | "offline" | "unreachable";
         /** @enum {string} */
         HostMode: "standalone" | "host" | "client";
         HostPeer: {
+            /** @description The device holds host administration (may send keys and settings here). */
+            admin: boolean;
             key: string;
             /** Format: int64 */
             last_seen_ms?: number | null;
@@ -1937,6 +4341,45 @@ export interface components {
             online: boolean;
             role: string;
         };
+        /** @description A setup job as seen by the app (poll `GET /v1/hosts/setup/{job}`). */
+        HostSetupJob: {
+            /** @description Paired host id once pairing worked: select it in the computer list. */
+            host_id?: string | null;
+            host_key?: null | components["schemas"]["HostKeyPrompt"];
+            host_name?: string | null;
+            id: string;
+            /**
+             * @description False while Praxi has no published release: only a server that already
+             *     runs Praxi can be added.
+             */
+            install_available: boolean;
+            /** @description Free-text progress lines ("installing ..."). */
+            notes: string[];
+            state: components["schemas"]["HostSetupState"];
+            steps: components["schemas"]["HostSetupStep"][];
+            /** @description `user@host:port` being set up. */
+            target: string;
+            /**
+             * Format: int32
+             * @description Live-view targets on the host (`null`: not known / older host).
+             */
+            view_targets?: number | null;
+        };
+        /** @enum {string} */
+        HostSetupState: "running" | "awaiting_host_key" | "succeeded" | "failed" | "cancelled";
+        /**
+         * @description One finished step. Texts are English and technical (for "copy details");
+         *     the app shows its own localised sentence per `id`.
+         */
+        HostSetupStep: {
+            detail: string;
+            hint?: string | null;
+            id: string;
+            status: components["schemas"]["HostSetupStepStatus"];
+            title: string;
+        };
+        /** @enum {string} */
+        HostSetupStepStatus: "pass" | "warn" | "fail" | "skip";
         /** @enum {string} */
         HostState: "active" | "standby" | "fresh";
         HostStatus: {
@@ -1959,6 +4402,147 @@ export interface components {
         };
         /** @enum {string} */
         HumanAction: "login_completed" | "application_opened" | "other";
+        ImportBotInput: {
+            /** @description The owner asked to bind this bot to the host bot that already has its name. */
+            adopt?: boolean;
+            config: unknown;
+            name: string;
+            /**
+             * Format: uuid
+             * @description The bot's id on the sending computer.
+             */
+            source_bot_id: string;
+        };
+        ImportBotResult: {
+            /** @description `name_taken`: a different bot with this name already exists on the server. */
+            code?: string | null;
+            /** Format: uuid */
+            host_bot_id?: string | null;
+            /** @description `done` (created), `exists` (already mapped), `adopted` or `failed`. */
+            status: string;
+        };
+        ImportChat: {
+            /** Format: int64 */
+            created_at_ms: number;
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uuid
+             * @description The bot's id on the SENDING computer.
+             */
+            source_bot_id: string;
+            title: string;
+        };
+        /** @description One page of a chat move. Chats first, then runs, then messages: send the pages in that order. */
+        ImportChatsInput: {
+            chats?: components["schemas"]["ImportChat"][];
+            messages?: components["schemas"]["ImportMessage"][];
+            runs?: components["schemas"]["ImportRun"][];
+        };
+        /** @description What a page did. Counts only. */
+        ImportChatsReport: {
+            /** Format: int32 */
+            chats: number;
+            /**
+             * Format: int32
+             * @description Items the host already had from this device (an earlier or interrupted sync).
+             */
+            existing: number;
+            /** Format: int32 */
+            messages: number;
+            /**
+             * Format: int32
+             * @description Items refused: unmapped bot, an id that belongs to something else, malformed, too long.
+             */
+            rejected: number;
+            /** Format: int32 */
+            runs: number;
+        };
+        ImportMessage: {
+            /** Format: uuid */
+            chat_id: string;
+            content: string;
+            /** Format: int64 */
+            created_at_ms: number;
+            exposure_private?: boolean;
+            exposure_sources?: string[];
+            exposure_untrusted?: boolean;
+            /** @description For a reply of a bot that did NOT move: its name. The reply stays foreign, quoted data. */
+            foreign_author?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** @description The author: `user`, `assistant`, `system`, `tool`, ... */
+            role: string;
+            /** Format: uuid */
+            run_id?: string | null;
+        };
+        /** @description Run metadata only: no error text, no spawn parameters, no computer identity. */
+        ImportRun: {
+            /** Format: uuid */
+            chat_id?: string | null;
+            /** Format: int64 */
+            created_at_ms: number;
+            /** Format: uuid */
+            id: string;
+            kind: string;
+            /** Format: uuid */
+            source_bot_id: string;
+            /** @description `succeeded`, `failed` or `cancelled`; anything else arrives as `cancelled`. */
+            state: string;
+            /** Format: int64 */
+            updated_at_ms: number;
+        };
+        ImportScheduleItem: {
+            /**
+             * Format: uuid
+             * @description A chat that was moved too (host id = source id); dropped unless bound to this bot.
+             */
+            chat_id?: string | null;
+            /** Format: int64 */
+            created_at_ms: number;
+            /** @description What the owner had; the schedule is imported DISABLED and activated later. */
+            enabled: boolean;
+            /**
+             * Format: uuid
+             * @description Preserved: the same id on the host means "already moved".
+             */
+            id: string;
+            misfire_policy?: string | null;
+            name: string;
+            /** @description `user` or `bot`. */
+            origin?: string | null;
+            payload: unknown;
+            precheck?: unknown;
+            /**
+             * Format: uuid
+             * @description The bot's id on the SENDING computer; the host maps it (see the module docs).
+             */
+            source_bot_id: string;
+            /** @description `{"cron": "0 9 * * 1-5 Europe/Istanbul"}`: the zone travels inside the spec. */
+            spec: unknown;
+            /** @description File-watch or e-mail trigger; never a webhook (its secret stays behind). */
+            trigger?: unknown;
+        };
+        ImportScheduleResult: {
+            code?: string | null;
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: int64
+             * @description Next firing, recomputed on the host's clock (only once active).
+             */
+            next_run_at_ms?: number | null;
+            /** @description `staged`, `active` or `released`. */
+            stage?: string | null;
+            /** @description `done` (imported, disabled), `exists`, `active`, `paused`, `released` or `failed`. */
+            status: string;
+        };
+        ImportSchedulesInput: {
+            schedules: components["schemas"]["ImportScheduleItem"][];
+        };
+        ImportSchedulesReport: {
+            items: components["schemas"]["ImportScheduleResult"][];
+        };
         InputBatch: {
             /** Format: int64 */
             control_epoch: number;
@@ -2027,6 +4611,169 @@ export interface components {
         InviteRole: "desktop" | "phone" | "node" | "host";
         /** @enum {string} */
         KeyPhase: "down" | "up";
+        KnowledgeEmailCapture: {
+            account: string;
+            /** Format: int64 */
+            created_ms: number;
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            tool_call_id: string;
+        };
+        KnowledgeEmbed: {
+            /** Format: int64 */
+            expected_revision: number;
+            /**
+             * @description True only for an explicit user retry. Continuation batches keep retries,
+             *     provider cooldowns and the shared quota ledger intact.
+             */
+            reset_retry?: boolean;
+        };
+        KnowledgeEmbeddingDto: {
+            dimensions: number;
+            endpoint: string;
+            local_profile_id?: string | null;
+            model: string;
+            profile_fingerprint: string;
+            provider_id: string;
+            query_remote: boolean;
+            request_dimensions: boolean;
+            /** Format: int32 */
+            requests_per_day: number;
+            /** Format: int32 */
+            requests_per_minute: number;
+        };
+        KnowledgeEmbeddingInput: {
+            dimensions: number;
+            /** @description Select an already installed host profile; cannot choose native files. */
+            local_profile_id?: string | null;
+            model: string;
+            provider_id: string;
+            request_dimensions?: boolean;
+            /** Format: int32 */
+            requests_per_day: number;
+            /** Format: int32 */
+            requests_per_minute: number;
+        };
+        /**
+         * @description Progress of one bounded embedding batch. The queue resumes from hashes and
+         *     source revisions already committed; no provider response body is exposed.
+         */
+        KnowledgeEmbeddingProgress: {
+            cache_hits: number;
+            embedded_chunks: number;
+            failure_code?: string | null;
+            /** Format: int64 */
+            next_attempt_ms?: number | null;
+            remaining_chunks: number;
+            skipped_chunks: number;
+            status: components["schemas"]["KnowledgeEmbeddingStatus"];
+        };
+        /** @enum {string} */
+        KnowledgeEmbeddingStatus: "progress" | "complete" | "awaiting_consent" | "deferred" | "cancelled" | "failed";
+        /** @description A skipped file never prevents the page cursor from advancing. */
+        KnowledgeFileFailure: {
+            code: string;
+            locator: string;
+        };
+        /** @description A bounded indexing page. Replay starts from hashes already committed. */
+        KnowledgeIndexStatus: {
+            failures: components["schemas"]["KnowledgeFileFailure"][];
+            next_cursor?: string | null;
+            processed: number;
+            removed: number;
+            unchanged: number;
+        };
+        /** @description A host-installed local model. Native file locations are never API inputs. */
+        KnowledgeLocalProfileDto: {
+            dimensions: number;
+            id: string;
+            label: string;
+            model: string;
+        };
+        KnowledgeMutation: {
+            indexing: components["schemas"]["KnowledgeIndexStatus"];
+            source: components["schemas"]["KnowledgeSourceDto"];
+        };
+        KnowledgeReindex: {
+            /** @description Last relative file from the previous page; omitted starts a new scan. */
+            cursor?: string | null;
+            /** Format: int64 */
+            expected_revision: number;
+        };
+        KnowledgeRevision: {
+            /** Format: int64 */
+            expected_revision: number;
+        };
+        KnowledgeSettingsDto: {
+            auto_retrieval_available: boolean;
+            auto_retrieve: boolean;
+            embedding?: null | components["schemas"]["KnowledgeEmbeddingDto"];
+            local_embeddings_available: boolean;
+            local_profiles: components["schemas"]["KnowledgeLocalProfileDto"][];
+        };
+        KnowledgeSettingsInput: {
+            auto_retrieve: boolean;
+            embedding?: null | components["schemas"]["KnowledgeEmbeddingInput"];
+        };
+        /** @enum {string} */
+        KnowledgeSourceAction: "enable" | "disable" | "revoke_remote" | "rename" | "rebind";
+        KnowledgeSourceChange: {
+            action: components["schemas"]["KnowledgeSourceAction"];
+            /** Format: int64 */
+            expected_revision: number;
+            label?: string | null;
+            /** @description An owner-selected replacement path, required to rebind imported files. */
+            path?: string | null;
+        };
+        /** @description Source metadata; source bodies and credentials are never listed. */
+        KnowledgeSourceDto: {
+            chunks: number;
+            documents: number;
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["KnowledgeSourceKind"];
+            label: string;
+            locator: string;
+            remote_profile_fingerprint?: string | null;
+            requires_path_selection: boolean;
+            /** Format: int64 */
+            revision: number;
+            /** Format: int64 */
+            updated_ms: number;
+        };
+        /** @description A user-selected source. Body fields cannot choose an owner, trust or consent. */
+        KnowledgeSourceInput: {
+            /** @description Must equal the explicit account in the recorded `email_read` arguments. */
+            account?: string | null;
+            /** Format: uuid */
+            chat_id?: string | null;
+            /**
+             * @description Saved text/HTML or a note; never interpreted as a source URL to fetch.
+             *     At most 4 MiB decoded UTF-8 input and 1 MiB extracted/indexed text.
+             *     The JSON envelope permits up to 24 MiB + 64 KiB for escaped input.
+             */
+            content?: string | null;
+            html?: boolean;
+            kind: components["schemas"]["KnowledgeSourceKind"];
+            label?: string;
+            /** @description Absolute path on the daemon host, for a file or folder only. */
+            path?: string | null;
+            /**
+             * Format: uuid
+             * @description Email sources use a successful recorded `email_read` in this bot's run.
+             */
+            run_id?: string | null;
+            /** Format: uuid */
+            tool_call_id?: string | null;
+            url?: string | null;
+        };
+        /**
+         * @description Source kinds accepted by user management; every kind remains untrusted data.
+         * @enum {string}
+         */
+        KnowledgeSourceKind: "file" | "folder" | "saved_web" | "conversation" | "email" | "note" | "shared_brain";
         /** @description `GET /v1/events/latest`. */
         LatestCursor: {
             /**
@@ -2034,6 +4781,37 @@ export interface components {
              * @description Highest daemon-wide event `gseq` (`0` = none yet).
              */
             gseq: number;
+        };
+        /** @description Metadata only; the response never includes instruction bodies or files. */
+        ManagedSkillDto: {
+            description: string;
+            name: string;
+            /** @description Always `shared` for owner-managed skills. */
+            scope: string;
+            version: string;
+        };
+        /** @description Body of `POST /v1/mcp/servers/{name}/auth/callback`. */
+        McpAuthCallback: {
+            /** @description The full address the browser was redirected to (`http://127.0.0.1:<port>/callback?...`). */
+            redirect_url: string;
+        };
+        /** @description Browser destination for a user-started, five-minute sign-in. */
+        McpAuthStart: {
+            authorization_url: string;
+            /** Format: int64 */
+            expires_in: number;
+        };
+        /**
+         * @description Authentication state, independent of transport errors.
+         * @enum {string}
+         */
+        McpAuthState: "signed_out" | "signing_in" | "signed_in" | "auth_required";
+        /** @description One MCP operation. `bot` is bound by the stdio server's --bot setting. */
+        McpCallInput: {
+            arguments?: unknown;
+            /** Format: uuid */
+            bot: string;
+            name: string;
         };
         /** @description An entry of the curated MCP catalog (`GET /v1/mcp/catalog`). */
         McpCatalogEntryDto: {
@@ -2065,6 +4843,7 @@ export interface components {
             env?: {
                 [key: string]: string;
             };
+            folder?: null | components["schemas"]["McpFolderDto"];
             /** @description Secrets to collect first. */
             required_secrets: components["schemas"]["McpRequiredSecretDto"][];
             /** @description Environment variable -> secret name (stdio). */
@@ -2080,6 +4859,34 @@ export interface components {
             /** @description Endpoint (http). */
             url?: string | null;
         };
+        /**
+         * @description Class of the last connect error of an MCP server, so a UI can show a
+         *     localized "what to do" next to the raw `error` text.
+         * @enum {string}
+         */
+        McpErrorKind: "runtime_missing" | "spawn" | "closed" | "timeout" | "config" | "needs_folder" | "other";
+        /**
+         * @description A folder the user must choose when adding a catalog entry; the app appends
+         *     it as the last argument.
+         */
+        McpFolderDto: {
+            /** @description Label of the folder field. */
+            label: string;
+            /** @description A safe default offered to the user (their Documents folder), if there is one. */
+            suggestion?: string | null;
+        };
+        /** @description OAuth configuration contains no credential values. */
+        McpOAuthConfig: {
+            allow_loopback_http?: boolean;
+            client_id?: string | null;
+            client_metadata_url?: string | null;
+            client_secret_ref?: string | null;
+            /**
+             * @description The authorization server a pre-registered client is bound to;
+             *     required with `client_id` / `client_secret_ref`.
+             */
+            issuer?: string | null;
+        };
         /** @description A secret the user must provide to install a catalog entry. */
         McpRequiredSecretDto: {
             /** @description Where the user can get the value. */
@@ -2089,6 +4896,11 @@ export interface components {
             /** @description Secret name (store it with `POST /v1/secrets/{name}`). */
             name: string;
         };
+        /**
+         * @description Independent MCP capabilities. Neither permits owner management endpoints.
+         * @enum {string}
+         */
+        McpScope: "mcp:tasks" | "mcp:computer";
         /**
          * @description Data of the `mcp_server_changed` SSE event of the daemon-wide stream: a
          *     server was added, changed, removed, or its status moved.  A notification
@@ -2105,7 +4917,8 @@ export interface components {
         /**
          * @description A configured MCP server (`GET /v1/mcp/servers`).  The full stored config,
          *     except secret *values*: `secret_env` / `secret_headers` carry secret
-         *     **names** only.
+         *     **names** only. `enabled`, `trust_hints`, `public_content` and `local_only`
+         *     are independent switches.
          */
         McpServerDto: {
             /** @description Arguments (stdio). */
@@ -2126,12 +4939,18 @@ export interface components {
             };
             /** @description Most recent error, if any. */
             error?: string | null;
+            error_kind?: null | components["schemas"]["McpErrorKind"];
             /** @description Plain request headers (http). Not secrets. */
             headers?: {
                 [key: string]: string;
             };
+            /** @description Tools cannot send data off the machine. Default `false`: every tool is egress. */
+            local_only?: boolean;
             /** @description Server name (the `<server>` of `mcp:<server>/<tool>`). */
             name: string;
+            oauth?: null | components["schemas"]["McpOAuthConfig"];
+            /** @description Tool results are public data. Default `false`: a result is a private read. */
+            public_content?: boolean;
             /** @description Environment variable -> secret name (stdio). */
             secret_env?: {
                 [key: string]: string;
@@ -2142,6 +4961,11 @@ export interface components {
             };
             /** @description Connection state. */
             status: components["schemas"]["McpStatus"];
+            /**
+             * @description Last lines the server wrote to stderr (secret-redacted, bounded) while
+             *     it is in an error state; empty otherwise.
+             */
+            stderr_tail?: string[];
             /** @description Glob allow list over server-side tool names; empty = all. */
             tool_allow?: string[];
             /**
@@ -2184,11 +5008,16 @@ export interface components {
             headers?: {
                 [key: string]: string;
             };
+            /** @description Tools cannot send data off the machine. Default `false` (every tool is egress). */
+            local_only?: boolean;
             /**
              * @description Server name; `id` is accepted as an alias.  Required on POST; on PUT the
              *     path wins (a different name in the body is rejected).
              */
             name?: string | null;
+            oauth?: null | components["schemas"]["McpOAuthConfig"];
+            /** @description Tool results are public data. Default `false` (a result is a private read). */
+            public_content?: boolean;
             /** @description Environment variable -> secret name. */
             secret_env?: {
                 [key: string]: string;
@@ -2245,11 +5074,16 @@ export interface components {
             headers?: {
                 [key: string]: string;
             } | null;
+            /** @description Tools cannot send data off the machine. Omit to keep the stored value. */
+            local_only?: boolean | null;
             /**
              * @description Server name; `id` is accepted as an alias.  The path wins (a different
              *     name in the body is rejected).
              */
             name?: string | null;
+            oauth?: null | components["schemas"]["McpOAuthConfig"];
+            /** @description Tool results are public data. Omit to keep the stored value. */
+            public_content?: boolean | null;
             /** @description Environment variable -> secret name.  Present object replaces the map. */
             secret_env?: {
                 [key: string]: string;
@@ -2272,7 +5106,16 @@ export interface components {
          * @description Connection state of an MCP server.
          * @enum {string}
          */
-        McpStatus: "connected" | "connecting" | "disconnected" | "error" | "quarantined";
+        McpStatus: "auth_required" | "connected" | "connecting" | "disconnected" | "error" | "quarantined";
+        /** @description Nonsecret grant, returned to the owner after storing a credential. */
+        McpTokenGrant: {
+            bots: string[];
+            /** Format: int64 */
+            expires_at_ms: number;
+            /** Format: uuid */
+            id: string;
+            scopes: components["schemas"]["McpScope"][];
+        };
         /** @description A tool of an MCP server (`GET /v1/mcp/servers/{name}/tools`). */
         McpToolDto: {
             /** @description Description given by the server. */
@@ -2321,6 +5164,12 @@ export interface components {
         MessageDto: {
             /**
              * Format: uuid
+             * @description Bot that ran `run_id` (the author of an assistant message). It differs
+             *     from the chat's bot when another bot answered an `@mention`.
+             */
+            bot_id?: string | null;
+            /**
+             * Format: uuid
              * @description Chat it belongs to.
              */
             chat_id: string;
@@ -2349,10 +5198,33 @@ export interface components {
          * @enum {string}
          */
         Mode: "steer" | "queue";
+        /** @description Presentation only: never changes execution capabilities or configured ids. */
+        ModelMetadataDto: {
+            deprecated: boolean;
+            display_name: string;
+            id: string;
+            /**
+             * @description `chat`, `reasoning`, `vision_capable`, `embedding`, `image`, `audio`,
+             *     `video`, or `other`. Kind describes primary use, not input modalities.
+             */
+            kind: string;
+            /** @description A short annotation such as `preview` or a live `OpenRouter` `free` id. */
+            note?: string | null;
+            recommended: boolean;
+            /** Format: int32 */
+            recommended_rank?: number | null;
+        };
         /** @enum {string} */
         Modifier: "alt" | "ctrl" | "meta" | "shift";
         /** @enum {string} */
         Outcome: "completed";
+        /** @description A skill learned by the bot itself (per-bot scope, read-only here). */
+        OwnSkillDto: {
+            /** @description Skill name. */
+            name: string;
+            /** @description Skill version string. */
+            version: string;
+        };
         /** @description A one-time pairing code (`POST /v1/channels/telegram/pair-code`). */
         PairCodeDto: {
             /** @description The 6-digit code the user sends as `/pair <code>`. */
@@ -2362,6 +5234,11 @@ export interface components {
              * @description Seconds until it expires.
              */
             expires_in_secs: number;
+        };
+        /** @description `POST /v1/hosts/pair`. */
+        PairHostInput: {
+            /** @description Pairing ticket printed by `bot host invite --role desktop` on the host. */
+            ticket: string;
         };
         /** @description Body of `POST /v1/schedules/parse`. */
         ParseSchedule: {
@@ -2379,6 +5256,34 @@ export interface components {
             next_run_at_ms?: number | null;
             /** @description The [`ScheduleDto::spec`] the phrase means. */
             spec: unknown;
+        };
+        /** @description The local owner's answer. */
+        PcRequestDecision: {
+            allow: boolean;
+        };
+        /** @description One pending request, as the desktop app shows it. */
+        PcRequestInfo: {
+            /** @description `click`, `type`, `key`, `scroll`, `launch`, ... */
+            action: string;
+            /** Format: int64 */
+            created_ms: number;
+            /** @description Paired host the request comes from (public key). */
+            host_id: string;
+            /** @description Name the host announced (untrusted text, shown as "from the server"). */
+            host_name: string;
+            id: string;
+            /** @description `session_read` (first look at the screen this session) or `act`. */
+            kind: string;
+            /** @description The complete, masked payload (text to type, keys, launch command). */
+            payload: string;
+            /** @description What the input would reach, resolved by this computer's OS. */
+            target: string;
+        };
+        /** @description Pending requests and who is looking at the screen right now. */
+        PcRequestList: {
+            /** @description Names of hosts whose bots read this screen in the last few seconds. */
+            reading: string[];
+            requests: components["schemas"]["PcRequestInfo"][];
         };
         /** @enum {string} */
         PointerPhase: "move" | "down" | "up";
@@ -2424,8 +5329,38 @@ export interface components {
             /** @description Id of the loop's default provider. */
             default_provider?: string | null;
         };
+        /** @description Body of `PUT /v1/bots/{id}/skills`. */
+        PutBotSkillsInput: {
+            /**
+             * Format: int64
+             * @description Version the client loaded (`BotSkillsDto::version`). When set and not
+             *     current the write is refused with `409`; omit for an unconditional write.
+             */
+            expected_version?: number | null;
+            /** @description Assignment mode (`all` or `selected`). */
+            mode: components["schemas"]["SkillAssignmentModeDto"];
+            /** @description Skill names to assign when `mode == "selected"` (max 200). */
+            names?: string[];
+        };
         /** @enum {string} */
         Reason: "browser_idle" | "remote_node_live_view" | "unsupported" | "unavailable" | "expired" | "revoked" | "disconnected" | "stale" | "geometry_changed" | "refresh_pending" | "frame_budget_exceeded" | "drain_timeout" | "audit_failed" | "reset_failed" | "partial_injection" | "rate_limited" | "restart" | "persistence_failed" | "local_override";
+        ReclaimDto: {
+            /** @description The local copy runs again (it was enabled before the move). */
+            enabled: boolean;
+            /** @description The server was not asked or did not answer: its copy may still be active. */
+            host_copy_may_be_active: boolean;
+            /** @description The server confirmed that its copy is switched off. */
+            host_released: boolean;
+            /** Format: uuid */
+            schedule_id: string;
+        };
+        ReclaimInput: {
+            /**
+             * @description The server cannot be reached: bring the schedule back anyway. The copy there may still
+             *     be active and then both computers run it.
+             */
+            confirm_host_unreachable?: boolean;
+        };
         RecordHeader: (components["schemas"]["FrameMetadata"] & {
             /** Format: int64 */
             sent_at_ms: number;
@@ -2491,10 +5426,80 @@ export interface components {
              */
             route: Record<string, never>;
         };
+        /**
+         * @description An allow-listed, one-click repair.  Deliberately closed: nothing here runs
+         *     a shell command, and regenerating the API token is not offered.
+         * @enum {string}
+         */
+        Repair: "create_data_dir" | "reload_providers" | "restart_browser";
+        /** @description `POST /v1/doctor/repair/{id}` response. */
+        RepairResult: {
+            /** @description What it did. */
+            detail: string;
+            /** @description The repair that ran. */
+            repair: components["schemas"]["Repair"];
+        };
+        /**
+         * @description Action a restore operation will apply to a path.
+         * @enum {string}
+         */
+        RestoreActionDto: "restore" | "delete" | "keep";
+        /** @description Response for `GET /v1/runs/{id}/changes/{cp}/preview`. */
+        RestorePreviewDto: {
+            checkpoint_id: string;
+            computer: components["schemas"]["CheckpointComputerDto"];
+            could_not_verify: string[];
+            covered: string[];
+            entries: components["schemas"]["RestorePreviewEntryDto"][];
+            modified_since: string[];
+            not_covered: string[];
+            /** Format: uuid */
+            run_id: string;
+        };
+        /** @description Per-path dry-run entry for a checkpoint or whole-run restore. */
+        RestorePreviewEntryDto: {
+            accessible: boolean;
+            action: components["schemas"]["RestoreActionDto"];
+            /** Format: uuid */
+            changed_by_run?: string | null;
+            current_matches_after: boolean;
+            path: string;
+            verification: components["schemas"]["VerificationDto"];
+            via_link_of?: string | null;
+        };
+        /** @description Body for `POST /v1/runs/{id}/changes/{cp}/restore`. */
+        RestoreRequestDto: {
+            force?: boolean;
+        };
+        /** @description Response for `POST /v1/runs/{id}/changes/{cp}/restore`. */
+        RestoreResponseDto: {
+            checkpoint_id: string;
+            computer: components["schemas"]["CheckpointComputerDto"];
+            covered: string[];
+            error?: string | null;
+            not_covered: string[];
+            partial: boolean;
+            restored: string[];
+            /** Format: uuid */
+            run_id: string;
+            safety_checkpoint_ids: string[];
+            warnings: string[];
+        };
         /** @description `DELETE /v1/bots/{id}/grants`. */
         RevokeGrant: {
             /** @description The rule to remove. */
             target: components["schemas"]["GrantTargetDto"];
+        };
+        /** @description Response for `GET /v1/runs/{id}/changes`. */
+        RunChangesDto: {
+            changes: components["schemas"]["FileChangeDto"][];
+            computer: components["schemas"]["CheckpointComputerDto"];
+            covered: string[];
+            next_offset?: number | null;
+            not_covered: string[];
+            /** Format: uuid */
+            run_id: string;
+            safety_checkpoint_ids: string[];
         };
         /** @description A run. */
         RunDto: {
@@ -2513,6 +5518,12 @@ export interface components {
              * @description Chat, if any.
              */
             chat_id?: string | null;
+            /** @description Stable key of the PC used by this run (`local` for the daemon desktop). */
+            computer_node?: string | null;
+            /** @description Display name captured at target binding. */
+            computer_node_name?: string | null;
+            /** @description Resolved computer target label fixed at run start (`pc`, `host`, `browser`, `off`). */
+            computer_target?: string | null;
             /**
              * Format: int64
              * @description Creation time.
@@ -2532,6 +5543,13 @@ export interface components {
              * @description The run that spawned this one when it is a subagent run.
              */
             parent_run_id?: string | null;
+            /** @description Reason the run is currently `paused` (e.g. `waiting_for_pc`). */
+            pause_reason?: string | null;
+            /**
+             * Format: int64
+             * @description Start of the current pause in Unix milliseconds.
+             */
+            paused_at_ms?: number | null;
             /**
              * Format: uuid
              * @description The schedule that started this run (`null` for runs the user started).
@@ -2544,6 +5562,11 @@ export interface components {
              * @description Last state change.
              */
             updated_at_ms: number;
+        };
+        /** @description Bot `[runtime]` settings (ADR-0027 §7). */
+        RuntimeConfigDto: {
+            /** @description Configured computer target (`auto`, `pc`, `host`, `browser`, `off`, or `node:<id>`). */
+            computer: string;
         };
         /**
          * @description What happened to a schedule (see [`ScheduleChanged`]).
@@ -2581,6 +5604,11 @@ export interface components {
              */
             chat_id?: string | null;
             /**
+             * Format: int32
+             * @description Consecutive precheck/polling failures (ten pauses the schedule).
+             */
+            consecutive_errors?: number;
+            /**
              * Format: int64
              * @description Creation time.
              */
@@ -2607,6 +5635,11 @@ export interface components {
              *     while the daemon was down.
              */
             misfire_policy: string;
+            /**
+             * @description Name of the server this schedule was moved to. The local copy is then disabled
+             *     (not deleted) so nothing runs twice.
+             */
+            moved_to?: string | null;
             /** @description Display name. */
             name: string;
             /**
@@ -2625,11 +5658,23 @@ export interface components {
              *     `{"kind": "tool", "name": "...", "input": {}}`.
              */
             payload: unknown;
+            /** @description Read-only deterministic condition, including full script source. */
+            precheck?: unknown;
+            /**
+             * Format: int64
+             * @description Firings skipped before an agent run was created.
+             */
+            skipped_by_precheck?: number;
             /**
              * @description When it fires: `{"cron": "0 9 * * 1-5 Europe/Istanbul"}`,
              *     `{"every": {"seconds": 600}}` or `{"at": {"unix_ms": 1767225600000}}`.
              */
             spec: unknown;
+            /** @description Non-webhook trigger definition; never includes webhook secrets. */
+            trigger?: unknown;
+        };
+        ScheduleIdsInput: {
+            ids: string[];
         };
         /** @description Body of `POST /v1/schedules` and `PUT /v1/schedules/{id}`. */
         ScheduleInput: {
@@ -2651,8 +5696,12 @@ export interface components {
             name: string;
             /** @description See [`ScheduleDto::payload`]. */
             payload: unknown;
+            /** @description `HashChanged` or Script precheck. Absent keeps it; null removes it. */
+            precheck?: unknown;
             /** @description See [`ScheduleDto::spec`]. */
             spec: unknown;
+            /** @description File-watch or email trigger. Absent keeps it; null removes it. */
+            trigger?: unknown;
             /**
              * @description HMAC secret of a webhook trigger.  Absent: unchanged (none on create);
              *     the empty string removes the trigger.
@@ -2663,7 +5712,7 @@ export interface components {
          * @description How far an approval reaches.
          * @enum {string}
          */
-        Scope: "once" | "this_chat" | "always" | "always_category";
+        Scope: "once" | "this_chat" | "always" | "always_category" | "run_control";
         /** @description Body of `PUT /v1/view/privileges/{peer_key}` (local user only). */
         ScreenPrivilegesInput: {
             /** @description May take over and drive input (`screen:input`); requires `view`. */
@@ -2721,6 +5770,96 @@ export interface components {
             /** @description The secret value.  Write-only: no route returns it. */
             value: string;
         };
+        /**
+         * @description Per-bot skill assignment mode.
+         * @enum {string}
+         */
+        SkillAssignmentModeDto: "all" | "selected";
+        /** @description A complete SKILL.md or the three fields used to author one. */
+        SkillDocumentInput: {
+            /** @description Optional optimistic version check when updating. */
+            expected_version?: string | null;
+            /** @description Name/description frontmatter and Markdown instructions. */
+            skill_md: string;
+        } | {
+            /** @description One-line description, at most 200 characters. */
+            description: string;
+            /** @description Optional optimistic version check when updating. */
+            expected_version?: string | null;
+            /** @description Markdown instructions. */
+            instructions: string;
+            /** @description Safe lowercase skill name. */
+            name: string;
+        };
+        /** @description Hub lockfile metadata for a shared skill installed via `SkillHub`. */
+        SkillHubInfoDto: {
+            /** @description True when the on-disk tree matches the lockfile hash. */
+            locked: boolean;
+            /** @description Provenance tag (e.g. `git:https://...`, `local:...`). */
+            source: string;
+        };
+        /** @description Import one folder or a ZIP with SKILL.md at its root. No URL fetching. */
+        SkillImportInput: {
+            /** @enum {string} */
+            kind: "folder";
+            /** @description Absolute folder path. Links, special and executable files are refused. */
+            path: string;
+        } | {
+            /** @description Standard Base64 of a ZIP, compressed and expanded limit 8 MiB. */
+            base64: string;
+            /** @enum {string} */
+            kind: "zip";
+        };
+        /** @description A non-fatal skill load problem surfaced by `SkillIndex::issues`. */
+        SkillIssueDto: {
+            /** @description Diagnostic message. */
+            message: string;
+            /** @description Path (or `bundled:<name>`). */
+            path: string;
+            /** @description Layer where the problem occurred. */
+            scope: components["schemas"]["SkillIssueScope"];
+        };
+        /**
+         * @description Scope where a skill load issue occurred.
+         * @enum {string}
+         */
+        SkillIssueScope: "bundled" | "shared" | "bot";
+        /** @description Stable storage locations for the owner's skill-management UI. */
+        SkillLocationsDto: {
+            /** @description Per-bot skill folder template; these routes do not mutate it. */
+            bot_template: string;
+            /** @description Bundled skills are embedded in the application. */
+            bundled: string;
+            /** @description Shared owner-managed skill folder. */
+            shared: string;
+        };
+        /** @description Auto-suggestion triggers declared in a skill's `when:` frontmatter. */
+        SkillRequiresDto: {
+            /** @description Application names. */
+            apps: string[];
+            /** @description Domains (e.g. `github.com`). */
+            domains: string[];
+            /** @description Task text keywords. */
+            keywords: string[];
+        };
+        /**
+         * @description Scope of a catalog skill (`shared` or `bundled`).
+         * @enum {string}
+         */
+        SkillScope: "shared" | "bundled";
+        /** @description Bots currently assigned to a skill, also returned on an assignment conflict. */
+        SkillUsingBotDto: {
+            id: string;
+            name: string;
+        };
+        /** @description Response of `GET /v1/skills`. */
+        SkillsCatalogDto: {
+            /** @description Non-fatal problems found while loading skills. */
+            issues: components["schemas"]["SkillIssueDto"][];
+            locations?: null | components["schemas"]["SkillLocationsDto"];
+            /** @description Shared and bundled catalog skills. */
+            skills: components["schemas"]["CatalogSkillDto"][];
+        };
         SourceRect: {
             /** Format: int32 */
             height: number;
@@ -2750,6 +5889,121 @@ export interface components {
              */
             sse_subscribers: number;
         };
+        /** @description A private key file found in `~/.ssh` (path only). */
+        SshKeyHint: {
+            name: string;
+            path: string;
+        };
+        SshKeyList: {
+            keys: components["schemas"]["SshKeyHint"][];
+        };
+        /** @description `POST /v1/hosts/setup`. */
+        StartHostSetupInput: {
+            /** @description Host name or IP address of the server. */
+            host: string;
+            /**
+             * @description Path of a private key file. Omit to use the SSH agent. Only the path is
+             *     used: the file is never copied into Praxi's data or logs.
+             */
+            key_path?: string | null;
+            /** @description Local name for the server (default: derived from the address). */
+            name?: string | null;
+            /**
+             * Format: int32
+             * @description SSH port (default 22).
+             */
+            port?: number | null;
+            /** @description SSH user (default `ubuntu`). */
+            user?: string | null;
+        };
+        /**
+         * @description Result class of one check.
+         * @enum {string}
+         */
+        Status: "ok" | "warn" | "fail" | "skipped";
+        /**
+         * @description What happened to one run of a Stop's target set.
+         *
+         *     `cancelled` is the only outcome that means the run has stopped. For a live
+         *     run the daemon can only fire the run's cancel token: `cancel_requested`
+         *     says it did so, and the run's effects (a tool call, a shell child, a
+         *     browser or desktop action) have ceased only once its `state` is terminal or
+         *     `run_finished` arrives. A human takeover is not touched by this route
+         *     (`/v1/control/override` handles it).
+         * @enum {string}
+         */
+        StopOutcome: "cancelled" | "cancel_requested" | "already_terminal" | "not_found" | "failed";
+        /** @description One member of a Stop's target set. */
+        StopRunResult: {
+            /** @description Why the cancel failed. */
+            error?: string | null;
+            /** @description Cancel outcome. */
+            outcome: components["schemas"]["StopOutcome"];
+            /**
+             * Format: uuid
+             * @description Run id.
+             */
+            run_id: string;
+            /** @description Current run state, if the run exists. */
+            state?: string | null;
+        };
+        /** @description Body of `POST /v1/runs/stop`. */
+        StopRunsInput: {
+            /**
+             * @description Hard stop: besides firing the cancel token, abort the run's task so a
+             *     run stuck in work that ignores the token still ends (its process
+             *     trees and requests are dropped). Applies to this receipt and to repeats.
+             */
+            force?: boolean;
+            /** @description Runs the caller knew about (at most 1024). Only the first receipt reads them. */
+            run_ids?: string[];
+            /** @description Which runs the Stop targets besides `run_ids`. */
+            scope: components["schemas"]["StopScope"];
+            /**
+             * Format: uuid
+             * @description One user decision to stop, minted by the caller. The daemon fixes the
+             *     target set the first time it sees this id; a repeat never changes it.
+             */
+            stop_id: string;
+        };
+        /** @description Response of `POST /v1/runs/stop`. */
+        StopRunsResponse: {
+            /**
+             * @description `false` when the audit row of this call could not be written. Only the
+             *     local user's Stop proceeds without it (peers fail with 500).
+             */
+            audited?: boolean;
+            /**
+             * @description `true` when this `stop_id` was seen before but its target set is no
+             *     longer kept (expired or evicted): nothing was cancelled and `results`
+             *     is empty. The original target set is unknown, so the daemon will not
+             *     guess it. To retry, send a NEW `stop_id` with `scope: listed` and the
+             *     run ids the client still holds as stop-held. `all_existing` with a new
+             *     `stop_id` sweeps every run open now, including runs started after the
+             *     original Stop: use it only for a new user decision. The client should
+             *     tell the user that the Stop expired.
+             */
+            expired?: boolean;
+            /** @description `true` when this call fixed the target set, `false` for a repeat. */
+            first_seen: boolean;
+            /**
+             * @description Every member of the target set. A run that is not listed was not
+             *     targeted (it was created after the first receipt). A repeat retries
+             *     `failed` members and re-issues the cancel of `cancel_requested` ones;
+             *     terminal and unknown members are never touched again.
+             */
+            results: components["schemas"]["StopRunResult"][];
+            /**
+             * Format: uuid
+             * @description Echo of the request's `stop_id`.
+             */
+            stop_id: string;
+        };
+        /**
+         * @description Which runs a Stop targets (`POST /v1/runs/stop`).
+         * @enum {string}
+         */
+        StopScope: "all_existing" | "listed";
         TakeoverAccepted: {
             /** Format: int64 */
             control_epoch: number;
@@ -2798,12 +6052,62 @@ export interface components {
         };
         /** @enum {string} */
         TargetKind: "browser" | "desktop";
+        /**
+         * @description A kind of screen this host cannot offer, and why. Lets the UI say
+         *     "No screen: <reason>" instead of an empty panel.
+         */
+        TargetUnavailable: {
+            /** @description Fixed reason code; never free text. */
+            code: components["schemas"]["UnavailableCode"];
+            host_id: string;
+            kind: components["schemas"]["TargetKind"];
+            reason: components["schemas"]["Reason"];
+        };
+        TrustFolderInput: {
+            /** @description An existing directory (an absolute path). */
+            path: string;
+        };
+        TrustedFoldersDto: {
+            /** @description Folders, as stored (normalised: `/` separators, lower case on Windows). */
+            folders: string[];
+        };
+        /**
+         * @description Why a kind of screen is not offered, as a small FIXED set. Peers only ever
+         *     see these codes (the UI words them in its own language); raw backend
+         *     diagnostics (paths, user names, display names, environment values) stay in
+         *     the local daemon log and never reach this type.
+         * @enum {string}
+         */
+        UnavailableCode: "desktop_off" | "unsupported_platform" | "wayland" | "no_display" | "screen_unavailable" | "start_failed" | "starting" | "timed_out";
+        /** @description Unified text diff payload for a single changed text file. */
+        UnifiedDiffDto: {
+            added_lines: number;
+            hunks: number;
+            removed_lines: number;
+            unified: string;
+        };
         /** @enum {string} */
         Units: "physical_px" | "css_px";
+        /**
+         * @description Body of `PUT /v1/fill-secrets/{name}`. Every field is optional; a value,
+         *     when given, replaces the stored one.
+         */
+        UpdateFillSecret: {
+            /** @description Replaces the allowed origins. */
+            origins?: string[] | null;
+            /** @description Replaces the allowed programs. */
+            programs?: string[] | null;
+            /** @description New value (write-only). */
+            value?: string | null;
+        };
         /** @description `GET /v1/usage`. */
         UsageSummary: {
             /** @description Per bot. */
             by_bot: components["schemas"]["BotUsage"][];
+            /** @description Per-purpose totals, including invocations that report no tokens. */
+            by_purpose?: {
+                [key: string]: components["schemas"]["UsageTotals"];
+            };
             /**
              * Format: int64
              * @description Runs counted.
@@ -2841,6 +6145,11 @@ export interface components {
              */
             prompt_tokens: number;
         };
+        /**
+         * @description Whether bounded hashing verified the recorded after-state.
+         * @enum {string}
+         */
+        VerificationDto: "matched" | "changed" | "unknown";
         /** @enum {string} */
         ViewState: "watch" | "acquiring" | "active" | "paused" | "unavailable" | "closed";
         /**
@@ -2945,6 +6254,620 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    admin_cli_engines: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliEngineDto"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_cli_engine_install_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliInstallDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_cli_engine_install: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliInstallDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_cli_engine_login_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description The `job_id` the sign-in was started with. */
+                job: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliLoginDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_cli_engine_login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliLoginDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_cli_engine_login_cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description The `job_id` the sign-in was started with. */
+                job: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliLoginDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_cli_engine_login_code: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminLoginCodeInput"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliLoginDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_set_default_provider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminDefaultInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminProviderDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_set_home: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminHomeInput"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_import_bot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportBotInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportBotResult"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_check_bots: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckBotsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckBotsReport"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_import_chats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportChatsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportChatsReport"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_import_schedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportSchedulesInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportSchedulesReport"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_activate_schedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleIdsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportSchedulesReport"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_release_schedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleIdsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportSchedulesReport"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_put_provider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminProviderInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminProviderDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_delete_provider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_state: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminStateDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     list_approvals: {
         parameters: {
             query?: {
@@ -3070,6 +6993,508 @@ export interface operations {
             };
         };
     };
+    get_files: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileAccessDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_files: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileAccessDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileAccessDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    email_captures: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeEmailCapture"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    request_embedding_approval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbeddingGrantTarget"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbeddingApprovalChallenge"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    confirm_embedding_approval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                approval: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    reset_embedding_cooldown: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    revoke_embedding_grant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbeddingGrantTarget"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSettingsDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeSettingsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSettingsDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_sources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSourceDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeSourceInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeMutation"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeSourceChange"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSourceDto"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeRevision"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    embed_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeEmbed"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeEmbeddingProgress"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    reindex_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeReindex"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeMutation"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     get_bot: {
         parameters: {
             query?: never;
@@ -3132,7 +7557,23 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotConflictBody"];
+                };
+            };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            428: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3169,6 +7610,154 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    patch_bot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BotPatchInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotDto"];
+                };
+            };
+            /** @description patch exceeds depth, size or operation limits */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the bot changed since `expected_version`; `current` is its state now */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotConflictBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_engine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BotEngineInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    kill_engine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3240,6 +7829,117 @@ export interface operations {
             };
             /** @description no such bot or grant */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_bot_skills: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotSkillsDto"];
+                };
+            };
+            /** @description unknown bot */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description skills are not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_bot_skills: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutBotSkillsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotSkillsDto"];
+                };
+            };
+            /** @description peer role not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description unknown bot */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the assignment changed since `expected_version` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description invalid skill name or too many skills */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description skills are not available */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3426,6 +8126,415 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_components: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComponentDto"][];
+                };
+            };
+        };
+    };
+    get_component: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `uv` or `node` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComponentDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    install_component: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `uv` or `node` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComponentDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioStatusDto"];
+                };
+            };
+            /** @description Composio is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_list_apps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioAppDto"][];
+                };
+            };
+        };
+    };
+    composio_get_app: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Toolkit slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioAppDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_disconnect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Toolkit slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioDisconnectDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_connect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Toolkit slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioConnectDto"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_set_enabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Toolkit slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComposioEnabledInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioAppDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_set_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComposioKeyInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioStatusDto"];
+                };
+            };
+            /** @description malformed or rejected key */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Composio unreachable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_remove_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioStatusDto"];
+                };
+            };
+        };
+    };
+    composio_login_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioLoginStatusDto"];
+                };
+            };
+        };
+    };
+    composio_login_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioLoginDto"];
+                };
+            };
+            /** @description Composio unreachable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    composio_catalog: {
+        parameters: {
+            query?: {
+                /** @description Text matched against name, slug and description. */
+                search?: string;
+                /** @description Chip group (`all` or empty = every group). */
+                group?: string;
+                /** @description Cursor from the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 100 (default 48). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposioCatalogDto"];
+                };
+            };
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3651,6 +8760,162 @@ export interface operations {
             };
             /** @description unknown, answered or timed-out request */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_doctor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DoctorReport"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description a diagnostics run is already in progress */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    repair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repair id: create_data_dir, reload_providers or restart_browser */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepairResult"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not the local user */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not an allow-listed repair */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description this daemon cannot run that repair */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the repair ran and failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the audit record could not be written; nothing ran */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Markdown report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/markdown": string;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description safe redaction unavailable or the report did not finish in time */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4058,6 +9323,295 @@ export interface operations {
             };
         };
     };
+    list_fill_grants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FillGrantDto"][];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_fill_grant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateFillGrant"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FillGrantDto"];
+                };
+            };
+            /** @description the origin is not on the secret's allowed list */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    revoke_fill_grant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Grant id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_fill_secrets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FillSecretDto"][];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description no fill secrets in this daemon */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_fill_secret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateFillSecret"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FillSecretDto"];
+                };
+            };
+            /** @description bad name, value or allow-list entry */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the name exists; use PUT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update_fill_secret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret name, may contain `/` */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateFillSecret"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FillSecretDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_fill_secret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret name, may contain `/` */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     health: {
         parameters: {
             query?: never;
@@ -4146,6 +9700,45 @@ export interface operations {
             };
         };
     };
+    host_set_admin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostAdminInput"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     host_invite: {
         parameters: {
             query?: never;
@@ -4204,6 +9797,522 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hosts_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostLinkList"];
+                };
+            };
+        };
+    };
+    hosts_computer_requests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PcRequestList"];
+                };
+            };
+        };
+    };
+    hosts_decide_computer_request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PcRequestDecision"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hosts_home: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeDto"];
+                };
+            };
+        };
+    };
+    hosts_pair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PairHostInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostLinkInfo"];
+                };
+            };
+        };
+    };
+    hosts_setup_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartHostSetupInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSetupJob"];
+                };
+            };
+        };
+    };
+    hosts_setup_ssh_keys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshKeyList"];
+                };
+            };
+        };
+    };
+    hosts_setup_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSetupJob"];
+                };
+            };
+        };
+    };
+    hosts_setup_cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSetupJob"];
+                };
+            };
+        };
+    };
+    hosts_setup_host_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostKeyAnswer"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSetupJob"];
+                };
+            };
+        };
+    };
+    hosts_forget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hosts_set_computer_access: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComputerAccessInput"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hosts_connect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostLinkConnection"];
+                };
+            };
+        };
+    };
+    hosts_disconnect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    hosts_copy_plan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopyPlanDto"];
+                };
+            };
+        };
+    };
+    hosts_copy_setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CopyRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopyReport"];
+                };
+            };
+        };
+    };
+    call_tool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpCallInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMcpToken"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpTokenGrant"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    revoke_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_tools: {
+        parameters: {
+            query: {
+                bot: string;
+                computer?: boolean;
+                tasks?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportedMcpTool"][];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4408,6 +10517,171 @@ export interface operations {
             };
         };
     };
+    complete_mcp_auth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpAuthCallback"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthState"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    cancel_mcp_auth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthState"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    logout_mcp_auth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthState"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    start_mcp_auth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthStart"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    mcp_auth_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAuthState"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     reconnect_mcp_server: {
         parameters: {
             query?: never;
@@ -4538,7 +10812,13 @@ export interface operations {
     };
     list_providers: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Default true: omit deprecated and non-chat models. False exposes all
+                 *     kinds for advanced clients; it does not change bot execution.
+                 */
+                chat_only?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4551,6 +10831,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProvidersDto"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description When set to 1, bypasses the in-process 60-second cache. */
+                refresh: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CliEngineDto"][];
+                };
+            };
+        };
+    };
+    disable_cli_provider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnableCliProviderInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfiguredProviderDto"];
+                };
+            };
+            /** @description engine is unknown or never a provider */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };
@@ -4587,6 +10921,84 @@ export interface operations {
             };
         };
     };
+    preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CliInstallInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CliInstallApproval"];
+                };
+            };
+        };
+    };
+    decide: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CliInstallDecision"];
+            };
+        };
+        responses: {
+            /** @description SSE output and done events; denied approvals emit done only */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+        };
+    };
+    refresh_models_route: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description engine id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description list refreshed (or kept) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     detect_providers: {
         parameters: {
             query?: never;
@@ -4605,6 +11017,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DetectedProviderDto"][];
+                };
+            };
+            /** @description caller is not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };
@@ -4699,6 +11120,46 @@ export interface operations {
             };
         };
     };
+    stop_runs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StopRunsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StopRunsResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description scope all_existing is for the local user only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     get_run: {
         parameters: {
             query?: never;
@@ -4757,6 +11218,118 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_run_changes: {
+        parameters: {
+            query?: {
+                /** @description File offset */
+                offset?: number;
+                /** @description Page size, maximum 100 */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Run id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunChangesDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    preview_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                id: string;
+                /** @description Checkpoint id or 'all' */
+                cp: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestorePreviewDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    restore_changes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                id: string;
+                /** @description Checkpoint id or 'all' */
+                cp: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["RestoreRequestDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreResponseDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description modified_since or run still active */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5034,6 +11607,40 @@ export interface operations {
             };
         };
     };
+    schedule_reclaim: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Schedule id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReclaimInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReclaimDto"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     run_schedule_now: {
         parameters: {
             query?: never;
@@ -5124,6 +11731,329 @@ export interface operations {
             };
         };
     };
+    list_skills: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillsCatalogDto"];
+                };
+            };
+            /** @description skills are not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillDocumentInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSkillDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    import: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillImportInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSkillDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillDocumentInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSkillDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: {
+                force?: boolean;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteSkillResult"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteSkillResult"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_trusted_folders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustedFoldersDto"];
+                };
+            };
+        };
+    };
+    trust_folder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrustFolderInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustedFoldersDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    untrust_folder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrustFolderInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustedFoldersDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     usage: {
         parameters: {
             query?: {
@@ -5142,6 +12072,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UsageSummary"];
+                };
+            };
+        };
+    };
+    availability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetUnavailable"][];
                 };
             };
         };

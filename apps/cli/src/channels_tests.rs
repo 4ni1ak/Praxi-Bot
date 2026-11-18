@@ -174,6 +174,7 @@ async fn the_daemon_runs_the_channel_and_stops_it_on_shutdown() {
         LoopConfig::default(),
     );
     let state = AppState::new(agent, storage, DaemonConfig::new(API_TOKEN)).unwrap();
+    state.set_owner_key(crate::client::TEST_OWNER_KEY.into());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();
@@ -214,6 +215,7 @@ async fn the_daemon_runs_the_channel_and_stops_it_on_shutdown() {
     let code: Value = http
         .post(url("/v1/channels/telegram/pair-code"))
         .bearer_auth(API_TOKEN)
+        .header("x-praxi-owner-key", crate::client::TEST_OWNER_KEY)
         .send()
         .await
         .unwrap()
@@ -248,6 +250,7 @@ async fn standby_telegram_runtime_does_not_poll_until_started_and_can_restart() 
         store_with_token(),
         "http://127.0.0.1:1",
         "token",
+        None,
         Some(&server.uri()),
         None,
     );

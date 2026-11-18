@@ -130,6 +130,8 @@ fn device() -> Device {
         capabilities: Vec::new(),
         addr: None,
         paired_at: 0,
+        pairing_generation: String::new(),
+        admin: false,
     }
 }
 

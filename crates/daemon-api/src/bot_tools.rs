@@ -890,9 +890,11 @@ fn section<'a>(root: &'a mut Map<String, Value>, key: &str) -> &'a mut Map<Strin
 /// Run the same validation as `POST /v1/bots`.
 fn validate(name: &str, config: Value) -> Result<(String, Value), String> {
     crate::routes::resolve_bot(BotInput {
+        expected_version: None,
         name: Some(name.to_owned()),
         config: Some(config),
         profile_toml: None,
+        runtime: None,
     })
     .map_err(|e| e.message().to_owned())
 }
@@ -993,13 +995,30 @@ impl BotHost for DaemonBotHost {
         let key = Self::key(who, &change);
         let (bot, app) = {
             let _gate = self.gate.lock();
+            // The profile revision the change was resolved against: a user edit
+            // in between makes the write stale instead of overwriting it.
+            let version = Uuid::parse_str(id)
+                .ok()
+                .and_then(|u| self.storage.get_bot_versioned(BotId(u)).ok().flatten())
+                .map(|(_, v)| v)
+                .ok_or_else(|| format!("there is no bot with id {id:?}"))?;
             let r = self.resolve(who, &change)?;
             self.take_frozen(&key, &r)?;
             self.audit(who, "bot.update", &r)?;
             let mut bot = r.target.ok_or("no target")?;
-            self.storage
-                .update_bot(bot.id, &r.name, &r.config)
-                .map_err(|e| e.to_string())?;
+            match self
+                .storage
+                .update_bot(bot.id, &r.name, &r.config, version)
+                .map_err(|e| e.to_string())?
+            {
+                storage::BotPatch::Applied { .. } => {}
+                _ => {
+                    return Err(
+                        "the bot was changed by someone else while this was prepared; ask again"
+                            .to_owned(),
+                    );
+                }
+            }
             bot.name = r.name;
             bot.config = r.config;
             (bot, self.app()?)
@@ -1016,21 +1035,21 @@ impl BotHost for DaemonBotHost {
             let r = self.resolve(who, &change)?;
             self.take_frozen(&key, &r)?;
             self.audit(who, "bot.delete", &r)?;
-            let bot = r.target.ok_or("no target")?;
-            if self.storage.delete_bot(bot.id).is_err() {
-                // The audit entry above said "delete"; say it did not happen.
-                let _ = self.storage.append_audit(
-                    self.user_id,
-                    Uuid::parse_str(&who.run_id).ok().map(RunId),
-                    "bot",
-                    "bot.delete_failed",
-                    &json!({"caller_bot_id": who.bot_id, "bot_id": bot.id.to_string()}),
-                );
-                return Err("this bot still has chats or runs, so it cannot be deleted (HTTP 409); only the user can clear them in the app".to_owned());
-            }
-            (bot, self.app()?)
+            (r.target.ok_or("no target")?, self.app()?)
         };
-        crate::routes::forget_bot_links(&app, &bot).await;
+        // The same removal as the HTTP route (knowledge, browser slot, MCP and
+        // e-mail links); it runs outside the gate because it awaits.
+        if crate::routes::remove_bot(&app, &bot).await.is_err() {
+            // The audit entry above said "delete"; say it did not happen.
+            let _ = self.storage.append_audit(
+                self.user_id,
+                Uuid::parse_str(&who.run_id).ok().map(RunId),
+                "bot",
+                "bot.delete_failed",
+                &json!({"caller_bot_id": who.bot_id, "bot_id": bot.id.to_string()}),
+            );
+            return Err("this bot still has chats or runs, so it cannot be deleted (HTTP 409); only the user can clear them in the app".to_owned());
+        }
         Ok(Self::view(&bot, &who.bot_id))
     }
 }

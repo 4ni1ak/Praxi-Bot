@@ -29,6 +29,69 @@ pub enum HostCmd {
         #[arg(long)]
         force: bool,
     },
+    /// Let a paired desktop watch (and take over) this host's screen. Local
+    /// only: run it on the host. The grant survives restarts.
+    Screen {
+        /// Paired device key from `bot host devices`.
+        #[arg(required_unless_present = "all_desktops")]
+        key: Option<String>,
+        /// Every paired device with the desktop role.
+        #[arg(long, conflicts_with = "key")]
+        all_desktops: bool,
+        /// Watch only: no takeover or input.
+        #[arg(long)]
+        view_only: bool,
+        /// Remove the grant instead of adding it.
+        #[arg(long)]
+        revoke: bool,
+    },
+    /// Let a paired desktop send model keys, bots and settings to this host
+    /// (host administration). Local only: run it on the host. Needed once for
+    /// a desktop paired before this existed; new desktop invites grant it.
+    Admin {
+        /// Paired device key from `bot host devices`.
+        #[arg(required_unless_present = "all_desktops")]
+        key: Option<String>,
+        /// Every paired device with the desktop role.
+        #[arg(long, conflicts_with = "key")]
+        all_desktops: bool,
+        /// Withdraw the capability instead of granting it.
+        #[arg(long)]
+        revoke: bool,
+    },
+    /// Provision your own server over SSH: add, repair, upgrade, remove.
+    #[command(flatten)]
+    Provision(crate::host_provision::ProvisionCmd),
+}
+
+/// Device keys a `host screen` command applies to.
+async fn screen_targets(
+    client: &Client,
+    key: Option<&str>,
+    all_desktops: bool,
+) -> Result<Vec<String>> {
+    let keys: Vec<String> = if all_desktops {
+        let status = client.request(Method::GET, "/v1/host", None).await?;
+        status["peers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|p| p["role"] == "desktop")
+            .filter_map(|p| p["key"].as_str().map(str::to_owned))
+            .collect()
+    } else {
+        key.map(str::to_owned).into_iter().collect()
+    };
+    if keys.is_empty() {
+        return Err("no paired desktop found; check `bot host devices`".into());
+    }
+    if let Some(bad) = keys
+        .iter()
+        .find(|k| k.is_empty() || k.len() > 128 || !k.chars().all(|c| c.is_ascii_alphanumeric()))
+    {
+        return Err(format!("not a device key: {bad:?}").into());
+    }
+    Ok(keys)
 }
 
 pub async fn join(data: &Path, ticket: &str) -> Result<()> {
@@ -67,12 +130,68 @@ pub async fn join(data: &Path, ticket: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // one dispatcher over the host subcommands
 pub async fn run(
     client: &Client,
     action: &HostCmd,
     json_output: bool,
     out: &mut dyn Write,
+    data: &Path,
 ) -> Result<()> {
+    if let HostCmd::Screen {
+        key,
+        all_desktops,
+        view_only,
+        revoke,
+    } = action
+    {
+        for key in screen_targets(client, key.as_deref(), *all_desktops).await? {
+            let (view, input) = (!revoke, !revoke && !view_only);
+            client
+                .request(
+                    Method::PUT,
+                    &format!("/v1/view/privileges/{key}"),
+                    Some(json!({"view": view, "input": input})),
+                )
+                .await?;
+            writeln!(
+                out,
+                "{key}: screen view={view} input={input} (kept across restarts)"
+            )?;
+        }
+        return Ok(());
+    }
+    if let HostCmd::Admin {
+        key,
+        all_desktops,
+        revoke,
+    } = action
+    {
+        // The owner key of THIS data dir (a file only the host's own account
+        // reads), not the general API token.
+        let owner = daemon_api::read_owner_key(data).map_err(|_| {
+            "no owner key in this data dir: run this on the host, as the account that runs the service, after `bot serve --host` has started once"
+        })?;
+        for key in screen_targets(client, key.as_deref(), *all_desktops).await? {
+            client
+                .request_owner(
+                    Method::PUT,
+                    &format!("/v1/host/devices/{key}/admin"),
+                    Some(json!({"enabled": !revoke})),
+                    &owner,
+                )
+                .await?;
+            if *revoke {
+                writeln!(out, "{key}: host administration withdrawn")?;
+            } else {
+                writeln!(
+                    out,
+                    "{key}: may now send model keys, bots and settings to this host"
+                )?;
+            }
+        }
+        return Ok(());
+    }
     let (method, path, body) = match action {
         HostCmd::Status | HostCmd::Devices => (Method::GET, "/v1/host".into(), None),
         HostCmd::Invite { role } => (
@@ -90,14 +209,27 @@ pub async fn run(
             "/v1/host/activate".into(),
             Some(json!({"force": force})),
         ),
-        HostCmd::Join { .. } => return Err("join is local only".into()),
+        HostCmd::Join { .. }
+        | HostCmd::Screen { .. }
+        | HostCmd::Admin { .. }
+        | HostCmd::Provision(_) => {
+            return Err("this command is local only".into());
+        }
     };
     if matches!(action, HostCmd::Activate { force: true }) {
         eprintln!(
             "Forced activation uses this installation's last local data; newer changes on the other leader may be missing, and missed schedules can duplicate actions already run there."
         );
     }
-    let mut response = client.request(method, &path, body).await?;
+    // A desktop invite asks for host administration with the owner key; without
+    // one (no key file) the invite is an ordinary one.
+    let owner = matches!(action, HostCmd::Invite { .. })
+        .then(|| daemon_api::read_owner_key(data).ok())
+        .flatten();
+    let mut response = match owner {
+        Some(key) => client.request_owner(method, &path, body, &key).await?,
+        None => client.request(method, &path, body).await?,
+    };
     if matches!(action, HostCmd::Devices) {
         response = response["peers"].clone();
     }

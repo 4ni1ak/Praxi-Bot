@@ -102,6 +102,16 @@ pub enum EmbedTask {
 /// Pluggable text embedder.
 #[async_trait]
 pub trait Embedder: Send + Sync {
+    /// Numeric-ledger label; implementations must not return an endpoint or credentials.
+    fn model_name(&self) -> String {
+        "embedding".into()
+    }
+
+    /// Maximum texts per transport request, used for per-call accounting.
+    fn max_batch_size(&self) -> usize {
+        usize::MAX
+    }
+
     /// `false` for [`NullEmbedder`]: the ladder then skips embedding entirely.
     fn is_enabled(&self) -> bool {
         true

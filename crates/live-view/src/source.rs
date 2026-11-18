@@ -1,9 +1,12 @@
 //! Object-safe backend hooks. Dropping the last subscription ends capture.
-use crate::{EffectiveProfile, FrameMetadata, InputEvent, MAX_PAYLOAD, TargetInfo, ViewError};
+use crate::{
+    EffectiveProfile, FrameMetadata, InputEvent, MAX_PAYLOAD, TargetInfo, TargetUnavailable,
+    ViewError,
+};
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 use uuid::Uuid;
 
 /// Encoded pixels are shared, never serialized into JSON or event logs.
@@ -98,6 +101,21 @@ pub trait FrameSource: Send + Sync {
 pub trait InputSink: Send + Sync {
     /// One event, called by the daemon's serialized ownership executor only.
     async fn inject(&self, event: &InputEvent) -> Result<(), ViewError>;
+    /// Inject one event validated against the `(generation, geometry_revision)`
+    /// the client computed it from.
+    ///
+    /// Backends whose coordinate mapping depends on frame-synchronized display
+    /// geometry override this to reject stale revisions fail-closed; targets
+    /// whose input path already delegates to [`Self::inject`] (such as the
+    /// browser target) inherit the default delegation unchanged.
+    async fn inject_at_revision(
+        &self,
+        event: &InputEvent,
+        _generation: u64,
+        _geometry_revision: u64,
+    ) -> Result<(), ViewError> {
+        self.inject(event).await
+    }
     async fn release_pressed_inputs(&self) -> Result<(), ViewError>;
     /// Pin only real takeover; subscribing in watch must never launch or pin.
     async fn set_takeover_active(&self, _active: bool) -> Result<(), ViewError> {
@@ -111,34 +129,179 @@ pub trait ViewTarget: Send + Sync {
     fn input_sink(&self) -> Option<Arc<dyn InputSink>>;
 }
 
+type Hook = Arc<dyn Fn() + Send + Sync>;
+type BotHook = Arc<dyn Fn(Uuid) + Send + Sync>;
+
 /// Injection point for existing backend instances, never a browser manager.
-#[derive(Default)]
-pub struct TargetRegistry(RwLock<BTreeMap<Uuid, Arc<dyn ViewTarget>>>);
+pub struct TargetRegistry {
+    targets: RwLock<BTreeMap<Uuid, Arc<dyn ViewTarget>>>,
+    unavailable: RwLock<Vec<TargetUnavailable>>,
+    /// Pixel-free "the set of targets or one target's state changed" signal.
+    changes: broadcast::Sender<()>,
+    /// Asks the owner of a missing screen to look again (see [`Self::request_reprobe`]).
+    reprobe: RwLock<Option<Hook>>,
+    /// Runs when a bot is retired, so its owner can drop what it holds for it.
+    bot_retired: RwLock<Vec<BotHook>>,
+}
+impl Default for TargetRegistry {
+    fn default() -> Self {
+        Self {
+            targets: RwLock::default(),
+            unavailable: RwLock::default(),
+            changes: broadcast::channel(16).0,
+            reprobe: RwLock::default(),
+            bot_retired: RwLock::default(),
+        }
+    }
+}
 impl TargetRegistry {
+    /// Target lifecycle notifications: a target was added, removed or changed
+    /// state (idle, attached, closed), or a missing-screen note changed. Carries
+    /// nothing; readers refetch `GET /v1/view/targets`. A lagging reader only
+    /// loses a hint.
+    #[must_use]
+    pub fn subscribe_changes(&self) -> broadcast::Receiver<()> {
+        self.changes.subscribe()
+    }
+    /// Signal a change (a target changed its own state). Cheap, never blocks.
+    pub fn notify_changed(&self) {
+        let _ = self.changes.send(());
+    }
+    /// Record that `kind` of screen cannot be offered (replaces an earlier note
+    /// of the same kind and host; ignored while such a target is registered).
+    /// Never exposes pixels, paths or free text.
+    ///
+    /// # Panics
+    /// Panics only if an internal synchronization lock was poisoned.
+    pub fn note_unavailable(&self, note: TargetUnavailable) {
+        let changed = {
+            let targets = self.targets.read().expect("registry poisoned");
+            // A kind that is offered has no reason to be missing: a late note
+            // (a slow probe's timeout) must not outlive the registration.
+            if targets.values().any(|t| {
+                let info = t.info();
+                info.kind == note.kind && info.host_id == note.host_id
+            }) {
+                return;
+            }
+            let mut all = self.unavailable.write().expect("registry poisoned");
+            let same = all.contains(&note);
+            all.retain(|n| !(n.kind == note.kind && n.host_id == note.host_id));
+            all.push(note);
+            !same
+        };
+        if changed {
+            self.notify_changed();
+        }
+    }
+    /// Why some kinds of screen are missing (empty when everything is offered).
+    ///
+    /// # Panics
+    /// Panics only if an internal synchronization lock was poisoned.
+    #[must_use]
+    pub fn unavailable(&self) -> Vec<TargetUnavailable> {
+        self.unavailable.read().expect("registry poisoned").clone()
+    }
+    /// Offer a target. Any "cannot offer this kind of screen" note for the same
+    /// kind and host is cleared in the same step, so a late success never
+    /// leaves a stale reason behind.
+    ///
     /// # Panics
     /// Panics only if an internal synchronization lock was poisoned.
     pub fn register(&self, target: Arc<dyn ViewTarget>) {
-        self.0
-            .write()
-            .expect("registry poisoned")
-            .insert(target.info().target_id, target);
+        let info = target.info();
+        {
+            let mut targets = self.targets.write().expect("registry poisoned");
+            let mut notes = self.unavailable.write().expect("registry poisoned");
+            notes.retain(|n| !(n.kind == info.kind && n.host_id == info.host_id));
+            targets.insert(info.target_id, target);
+        }
+        self.notify_changed();
     }
     /// # Panics
     /// Panics only if an internal synchronization lock was poisoned.
     pub fn remove(&self, id: Uuid) {
-        self.0.write().expect("registry poisoned").remove(&id);
+        let removed = self
+            .targets
+            .write()
+            .expect("registry poisoned")
+            .remove(&id)
+            .is_some();
+        if removed {
+            self.notify_changed();
+        }
+    }
+    /// Remove every target that belongs to `bot_id` and tell the owners that
+    /// registered for it ([`Self::on_bot_retired`]) to drop their drivers.
+    /// Returns how many targets were removed.
+    ///
+    /// # Panics
+    /// Panics only if an internal synchronization lock was poisoned.
+    pub fn retire_bot(&self, bot_id: Uuid) -> usize {
+        let removed = {
+            let mut targets = self.targets.write().expect("registry poisoned");
+            let ids: Vec<Uuid> = targets
+                .iter()
+                .filter(|(_, t)| t.info().bot_id == Some(bot_id))
+                .map(|(id, _)| *id)
+                .collect();
+            for id in &ids {
+                targets.remove(id);
+            }
+            ids.len()
+        };
+        let hooks: Vec<BotHook> = self.bot_retired.read().expect("registry poisoned").clone();
+        for hook in hooks {
+            hook(bot_id);
+        }
+        if removed > 0 {
+            self.notify_changed();
+        }
+        removed
+    }
+    /// Run `hook` whenever a bot is retired (deleted).
+    ///
+    /// # Panics
+    /// Panics only if an internal synchronization lock was poisoned.
+    pub fn on_bot_retired(&self, hook: impl Fn(Uuid) + Send + Sync + 'static) {
+        self.bot_retired
+            .write()
+            .expect("registry poisoned")
+            .push(Arc::new(hook));
+    }
+    /// Install the function that looks for a screen again after a transient
+    /// failure. It must return at once (spawn, do not block) and rate-limit itself.
+    ///
+    /// # Panics
+    /// Panics only if an internal synchronization lock was poisoned.
+    pub fn set_reprobe(&self, hook: impl Fn() + Send + Sync + 'static) {
+        *self.reprobe.write().expect("registry poisoned") = Some(Arc::new(hook));
+    }
+    /// A viewer asked: look again for screens that were unavailable. Never blocks.
+    ///
+    /// # Panics
+    /// Panics only if an internal synchronization lock was poisoned.
+    pub fn request_reprobe(&self) {
+        let hook = self.reprobe.read().expect("registry poisoned").clone();
+        if let Some(hook) = hook {
+            hook();
+        }
     }
     #[must_use]
     /// # Panics
     /// Panics only if an internal synchronization lock was poisoned.
     pub fn get(&self, id: Uuid) -> Option<Arc<dyn ViewTarget>> {
-        self.0.read().expect("registry poisoned").get(&id).cloned()
+        self.targets
+            .read()
+            .expect("registry poisoned")
+            .get(&id)
+            .cloned()
     }
     #[must_use]
     /// # Panics
     /// Panics only if an internal synchronization lock was poisoned.
     pub fn targets(&self) -> Vec<TargetInfo> {
-        self.0
+        self.targets
             .read()
             .expect("registry poisoned")
             .values()

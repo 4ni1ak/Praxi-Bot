@@ -1,0 +1,390 @@
+.backdrop {
+  position: fixed;
+  inset: var(--space-0);
+  z-index: 40; /* below Modal/Toast (50): dialogs and toasts stay visible and usable */
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-background);
+  color: var(--color-text);
+}
+
+:global(:root[data-style="glass"]) .backdrop {
+  background-color: color-mix(in srgb, var(--color-background) 92%, transparent);
+  backdrop-filter: blur(var(--blur-glass)) saturate(1.25);
+}
+
+.header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  flex-shrink: 0;
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: var(--space-0);
+}
+
+.targetPicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: var(--space-0);
+}
+
+.headerRight {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.stateBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--space-8);
+  padding: var(--space-0) var(--space-3);
+  border-radius: var(--radius-pill);
+  border: none;
+  background-color: var(--color-surface-elevated);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+
+.stateDot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-text-faint);
+}
+
+.stateBadge[data-tone="watch"] .stateDot {
+  background-color: var(--color-success);
+}
+
+.stateBadge[data-tone="active"],
+.stateBadge[data-tone="acquiring"] {
+  border-color: var(--color-accent);
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent-text);
+}
+
+.stateBadge[data-tone="active"] .stateDot,
+.stateBadge[data-tone="acquiring"] .stateDot {
+  background-color: var(--color-accent);
+}
+
+.stateBadge[data-tone="paused"] {
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+
+.stateBadge[data-tone="paused"] .stateDot {
+  background-color: var(--color-warning);
+}
+
+.statusLine {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-5);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.approvalBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  border-bottom: var(--size-border) solid var(--color-warning);
+  background-color: var(--color-accent-subtle);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  flex-shrink: 0;
+}
+
+.errorInline {
+  color: var(--color-danger);
+  font-weight: var(--font-weight-medium);
+}
+
+.stageArea {
+  position: relative;
+  flex: 1;
+  min-height: var(--space-0);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) var(--space-6) var(--space-2);
+  gap: var(--space-3);
+}
+
+/* The stage is framed like a screen: it takes the frame's own aspect ratio (inline) and
+   never grows past the free room; without a frame it fills the area as a calm card. */
+.stageFrame {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  min-height: var(--space-0);
+  flex: 1 1 auto;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: calc(var(--radius-card) * 1.25);
+  border: var(--size-border) solid color-mix(in srgb, var(--color-text) 10%, transparent);
+  background-color: var(--color-surface);
+  box-shadow: 0 var(--space-6) var(--space-12) calc(var(--space-6) * -1) var(--color-shadow);
+  overflow: hidden;
+  transition: border-color var(--motion-duration-fast) ease-out;
+}
+
+.stageFrame[data-has-frame="true"] {
+  flex: 0 1 auto;
+  width: auto;
+  height: 100%;
+  background-color: var(--color-background);
+}
+
+.stageFrame[data-active="true"] {
+  border-color: var(--color-accent);
+}
+
+.stageSurface {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+  touch-action: none;
+}
+
+.stageSurface[data-interactive="true"] {
+  cursor: crosshair;
+}
+
+.stageImg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+}
+
+.imeCapture {
+  position: fixed;
+  opacity: 0;
+  pointer-events: none;
+  width: var(--space-1);
+  height: var(--space-1);
+}
+
+.focusOverlayBar {
+  position: absolute;
+  top: var(--space-3);
+  left: var(--space-3);
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  border: var(--size-border) solid var(--color-border-strong);
+  background-color: color-mix(in srgb, var(--color-background) 88%, transparent);
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+}
+
+.tabToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: calc(var(--space-1) / 2) var(--space-2);
+  border: var(--size-border) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.tabToggle[aria-pressed="true"] {
+  border-color: var(--color-accent);
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent-text);
+}
+
+.actionBox {
+  position: absolute;
+  border: var(--size-border-thick) solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background-color: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  pointer-events: none;
+}
+
+.actionTag {
+  position: absolute;
+  top: calc(var(--space-6) * -1);
+  left: var(--space-0);
+  padding: calc(var(--space-1) / 2) var(--space-2);
+  border-radius: var(--radius-md);
+  background-color: var(--color-accent);
+  color: var(--color-accent-contrast);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.emptyStage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-8);
+  text-align: center;
+  max-width: calc(var(--space-10) * 9);
+  color: var(--color-text-secondary);
+}
+
+.emptyIcon {
+  display: grid;
+  place-items: center;
+  width: var(--space-16);
+  height: var(--space-16);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-surface-elevated);
+  color: var(--color-text-muted);
+}
+
+.emptyIcon > svg {
+  width: var(--space-6);
+  height: var(--space-6);
+}
+
+.emptyTitle {
+  margin: var(--space-0);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.emptyBody {
+  margin: var(--space-0);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.privacyHint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  margin: var(--space-0);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-faint);
+  flex-shrink: 0;
+}
+
+.privacyHint > svg {
+  width: var(--space-4);
+  height: var(--space-4);
+  flex-shrink: 0;
+}
+
+.privacyHint > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bottomDock {
+  position: relative;
+  align-self: center;
+  margin: var(--space-2) var(--space-4) var(--space-5);
+  flex-shrink: 0;
+  z-index: 61;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  border: none;
+  background-color: var(--color-surface-elevated);
+  background-image: var(--surface-sheen);
+  box-shadow: 0 0 0 var(--size-border) color-mix(in srgb, var(--color-text) 12%, transparent), var(--shadow-overlay);
+  max-width: 92vw;
+}
+
+:global(:root[data-style="glass"]) .bottomDock {
+  background-color: color-mix(in srgb, var(--color-surface-elevated) 84%, transparent);
+  backdrop-filter: blur(var(--blur-glass)) saturate(1.45);
+}
+
+.dockStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+
+.outcomeSelect {
+  height: var(--space-8);
+  padding: var(--space-0) var(--space-2);
+  border-radius: var(--radius-md);
+  border: var(--size-border) solid var(--color-border);
+  background-color: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.dockActions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.iconBtn {
+  display: inline-grid;
+  place-items: center;
+  width: var(--space-8);
+  height: var(--space-8);
+  border: var(--size-border) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.iconBtn:hover {
+  background-color: var(--color-surface-elevated);
+  color: var(--color-text);
+}
+
+/* The takeover control is the one clear primary pill of the screen. */
+.bottomDock button {
+  border-radius: var(--radius-pill);
+  padding-inline: var(--space-5);
+  min-height: var(--space-8);
+}

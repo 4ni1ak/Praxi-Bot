@@ -50,21 +50,130 @@ pub fn fail(code: i32, msg: impl Into<String>) -> Box<dyn std::error::Error> {
     })
 }
 
+/// Owner key of the daemons the tests start.
+#[cfg(test)]
+pub const TEST_OWNER_KEY: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
+
 /// A connected client.
 pub struct Client {
     base: String,
     token: String,
+    /// The owner key of this data dir (the `owner-key` file), sent on the
+    /// owner-only routes (`daemon_api::owner::OWNER_ROUTES`) and nowhere else.
+    owner_key: Option<String>,
     http: reqwest::Client,
 }
 
 impl Client {
+    /// A scoped MCP connection is loopback-only and never follows redirects.
+    /// Callers supply the scoped credential, not the daemon owner token.
+    pub fn scoped(base: &str, token: String) -> Result<Self> {
+        let url =
+            url::Url::parse(base).map_err(|_| fail(exit::REJECTED, "invalid MCP daemon URL"))?;
+        let local = url
+            .host_str()
+            .is_some_and(|h| h == "localhost" || h == "127.0.0.1" || h == "[::1]" || h == "::1");
+        if !local
+            || url.scheme() != "http"
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || url.path() != "/"
+        {
+            return Err(fail(
+                exit::REJECTED,
+                "MCP daemon URL must be an HTTP loopback origin",
+            ));
+        }
+        if !token.starts_with("praxi-mcp.") {
+            return Err(fail(exit::AUTH, "MCP serve requires a scoped credential"));
+        }
+        Ok(Self {
+            base: base.trim_end_matches('/').to_owned(),
+            token,
+            owner_key: None,
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|_| fail(exit::GENERIC, "cannot build scoped MCP client"))?,
+        })
+    }
+
+    /// Bounded MCP facade request. Errors never echo response content, request
+    /// arguments, URLs or bearer strings supplied by an untrusted daemon.
+    pub async fn mcp_request(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
+        let endpoint = path.split('?').next().unwrap_or_default();
+        if !((method == Method::GET && endpoint == "/v1/mcp-server/tools")
+            || (method == Method::POST && endpoint == "/v1/mcp-server/call"))
+        {
+            return Err(fail(exit::REJECTED, "not an MCP facade endpoint"));
+        }
+        let mut request = self
+            .http
+            .request(method, format!("{}{path}", self.base))
+            .bearer_auth(&self.token)
+            .timeout(daemon_api::mcp_server::MCP_APPROVAL_WAIT + Duration::from_secs(5));
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let mut response = request
+            .send()
+            .await
+            .map_err(|_| fail(exit::UNREACHABLE, "MCP daemon request failed"))?;
+        if !response.status().is_success() {
+            return Err(fail(
+                exit::REJECTED,
+                format!(
+                    "MCP daemon refused the request ({})",
+                    response.status().as_u16()
+                ),
+            ));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| fail(exit::GENERIC, "MCP response could not be read"))?
+        {
+            if bytes.len().saturating_add(chunk.len()) > 128 * 1024 {
+                return Err(fail(exit::GENERIC, "MCP response exceeds its byte budget"));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        // The daemon applies the production redactor. Independently keep this
+        // process's own bearer out of any echoed success payload as well.
+        // Decode first: JSON escapes must not let a reflected bearer evade
+        // masking and become visible only after the caller parses the value.
+        let value: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| fail(exit::GENERIC, "invalid MCP response"))?;
+        let mut redactor = secret_store::Redactor::new();
+        redactor.add_secret(&self.token);
+        serde_json::from_str(&redactor.redact(&value.to_string()))
+            .map_err(|_| fail(exit::GENERIC, "invalid MCP response"))
+    }
+
     /// Client for `base` (e.g. `http://127.0.0.1:47821`) with a bearer token.
     pub fn new(base: &str, token: String) -> Self {
         Self {
             base: base.trim_end_matches('/').to_owned(),
             token,
+            owner_key: None,
             http: reqwest::Client::new(),
         }
+    }
+
+    /// Present `key` on the owner-only routes (the terminal owner's authority).
+    #[must_use]
+    pub fn with_owner_key(mut self, key: Option<String>) -> Self {
+        self.owner_key = key;
+        self
     }
 
     fn unreachable(&self, e: &reqwest::Error) -> Box<dyn std::error::Error> {
@@ -91,6 +200,14 @@ impl Client {
         let msg = body["error"]["message"]
             .as_str()
             .map_or_else(|| status.to_string(), str::to_owned);
+        if body["error"]["code"] == daemon_api::owner::OWNER_REQUIRED {
+            return Err(fail(
+                exit::AUTH,
+                "this needs the owner key. A daemon started by the Praxi app keeps it in memory only: \
+                 do this in the app, or stop the app and run `bot serve` in a terminal (it keeps the \
+                 key in the `owner-key` file of the data dir, which this command reads)",
+            ));
+        }
         let code = match status {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => exit::AUTH,
             StatusCode::NOT_FOUND => exit::NOT_FOUND,
@@ -102,11 +219,41 @@ impl Client {
 
     /// Send a request, return the JSON body (`Null` for empty bodies).
     pub async fn request(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value> {
+        self.request_with(method, path, body, None).await
+    }
+
+    /// An owner-only request: also carries the owner key (host: the data dir's
+    /// `owner-key` file) in `x-praxi-owner-key`.
+    pub async fn request_owner(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        owner_key: &str,
+    ) -> Result<Value> {
+        self.request_with(method, path, body, Some(owner_key)).await
+    }
+
+    async fn request_with(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        owner_key: Option<&str>,
+    ) -> Result<Value> {
+        let owner_key = owner_key.or_else(|| {
+            self.owner_key
+                .as_deref()
+                .filter(|_| daemon_api::owner::is_owner_route(method.as_str(), path))
+        });
         let mut rb = self
             .http
             .request(method, format!("{}{path}", self.base))
             .bearer_auth(&self.token)
             .timeout(Duration::from_secs(30));
+        if let Some(key) = owner_key {
+            rb = rb.header(daemon_api::owner::OWNER_HEADER, key);
+        }
         if let Some(b) = body {
             rb = rb.json(&b);
         }
