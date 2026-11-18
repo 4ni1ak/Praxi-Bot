@@ -41,14 +41,11 @@ use crate::{
 /// The whole login, from start to a confirmed sign-in.
 pub(crate) const LOGIN_LIFETIME: Duration = Duration::from_secs(10 * 60);
 /// How long the CLI may take to show its page.
-const STARTUP: Duration = Duration::from_secs(30);
+pub(crate) const STARTUP: Duration = Duration::from_secs(30);
 
-/// Tests shorten the two limits above (milliseconds; 0 = production values).
+/// Tests can shorten the login lifetime (milliseconds; 0 = production value).
 #[cfg(test)]
 pub(crate) static LIFETIME_TEST_MS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-#[cfg(test)]
-pub(crate) static STARTUP_TEST_MS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
 fn lifetime() -> Duration {
@@ -59,13 +56,6 @@ fn lifetime() -> Duration {
     LOGIN_LIFETIME
 }
 
-fn startup() -> Duration {
-    #[cfg(test)]
-    if let ms @ 1.. = STARTUP_TEST_MS.load(std::sync::atomic::Ordering::SeqCst) {
-        return Duration::from_millis(ms);
-    }
-    STARTUP
-}
 /// How long the CLI may take after the code was handed to it.
 const AFTER_CODE: Duration = Duration::from_secs(60);
 
@@ -311,7 +301,7 @@ async fn run_job(
     };
     // 1. The page (and code) the vendor's CLI wants the person to use.
     let prompt = tokio::select! {
-        p = run.next_prompt(spec, startup()) => p,
+        p = run.next_prompt(spec, STARTUP) => p,
         () = cancel.cancelled() => { run.terminate().await; finish(&s, engine, id, "cancelled", None); return; }
         () = shutdown.cancelled() => { run.terminate().await; finish(&s, engine, id, "cancelled", None); return; }
     };
