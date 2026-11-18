@@ -12,8 +12,8 @@ use crate::{
     changes, cli_login, components, composio, composio_routes, doctor, doctor_routes, dto, email,
     email_routes, error, file_access, fill_routes, host, host_admin, host_copy, host_import,
     host_links, host_setup, knowledge, knowledge_settings, live_view, mcp, mcp_routes, mcp_server,
-    routes, skill_hub, skill_management, skills, sse, terminal, trusted_folders, voice, voice_routes,
-    web, web_routes,
+    routes, skill_hub, skill_management, skills, sse, terminal, trusted_folders, voice,
+    voice_routes, web, web_routes,
 };
 
 struct Security;
