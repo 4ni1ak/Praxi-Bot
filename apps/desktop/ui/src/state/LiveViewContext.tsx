@@ -64,6 +64,8 @@ import {
 } from "../lib/liveViewRelease.ts";
 import { admitSnapshot, createSnapshotSequencer } from "../lib/snapshotOrder.ts";
 import { runReconnectLoop } from "../lib/liveViewReconnect.ts";
+import { liveViewErrorCode } from "../lib/liveViewError.ts";
+import { SCREEN_START_TIMEOUT_MS } from "../lib/computerView.ts";
 import {
   consumeLiveViewStream,
   type DecodedFrameRecord,
@@ -91,7 +93,9 @@ interface LiveViewContextValue {
   controlState: ControlStateDto | null;
   state: LiveViewControllerState;
   frameUrl: string | null;
-  streamFailure: "permission" | "failed" | null;
+  frameBlob: Blob | null;
+  streamFailure: string | null;
+  retryStream: () => void;
   streamPaused: boolean;
   viewerOpen: boolean;
   loadingTargets: boolean;
@@ -219,9 +223,20 @@ export function LiveViewProvider({
   const [documentHidden, setDocumentHidden] = useState<boolean>(() =>
     typeof document !== "undefined" ? document.visibilityState === "hidden" : false
   );
-  const [frameUrl, setFrameUrl] = useState<string | null>(null);
+  const [presentedFrame, setPresentedFrame] = useState<{ url: string; blob: Blob } | null>(null);
+  const frameUrl = presentedFrame?.url ?? null;
+  const frameBlob = presentedFrame?.blob ?? null;
   const [streamPaused, setStreamPaused] = useState(false);
-  const [streamFailure, setStreamFailure] = useState<"permission" | "failed" | null>(null);
+  const [streamFailure, setStreamFailure] = useState<string | null>(null);
+  const [viewerTimedOut, setViewerTimedOut] = useState(false);
+  const [streamAttempt, setStreamAttempt] = useState(0);
+  const retryStream = useCallback(() => {
+    if (!isControlBusy(stateRef.current)) {
+      setStreamFailure(null);
+      setViewerTimedOut(false);
+      setStreamAttempt((attempt) => attempt + 1);
+    }
+  }, []);
   const [panelAction, setPanelAction] = useState<PanelActionHighlight | null>(
     null
   );
@@ -482,7 +497,7 @@ export function LiveViewProvider({
     hasClient: Boolean(client),
     documentHidden,
     target: selectedTarget,
-    viewerOpen,
+    viewerOpen: viewerOpen && !viewerTimedOut,
     cardRequested: cardDemand.active
   });
 
@@ -506,13 +521,27 @@ export function LiveViewProvider({
 
   const activeSessionRef = useRef<SessionInfo | null>(null);
 
+  useEffect(() => {
+    if (!viewerOpen) {
+      setViewerTimedOut(false);
+      return undefined;
+    }
+    if (frameUrl || viewerTimedOut || isControlBusy(stateRef.current)) return undefined;
+    const id = window.setTimeout(() => {
+      if (!isControlBusy(stateRef.current)) {
+        setViewerTimedOut(true);
+        setStreamFailure((failure) => failure ?? "timeout");
+      }
+    }, SCREEN_START_TIMEOUT_MS);
+    return () => window.clearTimeout(id);
+  }, [viewerOpen, frameUrl, streamAttempt, viewerTimedOut]);
+
   // Create/delete view session strictly based on panel/viewer demand and target identity.
   useEffect(() => {
     if (!wantSession || !client || !selectedTarget) {
       const stale = activeSessionRef.current;
       activeSessionRef.current = null;
-      setFrameUrl(null);
-      setStreamFailure(null);
+      setPresentedFrame(null);
       if (stale && client) {
         void client.deleteViewSession(stale.session_id).catch(() => undefined);
       }
@@ -552,7 +581,7 @@ export function LiveViewProvider({
         return;
       }
 
-      const presenter: FramePresenter<string> = {
+      const presenter: FramePresenter<{ url: string; blob: Blob }> = {
         decodeAndBind: async (frame: DecodedFrameRecord) => {
           const mime =
             frame.header.codec === "webp" ? "image/webp" : "image/jpeg";
@@ -565,14 +594,14 @@ export function LiveViewProvider({
             const img = new Image();
             img.src = url;
             await img.decode();
-            return url;
+            return { url, blob };
           } catch (err) {
             activeUrlsRef.current.delete(url);
             URL.revokeObjectURL(url);
             throw err;
           }
         },
-        release: (url: string) => {
+        release: ({ url }) => {
           const revoke = () => {
             if (activeUrlsRef.current.has(url)) {
               activeUrlsRef.current.delete(url);
@@ -599,9 +628,9 @@ export function LiveViewProvider({
             applyStatusRecord(prev, statusHeader, Date.now())
           );
         },
-        onFramePresented: (frame, url, metrics) => {
+        onFramePresented: (frame, presentation, metrics) => {
           setStreamFailure(null);
-          setFrameUrl(url);
+          setPresentedFrame(presentation);
           const nowMs = Date.now();
           updateState((prev) => applyFrameRendered(prev, frame.header, nowMs));
 
@@ -656,11 +685,7 @@ export function LiveViewProvider({
         },
         onDisconnected: (err) => {
           if (err instanceof ApiError) {
-            if (err.status === 401 || err.status === 403) {
-              setStreamFailure("permission");
-            } else if (err.status === 429 || err.status === 503) {
-              setStreamFailure("failed");
-            }
+            setStreamFailure(liveViewErrorCode(err));
           }
           inputQueueRef.current.clear();
           updateState((prev) => applyStreamDisconnected(prev));
@@ -689,8 +714,7 @@ export function LiveViewProvider({
     return () => {
       abort.abort();
       activeSessionRef.current = null;
-      setFrameUrl(null);
-      setStreamFailure(null);
+      setPresentedFrame(null);
       inputQueue.clear();
       if (mountedSessionId) {
         void client.deleteViewSession(mountedSessionId).catch(() => undefined);
@@ -701,6 +725,7 @@ export function LiveViewProvider({
   }, [
     wantSession,
     client,
+    streamAttempt,
     selectedTarget?.target_id,
     selectedTarget?.generation
   ]);
@@ -1106,6 +1131,8 @@ export function LiveViewProvider({
   };
 
   const openViewer = useCallback((targetId?: string) => {
+    setStreamFailure(null);
+    setViewerTimedOut(false);
     // Never retarget while holding/acquiring control.
     if (targetId && !isControlBusy(stateRef.current)) {
       setSelectedTargetId(targetId);
@@ -1167,7 +1194,9 @@ export function LiveViewProvider({
       controlState,
       state,
       frameUrl,
+      frameBlob,
       streamFailure,
+      retryStream,
       streamPaused,
       viewerOpen,
       loadingTargets,
@@ -1202,7 +1231,9 @@ export function LiveViewProvider({
       controlState,
       state,
       frameUrl,
+      frameBlob,
       streamFailure,
+      retryStream,
       streamPaused,
       viewerOpen,
       loadingTargets,

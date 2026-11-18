@@ -97,8 +97,18 @@ pub(crate) async fn frames(
         session.stream = Some(cancel.clone());
     }
     let source = target_impl.frame_source();
-    // Bounded like every backend call made under the executor.
-    let subscription = match super::bounded(source.subscribe(profile)).await {
+    // A cold browser can need longer to start capture than the other backend calls.
+    let subscribe = tokio::time::timeout(Duration::from_secs(6), source.subscribe(profile))
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::GATEWAY_TIMEOUT,
+                "timeout",
+                "the screen backend did not start capture in time",
+            )
+        })
+        .and_then(|result| result.map_err(super::backend));
+    let subscription = match subscribe {
         Ok(sub) => sub,
         Err(e) => {
             if let Some(session) = live.sessions.lock().get_mut(&id) {

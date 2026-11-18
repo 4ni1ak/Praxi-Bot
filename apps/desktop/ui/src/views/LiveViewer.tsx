@@ -81,6 +81,8 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
     controlState,
     state,
     frameUrl,
+    streamFailure,
+    retryStream,
     viewerOpen,
     loadingTargets,
     panelAction,
@@ -448,18 +450,23 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
         </div>
       </header>
 
-      {otherOwner || state.lastError || state.disconnected || state.needsResync ? (
+      {otherOwner || state.lastError || streamFailure || state.disconnected || state.needsResync ? (
         <div className={styles.statusLine} role="status">
           {otherOwner ? (
             <strong>{t("liveView.otherOwner", { owner: otherOwner })}</strong>
           ) : null}
-          {state.lastError ? (
+          {state.lastError || streamFailure ? (
             <span className={styles.errorInline} role="alert">
-              {t(`liveView.errors.${state.lastError.code}`, {
-                defaultValue: t(`liveView.reasons.${state.lastError.code}`, {
+              {t(`liveView.errors.${state.lastError?.code ?? streamFailure}`, {
+                defaultValue: t(`liveView.reasons.${state.lastError?.code ?? streamFailure}`, {
                   defaultValue: t("liveView.errors.generic")
                 })
               })}
+              {streamFailure && !frameUrl ? (
+                <Button variant="secondary" size="sm" onClick={retryStream}>
+                  {t("computerCard.retry")}
+                </Button>
+              ) : null}
             </span>
           ) : state.disconnected ? (
             <span className={styles.errorInline}>{t("liveView.reconnecting")}</span>

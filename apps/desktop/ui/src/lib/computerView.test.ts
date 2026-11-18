@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { deriveView, formatLive, IDLE_PAUSE_MS, measureFps, type ViewInputs } from "./computerView.ts";
+import { deriveView, formatLive, IDLE_PAUSE_MS, measureFps, SCREEN_START_TIMEOUT_MS, type ViewInputs } from "./computerView.ts";
 import { gradientBase, gradientVars, hexToOklch, NEUTRAL_CHROMA } from "./botGradient.ts";
 
 const base: ViewInputs = {
@@ -30,6 +30,7 @@ test("the computer card never starts a view by itself: idle until asked, then st
 });
 
 test("a card start resolves to a frame, an unavailable reason, or a retryable timeout", () => {
+  assert.equal(SCREEN_START_TIMEOUT_MS, 6_000);
   const starting: ViewInputs = { ...base, wanted: true, hasTarget: true, targetsStatus: "ok" };
   assert.equal(deriveView(starting).kind, "starting");
   assert.equal(deriveView({ ...starting, hasFrame: true }).kind, "live");

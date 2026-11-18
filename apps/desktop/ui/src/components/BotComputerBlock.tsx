@@ -23,7 +23,9 @@ function reasonKey(reason: UnavailableReason | null): { key: string; detail?: st
   if (reason && typeof reason === "object") {
     return "noScreen" in reason
       ? { key: "computerCard.reason.noScreen", detail: noScreenDetailKey(reason.noScreen) }
-      : { key: `liveView.reasons.${reason.targetReason}` };
+      : "streamError" in reason
+        ? { key: `liveView.errors.${reason.streamError}` }
+        : { key: `liveView.reasons.${reason.targetReason}` };
   }
   return { key: `computerCard.reason.${reason ?? "failed"}` };
 }
@@ -102,7 +104,7 @@ export function BotComputerBlock({
         : view.kind === "paused"
           ? t("computerCard.hint.paused")
           : view.kind === "unavailable" || view.kind === "timeout"
-            ? t(rk, { name: serverName || t("computerPicker.host"), detail: detail ? t(detail) : "" })
+            ? t(rk, { name: serverName || t("computerPicker.host"), detail: detail ? t(detail) : "", defaultValue: t("computerCard.reason.failed") })
             : "";
 
   let body: ReactNode = null;
@@ -190,7 +192,11 @@ export function BotComputerBlock({
             </>
           ) : (
             <>
-              <BotGradient color={botColor} still={view.kind === "paused" || view.kind === "unavailable" || view.kind === "timeout"} />
+              {view.previewUrl ? (
+                <img className={styles.frame} src={view.previewUrl} alt="" draggable={false} />
+              ) : (
+                <BotGradient color={botColor} still={view.kind === "paused" || view.kind === "unavailable" || view.kind === "timeout"} />
+              )}
               {body}
               {hint ? <div className={styles.hint}>{hint}</div> : null}
             </>

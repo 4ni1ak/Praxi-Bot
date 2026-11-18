@@ -34,6 +34,8 @@ export function useComputerView(opts: {
   const [arrivals, setArrivals] = useState<number[]>([]);
   const [liveSinceMs, setLiveSinceMs] = useState<number | null>(null);
   const [fps, setFps] = useState<number | null>(null);
+  const lastFrame = useRef<Blob | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const { selectedTarget, targetsStatus, availability, frameUrl, state, viewerOpen } = view;
   const summary = selectedTarget ? summarizeTarget(selectedTarget) : null;
@@ -79,11 +81,18 @@ export function useComputerView(opts: {
     setWanted(false);
     setPausedIdle(false);
     setStartFailure(null);
+    lastFrame.current = null;
   }, [opts.side, opts.botId, activeComputerId]);
 
   useEffect(() => {
-    if (demanding && view.streamFailure && !frameUrl) {
-      setStartFailure(view.streamFailure);
+    if (!opts.visible) {
+      lastFrame.current = null;
+    }
+  }, [opts.visible]);
+
+  useEffect(() => {
+    if (demanding && !frameUrl && (view.streamFailure === "unauthorized" || view.streamFailure === "forbidden")) {
+      setStartFailure({ streamError: view.streamFailure });
     }
   }, [demanding, view.streamFailure, frameUrl]);
 
@@ -125,6 +134,22 @@ export function useComputerView(opts: {
 
   // Frame rate and live time.
   const live = derived.kind === "live";
+  const { frameBlob } = view;
+  useEffect(() => {
+    if (live && !viewerOpen && frameBlob) {
+      lastFrame.current = frameBlob;
+    }
+  }, [live, viewerOpen, frameBlob]);
+  useEffect(() => {
+    const retained = lastFrame.current;
+    if (!opts.visible || live || !retained) {
+      setPreviewUrl(null);
+      return undefined;
+    }
+    const url = URL.createObjectURL(retained);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [opts.visible, live, opts.side, opts.botId, activeComputerId]);
   useEffect(() => {
     setLiveSinceMs((prev) => (live ? (prev ?? Date.now()) : null));
     if (!live) {
@@ -154,14 +179,15 @@ export function useComputerView(opts: {
     }
   }, [pendingTakeover, viewerOpen, state.session, requestTakeover]);
 
-  const refreshTargets = view.refreshTargets;
+  const { refreshTargets, retryStream } = view;
   const start = useCallback(() => {
     lastTouch.current = Date.now();
     setPausedIdle(false);
     setStartFailure(null);
     setWanted(true);
+    retryStream();
     void refreshTargets();
-  }, [refreshTargets]);
+  }, [refreshTargets, retryStream]);
   const stop = useCallback(() => {
     setWanted(false);
     setPausedIdle(false);
@@ -188,8 +214,13 @@ export function useComputerView(opts: {
   return {
     kind,
     paused: forced === "paused" ? "idle" : derived.paused,
-    unavailable: forced === "offline" ? "offline" : derived.unavailable,
+    unavailable: forced === "offline"
+      ? "offline"
+      : derived.kind === "timeout" && view.streamFailure && view.streamFailure !== "timeout"
+        ? { streamError: view.streamFailure }
+        : derived.unavailable,
     frameUrl: live ? frameUrl : null,
+    previewUrl,
     resolution: live && frame ? `${frame.width}×${frame.height}` : null,
     fps: live ? fps : null,
     liveSinceMs,

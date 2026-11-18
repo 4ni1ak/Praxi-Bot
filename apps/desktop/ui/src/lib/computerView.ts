@@ -21,6 +21,7 @@ export type UnavailableReason =
   | "permission"
   | "failed"
   | "timeout"
+  | { streamError: string }
   | { targetReason: string }
   | { noScreen: string };
 
@@ -30,6 +31,7 @@ export interface ComputerViewModel {
   unavailable: UnavailableReason | null;
   /** The current frame (blob URL) while `live`. */
   frameUrl: string | null;
+  previewUrl: string | null;
   /** `1280×800` once a frame is known. */
   resolution: string | null;
   /** Frames per second, measured; `null` until measured. */
@@ -57,7 +59,7 @@ export type ComputerView = ComputerViewModel & ComputerViewActions;
 
 /** No interaction for this long ends a view (the design says three minutes). */
 export const IDLE_PAUSE_MS = 3 * 60 * 1000;
-export const SCREEN_START_TIMEOUT_MS = 15_000;
+export const SCREEN_START_TIMEOUT_MS = 6_000;
 
 export interface ViewInputs {
   /** The owner pressed start and has not stopped it. */
