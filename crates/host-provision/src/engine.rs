@@ -892,6 +892,14 @@ impl Engine<'_> {
                     StepResult::warn("health.desktop", "Virtual display and desktop session", format!("xvfb={} desktop={}", f.get("xvfb"), f.get("desktop")), "Run `bot host repair`; the host works without a screen but live view will be empty.")
                 },
             );
+            self.emit(
+                report,
+                if f.flag("browser") {
+                    StepResult::pass("health.browser", "Browser for the bot's computer", "a non-snap Chrome/Chromium is installed")
+                } else {
+                    StepResult::warn("health.browser", "Browser for the bot's computer", "no usable browser found on the host", "Run `bot host repair <user@server>` to retry the browser download (the server must reach storage.googleapis.com). Until then the bot's browser tools report that no browser is installed.")
+                },
+            );
         }
         let Some(id) = self.rec().paired_host_id.clone() else {
             return;

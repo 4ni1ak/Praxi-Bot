@@ -2053,6 +2053,14 @@
         "timeout": "Das Installationsprogramm hat zu lange gebraucht und wurde gestoppt.",
         "unavailable": "Das Installationsprogramm konnte nicht gestartet werden."
       }
+    },
+    "tools": {
+      "label": "Werkzeuge, die Bots nutzen dürfen",
+      "restricted": "Die Werkzeuge sind durch eine eigene Erlaubnisliste eingeschränkt; bearbeiten Sie sie in den Servereinstellungen.",
+      "effect": {
+        "write": "ändert Daten",
+        "destructive": "kann löschen oder senden"
+      }
     }
   },
   "help": {
