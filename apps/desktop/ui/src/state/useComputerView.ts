@@ -37,7 +37,7 @@ export function useComputerView(opts: {
   const lastFrame = useRef<Blob | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  const { selectedTarget, targetsStatus, availability, frameUrl, state, viewerOpen } = view;
+  const { selectedTarget, targetsStatus, targetsError, availability, frameUrl, state, viewerOpen } = view;
   const summary = selectedTarget ? summarizeTarget(selectedTarget) : null;
   const issue = onHost ? serverScreenIssue(hostState) : null;
   const asked = wanted && opts.visible;
@@ -52,10 +52,10 @@ export function useComputerView(opts: {
         targetUnavailable: summary && !summary.available ? summary.reason : null,
         startFailure,
         noScreen: noScreenCode(availability),
-        permissionRefused: onHost && !issue && targetsStatus === "failed",
+        targetsError,
         hasFrame: Boolean(frameUrl)
       }),
-    [asked, pausedIdle, issue, targetsStatus, selectedTarget, summary, availability, onHost, frameUrl, startFailure]
+    [asked, pausedIdle, issue, targetsStatus, targetsError, selectedTarget, summary, availability, frameUrl, startFailure]
   );
 
   // The view session exists only while the owner asked for it and the panel is on screen.

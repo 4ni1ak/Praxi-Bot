@@ -75,8 +75,8 @@ export interface ViewInputs {
   startFailure: UnavailableReason | null;
   /** Code of the host's "no screen" note, if any. */
   noScreen: string | null;
-  /** The computer is a server and the screen list was refused (no screen permission). */
-  permissionRefused: boolean;
+  /** The screen list error, when discovery failed. */
+  targetsError: string | null;
   hasFrame: boolean;
 }
 
@@ -103,11 +103,9 @@ export function deriveView(i: ViewInputs): DerivedView {
     if (i.startFailure) {
       return out(i.startFailure === "timeout" ? "timeout" : "unavailable", i.startFailure);
     }
-    if (i.permissionRefused) {
-      return out("unavailable", "permission");
-    }
     if (i.targetsStatus === "failed") {
-      return out("unavailable", "failed");
+      const code = i.targetsError;
+      return out("unavailable", code === "forbidden" ? "permission" : code ? { streamError: code } : "failed");
     }
     if (i.targetUnavailable) {
       return out("unavailable", { targetReason: i.targetUnavailable });

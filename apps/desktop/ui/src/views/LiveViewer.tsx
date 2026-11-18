@@ -82,6 +82,7 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
     state,
     frameUrl,
     streamFailure,
+    targetsError,
     retryStream,
     viewerOpen,
     loadingTargets,
@@ -101,6 +102,7 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
     setComposing
   } = view;
 
+  const viewFailure = streamFailure ?? (!frameUrl ? targetsError : null);
   const [selectedOutcome, setSelectedOutcome] = useState<HumanAction | "none">(
     "none"
   );
@@ -450,20 +452,23 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
         </div>
       </header>
 
-      {otherOwner || state.lastError || streamFailure || state.disconnected || state.needsResync ? (
+      {otherOwner || state.lastError || viewFailure || state.disconnected || state.needsResync ? (
         <div className={styles.statusLine} role="status">
           {otherOwner ? (
             <strong>{t("liveView.otherOwner", { owner: otherOwner })}</strong>
           ) : null}
-          {state.lastError || streamFailure ? (
+          {state.lastError || viewFailure ? (
             <span className={styles.errorInline} role="alert">
-              {t(`liveView.errors.${state.lastError?.code ?? streamFailure}`, {
-                defaultValue: t(`liveView.reasons.${state.lastError?.code ?? streamFailure}`, {
+              {t(`liveView.errors.${state.lastError?.code ?? viewFailure}`, {
+                defaultValue: t(`liveView.reasons.${state.lastError?.code ?? viewFailure}`, {
                   defaultValue: t("liveView.errors.generic")
                 })
               })}
-              {streamFailure && !frameUrl ? (
-                <Button variant="secondary" size="sm" onClick={retryStream}>
+              {viewFailure && !frameUrl ? (
+                <Button variant="secondary" size="sm" onClick={() => {
+                  retryStream();
+                  void refreshTargets();
+                }}>
                   {t("computerCard.retry")}
                 </Button>
               ) : null}

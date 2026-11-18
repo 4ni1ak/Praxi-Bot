@@ -100,6 +100,7 @@ interface LiveViewContextValue {
   viewerOpen: boolean;
   loadingTargets: boolean;
   targetsStatus: TargetsStatus;
+  targetsError: string | null;
   availability: TargetUnavailable[];
   panelAction: PanelActionHighlight | null;
   recoveryPrompt: RecoveryPrompt | null;
@@ -192,6 +193,7 @@ export function LiveViewProvider({
   }, []);
   const [loadingTargets, setLoadingTargets] = useState(false);
   const [targetsStatus, setTargetsStatus] = useState<TargetsStatus>("unknown");
+  const [targetsError, setTargetsError] = useState<string | null>(null);
   const [availability, setAvailability] = useState<TargetUnavailable[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [controlState, setControlStateRaw] = useState<ControlStateDto | null>(
@@ -366,6 +368,7 @@ export function LiveViewProvider({
       targetsForRef.current = { client, targets: nextTargets };
       setTargets(nextTargets);
       setTargetsStatus("ok");
+      setTargetsError(null);
       // Why a screen is missing is optional context: its failure never hides the targets.
       client
         .listViewAvailability()
@@ -379,9 +382,10 @@ export function LiveViewProvider({
         updateState((prev) => applyControlStateDto(prev, nextCtrl));
         takeoverStopRef.current?.pump();
       }
-    } catch {
+    } catch (err) {
       if (clientRef.current === client) {
         setTargetsStatus("failed");
+        setTargetsError(err instanceof ApiError ? liveViewErrorCode(err) : "network");
       }
     } finally {
       if (clientRef.current === client) {
@@ -399,6 +403,7 @@ export function LiveViewProvider({
     if (!client) {
       setTargets([]);
       setTargetsStatus("unknown");
+      setTargetsError(null);
       setControlState(null);
       updateState(createInitialLiveViewState(null));
       return undefined;
@@ -1201,6 +1206,7 @@ export function LiveViewProvider({
       viewerOpen,
       loadingTargets,
       targetsStatus,
+      targetsError,
       availability,
       panelAction,
       recoveryPrompt,
@@ -1238,6 +1244,7 @@ export function LiveViewProvider({
       viewerOpen,
       loadingTargets,
       targetsStatus,
+      targetsError,
       availability,
       panelAction,
       recoveryPrompt,

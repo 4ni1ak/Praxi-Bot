@@ -12,7 +12,7 @@ const base: ViewInputs = {
   targetUnavailable: null,
   startFailure: null,
   noScreen: null,
-  permissionRefused: false,
+  targetsError: null,
   hasFrame: false
 };
 
@@ -47,8 +47,12 @@ test("an unreachable server or a refused screen is 'unavailable' with a reason, 
   assert.deepEqual(deriveView({ ...base, issue: "offline" }), { kind: "unavailable", unavailable: "offline", paused: null });
   assert.equal(deriveView({ ...base, issue: "connecting" }).kind, "idle");
   assert.equal(deriveView({ ...base, issue: "connecting", wanted: true }).unavailable, "connecting");
-  assert.equal(deriveView({ ...base, wanted: true, permissionRefused: true, targetsStatus: "failed" }).unavailable, "permission");
+  assert.equal(deriveView({ ...base, wanted: true, targetsError: "forbidden", targetsStatus: "failed" }).unavailable, "permission");
   assert.deepEqual(deriveView({ ...base, wanted: true, targetsStatus: "ok", noScreen: "no_display" }).unavailable, { noScreen: "no_display" });
+  assert.deepEqual(
+    deriveView({ ...base, wanted: true, targetsError: "network", targetsStatus: "failed" }).unavailable,
+    { streamError: "network" }
+  );
   assert.equal(formatLive(42_000), "0:42");
   assert.equal(measureFps([0, 500, 1000, 1500, 2000, 2500], 2500), 2);
   assert.equal(measureFps([2400], 2500), null);
