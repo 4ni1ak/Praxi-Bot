@@ -2949,7 +2949,17 @@
       "toolsLabel": "Let {{name}} use mail",
       "toolsOnHint": "Reading is allowed. Sending always follows the permission mode of this bot, and asks first by default.",
       "toolsOffHint": "The mailbox is connected, but {{name}} cannot see any mail tools yet. Turn this on to let it read and write mail.",
-      "toolsError": "Could not change the mail access: {{message}}"
+      "toolsError": "Could not change the mail access: {{message}}",
+      "recent": "Show recent mail",
+      "hideRecent": "Hide recent mail",
+      "recentError": "Could not read the inbox: {{message}}",
+      "noMessages": "The inbox is empty.",
+      "noSubject": "(no subject)",
+      "sendTest": "Send test mail",
+      "sendingTest": "Sending…",
+      "sendTestHint": "Sends one short test message to {{address}} itself, to nobody else.",
+      "testSent": "Test mail sent to {{address}}. It should arrive in a moment.",
+      "testError": "The test mail could not be sent: {{message}}"
     }
   },
   "terminal": {

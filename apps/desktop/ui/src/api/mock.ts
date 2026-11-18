@@ -1404,6 +1404,15 @@ export class MockApiClient extends ApiClient {
     if (idx < 0) {
       throw new ApiError(404, "not_found", `no account ${name}`);
     }
+    if (action === "messages") {
+      return [
+        { id: "12", subject: "Your invoice for October", from: "Billing <billing@example.com>", date: "2026-11-18T09:12:00Z", unread: true },
+        { id: "11", subject: "Lunch on Friday?", from: "Sam <sam@example.com>", date: "2026-11-17T16:40:00Z", unread: false }
+      ];
+    }
+    if (action === "send-test") {
+      return { sent_to: this.emailAccounts[idx].address };
+    }
     if (action === "test") {
       return this.emailAccounts[idx].provider === "agentmail"
         ? { imap: "ok", smtp: "ok", ok: true, api: "ok" }

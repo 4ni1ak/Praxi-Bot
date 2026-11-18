@@ -1323,6 +1323,14 @@ fn api_routes() -> Router<AppState> {
             "/v1/email/accounts/{name}/test",
             post(e::test_email_account),
         )
+        .route(
+            "/v1/email/accounts/{name}/messages",
+            get(e::list_email_messages),
+        )
+        .route(
+            "/v1/email/accounts/{name}/send-test",
+            post(e::send_email_test),
+        )
         .route("/v1/email/test", post(e::test_email_draft))
         .route(
             "/v1/web/search",

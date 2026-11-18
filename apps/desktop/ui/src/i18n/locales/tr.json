@@ -2949,7 +2949,17 @@
       "toolsLabel": "{{name}} e-posta kullanabilsin",
       "toolsOnHint": "Okumaya izin var. Göndermek her zaman bu botun izin moduna uyar ve varsayılan olarak önce sorar.",
       "toolsOffHint": "Posta kutusu bağlı ama {{name}} henüz hiçbir e-posta aracını göremiyor. E-postayı okuyup yazabilmesi için bunu aç.",
-      "toolsError": "E-posta erişimi değiştirilemedi: {{message}}"
+      "toolsError": "E-posta erişimi değiştirilemedi: {{message}}",
+      "recent": "Son postaları göster",
+      "hideRecent": "Son postaları gizle",
+      "recentError": "Gelen kutusu okunamadı: {{message}}",
+      "noMessages": "Gelen kutusu boş.",
+      "noSubject": "(konu yok)",
+      "sendTest": "Deneme postası gönder",
+      "sendingTest": "Gönderiliyor…",
+      "sendTestHint": "{{address}} adresine, yalnızca kendisine kısa bir deneme iletisi gönderir.",
+      "testSent": "Deneme postası {{address}} adresine gönderildi. Birazdan ulaşmalı.",
+      "testError": "Deneme postası gönderilemedi: {{message}}"
     }
   },
   "terminal": {

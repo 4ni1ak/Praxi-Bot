@@ -149,6 +149,9 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/email/accounts"),
     ("PUT", "/v1/email/accounts/{}"),
     ("DELETE", "/v1/email/accounts/{}"),
+    // reads headers of a mailbox / sends from it: the owner's own action, never a token's
+    ("GET", "/v1/email/accounts/{}/messages"),
+    ("POST", "/v1/email/accounts/{}/send-test"),
     ("PUT", "/v1/web/search"),
     ("PUT", "/v1/composio/key"),
     ("DELETE", "/v1/composio/key"),
