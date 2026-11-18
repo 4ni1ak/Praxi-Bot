@@ -359,7 +359,9 @@ compute their hashes using `sha256sum`, and update `version`,
 `install_cft`.
 
 Fedora/RHEL uses `chromium` from the administrator's enabled RPM repos, without
-weak dependencies; absence is an installation error. No PPA or snap is added.
+weak dependencies. When those repos have no `chromium` (Oracle Linux, for
+example), the installer falls back to the same pinned Chrome for Testing archive
+as on Ubuntu, for either CPU. No PPA or snap is added.
 An xtradeb PPA would add third-party trust and isn't needed with the official
 ARM64 archive. Playwright also supports ARM64, but adds a separate runtime and
 browser lifecycle that this installer doesn't need.
@@ -370,6 +372,25 @@ unsupported and produce a clear diagnostic. With `--skip-packages`, provide a
 working non-snap browser yourself. `BOT_BROWSER_PATH` overrides discovery;
 `PRAXI_BROWSER_PATH` remains a compatible fallback. An invalid override fails
 instead of silently choosing a different browser.
+
+Re-running the installer (`bot host repair`, upgrades) is idempotent for the
+browser: a working `/opt/praxi-browser` at the pinned version is kept and not
+downloaded again, while the shared libraries, AppArmor profile and fonts are
+re-checked. After installing, the installer checks that the browser starts and
+has all its shared libraries, and fails with the missing names if not. If the
+download fails (no route to `storage.googleapis.com`, a proxy, a full disk), the
+installer stops with the reason and these next steps: check the network from the
+server, re-run the same command (it resumes), or install a non-snap Chrome or
+Chromium yourself, set `BOT_BROWSER_PATH`, and re-run with `--skip-packages`.
+`bot host add`/`repair` reports a **Browser for the bot's computer** health
+row (warning when none is installed) next to the virtual-display row.
+
+**Fonts.** With `--with-desktop` the installer also installs
+`fonts-noto-color-emoji` and `fonts-noto-cjk` (Fedora/RHEL:
+`google-noto-emoji-color-fonts`, `google-noto-sans-cjk-ttc-fonts`) next to the
+Noto and Liberation families, so Turkish, Japanese/Chinese/Korean text and emoji
+render in the browser and in screenshots instead of empty boxes. A font package
+that is unavailable or fails to install is a warning, not an install failure.
 
 The browser needs **libcups**, the client library; it does not need a print
 server. Packages use `--no-install-recommends`. The installer disables/stops
@@ -399,8 +420,8 @@ installs, or preserving the existing `praxi-xvfb.service` geometry unless
 `--screen` is passed), running as the same unprivileged `praxi` user:
 
 - **Application menu usage & security posture:** During live-view takeover, open
-  the top-left **Applications** menu on `xfce4-panel` to launch **Web Browser**
-  (manual launch). `xfce4-terminal` and `thunar` are **not** installed or
+  the **Web Browser** icon on the desktop, or the top-left **Applications** menu on
+  `xfce4-panel`, to launch it (manual launch; it is never autostarted). `xfce4-terminal` and `thunar` are **not** installed or
   exposed in the menu by default; pass `--with-session-apps` if you explicitly
   need them, or `--without-session-apps` to hide them again. Note that
   `--without-session-apps` only writes `Hidden=true` `.desktop` overrides and
