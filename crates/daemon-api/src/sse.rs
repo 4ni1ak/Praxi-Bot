@@ -1248,10 +1248,12 @@ mod tests {
         let a = RunId::new();
         let mut w = storage::EventLogWriter::open(dir.path(), a).unwrap();
         let total = 5_200u64;
+        // Seed the whole log before replay starts, with one durable flush.
         for seq in 0..total {
-            w.append(&msg(a, seq)).unwrap();
+            w.append_buffered(&msg(a, seq)).unwrap();
             st.index_event(seq + 1, a, seq).unwrap();
         }
+        w.sync().unwrap();
         let cache = parking_lot::Mutex::new(LogCache::default());
         let (mut after, mut delivered, mut chunks) = (0, 0u64, 0);
         loop {

@@ -1132,7 +1132,7 @@ async fn a_cancelled_input_request_aborts_its_inject_invalidates_the_epoch_and_o
     assert!(!t.state.hub().override_pending().0);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn bounded_duplicate_window_requires_resync_after_sixty_four_batches() {
     let t = Test::new();
     let (id, owned, _body) = t.active(None).await;
@@ -1143,13 +1143,12 @@ async fn bounded_duplicate_window_requires_resync_after_sixty_four_batches() {
         batch
     };
     for seq in 1..=65 {
-        assert_eq!(
-            t.call(None, Method::POST, &path, Some(request(seq)))
-                .await
-                .0,
-            StatusCode::OK
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        if seq == 65 {
+            // Refill one token beyond the 64-event burst without aging out the frame.
+            tokio::time::advance(Duration::from_millis(10)).await;
+        }
+        let (status, result) = t.call(None, Method::POST, &path, Some(request(seq))).await;
+        assert_eq!(status, StatusCode::OK, "batch {seq}: {result}");
     }
     let (status, result) = t.call(None, Method::POST, &path, Some(request(1))).await;
     assert_eq!(status, StatusCode::CONFLICT);
