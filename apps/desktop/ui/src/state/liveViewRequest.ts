@@ -17,12 +17,13 @@ export const VIEWER_MAX_HEIGHT = 1080;
 export function sessionRequest(input: { viewerOpen: boolean; owning: boolean }): SessionRequest {
   if (!input.viewerOpen) {
     // The card: a small picture, a modest budget.
-    return { maxWidth: 1280, maxHeight: 800, quality: 70 };
+    return { maxWidth: 640, maxHeight: 400, quality: 70 };
   }
-  // Moving content is encoded at this ceiling; the host adds one sharper frame once it settles.
+  // Moving content is encoded at this quality (4:4:4); the host adds one lossless frame once the
+  // screen has been still for a moment. The host clamps to its own ceilings.
   return {
     maxWidth: VIEWER_MAX_WIDTH,
     maxHeight: VIEWER_MAX_HEIGHT,
-    quality: input.owning ? 80 : 85
+    quality: 70
   };
 }
