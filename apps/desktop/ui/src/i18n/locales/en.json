@@ -3839,6 +3839,22 @@
     "auto": "Automatic (matches the app language)",
     "online": "online",
     "speed": "Speed",
-    "unsupported": "This system offers no speech voices."
+    "unsupported": "This system offers no speech voices.",
+    "dictate": "Dictate",
+    "dictateStop": "Stop and transcribe",
+    "micDenied": "The microphone is not available. Allow microphone access and try again.",
+    "notConfigured": "Dictation is not set up yet. Add a transcription service in Settings > General.",
+    "stt": {
+      "title": "Dictation service",
+      "description": "Where your recordings are transcribed: an OpenAI-compatible service (a cloud provider or a local whisper server).",
+      "url": "Service address",
+      "model": "Model",
+      "key": "API key",
+      "keyStored": "Key stored (type to replace)",
+      "save": "Save",
+      "saved": "Dictation settings saved",
+      "clearKey": "Remove key",
+      "privacy": "A recording is sent only when you press the microphone, and only to this address. The key stays in the secret store."
+    }
   }
 }

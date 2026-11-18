@@ -3839,6 +3839,22 @@
     "auto": "Otomatik (uygulama diline göre)",
     "online": "çevrimiçi",
     "speed": "Hız",
-    "unsupported": "Bu sistemde konuşma sesi yok."
+    "unsupported": "Bu sistemde konuşma sesi yok.",
+    "dictate": "Sesle yaz",
+    "dictateStop": "Durdur ve yazıya çevir",
+    "micDenied": "Mikrofon kullanılamıyor. Mikrofon erişimine izin verip tekrar dene.",
+    "notConfigured": "Sesle yazma henüz kurulu değil. Ayarlar > Genel bölümünden bir yazıya çevirme servisi ekle.",
+    "stt": {
+      "title": "Sesle yazma servisi",
+      "description": "Kayıtların nerede yazıya çevrileceği: OpenAI uyumlu bir servis (bulut sağlayıcı ya da yerel whisper sunucusu).",
+      "url": "Servis adresi",
+      "model": "Model",
+      "key": "API anahtarı",
+      "keyStored": "Anahtar kayıtlı (değiştirmek için yaz)",
+      "save": "Kaydet",
+      "saved": "Sesle yazma ayarları kaydedildi",
+      "clearKey": "Anahtarı sil",
+      "privacy": "Kayıt yalnızca mikrofona bastığında ve yalnızca bu adrese gönderilir. Anahtar gizli depoda kalır."
+    }
   }
 }

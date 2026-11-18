@@ -1182,6 +1182,11 @@ export class MockApiClient extends ApiClient {
       case "PUT /control":
       case "POST /control":
         return ok(this.control(method, seg, opts.body));
+      case "GET /voice":
+      case "PUT /voice":
+        return ok(this.voiceConfig(opts.body));
+      case "POST /voice":
+        return ok({ text: "This is a mock dictation." });
       case "GET /web":
       case "PUT /web":
       case "POST /web":
@@ -1424,6 +1429,18 @@ export class MockApiClient extends ApiClient {
     } as EmailAccount;
     this.emailAccounts[idx] = merged;
     return merged;
+  }
+
+  private voice = { stt_base_url: "https://api.openai.com/v1", stt_model: "whisper-1", stt_key_set: false };
+
+  private voiceConfig(body: unknown): unknown {
+    const b = (body ?? {}) as { stt_base_url?: string; stt_model?: string; stt_key?: string; clear_stt_key?: boolean };
+    this.voice = {
+      stt_base_url: b.stt_base_url || this.voice.stt_base_url,
+      stt_model: b.stt_model || this.voice.stt_model,
+      stt_key_set: b.clear_stt_key ? false : b.stt_key ? true : this.voice.stt_key_set
+    };
+    return { ...this.voice };
   }
 
   private web(method: string, seg: string[], body: unknown): unknown {

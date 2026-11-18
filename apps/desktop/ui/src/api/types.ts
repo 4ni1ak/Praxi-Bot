@@ -372,6 +372,11 @@ export type EmailProviderKind = S["EmailProviderKind"];
 export type EmailProbeStatus = S["EmailProbeStatus"];
 export type EmailTestReport = S["EmailTestReport"];
 
+export type VoiceConfig = S["VoiceConfigDto"];
+export type VoiceConfigInput = S["VoiceConfigInput"];
+export type TranscribeInput = S["TranscribeInput"];
+export type TranscribeOutput = S["TranscribeOutput"];
+
 export type WebSearchConfig = S["WebSearchConfigDto"];
 export type WebSearchConfigInput = S["WebSearchConfigInput"];
 export type WebSearchTestInput = S["WebSearchTestInput"];
