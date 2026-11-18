@@ -9911,7 +9911,7 @@
               "string",
               "null"
             ],
-            "description": "Absolute workspace folder; required for `native_tools`."
+            "description": "Absolute workspace folder for `native_tools`; when omitted the daemon creates\n`<home>/Praxi/<bot>` for the bot."
           }
         },
         "additionalProperties": false

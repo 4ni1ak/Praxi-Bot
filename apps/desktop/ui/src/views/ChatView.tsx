@@ -42,6 +42,8 @@ import { RunBar } from "../components/RunBar";
 import { RunChangesGate } from "../components/RunChangesGate";
 import { ThinkingChain } from "../components/ThinkingChain";
 import { useToast } from "../components/Toast";
+import { useEngineConsent } from "../state/EngineConsent";
+import { OPEN_AI_SETTINGS_EVENT } from "../state/useCliEngineRows";
 import {
   botView,
   configFromDraft,
@@ -96,7 +98,7 @@ import {
 } from "../state/timeline";
 import ccStyles from "../components/ChatCards.module.css";
 import styles from "./ChatView.module.css";
-import { type HumanError, humanError, humanLine, humanToolError } from "../lib/humanError";
+import { type ErrorAction, type HumanError, humanError, humanLine, humanToolError } from "../lib/humanError";
 import { ComputerTargetChip } from "../components/ComputerTargetChip";
 import { ErrorNotice } from "../components/ErrorNotice";
 
@@ -197,6 +199,7 @@ export function ChatView({
   const bot = bots.find((b) => b.id === chat?.bot_id);
   const view = bot ? botView(bot) : null;
   const { dto: providersDto } = useProviders();
+  const { askEngine, applyEngine, fixBotEngine } = useEngineConsent();
   const pickerGroups = useMemo(
     () => modelGroups(providersDto, view?.executor),
     [providersDto, view?.executor]
@@ -208,15 +211,34 @@ export function ChatView({
       return;
     }
     try {
-      await writeBotProfile(client, bot, (current) => {
+      // A CLI that only works with its own tools: the one consent step, here, before saving.
+      const answer = await askEngine(ref, bot.config);
+      if (answer === null) {
+        return;
+      }
+      const saved = await writeBotProfile(client, bot, (current) => {
         const draft = draftFromBot(current);
         draft.executor = parseModelRef(ref);
         return { name: current.name, config: configFromDraft(draft, current) };
       });
+      await applyEngine(saved.id, answer);
       await refreshBots();
       toast.show(t("modelPicker.switched", { model: ref }), "success");
     } catch (e) {
       toast.show(botWriteMessage(e, t), "danger");
+    }
+  };
+
+  // A failed turn: only the actions this view can carry out get a button.
+  const runErrorFor = (message: string): HumanError => {
+    const h = humanToolError(message);
+    return h.action === "fixEngine" || h.action === "settings" ? h : { ...h, action: undefined };
+  };
+  const onRunErrorAction = (action: ErrorAction) => {
+    if (action === "fixEngine" && bot) {
+      void fixBotEngine(bot).then((ok) => ok && toast.show(t("engineConsent.fixed"), "success"));
+    } else if (action === "settings") {
+      window.dispatchEvent(new CustomEvent(OPEN_AI_SETTINGS_EVENT));
     }
   };
 
@@ -1045,7 +1067,7 @@ export function ChatView({
               case "runError":
                 return (
                   <div key={e.key} className={styles.runError}>
-                    <ErrorNotice compact error={humanToolError(e.message)} />
+                    <ErrorNotice compact error={runErrorFor(e.message)} onAction={onRunErrorAction} />
                   </div>
                 );
               case "route": {

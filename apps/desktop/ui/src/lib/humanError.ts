@@ -30,7 +30,7 @@ export const DAEMON_ERROR_CODES = [
   "prerequisite_missing", "install_copy_only", "host_admin_forbidden", "host_admin_required", "secrets_unavailable", "secret_store_failed", "owner_key_required"
 ] as const;
 
-export type ErrorAction = "retry" | "reload" | "restartService" | "settings";
+export type ErrorAction = "retry" | "reload" | "restartService" | "settings" | "fixEngine";
 
 export interface HumanError {
   /** Stable key: the daemon code, a client code, or `generic`. */
@@ -59,7 +59,10 @@ const ACTIONS: Record<string, ErrorAction> = {
   setup_required: "settings",
   secret_store_failed: "retry",
   composio_not_configured: "settings",
-  disabled: "settings"
+  disabled: "settings",
+  engineNeedsNative: "fixEngine",
+  cliSignedOut: "settings",
+  cliNotInstalled: "settings"
 };
 
 /** Status classes for a code the table does not know. */
@@ -78,6 +81,11 @@ const STATUS_CODE: Record<number, string> = {
 
 /** Raw-text patterns, for tool results and plain errors that carry no code. First match wins. */
 const PATTERNS: ReadonlyArray<readonly [RegExp, string, ((m: RegExpExecArray) => Record<string, string>)?]> = [
+  // A coding CLI that cannot answer yet (the daemon's stable markers, see `cli_exec_error_for`).
+  [/engine_needs_native|only runs with its own tools|only works with its own tools|native_tools_open|isolation flags/i, "engineNeedsNative"],
+  [/\(signed_out\)|is signed out/i, "cliSignedOut"],
+  [/\(not_installed\)|is not installed or needs an update/i, "cliNotInstalled"],
+  [/\(quota_exceeded|usage limit reached/i, "cliQuota"],
   [/user is controlling the screen|observation paused/i, "toolScreenControl"],
   [/wrong computer:/i, "toolWrongMachine"],
   [/waiting for the pc|pc desktop unavailable|computer is offline|desktop backend is unavailable|peer is not connected/i, "toolTargetOffline"],
@@ -88,7 +96,8 @@ const PATTERNS: ReadonlyArray<readonly [RegExp, string, ((m: RegExpExecArray) =>
   [/providers_require_app_daemon|_outside_tauri|daemon_unavailable/i, "desktop_only"],
   [/denied|not allowed by the user|user rejected/i, "toolDenied"],
   [/failed to fetch|networkerror|load failed|econnrefused|enotfound|fetch failed|connection (refused|reset|lost)/i, "network"],
-  [/timed? ?out|etimedout/i, "timeout"]
+  [/timed? ?out|etimedout/i, "timeout"],
+  [/^step 'model' failed/i, "modelFailed"]
 ];
 
 /** `t` that still returns a string before i18next is initialised (plain-node tests). */
