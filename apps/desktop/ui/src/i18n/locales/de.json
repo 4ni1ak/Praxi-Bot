@@ -1600,27 +1600,27 @@
       "levels": {
         "ask": {
           "pitch": "Fragt dich, bevor er etwas ändert. Gut, solange du ihn kennenlernst.",
-          "examples": [
-            "Fragt vor dem Speichern oder Bearbeiten einer Datei",
-            "Fragt vor dem Klicken oder Tippen für dich",
-            "Fragt vor dem Ausführen eines Befehls"
-          ]
+          "examples": {
+            "0": "Fragt vor dem Speichern oder Bearbeiten einer Datei",
+            "1": "Fragt vor dem Klicken oder Tippen für dich",
+            "2": "Fragt vor dem Ausführen eines Befehls"
+          }
         },
         "balanced": {
           "pitch": "Sieht sich selbstständig um, fragt aber, bevor er etwas ändert oder sendet.",
-          "examples": [
-            "Liest Dateien und prüft deinen Bildschirm ohne Nachfrage",
-            "Fragt vor dem Löschen oder Senden",
-            "Zeigt dir zuerst, was er tun will"
-          ]
+          "examples": {
+            "0": "Liest Dateien und prüft deinen Bildschirm ohne Nachfrage",
+            "1": "Fragt vor dem Löschen oder Senden",
+            "2": "Zeigt dir zuerst, was er tun will"
+          }
         },
         "auto": {
           "pitch": "Legt einfach los. Hält nur bei Zahlungen und einer kurzen Verbotsliste an.",
-          "examples": [
-            "Bearbeitet und löscht gewöhnliche Dateien selbstständig",
-            "Führt Befehle aus und sendet Nachrichten selbstständig",
-            "Hält bei Zahlungen immer an"
-          ]
+          "examples": {
+            "0": "Bearbeitet und löscht gewöhnliche Dateien selbstständig",
+            "1": "Führt Befehle aus und sendet Nachrichten selbstständig",
+            "2": "Hält bei Zahlungen immer an"
+          }
         }
       },
       "alwaysTitle": "Immer aktiv, was du auch wählst",
@@ -2678,7 +2678,109 @@
     "railGrip": "Seitenleiste in der Größe ändern (Pfeiltasten)",
     "panelGrip": "Bot-Panel in der Größe ändern (Pfeiltasten)"
   },
+  "computerCard": {
+    "title": "Computer",
+    "thisComputer": "Dieser Computer",
+    "sideBot": "Vom Bot",
+    "sideMine": "Von mir",
+    "live": "LIVE",
+    "big": "Vergrößern",
+    "take": "Steuerung übernehmen",
+    "close": "Schließen",
+    "show": "Bildschirm anzeigen",
+    "resume": "Fortsetzen",
+    "retry": "Erneut versuchen",
+    "connecting": "Verbindung wird hergestellt",
+    "frameAlt": "Live-Bildschirm von {{name}}",
+    "terminal": "Terminal",
+    "terminalSoon": "Demnächst verfügbar",
+    "browser": "Browser",
+    "fps": "{{fps}} fps",
+    "pausedNote": "pausiert",
+    "hint": {
+      "idle": "Das Bild wird nur erzeugt, solange du hinschaust",
+      "starting": "Bildschirm wird gestartet …",
+      "paused": "Pausiert, weil 3 Minuten lang niemand hingeschaut hat"
+    },
+    "status": {
+      "serverOnline": "Server · online",
+      "serverOffline": "antwortet nicht · verbindet neu",
+      "local": "{{system}} · der Bot arbeitet hier",
+      "localNoSystem": "Der Bot arbeitet hier"
+    },
+    "reason": {
+      "connecting": "Verbindung zu {{name}} wird hergestellt …",
+      "offline": "Server nicht erreichbar",
+      "notPaired": "Der Server akzeptiert diesen Computer nicht mehr",
+      "version": "App und Server haben unterschiedliche Versionen",
+      "permission": "Dieser Computer darf den Bildschirm des Servers noch nicht ansehen",
+      "failed": "Bildschirm konnte nicht abgerufen werden",
+      "noScreen": "Kein Bildschirm: {{detail}}"
+    }
+  },
+  "homeMenu": {
+    "lives": {
+      "local": "Deine Bots leben hier",
+      "online": "Deine Bots leben hier · online",
+      "connecting": "Deine Bots leben hier · verbindet",
+      "offline": "Deine Bots leben hier · offline",
+      "temporary": "Vorerst arbeiten deine Bots auf diesem Computer"
+    },
+    "sync": "Meine Einrichtung synchronisieren",
+    "lastSync": "Letzte Synchronisierung: {{when}}",
+    "today": "heute {{time}}",
+    "pcOn": "Jede Aktion fragt dich hier",
+    "pcOff": "Deine Bots können diesen Computer nicht nutzen"
+  },
+  "runStatus": {
+    "working": "Arbeitet …",
+    "stopping": "Wird gestoppt …",
+    "waiting": "Wartet auf deine Genehmigung: {{step}}"
+  },
+  "queued": {
+    "label": "In der Warteschlange.",
+    "sendNow": "Jetzt senden",
+    "remove": "Diese Nachricht aus der Warteschlange entfernen"
+  },
+  "messageInfo": {
+    "label": "Nachrichteninfo",
+    "title": "Nachrichtendetails",
+    "steps": "{{count}} Werkzeuge",
+    "steps_one": "{{count}} Werkzeug",
+    "steps_other": "{{count}} Werkzeuge",
+    "unit": {
+      "s": "s",
+      "m": "Min."
+    },
+    "rows": {
+      "model": "Modell",
+      "source": "Quelle",
+      "duration": "Dauer",
+      "started": "Gestartet",
+      "finished": "Beendet",
+      "steps": "Schritte",
+      "where": "Ort",
+      "tokens": "Tokens",
+      "sent": "Gesendet"
+    },
+    "sources": {
+      "app": "diese App",
+      "telegram": "Telegram",
+      "peer": "ein anderer Computer",
+      "api": "lokale API",
+      "unknown": "unbekannt"
+    }
+  },
   "botPanel": {
+    "now": {
+      "waiting": "Wartet auf deine Genehmigung",
+      "thinking": "Denkt nach …",
+      "subagents": "{{count}} Subagenten",
+      "subagents_one": "{{count}} Subagent",
+      "subagents_other": "{{count}} Subagenten",
+      "open": "Details öffnen",
+      "detailTitle": "Aktueller Lauf"
+    },
     "toggle": "Bot-Panel",
     "close": "Panel schließen",
     "profile": "Bot-Profil",
