@@ -7,6 +7,7 @@ use protocol::BotId;
 use uuid::Uuid;
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // one ordered CRUD, isolation, forget/undo and preview scenario
 async fn memory_crud_bot_isolation_forget_undo_and_recall_preview() {
     let t = setup();
     let (bot_a, _) = make_chat(&t).await;

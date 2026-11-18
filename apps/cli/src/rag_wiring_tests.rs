@@ -155,10 +155,8 @@ fn shipped_agent_wires_default_memory_store_with_local_hash_embedder() {
         .unwrap();
     assert_eq!(preview.len(), 1);
     assert_eq!(preview[0].0.id, created.id);
-    assert!(
-        store
-            .preview_recall(user, other, "Thursday release", 800)
-            .unwrap()
-            .is_empty()
-    );
+    let leaked = store
+        .preview_recall(user, other, "Thursday release", 800)
+        .unwrap();
+    assert_eq!(leaked.len(), 0);
 }
