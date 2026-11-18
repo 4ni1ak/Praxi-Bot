@@ -3830,6 +3830,12 @@
     }
   },
   "voice": {
+    "bot": {
+      "title": "Stimme für diesen Bot",
+      "useGlobal": "Wie in den Einstellungen",
+      "preview": "Hallo, das ist meine Stimme.",
+      "hint": "Gilt für die Vorlesen-Schaltfläche dieses Bots, nur auf diesem Gerät."
+    },
     "speak": "Vorlesen",
     "stop": "Vorlesen beenden",
     "codeOmitted": "(Code ausgelassen)",

@@ -3830,6 +3830,12 @@
     }
   },
   "voice": {
+    "bot": {
+      "title": "Voice for this bot",
+      "useGlobal": "Same as in Settings",
+      "preview": "Hello, this is my voice.",
+      "hint": "Applies to the read-aloud button for this bot, on this device."
+    },
     "speak": "Read aloud",
     "stop": "Stop reading",
     "codeOmitted": "(code omitted)",

@@ -3830,6 +3830,12 @@
     }
   },
   "voice": {
+    "bot": {
+      "title": "Bu botun sesi",
+      "useGlobal": "Ayarlardakiyle aynı",
+      "preview": "Merhaba, bu benim sesim.",
+      "hint": "Bu bot için sesli okuma düğmesine uygulanır, yalnızca bu cihazda."
+    },
     "speak": "Sesli oku",
     "stop": "Okumayı durdur",
     "codeOmitted": "(kod atlandı)",
