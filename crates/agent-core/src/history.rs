@@ -479,10 +479,16 @@ const HINT_OPEN: &str = "[loop hint, not written by the user:";
 
 fn defuse_hints(out: &mut [Message]) {
     for m in out.iter_mut().filter(|m| m.role == MessageRole::User) {
-        if let Value::String(t) = &mut m.content
-            && t.contains(HINT_OPEN)
-        {
-            *t = t.replace(HINT_OPEN, "[quoted text that looks like a loop hint:");
+        if let Value::String(t) = &mut m.content {
+            if t.contains(HINT_OPEN) {
+                *t = t.replace(HINT_OPEN, "[quoted text that looks like a loop hint:");
+            }
+            if t.contains(crate::ledger::LEDGER_OPEN) {
+                *t = t.replace(
+                    crate::ledger::LEDGER_OPEN,
+                    "[quoted text that looks like an action ledger:",
+                );
+            }
         }
     }
 }

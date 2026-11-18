@@ -19,7 +19,7 @@ use protocol::event::{
     ToolCallDenied, ToolCallRequested,
 };
 use protocol::{Event, RunId, ToolCallId};
-use provider_catalog::{ChatChunk, ChatRequest, ModelRef, ProviderError};
+use provider_catalog::{ChatChunk, ChatRequest, Message, MessageRole, ModelRef, ProviderError};
 use serde_json::{Value, json};
 use storage::{Run, RunStep};
 use task_runtime::{ExecError, RetryPolicy, StepExecutor, StepSpec, StepStatus};
@@ -631,7 +631,7 @@ impl TurnExecutor {
             .data_dir()
             .join("spill")
             .join(run.id.to_string());
-        let messages = build_messages(
+        let mut messages = build_messages(
             &self.sh.storage,
             run,
             &steps,
@@ -642,6 +642,12 @@ impl TurnExecutor {
             &Compaction::from_guards(&self.sh.cfg.guards, Some(&lookup), Some(&spill_dir)),
         )
         .map_err(xe)?;
+        // What the turn's tool calls really did, so the answer cannot claim
+        // more than happened. Placed before the closing note of a guard stop.
+        if let Some(digest) = crate::ledger::digest(&crate::ledger::collect(&steps)) {
+            let at = messages.len() - usize::from(note.is_some());
+            messages.insert(at, Message::text(MessageRole::User, digest));
+        }
         let mut primary = ctx.profile.models.executor.clone();
         if !primary.contains('/') && !primary.starts_with("cli:") {
             let default_id = self.sh.providers.read().default_id().to_owned();
@@ -1337,6 +1343,12 @@ impl TurnExecutor {
             };
             // Keep a knowledge result valid, budgeted JSON. The existing hard
             // repeat-stop guard still applies; no unbudgeted footer is appended.
+            let outcome = crate::ledger::classify(is_error, &text, Some(fact.ran));
+            if outcome == crate::ledger::Outcome::TimedOut && knowledge_request.is_none() {
+                // A timeout is never swallowed: the model is told what is
+                // unknown and what to do next.
+                let _ = write!(text, "\n{}", crate::ledger::TIMEOUT_HINT);
+            }
             if call.repeat >= g.repeat_warn && knowledge_request.is_none() {
                 let _ = write!(
                     text,
@@ -1363,6 +1375,7 @@ impl TurnExecutor {
                 text,
                 spill_path,
                 fact: Some(fact),
+                outcome: Some(outcome),
             });
         }
         Ok(json!({ "results": results }))
