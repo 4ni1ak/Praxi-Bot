@@ -565,7 +565,7 @@ pub(crate) async fn thumbnail(
         let mut profile = EffectiveProfile::watch();
         profile.max_width = profile.max_width.min(640);
         profile.max_height = profile.max_height.min(400);
-        profile.quality = profile.quality.min(55);
+        profile.quality = profile.quality.min(70);
         let subscription = bounded(source.subscribe(profile)).await?;
         let _ = bounded(source.request_refresh(0)).await;
         let mut frames = subscription.frames.clone();
@@ -758,7 +758,10 @@ pub(crate) async fn update_session(
         .max_height
         .unwrap_or(old.max_height)
         .clamp(1, p.max_height);
-    p.quality = i.quality.unwrap_or(p.quality).clamp(20, p.quality);
+    p.quality = i.quality.unwrap_or(p.quality).clamp(
+        desktop_api::live_view::QUALITY_FLOOR.min(p.quality),
+        p.quality,
+    );
     p.bytes_per_second = i
         .bytes_per_second
         .unwrap_or(p.bytes_per_second)
@@ -767,11 +770,8 @@ pub(crate) async fn update_session(
     let unhealthy =
         i.decode_ms.is_some_and(|v| v > 100) || i.buffered_frames.is_some_and(|v| v > 1);
     if unhealthy {
-        // A viewer that cannot keep up gets fewer, smaller frames, but stays readable (720p).
-        p.quality = p.quality.min(50);
-        p.max_width = p.max_width.min(1280);
-        p.max_height = p.max_height.min(720);
-        p.max_fps = p.max_fps.min(4);
+        // A viewer that cannot keep up gets FEWER frames; picture size and quality stay.
+        p.max_fps = p.max_fps.min(2);
     }
     {
         let mut sessions = live.sessions.lock();
@@ -781,16 +781,13 @@ pub(crate) async fn update_session(
         if unhealthy {
             session.healthy_since = None;
         } else if old.quality < p.quality || old.max_fps < p.max_fps {
+            // Recover in one step after a short healthy spell, not a +5 / 10 s crawl.
             let since = session.healthy_since.get_or_insert_with(Instant::now);
-            if since.elapsed() < Duration::from_secs(10) {
+            if since.elapsed() < Duration::from_secs(2) {
                 p.quality = p.quality.min(old.quality);
                 p.max_width = p.max_width.min(old.max_width);
                 p.max_height = p.max_height.min(old.max_height);
                 p.max_fps = p.max_fps.min(old.max_fps);
-            } else {
-                p.quality = p.quality.min(old.quality.saturating_add(5));
-                p.max_fps = p.max_fps.min(old.max_fps.saturating_add(1));
-                session.healthy_since = Some(Instant::now());
             }
         }
         session.profile = p.clone();
