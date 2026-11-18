@@ -3775,5 +3775,17 @@
       "sign_in": "{{cli}} ist abgemeldet. Melde dich unter Einstellungen, KI dort an.",
       "unsupported": "Praxi kann {{cli}} auf diesem Computer nicht ausführen."
     }
+  },
+  "voice": {
+    "speak": "Vorlesen",
+    "stop": "Vorlesen beenden",
+    "codeOmitted": "(Code ausgelassen)",
+    "tableOmitted": "(Tabelle ausgelassen)",
+    "title": "Gesprochene Antworten",
+    "description": "Stimme und Tempo für die Vorlesen-Schaltfläche. Nutzt die Sprachausgabe deines Systems.",
+    "auto": "Automatisch (passend zur App-Sprache)",
+    "online": "online",
+    "speed": "Tempo",
+    "unsupported": "Dieses System bietet keine Sprachausgabe-Stimmen."
   }
 }

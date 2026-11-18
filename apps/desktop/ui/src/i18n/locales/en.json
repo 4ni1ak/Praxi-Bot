@@ -3775,5 +3775,17 @@
       "sign_in": "{{cli}} is signed out. Sign in to it in Settings, AI.",
       "unsupported": "Praxi cannot run {{cli}} on this computer."
     }
+  },
+  "voice": {
+    "speak": "Read aloud",
+    "stop": "Stop reading",
+    "codeOmitted": "(code omitted)",
+    "tableOmitted": "(table omitted)",
+    "title": "Spoken replies",
+    "description": "Reply voice and speed for the read-aloud button. Uses your system's speech engine.",
+    "auto": "Automatic (matches the app language)",
+    "online": "online",
+    "speed": "Speed",
+    "unsupported": "This system offers no speech voices."
   }
 }
