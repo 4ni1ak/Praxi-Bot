@@ -2053,6 +2053,14 @@
         "timeout": "The installer took too long and was stopped.",
         "unavailable": "The installer could not be started."
       }
+    },
+    "tools": {
+      "label": "Tools bots may use",
+      "restricted": "Some tools are limited by a custom allow-list; edit it in the server settings.",
+      "effect": {
+        "write": "changes data",
+        "destructive": "can delete or send"
+      }
     }
   },
   "help": {
