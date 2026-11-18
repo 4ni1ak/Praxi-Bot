@@ -192,6 +192,8 @@ fn run_approvals(s: &AppState, run: &storage::Run) -> Result<Vec<ApprovalDto>, A
                 run_id: run.id.0,
                 tool_name: n.tool_name,
                 summary: n.summary,
+                input: Some(n.input),
+                details: n.details,
                 decision: (!waiting).then(|| "expired".to_owned()),
                 requested_at_ms: ms(env.ts_ms),
                 decided_at_ms: None,
@@ -201,11 +203,12 @@ fn run_approvals(s: &AppState, run: &storage::Run) -> Result<Vec<ApprovalDto>, A
             _ => {}
         }
     }
-    // Only the newest approval of a waiting run can still be pending.
+    // A card is pending only while its wait is parked in the loop. One that is not (its tool timed
+    // out, the wait was dropped, the daemon restarted) has expired, whatever the run's state says;
+    // several cards of one run (parallel permission requests) can be pending at once.
     if waiting {
-        let n = out.len();
-        for (i, a) in out.iter_mut().enumerate() {
-            if a.decision.is_none() && i + 1 != n {
+        for a in &mut out {
+            if a.decision.is_none() && !s.agent().is_pending(ToolCallId(a.call_id)) {
                 a.decision = Some("expired".to_owned());
             }
         }

@@ -57,10 +57,24 @@ impl Drop for ClosedGuard {
     }
 }
 
+/// What a call's card says when nobody decided it in time (the model sees it as the denial reason).
+pub(crate) const EXPIRED_REASON: &str = "expired: nobody answered in time";
+
+/// How a wait for the user ended.
+enum Waited {
+    Verdict(Result<Verdict, oneshot::error::RecvError>),
+    /// A schedule-started run: nobody answered, the run is asked to pause.
+    Paused,
+    /// Nobody answered within the approval timeout: the call is denied as expired.
+    Expired,
+}
+
 struct PendingGuard {
     sh: Arc<Shared>,
     id: ToolCallId,
     run_id: RunId,
+    /// The persisted approval row of this park (expired when the wait is abandoned).
+    approval_id: Uuid,
     released: bool,
 }
 
@@ -96,9 +110,15 @@ impl Drop for PendingGuard {
     fn drop(&mut self) {
         self.sh.pending.lock().remove(&self.id);
         forget_parked(&self.sh, self.id);
-        // A dropped (cancelled) wait only releases its slot; the run's own
-        // state is settled by whoever cancelled it.
-        self.release();
+        let abandoned = !self.released;
+        let last = self.release();
+        if abandoned {
+            // The wait was dropped without a verdict (the tool around it timed out, or the run
+            // was stopped): the card is dead, so it must not stay pending and the run must not
+            // stay in `waiting_approval`.
+            self.sh
+                .expire_abandoned(self.run_id, self.id, self.approval_id, last);
+        }
     }
 }
 
@@ -902,13 +922,14 @@ impl Shared {
             },
         );
         *self.parked.lock().entry(ctx.run_id).or_insert(0) += 1;
+        let approval_id = Uuid::now_v7();
         let guard = PendingGuard {
             sh: Arc::clone(self),
             id: call_id,
             run_id: ctx.run_id,
+            approval_id,
             released: false,
         };
-        let approval_id = Uuid::now_v7();
         let _ = self.storage.insert_approval(&Approval {
             id: approval_id,
             user_id: ctx.user_id,
@@ -925,21 +946,34 @@ impl Shared {
 
     /// Wait for the user's verdict.  A schedule-started run only waits
     /// [`LoopConfig::schedule_approval_timeout`](crate::LoopConfig); then the
-    /// run is asked to pause (resumable) and `None` is returned.
-    async fn wait_verdict(
-        &self,
-        ctx: &RunCtx,
-        rx: oneshot::Receiver<Verdict>,
-    ) -> Option<Result<Verdict, oneshot::error::RecvError>> {
+    /// run is asked to pause (resumable).  Any other run waits at most
+    /// [`LoopConfig::approval_timeout`](crate::LoopConfig) (zero = no limit);
+    /// then the call is denied as expired and the run carries on.
+    async fn wait_verdict(&self, ctx: &RunCtx, rx: oneshot::Receiver<Verdict>) -> Waited {
         if !matches!(
             ctx.initiator,
             InitiatorKind::Schedule | InitiatorKind::ExternalSchedule
         ) {
-            return Some(rx.await);
+            let limit = self.cfg.approval_timeout;
+            if limit.is_zero() {
+                return Waited::Verdict(rx.await);
+            }
+            return match tokio::time::timeout(limit, rx).await {
+                Ok(v) => Waited::Verdict(v),
+                Err(_) => {
+                    self.audit(
+                        ctx,
+                        "system",
+                        "approval.expired",
+                        &json!({ "timeout_secs": limit.as_secs() }),
+                    );
+                    Waited::Expired
+                }
+            };
         }
         let limit = self.cfg.schedule_approval_timeout;
         if let Ok(v) = tokio::time::timeout(limit, rx).await {
-            return Some(v);
+            return Waited::Verdict(v);
         }
         self.approval_paused.lock().insert(ctx.run_id);
         self.audit(
@@ -951,7 +985,46 @@ impl Shared {
         if let Some(rt) = self.rt.get().and_then(Weak::upgrade) {
             rt.request_pause(ctx.run_id, true);
         }
-        None
+        Waited::Paused
+    }
+
+    /// A wait that ended without a verdict (the tool around it timed out, the run was stopped):
+    /// the approval row expires, every client's card closes (`tool_call_denied` with the expired
+    /// reason) and a run that is still alive leaves `waiting_approval` when this was its last
+    /// parked call.
+    pub(crate) fn expire_abandoned(
+        &self,
+        run_id: RunId,
+        call_id: ToolCallId,
+        approval_id: Uuid,
+        last_parked: bool,
+    ) {
+        let _ = self.storage.decide_approval(approval_id, "expired");
+        let alive = self
+            .storage
+            .get_run(run_id)
+            .ok()
+            .flatten()
+            .and_then(|r| RunState::parse(&r.state))
+            .is_some_and(|s| matches!(s, RunState::Running | RunState::WaitingApproval));
+        if !alive {
+            return;
+        }
+        if last_parked {
+            self.set_state(run_id, RunState::Running);
+        }
+        let ctx = self.runs.lock().get(&run_id).cloned();
+        if let Some(ctx) = ctx {
+            self.emit(
+                &ctx,
+                Event::ToolCallDenied(ToolCallDenied {
+                    run_id,
+                    call_id,
+                    denied_by: ctx.user_id,
+                    reason: Some(EXPIRED_REASON.into()),
+                }),
+            );
+        }
     }
 
     /// True when redaction would change the card or the input that would run.
@@ -1168,11 +1241,27 @@ impl Shared {
                 details,
             }),
         );
-        let verdict = self.wait_verdict(ctx, rx).await;
+        let waited = self.wait_verdict(ctx, rx).await;
         guard.resume();
-        let Some(verdict) = verdict else {
-            let _ = self.storage.decide_approval(approval_id, "expired");
-            return Err(Some("nobody approved in time; the run is paused".into()));
+        let verdict = match waited {
+            Waited::Verdict(v) => v,
+            Waited::Paused => {
+                let _ = self.storage.decide_approval(approval_id, "expired");
+                return Err(Some("nobody approved in time; the run is paused".into()));
+            }
+            Waited::Expired => {
+                let _ = self.storage.decide_approval(approval_id, "expired");
+                self.emit(
+                    ctx,
+                    Event::ToolCallDenied(ToolCallDenied {
+                        run_id: ctx.run_id,
+                        call_id,
+                        denied_by: ctx.user_id,
+                        reason: Some(EXPIRED_REASON.into()),
+                    }),
+                );
+                return Err(Some(EXPIRED_REASON.into()));
+            }
         };
 
         match verdict {
@@ -1341,11 +1430,19 @@ impl Shared {
                 options,
             }),
         );
-        let verdict = self.wait_verdict(ctx, rx).await;
+        let waited = self.wait_verdict(ctx, rx).await;
         guard.resume();
-        let Some(verdict) = verdict else {
-            let _ = self.storage.decide_approval(approval_id, "expired");
-            return Err(Some("nobody answered in time; the run is paused".into()));
+        let verdict = match waited {
+            Waited::Verdict(v) => v,
+            Waited::Paused => {
+                let _ = self.storage.decide_approval(approval_id, "expired");
+                return Err(Some("nobody answered in time; the run is paused".into()));
+            }
+            Waited::Expired => {
+                // The question card closes with its call: the tool completes with this reason.
+                let _ = self.storage.decide_approval(approval_id, "expired");
+                return Err(Some(EXPIRED_REASON.into()));
+            }
         };
         match verdict {
             Ok(Verdict::Answered { answer, .. }) => {

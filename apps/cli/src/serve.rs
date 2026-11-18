@@ -313,6 +313,11 @@ fn build_agent_with_skills(
         std::env::var("BOT_BROWSER_IDLE_SECONDS").ok().as_deref(),
     );
     tools.browser_settings.idle_timeout = idle;
+    let approval_timeout = approval_timeout(
+        std::env::var("BOT_APPROVAL_TIMEOUT_SECONDS")
+            .ok()
+            .as_deref(),
+    );
     // The discovery threshold is `LoopConfig`'s default (40).
     Ok(AgentLoop::new(
         Arc::clone(storage),
@@ -321,6 +326,7 @@ fn build_agent_with_skills(
         LoopConfig {
             redactor: Some(redactor),
             max_computer_runs,
+            approval_timeout,
             knowledge_decider: Some(Arc::new(agent_core::HeuristicKnowledgeDecider::new(
                 Arc::clone(storage),
             ))),
@@ -350,6 +356,13 @@ struct ComputerLimits {
     max_computer_runs: Option<usize>,
     browser_idle_seconds: Option<u64>,
 }
+/// How long an unanswered approval or question waits before it expires
+/// (`BOT_APPROVAL_TIMEOUT_SECONDS`; `0` = no limit, unset or invalid = the default).
+fn approval_timeout(env: Option<&str>) -> Duration {
+    env.and_then(|n| n.trim().parse::<u64>().ok())
+        .map_or(agent_core::DEFAULT_APPROVAL_TIMEOUT, Duration::from_secs)
+}
+
 fn computer_limits(
     host: &str,
     env_runs: Option<&str>,
@@ -1422,6 +1435,17 @@ paths:
         for tool in imported {
             registry.register(tool);
         }
+    }
+
+    #[test]
+    fn approval_timeout_reads_the_environment() {
+        assert_eq!(approval_timeout(None), agent_core::DEFAULT_APPROVAL_TIMEOUT);
+        assert_eq!(
+            approval_timeout(Some("bad")),
+            agent_core::DEFAULT_APPROVAL_TIMEOUT
+        );
+        assert_eq!(approval_timeout(Some("90")), Duration::from_secs(90));
+        assert_eq!(approval_timeout(Some("0")), Duration::ZERO);
     }
 
     #[test]

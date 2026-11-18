@@ -1407,7 +1407,13 @@ impl TurnExecutor {
         let outcome = crate::control::pause_aware_timeout(
             g.tool_timeout,
             control,
-            Arc::clone(&ctx.waiting_computer),
+            // The clock stops while the run waits for the computer slot or is parked on a card
+            // (a call that asks the user from inside the tool, such as a script's inner call).
+            || {
+                ctx.waiting_computer
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    || self.sh.parked.lock().contains_key(&run.id)
+            },
             async {
                 if matches!(
                     tool.spec().category,
