@@ -2800,6 +2800,7 @@
       "localNoSystem": "The bot works here"
     },
     "reason": {
+      "timeout": "The screen took too long to start",
       "connecting": "Connecting to {{name}}…",
       "offline": "Cannot reach the server",
       "notPaired": "The server no longer accepts this computer",
@@ -3181,6 +3182,12 @@
     "approvalsWaiting": "{{count}} item(s) are waiting for your decision in chat.",
     "reviewApprovals": "Back to chat to answer",
     "errors": {
+      "unauthorized": "Your session is no longer authorized. Reconnect to this computer.",
+      "too_many_streams": "This connection has too many open streams. Close another stream and try again.",
+      "network": "The connection to the screen was interrupted. Check your network and try again.",
+      "view_quota": "The server has too many screen sessions. Close an unused viewer or try again in a moment.",
+      "server_restarting": "The server may be restarting. Try again when it comes back online.",
+      "timeout": "The screen did not start in time.",
       "generic": "The request failed. Check the connection and try again.",
       "release_failed": "Could not hand control back. The bot stays paused; retry Bitirdim.",
       "release_unconfirmed": "The daemon still reports your takeover as active. Retry Bitirdim.",

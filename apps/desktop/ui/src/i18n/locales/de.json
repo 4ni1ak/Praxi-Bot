@@ -2800,6 +2800,7 @@
       "localNoSystem": "Der Bot arbeitet hier"
     },
     "reason": {
+      "timeout": "Der Bildschirm konnte nicht rechtzeitig gestartet werden",
       "connecting": "Verbindung zu {{name}} wird hergestellt …",
       "offline": "Server nicht erreichbar",
       "notPaired": "Der Server akzeptiert diesen Computer nicht mehr",
@@ -3181,6 +3182,12 @@
     "approvalsWaiting": "{{count}} Element(e) warten im Chat auf deine Entscheidung.",
     "reviewApprovals": "Zurück zum Chat, um zu antworten",
     "errors": {
+      "unauthorized": "Ihre Sitzung ist nicht mehr autorisiert. Verbinden Sie sich erneut mit diesem Computer.",
+      "too_many_streams": "Auf dieser Verbindung sind zu viele Streams offen. Schließen Sie einen anderen Stream und versuchen Sie es erneut.",
+      "network": "Die Bildschirmverbindung wurde unterbrochen. Prüfen Sie Ihr Netzwerk und versuchen Sie es erneut.",
+      "view_quota": "Auf dem Server sind zu viele Bildschirm-Sitzungen offen. Schließen Sie eine unbenutzte Ansicht oder versuchen Sie es gleich erneut.",
+      "server_restarting": "Der Server wird möglicherweise neu gestartet. Versuchen Sie es erneut, sobald er wieder online ist.",
+      "timeout": "Der Bildschirm konnte nicht rechtzeitig gestartet werden.",
       "generic": "Die Anfrage ist fehlgeschlagen. Prüfe die Verbindung und versuche es erneut.",
       "release_failed": "Die Kontrolle konnte nicht zurückgegeben werden. Der Bot bleibt pausiert; versuche Bitirdim erneut.",
       "release_unconfirmed": "Der Daemon meldet deine Übernahme weiterhin als aktiv. Versuche Bitirdim erneut.",

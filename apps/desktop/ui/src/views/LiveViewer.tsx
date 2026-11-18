@@ -89,6 +89,9 @@ export function LiveViewer({
     controlState,
     state,
     frameUrl,
+    streamFailure,
+    targetsError,
+    retryStream,
     viewerOpen,
     loadingTargets,
     panelAction,
@@ -107,6 +110,7 @@ export function LiveViewer({
     setComposing
   } = view;
 
+  const viewFailure = streamFailure ?? (!frameUrl ? targetsError : null);
   const [selectedOutcome, setSelectedOutcome] = useState<HumanAction | "none">(
     "none"
   );
@@ -456,18 +460,26 @@ export function LiveViewer({
         </div>
       </header>
 
-      {otherOwner || state.lastError || state.disconnected || state.needsResync ? (
+      {otherOwner || state.lastError || viewFailure || state.disconnected || state.needsResync ? (
         <div className={styles.statusLine} role="status">
           {otherOwner ? (
             <strong>{t("liveView.otherOwner", { owner: otherOwner })}</strong>
           ) : null}
-          {state.lastError ? (
+          {state.lastError || viewFailure ? (
             <span className={styles.errorInline} role="alert">
-              {t(`liveView.errors.${state.lastError.code}`, {
-                defaultValue: t(`liveView.reasons.${state.lastError.code}`, {
+              {t(`liveView.errors.${state.lastError?.code ?? viewFailure}`, {
+                defaultValue: t(`liveView.reasons.${state.lastError?.code ?? viewFailure}`, {
                   defaultValue: t("liveView.errors.generic")
                 })
               })}
+              {viewFailure && !frameUrl ? (
+                <Button variant="secondary" size="sm" onClick={() => {
+                  retryStream();
+                  void refreshTargets();
+                }}>
+                  {t("computerCard.retry")}
+                </Button>
+              ) : null}
             </span>
           ) : state.disconnected ? (
             <span className={styles.errorInline}>{t("liveView.reconnecting")}</span>

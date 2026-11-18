@@ -2800,6 +2800,7 @@
       "localNoSystem": "Bot burada çalışıyor"
     },
     "reason": {
+      "timeout": "Ekran zamanında başlatılamadı",
       "connecting": "{{name}} sunucusuna bağlanılıyor…",
       "offline": "Sunucuya ulaşılamıyor",
       "notPaired": "Sunucu bu bilgisayarı artık kabul etmiyor",
@@ -3181,6 +3182,12 @@
     "approvalsWaiting": "Sohbette kararınızı bekleyen {{count}} öğe var.",
     "reviewApprovals": "Yanıtlamak için sohbete dön",
     "errors": {
+      "unauthorized": "Oturumunuzun yetkisi artık geçerli değil. Bu bilgisayara yeniden bağlanın.",
+      "too_many_streams": "Bu bağlantıda çok fazla akış açık. Başka bir akışı kapatıp tekrar deneyin.",
+      "network": "Ekran bağlantısı kesildi. Ağınızı kontrol edip tekrar deneyin.",
+      "view_quota": "Sunucuda çok fazla ekran oturumu açık. Kullanmadığınız bir ekranı kapatın veya biraz sonra tekrar deneyin.",
+      "server_restarting": "Sunucu yeniden başlatılıyor olabilir. Çevrimiçi olduğunda tekrar deneyin.",
+      "timeout": "Ekran zamanında başlatılamadı.",
       "generic": "İstek başarısız oldu. Bağlantıyı kontrol edip tekrar deneyin.",
       "release_failed": "Kontrol geri verilemedi. Bot duraklatılmış kalır; Bitirdim'i yeniden deneyin.",
       "release_unconfirmed": "Daemon devralmanızı hâlâ etkin gösteriyor. Bitirdim'i yeniden deneyin.",
