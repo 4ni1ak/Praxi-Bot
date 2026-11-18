@@ -559,6 +559,7 @@
       "code": "Code"
     },
     "slash": {
+      "export": "Diesen Chat als Markdown-Datei speichern",
       "new": "Neuen Chat starten",
       "stop": "Aktuellen Lauf stoppen",
       "help": "Hilfe und Tastenkürzel öffnen",
@@ -850,6 +851,7 @@
       }
     },
     "timelineLabel": "Unterhaltung",
+    "export": { "you": "Du", "done": "Chat gespeichert" },
     "jumpToLatest": "Zum Neuesten springen",
     "runBar": {
       "label": "Lauf-Steuerung",
