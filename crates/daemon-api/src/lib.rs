@@ -61,6 +61,8 @@ pub mod skills;
 mod sse;
 mod stop;
 pub mod terminal;
+pub mod voice;
+mod voice_routes;
 pub mod web;
 mod web_routes;
 
@@ -103,6 +105,7 @@ pub use openapi::openapi_json;
 pub use policy::{PolicyLoadError, load_policy, validate_policy};
 pub use schedule_tools::{ScheduleLimits, load_schedule_limits};
 pub use skills::SkillAssignments;
+pub use voice::{VoiceControl, VoiceControlError};
 pub use web::{WebControl, WebControlError};
 
 /// Default TCP port of `bot serve`.
@@ -221,6 +224,8 @@ struct Inner {
     email_tests: Arc<tokio::sync::Semaphore>,
     /// Web search settings management (see [`AppState::set_web`]).
     web: OnceLock<Arc<dyn WebControl>>,
+    /// Dictation (speech-to-text) management (see [`AppState::set_voice`]).
+    voice: OnceLock<Arc<dyn VoiceControl>>,
     /// Skill catalog index (see [`AppState::set_skills`]).
     skills: OnceLock<::skills::SkillIndex>,
     /// Serialises owner catalog mutations with per-bot assignment writes.
@@ -402,6 +407,7 @@ impl AppState {
             email: OnceLock::new(),
             email_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             web: OnceLock::new(),
+            voice: OnceLock::new(),
             skills: OnceLock::new(),
             skill_mutations: parking_lot::Mutex::new(()),
             web_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
@@ -585,6 +591,15 @@ impl AppState {
 
     pub(crate) fn email(&self) -> Option<Arc<dyn EmailControl>> {
         self.0.email.get().cloned()
+    }
+
+    /// Enable `/v1/voice*` with the embedder dictation manager (call once, before [`serve`]).
+    pub fn set_voice(&self, voice: Arc<dyn VoiceControl>) {
+        let _ = self.0.voice.set(voice);
+    }
+
+    pub(crate) fn voice(&self) -> Option<Arc<dyn VoiceControl>> {
+        self.0.voice.get().cloned()
     }
 
     pub(crate) fn web(&self) -> Option<Arc<dyn WebControl>> {
@@ -997,6 +1012,7 @@ fn api_routes() -> Router<AppState> {
     use live_view as v;
     use mcp_routes as m;
     use routes as r;
+    use voice_routes as vo;
     use web_routes as w;
     Router::new()
         .route("/v1/mcp-server/tokens", post(mcp_server::create_token))
@@ -1328,6 +1344,11 @@ fn api_routes() -> Router<AppState> {
             get(w::get_web_search).put(w::update_web_search),
         )
         .route("/v1/web/search/test", post(w::test_web_search))
+        .route("/v1/voice", get(vo::get_voice).put(vo::update_voice))
+        .route(
+            "/v1/voice/transcribe",
+            post(vo::transcribe).layer(axum::extract::DefaultBodyLimit::max(vo::MAX_BODY_BYTES)),
+        )
         .route("/v1/secrets/{*name}", post(m::set_secret))
         .route(
             "/v1/fill-secrets",

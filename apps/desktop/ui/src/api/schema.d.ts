@@ -2935,6 +2935,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/voice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Dictation configuration; the API key is write-only (`stt_key_set` only says whether one is stored). */
+        get: operations["get_voice"];
+        /** Update the dictation configuration. */
+        put: operations["update_voice"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/voice/transcribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transcribe a recording with the configured service (owner-triggered dictation). */
+        post: operations["transcribe"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/web/search": {
         parameters: {
             query?: never;
@@ -6486,6 +6521,20 @@ export interface components {
             /** Format: int32 */
             rows: number;
         };
+        /** @description Body of `POST /v1/voice/transcribe`. */
+        TranscribeInput: {
+            /** @description The recording, base64 (standard alphabet). */
+            audio_base64: string;
+            /** @description Optional ISO-639-1 language hint (`en`, `tr`, `de`). */
+            language?: string | null;
+            /** @description MIME type of the recording, e.g. `audio/webm`. */
+            mime: string;
+        };
+        /** @description Result of `POST /v1/voice/transcribe`. */
+        TranscribeOutput: {
+            /** @description The recognised text. */
+            text: string;
+        };
         TrustFolderInput: {
             /** @description An existing directory (an absolute path). */
             path: string;
@@ -6575,6 +6624,26 @@ export interface components {
         VerificationDto: "matched" | "changed" | "unknown";
         /** @enum {string} */
         ViewState: "watch" | "acquiring" | "active" | "paused" | "unavailable" | "closed";
+        /** @description Dictation configuration (`GET /v1/voice`): non-secret fields only. */
+        VoiceConfigDto: {
+            /** @description Base URL of the OpenAI-compatible transcription service (without `/audio/transcriptions`). */
+            stt_base_url: string;
+            /** @description Whether an API key is stored (never returned). */
+            stt_key_set: boolean;
+            /** @description Model name sent with each request. */
+            stt_model: string;
+        };
+        /** @description Body of `PUT /v1/voice`; omitted fields keep their value. */
+        VoiceConfigInput: {
+            /** @description Remove the stored key. */
+            clear_stt_key?: boolean | null;
+            /** @description `https://...`, or `http://` for a loopback server only. */
+            stt_base_url?: string | null;
+            /** @description API key (**write-only**: stored in the secret store, never returned or logged). */
+            stt_key?: string | null;
+            /** @description Model name. */
+            stt_model?: string | null;
+        };
         /**
          * @description Current web search configuration (`GET /v1/web/search`): non-secret fields
          *     only.
@@ -13242,6 +13311,143 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_voice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceConfigDto"];
+                };
+            };
+            /** @description voice is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update_voice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoiceConfigInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceConfigDto"];
+                };
+            };
+            /** @description bad API key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description invalid config */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description voice is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    transcribe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TranscribeInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscribeOutput"];
+                };
+            };
+            /** @description bad or oversized audio */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description dictation is not set up */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the transcription service failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description voice is not available */
             503: {
                 headers: {
                     [name: string]: unknown;

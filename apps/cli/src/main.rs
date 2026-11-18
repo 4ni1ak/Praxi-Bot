@@ -30,6 +30,7 @@ mod serve;
 mod skills_cmd;
 mod update;
 mod view_targets;
+mod voice_host;
 mod web_host;
 mod wizard;
 

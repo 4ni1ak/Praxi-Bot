@@ -38,6 +38,7 @@ mod model_catalog;
 mod peer_knowledge;
 mod schedules;
 mod skills;
+mod voice;
 mod web;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

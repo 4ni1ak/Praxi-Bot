@@ -12,7 +12,8 @@ use crate::{
     changes, cli_login, components, composio, composio_routes, doctor, doctor_routes, dto, email,
     email_routes, error, file_access, fill_routes, host, host_admin, host_copy, host_import,
     host_links, host_setup, knowledge, knowledge_settings, live_view, mcp, mcp_routes, mcp_server,
-    routes, skill_hub, skill_management, skills, sse, terminal, trusted_folders, web, web_routes,
+    routes, skill_hub, skill_management, skills, sse, terminal, trusted_folders, voice, voice_routes,
+    web, web_routes,
 };
 
 struct Security;
@@ -175,6 +176,9 @@ impl Modify for Security {
         web_routes::get_web_search,
         web_routes::update_web_search,
         web_routes::test_web_search,
+        voice_routes::get_voice,
+        voice_routes::update_voice,
+        voice_routes::transcribe,
         events_doc,
     ),
     components(schemas(
@@ -206,6 +210,7 @@ impl Modify for Security {
         email::EmailProbeStatus, email::EmailTestReport,
         web::WebSearchConfigDto, web::WebSearchConfigInput, web::WebSearchTestInput,
         web::WebSearchTestReport,
+        voice::VoiceConfigDto, voice::VoiceConfigInput, voice::TranscribeInput, voice::TranscribeOutput,
         host::HostMode, host::HostState, host::HostLimits, host::HostConfig, host::HostConflict,
         host_links::HostLinkState, host_links::HostLinkInfo, host_links::HostLinkList, host_links::PairHostInput, host_links::HostLinkConnection,
         host_setup::StartHostSetupInput, host_setup::HostSetupState, host_setup::HostSetupStepStatus, host_setup::HostSetupStep, host_setup::HostKeyPrompt, host_setup::HostSetupJob, host_setup::HostKeyAnswer, host_setup::SshKeyHint, host_setup::SshKeyList,
@@ -234,7 +239,7 @@ impl Modify for Security {
         (name = "view"), (name = "meta"), (name = "bots"), (name = "chats"), (name = "approvals"),
         (name = "runs"), (name = "usage"), (name = "events"), (name = "control"),
         (name = "policy"), (name = "providers"), (name = "schedules"), (name = "channels"),
-        (name = "host"), (name = "admin"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "composio"), (name = "web"),
+        (name = "host"), (name = "admin"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "composio"), (name = "web"), (name = "voice"),
         (name = "skills"), (name = "doctor"), (name = "mcp-server")
     )
 )]
