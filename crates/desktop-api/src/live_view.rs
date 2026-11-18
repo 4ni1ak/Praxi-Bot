@@ -1044,7 +1044,7 @@ pub fn encode_refined(
     };
     scratch_rgb.clear();
     scratch_rgb.reserve(usize::from(w) * usize::from(h) * 3);
-    for px in pixels.chunks_exact(4) {
+    for px in pixels.as_chunks::<4>().0 {
         scratch_rgb.extend_from_slice(&[px[2], px[1], px[0]]);
     }
     out.clear();
@@ -3496,8 +3496,10 @@ mod tests {
         let mut rgb_back = vec![0u8; dec.output_buffer_size().unwrap()];
         dec.read_image(&mut rgb_back).unwrap();
         let exact = page
-            .chunks_exact(4)
-            .zip(rgb_back.chunks_exact(3))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(rgb_back.as_chunks::<3>().0)
             .all(|(p, r)| p[2] == r[0] && p[1] == r[1] && p[0] == r[2]);
         assert!(exact, "lossless refinement must reproduce every pixel");
         println!("refinement 1280x720 text page: lossless WebP = {webp_bytes} B");
