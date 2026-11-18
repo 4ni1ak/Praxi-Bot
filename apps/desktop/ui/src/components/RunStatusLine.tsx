@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { formatElapsed, type RunBarModel } from "../lib/runBar";
+import { formatElapsed, type RunBarModel, type RunStopUi } from "../lib/runBar";
 import { StopStatusNotice } from "./StopStatusNotice";
 import styles from "./RunStatusLine.module.css";
 
@@ -28,7 +28,9 @@ export interface RunStatusLineProps {
   approvalStep: string | null;
   startedMs: number | null;
   /** This chat's Stop progress (the one stop function of the chat decides it). */
-  stop: { phase: "stopping" | "failed"; error: string | null } | null;
+  runStop: RunStopUi | null;
+  /** The chat's one stop function: the second press while a Stop is unconfirmed is the hard stop. */
+  onStop: () => void;
   humanDriving: boolean;
   onPause: () => void;
   onResume: () => void;
@@ -48,7 +50,8 @@ export function RunStatusLine({
   sentence,
   approvalStep,
   startedMs,
-  stop,
+  runStop: stop,
+  onStop,
   humanDriving,
   onPause,
   onResume,
@@ -65,7 +68,9 @@ export function RunStatusLine({
   const text =
     stop?.phase === "stopping"
       ? t("runStatus.stopping")
-      : stop?.phase === "failed"
+      : stop?.phase === "unconfirmed"
+        ? t(stop.unreachable ? "chat.runBar.stopUnreachable" : "chat.runBar.stopUnconfirmed")
+        : stop?.phase === "failed"
         ? (stop.error ?? t("stopStatus.title.partial"))
         : approval
           ? approvalStep
@@ -90,6 +95,11 @@ export function RunStatusLine({
           <span className={styles.pulse} aria-hidden="true" />
           <span className={styles.text}>{botName ? `${botName} · ${text}` : text}</span>
           <span className={styles.actions}>
+            {stop?.phase === "unconfirmed" || stop?.phase === "failed" ? (
+              <button type="button" className={styles.link} onClick={onStop} data-testid="force-stop">
+                {t("chat.runBar.forceStop")}
+              </button>
+            ) : null}
             {model.canResume ? (
               <button type="button" className={styles.link} onClick={onResume}>
                 {t("widget.resume")}
