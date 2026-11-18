@@ -167,8 +167,8 @@ export function activitySections(have: {
 }): ActivitySection[] {
   const out: ActivitySection[] = [];
   if (have.subagents > 0) out.push("subagents");
-  if (have.upcoming > 0) out.push("upcoming");
   out.push("computer");
+  if (have.upcoming > 0) out.push("upcoming");
   if (have.quota > 0) out.push("quota");
   return out;
 }
