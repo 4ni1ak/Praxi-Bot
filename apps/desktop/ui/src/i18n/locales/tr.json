@@ -561,6 +561,11 @@
     "slash": {
       "new": "Yeni bir sohbet başlat",
       "stop": "Çalışan işi durdur",
+      "help": "Yardımı ve kısayolları aç",
+      "settings": "Ayarları aç",
+      "models": "Yapay zekâ modeli ayarlarını aç",
+      "apps": "Uygulamaları aç",
+      "schedules": "Zamanlamaları aç",
       "menu": "Komutlar",
       "mentionMenu": "Botlar",
       "noMatch": "Eşleşme yok"
@@ -1704,6 +1709,7 @@
     "nextRun": "Sonraki çalışma",
     "lastRun": "Son çalışma",
     "never": "Hiç",
+    "missed": "Kapalıyken kaçırılan",
     "payload": {
       "workflow": "{{name}} iş akışını çalıştırır",
       "tool": "{{name}} aracını çağırır",

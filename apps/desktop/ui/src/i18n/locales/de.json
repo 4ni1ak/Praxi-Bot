@@ -561,6 +561,11 @@
     "slash": {
       "new": "Neuen Chat starten",
       "stop": "Aktuellen Lauf stoppen",
+      "help": "Hilfe und Tastenkürzel öffnen",
+      "settings": "Einstellungen öffnen",
+      "models": "Einstellungen für KI-Modelle öffnen",
+      "apps": "Apps öffnen",
+      "schedules": "Geplante Aufgaben öffnen",
       "menu": "Befehle",
       "mentionMenu": "Bots",
       "noMatch": "Keine Treffer"
@@ -1704,6 +1709,7 @@
     "nextRun": "Nächster Lauf",
     "lastRun": "Letzter Lauf",
     "never": "Nie",
+    "missed": "Verpasst, während aus",
     "payload": {
       "workflow": "Führt Workflow {{name}} aus",
       "tool": "Ruft Werkzeug {{name}} auf",
