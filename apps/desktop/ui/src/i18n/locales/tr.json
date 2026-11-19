@@ -2596,9 +2596,11 @@
     },
     "chip": {
       "connecting": "{{name}} · bağlanıyor",
+      "degraded": "{{name}} · kısıtlı",
       "local": "Bu bilgisayar",
       "offline": "{{name}} · çevrimdışı",
       "online": "{{name}} · çevrimiçi",
+      "starting": "{{name}} · başlıyor",
       "temporary": "Bu bilgisayar · şimdilik"
     },
     "copy": "Kopyala",

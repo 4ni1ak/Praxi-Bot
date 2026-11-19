@@ -25,9 +25,15 @@ pub struct Health {
     /// start, `ready` once finished, `degraded` when a component failed to start.
     #[serde(default = "default_ready")]
     pub startup: crate::host::StartupPhase,
-    /// `true` once startup finished without a failure (standby runs no components).
+    /// `true` when startup finished without a failure: this daemon's own automatic
+    /// components are running, or it is standby/client by design and runs none.
+    /// It does NOT mean channels are active; use `channels_active` for that.
     #[serde(default = "default_true")]
     pub components_ready: bool,
+    /// `true` only when this daemon is the active leader and its automatic
+    /// components (scheduler, channels) are running. `false` on standby.
+    #[serde(default)]
+    pub channels_active: bool,
     /// Why startup is `degraded`; fixed text, no secrets or paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_reason: Option<String>,
