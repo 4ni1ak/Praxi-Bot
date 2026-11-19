@@ -5,9 +5,11 @@ import {
   describeTool,
   hostOf,
   humanizeName,
+  isDiscoveryTool,
   isSendTool,
   KNOWN_TOOL_NAMES,
-  stepPhase
+  stepPhase,
+  trLocative
 } from "./toolLabels.ts";
 
 test("known builtin tools get a stable key, icon and chips", () => {
@@ -27,12 +29,35 @@ test("MCP tools name the app and the action", () => {
   const s = describeTool("github.search_pull_requests", { query: "is:closed" }, (n) =>
     n === "github" ? "GitHub" : null
   );
-  assert.equal(s.key, "chat.step.mcp");
-  assert.deepEqual(s.values, { app: "GitHub", action: "search pull requests" });
+  assert.equal(s.key, "chat.step.mcp_search");
+  assert.deepEqual(s.values, { app: "GitHub", appAt: "GitHub'da", action: "search pull requests" });
   assert.equal(s.brand, "github");
   assert.deepEqual(s.chips, [{ text: "is:closed" }]);
   const u = describeTool("linear.createIssue", {});
-  assert.deepEqual(u.values, { app: "Linear", action: "create Issue" });
+  assert.equal(u.key, "chat.step.mcp");
+  assert.deepEqual(u.values, { app: "Linear", appAt: "Linear'da", action: "create Issue" });
+});
+
+test("use_tool shows the real tool it ran; discovery plumbing is flagged hidden", () => {
+  const s = describeTool("use_tool", {
+    name: "mcp:github/search_repositories",
+    input: { query: "grok bot" }
+  });
+  assert.equal(s.key, "chat.step.mcp_search");
+  assert.equal(s.brand, "github");
+  assert.deepEqual(s.chips, [{ text: "grok bot" }]);
+  assert.equal(describeTool("use_tool", { name: "web_search", input: { query: "x" } }).key, "chat.step.web_search");
+  assert.equal(isDiscoveryTool("find_tool"), true);
+  assert.equal(isDiscoveryTool("get_tool_details"), true);
+  assert.equal(isDiscoveryTool("use_tool"), false);
+});
+
+test("Turkish locative follows vowel harmony and consonant hardening", () => {
+  assert.equal(trLocative("GitHub"), "GitHub'da");
+  assert.equal(trLocative("Gmail"), "Gmail'de");
+  assert.equal(trLocative("Slack"), "Slack'ta");
+  assert.equal(trLocative("Notion"), "Notion'da");
+  assert.equal(trLocative("Linear"), "Linear'da");
 });
 
 test("unknown tools fall back to a generic wording, never crash on odd input", () => {
@@ -61,6 +86,10 @@ test("writing, scripting and typing tools are not worded as reads or generic use
   const keys = ["browser_eval", "browser_fill", "browser_scroll"].map((n) => describeTool(n, {}).key);
   assert.equal(new Set(keys).size, 3);
   assert.notEqual(describeTool("skill_write", {}).key, describeTool("skill_read", {}).key);
+  assert.notEqual(describeTool("memory_save", {}).key, describeTool("memory_search", {}).key);
+  assert.notEqual(describeTool("memory_forget", {}).key, describeTool("memory_search", {}).key);
+  assert.equal(describeTool("session_search", { query: "deploy" }).key, "chat.step.session_search");
+  assert.equal(describeTool("knowledge_search", { query: "backup" }).key, "chat.step.knowledge_search");
   assert.notEqual(describeTool("desktop_type", {}).key, describeTool("desktop_get_state", {}).key);
   assert.notEqual(describeTool("desktop_key", {}).key, describeTool("desktop_type", {}).key);
 });

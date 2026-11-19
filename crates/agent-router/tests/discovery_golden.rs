@@ -1,4 +1,4 @@
-//! Tool-discovery golden-query baseline (task 039).
+//! Tool-discovery golden-query baseline.
 //!
 //! Ranks a frozen set of Turkish / English queries against a frozen tool corpus
 //! with the two lexical discovery indexes that exist today:
@@ -73,6 +73,7 @@ fn to_spec(t: &FxTool) -> ToolSpec {
         effect: effect(&t.effect),
         category: PermissionCategory::Meta,
         platforms: vec![Platform::All],
+        content: tool_registry::ContentClass::none(),
     }
 }
 

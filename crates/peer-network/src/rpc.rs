@@ -509,10 +509,36 @@ impl RpcClient {
         params: Value,
         cancel: &CancellationToken,
     ) -> Result<Value> {
+        self.call_inner(method, params, cancel, self.timeout).await
+    }
+
+    /// [`call`](Self::call) with a deadline of its own, for requests that wait
+    /// for a person (the owner's approval card on a paired desktop).
+    ///
+    /// # Errors
+    ///
+    /// As [`call`](Self::call).
+    pub async fn call_with_timeout(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value> {
+        self.call_inner(method, params, &CancellationToken::new(), timeout)
+            .await
+    }
+
+    async fn call_inner(
+        &self,
+        method: &str,
+        params: Value,
+        cancel: &CancellationToken,
+        timeout: Duration,
+    ) -> Result<Value> {
         if cancel.is_cancelled() {
             return Err(PeerError::Cancelled);
         }
-        let deadline = deadline(self.timeout)?;
+        let deadline = deadline(timeout)?;
         let request = Request {
             jsonrpc: "2.0".into(),
             id: Value::from(self.next_id.fetch_add(1, Ordering::Relaxed)),

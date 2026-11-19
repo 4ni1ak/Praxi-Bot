@@ -34,7 +34,8 @@ pub mod page;
 pub mod snapshot;
 
 pub use actions::{
-    ActionResult, KeySpec, ScreenshotOptions, ScreenshotTarget, WaitCondition, parse_key,
+    ActionResult, FieldTarget, FrameIdentity, KeySpec, ScreenshotOptions, ScreenshotTarget,
+    WaitCondition, parse_key,
 };
 pub use browser::{Browser, TargetInfo};
 pub use client::{

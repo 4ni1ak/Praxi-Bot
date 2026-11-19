@@ -8,10 +8,10 @@
 use std::path::{Path, PathBuf};
 
 use protocol::{BotId, UserId};
+pub use provider_catalog::ProviderChoice;
 use provider_catalog::{
-    Auth, Catalog, CompatFlags, ModelCapabilities, ModelRef, OpenAiCompatConfig, ProviderConfig,
-    ProviderEntry, ProviderKind, ProviderSettings, api_key_secret_name, build_chat_provider,
-    config_path, test_connection,
+    Auth, Catalog, ModelRef, OpenAiCompatConfig, ProviderConfig, ProviderEntry, ProviderSettings,
+    api_key_secret_name, build_chat_provider, test_connection,
 };
 use secret_store::{SecretRef, SecretStore, SecretValue};
 use storage::{Bot, Storage, User, now_ms};
@@ -24,20 +24,6 @@ use crate::{
 
 /// Models listed above this count are asked as free text instead of a menu.
 const MENU_LIMIT: usize = 30;
-
-/// Which provider the user picked.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProviderChoice {
-    /// A catalog entry by id.
-    Catalog(String),
-    /// A custom OpenAI-compatible endpoint.
-    Custom {
-        /// Id to register it under.
-        id: String,
-        /// Base URL (e.g. `http://localhost:8000/v1`).
-        base_url: String,
-    },
-}
 
 /// Everything decided by the user; applied in one go.
 #[derive(Debug)]
@@ -130,33 +116,12 @@ pub struct SetupEnv<'a> {
 /// # Errors
 /// Unknown catalog id.
 pub fn entry_for(choice: &ProviderChoice, catalog: &Catalog) -> Result<ProviderEntry> {
-    match choice {
-        ProviderChoice::Catalog(id) => catalog.get(id).cloned().ok_or_else(|| {
+    provider_catalog::entry_for(choice, catalog).map_err(|e| match e {
+        provider_catalog::SetupError::Unknown(id) => {
             format!("unknown provider {id:?}; use --base-url for a custom one").into()
-        }),
-        ProviderChoice::Custom { id, base_url } => Ok(custom_entry(id, base_url)),
-    }
-}
-
-/// Entry for a custom OpenAI-compatible endpoint.
-#[must_use]
-pub fn custom_entry(id: &str, base_url: &str) -> ProviderEntry {
-    let base = base_url.trim_end_matches('/').to_string();
-    ProviderEntry {
-        id: id.to_string(),
-        kind: ProviderKind::OpenAiCompatible,
-        models_endpoint: Some(format!("{base}/models")),
-        models: Vec::new(),
-        base_url: base,
-        auth: Auth::None,
-        capabilities: ModelCapabilities {
-            tools: true,
-            vision: false,
-            streaming: true,
-            json_mode: false,
-        },
-        compat_flags: CompatFlags::default(),
-    }
+        }
+        other => other.into(),
+    })
 }
 
 fn sorted_catalog(catalog: &Catalog) -> Vec<&ProviderEntry> {
@@ -384,46 +349,17 @@ pub fn configure_provider(
     key: Option<&SecretValue>,
     model: Option<&str>,
 ) -> Result<(ProviderSettings, ProviderConfig)> {
-    let entry = entry_for(choice, env.catalog)?;
-    let secret_ref = if let Some(k) = key {
-        let name = api_key_secret_name(&entry.id);
-        let secret_ref = SecretRef::new(name.clone())?;
-        // Write to the OS keychain/secret store before taking providers.lock so
-        // an interactive unlock prompt never stalls concurrent config writers.
-        env.store.set(&name, k.expose())?;
-        Some(secret_ref)
-    } else {
-        None
-    };
-    let path = config_path(env.data_dir);
-    let _guard = ProviderConfig::lock(&path)?;
-    let mut cfg = ProviderConfig::load(&path)?;
-    let mut s = ProviderSettings::new(&entry.id, now_ms());
-    s.key = secret_ref;
-    if matches!(choice, ProviderChoice::Custom { .. }) {
-        s.custom = Some(entry);
-    }
-    s.default_model = model.map(str::to_string);
-    let id = s.id.clone();
-    // Re-adding without a new key / model keeps what was there.
-    if let Some(old) = cfg.get(&id) {
-        if s.key.is_none() {
-            s.key.clone_from(&old.key);
-        }
-        if s.default_model.is_none() {
-            s.default_model.clone_from(&old.default_model);
-        }
-        if s.model_caps.is_empty() {
-            s.model_caps.clone_from(&old.model_caps);
-        }
-    }
-    cfg.upsert(s);
-    cfg.save(&path)?;
-    let settings = cfg
-        .get(&id)
-        .cloned()
-        .ok_or("provider vanished after save")?;
-    Ok((settings, cfg))
+    // Unknown ids keep the CLI's own wording (`--base-url`).
+    entry_for(choice, env.catalog)?;
+    Ok(provider_catalog::configure_provider(
+        env.catalog,
+        env.store,
+        env.data_dir,
+        choice,
+        key.map(SecretValue::expose),
+        model,
+        now_ms(),
+    )?)
 }
 
 /// Persist everything in the plan.
@@ -501,6 +437,7 @@ fn save_language(data_dir: &Path, lang: Lang) -> Result<()> {
 mod tests {
     use super::*;
     use crate::prompt::scripted::{Answer, Scripted};
+    use provider_catalog::{CompatFlags, ModelCapabilities, ProviderKind, config_path};
     use secret_store::MemoryStore;
     use std::cell::RefCell;
 

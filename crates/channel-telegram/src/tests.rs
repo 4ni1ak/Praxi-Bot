@@ -3229,6 +3229,51 @@ async fn schedule_approval_shows_everything_without_always_and_chunks_long_promp
 }
 
 #[tokio::test]
+async fn an_approval_too_large_for_telegram_is_not_offered() {
+    let marker = "PAYLOAD-MARKER-XYZ";
+    let payload = marker.repeat(40 * 3500);
+    let msgs = approval_messages(Some(json!({
+        "kind": "egress",
+        "reason": "send",
+        "host": "example.test",
+        "payload": payload,
+        "payload_kind": "body",
+    })))
+    .await;
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    let text = msgs[0]["text"].as_str().unwrap();
+    assert!(text.contains("desktop app"), "{text}");
+    assert!(msgs[0].get("reply_markup").is_none(), "{:?}", msgs[0]);
+    assert!(!text.contains(marker), "{text}");
+}
+
+#[tokio::test]
+async fn an_egress_card_shows_the_computer_target() {
+    let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let msgs = approval_messages(Some(json!({
+        "kind": "egress",
+        "reason": "typing after a read",
+        "host": "the desktop",
+        "payload": "hello",
+        "payload_kind": "body",
+        "computer_target": {"kind": "pc", "node_id": id, "node_name": "Work PC"},
+    })))
+    .await;
+    let all: String = msgs
+        .iter()
+        .map(|m| m["text"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(
+        all.contains(&format!("COMPUTER: pc \"Work PC\" (id {id})")),
+        "{all}"
+    );
+    assert!(
+        msgs.last().unwrap().get("reply_markup").is_some(),
+        "{msgs:?}"
+    );
+}
+
+#[tokio::test]
 async fn unrenderable_details_leave_approval_to_the_desktop_app() {
     let msgs = approval_messages(Some(json!({"kind": "future-thing"}))).await;
     assert_eq!(msgs.len(), 1);
@@ -3246,6 +3291,122 @@ async fn plain_approvals_keep_their_three_buttons() {
             .unwrap()
             .len(),
         3
+    );
+}
+
+fn control_card_json(offered: bool, payload: &str) -> serde_json::Value {
+    json!({
+        "kind": "egress", "reason": "this run read file a.txt and now wants to type",
+        "read": ["file a.txt"], "host": "keyboard", "payload": payload, "payload_kind": "text",
+        "control_grant": {
+            "offered": offered, "refusal": if offered { Value::Null } else { json!("terminal") },
+            "program": "notepad.exe", "image_path": "C:\\Windows\\notepad.exe",
+            "window_title": "Untitled - Notepad", "pid": 7
+        }
+    })
+}
+
+#[tokio::test]
+async fn a_control_card_that_fits_one_message_gets_a_this_task_button() {
+    let msgs = approval_messages(Some(control_card_json(true, "hello"))).await;
+    assert_eq!(msgs.len(), 1);
+    let text = msgs[0]["text"].as_str().unwrap();
+    assert!(text.contains("This task: notepad.exe"), "{text}");
+    assert!(text.contains("Bu görev: notepad.exe"), "{text}");
+    let row = msgs[0]["reply_markup"]["inline_keyboard"][0]
+        .as_array()
+        .unwrap();
+    let labels: Vec<&str> = row.iter().map(|b| b["text"].as_str().unwrap()).collect();
+    assert_eq!(labels, ["Approve once", "This task: notepad.exe", "Deny"]);
+    assert!(
+        row[1]["callback_data"]
+            .as_str()
+            .unwrap()
+            .starts_with("approve:run:")
+    );
+}
+
+#[tokio::test]
+async fn a_control_card_that_does_not_offer_the_grant_has_no_this_task_button() {
+    let msgs = approval_messages(Some(control_card_json(false, "hello"))).await;
+    let text = msgs[0]["text"].as_str().unwrap();
+    assert!(text.contains("NO CONTROL GRANT"), "{text}");
+    let row = msgs[0]["reply_markup"]["inline_keyboard"][0]
+        .as_array()
+        .unwrap();
+    assert_eq!(row.len(), 2, "approve once and deny only");
+}
+
+#[tokio::test]
+async fn a_control_card_longer_than_one_message_offers_only_once() {
+    let long = "x".repeat(6000);
+    let msgs = approval_messages(Some(control_card_json(true, &long))).await;
+    assert!(msgs.len() >= 2);
+    let last = msgs.last().unwrap();
+    let row = last["reply_markup"]["inline_keyboard"][0]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        row.len(),
+        2,
+        "no run-control button when the card does not fit one message"
+    );
+}
+
+#[tokio::test]
+async fn a_crafted_run_callback_is_refused_unless_the_card_offered_it() {
+    let server = MockServer::start().await;
+    mount_telegram_mocks(&server).await;
+    let bot = BotSummary {
+        id: BotId::new(),
+        name: "Mira".into(),
+    };
+    let daemon = Arc::new(FakeDaemon::new(vec![bot]));
+    let cfg = TelegramConfig::with_in_memory_token(TEST_BOT_TOKEN)
+        .with_api_base_url(server.uri())
+        .with_paired_users([PAIRED_USER_ID]);
+    let channel = TelegramChannel::new(cfg, daemon.clone()).unwrap();
+    let (run_id, call_id) = once_only_cb_args();
+    let (tx, rx) = mpsc::unbounded_channel::<Envelope>();
+    tx.send(Envelope::new(
+        0,
+        Event::ApprovalNeeded(ApprovalNeeded {
+            run_id,
+            call_id,
+            tool_name: "desktop_type".into(),
+            input: json!({}),
+            summary: "s".into(),
+            details: Some(control_card_json(false, "hello")),
+        }),
+    ))
+    .unwrap();
+    daemon.queue_run_stream(
+        run_id,
+        Box::pin(futures::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|item| (item, rx))
+        })),
+    );
+    channel
+        .handle_update(
+            serde_json::from_value(text_update(1, PAIRED_USER_ID, TEST_CHAT_ID, "go")).unwrap(),
+        )
+        .await
+        .unwrap();
+    let u: Update = serde_json::from_value(callback_update(
+        10,
+        PAIRED_USER_ID,
+        TEST_CHAT_ID,
+        "cb-run",
+        &format_approval_callback(call_id, "run"),
+    ))
+    .unwrap();
+    channel.handle_update(u).await.unwrap();
+    assert!(daemon.approvals.lock().is_empty(), "no decision was sent");
+    let reqs = server.received_requests().await.unwrap();
+    assert!(
+        callback_answers(&reqs)
+            .iter()
+            .any(|a| a.to_string().contains("only be approved once"))
     );
 }
 
@@ -3578,4 +3739,48 @@ async fn telegram_409_resumes_after_capped_backoff_once_conflict_clears() {
     assert_eq!(conflicts.load(Ordering::SeqCst), 1);
     assert!(polls.load(Ordering::SeqCst) >= 5);
     channel.shutdown().await;
+}
+
+#[tokio::test]
+async fn app_approval_sends_all_arguments_before_the_only_approval_buttons() {
+    let body = format!("{}RECIPIENT-AT-END", "x".repeat(6000));
+    let messages = approval_messages(Some(json!({"kind":"app_action","app_name":"GitHub","action_slug":"GITHUB_SEND","version":"20260901_00","arguments":{"body":body}}))).await;
+    let all: String = messages
+        .iter()
+        .map(|m| m["text"].as_str().unwrap())
+        .collect();
+    assert!(all.contains(&body) && all.contains("via Composio") && all.contains("GITHUB_SEND"));
+    assert!(messages.len() > 1);
+    assert!(
+        messages[..messages.len() - 1]
+            .iter()
+            .all(|m| m.get("reply_markup").is_none())
+    );
+    let buttons = messages.last().unwrap()["reply_markup"]["inline_keyboard"][0]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        buttons
+            .iter()
+            .map(|b| b["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["Approve once", "Deny"]
+    );
+}
+
+#[test]
+fn voice_and_photo_messages_become_unsupported_not_dropped() {
+    let mut v = text_update(1, PAIRED_USER_ID, PAIRED_USER_ID, "x");
+    v["message"].as_object_mut().unwrap().remove("text");
+    v["message"]["voice"] = json!({"file_id": "f", "duration": 3});
+    let incoming = update(v.clone()).into_incoming().unwrap();
+    assert_eq!(
+        incoming.kind,
+        IncomingKind::Unsupported("voice message".into())
+    );
+    v["message"].as_object_mut().unwrap().remove("voice");
+    v["message"]["photo"] = json!([{"file_id": "p"}]);
+    v["message"]["caption"] = json!("look");
+    let incoming = update(v).into_incoming().unwrap();
+    assert_eq!(incoming.kind, IncomingKind::Unsupported("photo".into()));
 }

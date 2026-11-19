@@ -85,3 +85,19 @@ test("a chain sorts at its end, never after the next row nor before its start", 
   assert.equal(chainOrderTs(chain, 5000), 5000);
   assert.equal(chainOrderTs(chain, 500), 1000);
 });
+
+test("find_tool / get_tool_details never appear as steps and do not split a chain", () => {
+  const items = [
+    tool("a", 1, "done", "find_tool"),
+    tool("b", 2, "done", "get_tool_details"),
+    tool("c", 3, "done", "use_tool"),
+    text("t", 5, "Done.")
+  ];
+  const segs = groupRunItems(items, true);
+  assert.equal(segs.length, 2);
+  const chain = segs[0];
+  assert.ok(chain && chain.kind === "chain");
+  assert.deepEqual(chain.chain.steps.map((s) => s.key), ["c"]);
+  // only plumbing: no chain at all
+  assert.deepEqual(kinds([tool("a", 1, "done", "find_tool")], true), []);
+});

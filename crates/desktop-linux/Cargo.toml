@@ -33,5 +33,5 @@ tempfile.workspace = true
 tokio.workspace = true
 
 [[example]]
-name = "inspect"
+name = "inspect-linux"
 path = "examples/inspect.rs"

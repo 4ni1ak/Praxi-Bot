@@ -122,6 +122,7 @@ impl Classifier for ProviderClassifier {
         req.max_tokens = Some(max_tokens);
         req.temperature = Some(0.0);
         req.json_mode = true;
+        let mut call = crate::usage::Scope::call(&self.model, crate::CallPurpose::Router)?;
         let mut stream = provider
             .stream(req)
             .await
@@ -130,6 +131,7 @@ impl Classifier for ProviderClassifier {
         while let Some(chunk) = stream.next().await {
             match chunk.map_err(|e| BackendError::new(e.to_string()))? {
                 ChatChunk::TextDelta(t) => out.push_str(&t),
+                ChatChunk::Usage(u) => call.usage(&u),
                 ChatChunk::Done { .. } => break,
                 _ => {}
             }
@@ -267,7 +269,7 @@ impl Shared {
         let providers = self.providers.read().clone();
         let mut builder = Ladder::builder().config(self.cfg.ladder.clone());
         if let Some(e) = providers.embedder() {
-            builder = builder.embedder(e);
+            builder = builder.embedder(Arc::new(crate::usage::CountedEmbedder(e)));
         }
         if let Some(model) = profile.k3_model() {
             builder = builder.classifier(Arc::new(ProviderClassifier {
@@ -315,7 +317,7 @@ impl Shared {
         if let Some(index) = self.skills.get()
             && let Ok(view) = index.for_bot(Some(&bot.to_string()))
         {
-            for s in view.list() {
+            for s in view.list().into_iter().filter(|skill| !skill.untrusted) {
                 let version = format!("{}:{:016x}", s.version, fnv(s.body.as_bytes()));
                 out.push(
                     Candidate::new(CandidateKind::Skill, &s.name, &s.description)
@@ -370,15 +372,20 @@ impl Shared {
         bl.ladder.set_candidates(candidates);
         if embed && let Ok(handle) = tokio::runtime::Handle::try_current() {
             let ladder = Arc::clone(&bl.ladder);
-            let task = handle.spawn(async move {
-                if let Err(e) = ladder.refresh_embeddings().await {
+            let Some(scope) = crate::usage::Scope::current() else {
+                return;
+            };
+            let activity = crate::usage::Activity::new(&scope.sh, scope.ctx.run_id);
+            let task = handle.spawn(scope.clone().run(async move {
+                let _activity = activity;
+                if ladder.refresh_embeddings().await.is_err() {
+                    // Never log backend text; it can contain user input or credentials.
                     tracing::warn!(
                         candidates = count,
-                        error = %e,
                         "K2 embedding refresh failed; routing falls back to BM25"
                     );
                 }
-            });
+            }));
             let mut bg = self.bg.lock();
             bg.retain(|h| !h.is_finished());
             bg.push(task);
@@ -496,8 +503,21 @@ fn workflow_run_by_model(steps: &[RunStep]) -> Option<(String, BTreeMap<String, 
 impl TurnExecutor {
     /// Decide how a fresh top-level turn starts and emit `route_decided`.
     /// `None` for subagents and bots with the router off.
-    pub(crate) async fn route_first(&self, ctx: &RunCtx, text: &str) -> Option<Decision> {
-        if ctx.sub.is_some() || ctx.parent_run_id.is_some() {
+    pub(crate) async fn route_first(&self, ctx: &Arc<RunCtx>, text: &str) -> Option<Decision> {
+        crate::usage::Scope {
+            sh: Arc::clone(&self.sh),
+            ctx: Arc::clone(ctx),
+        }
+        .run(self.route_first_counted(ctx, text))
+        .await
+    }
+
+    async fn route_first_counted(&self, ctx: &RunCtx, text: &str) -> Option<Decision> {
+        if ctx.sub.is_some()
+            || ctx.parent_run_id.is_some()
+            || ctx.initiator == protocol::InitiatorKind::ExternalAgent
+            || ctx.initiator == protocol::InitiatorKind::ExternalSchedule
+        {
             return None;
         }
         let bl = self.sh.ladder_for(ctx.bot_id, &ctx.profile)?;
@@ -693,14 +713,27 @@ impl TurnExecutor {
                 "level": level,
                 "note": "The saved workflow could not be replayed.",
                 "summary": format!("The saved workflow could not be replayed: {why}"),
+                "exposure": { "ran": false },
             })
         };
         let Some(w) = self.sh.router.workflows.get() else {
             return Ok(fail("workflows are not available".into()));
         };
+        // Loading/parsing can itself return file content in an error. Record
+        // exposure before touching the store and persist it on failure too.
+        ctx.taint.lock().note(
+            tool_registry::ContentClass::untrusted_private(),
+            "saved workflow",
+        );
+        let fail_after_read = |why| {
+            let mut failed = fail(why);
+            failed["exposure"] = json!({"ran": true, "ingests_untrusted": true,
+                "reads_private": true, "label": "saved workflow"});
+            failed
+        };
         let wf = match w.store.get(&name) {
             Ok(wf) => wf,
-            Err(e) => return Ok(fail(e.to_string())),
+            Err(e) => return Ok(fail_after_read(e.to_string())),
         };
         let mut opts = w.opts.clone();
         opts.run_id = run.id.to_string();
@@ -713,9 +746,19 @@ impl TurnExecutor {
             .await
         {
             Ok(r) => r,
-            Err(e) => return Ok(fail(e.to_string())),
+            Err(e) => return Ok(fail_after_read(e.to_string())),
         };
         let summary = summarize(&report);
+        let exposure = json!({
+            "ran": true,
+            "ingests_untrusted": true,
+            "reads_private": true,
+            "label": "workflow replay",
+        });
+        ctx.taint.lock().note(
+            tool_registry::ContentClass::untrusted_private(),
+            "workflow replay",
+        );
         if report.is_completed() {
             self.sh.emit(
                 &ctx,
@@ -730,6 +773,7 @@ impl TurnExecutor {
                 "final_text": summary,
                 "steps_replayed": report.steps_replayed,
                 "wall_time_ms": report.wall_time_ms,
+                "exposure": exposure,
             }));
         }
         Ok(json!({
@@ -738,6 +782,7 @@ impl TurnExecutor {
             "level": level,
             "note": "The saved workflow stopped early.",
             "summary": summary,
+            "exposure": exposure,
         }))
     }
 

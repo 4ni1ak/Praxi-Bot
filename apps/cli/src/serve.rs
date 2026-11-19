@@ -258,6 +258,7 @@ pub fn build_agent_with_live_views(
         view_registry,
         false,
         skills,
+        None,
     )
     .expect("test agent skill wiring")
 }
@@ -280,6 +281,7 @@ fn build_agent_with_skills(
     view_registry: Option<Arc<live_view::TargetRegistry>>,
     dynamic_desktop: bool,
     skills: SkillIndex,
+    fill_secrets: Option<Arc<secret_store::FillSecrets>>,
 ) -> Result<AgentLoop> {
     if !skills.has_assignments() {
         return Err("skill index must carry the per-bot assignment source".into());
@@ -291,9 +293,15 @@ fn build_agent_with_skills(
         None,
         InitiatorKind::Human,
     );
-    let mut tools = BuiltinConfig::new(data_dir.to_path_buf(), Arc::new(gate));
+    // Storage resolves symlinks and junctions in the data dir once; the file
+    // tools' protected-path checks must use that same canonical spelling.
+    let mut tools = BuiltinConfig::new(storage.data_dir().to_path_buf(), Arc::new(gate));
     tools.desktop.clone_from(&desktop);
     tools.dynamic_desktop = dynamic_desktop;
+    tools.fill_secrets = fill_secrets;
+    tools.provenance = Some(Arc::new(builtin_tools::provenance::StorageProvenance(
+        Arc::clone(storage),
+    )));
     tools.view_registry = view_registry;
     tools.knowledge = Some(Arc::new(
         builtin_tools::knowledge::LocalKnowledgeBackend::new(Arc::clone(storage)),
@@ -305,6 +313,18 @@ fn build_agent_with_skills(
         std::env::var("BOT_BROWSER_IDLE_SECONDS").ok().as_deref(),
     );
     tools.browser_settings.idle_timeout = idle;
+    let approval_timeout = approval_timeout(
+        std::env::var("BOT_APPROVAL_TIMEOUT_SECONDS")
+            .ok()
+            .as_deref(),
+    );
+    let memory = match agent_core::MemoryConfig::open_default(storage.data_dir()) {
+        Ok(cfg) => Some(cfg),
+        Err(e) => {
+            eprintln!("warning: memory store unavailable: {e}");
+            None
+        }
+    };
     // The discovery threshold is `LoopConfig`'s default (40).
     Ok(AgentLoop::new(
         Arc::clone(storage),
@@ -313,6 +333,8 @@ fn build_agent_with_skills(
         LoopConfig {
             redactor: Some(redactor),
             max_computer_runs,
+            approval_timeout,
+            memory,
             knowledge_decider: Some(Arc::new(agent_core::HeuristicKnowledgeDecider::new(
                 Arc::clone(storage),
             ))),
@@ -322,6 +344,7 @@ fn build_agent_with_skills(
     .with_builtin_tools(tools)
     .with_subagents()
     .with_skills(skills)
+    .with_memory_tools()
     .with_workflows(
         WorkflowStore::new(data_dir),
         Handles {
@@ -342,6 +365,13 @@ struct ComputerLimits {
     max_computer_runs: Option<usize>,
     browser_idle_seconds: Option<u64>,
 }
+/// How long an unanswered approval or question waits before it expires
+/// (`BOT_APPROVAL_TIMEOUT_SECONDS`; `0` = no limit, unset or invalid = the default).
+fn approval_timeout(env: Option<&str>) -> Duration {
+    env.and_then(|n| n.trim().parse::<u64>().ok())
+        .map_or(agent_core::DEFAULT_APPROVAL_TIMEOUT, Duration::from_secs)
+}
+
 fn computer_limits(
     host: &str,
     env_runs: Option<&str>,
@@ -816,6 +846,9 @@ pub struct ServeOptions {
     /// Secret store of the Telegram channel (`None` = no channels, e.g. the
     /// fake-provider demo).
     pub telegram_store: Option<Arc<dyn SecretStore>>,
+    /// Owner key handed over by the desktop app on stdin (never argv, a file
+    /// or the environment). A host without one creates the `owner-key` file.
+    pub owner_key: Option<String>,
 }
 
 /// Run the daemon on `listener` until `shutdown` resolves, with the Telegram
@@ -857,6 +890,14 @@ impl daemon_api::DoctorHost for ServeDoctorHost {
     }
 }
 
+/// Start-up progress, one line per step with the milliseconds since the first one, so the
+/// daemon log of a machine where `serve` stops early says exactly where it stopped.
+fn step(name: &str) {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let start = START.get_or_init(std::time::Instant::now);
+    eprintln!("startup: {name} (+{} ms)", start.elapsed().as_millis());
+}
+
 /// Run the daemon until a stop request (see [`shutdown_signal`]); running tool
 /// steps get `grace` to finish, everything else live is paused for the next start.
 ///
@@ -877,8 +918,10 @@ pub fn serve(
         telegram_store,
         host_mode,
         peer_enabled,
+        owner_key,
     } = opts;
     let (port, json, grace) = (*port, *json, *grace);
+    step("begin");
     let mut ownership = daemon_api::host::HostConfig::load(data_dir)?;
     if *host_mode {
         ownership.mode = daemon_api::host::HostMode::Host;
@@ -892,7 +935,9 @@ pub fn serve(
         ownership.save(data_dir)?;
     }
     let storage = Arc::new(Storage::open(data_dir)?);
+    step("database open");
     let token = load_or_create_token(data_dir)?;
+    step("api token ready");
     if !token.restricted {
         eprintln!(
             "warning: could not restrict {} to the current user",
@@ -916,13 +961,44 @@ pub fn serve(
         }) as Arc<dyn SecretStore>
     });
     let desktop_caps = desktop.as_ref().map(|d| d.capabilities());
+    step("desktop backend capabilities read");
     let views = Arc::new(live_view::TargetRegistry::default());
+    // This computer's screen becomes a (lazy) view target. Opening it can touch
+    // the OS, so it is probed on a worker thread with a deadline: the API starts
+    // regardless, and the panel is told why while there is no screen. The raw
+    // reason goes only to this log, redacted.
+    let _desktop_view = crate::view_targets::DesktopRegistrar::start(
+        Arc::clone(&views),
+        crate::view_targets::local_opener(desktop.clone()),
+        {
+            let redactor = redactor.clone();
+            Arc::new(move |line: &str| eprintln!("warning: {}", redactor.redact(line)))
+        },
+        crate::view_targets::Timing::default(),
+    );
     let host_is_host = ownership.mode == daemon_api::host::HostMode::Host;
     let effective_peer_enabled =
         peer_enabled_for_startup(data_dir, host_is_host, *peer_enabled, *host_mode)?;
     let dynamic_desktop = effective_peer_enabled;
     let local_desktop = desktop.clone();
     let skill_index = skill_index_with_assignments(&storage, data_dir);
+    step("skill index built");
+    // Owner-stored fill secrets live in the same secret store as everything
+    // else, under `fill/`; every value is registered with the production
+    // redactor as it is stored and as it is read, on top of the periodic
+    // refresh that already covers every name in the store.
+    let fill_secrets = telegram_store.as_ref().and_then(|store| {
+        let hook_redactor = redactor.clone();
+        match secret_store::FillSecrets::open(Arc::clone(store), data_dir) {
+            Ok(f) => Some(Arc::new(f.with_value_hook(Arc::new(move |v: &str| {
+                hook_redactor.register(v);
+            })))),
+            Err(e) => {
+                eprintln!("warning: fill secrets are disabled: {e}");
+                None
+            }
+        }
+    });
     let agent = build_agent_with_skills(
         &storage,
         providers,
@@ -932,15 +1008,22 @@ pub fn serve(
         Some(Arc::clone(&views)),
         dynamic_desktop,
         skill_index.clone(),
+        fill_secrets.clone(),
     )?;
+    step("agent built");
     // Same registry the loop calls tools from: MCP servers, email and web tools register into it.
     let mcp_tools = agent.tool_registry();
+    let composio_tools = mcp_tools.clone();
     let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
         .map(|(host, _)| host);
+    crate::homeassistant_host::start_homeassistant(data_dir, &mcp_tools, telegram_store.as_ref());
+    crate::calendar_host::start_calendar(data_dir, &mcp_tools, telegram_store.as_ref());
     register_web(data_dir, port, &mcp_tools, telegram_store.as_ref());
+    step("web tools registered");
     let web_host =
         crate::web_host::WebHost::new(data_dir, port, mcp_tools.clone(), telegram_store.clone());
     let recovered = agent.recover()?;
+    step("interrupted runs recovered");
     let mut cfg = DaemonConfig::new(api_token.clone());
     cfg.shutdown_grace = grace;
     // Extra browser origins (e.g. the desktop app's dev server), comma separated.
@@ -948,10 +1031,28 @@ pub fn serve(
         cfg.allowed_origins.extend(parse_origins(&extra));
     }
     let state = AppState::with_view_registry(agent.clone(), storage, cfg, views)?;
+    step("app state built");
+    // The owner key: handed over by the desktop app on stdin (memory only), else
+    // the `owner-key` file of this data dir (0600) for a terminal `bot serve`,
+    // a host and the `bot` commands the owner runs in a terminal (card 262).
+    if let Some(key) = owner_key.clone() {
+        state.set_owner_key(key);
+    } else {
+        match daemon_api::load_or_create_owner_key(data_dir) {
+            Ok(key) => state.set_owner_key(key),
+            Err(e) => {
+                eprintln!("warning: owner key unavailable, owner-only operations are off: {e}");
+            }
+        }
+    }
     state
         .set_skills(skill_index)
         .map_err(|e| format!("skills wiring: {e}"))?;
     register_schedule_tools(data_dir, &state);
+    step("schedule tools registered");
+    if let Some(f) = &fill_secrets {
+        state.set_fill_secrets(Arc::clone(f));
+    }
     state.set_doctor_host(Arc::new(ServeDoctorHost {
         desktop: desktop_caps,
         redactor: redactor.clone(),
@@ -963,6 +1064,7 @@ pub fn serve(
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
+    step("runtime built");
     rt.block_on(async {
         // Backstop poll: pick up secrets stored behind the daemon's back (the CLI,
         // the environment).  Runs with or without a secret store.
@@ -978,17 +1080,72 @@ pub fn serve(
                 }
             })
         };
+        // This computer as a target for a paired host's bots (card 258-A): the same
+        // desktop RPC a bot-node serves, behind the owner's per-host switch.
+        let pc_target = (!host_is_host).then(|| {
+            let access = Arc::new(crate::pc_target::AccessStore::open(data_dir));
+            let requests = Arc::new(daemon_api::pc_access::PcRequests::new());
+            let handler = local_desktop.clone().map(|backend| {
+                let audit = state.audit_writer_as("pc-target");
+                let hub = state.control_hub();
+                let live_hub = state.control_hub();
+                let masker = redactor.clone();
+                Arc::new(crate::pc_target::HostDesktopHandler::new(
+                    crate::pc_target::PcTargetDeps {
+                        raw: backend,
+                        data: data_dir.join(""),
+                        access: access.clone(),
+                        requests: requests.clone(),
+                        gate: hub,
+                        owner_ui_live: Arc::new(move || live_hub.owner_ui_live()),
+                        audit: Arc::new(move |action, detail| audit(action, &detail)),
+                        redact: Arc::new(move |text| masker.redact(text)),
+                        own_pid: std::process::id(),
+                    },
+                ))
+            });
+            crate::host_links::PcTarget {
+                access,
+                requests,
+                handler,
+            }
+        });
         let peer = crate::peer::start_server(
             data_dir,
             host_is_host,
             effective_peer_enabled,
             state.clone(),
+            pc_target
+                .as_ref()
+                .and_then(|pc| pc.handler.clone())
+                .map(|h| h as Arc<dyn peer_network::RpcHandler>),
         )
         .await?;
+        step("peer stack handled");
         if let Some(net) = peer.clone() {
             crate::host::watch_peers(&state, net);
         }
+        // Screen grants of paired devices survive a restart: a headless host
+        // has nobody at its screen to grant them again. Pairing
+        // reconciliation below still revokes devices that are gone.
+        state.load_screen_privileges().await;
+        step("screen privileges loaded");
+        if host_is_host {
+            // Bots moved here before the import mapped their computer still say "the
+            // owner's PC": once, logged, they run on this host's own computer.
+            let moved = state.normalise_moved_bots();
+            if moved > 0 {
+                eprintln!("migration: {moved} moved bot(s) now use this host's own computer");
+            }
+        }
+        if let Some(pc) = pc_target {
+            // This computer's links to paired hosts (`/v1/hosts`); the peer
+            // endpoint starts lazily unless `--peer` already started one.
+            crate::host_links::install(&state, data_dir.to_path_buf(), peer.clone(), pc);
+        }
+        step("host links installed");
         let local_id = crate::computer::machine_computer_id(data_dir, peer.as_ref());
+        step("computer identity read");
         let computer = Arc::new(crate::computer::CliComputerProvider::new(
             host_is_host,
             local_desktop,
@@ -1012,6 +1169,7 @@ pub fn serve(
             );
         }
         agent.reconcile_waiting_for_pc_runs()?;
+        step("computer grants reconciled");
         // A revoked pairing loses screen privileges, live sessions and takeover
         // within a couple of seconds, wherever the revoke happened.
         if let Some(net) = peer.clone() {
@@ -1045,13 +1203,41 @@ pub fn serve(
             let handle = redactor.clone();
             Arc::new(move |text: &str| handle.redact(text))
         };
+        let mcp_registrar: mcp_bridge::oauth::SecretRegistrar = {
+            let handle = redactor.clone();
+            Arc::new(move |value: &str| handle.register(value))
+        };
         let mcp = crate::mcp_host::McpHost::start(
             data_dir,
             mcp_tools,
             telegram_store.clone(),
             Some(mcp_redactor),
+            Some(mcp_registrar),
         );
+        step("mcp host started");
         state.set_mcp(Arc::clone(&mcp) as Arc<dyn McpControl>);
+        state.set_components(crate::components_host::ComponentHost::system());
+        // Composio app connections: the key stays in the secret store (reserved
+        // `composio/` prefix); without a store there is no key custody, so the
+        // feature stays off.
+        if let Some(store) = telegram_store.clone() {
+            let redact: composio::Redact = {
+                let handle = redactor.clone();
+                Arc::new(move |text: &str| handle.redact(text))
+            };
+            let audit = Arc::new(crate::composio_host::DaemonAudit(state.audit_writer()));
+            match crate::composio_host::ComposioHost::start(
+                data_dir,
+                composio_tools,
+                store,
+                redact,
+                audit,
+                { let handle = redactor.clone(); Arc::new(move |value| handle.register(value)) },
+            ) {
+                Ok(host) => state.set_composio(host as Arc<dyn daemon_api::ComposioControl>),
+                Err(e) => eprintln!("warning: composio: {e}; app connections are off"),
+            }
+        }
         if let Some(email) = email {
             state.set_email(email as Arc<dyn daemon_api::EmailControl>);
         }
@@ -1063,10 +1249,12 @@ pub fn serve(
         if configured > 0 {
             eprintln!("mcp: {configured} server(s) configured");
         }
+        step("components and apps wired");
         // Loopback only: never bind another interface.
         let listener =
             tokio::net::TcpListener::bind(SocketAddr::from((DAEMON_BIND_IP, port))).await?;
         let addr = listener.local_addr()?;
+        step("port bound");
         // The Telegram channel (when a token is stored and it is enabled) talks
         // to this daemon through its own loopback address.
         let telegram = telegram_store.as_ref().map(|store| {
@@ -1075,6 +1263,7 @@ pub fn serve(
                 Arc::clone(store),
                 &format!("http://{addr}"),
                 &api_token,
+                state.owner_key().as_deref(),
                 None,
                 Some(state.leader().clone()),
             );
@@ -1094,6 +1283,7 @@ pub fn serve(
                 );
             }
         }
+        step("listening");
         if json {
             println!(
                 "{}",
@@ -1199,6 +1389,73 @@ id = "unpriced"
             passphrase: passphrase.map(ToOwned::to_owned),
             catalog_vars: vec!["ACME_KEY".into()],
         }
+    }
+
+    struct FixtureTool(tool_registry::ToolSpec);
+
+    #[async_trait::async_trait]
+    impl tool_registry::Tool for FixtureTool {
+        fn spec(&self) -> &tool_registry::ToolSpec {
+            &self.0
+        }
+
+        async fn call(
+            &self,
+            _ctx: &tool_registry::ToolContext,
+            _input: serde_json::Value,
+        ) -> std::result::Result<tool_registry::ToolOutput, tool_registry::ToolError> {
+            Ok(tool_registry::ToolOutput::text("ok"))
+        }
+    }
+
+    fn register_runtime_egress_fixtures(registry: &tool_registry::ToolRegistry) {
+        let config = mcp_bridge::McpServerConfig::http("srv", "http://127.0.0.1:9/mcp");
+        let spec = mcp_bridge::registered_spec(
+            &config,
+            "echo",
+            "echo a prompt",
+            &serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string"},
+                    "hidden_arg": {"type": "string"}
+                }
+            }),
+        );
+        assert!(registry.register(std::sync::Arc::new(FixtureTool(spec))));
+        let secrets: Arc<dyn secret_store::SecretStore> = Arc::new(MemoryStore::new());
+        let openapi = "\
+openapi: 3.0.0
+info: {title: t, version: '1'}
+servers: [{url: 'https://api.example.com'}]
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      parameters:
+        - {name: q, in: query, schema: {type: string}}
+      responses: {'200': {description: ok}}
+";
+        let (_api, imported) = openapi_tools::import_tools(
+            openapi,
+            &openapi_tools::ImportOptions::default(),
+            &openapi_tools::OpenApiConfig::new(secrets),
+        )
+        .unwrap();
+        for tool in imported {
+            registry.register(tool);
+        }
+    }
+
+    #[test]
+    fn approval_timeout_reads_the_environment() {
+        assert_eq!(approval_timeout(None), agent_core::DEFAULT_APPROVAL_TIMEOUT);
+        assert_eq!(
+            approval_timeout(Some("bad")),
+            agent_core::DEFAULT_APPROVAL_TIMEOUT
+        );
+        assert_eq!(approval_timeout(Some("90")), Duration::from_secs(90));
+        assert_eq!(approval_timeout(Some("0")), Duration::ZERO);
     }
 
     #[test]
@@ -1432,6 +1689,83 @@ min_interval_secs = 0",
         let storage = Arc::new(Storage::open(dir.path()).unwrap());
         let agent = build_agent(&storage, p, dir.path(), None);
         assert_eq!(agent.price_for("t/m1").unwrap().output_per_mtok, 8.0);
+    }
+
+    #[test]
+    fn production_daemon_registry_egress_schemas_are_all_on_cards() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::open(dir.path()).unwrap());
+        let providers = Providers::single(Arc::new(daemon_api::fake::FakeProvider));
+        let agent = build_agent(&storage, providers, dir.path(), None);
+        let registry = agent.tool_registry();
+        register_web(dir.path(), 0, &registry, None);
+        let state =
+            AppState::new(agent.clone(), storage, DaemonConfig::new("daemon-token")).unwrap();
+        register_schedule_tools(dir.path(), &state);
+        // Optional mail tools use the real daemon registration path, with a
+        // memory credential store and no connection to either example host.
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemoryStore::new());
+        secrets.set("email/work/password", "test-fixture").unwrap();
+        std::fs::write(
+            dir.path().join(EMAIL_FILE),
+            r#"
+[[accounts]]
+name = "work"
+address = "alice@example.com"
+password = "email/work/password"
+[accounts.imap]
+host = "imap.example.com"
+[accounts.smtp]
+host = "smtp.example.com"
+"#,
+        )
+        .unwrap();
+        assert_eq!(register_email(dir.path(), &registry, Some(&secrets)), 6);
+        let audited = agent.audit_egress_card_schemas().unwrap();
+        for name in [
+            "workflow_run",
+            "skill_publish",
+            "skill_write",
+            "schedule_create",
+            "shell_run",
+            "script_run",
+            "web_search",
+            "email_send",
+            "email_draft",
+        ] {
+            assert!(
+                audited.iter().any(|item| item == name),
+                "missing {name}: {audited:?}"
+            );
+        }
+        assert!(audited.len() > 8, "{audited:?}");
+        register_runtime_egress_fixtures(&registry);
+        let audited = agent.audit_egress_card_schemas().unwrap();
+        for name in ["mcp:srv/echo", "listPets"] {
+            assert!(
+                audited.iter().any(|item| item == name),
+                "missing {name}: {audited:?}"
+            );
+        }
+        // A local MCP server tool is not classified as an executor in this
+        // scope (deferred to card 238); the fixture records that choice.
+        for name in ["mcp:srv/echo", "listPets"] {
+            assert!(
+                !registry.get(name).unwrap().spec().content.executes,
+                "{name}"
+            );
+        }
+        // Every tool that starts a program is egress, so its card carries the
+        // command, and the executors registered here are exactly these.
+        let mut executors: Vec<String> = registry
+            .list()
+            .into_iter()
+            .filter(|spec| spec.content.executes)
+            .inspect(|spec| assert!(spec.content.egress, "{}", spec.name))
+            .map(|spec| spec.name)
+            .collect();
+        executors.sort();
+        assert_eq!(executors, ["script_run", "shell_run"]);
     }
 
     #[test]
@@ -1872,6 +2206,7 @@ body
             None,
             false,
             plain,
+            None,
         );
         assert!(
             result.is_err(),

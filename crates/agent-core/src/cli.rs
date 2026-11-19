@@ -5,7 +5,10 @@ use crate::{
     shared::{ModelOut, STEP_TOOLS, Shared, xe},
 };
 use async_trait::async_trait;
-use cli_provider::runtime::{CliEngine, CliError, Engine, ToolReply, Turn, TurnHost};
+use cli_provider::runtime::{
+    CliEngine, CliError, Engine, NativePermission, NativeTurn, ToolReply, Turn, TurnHost,
+    run_native_turn,
+};
 use permission_engine::Decision;
 use protocol::{Event, ToolCallId, event::MessageDelta};
 use provider_catalog::{
@@ -20,10 +23,16 @@ use task_runtime::{ExecError, StepSpec};
 use tokio_util::sync::CancellationToken;
 use tool_registry::ToolSpec;
 
+/// Upper bound of one native-tools turn (Stop and the kill switch end it sooner).
+const NATIVE_TURN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
 struct Host {
     sh: Arc<Shared>,
     run: Run,
     approved: parking_lot::Mutex<Vec<CliApproval>>,
+    /// Facts for tool calls this CLI turn ran. The runtime does not persist a
+    /// tools step for them; they ride on the model step instead.
+    executed: parking_lot::Mutex<Vec<crate::taint::ExecFact>>,
 }
 #[async_trait]
 impl TurnHost for Host {
@@ -64,13 +73,21 @@ impl TurnHost for Host {
                 .map(|i| approvals.remove(i))
         };
         match exec.exec_tools_approved(&self.run, &step, approval).await {
-            Ok(v) => ToolReply {
-                text: v["results"][0]["text"]
-                    .as_str()
-                    .unwrap_or("tool failed")
-                    .into(),
-                is_error: v["results"][0]["is_error"].as_bool().unwrap_or(true),
-            },
+            Ok(v) => {
+                if let Some(fact) = v["results"][0]["fact"].as_object()
+                    && let Ok(fact) =
+                        serde_json::from_value(serde_json::Value::Object(fact.clone()))
+                {
+                    self.executed.lock().push(fact);
+                }
+                ToolReply {
+                    text: v["results"][0]["text"]
+                        .as_str()
+                        .unwrap_or("tool failed")
+                        .into(),
+                    is_error: v["results"][0]["is_error"].as_bool().unwrap_or(true),
+                }
+            }
             Err(_) => ToolReply {
                 text: "tool execution failed".into(),
                 is_error: true,
@@ -113,6 +130,7 @@ impl TurnHost for Host {
                         spec.category,
                         &r.input,
                         details,
+                        None,
                     )
                     .await
                 else {
@@ -136,6 +154,53 @@ impl TurnHost for Host {
     }
 }
 
+impl Host {
+    /// A permission request for the CLI's own tool becomes a normal approval card.
+    /// The CLI's text is untrusted: it is shown, never executed or trusted, and
+    /// the answer is a single allow or deny for exactly this request.
+    async fn native_permission(&self, request: NativePermission) -> bool {
+        let Ok(ctx) = self.sh.ctx(&self.run) else {
+            return false;
+        };
+        let name = format!("cli.native.{}", sanitize_tool_label(&request.tool));
+        let details = json!({
+            "kind": "cli_native_action",
+            "engine_label": ctx.profile.models.executor,
+            "tool": request.tool,
+            "summary": request.summary,
+            "input": request.input,
+        });
+        // `Meta` is never denied by policy: the owner's level decides which requests reach
+        // this card, and a click here is the whole decision (no grant is recorded).
+        self.sh
+            .request_approval(
+                &ctx,
+                ToolCallId::new(),
+                &name,
+                tool_registry::Effect::Write,
+                protocol::PermissionCategory::Meta,
+                &json!({"summary": request.summary, "input": request.input}),
+                Some(details),
+                None,
+            )
+            .await
+            .is_ok()
+    }
+}
+
+fn sanitize_tool_label(label: &str) -> String {
+    let clean: String = label
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+        .take(32)
+        .collect();
+    if clean.is_empty() {
+        "action".into()
+    } else {
+        clean
+    }
+}
+
 struct RecordingHost {
     inner: Host,
     text: parking_lot::Mutex<String>,
@@ -152,9 +217,46 @@ impl TurnHost for RecordingHost {
     async fn approve(&self, name: &str, input: Value) -> bool {
         self.inner.approve(name, input).await
     }
+    async fn permission(&self, request: NativePermission) -> bool {
+        self.inner.native_permission(request).await
+    }
 }
 
 impl TurnExecutor {
+    /// The settings of a native-tools bot, re-checked at every turn: consent on
+    /// record and a workspace the protected-path rules still accept.
+    fn native_turn(
+        &self,
+        engine: &crate::profile::EngineSettings,
+        driver: cli_provider::Driver,
+        turn: Turn,
+    ) -> Result<NativeTurn, ExecError> {
+        if engine.consent.native_tools_at_ms.is_none()
+            || (engine.approval_level == cli_provider::ApprovalLevel::Full
+                && engine.consent.full_access_at_ms.is_none())
+        {
+            return Err(xe(
+                "the owner has not agreed to this engine setting; open the bot's engine settings",
+            ));
+        }
+        let workspace = engine
+            .workspace
+            .as_deref()
+            .ok_or_else(|| xe("this bot has no workspace folder"))?;
+        let workspace = std::path::PathBuf::from(workspace);
+        if let Some(why) = builtin_tools::workspace_refusal(&workspace, self.sh.storage.data_dir())
+        {
+            return Err(xe(format!("workspace refused: {why}")));
+        }
+        Ok(NativeTurn {
+            turn,
+            driver,
+            level: engine.approval_level,
+            workspace,
+        })
+    }
+
+    #[allow(clippy::too_many_lines)] // Governed and native branches share the request assembly.
     pub(crate) async fn exec_cli(
         &self,
         run: &Run,
@@ -162,6 +264,18 @@ impl TurnExecutor {
         specs: &[ToolSpec],
         cancel: &CancellationToken,
     ) -> Result<ModelOut, ExecError> {
+        // Central boundary covers primary models, fallbacks and child roles.
+        // Native CLI tools cannot honor the per-call external-agent gate.
+        if self.sh.ctx(run)?.initiator == protocol::InitiatorKind::ExternalAgent {
+            return Err(xe(
+                "native CLI sessions are not available to external agents",
+            ));
+        }
+        if self.sh.ctx(run)?.initiator == protocol::InitiatorKind::ExternalSchedule {
+            return Err(xe(
+                "CLI executors are unavailable for externally supplied schedules",
+            ));
+        }
         let cfg = ProviderConfig::load(&config_path(self.sh.storage.data_dir())).map_err(xe)?;
         let id = req.model.provider().unwrap_or(&req.model.0);
         let settings = cfg
@@ -172,21 +286,16 @@ impl TurnExecutor {
             .cli
             .as_ref()
             .ok_or_else(|| xe("CLI provider is not configured"))?;
-        let (engine, command) = cli.parts();
-        let engine = match engine {
-            ConfigEngine::Claude => Engine::Claude,
-            ConfigEngine::Codex => Engine::Codex,
-        };
-        let runtime = CliEngine {
-            engine,
-            command: command.into(),
-            env: cli_provider::PathEnv::from_ambient(),
-        };
+        let (cfg_engine, command) = cli.parts();
+        let ctx = self.sh.ctx(run).map_err(xe)?;
+        let engine_settings = ctx.profile.engine.clone();
+        let native = engine_settings.mode == cli_provider::EngineMode::NativeTools;
         let host = Arc::new(RecordingHost {
             inner: Host {
                 sh: self.sh.clone(),
                 run: run.clone(),
                 approved: parking_lot::Mutex::new(Vec::new()),
+                executed: parking_lot::Mutex::new(Vec::new()),
             },
             text: parking_lot::Mutex::new(String::new()),
         });
@@ -205,24 +314,96 @@ impl TurnExecutor {
             }
         }
         // MCP encodes names reversibly; permissions receive the original name.
-        let tools = specs.to_vec();
+        // In native mode the CLI has its own file, shell and script tools, so Praxi's
+        // versions are not offered next to them (everything else is).
+        let tools: Vec<ToolSpec> = specs
+            .iter()
+            .filter(|s| {
+                !native
+                    || !matches!(
+                        s.category,
+                        protocol::PermissionCategory::Fs
+                            | protocol::PermissionCategory::Shell
+                            | protocol::PermissionCategory::Script
+                    )
+            })
+            .cloned()
+            .collect();
         let model = cli_model_arg(&req.model).map_err(xe)?;
-        let usage = tokio::time::timeout(
-            self.sh.cfg.guards.model_timeout,
-            runtime.run_turn(
+        let usage = if native {
+            let driver = cli_provider::Driver::from_id(cfg_engine.as_str())
+                .ok_or_else(|| xe("this CLI has no native-tools driver"))?;
+            let nt = self.native_turn(
+                &engine_settings,
+                driver,
                 Turn {
                     prompt,
                     system,
                     model,
                     tools,
                 },
-                host.clone(),
-                cancel.clone(),
-            ),
-        )
-        .await
-        .map_err(|_| xe("CLI turn timed out"))?
-        .map_err(|e| cli_exec_error(engine, &e))?;
+            )?;
+            let token = cancel.child_token();
+            let key = uuid::Uuid::now_v7();
+            self.sh
+                .native_runs
+                .lock()
+                .entry(ctx.bot_id)
+                .or_default()
+                .push((key, token.clone()));
+            // Coding turns outlast a chat completion and wait on approval cards.
+            let result = tokio::time::timeout(
+                self.sh.cfg.guards.model_timeout.max(NATIVE_TURN_TIMEOUT),
+                run_native_turn(
+                    command,
+                    &cli_provider::PathEnv::from_ambient(),
+                    nt,
+                    host.clone(),
+                    token,
+                ),
+            )
+            .await;
+            if let Some(list) = self.sh.native_runs.lock().get_mut(&ctx.bot_id) {
+                list.retain(|(k, _)| *k != key);
+            }
+            result
+                .map_err(|_| xe("CLI turn timed out"))?
+                .map_err(|e| cli_exec_error_for(driver.display_name(), driver.id(), &e))?
+        } else {
+            let engine = match cfg_engine {
+                ConfigEngine::Claude => Engine::Claude,
+                ConfigEngine::Codex => Engine::Codex,
+                other => {
+                    return Err(xe(format!(
+                        "{name} only works with its own tools. Allow that in this bot's engine settings. (engine_needs_native)",
+                        name = cli_provider::Driver::from_id(other.as_str())
+                            .map_or(other.as_str(), cli_provider::Driver::display_name)
+                    )));
+                }
+            };
+            let runtime = CliEngine {
+                engine,
+                command: command.into(),
+                env: cli_provider::PathEnv::from_ambient(),
+            };
+            tokio::time::timeout(
+                self.sh.cfg.guards.model_timeout,
+                runtime.run_turn(
+                    Turn {
+                        prompt,
+                        system,
+                        model,
+                        tools,
+                    },
+                    host.clone(),
+                    cancel.clone(),
+                ),
+            )
+            .await
+            .map_err(|_| xe("CLI turn timed out"))?
+            .map_err(|e| cli_exec_error(engine, &e))?
+        };
+        let executed = std::mem::take(&mut *host.inner.executed.lock());
         Ok(ModelOut {
             text: self.sh.redact(host.text.lock().clone()),
             model: req.model.0.clone(),
@@ -233,6 +414,7 @@ impl TurnExecutor {
                 cache_write_tokens: None,
             }),
             finish: "Stop".into(),
+            executed,
             ..ModelOut::default()
         })
     }
@@ -243,6 +425,10 @@ fn cli_exec_error(engine: Engine, err: &CliError) -> ExecError {
         Engine::Claude => ("Claude Code", "claude"),
         Engine::Codex => ("Codex CLI", "codex"),
     };
+    cli_exec_error_for(name, cmd, err)
+}
+
+fn cli_exec_error_for(name: &str, cmd: &str, err: &CliError) -> ExecError {
     let code = err.code();
     let msg = match err {
         CliError::Cancelled => return ExecError(code.to_owned()),
@@ -271,7 +457,10 @@ fn cli_exec_error(engine: Engine, err: &CliError) -> ExecError {
             "The {name} binary changed while starting the turn. Try sending your message again. ({code})"
         ),
         CliError::CodexUnconfinable => format!(
-            "The installed Codex cannot disable unified_exec, so Praxi will not run it. ({code})"
+            "{name} only works with its own tools. Allow that in this bot's engine settings. (engine_needs_native)"
+        ),
+        CliError::WorkspaceUnavailable => format!(
+            "The workspace folder chosen for this bot is missing. Choose it again in the bot's engine settings. ({code})"
         ),
     };
     ExecError(msg)
@@ -319,6 +508,155 @@ mod tests {
     use std::sync::atomic::Ordering;
     use tool_registry::{Effect, ToolRegistry};
     #[tokio::test]
+    async fn cli_carried_approval_runs_the_exact_revealed_payload_once() {
+        use crate::tests::{until, with_class};
+        use tool_registry::{ContentClass, PermissionCategory};
+        let env = setup();
+        let search = Arc::new(with_class(
+            "web_search",
+            Effect::Read,
+            PermissionCategory::Browser,
+            ContentClass::untrusted_egress(),
+            "sent",
+        ));
+        let registry = ToolRegistry::new();
+        registry.register(search.clone());
+        let lp = crate::AgentLoop::new(
+            env.storage.clone(),
+            registry,
+            crate::Providers::single(Arc::new(UnusedHttp)),
+            cfg(Policy::full()),
+        );
+        lp.add_profile(env.bot, profile(""));
+        let id = lp.run_turn(env.chat, "hi").unwrap();
+        lp.wait(id).await.unwrap();
+        let run = env.storage.get_run(id).unwrap().unwrap();
+        lp.sh
+            .ctx(&run)
+            .unwrap()
+            .taint
+            .lock()
+            .note(ContentClass::untrusted_private(), "file");
+        let host = Host {
+            sh: lp.sh.clone(),
+            run,
+            approved: parking_lot::Mutex::new(Vec::new()),
+            executed: parking_lot::Mutex::new(Vec::new()),
+        };
+        let input = json!({"query": "French\u{a0}text\u{feff}"});
+        let mut rx = lp.subscribe();
+        let (approved, ()) = tokio::join!(host.approve("web_search", input.clone()), async {
+            let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+            let Event::ApprovalNeeded(card) = event else {
+                unreachable!()
+            };
+            assert_eq!(card.input, input);
+            assert!(
+                card.details.unwrap()["payload"]
+                    .as_str()
+                    .unwrap()
+                    .contains("<U+00A0>")
+            );
+            lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+                .unwrap();
+        });
+        assert!(approved);
+        let reply = host.call("web_search", input.clone()).await;
+        assert!(!reply.is_error, "{}", reply.text);
+        assert_eq!(search.count.load(Ordering::SeqCst), 1);
+        // A changed call cannot consume the permit for the approved bytes.
+        assert!(host.approved.lock().is_empty());
+        let mut saw_exact = false;
+        while let Ok(event) = rx.try_recv() {
+            if let Event::ToolCallRequested(call) = event.envelope.event {
+                assert_eq!(call.input, input);
+                saw_exact = true;
+            }
+        }
+        assert!(saw_exact);
+    }
+
+    #[tokio::test]
+    async fn cli_permit_from_a_clean_run_asks_again_after_taint() {
+        use crate::tests::{until, with_class};
+        use tool_registry::{ContentClass, PermissionCategory};
+        let env = setup();
+        let search = Arc::new(with_class(
+            "web_search",
+            Effect::Read,
+            PermissionCategory::Browser,
+            ContentClass::untrusted_egress(),
+            "sent",
+        ));
+        let registry = ToolRegistry::new();
+        registry.register(search.clone());
+        let mut config = cfg(Policy::approve_destructive());
+        config.read_tools_skip_ask = false;
+        let lp = crate::AgentLoop::new(
+            env.storage.clone(),
+            registry,
+            crate::Providers::single(Arc::new(UnusedHttp)),
+            config,
+        );
+        lp.add_profile(env.bot, profile(""));
+        let id = lp.run_turn(env.chat, "hi").unwrap();
+        lp.wait(id).await.unwrap();
+        let run = env.storage.get_run(id).unwrap().unwrap();
+        let host = Host {
+            sh: lp.sh.clone(),
+            run,
+            approved: parking_lot::Mutex::new(Vec::new()),
+            executed: parking_lot::Mutex::new(Vec::new()),
+        };
+        let input = json!({"query": "weather"});
+        let mut rx = lp.subscribe();
+        let (approved, ()) = tokio::join!(host.approve("web_search", input.clone()), async {
+            let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+            let Event::ApprovalNeeded(card) = event else {
+                unreachable!()
+            };
+            let disclosed = card.details.as_ref().is_some_and(|details| {
+                details["reason"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("wants to send")
+            });
+            assert!(!disclosed, "a clean run must not show an egress card");
+            lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+                .unwrap();
+        });
+        assert!(approved);
+        assert_eq!(search.count.load(Ordering::SeqCst), 0);
+        host.sh
+            .ctx(&host.run)
+            .unwrap()
+            .taint
+            .lock()
+            .note(ContentClass::untrusted_private(), "file notes.txt");
+        let call = host.call("web_search", input);
+        tokio::pin!(call);
+        let event = tokio::select! {
+            reply = &mut call => panic!("old permit ran the call: {reply:?}"),
+            event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))) => event,
+        };
+        let Event::ApprovalNeeded(card) = event else {
+            unreachable!()
+        };
+        assert!(
+            card.details.unwrap()["reason"]
+                .as_str()
+                .unwrap()
+                .contains("wants to send")
+        );
+        assert_eq!(search.count.load(Ordering::SeqCst), 0);
+        lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+            .unwrap();
+        let reply = call.await;
+        assert!(!reply.is_error, "{}", reply.text);
+        assert_eq!(search.count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn bridge_reuses_policy_and_tool_events() {
         for allow in [false, true] {
             let env = setup();
@@ -345,12 +683,143 @@ mod tests {
                 sh: lp.sh.clone(),
                 run,
                 approved: parking_lot::Mutex::new(Vec::new()),
+                executed: parking_lot::Mutex::new(Vec::new()),
             };
             let reply = host.call("test.read", json!({})).await;
             assert_eq!(reply.is_error, !allow);
             assert_eq!(t.count.load(Ordering::SeqCst), usize::from(allow));
         }
     }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn a_cli_child_read_is_recorded_and_gates_the_parent() {
+        use crate::tests::with_class;
+        use tool_registry::{ContentClass, Effect, PermissionCategory, Tool};
+
+        let env = setup();
+        let read = std::sync::Arc::new(with_class(
+            "fs_read",
+            Effect::Read,
+            PermissionCategory::Fs,
+            ContentClass::untrusted_private(),
+            "Permission denied: secret notes",
+        ));
+        let search = std::sync::Arc::new(with_class(
+            "web_search",
+            Effect::Read,
+            PermissionCategory::Browser,
+            ContentClass::untrusted_egress(),
+            "sent",
+        ));
+        let registry = ToolRegistry::new();
+        registry.register(std::sync::Arc::clone(&read) as std::sync::Arc<dyn Tool>);
+        registry.register(std::sync::Arc::clone(&search) as std::sync::Arc<dyn Tool>);
+        let lp = crate::AgentLoop::new(
+            env.storage.clone(),
+            registry,
+            crate::Providers::single(std::sync::Arc::new(UnusedHttp)),
+            cfg(Policy::full()),
+        );
+        lp.add_profile(env.bot, profile(""));
+        let parent_id = lp.run_turn(env.chat, "hi").unwrap();
+        lp.wait(parent_id).await.unwrap();
+        let parent_run = env.storage.get_run(parent_id).unwrap().unwrap();
+        let now = storage::now_ms();
+        let child_id = protocol::RunId::new();
+        env.storage
+            .insert_run(&storage::Run {
+                id: child_id,
+                user_id: env.user,
+                bot_id: env.bot,
+                chat_id: Some(env.chat),
+                kind: "turn:subagent".into(),
+                state: "succeeded".into(),
+                error: None,
+                created_at_ms: now,
+                updated_at_ms: now,
+                parent_run_id: Some(parent_id),
+                spec: Some(json!({
+                    "task": "read",
+                    "context": "",
+                    "tools": ["fs_read"],
+                    "max_steps": 4,
+                    "token_budget": 0,
+                    "depth": 1,
+                    "spawn_key": "0:c1"
+                })),
+                computer_target: parent_run.computer_target.clone(),
+                computer_node: parent_run.computer_node.clone(),
+                computer_node_name: parent_run.computer_node_name.clone(),
+                paused_at_ms: None,
+                pause_reason: None,
+            })
+            .unwrap();
+        let child = env.storage.get_run(child_id).unwrap().unwrap();
+        let host = Host {
+            sh: lp.sh.clone(),
+            run: child,
+            approved: parking_lot::Mutex::new(Vec::new()),
+            executed: parking_lot::Mutex::new(Vec::new()),
+        };
+        let reply = host.call("fs_read", json!({"path": "secret.txt"})).await;
+        assert!(!reply.is_error, "{}", reply.text);
+        assert!(
+            reply.text.starts_with("Permission denied"),
+            "{}",
+            reply.text
+        );
+        let facts = host.executed.lock().clone();
+        assert!(facts[0].ran && facts[0].reads_private, "{facts:?}");
+        assert!(
+            !lp.sh
+                .ctx(&parent_run)
+                .unwrap()
+                .taint
+                .lock()
+                .exposure
+                .private
+        );
+        env.storage
+            .insert_step(&storage::RunStep {
+                id: uuid::Uuid::now_v7(),
+                run_id: child_id,
+                user_id: env.user,
+                idx: 0,
+                name: "model".into(),
+                input: json!({}),
+                idempotent: false,
+                retry: None,
+                status: "succeeded".into(),
+                attempt: 1,
+                output: Some(json!({
+                    "text": "ok",
+                    "finish": "Stop",
+                    "executed": facts,
+                })),
+                error: None,
+                started_at_ms: now,
+                finished_at_ms: Some(now),
+            })
+            .unwrap();
+        // The tool is gone from the current surface. The stored fact is enough.
+        assert!(lp.sh.tools.unregister("fs_read"));
+        lp.sh.runs.lock().clear();
+        let parent_run = env.storage.get_run(parent_id).unwrap().unwrap();
+        let ctx = lp.sh.ctx(&parent_run).unwrap();
+        assert!(ctx.taint.lock().exposure.private);
+        let decision = lp.sh.decide(
+            &ctx,
+            "web_search",
+            Effect::Read,
+            PermissionCategory::Browser,
+            &json!({"query": "q"}),
+        );
+        assert!(decision.is_ask(), "{decision:?}");
+        assert_eq!(read.count.load(Ordering::SeqCst), 1);
+        assert_eq!(search.count.load(Ordering::SeqCst), 0);
+    }
+
     struct UnusedHttp;
     #[async_trait]
     impl provider_catalog::ChatProvider for UnusedHttp {
@@ -396,6 +865,7 @@ mod tests {
             command: "praxi-c062-nonexistent-fixture".into(),
         });
         provider_catalog::ProviderConfig {
+            quarantined: std::collections::BTreeMap::default(),
             providers: vec![setting],
             default_provider: None,
         }

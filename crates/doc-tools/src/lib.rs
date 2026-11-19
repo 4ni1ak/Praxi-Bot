@@ -20,10 +20,11 @@
 //!
 //! File paths are always passed in the `path` (and, for `csv_transform`, the
 //! optional `output_path`) input fields, exactly like the `fs_*` tools of
-//! `builtin-tools`. These tools do not re-implement scope checks; the caller
-//! (agent loop / permission engine) gates them by `category` + `effect` and the
-//! path fields before `call`. Write tools never overwrite an existing file
-//! unless `overwrite: true` is given. Inputs larger than
+//! `builtin-tools`. The permission engine gates them by category and effect
+//! before `call`. `write_file` also refuses the daemon data directory and
+//! native CLI configuration, so a caller that skips that gate still cannot
+//! plant a skill or a workflow there. Write tools never overwrite an existing
+//! file unless `overwrite: true` is given. Inputs larger than
 //! [`DocToolsConfig::max_input_bytes`] are rejected.
 //!
 //! # Wiring
@@ -44,8 +45,12 @@ mod csv_tools;
 mod docx;
 mod json_query;
 mod pdf;
+mod pdf_budget;
+mod pdf_cmap;
+mod pptx;
 mod xlsx;
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -56,6 +61,174 @@ use tool_registry::{
 };
 
 pub use common::Reply;
+
+/// Extract an already-authorized PDF or DOCX snapshot without reopening a path.
+/// The caller owns path authorization and supplies a display label, never an
+/// instruction. Both input and rendered output are bounded by `cfg`.
+///
+/// # Errors
+/// Rejects unsupported formats, oversized input and malformed documents.
+pub fn extract_bytes(
+    cfg: &DocToolsConfig,
+    extension: &str,
+    label: &str,
+    bytes: &[u8],
+) -> Result<Reply, ToolError> {
+    if bytes.len() as u64 > cfg.max_input_bytes {
+        return Err(ToolError::InvalidInput(
+            "document exceeds input limit".into(),
+        ));
+    }
+    let mut reply = std::panic::catch_unwind(|| match extension {
+        "pdf" => pdf::from_bytes(cfg, label, bytes),
+        "docx" => docx::read_bytes(cfg, label, bytes),
+        _ => Err(ToolError::InvalidInput(
+            "unsupported document format".into(),
+        )),
+    })
+    .map_err(|_| ToolError::Execution("document parser failed; source was not indexed".into()))??;
+    if reply.data["truncated"].as_bool() == Some(true) {
+        return Err(ToolError::InvalidInput(
+            "document source exceeds extraction limits; no truncated snapshot was indexed".into(),
+        ));
+    }
+    // Tool previews deliberately shorten tables/cells and prose. A knowledge
+    // snapshot instead renders all retained structured text or rejects it.
+    let complete = if extension == "pdf" {
+        let mut text = format!("# {label}\n");
+        for page in reply.data["pages"]
+            .as_array()
+            .ok_or_else(|| ToolError::Execution("missing PDF extraction pages".into()))?
+        {
+            if page.get("error").is_some() {
+                return Err(ToolError::Execution(
+                    "PDF source text extraction failed".into(),
+                ));
+            }
+            let _ = write!(
+                text,
+                "\n## Page {}\n\n{}\n",
+                page["page"],
+                page["text"].as_str().unwrap_or_default()
+            );
+        }
+        text
+    } else {
+        complete_docx_text(&reply.data)?
+    };
+    if complete.len() > cfg.max_output_bytes || complete.chars().count() > cfg.max_preview_chars {
+        return Err(ToolError::InvalidInput(
+            "document source exceeds extracted text limit; no truncated snapshot was indexed"
+                .into(),
+        ));
+    }
+    reply.markdown = complete;
+    Ok(reply)
+}
+
+/// Which Office format a zip file is (`docx`, `xlsx` or `pptx`), judged by its entries
+/// rather than any file name; `None` for other archives.
+#[must_use]
+pub fn office_extension(bytes: &[u8]) -> Option<&'static str> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+    [
+        ("word/document.xml", "docx"),
+        ("xl/workbook.xml", "xlsx"),
+        ("ppt/presentation.xml", "pptx"),
+    ]
+    .into_iter()
+    .find(|(entry, _)| zip.by_name(entry).is_ok())
+    .map(|(_, ext)| ext)
+}
+
+/// Plain text of a user-attached document (`pdf`, `docx`, `xlsx`, `pptx`), at most
+/// `max_bytes` long (cut on a character boundary, with a marker). Bounded like the
+/// document tools; malformed or oversized files are an error, never a panic.
+///
+/// # Errors
+/// Unsupported extension, oversized input or a document that cannot be parsed.
+pub fn attachment_text(
+    cfg: &DocToolsConfig,
+    extension: &str,
+    label: &str,
+    bytes: &[u8],
+    max_bytes: usize,
+) -> Result<String, ToolError> {
+    if bytes.len() as u64 > cfg.max_input_bytes {
+        return Err(ToolError::InvalidInput(
+            "document exceeds input limit".into(),
+        ));
+    }
+    let mut text = match extension {
+        "pdf" | "docx" => {
+            let mut big = cfg.clone();
+            big.max_preview_chars = max_bytes.saturating_mul(4);
+            extract_bytes(&big, extension, label, bytes).map(|r| r.markdown)?
+        }
+        "xlsx" | "pptx" => std::panic::catch_unwind(|| match extension {
+            "xlsx" => xlsx::plain_text(bytes.to_vec(), max_bytes),
+            _ => pptx::plain_text(bytes, max_bytes),
+        })
+        .map_err(|_| ToolError::Execution("document parser failed".into()))??,
+        _ => {
+            return Err(ToolError::InvalidInput(
+                "unsupported document format".into(),
+            ));
+        }
+    };
+    if text.len() > max_bytes {
+        let mut cut = max_bytes;
+        while !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        text.truncate(cut);
+        text.push_str("\n[truncated]");
+    }
+    Ok(text)
+}
+
+fn complete_docx_text(data: &Value) -> Result<String, ToolError> {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    for block in data["blocks"]
+        .as_array()
+        .ok_or_else(|| ToolError::Execution("missing DOCX extraction blocks".into()))?
+    {
+        match block["type"].as_str() {
+            Some("heading") => {
+                let level = usize::try_from(block["level"].as_u64().unwrap_or(1))
+                    .unwrap_or(1)
+                    .clamp(1, 9);
+                let _ = writeln!(
+                    text,
+                    "{} {}\n",
+                    "#".repeat(level),
+                    block["text"].as_str().unwrap_or_default()
+                );
+            }
+            Some("paragraph") => {
+                let _ = writeln!(text, "{}\n", block["text"].as_str().unwrap_or_default());
+            }
+            Some("table") => {
+                let rows: Vec<Vec<String>> = serde_json::from_value(block["rows"].clone())
+                    .map_err(|_| ToolError::Execution("invalid extracted DOCX table".into()))?;
+                for (index, row) in rows.iter().enumerate() {
+                    let cells: Vec<_> = row
+                        .iter()
+                        .map(|cell| cell.replace('|', "\\|").replace(['\r', '\n'], " "))
+                        .collect();
+                    let _ = writeln!(text, "| {} |", cells.join(" | "));
+                    if index == 0 {
+                        let _ = writeln!(text, "|{}|", vec![" --- "; row.len()].join("|"));
+                    }
+                }
+                text.push('\n');
+            }
+            _ => return Err(ToolError::Execution("invalid extracted DOCX block".into())),
+        }
+    }
+    Ok(text)
+}
 
 /// Limits applied by every doc tool.
 #[derive(Debug, Clone)]
@@ -71,6 +244,37 @@ pub struct DocToolsConfig {
     /// Largest written output (docx/xlsx/csv), in bytes (default 25 MiB).
     /// Also bounds DOCX read JSON, which has an additional hard 1 MiB cap.
     pub max_output_bytes: usize,
+    /// Extra check on every output path, run by the writer itself. The daemon
+    /// sets it to refuse its data directory and native CLI configuration, so a
+    /// caller that skips the permission check still cannot plant a skill or a
+    /// workflow there. It is a hook, not a dependency: `builtin-tools` already
+    /// depends on this crate's consumers, so the guard cannot be imported here.
+    pub write_guard: Option<WriteGuard>,
+}
+
+type GuardFn = dyn Fn(&str) -> Result<(), String> + Send + Sync + std::panic::RefUnwindSafe;
+
+/// A path check supplied by the embedder; `Err` carries the refusal reason.
+#[derive(Clone)]
+pub struct WriteGuard(Arc<GuardFn>);
+
+impl WriteGuard {
+    /// Wrap a check.
+    pub fn new(
+        check: impl Fn(&str) -> Result<(), String> + Send + Sync + std::panic::RefUnwindSafe + 'static,
+    ) -> Self {
+        Self(Arc::new(check))
+    }
+
+    pub(crate) fn check(&self, path: &str) -> Result<(), String> {
+        (self.0)(path)
+    }
+}
+
+impl std::fmt::Debug for WriteGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WriteGuard")
+    }
 }
 
 impl Default for DocToolsConfig {
@@ -81,6 +285,7 @@ impl Default for DocToolsConfig {
             max_preview_chars: 6000,
             max_cell_chars: 4000,
             max_output_bytes: 25 * 1024 * 1024,
+            write_guard: None,
         }
     }
 }
@@ -166,6 +371,14 @@ pub(crate) fn mk_spec(
         effect,
         category: PermissionCategory::Fs,
         platforms: vec![Platform::All],
+        content: match name {
+            // Documents can carry prompt injection and are private files.
+            "pdf_extract" | "docx_read" | "xlsx_read" | "csv_read" | "csv_transform"
+            | "json_query" => tool_registry::ContentClass::untrusted_private(),
+            // The model already holds the document it is writing.
+            "docx_write" | "xlsx_write" => tool_registry::ContentClass::none(),
+            _ => tool_registry::ContentClass::unspecified(),
+        },
     }
 }
 
@@ -182,7 +395,34 @@ mod tests {
             assert!(t.spec().is_valid(), "{name}");
         }
         assert_eq!(reg.get("docx_write").unwrap().spec().effect, Effect::Write);
+        assert!(!reg.get("docx_write").unwrap().spec().content.reads_private);
+        assert!(!reg.get("xlsx_write").unwrap().spec().content.reads_private);
         assert_eq!(reg.get("pdf_extract").unwrap().spec().effect, Effect::Read);
+    }
+
+    #[test]
+    fn write_file_refuses_the_daemon_data_directory() {
+        let data = tempfile::tempdir().unwrap();
+        let root = data.path().to_path_buf();
+        let cfg = DocToolsConfig {
+            write_guard: Some(WriteGuard::new(move |path| {
+                if std::path::Path::new(path).starts_with(&root) {
+                    Err("daemon data is not writable".into())
+                } else {
+                    Ok(())
+                }
+            })),
+            ..DocToolsConfig::default()
+        };
+        let inside = data.path().join("skills.md");
+        let err = crate::common::write_file(&cfg, inside.to_str().unwrap(), b"hi", true)
+            .expect_err("data dir");
+        assert!(err.to_string().contains("daemon"), "{err}");
+        assert!(!inside.exists());
+        let outside = tempfile::tempdir().unwrap();
+        let path = outside.path().join("ok.txt");
+        crate::common::write_file(&cfg, path.to_str().unwrap(), b"hi", true).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"hi");
     }
 }
 

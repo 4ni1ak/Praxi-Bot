@@ -105,6 +105,202 @@ struct Shared {
     /// not be resolved. Every `fs_*` call fails until this is false.
     roots_unresolved: bool,
     drives: DriveCache,
+    /// Per-bot scope source (file access mode). `None` keeps the static roots.
+    access: Option<Arc<dyn crate::FsAccessProvider>>,
+    /// The user's home. With a scope source it is the base for relative paths
+    /// in "This computer" mode and anchors the sensitive-location denylist.
+    home: Option<PathBuf>,
+    /// Base directory relative paths resolve against (`None`: process cwd).
+    workdir: Option<PathBuf>,
+    /// Ledger of files with an untrusted origin (see `crate::provenance`).
+    provenance: Option<Arc<dyn crate::provenance::Provenance>>,
+}
+
+impl Shared {
+    /// This call's view of the shared state under the bot's file access scope.
+    fn scoped(&self, scope: &crate::FsScope) -> Self {
+        let (roots, unresolved, workdir) = match scope {
+            crate::FsScope::Computer => (Vec::new(), self.home.is_none(), self.home.clone()),
+            crate::FsScope::Folders(folders) if folders.is_empty() => (Vec::new(), true, None),
+            crate::FsScope::Folders(folders) => match prepare_roots(folders, &self.drives) {
+                Ok(roots) => {
+                    let first = roots.first().cloned();
+                    (roots, false, first)
+                }
+                Err(()) => (Vec::new(), true, None),
+            },
+        };
+        Self {
+            checkpoints: self.checkpoints.clone(),
+            spill_dir: self.spill_dir.clone(),
+            data_dir: self.data_dir.clone(),
+            allowed_roots: roots,
+            grants: self.grants.clone(),
+            roots_unresolved: unresolved,
+            drives: DriveCache::new(),
+            access: None,
+            home: self.home.clone(),
+            workdir,
+            provenance: self.provenance.clone(),
+        }
+    }
+}
+
+thread_local! {
+    static BASE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+fn with_base_dir<T>(base: Option<PathBuf>, f: impl FnOnce() -> T) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            BASE_DIR.with(|b| *b.borrow_mut() = None);
+        }
+    }
+    BASE_DIR.with(|b| *b.borrow_mut() = base);
+    let _reset = Reset;
+    f()
+}
+
+/// Directory relative tool paths start from: the bot's workspace or the user's
+/// home when a file access scope is active, else the process directory.
+fn base_dir() -> Result<PathBuf, ToolError> {
+    match BASE_DIR.with(|b| b.borrow().clone()) {
+        Some(dir) => Ok(dir),
+        None => std::env::current_dir().map_err(|e| exec_err(format!("current directory: {e}"))),
+    }
+}
+
+/// Filename and metadata only; never a file's bytes.
+#[derive(Debug, Clone)]
+pub struct WatchFile {
+    /// Local path inside the configured workspace.
+    pub path: PathBuf,
+    /// Size and modification timestamp, used only for change detection.
+    pub fingerprint: String,
+}
+
+/// Bounded metadata snapshot using the same local/root/credential boundary as
+/// file tools, with stricter no-symlink semantics. Empty roots fail closed.
+///
+/// # Errors
+/// Unconfigured roots, outside/protected/link path, invalid glob, or I/O/size limit.
+pub fn watch_snapshot(
+    data_dir: &Path,
+    roots: &[PathBuf],
+    raw: &str,
+    glob: &str,
+) -> Result<Vec<WatchFile>, ToolError> {
+    if roots.is_empty() {
+        return Err(denied("file watches require explicit workspace roots"));
+    }
+    let drives = DriveCache::new();
+    let (allowed_roots, roots_unresolved) = match prepare_roots(roots, &drives) {
+        Ok(r) => (r, false),
+        Err(()) => (Vec::new(), true),
+    };
+    let data_dir = canonical_data_dir(data_dir);
+    let sh = Shared {
+        checkpoints: CheckpointStore::new(&data_dir),
+        spill_dir: data_dir.join("spill"),
+        data_dir,
+        allowed_roots,
+        grants: Vec::new(),
+        roots_unresolved,
+        drives,
+        access: None,
+        home: None,
+        workdir: None,
+        provenance: None,
+    };
+    let root = validate_path(&sh, raw, Follow::Watch)?;
+    if root.parent().is_none() {
+        return Err(denied("system roots cannot be watched"));
+    }
+    #[cfg(unix)]
+    if [
+        "/etc", "/proc", "/sys", "/dev", "/usr", "/bin", "/sbin", "/var",
+    ]
+    .iter()
+    .any(|p| root.starts_with(p))
+    {
+        return Err(denied("system directories cannot be watched"));
+    }
+    #[cfg(windows)]
+    if root
+        .components()
+        .find_map(|c| {
+            if let Component::Normal(n) = c {
+                Some(n.to_string_lossy().to_ascii_lowercase())
+            } else {
+                None
+            }
+        })
+        .is_some_and(|n| {
+            [
+                "windows",
+                "program files",
+                "program files (x86)",
+                "programdata",
+            ]
+            .contains(&n.as_str())
+        })
+    {
+        return Err(denied("system directories cannot be watched"));
+    }
+
+    if !fs::symlink_metadata(&root)
+        .map_err(|_| exec_err("watch root unavailable"))?
+        .is_dir()
+    {
+        return Err(denied("watch root must be a directory"));
+    }
+    let pattern = matcher(Some(glob))?.ok_or_else(|| exec_err("watch glob required"))?;
+    let mut dirs = vec![(root.clone(), 0usize)];
+    let mut visited = 0usize;
+    let mut out = Vec::new();
+    while let Some((dir, depth)) = dirs.pop() {
+        let dir = validate_path(&sh, &dir.to_string_lossy(), Follow::Watch)?;
+        for item in fs::read_dir(dir).map_err(|_| exec_err("watch directory unavailable"))? {
+            visited += 1;
+            if visited > 1000 {
+                return Err(exec_err("watch snapshot exceeds 1000 entries"));
+            }
+            let entry = item.map_err(|_| exec_err("watch entry unavailable"))?;
+            let path = entry.path();
+            let metadata =
+                fs::symlink_metadata(&path).map_err(|_| exec_err("watch metadata unavailable"))?;
+            if metadata.file_type().is_symlink() || reparse_unsafe(&metadata) {
+                continue;
+            }
+            // Revalidate each descendant; credential exclusions apply to paths
+            // discovered by a directory walk as well as the supplied root.
+            let Ok(path) = validate_path(&sh, &path.to_string_lossy(), Follow::Watch) else {
+                continue;
+            };
+            if metadata.is_dir() {
+                if depth >= 16 {
+                    return Err(exec_err("watch depth exceeds 16"));
+                }
+                if !SKIP_DIRS.iter().any(|n| entry.file_name() == *n) {
+                    dirs.push((path, depth + 1));
+                }
+            } else if metadata.is_file() && glob_hit(&pattern, &root, &path) {
+                let modified = metadata
+                    .modified()
+                    .map_err(|_| exec_err("watch timestamp unavailable"))?
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| exec_err("watch timestamp unavailable"))?
+                    .as_nanos();
+                out.push(WatchFile {
+                    path,
+                    fingerprint: format!("{}:{modified}", metadata.len()),
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(out)
 }
 
 /// One file tool.
@@ -112,6 +308,35 @@ pub struct FsTool {
     spec: ToolSpec,
     op: Op,
     shared: Arc<Shared>,
+}
+
+/// Apply the same daemon boundary to local writers hosted outside this crate.
+/// The lexical, resolved and opened identities are all checked, including a
+/// missing leaf reached through a symlink. No credential/root check is waived.
+/// # Errors
+/// Unsafe/unverifiable path or a destination under the daemon data directory.
+pub fn check_daemon_write(data_dir: &Path, raw: &str) -> Result<(), ToolError> {
+    let data_dir = canonical_data_dir(data_dir);
+    let lexical = lexical_absolute(raw)?;
+    let drives = DriveCache::new();
+    let ctx = ResolveCtx {
+        follow: Follow::Write,
+        roots: &[],
+        drives: &drives,
+        depth: 0,
+        allow_cloud_placeholder: false,
+    };
+    let resolved = resolve_local(&lexical, &ctx)?;
+    let opened = final_identity(&resolved)?;
+    if [&lexical, &resolved, &opened]
+        .iter()
+        .any(|p| under_daemon_data(p, &data_dir).is_some() || under_native_cli_authority(p))
+    {
+        return Err(denied(
+            "local writers cannot modify daemon data or native CLI configuration",
+        ));
+    }
+    Ok(())
 }
 
 /// Build all file tools; `data_dir` hosts checkpoints and spill files.
@@ -131,6 +356,19 @@ pub(crate) fn tools_bounded(
     allowed_roots: &[PathBuf],
     grants: &[PathBuf],
 ) -> Vec<Arc<dyn Tool>> {
+    tools_scoped(data_dir, allowed_roots, grants, None, None, None)
+}
+
+/// Like [`tools_bounded`] with a per-bot scope source and the home directory.
+#[must_use]
+pub(crate) fn tools_scoped(
+    data_dir: &Path,
+    allowed_roots: &[PathBuf],
+    grants: &[PathBuf],
+    access: Option<Arc<dyn crate::FsAccessProvider>>,
+    home: Option<PathBuf>,
+    provenance: Option<Arc<dyn crate::provenance::Provenance>>,
+) -> Vec<Arc<dyn Tool>> {
     let drives = DriveCache::new();
     let (allowed_roots, roots_unresolved) = match prepare_roots(allowed_roots, &drives) {
         Ok(roots) => (roots, false),
@@ -146,6 +384,10 @@ pub(crate) fn tools_bounded(
         grants,
         roots_unresolved,
         drives,
+        workdir: home.clone(),
+        access,
+        home,
+        provenance,
     });
     let fs = PermissionCategory::Fs;
     let defs: Vec<(Op, ToolSpec)> = vec![
@@ -366,6 +608,8 @@ enum Class {
 /// How far [`validate_path`] follows links before the filesystem is changed.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Follow {
+    /// Metadata-only watcher: refuse every symlink, including intermediate components.
+    Watch,
     /// Read the file or directory. The final symlink is resolved.
     Content,
     /// Write bytes. The final symlink is resolved; a missing tail is allowed.
@@ -623,8 +867,7 @@ fn lexical_absolute(raw: &str) -> Result<PathBuf, ToolError> {
     } else if is_root_relative(path) {
         prefix_current_drive(path)?
     } else {
-        let cwd =
-            std::env::current_dir().map_err(|e| exec_err(format!("current directory: {e}")))?;
+        let cwd = base_dir()?;
         reject_syntax(&cwd.to_string_lossy())?;
         cwd.join(path)
     };
@@ -795,6 +1038,9 @@ fn resolve_local(path: &Path, ctx: &ResolveCtx<'_>) -> Result<PathBuf, ToolError
                 }
             }
             Ok(meta) if meta.file_type().is_symlink() => {
+                if ctx.follow == Follow::Watch {
+                    return Err(denied("watch paths may not contain links"));
+                }
                 return follow_link(&acc, &next, &names[i + 1..], ctx);
             }
             Ok(_) => acc = next,
@@ -925,18 +1171,245 @@ fn prepare_grants(grants: &[PathBuf]) -> Vec<PathBuf> {
 
 const CREDENTIAL_NAMES: &[&str] = &[
     "api-token",
+    "owner-key",
     "praxi.env",
     "praxi-node.env",
     "secrets.enc",
     "identity.key",
+    // CLI configuration can install hooks/tools as well as carry credentials.
+    ".claude",
+    ".claude.json",
+    ".codex",
+    ".gemini",
+    ".cursor",
+    ".cursor-agent",
+    ".opencode",
+    // Project-level OpenCode config can declare plugins, commands and MCP
+    // servers that run code, so it is protected in every workspace on purpose.
+    // Likewise `.claude/` (hooks, commands) and `.cursor/` (rules, MCP).
+    "opencode.json",
+    "opencode.jsonc",
+    "oauth_creds.json",
 ];
+
+/// Config and data locations of the CLIs that are plain directory names
+/// (`opencode`, `cursor`, ...) and therefore only protected at their known
+/// place, as consecutive path components (lower case). A repository that merely
+/// lives in a folder called `opencode` or `cursor` stays usable.
+const CLI_CONFIG_SEQUENCES: &[&[&str]] = &[
+    &[".config", "opencode"],
+    &[".config", "claude"],
+    &[".config", "cursor"],
+    &[".config", "cursor-agent"],
+    &[".local", "share", "opencode"],
+    &[".local", "share", "cursor-agent"],
+    &["appdata", "roaming", "opencode"],
+    &["appdata", "roaming", "cursor"],
+    &["appdata", "local", "opencode"],
+    &["appdata", "local", "cursor"],
+    &["appdata", "local", "cursor-agent"],
+    &["library", "application support", "opencode"],
+    &["library", "application support", "cursor"],
+    &["library", "application support", "claude"],
+];
+
+fn env_abs_dir(key: &str) -> Option<PathBuf> {
+    std::env::var_os(key)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+}
+
+fn sequence_in(parts: &[String], seq: &[&str]) -> bool {
+    parts.windows(seq.len()).any(|w| {
+        w.iter()
+            .zip(seq)
+            .all(|(part, want)| canonical_name(part) == *want)
+    })
+}
+
+/// Directories that hold the CLI executables detection and the Claude runtime
+/// search outside the user's PATH (mirrors `cli-provider`'s `augment`). A file
+/// tool must never create, replace or move anything there: the next detection
+/// or run would execute it outside the permission engine.
+fn cli_executable_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for home in ["HOME", "USERPROFILE"]
+        .iter()
+        .filter_map(|k| env_abs_dir(k))
+    {
+        for rel in [
+            ".local/bin",
+            "bin",
+            ".volta/bin",
+            ".bun/bin",
+            ".npm-global",
+            ".nvm/versions/node",
+            ".local/share/cursor-agent",
+            "AppData/Roaming/npm",
+            "AppData/Local/cursor-agent",
+        ] {
+            out.push(home.join(rel));
+        }
+    }
+    if let Some(dir) = env_abs_dir("APPDATA") {
+        out.push(dir.join("npm"));
+    }
+    if let Some(dir) = env_abs_dir("LOCALAPPDATA") {
+        out.push(dir.join("cursor-agent"));
+    }
+    if let Some(dir) = env_abs_dir("NPM_CONFIG_PREFIX") {
+        out.push(dir);
+    }
+    out
+}
+
+/// Config locations relocated by an environment variable the CLIs honour.
+fn cli_relocated_config_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(dir) = env_abs_dir("XDG_CONFIG_HOME") {
+        out.extend(["opencode", "claude", "cursor", "cursor-agent"].map(|n| dir.join(n)));
+    }
+    if let Some(dir) = env_abs_dir("XDG_DATA_HOME") {
+        out.extend(["opencode", "cursor-agent"].map(|n| dir.join(n)));
+    }
+    for key in ["APPDATA", "LOCALAPPDATA"] {
+        if let Some(dir) = env_abs_dir(key) {
+            out.extend(["opencode", "cursor", "cursor-agent"].map(|n| dir.join(n)));
+        }
+    }
+    out
+}
+
+fn cli_location(parts: &[String]) -> bool {
+    // The directory set only depends on the process environment, which is fixed
+    // at startup; building it per call made directory walks quadratic.
+    static DIRS: std::sync::OnceLock<Vec<Vec<String>>> = std::sync::OnceLock::new();
+    if CLI_CONFIG_SEQUENCES
+        .iter()
+        .any(|seq| sequence_in(parts, seq))
+    {
+        return true;
+    }
+    DIRS.get_or_init(|| {
+        cli_executable_dirs()
+            .into_iter()
+            .chain(cli_relocated_config_dirs())
+            .map(|dir| norm_parts(&widen_for_compare(&dir)))
+            .collect()
+    })
+    .iter()
+    .any(|dir| parts.starts_with(dir))
+}
 
 /// Hard link to a credential file under another name (`notes.txt` → `.env`)
 /// is not detected. These tools cannot create a hard link; a second directory
 /// entry for the same file is a known limitation of the name denylist.
 fn name_is_credential(name: &str) -> bool {
     let n = name.trim_end_matches([' ', '.']).to_ascii_lowercase();
-    n == ".env" || n.starts_with(".env.") || CREDENTIAL_NAMES.contains(&n.as_str())
+    n == ".env"
+        || n.starts_with(".env.")
+        // `.claude.json.backup*` and other siblings Claude Code writes.
+        || n.starts_with(".claude.json.")
+        || CREDENTIAL_NAMES.contains(&n.as_str())
+}
+
+fn cli_home_override(path: &[String]) -> bool {
+    [
+        "CODEX_HOME",
+        "CLAUDE_CONFIG_DIR",
+        "GEMINI_CLI_HOME",
+        "OPENCODE_CONFIG_DIR",
+        "OPENCODE_CONFIG",
+    ]
+    .iter()
+    .any(|key| {
+        let Some(dir) = std::env::var_os(key)
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+        else {
+            return false;
+        };
+        let dir = norm_parts(&widen_for_compare(&dir));
+        path.starts_with(&dir)
+    })
+}
+
+/// Why `dir` may not be the workspace of an engine that runs with its own
+/// file and shell tools, or `None` when it is acceptable. The folder must be an
+/// existing absolute directory that is not a drive root, not the user's home
+/// folder or one of its parents, not Praxi's data folder or a parent or child
+/// of it, and not a credential or CLI configuration location (or a parent of
+/// one), so the engine's own tools cannot reach what Praxi's file tools never may.
+#[must_use]
+pub fn workspace_refusal(dir: &Path, data_dir: &Path) -> Option<&'static str> {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from);
+    workspace_refusal_with_home(dir, data_dir, home.as_deref())
+}
+
+/// Credential and tool-configuration folders (SSH, cloud, GPG, container, CLI settings).
+/// A workspace may not be one, sit inside one, or contain one under the home folder.
+const CREDENTIAL_DIRS: [&str; 12] = [
+    ".claude", ".codex", ".gemini", ".cursor", ".config", ".local", ".ssh", ".aws", ".gnupg",
+    ".azure", ".kube", ".docker",
+];
+
+fn workspace_refusal_with_home(
+    dir: &Path,
+    data_dir: &Path,
+    home: Option<&Path>,
+) -> Option<&'static str> {
+    if !dir.is_absolute() {
+        return Some("the workspace must be an absolute folder path");
+    }
+    let Ok(real) = fs::canonicalize(dir) else {
+        return Some("the workspace folder does not exist");
+    };
+    if !real.is_dir() {
+        return Some("the workspace must be a folder");
+    }
+    let wide = widen_for_compare(&real);
+    let parts = norm_parts(&wide);
+    if !wide.components().any(|c| matches!(c, Component::Normal(_))) {
+        return Some("a drive root cannot be a workspace");
+    }
+    let data = fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
+    let data_parts = norm_parts(&widen_for_compare(&data));
+    if parts.starts_with(&data_parts) || data_parts.starts_with(&parts) {
+        return Some("the workspace cannot contain or be inside Praxi's data folder");
+    }
+    let named = |p: &Path| {
+        p.components().any(|c| match c {
+            Component::Normal(n) => {
+                let n = n.to_string_lossy().to_ascii_lowercase();
+                CREDENTIAL_DIRS.contains(&n.as_str()) || n == "gcloud"
+            }
+            _ => false,
+        })
+    };
+    if named(&real) || named(dir) {
+        return Some("the workspace cannot be or sit inside a credential or tool settings folder");
+    }
+    if is_protected(&real, data_dir) || is_protected(dir, data_dir) {
+        return Some("the workspace cannot be a credential or CLI configuration location");
+    }
+    if let Some(home) = home {
+        let home = fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+        if norm_parts(&widen_for_compare(&home)).starts_with(&parts) {
+            return Some("the home folder (or a folder containing it) cannot be a workspace");
+        }
+        // The CLIs keep credentials and configuration under these folders.
+        for name in CREDENTIAL_DIRS {
+            if norm_parts(&widen_for_compare(&home.join(name))).starts_with(&parts) {
+                return Some("the workspace cannot contain a CLI configuration folder");
+            }
+        }
+    }
+    if cli_home_override(&parts) {
+        return Some("the workspace cannot be a CLI configuration location");
+    }
+    None
 }
 
 fn is_protected(path: &Path, data_dir: &Path) -> bool {
@@ -946,7 +1419,99 @@ fn is_protected(path: &Path, data_dir: &Path) -> bool {
             false
         }
     });
-    named || under_data_sensitive(path, data_dir)
+    named || {
+        let parts = norm_parts(&widen_for_compare(path));
+        cli_home_override(&parts) || cli_location(&parts) || under_data_sensitive(path, data_dir)
+    }
+}
+
+/// Native providers can load persistent instructions and configuration outside
+/// Praxi's data directory. These stores have no taint marker protocol, so file
+/// tools and shell-free writers must never modify them or their sidecars.
+fn native_cli_authority_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for home in [std::env::var_os("HOME"), std::env::var_os("USERPROFILE")]
+        .into_iter()
+        .flatten()
+        .filter(|home| !home.is_empty())
+    {
+        let home = PathBuf::from(home);
+        roots.extend([
+            home.join(".codex"),
+            home.join(".claude"),
+            home.join(".claude.json"),
+        ]);
+    }
+    for variable in ["CODEX_HOME", "CLAUDE_CONFIG_DIR"] {
+        if let Some(root) = std::env::var_os(variable).filter(|root| !root.is_empty()) {
+            roots.push(PathBuf::from(root));
+        }
+    }
+    // Normalize syntax here; under_daemon_data widens and resolves the root
+    // at the point of comparison, including aliases created after startup.
+    let mut roots: Vec<_> = roots
+        .into_iter()
+        .filter_map(|root| lexical_absolute(&root.to_string_lossy()).ok())
+        .collect();
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn under_native_cli_authority(path: &Path) -> bool {
+    let path = widen_for_compare(path);
+    let parts: Vec<_> = norm_parts(&path)
+        .iter()
+        .map(|s| canonical_name(s))
+        .collect();
+    if let Some(hit) = cached_native(&parts) {
+        return hit;
+    }
+    native_cli_authority_roots()
+        .iter()
+        .any(|root| under_authority_parts(&parts, root).is_some())
+}
+
+/// Whether `root` must not be handed out as a whole folder (for example to a
+/// filesystem MCP server): it is, contains or lies inside the daemon's data
+/// directory, or it is or contains a credential-named entry on its own path.
+/// Same rules as the bot's file tools (`is_protected`), plus the containment
+/// test the file tools do not need for single files.
+#[must_use]
+pub fn is_protected_root(root: &Path, data_dir: &Path) -> bool {
+    if hard_denied(root) || is_protected(root, data_dir) {
+        return true;
+    }
+    let r = norm_parts(&widen_for_compare(root));
+    let d = norm_parts(&widen_path(data_dir).unwrap_or_else(|_| data_dir.to_path_buf()));
+    let n = r.len().min(d.len());
+    r[..n] == d[..n]
+}
+
+/// Resolve an existing local folder using the file tools' reparse-safe walk.
+/// Network/device syntax and drive mappings are classified before metadata;
+/// ambiguous parent traversal is refused rather than normalized across links.
+///
+/// # Errors
+/// The folder is relative, missing, remote, or cannot be safely resolved.
+pub fn resolve_local_folder(path: &Path) -> Result<PathBuf, ToolError> {
+    reject_syntax(&path.to_string_lossy())?;
+    if !path.is_absolute() || path.components().any(|c| c == Component::ParentDir) {
+        return Err(denied("choose an absolute folder without parent traversal"));
+    }
+    let lexical = lexical_absolute(&path.to_string_lossy())?;
+    let ctx = ResolveCtx {
+        follow: Follow::Content,
+        roots: &[],
+        drives: &DriveCache::new(),
+        depth: 0,
+        allow_cloud_placeholder: false,
+    };
+    let resolved = final_identity(&resolve_local(&lexical, &ctx)?)?;
+    if !resolved.is_dir() {
+        return Err(denied("choose an existing folder"));
+    }
+    Ok(resolved)
 }
 
 /// `widen_path`, but a path it refuses as a whole (a `:stream` name counts as a
@@ -965,96 +1530,232 @@ fn widen_for_compare(path: &Path) -> PathBuf {
     }
 }
 
+/// The daemon directory is an authority boundary, not an extensible denylist.
+/// Only inert output stores may be read by file tools. All other current and
+/// future locations (including the root itself) are protected by default.
 fn under_data_sensitive(path: &Path, data_dir: &Path) -> bool {
+    under_daemon_data(path, data_dir).is_some_and(|rel| {
+        !rel.first().is_some_and(|name| {
+            matches!(
+                name.as_str(),
+                "checkpoints" | "files" | "spill" | "screenshots" | "logs"
+            )
+        })
+    })
+}
+
+fn under_daemon_data(path: &Path, data_dir: &Path) -> Option<Vec<String>> {
     let path = widen_for_compare(path);
-    let data_dir = widen_path(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
-    let p = norm_parts(&path);
-    let d = norm_parts(&data_dir);
-    if p.len() <= d.len() || p[..d.len()] != d[..] {
-        return false;
-    }
-    // Windows resolves a trailing dot or space and `:stream` / `::$DATA` to the
-    // same file, so names are compared canonically (on every platform: a
-    // lexical match is cheap and conservative).
-    let rel: Vec<String> = p[d.len()..]
+    let parts: Vec<_> = norm_parts(&path)
         .iter()
-        .map(|part| canonical_name(part))
+        .map(|s| canonical_name(s))
         .collect();
-    let Some(base) = rel.last().map(String::as_str) else {
-        return false;
+    match cached_data_relative(&parts, data_dir) {
+        DataHit::Inside(relative) => Some(relative),
+        DataHit::Outside => None,
+        DataHit::Miss => under_authority_parts(&parts, data_dir),
+    }
+}
+
+/// Protected roots for one top-level file operation. Directory walks compare
+/// component lists; they do not re-read the environment or re-canonicalize
+/// the data directory for every entry.
+struct RootParts {
+    configured: Vec<String>,
+    referent: Option<Vec<String>>,
+    widened: Vec<String>,
+}
+
+struct Authority {
+    data_dir: PathBuf,
+    data: RootParts,
+    native: Vec<RootParts>,
+}
+
+fn component_parts(path: &Path) -> Vec<String> {
+    norm_parts(path).iter().map(|s| canonical_name(s)).collect()
+}
+
+fn root_parts(root: &Path) -> RootParts {
+    RootParts {
+        configured: component_parts(root),
+        referent: authority_referent(root).map(|path| component_parts(&path)),
+        widened: component_parts(&canonical_data_dir(root)),
+    }
+}
+
+fn relative_to(path: &[String], root: &RootParts) -> Option<Vec<String>> {
+    let relative = |dir: &[String]| {
+        (path.len() >= dir.len() && path[..dir.len()] == *dir).then(|| path[dir.len()..].to_vec())
     };
-    // Directly under the data dir only: these names are ordinary elsewhere.
-    base == "devices.json"
-        || base == "peer-node"
-        || rel.iter().any(|s| s == "vault" || s == "secrets")
-        || rel
-            .first()
-            .is_some_and(|first| DAEMON_STATE_DIRS.contains(&first.as_str()))
-        || (rel.len() == 1 && daemon_state_name(base))
+    if let Some(relative) = relative(&root.configured) {
+        return Some(relative);
+    }
+    if let Some(referent) = &root.referent {
+        if let Some(relative) = relative(referent) {
+            return Some(relative);
+        }
+        if root.configured == *referent {
+            return None;
+        }
+    }
+    relative(&root.widened)
 }
 
-/// Compare-form of one path component: no `:stream` suffix, no trailing dots or
-/// spaces, lower case.
+thread_local! {
+    static AUTHORITY: RefCell<Option<Authority>> = const { RefCell::new(None) };
+}
+
+struct AuthorityGuard {
+    armed: bool,
+}
+
+impl Drop for AuthorityGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            AUTHORITY.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+}
+
+fn enter_authority(data_dir: &Path) -> AuthorityGuard {
+    AUTHORITY.with(|slot| {
+        let mut guard = slot.borrow_mut();
+        if guard
+            .as_ref()
+            .is_some_and(|auth| same_path(&auth.data_dir, data_dir))
+        {
+            return AuthorityGuard { armed: false };
+        }
+        *guard = Some(Authority {
+            data_dir: data_dir.to_path_buf(),
+            data: root_parts(data_dir),
+            native: native_cli_authority_roots()
+                .into_iter()
+                .map(|root| root_parts(&root))
+                .collect(),
+        });
+        AuthorityGuard { armed: true }
+    })
+}
+
+enum DataHit {
+    Miss,
+    Outside,
+    Inside(Vec<String>),
+}
+
+fn cached_data_relative(parts: &[String], data_dir: &Path) -> DataHit {
+    AUTHORITY.with(|slot| {
+        let guard = slot.borrow();
+        let Some(auth) = guard.as_ref() else {
+            return DataHit::Miss;
+        };
+        if !same_path(&auth.data_dir, data_dir) {
+            return DataHit::Miss;
+        }
+        match relative_to(parts, &auth.data) {
+            Some(relative) => DataHit::Inside(relative),
+            None => DataHit::Outside,
+        }
+    })
+}
+
+fn cached_native(parts: &[String]) -> Option<bool> {
+    AUTHORITY.with(|slot| {
+        let guard = slot.borrow();
+        let auth = guard.as_ref()?;
+        Some(
+            auth.native
+                .iter()
+                .any(|root| relative_to(parts, root).is_some()),
+        )
+    })
+}
+
+fn under_authority_parts(p: &[String], data_dir: &Path) -> Option<Vec<String>> {
+    let parts = |root: &Path| {
+        norm_parts(root)
+            .iter()
+            .map(|s| canonical_name(s))
+            .collect::<Vec<_>>()
+    };
+    let relative =
+        |d: &[String]| (p.len() >= d.len() && p[..d.len()] == *d).then(|| p[d.len()..].to_vec());
+    // Keep the configured spelling protected as well as its referent: deleting
+    // the configured link would let a later writer replace it with a plain dir.
+    let configured = parts(data_dir);
+    if let Some(relative) = relative(&configured) {
+        return Some(relative);
+    }
+    if let Some(referent) = authority_referent(data_dir) {
+        let referent = parts(&referent);
+        if let Some(relative) = relative(&referent) {
+            return Some(relative);
+        }
+        if configured == referent {
+            // The configured path already is its canonical spelling. Avoid
+            // walking all its ancestors again for every directory-tree entry.
+            return None;
+        }
+    }
+    // A junction object's long name can differ from both its configured 8.3
+    // spelling and its referent. Keep that third spelling protected too.
+    let widened = canonical_data_dir(data_dir);
+    relative(&parts(&widened))
+}
+
+/// Follow only the trusted, host-configured data root, never a tool's path.
+/// A root created after tool construction can have an aliased existing ancestor.
+fn authority_referent(data_dir: &Path) -> Option<PathBuf> {
+    let mut ancestor = data_dir.to_path_buf();
+    let mut missing = Vec::new();
+    loop {
+        match fs::canonicalize(&ancestor) {
+            Ok(mut root) => {
+                for name in missing.iter().rev() {
+                    root.push(name);
+                }
+                #[cfg(windows)]
+                {
+                    return normalize_final(&root).ok();
+                }
+                #[cfg(not(windows))]
+                {
+                    return Some(root);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                missing.push(ancestor.file_name()?.to_os_string());
+                ancestor = ancestor.parent()?.to_path_buf();
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
 fn canonical_name(part: &str) -> String {
-    let base = part.split(':').next().unwrap_or(part);
-    base.trim_end_matches([' ', '.']).to_ascii_lowercase()
+    part.split(':')
+        .next()
+        .unwrap_or(part)
+        .trim_end_matches([' ', '.'])
+        .to_ascii_lowercase()
 }
 
-/// Directories under the data dir whose contents grant authority or are the
-/// daemon's own records, so the bot's file tools never touch them:
-/// `peer` (pairing keys and device list), `bots` and `profiles` (bot profiles
-/// and their policies), `runs` (the event logs the UI and replay trust).
-/// Deliberately NOT protected, with the reason: `skills` and `workflows`
-/// (the bot authors them on purpose), `checkpoints` (the file tools' own undo
-/// store), `files`, `spill` and `screenshots` (bot output), logs (no authority).
-const DAEMON_STATE_DIRS: [&str; 4] = ["peer", "bots", "profiles", "runs"];
-
-/// The daemon's own state files directly under the data dir, each one a file
-/// that grants authority or forges history if tampered with:
-/// - `bot.db`, `schedules.db`, `memory.db` (+ `-wal`/`-shm`/`-journal`):
-///   chats, approvals, audit, schedules that run unattended, memory.
-/// - `control-latch.json` (the takeover latch and its release journal) and
-///   `policy.json` (the global permission policy).
-/// - `host.toml` (leader/epoch), `config.toml` (peer networking), `mcp.toml`
-///   (servers the daemon launches), `providers.toml` (where model traffic
-///   goes), `web.toml` (web tool limits).
-/// - `telegram_state.json` and `telegram-inbox.jsonl` (which chats may command
-///   the bot, and what they sent).
-/// - `email.toml` (mail server targets and secret references: tampering would
-///   redirect a stored password) and `email-secret-cleanup.json` (pending
-///   secret deletions after an account change).
-/// - `schedule.toml` (limits for bot-created schedules).
-/// - the atomic-write temp files (`.tmp*`) of any of them.
-///
-/// Deliberately NOT listed: `skills.lock.json` / `skills-usage.json` (counters
-/// and a lockfile for bot-writable skills; no authority) and logs.
-fn daemon_state_name(base: &str) -> bool {
-    const DATABASES: [&str; 3] = ["bot.db", "schedules.db", "memory.db"];
-    const FILES: [&str; 12] = [
-        "control-latch.json",
-        "policy.json",
-        "host.toml",
-        "config.toml",
-        "mcp.toml",
-        "providers.toml",
-        "web.toml",
-        "telegram_state.json",
-        "telegram-inbox.jsonl",
-        "email.toml",
-        "email-secret-cleanup.json",
-        "schedule.toml",
-    ];
-    DATABASES.iter().any(|s| {
-        base == *s
-            || base
-                .strip_prefix(s)
-                .is_some_and(|rest| matches!(rest, "-wal" | "-shm" | "-journal"))
-    }) || FILES.iter().any(|s| {
-        base == *s
-            || base
-                .strip_prefix(s)
-                .is_some_and(|rest| matches!(rest, ".tmp" | ".bak"))
-    }) || base.starts_with(".tmp")
+/// Even an exact credential grant cannot authorize changing daemon behaviour.
+/// Output is readable, but only its owning daemon subsystem writes it.
+fn validate_mutation(sh: &Shared, raw: &str, resolved: &Path) -> Result<(), ToolError> {
+    let lexical = lexical_absolute(raw)?;
+    if under_daemon_data(&lexical, &sh.data_dir).is_some()
+        || under_daemon_data(resolved, &sh.data_dir).is_some()
+        || under_native_cli_authority(&lexical)
+        || under_native_cli_authority(resolved)
+    {
+        return Err(denied(
+            "file tools cannot modify daemon data or native CLI configuration; use the owning tool or user interface",
+        ));
+    }
+    Ok(())
 }
 
 /// A protected path is readable only when that path itself is granted.
@@ -1066,8 +1767,259 @@ fn credential_blocked(sh: &Shared, lexical: &Path, resolved: &Path) -> bool {
         || protected_ungranted(resolved, &sh.data_dir, &sh.grants)
 }
 
+// ---- The ONE table of locations no file tool may touch --------------------
+//
+// Matched on canonical (widened, case-folded on Windows) paths at every depth
+// by `hard_denied`, which `protected_ungranted` applies to every operation:
+// read, list, search, write, edit, move (both ends), delete and checkpoints,
+// including each descendant a recursive operation visits. A host grant never
+// lifts these.
+
+/// Consecutive path components (lower case) that are credential, key,
+/// browser-profile, password-manager or CLI-config stores wherever they sit,
+/// so another user's profile or a copied tree is covered too.
+const SENSITIVE_SEQUENCES: &[&[&str]] = &[
+    // ssh / cloud / dev credentials (all platforms)
+    &[".ssh"],
+    &[".aws"],
+    &[".gnupg"],
+    &[".azure"],
+    &[".kube"],
+    &[".docker"],
+    &[".password-store"],
+    &[".terraform.d"],
+    &[".cargo", "credentials"],
+    &[".cargo", "credentials.toml"],
+    &[".config", "git", "credentials"],
+    &[".config", "gh"],
+    &[".config", "gcloud"],
+    &[".config", "op"],
+    &[".config", "rclone"],
+    &[".config", "1password"],
+    &[".config", "bitwarden"],
+    &[".config", "keepassxc"],
+    // agent / CLI configuration
+    &[".claude"],
+    &[".codex"],
+    &[".gemini"],
+    &[".opencode"],
+    // Linux keyrings, wallets, browsers
+    &[".local", "share", "keyrings"],
+    &[".local", "share", "kwalletd"],
+    &[".kde", "share", "apps", "kwallet"],
+    &[".mozilla"],
+    &[".thunderbird"],
+    &[".config", "google-chrome"],
+    &[".config", "google-chrome-beta"],
+    &[".config", "chromium"],
+    &[".config", "microsoft-edge"],
+    &[".config", "bravesoftware"],
+    &[".config", "opera"],
+    &[".config", "vivaldi"],
+    &["snap", "chromium"],
+    &["snap", "firefox"],
+    &["snap", "brave"],
+    &[".var", "app", "org.mozilla.firefox"],
+    &[".var", "app", "com.google.chrome"],
+    &[".var", "app", "org.chromium.chromium"],
+    &[".var", "app", "com.brave.browser"],
+    // Windows (under any profile)
+    &["appdata", "roaming", "gh"],
+    &["appdata", "roaming", "github cli"],
+    &["appdata", "roaming", "gcloud"],
+    &["appdata", "roaming", "claude"],
+    &["appdata", "roaming", "microsoft", "credentials"],
+    &["appdata", "roaming", "microsoft", "vault"],
+    &["appdata", "roaming", "microsoft", "protect"],
+    &["appdata", "roaming", "microsoft", "crypto"],
+    &["appdata", "local", "microsoft", "credentials"],
+    &["appdata", "local", "microsoft", "vault"],
+    &["appdata", "local", "microsoft", "edge"],
+    &["appdata", "local", "google", "chrome"],
+    &["appdata", "local", "bravesoftware"],
+    &["appdata", "local", "vivaldi"],
+    &["appdata", "roaming", "opera software"],
+    &["appdata", "roaming", "mozilla"],
+    &["appdata", "local", "mozilla"],
+    &["appdata", "roaming", "thunderbird"],
+    &["appdata", "roaming", "1password"],
+    &["appdata", "local", "1password"],
+    &["appdata", "roaming", "bitwarden"],
+    &["appdata", "roaming", "keepassxc"],
+    &["programdata", "microsoft", "crypto"],
+    &["programdata", "microsoft", "vault"],
+    &["system volume information"],
+    // macOS
+    &["library", "keychains"],
+    &["library", "cookies"],
+    &["library", "safari"],
+    &["library", "group containers"],
+    &["library", "application support", "google", "chrome"],
+    &["library", "application support", "microsoft edge"],
+    &["library", "application support", "bravesoftware"],
+    &["library", "application support", "firefox"],
+    &["library", "application support", "1password"],
+    &["library", "application support", "bitwarden"],
+    &["library", "application support", "vivaldi"],
+    &["library", "application support", "com.operasoftware.opera"],
+    &["library", "application support", "keepassxc"],
+];
+
+/// File names (lower case) that hold credentials wherever they are: browser
+/// stores, Windows account hives, private keys, dotfile credential stores.
+const SENSITIVE_NAMES: &[&str] = &[
+    "login data",
+    "login data for account",
+    "web data",
+    "local state",
+    "key3.db",
+    "key4.db",
+    "logins.json",
+    "cert9.db",
+    "cookies.sqlite",
+    "usrclass.dat",
+    ".netrc",
+    "_netrc",
+    ".npmrc",
+    ".pypirc",
+    ".git-credentials",
+    ".pgpass",
+    ".vault-token",
+    ".my.cnf",
+    "credentials.tfrc.json",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+];
+
+/// File-name suffixes (lower case) of password-manager vaults and key stores.
+const SENSITIVE_SUFFIXES: &[&str] = &[
+    ".kdbx",
+    ".kdb",
+    ".opvault",
+    ".agilekeychain",
+    ".1pif",
+    ".keychain",
+    ".keychain-db",
+    ".p12",
+    ".pfx",
+];
+
+/// Names too generic to refuse alone: refused only directly inside a
+/// `config` directory (the Windows registry hives under `System32\config`).
+const HIVE_NAMES: &[&str] = &["sam", "security", "system", "software", "default"];
+
+/// OS trees (absolute prefixes) that stay refused.
+fn sensitive_roots() -> &'static Vec<Vec<String>> {
+    static ROOTS: std::sync::OnceLock<Vec<Vec<String>>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(|| {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        if cfg!(windows) {
+            dirs.push(env_abs_dir("SystemRoot").unwrap_or_else(|| PathBuf::from(r"C:\Windows")));
+        } else {
+            for d in [
+                "/etc",
+                "/proc",
+                "/sys",
+                "/dev",
+                "/boot",
+                "/root",
+                "/private/etc",
+                "/private/var/root",
+                "/private/var/db",
+                "/Library/Keychains",
+                "/var/lib/sss",
+                "/var/db",
+            ] {
+                dirs.push(PathBuf::from(d));
+            }
+        }
+        dirs.iter()
+            .map(|d| norm_parts(&widen_for_compare(d)))
+            .collect()
+    })
+}
+
+/// The daemon account's own home (environment, fixed at startup) and the
+/// directories whose other children are OTHER users' profiles.
+#[allow(clippy::type_complexity)]
+fn user_dirs() -> &'static (Option<Vec<String>>, Vec<Vec<String>>) {
+    static DIRS: std::sync::OnceLock<(Option<Vec<String>>, Vec<Vec<String>>)> =
+        std::sync::OnceLock::new();
+    DIRS.get_or_init(|| {
+        let home = crate::user_home();
+        let mut roots: Vec<PathBuf> = Vec::new();
+        if cfg!(windows) {
+            let drive = env_abs_dir("SystemDrive").unwrap_or_else(|| PathBuf::from(r"C:\"));
+            roots.push(drive.join("Users"));
+        } else {
+            roots.extend(["/home", "/Users"].map(PathBuf::from));
+        }
+        if let Some(parent) = home.as_deref().and_then(Path::parent)
+            && parent.components().count() > 1
+        {
+            roots.push(parent.to_path_buf());
+        }
+        (
+            home.map(|h| norm_parts(&widen_for_compare(&h))),
+            roots
+                .iter()
+                .map(|r| norm_parts(&widen_for_compare(r)))
+                .collect(),
+        )
+    })
+}
+
+/// Whether `path` is in the table: a credential, key, browser, vault or OS
+/// location, or inside another user's profile. Pure text on the canonical
+/// form, so it holds for every descendant a walk meets.
+fn hard_denied(path: &Path) -> bool {
+    let parts = norm_parts(&widen_for_compare(path));
+    if SENSITIVE_SEQUENCES
+        .iter()
+        .any(|seq| sequence_in(&parts, seq))
+    {
+        return true;
+    }
+    if let Some(name) = parts.last().map(|p| canonical_name(p)) {
+        let hive_dir = parts
+            .len()
+            .checked_sub(2)
+            .and_then(|i| parts.get(i))
+            .is_some_and(|p| canonical_name(p) == "config");
+        let hit = if HIVE_NAMES.contains(&name.as_str()) {
+            hive_dir
+        } else {
+            SENSITIVE_NAMES.contains(&name.as_str())
+        };
+        if hit
+            || SENSITIVE_SUFFIXES.iter().any(|s| name.ends_with(s))
+            || name.starts_with("ntuser.dat")
+        {
+            return true;
+        }
+    }
+    if sensitive_roots()
+        .iter()
+        .any(|r| !r.is_empty() && parts.starts_with(r))
+    {
+        return true;
+    }
+    let (home, roots) = user_dirs();
+    roots.iter().any(|root| {
+        parts.len() > root.len()
+            && parts.starts_with(root)
+            && !home.as_ref().is_some_and(|h| parts.starts_with(h))
+    })
+}
+
 fn protected_ungranted(path: &Path, data_dir: &Path, grants: &[PathBuf]) -> bool {
-    is_protected(path, data_dir) && !grants.iter().any(|g| grant_matches(g, path))
+    hard_denied(path)
+        || (is_protected(path, data_dir)
+            && (under_data_sensitive(path, data_dir)
+                || under_native_cli_authority(path)
+                || !grants.iter().any(|g| grant_matches(g, path))))
 }
 
 /// Exact path, or the same file under its 8.3 and long names.
@@ -1460,6 +2412,7 @@ fn with_checkpoint_gate<T>(sh: &Shared, f: impl FnOnce() -> T) -> T {
         });
     });
     let _clear = ClearGate;
+    let _auth = enter_authority(&sh.data_dir);
     f()
 }
 
@@ -1731,7 +2684,11 @@ pub(crate) fn vet_checkpoint_write(path: &Path) -> io::Result<()> {
     if !policy.roots.is_empty() && !roots_contain(&policy.roots, &opened) {
         return Err(deny_io(ROOT_MSG));
     }
-    if protected_paths(&[&lexical, &resolved, &opened], &policy) {
+    if [&lexical, &resolved, &opened]
+        .iter()
+        .any(|p| under_daemon_data(p, &policy.data_dir).is_some() || under_native_cli_authority(p))
+        || protected_paths(&[&lexical, &resolved, &opened], &policy)
+    {
         return Err(deny_io(GRANT_MSG));
     }
     Ok(())
@@ -1903,6 +2860,7 @@ pub(crate) fn remove_tree_skip_protected(
     data_dir: &Path,
     grants: &[PathBuf],
 ) -> io::Result<()> {
+    let _auth = enter_authority(data_dir);
     if entry_is_protected(path, data_dir, grants)? {
         return Ok(());
     }
@@ -1977,6 +2935,7 @@ pub(crate) fn remove_checkpoint_target(path: &Path) -> io::Result<()> {
 }
 
 fn has_protected_descendant(path: &Path, data_dir: &Path, grants: &[PathBuf]) -> io::Result<bool> {
+    let _auth = enter_authority(data_dir);
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -2107,6 +3066,7 @@ impl<'a, F: Fn(&Path, &Path) -> io::Result<()>> MoveTransaction<'a, F> {
     }
 
     fn move_path(&mut self, from: &Path, to: &Path) -> io::Result<()> {
+        let _auth = enter_authority(&self.sh.data_dir);
         if entry_is_protected(from, &self.sh.data_dir, &self.sh.grants)? {
             return Ok(());
         }
@@ -2380,7 +3340,13 @@ fn matcher(glob: Option<&str>) -> Result<Option<(globset::GlobMatcher, bool)>, T
 
 /// Walk `root` recursively (depth-limited), calling `f(path, is_dir)`.
 /// Returning `false` stops the walk.
-fn walk(root: &Path, depth: usize, f: &mut dyn FnMut(&Path, bool) -> bool) -> bool {
+/// [`walk`] that neither reports nor enters entries `skip` accepts.
+fn walk_skipping(
+    root: &Path,
+    depth: usize,
+    skip: &dyn Fn(&Path) -> bool,
+    f: &mut dyn FnMut(&Path, bool) -> bool,
+) -> bool {
     let Ok(rd) = fs::read_dir(root) else {
         return true;
     };
@@ -2398,10 +3364,13 @@ fn walk(root: &Path, depth: usize, f: &mut dyn FnMut(&Path, bool) -> bool) -> bo
         if is_dir && SKIP_DIRS.iter().any(|s| e.file_name() == *s) {
             continue;
         }
+        if skip(&p) {
+            continue;
+        }
         if !f(&p, is_dir) {
             return false;
         }
-        if is_dir && depth > 0 && !walk(&p, depth - 1, f) {
+        if is_dir && depth > 0 && !walk_skipping(&p, depth - 1, skip, f) {
             return false;
         }
     }
@@ -2434,6 +3403,7 @@ fn do_list(sh: &Shared, i: &ListIn) -> Result<String, ToolError> {
         return Err(exec_err(format!("{} is not a directory", i.path)));
     }
     let m = matcher(i.glob.as_deref())?;
+    let protected = |p: &Path| protected_ungranted(p, &sh.data_dir, &sh.grants);
     let mut lines = Vec::new();
     let mut truncated = false;
     let mut push = |p: &Path, is_dir: bool| -> bool {
@@ -2458,10 +3428,10 @@ fn do_list(sh: &Shared, i: &ListIn) -> Result<String, ToolError> {
     };
     match &m {
         None => {
-            walk(&root, 0, &mut |p, d| push(p, d));
+            walk_skipping(&root, 0, &protected, &mut |p, d| push(p, d));
         }
         Some(m) => {
-            walk(&root, 10, &mut |p, d| {
+            walk_skipping(&root, 10, &protected, &mut |p, d| {
                 if glob_hit(m, &root, p) {
                     push(p, d)
                 } else {
@@ -2533,7 +3503,8 @@ fn do_search(sh: &Shared, i: &SearchIn) -> Result<String, ToolError> {
         let parent = root.parent().unwrap_or(&root);
         search_file(sh, &root, &q, parent, &mut out);
     } else if is_dir_nofollow(&root) {
-        walk(&root, 12, &mut |p, is_dir| {
+        let protected = |p: &Path| protected_ungranted(p, &sh.data_dir, &sh.grants);
+        walk_skipping(&root, 12, &protected, &mut |p, is_dir| {
             if !is_dir && m.as_ref().is_none_or(|m| glob_hit(m, &root, p)) {
                 search_file(sh, p, &q, &root, &mut out);
             }
@@ -2616,6 +3587,7 @@ fn do_write(sh: &Shared, run: &str, i: &WriteIn) -> Result<String, ToolError> {
     let mutation_lock = file_mutations(&sh.data_dir);
     let _mutation = mutation_lock.read();
     let p = validate_path(sh, &i.path, Follow::Write)?;
+    validate_mutation(sh, &i.path, &p)?;
     let (cp, note) = sh.checkpoint(run, "fs_write", &[(Path::new(&i.path), &p)])?;
     if let Some(parent) = p.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(parent).map_err(|e| exec_err(format!("create dirs: {e}")))?;
@@ -2636,14 +3608,15 @@ fn do_edit(sh: &Shared, run: &str, i: &EditIn) -> Result<String, ToolError> {
         return Err(ToolError::InvalidInput("old must not be empty".into()));
     }
     let p = validate_path(sh, &i.path, Follow::Content)?;
+    validate_mutation(sh, &i.path, &p)?;
     let text = read_text(&p)?;
     let n = text.matches(&i.old).count();
     if n == 0 {
-        return Err(exec_err("old text not found; read the file again"));
+        return Err(exec_err("edit failed: old text not found"));
     }
     if n > 1 && !i.replace_all {
         return Err(exec_err(format!(
-            "old text matches {n} times; add more context or set replace_all"
+            "edit failed: old text matches {n} times; include more context or set replace_all"
         )));
     }
     let (cp, note) = sh.checkpoint(run, "fs_edit", &[(Path::new(&i.path), &p)])?;
@@ -2681,6 +3654,8 @@ fn do_move_with(
     let result = (|| {
         let from = validate_path(sh, &i.from, Follow::Entry)?;
         let to = validate_path(sh, &i.to, Follow::Place)?;
+        validate_mutation(sh, &i.from, &from)?;
+        validate_mutation(sh, &i.to, &to)?;
         // Cheap preflight first: a rejected move must not copy the
         // destination into a checkpoint or leave an empty receipt behind.
         if fs::symlink_metadata(&from).is_err() {
@@ -2736,6 +3711,7 @@ fn do_delete(sh: &Shared, run: &str, i: &DeleteIn) -> Result<String, ToolError> 
     let mutation_lock = file_mutations(&sh.data_dir);
     let _mutation = mutation_lock.read();
     let p = validate_path(sh, &i.path, Follow::Entry)?;
+    validate_mutation(sh, &i.path, &p)?;
     let meta = fs::symlink_metadata(&p).map_err(|e| exec_err(format!("{}: {e}", i.path)))?;
     if meta.is_dir() && !meta.file_type().is_symlink() && !i.recursive {
         return Err(exec_err(format!(
@@ -2788,6 +3764,111 @@ fn do_cp_restore(sh: &Shared, id: &str) -> Result<String, ToolError> {
     Ok(out)
 }
 
+/// `rel` of a `fs_search` hit line `rel:LINE: text`.
+fn search_hit_path(line: &str) -> Option<&str> {
+    let bytes = line.as_bytes();
+    (0..bytes.len()).find_map(|i| {
+        if bytes[i] != b':' {
+            return None;
+        }
+        let digits = bytes[i + 1..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        (digits > 0 && bytes.get(i + 1 + digits) == Some(&b':')).then(|| &line[..i])
+    })
+}
+
+/// Judge a finished call by provenance (review of #138): is what it returned untrusted?
+/// A read by the file's origin; a list or search by every entry it returned (not by the folder it
+/// was asked about). Also records what a write, edit or move in an untrusted run (or from an
+/// untrusted source) produced, so the mark outlives the chat.
+fn provenance_after(
+    sh: &Shared,
+    op: Op,
+    raw: &Value,
+    text: &str,
+    base: Option<PathBuf>,
+    run_untrusted: bool,
+) -> bool {
+    use crate::provenance::{external_location, is_untrusted, normalize};
+    let ledger = sh.provenance.as_deref();
+    with_base_dir(base, || {
+        let resolve = |key: &str| {
+            let raw = raw.get(key)?.as_str()?;
+            validate_path(sh, raw, Follow::Content)
+                .or_else(|_| validate_path(sh, raw, Follow::Write))
+                .ok()
+        };
+        let mark = |p: &Path| {
+            if let Some(l) = ledger {
+                crate::provenance::mark_path(
+                    l,
+                    p,
+                    p.is_dir(),
+                    "written by a tool in an untrusted run",
+                );
+            }
+        };
+        match op {
+            Op::Read => resolve("path").is_some_and(|p| is_untrusted(ledger, &p)),
+            Op::Edit | Op::Write => {
+                let Some(p) = resolve("path") else {
+                    return false;
+                };
+                let bad = is_untrusted(ledger, &p);
+                if run_untrusted {
+                    mark(&p);
+                }
+                bad
+            }
+            Op::Move => {
+                if let (Some(from), Some(to)) = (resolve("from"), resolve("to"))
+                    && (run_untrusted || is_untrusted(ledger, &from))
+                {
+                    mark(&to);
+                }
+                false
+            }
+            Op::List | Op::Search => {
+                let Some(root) = resolve("path") else {
+                    return false;
+                };
+                if is_untrusted(ledger, &root) {
+                    return true;
+                }
+                let base = if root.is_file() {
+                    root.parent()
+                        .map_or_else(|| root.clone(), Path::to_path_buf)
+                } else {
+                    root.clone()
+                };
+                let mut dirs: std::collections::HashMap<PathBuf, bool> =
+                    std::collections::HashMap::new();
+                text.lines().take(600).any(|line| {
+                    let rel = if op == Op::List {
+                        line.get(2..)
+                            .map(|r| r.split(" (").next().unwrap_or(r).trim_end_matches('/'))
+                    } else {
+                        search_hit_path(line)
+                    };
+                    let Some(rel) = rel else { return false };
+                    let entry = base.join(rel);
+                    let dir = entry.parent().map(Path::to_path_buf).unwrap_or_default();
+                    let external = *dirs.entry(dir).or_insert_with_key(|d| {
+                        let probe = d.join("x");
+                        // a folder the owner trusts lifts the by-rule classification
+                        !ledger.is_some_and(|l| l.is_trusted_folder(&normalize(&probe)))
+                            && external_location(&probe)
+                    });
+                    external || is_untrusted(ledger, &entry)
+                })
+            }
+            _ => false,
+        }
+    })
+}
+
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, ToolError> + Send + 'static,
 ) -> Result<T, ToolError> {
@@ -2803,51 +3884,89 @@ impl Tool for FsTool {
     }
 
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
-        if self.shared.roots_unresolved {
+        let sh = match &self.shared.access {
+            Some(access) => {
+                let scope = access.scope(ctx.bot_id.as_deref());
+                Arc::new(self.shared.scoped(&scope))
+            }
+            None => self.shared.clone(),
+        };
+        if sh.roots_unresolved {
             return Err(denied(ROOT_UNRESOLVED_MSG));
         }
-        let sh = self.shared.clone();
+        let base = sh.workdir.clone();
         let run = ctx.run_id.clone();
+        let raw = input.clone();
+        let (sh_after, base_after) = (sh.clone(), base.clone());
         let text = match self.op {
             Op::Read => {
                 let i: ReadIn = parse(input)?;
-                blocking(move || do_read(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_read(&sh, &run, &i))).await?
             }
             Op::List => {
                 let i: ListIn = parse(input)?;
-                blocking(move || do_list(&sh, &i)).await?
+                blocking(move || with_base_dir(base, || do_list(&sh, &i))).await?
             }
             Op::Search => {
                 let i: SearchIn = parse(input)?;
-                blocking(move || do_search(&sh, &i)).await?
+                blocking(move || with_base_dir(base, || do_search(&sh, &i))).await?
             }
             Op::Write => {
                 let i: WriteIn = parse(input)?;
-                blocking(move || do_write(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_write(&sh, &run, &i))).await?
             }
             Op::Edit => {
                 let i: EditIn = parse(input)?;
-                blocking(move || do_edit(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_edit(&sh, &run, &i))).await?
             }
             Op::Move => {
                 let i: MoveIn = parse(input)?;
-                blocking(move || do_move(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_move(&sh, &run, &i))).await?
             }
             Op::Delete => {
                 let i: DeleteIn = parse(input)?;
-                blocking(move || do_delete(&sh, &run, &i)).await?
+                blocking(move || with_base_dir(base, || do_delete(&sh, &run, &i))).await?
             }
             Op::CheckpointList => {
                 let i: CpListIn = parse(input)?;
                 let run = i.run.unwrap_or(run);
-                blocking(move || do_cp_list(&sh, &run)).await?
+                blocking(move || with_base_dir(base, || do_cp_list(&sh, &run))).await?
             }
             Op::CheckpointRestore => {
                 let i: CpRestoreIn = parse(input)?;
-                blocking(move || do_cp_restore(&sh, &i.id)).await?
+                blocking(move || with_base_dir(base, || do_cp_restore(&sh, &i.id))).await?
             }
         };
-        Ok(finish_text(ctx, &self.shared.spill_dir, text))
+        let (untrusted, trust_folder) = {
+            let (sh, text, base) = (sh_after, text.clone(), base_after);
+            let (op, untrusted_run) = (self.op, ctx.exposure_untrusted);
+            blocking(move || {
+                let untrusted = provenance_after(&sh, op, &raw, &text, base.clone(), untrusted_run);
+                let folder =
+                    if untrusted && matches!(op, Op::Read | Op::List | Op::Search | Op::Edit) {
+                        with_base_dir(base, || {
+                            let path = raw.get("path").and_then(Value::as_str)?;
+                            let path = validate_path(&sh, path, Follow::Content).ok()?;
+                            crate::provenance::git_work_tree_root(&path)
+                                .map(|p| crate::provenance::normalize(&p))
+                        })
+                    } else {
+                        None
+                    };
+                Ok((untrusted, folder))
+            })
+            .await?
+        };
+        let mut out = finish_text(ctx, &self.shared.spill_dir, text);
+        if untrusted {
+            out.exposure = Some(tool_registry::OutputExposure {
+                trust_folder,
+                ingests_untrusted: true,
+                reads_private: true,
+                label: String::new(),
+            });
+        }
+        Ok(out)
     }
 }
 
@@ -2855,6 +3974,101 @@ impl Tool for FsTool {
 mod tests {
     #![allow(clippy::many_single_char_names)]
     use super::*;
+
+    #[derive(Default)]
+    struct MemLedger(parking_lot::Mutex<Vec<(String, bool)>>);
+    impl crate::provenance::Provenance for MemLedger {
+        fn is_marked(&self, n: &str) -> bool {
+            self.0
+                .lock()
+                .iter()
+                .any(|(p, tree)| p == n || (*tree && n.starts_with(&format!("{p}/"))))
+        }
+        fn mark(&self, n: &str, tree: bool, _: &str) {
+            self.0.lock().push((n.to_owned(), tree));
+        }
+    }
+
+    #[test]
+    fn the_installed_cli_runtimes_and_cli_sign_in_stores_are_protected_from_file_tools() {
+        let data = std::env::temp_dir().join("praxi-data-protected-check");
+        for path in [
+            data.join("runtimes/npm-global/bin/claude"),
+            data.join("runtimes/node-v22.1.0-linux-x64/bin/node"),
+            data.join("cli-install-pins.json"),
+            std::path::PathBuf::from("/home/praxi/.claude/.credentials.json"),
+            std::path::PathBuf::from("/home/praxi/.codex/auth.json"),
+            std::path::PathBuf::from("/home/praxi/.local/share/opencode/auth.json"),
+        ] {
+            assert!(is_protected(&path, &data), "{}", path.display());
+        }
+        // Scratch space under the data dir stays usable.
+        assert!(!is_protected(&data.join("files/notes.txt"), &data));
+    }
+
+    #[test]
+    fn search_hit_lines_name_their_file() {
+        assert_eq!(search_hit_path("src/a.rs:12: let x = 1;"), Some("src/a.rs"));
+        assert_eq!(
+            search_hit_path(r"C:\w\a.txt:3: hi: 4: there"),
+            Some(r"C:\w\a.txt")
+        );
+        assert_eq!(search_hit_path("no hit here"), None);
+    }
+
+    #[tokio::test]
+    async fn untrusted_origin_follows_writes_moves_and_results_across_calls() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let ledger = Arc::new(MemLedger::default());
+        let t = tools_scoped(data.path(), &[], &[], None, None, Some(ledger.clone()));
+        let (a, b, c) = (
+            work.path().join("a.txt"),
+            work.path().join("b.txt"),
+            work.path().join("c.txt"),
+        );
+        let mut ctx = ToolContext {
+            run_id: "run-1".into(),
+            ..ToolContext::default()
+        };
+        // a write in a clean run records nothing; in an untrusted run it records the file
+        get(&t, "fs_write")
+            .call(&ctx, json!({"path": a, "content": "mine"}))
+            .await
+            .unwrap();
+        assert!(ledger.0.lock().is_empty());
+        ctx.exposure_untrusted = true;
+        get(&t, "fs_write")
+            .call(&ctx, json!({"path": b, "content": "web text"}))
+            .await
+            .unwrap();
+        assert_eq!(ledger.0.lock().len(), 1);
+        // a move by Praxi carries the mark to the new name, even from a clean run
+        ctx.exposure_untrusted = false;
+        get(&t, "fs_move")
+            .call(&ctx, json!({"from": b, "to": c}))
+            .await
+            .unwrap();
+        assert!(
+            crate::provenance::Provenance::is_marked(
+                ledger.as_ref(),
+                &crate::provenance::normalize(&fs::canonicalize(&c).unwrap())
+            ),
+            "{:?}",
+            ledger.0.lock()
+        );
+        // reading it (and searching a folder that holds it) is an untrusted result
+        let read = get(&t, "fs_read")
+            .call(&ctx, json!({"path": c}))
+            .await
+            .unwrap();
+        assert!(read.exposure.as_ref().is_some_and(|e| e.ingests_untrusted));
+        let hits = get(&t, "fs_search")
+            .call(&ctx, json!({"query": "web", "path": work.path()}))
+            .await
+            .unwrap();
+        assert!(hits.exposure.as_ref().is_some_and(|e| e.ingests_untrusted));
+    }
 
     fn setup() -> (tempfile::TempDir, tempfile::TempDir, Vec<Arc<dyn Tool>>) {
         let data = tempfile::tempdir().unwrap();
@@ -2876,6 +4090,11 @@ mod tests {
             run_id: "run-1".into(),
             max_inline_bytes: 1 << 20,
             bot_id: None,
+            content_tainted: false,
+            exposure_untrusted: false,
+            expected_origin: None,
+            control_guard: None,
+            lane: None,
         }
     }
 
@@ -3042,6 +4261,251 @@ mod tests {
         do_cp_restore(&sh, &cp.id).unwrap();
         assert_eq!(fs::read_link(&dangling).unwrap(), missing);
         assert!(!missing.exists());
+    }
+
+    #[test]
+    fn server_provisioning_state_is_protected_for_every_spelling() {
+        // `hosts/ssh_config` goes to `ssh -F` and `hosts/known_hosts` pins server
+        // identities: a bot must not write, move, delete or restore them.
+        let dir = tempfile::tempdir().unwrap();
+        for path in [
+            "hosts/ssh_config",
+            "hosts/known_hosts",
+            "hosts/oracle/host.json",
+            "HOSTS/ssh_config",
+            "hosts./ssh_config",
+            "hosts/ssh_config::$DATA",
+        ] {
+            assert!(is_protected(&dir.path().join(path), dir.path()), "{path}");
+        }
+    }
+
+    #[test]
+    fn cli_configuration_and_credentials_are_protected_even_in_broad_roots() {
+        // The data folder is elsewhere: the whole daemon folder is protected by default.
+        let outside = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        for path in [
+            ".claude/settings.json",
+            ".claude/.credentials.json",
+            ".claude.json",
+            ".codex/auth.json",
+            ".gemini/oauth_creds.json",
+            ".cursor/mcp.json",
+            ".cursor-agent/auth.json",
+            "AppData/Roaming/Cursor/User/settings.json",
+            ".claude.json.backup.1700000000",
+            ".config/claude/settings.json",
+            ".config/opencode/opencode.json",
+            ".opencode/plugins/local.ts",
+            "project/opencode.json",
+            "project/opencode.jsonc",
+            ".local/share/opencode/auth.json",
+            "AppData/Local/opencode/auth.json",
+            ".CODEX. /auth.json",
+        ] {
+            assert!(
+                is_protected(&dir.path().join(path), outside.path()),
+                "{path}"
+            );
+        }
+        assert!(!is_protected(
+            &dir.path().join("report.txt"),
+            outside.path()
+        ));
+    }
+
+    #[test]
+    fn repositories_named_like_a_cli_are_not_blocked() {
+        // The data folder is elsewhere: the whole daemon folder is protected by default.
+        let outside = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        for path in [
+            "code/opencode/src/main.rs",
+            "code/opencode/README.md",
+            "src/cursor/mod.rs",
+            "work/cursor-agent/notes.txt",
+            "opencode/package.json",
+            "cursor",
+            "projects/claude/readme.md",
+            "a/.config/other/opencode/x",
+        ] {
+            assert!(
+                !is_protected(&dir.path().join(path), outside.path()),
+                "{path} must stay usable"
+            );
+        }
+    }
+
+    /// Run `name` again in a child process with `envs` set, so the test can
+    /// change HOME and friends without touching sibling tests.
+    fn rerun_with_env(name: &str, fixture: &str, root: &Path, envs: &[(&str, PathBuf)]) {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child.args(["--exact", name]);
+        child.env(fixture, root);
+        for (key, value) in envs {
+            child.env(key, value);
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[allow(clippy::items_after_statements)]
+    fn cli_executable_directories_are_protected() {
+        // The data folder is elsewhere: the whole daemon folder is protected by default.
+        let outside = tempfile::tempdir().unwrap();
+        const FIXTURE: &str = "PRAXI_C250_BIN_DIR_FIXTURE";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            for path in [
+                ".local/bin/claude",
+                "bin/claude",
+                ".volta/bin/claude",
+                ".bun/bin/opencode",
+                ".npm-global/bin/claude",
+                "AppData/Roaming/npm/claude.cmd",
+                "AppData/Roaming/npm/claude.exe",
+                "AppData/Local/cursor-agent/cursor-agent.cmd",
+                ".nvm/versions/node/v22.1.0/bin/claude",
+                "prefix/bin/claude",
+                "xdg-config/opencode/opencode.json",
+                "xdg-data/opencode/auth.json",
+            ] {
+                assert!(is_protected(&root.join(path), outside.path()), "{path}");
+            }
+            assert!(!is_protected(&root.join("docs/claude.md"), outside.path()));
+            assert!(!is_protected(
+                &root.join(".local/other/claude"),
+                outside.path()
+            ));
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        rerun_with_env(
+            "files::tests::cli_executable_directories_are_protected",
+            FIXTURE,
+            root.path(),
+            &[
+                ("HOME", root.path().to_path_buf()),
+                ("USERPROFILE", root.path().to_path_buf()),
+                ("APPDATA", root.path().join("AppData/Roaming")),
+                ("LOCALAPPDATA", root.path().join("AppData/Local")),
+                ("NPM_CONFIG_PREFIX", root.path().join("prefix")),
+                ("XDG_CONFIG_HOME", root.path().join("xdg-config")),
+                ("XDG_DATA_HOME", root.path().join("xdg-data")),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn file_tools_refuse_to_plant_cli_executables() {
+        const FIXTURE: &str = "PRAXI_C250_PLANT_FIXTURE";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            let (_d, _w, t) = setup();
+            let c = ctx();
+            for rel in [".local/bin/claude", "AppData/Roaming/npm/claude.cmd"] {
+                let target = root.join(rel);
+                fs::create_dir_all(target.parent().unwrap()).unwrap();
+                let err = get(&t, "fs_write")
+                    .call(&c, json!({"path": &target, "content": "evil"}))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{rel}: {err}"
+                );
+                assert!(!target.exists(), "{rel}");
+                let src = root.join("planted.txt");
+                fs::write(&src, "evil").unwrap();
+                let err = get(&t, "fs_move")
+                    .call(&c, json!({"from": &src, "to": &target}))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{rel}: {err}"
+                );
+                assert!(!target.exists(), "{rel}");
+                fs::write(&target, "real").unwrap();
+                let err = get(&t, "fs_delete")
+                    .call(&c, json!({"path": &target}))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{rel}: {err}"
+                );
+                assert_eq!(fs::read_to_string(&target).unwrap(), "real");
+            }
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        rerun_with_env(
+            "files::tests::file_tools_refuse_to_plant_cli_executables",
+            FIXTURE,
+            root.path(),
+            &[
+                ("HOME", root.path().to_path_buf()),
+                ("USERPROFILE", root.path().to_path_buf()),
+            ],
+        );
+    }
+
+    #[test]
+    #[allow(clippy::items_after_statements)]
+    fn cli_custom_config_paths_are_protected() {
+        // The data folder is elsewhere: the whole daemon folder is protected by default.
+        let outside = tempfile::tempdir().unwrap();
+        const FIXTURE: &str = "PRAXI_C250_CONFIG_PATH_FIXTURE";
+        const OVERRIDES: &[&str] = &[
+            "CODEX_HOME",
+            "CLAUDE_CONFIG_DIR",
+            "GEMINI_CLI_HOME",
+            "OPENCODE_CONFIG_DIR",
+            "OPENCODE_CONFIG",
+        ];
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            for key in OVERRIDES {
+                let private = root.join(key);
+                assert!(is_protected(&private, outside.path()), "{key}");
+                assert!(
+                    is_protected(&private.join("settings.json"), outside.path()),
+                    "{key}"
+                );
+                assert!(
+                    !is_protected(&root.join(format!("{key}-other")), outside.path()),
+                    "{key}"
+                );
+            }
+            return;
+        }
+        // Isolate overrides in a child harness; parallel tests never inherit
+        // mutations of this process's environment or real user config homes.
+        let root = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child.args([
+            "--exact",
+            "files::tests::cli_custom_config_paths_are_protected",
+        ]);
+        child.env(FIXTURE, root.path());
+        for key in OVERRIDES {
+            child.env(key, root.path().join(key));
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
@@ -3512,6 +4976,8 @@ mod tests {
             canonical_data_dir(&short).display(),
             long.display()
         );
+        assert!(under_daemon_data(&long, &short).is_some());
+        assert!(under_daemon_data(&real.join("skills/x/SKILL.md"), &short).is_some());
     }
 
     #[test]
@@ -3718,7 +5184,13 @@ mod tests {
             .call(&c, json!({"path": file, "old": "x", "new": "y"}))
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("2 times"));
+        let missed = get(&t, "fs_edit")
+            .call(&c, json!({"path": file, "old": "zzz", "new": "y"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("matches 2 times"));
+        assert!(missed.to_string().contains("not found"));
+        assert!(get(&t, "fs_edit").spec().content.reads_private);
         get(&t, "fs_edit")
             .call(
                 &c,
@@ -3727,11 +5199,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(fs::read_to_string(&file).unwrap(), "y y");
-        let err = get(&t, "fs_edit")
-            .call(&c, json!({"path": file, "old": "zzz", "new": "y"}))
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("not found"));
     }
 
     #[tokio::test]
@@ -3938,6 +5405,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn mcp_folder_resolver_classifies_links_before_following() {
+        let base = tempfile::tempdir().unwrap();
+        let link = base.path().join("remote-link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("//192.0.2.1/share/dir", &link).unwrap();
+        #[cfg(unix)]
+        assert!(resolve_local_folder(&link).is_err());
+        #[cfg(windows)]
+        {
+            let target = base.path().ancestors().last().unwrap();
+            link_dir(target, &link).unwrap();
+            assert_eq!(
+                resolve_local_folder(&link).unwrap(),
+                resolve_local_folder(target).unwrap()
+            );
+        }
+        assert!(resolve_local_folder(Path::new(r"\\192.0.2.1\share\dir")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn mcp_folder_resolver_expands_case_and_short_credential_data_install_aliases() {
+        let base = tempfile::tempdir().unwrap();
+        let data = base.path().join("daemon-data-directory");
+        let install = base.path().join("application-install-directory");
+        for name in [
+            ".ssh",
+            ".docker",
+            "daemon-data-directory",
+            "application-install-directory",
+        ] {
+            let path = base.path().join(name);
+            fs::create_dir(&path).unwrap();
+        }
+        for path in [
+            &data,
+            &install,
+            &base.path().join(".ssh"),
+            &base.path().join(".docker"),
+        ] {
+            let short = win_fs::short_path(path).unwrap();
+            let canonical = resolve_local_folder(&short).unwrap();
+            assert_eq!(
+                norm_parts(&canonical),
+                norm_parts(&resolve_local_folder(path).unwrap())
+            );
+            if path == &data || path == &install {
+                assert!(is_protected_root(
+                    &canonical,
+                    &resolve_local_folder(path).unwrap()
+                ));
+            } else {
+                assert_eq!(canonical.file_name(), path.file_name());
+            }
+            let upper = PathBuf::from(path.display().to_string().to_ascii_uppercase());
+            assert_eq!(
+                norm_parts(&resolve_local_folder(&upper).unwrap()),
+                norm_parts(&canonical)
+            );
+        }
+    }
+
     /// Directory symlink, or a junction on Windows (no extra privilege).
     fn link_dir(target: &Path, link: &Path) -> std::io::Result<()> {
         #[cfg(unix)]
@@ -4019,6 +5549,184 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn daemon_directory_alias_cannot_bypass_authority_boundary() {
+        let base = tempfile::tempdir().unwrap();
+        let real = base.path().join("real-data");
+        fs::create_dir_all(real.join("skills/x")).unwrap();
+        let file = real.join("skills/x/SKILL.md");
+        fs::write(&file, "original").unwrap();
+        let alias = base.path().join("configured-data");
+        link_dir(&real, &alias).expect("local data-directory alias");
+        let alias_tools = tools(&alias);
+        for (name, input) in [
+            ("fs_write", json!({"path": file, "content": "forged"})),
+            ("fs_delete", json!({"path": alias, "recursive": true})),
+        ] {
+            let error = get(&alias_tools, name)
+                .call(&ctx(), input)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, ToolError::PermissionDenied(_)),
+                "{name}: {error}"
+            );
+        }
+        assert_eq!(fs::read_to_string(file).unwrap(), "original");
+        assert!(alias.exists());
+        assert!(
+            check_daemon_write(&alias, &real.join("workflows/new.toml").to_string_lossy()).is_err()
+        );
+
+        // Construction may precede creation of the daemon directory, with a
+        // configured ancestor already aliased. Protect its eventual referent.
+        let delayed = alias.join("later/data");
+        let delayed_tools = tools(&delayed);
+        let eventual = real.join("later/data/skills/x/SKILL.md");
+        fs::create_dir_all(eventual.parent().unwrap()).unwrap();
+        fs::write(&eventual, "original").unwrap();
+        let error = get(&delayed_tools, "fs_write")
+            .call(&ctx(), json!({"path": eventual, "content": "forged"}))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ToolError::PermissionDenied(_)), "{error}");
+        assert!(check_daemon_write(&delayed, &eventual.to_string_lossy()).is_err());
+        assert_eq!(fs::read_to_string(eventual).unwrap(), "original");
+    }
+
+    /// Inventory of stores later consumed as authority. The future-store case
+    /// asserts default denial so adding a new store does not require this list
+    /// to keep the boundary secure.
+    #[tokio::test]
+    async fn all_trusted_locations_reject_file_mutations_even_with_exact_grants() {
+        let (d, w, _) = setup();
+        let mut c = ctx();
+        c.content_tainted = true;
+        for relative in [
+            "skills/x/SKILL.md",
+            "skills/x/.praxi-untrusted",
+            "skills.lock.json",
+            "skills-usage.json",
+            "workflows/morning.toml",
+            "workflows/index.json",
+            "router/a.sqlite",
+            "bots/a/profile.toml",
+            "bots/a/skills/x/SKILL.md",
+            "profiles/a.toml",
+            "persona.md",
+            "bot.db",
+            "bot.db-wal",
+            "memory.db",
+            "memory.db-shm",
+            "schedules.db",
+            "schedule.toml",
+            "mcp.toml",
+            "cli-settings.json",
+            "plugins/x/config.toml",
+            "providers.toml",
+            "web.toml",
+            "email.toml",
+            "email-secret-cleanup.json",
+            "config.toml",
+            "policy.json",
+            "host.toml",
+            "control-latch.json",
+            "peer/devices.json",
+            "peer/identity.key",
+            "devices.json",
+            "peer-node",
+            "vault/state",
+            "secrets/state",
+            "telegram_state.json",
+            "telegram-inbox.jsonl",
+            "channels.toml",
+            "runs/history.json",
+            "notes/instructions.md",
+            "browsers/a/Preferences",
+            "checkpoints/forged.json",
+            "files/forged.txt",
+            "spill/forged.txt",
+            "screenshots/forged.png",
+            "logs/forged.log",
+            "future-trusted-store/instructions",
+        ] {
+            let file = d.path().join(relative);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(&file, "original").unwrap();
+            let t = tools_bounded(d.path(), &[], std::slice::from_ref(&file));
+            let source = w.path().join("source.txt");
+            fs::write(&source, "replacement").unwrap();
+            for (name, input) in [
+                ("fs_write", json!({"path": file, "content": "forged"})),
+                (
+                    "fs_edit",
+                    json!({"path": file, "old": "original", "new": "forged"}),
+                ),
+                (
+                    "fs_move",
+                    json!({"from": source, "to": file, "overwrite": true}),
+                ),
+                (
+                    "fs_move",
+                    json!({"from": file, "to": source, "overwrite": true}),
+                ),
+                ("fs_delete", json!({"path": file})),
+            ] {
+                let error = get(&t, name).call(&c, input).await.unwrap_err();
+                assert!(
+                    matches!(error, ToolError::PermissionDenied(_)),
+                    "{relative} {name}: {error}"
+                );
+                assert_eq!(fs::read_to_string(&file).unwrap(), "original");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_into_a_trusted_store_cannot_launder_file_writes() {
+        let (d, w, t) = setup();
+        let skills = d.path().join("skills");
+        fs::create_dir_all(&skills).unwrap();
+        let link = w.path().join("alias");
+        std::os::unix::fs::symlink(&skills, &link).unwrap();
+        let error = get(&t, "fs_write")
+            .call(
+                &ctx(),
+                json!({"path": link.join("SKILL.md"), "content": "forged"}),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ToolError::PermissionDenied(_)), "{error}");
+        assert!(!skills.join("SKILL.md").exists());
+    }
+
+    #[tokio::test]
+    async fn native_cli_authority_is_protected_without_touching_user_files() {
+        let (d, _w, _t) = setup();
+        let sh = shared_with(d.path(), Vec::new());
+        // Use the host's actual configured roots, but stop at validation:
+        // no file contents in those roots are read or modified by this test.
+        let roots = native_cli_authority_roots();
+        assert_ne!(roots.len(), 0, "host must provide a home/config root");
+        for root in roots {
+            for path in [
+                root.clone(),
+                root.join("config.toml"),
+                root.join("skills/x/SKILL.md"),
+            ] {
+                assert!(is_protected(&path, d.path()), "{}", path.display());
+                assert!(protected_ungranted(
+                    &path,
+                    d.path(),
+                    std::slice::from_ref(&path)
+                ));
+                assert!(validate_mutation(&sh, &path.to_string_lossy(), &path).is_err());
+                assert!(check_daemon_write(d.path(), &path.to_string_lossy()).is_err());
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn daemon_state_files_in_the_data_dir_are_protected_for_read_and_write() {
         let (d, w, t) = setup();
         let c = ctx();
@@ -4041,6 +5749,9 @@ mod tests {
             "config.toml",
             "mcp.toml",
             "providers.toml",
+            "composio.toml",
+            "composio.toml.tmp",
+            "composio.toml.bak",
             "web.toml",
             "telegram_state.json",
             "telegram-inbox.jsonl",
@@ -4048,9 +5759,22 @@ mod tests {
             "email.toml.tmp",
             "email.toml.bak",
             "email-secret-cleanup.json",
+            "fill-secrets.json",
+            "fill-secrets.json.tmp",
             "email-secret-cleanup.json.tmp",
             "schedule.toml",
             "schedule.toml.bak",
+            "knowledge-host.json",
+            "knowledge-host.json.tmp",
+            "knowledge-host.json.bak",
+            "knowledge-authority.db",
+            "knowledge-authority.db-wal",
+            "knowledge-authority.db-shm",
+            "knowledge-authority.db-journal",
+            "knowledge-runtime.db",
+            "knowledge-runtime.db-wal",
+            "knowledge-runtime.db-shm",
+            "knowledge-runtime.db-journal",
         ] {
             let file = d.path().join(name);
             fs::write(&file, secret).unwrap();
@@ -4085,10 +5809,162 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn daemon_state_directories_are_protected_but_bot_authored_ones_are_not() {
+    async fn knowledge_state_files_resist_every_file_tool_and_cannot_be_checkpointed() {
+        let (d, w, t) = setup();
+        let c = ctx();
+        let names = [
+            "knowledge-host.json",
+            "knowledge-host.json.tmp",
+            "knowledge-host.json.bak",
+            "knowledge-authority.db",
+            "knowledge-authority.db-wal",
+            "knowledge-authority.db-shm",
+            "knowledge-authority.db-journal",
+            "knowledge-runtime.db",
+            "knowledge-runtime.db-wal",
+            "knowledge-runtime.db-shm",
+            "knowledge-runtime.db-journal",
+        ];
+        assert_eq!(names.len(), 11);
+        for name in names {
+            let file = d.path().join(name);
+            fs::write(&file, "pinned").unwrap();
+            let own = w.path().join("own.txt");
+            fs::write(&own, "mine").unwrap();
+            for (tool, input) in [
+                ("fs_read", json!({"path": &file})),
+                ("fs_write", json!({"path": &file, "content": "evil"})),
+                (
+                    "fs_edit",
+                    json!({"path": &file, "old": "pinned", "new": "evil"}),
+                ),
+                ("fs_move", json!({"from": &file, "to": w.path().join("x")})),
+                (
+                    "fs_move",
+                    json!({"from": &own, "to": &file, "overwrite": true}),
+                ),
+                ("fs_delete", json!({"path": &file})),
+            ] {
+                let err = get(&t, tool).call(&c, input).await.unwrap_err();
+                assert!(
+                    matches!(err, ToolError::PermissionDenied(_)),
+                    "{tool} {name}: {err}"
+                );
+                assert!(!err.to_string().contains("pinned"), "{tool} {name}");
+                assert_eq!(
+                    fs::read_to_string(&file).unwrap(),
+                    "pinned",
+                    "{tool} {name}"
+                );
+                assert_eq!(fs::read_to_string(&own).unwrap(), "mine", "{tool} {name}");
+            }
+            // `CheckpointStore::create` vets every named path with the same
+            // protection and refuses an ungranted protected file outright, so
+            // no checkpoint exists that could later write the file back.
+            let store = crate::checkpoint::CheckpointStore::new(d.path());
+            let err = store
+                .create("run-cp", "fs_write", &[file.as_path()])
+                .expect_err(name);
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{name}");
+            assert_eq!(err.to_string(), GRANT_MSG, "{name}");
+            assert!(
+                store.list("run-cp").unwrap().is_empty(),
+                "{name}: a refused create must leave no checkpoint"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn state_files_stay_protected_when_reached_through_a_symlinked_data_dir() {
+        let real = tempfile::tempdir().unwrap();
+        let alias_parent = tempfile::tempdir().unwrap();
+        let alias = alias_parent.path().join("data-link");
+        std::os::unix::fs::symlink(real.path(), &alias).unwrap();
+        // The daemon hands the file tools the canonical data dir (what
+        // `Storage::open` resolves); the bot may name it through the alias.
+        let t = tools(&fs::canonicalize(&alias).unwrap());
+        let c = ctx();
+        for name in ["knowledge-host.json", "bot.db"] {
+            let file = real.path().join(name);
+            fs::write(&file, "pinned").unwrap();
+            for path in [alias.join(name), file.clone()] {
+                for (tool, input) in [
+                    ("fs_read", json!({"path": &path})),
+                    ("fs_write", json!({"path": &path, "content": "evil"})),
+                    ("fs_delete", json!({"path": &path})),
+                ] {
+                    let err = get(&t, tool).call(&c, input).await.unwrap_err();
+                    assert!(
+                        matches!(err, ToolError::PermissionDenied(_)),
+                        "{tool} {}: {err}",
+                        path.display()
+                    );
+                }
+            }
+            assert_eq!(fs::read_to_string(&file).unwrap(), "pinned");
+        }
+    }
+
+    #[tokio::test]
+    async fn composio_state_is_guarded_by_real_mutation_and_checkpoint_tools() {
+        let (d, w, t) = setup();
+        let c = ctx();
+        for name in [
+            "composio.toml",
+            "composio.toml.tmp",
+            "composio.toml.bak",
+            "composio.toml.tmp-123",
+            "composio.toml.bak.1",
+        ] {
+            let file = d.path().join(name);
+            fs::write(&file, "original").unwrap();
+            let source = w.path().join("replacement.txt");
+            fs::write(&source, "replacement").unwrap();
+            for (tool, input) in [
+                (
+                    "fs_edit",
+                    json!({"path":file,"old":"original","new":"changed"}),
+                ),
+                ("fs_delete", json!({"path":file})),
+                ("fs_move", json!({"from":source,"to":file,"overwrite":true})),
+            ] {
+                assert!(
+                    get(&t, tool).call(&c, input).await.is_err(),
+                    "{tool}: {name}"
+                );
+                assert_eq!(fs::read_to_string(&file).unwrap(), "original");
+            }
+            let id = plant_blob(
+                d.path(),
+                "run-1",
+                &file.display().to_string(),
+                "replacement",
+            );
+            let _ = get(&t, "checkpoint_restore")
+                .call(&c, json!({"id":id}))
+                .await;
+            assert_eq!(
+                fs::read_to_string(&file).unwrap(),
+                "original",
+                "checkpoint restore {name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn daemon_state_directories_default_to_protected() {
         let (d, _w, t) = setup();
         let c = ctx();
-        for dir in ["peer", "bots", "profiles", "runs"] {
+        for dir in [
+            "peer",
+            "bots",
+            "profiles",
+            "runs",
+            "skills",
+            "workflows",
+            "future-trusted-store",
+        ] {
             let file = d.path().join(dir).join("x.toml");
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(&file, "secret").unwrap();
@@ -4109,8 +5985,8 @@ mod tests {
                 "{dir}: {err}"
             );
         }
-        // Bot-authored by design (skills, workflows) or bot output: ordinary.
-        for dir in ["skills", "workflows", "screenshots", "files"] {
+        // Inert output stays readable.
+        for dir in ["screenshots", "files", "spill", "logs"] {
             let file = d.path().join(dir).join("note.txt");
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(&file, "ok").unwrap();
@@ -4142,7 +6018,7 @@ mod tests {
                 "{spelled:?} must resolve to a protected name"
             );
         }
-        assert!(!is_protected(
+        assert!(is_protected(
             &d.path().join("data.").join("notes.txt:stream"),
             &data
         ));
@@ -4173,7 +6049,34 @@ mod tests {
             &d.path().join("bots. ").join("a.toml"),
             d.path()
         ));
-        assert!(!is_protected(&d.path().join("notes.txt."), d.path()));
+        assert!(is_protected(&d.path().join("notes.txt."), d.path()));
+    }
+
+    #[tokio::test]
+    async fn a_bot_cannot_grant_screen_access_by_editing_view_privileges() {
+        // `view-privileges.json` is reloaded at daemon start as live screen
+        // view/input grants for paired devices (card 252).
+        let (d, _w, t) = setup();
+        let c = ctx();
+        let file = d.path().join("view-privileges.json");
+        let original = "{}";
+        std::fs::write(&file, original).unwrap();
+        let forged = r#"{"peer:abc":{"view":true,"input":true}}"#;
+        for (tool, input) in [
+            ("fs_write", json!({"path": &file, "content": forged})),
+            (
+                "fs_edit",
+                json!({"path": &file, "old": "{}", "new": forged}),
+            ),
+            ("fs_delete", json!({"path": &file})),
+        ] {
+            let err = get(&t, tool).call(&c, input).await.unwrap_err();
+            assert!(
+                matches!(err, ToolError::PermissionDenied(_)),
+                "{tool}: {err}"
+            );
+        }
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
     }
 
     #[tokio::test]
@@ -4209,6 +6112,17 @@ mod tests {
             "praxi-node.env",
             "secrets.enc",
             "identity.key",
+            // CLI configuration can install hooks/tools as well as carry credentials.
+            ".claude",
+            ".claude.json",
+            ".codex",
+            ".gemini",
+            ".cursor",
+            ".opencode",
+            ".claude.json.backup",
+            "opencode.json",
+            "opencode.jsonc",
+            "oauth_creds.json",
         ] {
             let file = w.path().join(name);
             fs::write(&file, secret).unwrap();
@@ -4331,6 +6245,11 @@ mod tests {
                 run_id: "run-1".into(),
                 max_inline_bytes: 1 << 20,
                 bot_id: None,
+                content_tainted: false,
+                exposure_untrusted: false,
+                expected_origin: None,
+                control_guard: None,
+                lane: None,
             };
             async move { reader.call(&c, json!({"path": p})).await }
         };
@@ -4443,6 +6362,190 @@ mod tests {
         assert!(ok.contains("safe"), "in-root reparse: {ok}");
     }
 
+    fn sep(parts: &[&str]) -> PathBuf {
+        let mut p = PathBuf::from(if cfg!(windows) { "C:\\" } else { "/" });
+        for part in parts {
+            p.push(part);
+        }
+        p
+    }
+
+    #[test]
+    fn credential_table_covers_browsers_vaults_hives_and_other_profiles() {
+        for denied in [
+            &["u", "AppData", "Roaming", "gh", "hosts.yml"][..],
+            &[
+                "u",
+                "AppData",
+                "Local",
+                "Google",
+                "Chrome",
+                "User Data",
+                "Local State",
+            ],
+            &[
+                "u",
+                "AppData",
+                "Local",
+                "Microsoft",
+                "Edge",
+                "User Data",
+                "Default",
+                "Login Data",
+            ],
+            &[
+                "u",
+                "AppData",
+                "Roaming",
+                "Mozilla",
+                "Firefox",
+                "Profiles",
+                "x.default",
+                "key4.db",
+            ],
+            &["u", "AppData", "Roaming", "Microsoft", "Credentials", "ABC"],
+            &[
+                "u",
+                "AppData",
+                "Roaming",
+                "Microsoft",
+                "Protect",
+                "S-1-5-21",
+                "key",
+            ],
+            &["u", "NTUSER.DAT"],
+            &["Windows", "System32", "config", "SAM"],
+            &["u", ".local", "share", "keyrings", "login.keyring"],
+            &["u", ".password-store", "mail.gpg"],
+            &["u", ".config", "google-chrome", "Default", "Cookies"],
+            &["u", ".mozilla", "firefox", "p.default", "logins.json"],
+            &["u", "Library", "Keychains", "login.keychain-db"],
+            &["u", "Library", "Application Support", "1Password", "data"],
+            &["u", "Documents", "family.kdbx"],
+            &["u", ".config", "gh", "hosts.yml"],
+        ] {
+            assert!(hard_denied(&sep(denied)), "{denied:?}");
+        }
+        assert!(!hard_denied(&sep(&["u", "Documents", "report.txt"])));
+        assert!(!hard_denied(&sep(&["u", "src", "config", "settings.toml"])));
+    }
+
+    #[tokio::test]
+    async fn recursive_tools_skip_protected_descendants_at_every_depth() {
+        let data = tempfile::tempdir().unwrap();
+        let w = tempfile::tempdir().unwrap();
+        let t = tools(data.path());
+        let cfg = w.path().join(".config");
+        fs::create_dir_all(cfg.join("gh")).unwrap();
+        fs::write(cfg.join("gh").join("hosts.yml"), "oauth_token: TOKEN123").unwrap();
+        fs::write(cfg.join("other.txt"), "fine").unwrap();
+        let c = ctx();
+        let listed = text(
+            &get(&t, "fs_list")
+                .call(&c, json!({"path": w.path(), "glob": "**/*"}))
+                .await
+                .unwrap(),
+        );
+        assert!(
+            !listed.contains("hosts.yml") && listed.contains("other.txt"),
+            "{listed}"
+        );
+        let found = text(
+            &get(&t, "fs_search")
+                .call(&c, json!({"query": "TOKEN123", "path": w.path()}))
+                .await
+                .unwrap(),
+        );
+        assert_eq!(found, "no matches");
+        // Moving the parent must not carry the protected child along.
+        let copy = w.path().join("config-copy");
+        get(&t, "fs_move")
+            .call(&c, json!({"from": &cfg, "to": &copy}))
+            .await
+            .unwrap();
+        assert!(copy.join("other.txt").exists());
+        assert!(!copy.join("gh").exists(), "protected child was moved");
+        assert!(
+            cfg.join("gh").join("hosts.yml").exists(),
+            "protected child stays"
+        );
+        // Recursive delete keeps it too.
+        get(&t, "fs_delete")
+            .call(&c, json!({"path": &cfg, "recursive": true}))
+            .await
+            .ok();
+        assert!(cfg.join("gh").join("hosts.yml").exists());
+    }
+
+    struct FixedScope(crate::FsScope);
+    impl crate::FsAccessProvider for FixedScope {
+        fn scope(&self, _bot: Option<&str>) -> crate::FsScope {
+            self.0.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn file_access_modes_computer_folder_and_home_base() {
+        let data = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let sandbox = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        fs::write(home.path().join("hello.txt"), "from-home").unwrap();
+        fs::write(elsewhere.path().join("note.txt"), "outside").unwrap();
+        fs::write(data.path().join("secrets.enc"), "secret-store").unwrap();
+        fs::create_dir_all(home.path().join(".ssh")).unwrap();
+        fs::write(home.path().join(".ssh").join("config"), "secret-ssh").unwrap();
+        let make = |scope| {
+            tools_scoped(
+                data.path(),
+                &[],
+                &[],
+                Some(Arc::new(FixedScope(scope))),
+                Some(home.path().to_path_buf()),
+                None,
+            )
+        };
+
+        // This computer: reads outside any folder, relative paths start in home,
+        // protected locations stay refused.
+        let t = make(crate::FsScope::Computer);
+        let read = |t: &[Arc<dyn Tool>], path: String| {
+            let tool = get(t, "fs_read");
+            let c = ctx();
+            async move { tool.call(&c, json!({ "path": path })).await }
+        };
+        let out = read(&t, p(&elsewhere, "note.txt")).await.unwrap();
+        assert!(text(&out).contains("outside"));
+        let out = read(&t, "hello.txt".into()).await.unwrap();
+        assert!(
+            text(&out).contains("from-home"),
+            "relative path must use home"
+        );
+        let err = read(
+            &t,
+            home.path()
+                .join(".ssh")
+                .join("config")
+                .display()
+                .to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ToolError::PermissionDenied(_)), "{err}");
+        let err = read(&t, data.path().join("secrets.enc").display().to_string())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ToolError::PermissionDenied(_)), "{err}");
+
+        // Folder only: outside is refused, inside works, relative = the folder.
+        fs::write(sandbox.path().join("in.txt"), "inside").unwrap();
+        let t = make(crate::FsScope::Folders(vec![sandbox.path().to_path_buf()]));
+        let err = read(&t, p(&elsewhere, "note.txt")).await.unwrap_err();
+        assert!(matches!(err, ToolError::PermissionDenied(_)), "{err}");
+        let out = read(&t, "in.txt".into()).await.unwrap();
+        assert!(text(&out).contains("inside"));
+    }
+
     #[cfg(windows)]
     #[tokio::test]
     async fn windows_local_files_work_and_unc_is_not_opened() {
@@ -4542,6 +6645,10 @@ mod tests {
             grants,
             roots_unresolved: false,
             drives: DriveCache::new(),
+            access: None,
+            home: None,
+            workdir: None,
+            provenance: None,
         }
     }
 
@@ -4611,12 +6718,12 @@ mod tests {
         let notes = data.path().join("notes.txt");
         let envf = data.path().join(".env");
         let token = data.path().join("api-token");
-        let sh = shared_with(data.path(), vec![notes.clone()]);
+        let sh = shared_with(&data.path().join("daemon"), vec![notes.clone()]);
         assert!(
             credential_blocked(&sh, &notes, &envf),
             "a grant of the lexical path must not authorize a resolved .env"
         );
-        let sh_env = shared_with(data.path(), vec![envf.clone()]);
+        let sh_env = shared_with(&data.path().join("daemon"), vec![envf.clone()]);
         assert!(
             credential_blocked(&sh_env, &envf, &token),
             "a grant of .env must not authorize api-token"
@@ -5240,7 +7347,8 @@ mod tests {
         fs::write(data.join("peer-node"), secret).unwrap();
         fs::write(data.join("vault").join("note.txt"), secret).unwrap();
         fs::write(data.join("secrets").join("note.txt"), secret).unwrap();
-        fs::write(data.join("notes.txt"), "ordinary").unwrap();
+        fs::create_dir(data.join("files")).unwrap();
+        fs::write(data.join("files/notes.txt"), "ordinary").unwrap();
         let short = win_fs::short_path(&data).unwrap();
         assert_ne!(
             short
@@ -5275,7 +7383,7 @@ mod tests {
         }
         let ok = text(
             &get(&t, "fs_read")
-                .call(&c, json!({"path": data.join("notes.txt")}))
+                .call(&c, json!({"path": data.join("files/notes.txt")}))
                 .await
                 .unwrap(),
         );
@@ -5451,5 +7559,118 @@ mod tests {
                 .unwrap(),
         );
         assert!(ok.contains("subst-ok"), "{ok}");
+    }
+}
+
+#[cfg(test)]
+mod c225_watch_tests {
+    use super::*;
+    #[test]
+    fn c225_watch_glob_roots_and_metadata_only() {
+        let root = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("a.txt"), "private content never returned").unwrap();
+        fs::write(root.path().join("b.csv"), "also private").unwrap();
+        let files = watch_snapshot(
+            data.path(),
+            &[root.path().to_path_buf()],
+            &root.path().to_string_lossy(),
+            "*.txt",
+        )
+        .unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].path.ends_with("a.txt"));
+        assert!(!format!("{files:?}").contains("private content"));
+        assert!(
+            watch_snapshot(
+                data.path(),
+                &[root.path().to_path_buf()],
+                &outside.path().to_string_lossy(),
+                "*"
+            )
+            .is_err()
+        );
+        assert!(watch_snapshot(data.path(), &[], &root.path().to_string_lossy(), "*").is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn c225_watch_never_follows_root_intermediate_or_descendant_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("hidden.txt"), "never read").unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("link")).unwrap();
+        let roots = [root.path().to_path_buf()];
+        let files =
+            watch_snapshot(data.path(), &roots, &root.path().to_string_lossy(), "**/*").unwrap();
+        assert!(files.is_empty());
+        assert!(
+            watch_snapshot(
+                data.path(),
+                &roots,
+                &root.path().join("link").to_string_lossy(),
+                "*"
+            )
+            .is_err()
+        );
+        fs::create_dir(root.path().join("real")).unwrap();
+        fs::create_dir(root.path().join("real/nested")).unwrap();
+        std::os::unix::fs::symlink(root.path().join("real"), root.path().join("internal")).unwrap();
+        assert!(
+            watch_snapshot(
+                data.path(),
+                &roots,
+                &root.path().join("internal").to_string_lossy(),
+                "*"
+            )
+            .is_err()
+        );
+        // The link is an intermediate component here; a final-entry metadata
+        // check alone cannot enforce the watcher's no-traversal guarantee.
+        assert!(
+            watch_snapshot(
+                data.path(),
+                &roots,
+                &root.path().join("internal/nested").to_string_lossy(),
+                "*"
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod workspace_refusal_tests {
+    use super::*;
+
+    #[test]
+    fn engine_workspace_refuses_protected_places() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let data = home.join("praxi-data");
+        let project = home.join("projects").join("app");
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(home.join(".claude")).unwrap();
+        fs::create_dir_all(&project).unwrap();
+        let check = |p: &Path| workspace_refusal_with_home(p, &data, Some(&home));
+        assert_eq!(check(&project), None);
+        assert!(check(Path::new("relative/dir")).is_some());
+        assert!(check(&home.join("missing")).is_some());
+        assert!(check(&data).is_some(), "Praxi data dir");
+        assert!(check(&data.join("bots")).is_some(), "inside the data dir");
+        assert!(check(&home).is_some(), "home folder");
+        assert!(check(tmp.path()).is_some(), "parent of home");
+        assert!(check(&home.join(".claude")).is_some(), "CLI configuration");
+        for name in [".ssh", ".aws", ".gnupg"] {
+            fs::create_dir_all(home.join(name).join("sub")).unwrap();
+            assert!(check(&home.join(name)).is_some(), "{name}");
+            assert!(
+                check(&home.join(name).join("sub")).is_some(),
+                "inside {name}"
+            );
+        }
+        let root = tmp.path().ancestors().last().unwrap();
+        assert!(check(root).is_some(), "drive root");
     }
 }

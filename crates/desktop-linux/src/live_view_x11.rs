@@ -1363,9 +1363,9 @@ fn canonical_us_code_keysym(code: &str) -> Result<u32, ViewError> {
 ///
 /// Fails with [`Reason::Unavailable`] or [`Reason::FrameBudgetExceeded`] if the
 /// initial geometry query / scope selection fails.
-pub fn build_x11_view_target<C, I>(
+pub fn build_x11_view_target<C, I, P>(
     options: &LiveViewOptions,
-    mut initial_probe_conn: C,
+    mut initial_probe_conn: P,
     capture_factory: Arc<dyn Fn() -> Result<C, CaptureFailure> + Send + Sync>,
     probe: AvailabilityProbeFn,
     input_factory: Option<Arc<dyn Fn() -> Result<I, ViewError> + Send + Sync>>,
@@ -1374,6 +1374,7 @@ pub fn build_x11_view_target<C, I>(
 where
     C: X11CaptureConnection,
     I: X11InputConnection,
+    P: X11CaptureConnection,
 {
     let layout = initial_probe_conn
         .query_layout()
@@ -1449,6 +1450,10 @@ mod linux_x11 {
     };
 
     const X11_PROBE_IO_TIMEOUT: Duration = Duration::from_millis(1500);
+    /// Total budget for the connection, `XTest` query and layout read made when
+    /// the target is created. A server that accepts connections but stalls
+    /// fails the open within this, instead of hanging the caller.
+    const X11_START_IO_TIMEOUT: Duration = Duration::from_secs(4);
 
     pub(super) struct BoundedStream {
         inner: DefaultStream,
@@ -1580,6 +1585,13 @@ mod linux_x11 {
     }
 
     impl RealX11Capture<BoundedStream> {
+        /// Whether the `XTest` extension answers, within this connection's deadline.
+        fn xtest_available(&self) -> bool {
+            self.conn
+                .xtest_get_version(2, 1)
+                .is_ok_and(|cookie| cookie.reply().is_ok())
+        }
+
         fn open_bounded(dpy: String, timeout: Duration) -> Result<Self, CaptureFailure> {
             let deadline = Instant::now() + timeout;
             let parsed = parse_display(Some(&dpy))
@@ -1983,20 +1995,28 @@ mod linux_x11 {
     pub fn open_x11_live_view_target(
         options: &LiveViewOptions,
     ) -> Result<Arc<DesktopViewTarget>, Reason> {
-        type RealCaptureFactory =
-            Arc<dyn Fn() -> Result<RealX11Capture, CaptureFailure> + Send + Sync>;
-        type RealInputFactory = Arc<dyn Fn() -> Result<RealX11Input, ViewError> + Send + Sync>;
-
         let xdg = std::env::var("XDG_SESSION_TYPE").ok();
         let wayland = std::env::var("WAYLAND_DISPLAY").ok();
         let x11 = std::env::var("DISPLAY").ok();
         let dpy = validate_x11_env(xdg.as_deref(), wayland.as_deref(), x11.as_deref())?;
+        open_x11_live_view_target_on(options, dpy, X11_START_IO_TIMEOUT)
+    }
 
-        let init_cap = RealX11Capture::open(dpy.clone()).map_err(|_| Reason::Unavailable)?;
-        let xtest_ok = RealX11Input::open(&dpy)
-            .ok()
-            .and_then(|mut c| c.has_xtest().ok())
-            .unwrap_or(false);
+    /// [`open_x11_live_view_target`] for an explicit display. Every X11 round
+    /// trip made here (handshake, `XTest` query, layout) shares one `io_timeout`
+    /// deadline, so a stalled server fails the call instead of hanging it.
+    pub(super) fn open_x11_live_view_target_on(
+        options: &LiveViewOptions,
+        dpy: String,
+        io_timeout: Duration,
+    ) -> Result<Arc<DesktopViewTarget>, Reason> {
+        type RealCaptureFactory =
+            Arc<dyn Fn() -> Result<RealX11Capture, CaptureFailure> + Send + Sync>;
+        type RealInputFactory = Arc<dyn Fn() -> Result<RealX11Input, ViewError> + Send + Sync>;
+
+        let init_cap = RealX11Capture::open_bounded(dpy.clone(), io_timeout)
+            .map_err(|_| Reason::Unavailable)?;
+        let xtest_ok = init_cap.xtest_available();
 
         let dpy_cap = dpy.clone();
         let dpy_probe = dpy.clone();
@@ -2377,6 +2397,118 @@ mod tests {
         assert_eq!(state.lock().get_image_calls.load(Ordering::SeqCst), 0);
     }
 
+    /// 244-V #5: an X server on a Unix socket that accepts the connection but
+    /// never answers must fail the open within the I/O budget; it can never
+    /// hang daemon start.
+    ///
+    /// This drives `connect_bounded_address` with the socket address directly:
+    /// x11rb rewrites a `DISPLAY` that is a socket path to `/tmp/.X11-unix/X0`,
+    /// so the client would never reach this fake server through
+    /// `open_x11_live_view_target_on`, and a join on a thread blocked in
+    /// `accept` would hang the test binary forever.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_server_that_accepts_but_never_replies_fails_the_open_within_the_budget() {
+        use std::os::unix::net::UnixListener;
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+        use x11rb::reexports::x11rb_protocol::parse_display::ConnectAddress;
+
+        let dir = tempfile::tempdir().unwrap();
+        let sock = dir.path().join("X-stalled");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let (accepted_tx, accepted_rx) = mpsc::channel::<()>();
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+        // Detached on purpose (never joined): holds the accepted connection
+        // open without writing a byte until the test is done.
+        std::thread::spawn(move || {
+            if let Ok((_stream, _)) = listener.accept() {
+                let _ = accepted_tx.send(());
+                let _ = done_rx.recv_timeout(Duration::from_secs(10));
+            }
+        });
+
+        let started = Instant::now();
+        let res = super::linux_x11::connect_bounded_address(
+            &ConnectAddress::Socket(sock.to_str().unwrap().to_owned()),
+            0,
+            0,
+            started + Duration::from_millis(300),
+        );
+        let took = started.elapsed();
+        let _ = done_tx.send(());
+
+        assert!(
+            accepted_rx.recv_timeout(Duration::from_secs(2)).is_ok(),
+            "the client never reached the fake server"
+        );
+        assert_eq!(
+            res.err(),
+            Some(CaptureFailure::ConnectionLost(Reason::Disconnected))
+        );
+        assert!(took < Duration::from_secs(2), "open took {took:?}");
+    }
+
+    /// 244-V #8: building the target (what the real constructor does after its
+    /// OS probe) starts no capture and no input work; only a viewer's subscribe
+    /// creates a capture connection, and watching never creates an input one.
+    #[tokio::test]
+    async fn building_the_target_starts_no_capture_or_input_until_a_viewer_subscribes() {
+        let cap_state = make_mock_x11_cap_state(64, 32, 64 * 4, vec![0x22; 64 * 32 * 4], 7);
+        let capture_made = Arc::new(AtomicU64::new(0));
+        let input_made = Arc::new(AtomicU64::new(0));
+        let target = build_x11_view_target(
+            &LiveViewOptions::new("counting"),
+            MockX11Capture {
+                state: Arc::clone(&cap_state),
+            },
+            {
+                let (state, made) = (Arc::clone(&cap_state), Arc::clone(&capture_made));
+                Arc::new(move || {
+                    made.fetch_add(1, Ordering::SeqCst);
+                    Ok(MockX11Capture {
+                        state: Arc::clone(&state),
+                    })
+                })
+            },
+            Arc::new(|_| Ok(())),
+            Some({
+                let made = Arc::clone(&input_made);
+                Arc::new(move || -> Result<MockX11Input, ViewError> {
+                    made.fetch_add(1, Ordering::SeqCst);
+                    Err(ViewError::Unavailable)
+                })
+            }),
+            None,
+        )
+        .unwrap();
+        let _ = target.info();
+        let source = target.frame_source();
+        let _ = target.input_sink();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(
+            capture_made.load(Ordering::SeqCst),
+            0,
+            "capture before a viewer"
+        );
+        assert_eq!(
+            input_made.load(Ordering::SeqCst),
+            0,
+            "input before a viewer"
+        );
+        assert_eq!(cap_state.lock().get_image_calls.load(Ordering::SeqCst), 0);
+        let mut sub = source.subscribe(EffectiveProfile::watch()).await.unwrap();
+        sub.frames.changed().await.unwrap();
+        assert!(capture_made.load(Ordering::SeqCst) >= 1);
+        assert_eq!(
+            input_made.load(Ordering::SeqCst),
+            0,
+            "watching never drives input"
+        );
+        drop(sub);
+        let _ = source.stop().await;
+    }
+
     fn make_mock_x11_cap_state(
         width: u32,
         height: u32,
@@ -2449,7 +2581,7 @@ mod tests {
         }
         let cap_state = make_mock_x11_cap_state(80, 60, stride, raw, 10);
 
-        let target = build_x11_view_target::<_, MockX11Input>(
+        let target = build_x11_view_target::<_, MockX11Input, _>(
             &LiveViewOptions::new("linux-x11-host"),
             MockX11Capture {
                 state: Arc::clone(&cap_state),
@@ -2470,7 +2602,7 @@ mod tests {
 
         let info = target.info();
         assert!(info.capabilities.view && !info.capabilities.input);
-        assert_eq!(info.capabilities.codecs, vec![Codec::Jpeg]);
+        assert_eq!(info.capabilities.codecs, vec![Codec::Jpeg, Codec::Webp]);
         assert!(target.input_sink().is_none());
 
         let src = target.frame_source();

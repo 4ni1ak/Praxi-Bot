@@ -16,4 +16,4 @@ expect:
   permissions:
     - { tool: t_write, decision: denied_user }
   requests:
-    - { request: 1, tool_messages_contain: [denied by the user, too risky, Do not retry] }
+    - { request: 1, tool_messages_contain: [Tool call was not authorized, too risky, Do not retry] }

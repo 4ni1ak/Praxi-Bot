@@ -33,6 +33,29 @@ pub struct Bot {
     pub created_at_ms: i64,
 }
 
+/// Outcome of [`crate::Storage::patch_bot`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum BotPatch {
+    /// Written; `version` is the new profile version.
+    Applied {
+        /// The bot as stored now.
+        bot: Bot,
+        /// New profile version.
+        version: i64,
+    },
+    /// The stored version differs from the expected one; nothing was written.
+    Stale {
+        /// The bot as stored now.
+        bot: Bot,
+        /// Its current version.
+        version: i64,
+    },
+    /// No such bot.
+    Missing,
+    /// The change function refused the edit; nothing was written.
+    Rejected(String),
+}
+
 /// A chat thread.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chat {
@@ -65,6 +88,12 @@ pub struct Message {
     pub content: String,
     /// Creation time.
     pub created_at_ms: i64,
+    /// The context that produced this message had untrusted content.
+    pub exposure_untrusted: bool,
+    /// The context that produced this message had private content.
+    pub exposure_private: bool,
+    /// Source labels captured with [`Self::exposure_untrusted`].
+    pub exposure_sources: Vec<String>,
 }
 
 /// A durable run (one bot turn or scheduled job).

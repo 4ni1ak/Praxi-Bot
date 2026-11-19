@@ -4,7 +4,7 @@ import { productBrandKey, providerBrand } from "./modelBrand.ts";
 
 test("providers map to their company, CLI variants carry a note", () => {
   assert.deepEqual(providerBrand("anthropic"), { company: "anthropic", label: "Anthropic" });
-  assert.equal(providerBrand("claude-code").company, "anthropic");
+  assert.equal(providerBrand("claude-code").company, "claude");
   assert.equal(providerBrand("claude-code").note, "Claude Code CLI");
   assert.equal(providerBrand("gemini").label, "Google");
   assert.deepEqual(providerBrand("cli:gemini-cli"), {
@@ -21,7 +21,13 @@ test("unknown providers keep their id as name and as logo key", () => {
 
 test("rows show the product logo, not the company's", () => {
   assert.equal(productBrandKey("anthropic", "claude-sonnet-5-5"), "claude");
-  assert.equal(productBrandKey("claude-code", "default"), "anthropic");
+  assert.equal(productBrandKey("claude-code", "default"), "claude");
+  assert.equal(productBrandKey("cli:claude", "sonnet"), "claude");
+  // Claude Code wears the Claude starburst; only the Anthropic API keeps the Anthropic "A".
+  assert.equal(providerBrand("cli:claude").company, "claude");
+  assert.equal(providerBrand("anthropic").company, "anthropic");
+  assert.equal(providerBrand("cli:agy").company, "antigravity");
+  assert.equal(providerBrand("cli:agy").label, "Antigravity");
   assert.equal(productBrandKey("openai", "gpt-4.1"), "openai");
   assert.equal(productBrandKey("openai", "o3"), "openai");
   assert.equal(productBrandKey("gemini", "gemini-2.5-flash"), "googlegemini");

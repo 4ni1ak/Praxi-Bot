@@ -2,7 +2,6 @@
  * Composer triggers: a `/` command at the very start of the message and an
  * `@` bot mention anywhere. Pure text logic; the menu UI lives in ChatView.
  */
-import { fold } from "./fuzzy.ts";
 
 /** Commands the daemon router understands as a message (`/new`, `/stop`). */
 export interface SlashCommand {
@@ -15,6 +14,43 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "new", i18nKey: "chat.slash.new" },
   { name: "stop", i18nKey: "chat.slash.stop" }
 ] as const;
+
+/** Window event a composer command uses to ask the app shell to open something (detail: the target). */
+export const APP_COMMAND_EVENT = "praxi:app-command";
+
+/** Where an app command goes: the same targets the profile menu offers. */
+export type AppCommandTarget = "help" | "settings" | "apps" | "schedules" | "ai";
+
+/** Commands the app itself runs (open a dialog or screen); they never reach the daemon. */
+export interface AppCommand extends SlashCommand {
+  target: AppCommandTarget;
+}
+
+export const APP_COMMANDS: readonly AppCommand[] = [
+  { name: "help", i18nKey: "chat.slash.help", target: "help" },
+  { name: "settings", i18nKey: "chat.slash.settings", target: "settings" },
+  { name: "models", i18nKey: "chat.slash.models", target: "ai" },
+  { name: "apps", i18nKey: "chat.slash.apps", target: "apps" },
+  { name: "schedules", i18nKey: "chat.slash.schedules", target: "schedules" }
+] as const;
+
+/** Commands the composer runs on the open chat itself (nothing is sent to the bot). */
+export const LOCAL_COMMANDS: readonly SlashCommand[] = [{ name: "export", i18nKey: "chat.slash.export" }] as const;
+
+/** True when the message is exactly `/export`. */
+export function isExportCommand(text: string): boolean {
+  const parsed = parseSlashInput(text);
+  return parsed !== null && parsed.args === "" && parsed.name === "export";
+}
+
+/** The app command a message is, when it is exactly `/name` (no arguments); otherwise `null`. */
+export function appCommandFor(text: string): AppCommand | null {
+  const parsed = parseSlashInput(text);
+  if (!parsed || parsed.args !== "") {
+    return null;
+  }
+  return APP_COMMANDS.find((c) => c.name === parsed.name) ?? null;
+}
 
 export type Trigger =
   | { kind: "slash"; query: string; start: number; end: number }
@@ -68,23 +104,4 @@ export function parseSlashInput(
 /** A bot's `@handle`: its name without whitespace. */
 export function mentionHandle(name: string): string {
   return name.replace(/\s+/g, "");
-}
-
-/**
- * `@Atlas do the thing` -> the bot named Atlas and `do the thing`. Matching is
- * case/diacritic-insensitive; an unknown handle (or a bare `@x`) is `null`, so
- * the text is sent as-is.
- */
-export function parseLeadingMention<B extends { name: string }>(
-  text: string,
-  bots: readonly B[]
-): { bot: B; rest: string } | null {
-  const m = /^\s*@(\S+)(?:\s+([\s\S]*))?$/.exec(text);
-  if (!m) {
-    return null;
-  }
-  const want = fold(m[1] ?? "");
-  const bot = bots.find((b) => fold(mentionHandle(b.name)) === want);
-  const rest = (m[2] ?? "").trim();
-  return bot && rest ? { bot, rest } : null;
 }
