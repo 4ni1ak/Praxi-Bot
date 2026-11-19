@@ -37,6 +37,7 @@ import {
   TodoCard,
   ToolCard
 } from "../components/ChatCards";
+import { ApprovalBatchCard } from "../components/ApprovalBatchCard";
 import { Markdown } from "../components/Markdown";
 import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
@@ -70,6 +71,7 @@ import { modelGroups } from "../lib/modelPicker";
 import { type ChatRunPhase, runBarModel, runStopUi, STOP_CONFIRM_MS } from "../lib/runBar";
 import { sendButtonDisabled, sendButtonMode } from "../lib/composerRun";
 import { enqueue, putBack, removeQueued, takeForNow, takeForRunEnd } from "../lib/messageQueue";
+import { groupPending, isBatchable, shouldBatch } from "../lib/approvalBatch";
 import { toolSentence } from "../lib/runSentence";
 import { useChatQueue } from "../state/useChatQueue";
 import {
@@ -1034,6 +1036,33 @@ export function ChatView({
               onCancel={cancelChild}
             />
           );
+        }
+        // Several plain approvals of one run share one card; the other pending calls of the
+        // batch render nothing. Cards the user must read (payloads, secrets) stay separate.
+        if (run && isBatchable(item)) {
+          const pending = run.items.filter(
+            (i): i is Extract<TimelineItem, { kind: "tool" }> => i.kind === "tool"
+          );
+          const rows = groupPending(pending);
+          if (shouldBatch(rows)) {
+            const first = rows[0]?.items[0];
+            if (first?.callId !== item.callId) {
+              return null;
+            }
+            return (
+              <ApprovalBatchCard
+                rows={rows}
+                onDecide={async (callIds, decision) => {
+                  if (!client) {
+                    return;
+                  }
+                  for (const callId of callIds) {
+                    await client.decideApproval(callId, decision, decision === "approve" ? "once" : undefined);
+                  }
+                }}
+              />
+            );
+          }
         }
         return item.status === "awaiting_approval" ? (
           <ApprovalCard
