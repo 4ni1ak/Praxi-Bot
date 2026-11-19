@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use crate::diff::{self, SnapshotDiff};
 use crate::error::{Error, Result};
 use crate::page::{DEFAULT_WAIT, DialogInfo, DialogOptions, Page};
-use crate::snapshot::{RefEntry, Snapshot};
+use crate::snapshot::{DomExtra, RefEntry, Snapshot};
 
 /// Result of an action: success flag, refreshed view as a diff against what the agent saw before.
 #[derive(Debug, Clone)]
@@ -305,7 +305,8 @@ impl Page {
                         .ok_or_else(|| Error::Element("unknown focused node".into()))?,
                     name: String::new(),
                     role: String::new(),
-                    sensitive: false,
+                    // Unknown until described; `focused_target` fills it in, failing closed.
+                    sensitive: true,
                 });
             }
         }
@@ -580,6 +581,54 @@ impl Page {
             top_origin: self.top_origin().await,
             sensitive: e.sensitive,
         })
+    }
+
+    /// The element that has keyboard focus right now. `sensitive` is true when
+    /// it holds a secret OR when that cannot be determined (fail closed).
+    pub async fn focused_target(&self) -> Result<FieldTarget> {
+        let mut e = self.focused_entry().await?;
+        e.sensitive = self.entry_is_sensitive(&e).await.unwrap_or(true);
+        let frame = self.frame_identity(&e).await?;
+        Ok(FieldTarget {
+            name: e.name.clone(),
+            role: e.role.clone(),
+            frame_origin: frame.origin,
+            top_origin: self.top_origin().await,
+            sensitive: e.sensitive,
+        })
+    }
+
+    async fn entry_is_sensitive(&self, e: &RefEntry) -> Result<bool> {
+        let node = self
+            .cmd_on(
+                e.session_id.as_deref(),
+                "DOM.describeNode",
+                json!({"backendNodeId": e.backend_id}),
+            )
+            .await?;
+        let node = &node["node"];
+        let tag = node["nodeName"].as_str().unwrap_or("").to_ascii_lowercase();
+        let flat: Vec<&str> = node["attributes"]
+            .as_array()
+            .map(|a| a.iter().map(|v| v.as_str().unwrap_or("")).collect())
+            .unwrap_or_default();
+        let attr = |k: &str| {
+            flat.chunks(2)
+                .find(|p| p.len() == 2 && p[0].eq_ignore_ascii_case(k))
+                .map(|p| p[1].to_string())
+        };
+        let is_input = matches!(tag.as_str(), "input" | "textarea");
+        let extra = DomExtra {
+            tag,
+            input_type: is_input.then(|| attr("type").unwrap_or_else(|| "text".into())),
+            autocomplete: attr("autocomplete"),
+            name_hints: ["name", "id", "aria-label"]
+                .iter()
+                .filter_map(|k| attr(k))
+                .collect(),
+            ..Default::default()
+        };
+        Ok(extra.is_sensitive())
     }
 
     // -- inner actions --------------------------------------------------------------------------
