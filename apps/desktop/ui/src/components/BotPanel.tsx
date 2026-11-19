@@ -1,4 +1,5 @@
 import {
+  ChevronRight,
   Lock,
   MessageSquare,
   PenLine,
@@ -9,14 +10,17 @@ import {
   X,
   Zap
 } from "lucide-react";
-import { useState } from "react";
+import { type CSSProperties, Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BotAvatar, type BotAvatarState, type BotIdentity } from "ui";
 import { activitySections, librarySections, subagentRows } from "../lib/activityPanel";
 import { type PermissionTone, permissionTone } from "../lib/botEditor";
 import { chatActivity, chatDateLabel } from "../lib/botLanding";
+import { chatTitleLabel } from "../lib/chatTitle";
 import type { PresetChoice } from "../lib/botProfile";
 import { modelLine } from "../lib/modelName";
+import { runNow } from "../lib/runNow";
+import { toolSentence } from "../lib/runSentence";
 import { cancelRun } from "../state/appStop";
 import { useDaemon } from "../state/DaemonContext";
 import { useQuotas } from "../state/useQuotas";
@@ -24,11 +28,13 @@ import type { BotSkillsState } from "../state/useBotSkills";
 import { BotComputerBlock } from "./BotComputerBlock";
 import { StopStatusNotice } from "./StopStatusNotice";
 import styles from "./BotPanel.module.css";
+import { BotPanelMail } from "./BotPanelMail";
 import { BotPanelSkills } from "./BotPanelSkills";
 import { BrandMark } from "./BrandMark";
 import { QuotaBlock } from "./QuotaRings";
 import { SubagentDetail } from "./SubagentDetail";
-import { SubagentList } from "./SubagentList";
+import { SubagentList, useNow } from "./SubagentList";
+import { formatElapsed } from "../lib/activityPanel";
 import { UpcomingBlock, useUpcoming } from "./UpcomingBlock";
 
 export interface BotPanelChat {
@@ -94,13 +100,15 @@ export function BotPanel({
   runs,
   skills,
   newChatBusy,
+  visible = true,
   onClose,
   onOpenChat,
   onNewChat,
   onOpenProfile,
   onOpenSettings,
   onManageSkills,
-  onAddSkill
+  onAddSkill,
+  onOpenMail
 }: {
   bot: BotIdentity;
   /** `provider/model` the bot runs on. */
@@ -115,6 +123,8 @@ export function BotPanel({
   runs: ReadonlyArray<{ chat_id?: string | null; state: string }>;
   skills: BotSkillsState;
   newChatBusy: boolean;
+  /** The panel is on screen (closing it ends the computer view). */
+  visible?: boolean;
   onClose: () => void;
   onOpenChat: (chatId: string) => void;
   onNewChat: () => void;
@@ -122,6 +132,8 @@ export function BotPanel({
   onOpenSettings: () => void;
   onManageSkills: () => void;
   onAddSkill: () => void;
+  /** Open Settings, Mail (connect, edit or remove a mailbox). */
+  onOpenMail: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const { events, refreshRuns } = useDaemon();
@@ -131,6 +143,8 @@ export function BotPanel({
   const upcoming = useUpcoming(bot.id);
   const quotas = useQuotas();
   const activity = activitySections({ subagents: subs.length, upcoming: upcoming.rows.length, quota: quotas.length });
+  const now = runNow(events, activeChatId);
+  const nowTick = useNow(now !== null);
   const library = librarySections({ chats: chats.length });
   const stopSub = (id: string) => {
     cancelRun(id);
@@ -149,47 +163,48 @@ export function BotPanel({
       </button>
 
       <header className={styles.hero}>
-        <BotAvatar bot={bot} size="hero" state={state ?? "idle"} decorative />
+        <div className={styles.ava} style={{ "--bot": bot.color } as CSSProperties}>
+          <BotAvatar bot={bot} size="panel" state={state ?? "idle"} decorative />
+        </div>
         <h2 className={styles.name}>{bot.name}</h2>
         <div className={styles.meta}>
           <ModelLineText model={model} />
           <PermissionChip preset={preset} />
           {engineCli ? <span data-testid="bot-engine-label">{t("botEngine.label", { cli: engineCli })}</span> : null}
         </div>
-      </header>
-
-      <div className={styles.actions}>
-        <button
-          type="button"
-          className={styles.primary}
-          disabled={newChatBusy}
-          data-testid="bot-panel-new-chat"
-          onClick={onNewChat}
-        >
-          <Plus aria-hidden="true" />
-          {t("bots.newChat")}
-        </button>
-        <div className={styles.actionRow}>
+        <div className={styles.actions}>
           <button
             type="button"
-            className={styles.pill}
+            className={styles.primary}
+            disabled={newChatBusy}
+            data-testid="bot-panel-new-chat"
+            onClick={onNewChat}
+          >
+            <Plus aria-hidden="true" />
+            {t("bots.newChat")}
+          </button>
+          <button
+            type="button"
+            className={styles.iconBtn}
             data-testid="bot-panel-edit"
+            title={t("botPanel.edit")}
+            aria-label={t("botPanel.edit")}
             onClick={onOpenSettings}
           >
             <PenLine aria-hidden="true" />
-            {t("botPanel.edit")}
           </button>
           <button
             type="button"
-            className={styles.pill}
+            className={styles.iconBtn}
             data-testid="bot-panel-profile"
+            title={t("botPanel.profile")}
+            aria-label={t("botPanel.profile")}
             onClick={onOpenProfile}
           >
             <UserRound aria-hidden="true" />
-            {t("botPanel.profile")}
           </button>
         </div>
-      </div>
+      </header>
 
       <div className={styles.tabs} role="tablist" aria-label={t("botPanel.tabs.label")}>
         {(["activity", "library"] as const).map((id) => (
@@ -222,6 +237,38 @@ export function BotPanel({
         {tab === "activity" ? (
           <>
             <StopStatusNotice variant="panel" />
+            {now ? (
+              <div className={styles.now} data-kind={now.approval ? "approval" : "run"} data-testid="bot-panel-now">
+                <span className={styles.pulse} aria-hidden="true" />
+                <div className={styles.nowText}>
+                  <b>
+                    {now.approval
+                      ? t("botPanel.now.waiting")
+                      : now.step
+                        ? toolSentence(t, now.step)
+                        : t("botPanel.now.thinking")}
+                  </b>
+                  <small>
+                    {[
+                      now.subagents > 0 ? t("botPanel.now.subagents", { count: now.subagents }) : null,
+                      formatElapsed(nowTick - now.startedMs)
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </small>
+                </div>
+                <button
+                  type="button"
+                  className={styles.nowOpen}
+                  title={t("botPanel.now.open")}
+                  aria-label={t("botPanel.now.open")}
+                  data-testid="bot-panel-now-open"
+                  onClick={() => setOpenSub(now.run.id)}
+                >
+                  <ChevronRight aria-hidden="true" />
+                </button>
+              </div>
+            ) : null}
             {activity.map((id) => {
               switch (id) {
                 case "subagents":
@@ -229,7 +276,7 @@ export function BotPanel({
                 case "upcoming":
                   return <UpcomingBlock key={id} rows={upcoming.rows} onToggle={upcoming.toggle} />;
                 case "computer":
-                  return <BotComputerBlock key={id} botName={bot.name} botId={bot.id} />;
+                  return <BotComputerBlock key={id} botName={bot.name} botId={bot.id} botColor={bot.color} visible={visible} />;
                 default:
                   return <QuotaBlock key={id} />;
               }
@@ -238,7 +285,10 @@ export function BotPanel({
         ) : (
           library.map((id) =>
             id === "skills" ? (
-              <BotPanelSkills key={id} skills={skills} onManage={onManageSkills} onAdd={onAddSkill} />
+              <Fragment key={id}>
+                <BotPanelSkills skills={skills} onManage={onManageSkills} onAdd={onAddSkill} />
+                <BotPanelMail botId={bot.id} botName={bot.name} onOpenMail={onOpenMail} />
+              </Fragment>
             ) : (
               <div key={id}>
         <section className={styles.section} aria-labelledby="bot-panel-chats">
@@ -258,7 +308,7 @@ export function BotPanel({
                   >
                     <MessageSquare aria-hidden="true" />
                     <span className={styles.chatText}>
-                      <span className={styles.chatTitle}>{c.title || t("botPanel.untitled")}</span>
+                      <span className={styles.chatTitle}>{chatTitleLabel(c.title, t("botPanel.untitled"))}</span>
                       <span className={styles.chatDate} data-testid="bot-panel-chat-date">
                         {chatDateLabel(c.createdAtMs, i18n.language)}
                       </span>
@@ -281,6 +331,7 @@ export function BotPanel({
       </div>
       <SubagentDetail
         run={openSub ? events.runs[openSub] : undefined}
+        fallbackTitle={t("botPanel.now.detailTitle")}
         onClose={() => setOpenSub(null)}
         onStop={stopSub}
       />

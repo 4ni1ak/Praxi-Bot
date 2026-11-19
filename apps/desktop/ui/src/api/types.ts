@@ -19,6 +19,7 @@ export type BotInput = S["BotInput"];
 export type BotPatchInput = S["BotPatchInput"];
 export type Chat = S["ChatDto"];
 export type Message = S["MessageDto"];
+export type RunUsage = S["RunUsageDto"];
 /**
  * A run.  `schedule_id` is not in the generated `RunDto` yet (the daemon only
  * reports it on the `run_started` event); typed here so it works once added.
@@ -90,6 +91,7 @@ export type CreateSessionInput = S["CreateSession"];
 export type SessionInfo = S["SessionInfo"];
 export type SessionUpdate = S["SessionUpdate"];
 export type ViewHeartbeat = S["Heartbeat"];
+export type PeerLink = S["PeerLink"];
 export type ScreenStatus = S["ScreenStatus"];
 export type ScreenStreamState = S["ScreenStreamState"];
 export type TerminalInfo = S["TerminalInfo"];

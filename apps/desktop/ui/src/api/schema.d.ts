@@ -2122,6 +2122,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/peer/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return the path for this request's tunnel, or null on local HTTP. */
+        get: operations["link"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/policy": {
         parameters: {
             query?: never;
@@ -2496,6 +2513,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Model and token usage of one run (read-only; feeds the chat's message info). */
+        get: operations["run_usage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/schedules": {
         parameters: {
             query?: never;
@@ -2626,6 +2660,40 @@ export interface paths {
         put?: never;
         /** Create a trusted shared skill authored by the local owner. */
         post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/hub/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install the previewed content when it is still exactly what the owner accepted. */
+        post: operations["hub_install"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/hub/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fetch a repository into a private staging folder and scan it; nothing is installed. */
+        post: operations["hub_preview"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4622,6 +4690,52 @@ export interface components {
             total_ram_mb: number;
             version: string;
         };
+        /** @description One scan finding. The text never contains a matched secret. */
+        HubFindingDto: {
+            file: string;
+            /** @description `script`, `network`, `credential`, `obfuscation`, `injection` or `oversized`. */
+            kind: string;
+            line?: number | null;
+            message: string;
+            /** @description `info`, `warn` or `high`. */
+            severity: string;
+        };
+        /** @description Install request: the source plus the fingerprint of the previewed content. */
+        HubInstallInput: {
+            /** @description `fingerprint` from the preview the owner accepted. */
+            accept: string;
+            /** @description Branch, tag or full commit; the default branch when absent. */
+            rev?: string | null;
+            /** @description Folder of the skill inside the repository; the repository root when absent. */
+            subdir?: string | null;
+            /** @description `https://` clone URL of a public repository. */
+            url: string;
+        };
+        /** @description What the scan found, shown before anything is installed. */
+        HubPreviewDto: {
+            /** @description True when the folder holds scripts or other active files (stored, never run). */
+            active: boolean;
+            description: string;
+            files: number;
+            findings: components["schemas"]["HubFindingDto"][];
+            /** @description Pass this back as `accept` to install exactly this content. */
+            fingerprint: string;
+            name: string;
+            /** @description `low`, `medium` or `high`. */
+            risk: string;
+            /** Format: int64 */
+            total_bytes: number;
+            version: string;
+        };
+        /** @description Where the skill lives. */
+        HubSourceInput: {
+            /** @description Branch, tag or full commit; the default branch when absent. */
+            rev?: string | null;
+            /** @description Folder of the skill inside the repository; the repository root when absent. */
+            subdir?: string | null;
+            /** @description `https://` clone URL of a public repository. */
+            url: string;
+        };
         /** @enum {string} */
         HumanAction: "login_completed" | "application_opened" | "other";
         ImportBotInput: {
@@ -5414,6 +5528,11 @@ export interface components {
              * @description Run that produced / carried it.
              */
             run_id?: string | null;
+            /**
+             * @description Where a user message came from (`owner` = this app, `telegram`, `peer`,
+             *     `local_api`); absent for older messages and for replies.
+             */
+            source?: string | null;
         };
         /**
          * @description What to do when the chat already has a running turn.
@@ -5512,6 +5631,12 @@ export interface components {
             /** @description Names of hosts whose bots read this screen in the last few seconds. */
             reading: string[];
             requests: components["schemas"]["PcRequestInfo"][];
+        };
+        /** @description The selected path of the authenticated QUIC connection, without peer addresses. */
+        PeerLink: {
+            relay: boolean;
+            /** Format: int32 */
+            rtt_ms: number;
         };
         /** @enum {string} */
         PointerPhase: "move" | "down" | "up";
@@ -5790,6 +5915,29 @@ export interface components {
              * @description Last state change.
              */
             updated_at_ms: number;
+        };
+        /** @description What a run cost, read from the usage ledger (`GET /v1/runs/{id}/usage`). */
+        RunUsageDto: {
+            /**
+             * Format: int64
+             * @description Completion tokens of the run's own model calls.
+             */
+            completion_tokens: number;
+            /**
+             * @description `provider/model` the run's turn used (the last executor call); absent
+             *     when no model call was recorded.
+             */
+            model?: string | null;
+            /**
+             * Format: int64
+             * @description Number of model calls of the run.
+             */
+            model_calls: number;
+            /**
+             * Format: int64
+             * @description Prompt tokens of the run's own model calls (reported by the provider).
+             */
+            prompt_tokens: number;
         };
         /** @description Bot `[runtime]` settings (ADR-0027 §7). */
         RuntimeConfigDto: {
@@ -11400,6 +11548,25 @@ export interface operations {
             };
         };
     };
+    link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": null | components["schemas"]["PeerLink"];
+                };
+            };
+        };
+    };
     get_policy: {
         parameters: {
             query?: never;
@@ -12057,6 +12224,36 @@ export interface operations {
             };
         };
     };
+    run_usage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunUsageDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     list_schedules: {
         parameters: {
             query?: never;
@@ -12437,6 +12634,108 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hub_install: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HubInstallInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSkillDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hub_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HubSourceInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HubPreviewDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

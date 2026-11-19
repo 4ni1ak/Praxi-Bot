@@ -56,6 +56,7 @@ pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod routes;
 mod schedule;
 mod schedule_tools;
+pub mod skill_hub;
 pub mod skill_management;
 pub mod skills;
 mod sse;
@@ -1086,6 +1087,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/health", get(r::health))
         .route("/v1/view/targets", get(v::targets))
         .route("/v1/view/availability", get(v::availability))
+        .route("/v1/peer/link", get(peer::link))
         .route("/v1/view/status", get(v::status))
         .route("/v1/view/targets/{id}/thumbnail", get(v::thumbnail))
         .route("/v1/view/sessions", post(v::create_session))
@@ -1174,6 +1176,8 @@ fn api_routes() -> Router<AppState> {
             post(skill_management::import)
                 .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024)),
         )
+        .route("/v1/skills/hub/preview", post(skill_hub::hub_preview))
+        .route("/v1/skills/hub/install", post(skill_hub::hub_install))
         .route(
             "/v1/skills/{name}",
             axum::routing::put(skill_management::update).delete(skill_management::delete),
@@ -1202,6 +1206,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/runs/{id}/cancel", post(r::cancel_run))
         .route("/v1/runs/{id}/resume", post(r::resume_run))
         .route("/v1/runs/{id}/remember", post(r::remember_run))
+        .route("/v1/runs/{id}/usage", get(r::run_usage))
         .route("/v1/runs/{id}/changes", get(changes::get_run_changes))
         .route(
             "/v1/runs/{id}/changes/{cp}/preview",

@@ -78,6 +78,7 @@ import type {
   ScheduleInput,
   Scope,
   ScreenPrivilegesInput,
+  RunUsage,
   SendMode,
   SendResponse,
   SessionInfo,
@@ -86,6 +87,7 @@ import type {
   TakeoverRequest,
   TargetInfo,
   TargetUnavailable,
+  PeerLink,
   ScreenStatus,
   TerminalInfo,
   TerminalOutput,
@@ -553,6 +555,10 @@ export class ApiClient {
   stopRuns(body: StopRunsInput, signal?: AbortSignal): Promise<StopRunsResponse> {
     return this.request("POST", "/runs/stop", { body, signal });
   }
+  /** Model and token usage of one run (read-only; the message info popover). */
+  getRunUsage(runId: string): Promise<RunUsage> {
+    return this.request("GET", `/runs/${encodeURIComponent(runId)}/usage`);
+  }
   resumeRun(runId: string): Promise<Run> {
     return this.request("POST", `/runs/${runId}/resume`);
   }
@@ -691,6 +697,10 @@ export class ApiClient {
     return this.request("GET", "/view/availability");
   }
   /** Idle / starting / live / paused-idle / unavailable, and the host's idle limit. */
+  peerLink(signal?: AbortSignal): Promise<PeerLink | null> {
+    return this.request("GET", "/peer/link", { signal });
+  }
+
   viewStatus(): Promise<ScreenStatus> {
     return this.request("GET", "/view/status");
   }
@@ -718,8 +728,20 @@ export class ApiClient {
   terminalClose(hostId: string, id: string): Promise<void> {
     return this.request("DELETE", `/hosts/${encodeURIComponent(hostId)}/terminal/${encodeURIComponent(id)}`);
   }
-  createViewSession(input: CreateSessionInput): Promise<SessionInfo> {
-    return this.request("POST", "/view/sessions", { body: input });
+  private readonly staleViewSessions = new Set<string>();
+
+  async createViewSession(input: CreateSessionInput): Promise<SessionInfo> {
+    const create = () => this.request<SessionInfo>("POST", "/view/sessions", { body: input });
+    try {
+      return await create();
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.code !== "view_quota" || this.staleViewSessions.size === 0) {
+        throw err;
+      }
+      // Retry only DELETEs for sessions this client has already abandoned.
+      await Promise.allSettled([...this.staleViewSessions].map((id) => this.deleteViewSession(id)));
+      return create();
+    }
   }
   updateViewSession(
     id: string,
@@ -736,8 +758,23 @@ export class ApiClient {
       { body: input }
     );
   }
-  deleteViewSession(id: string): Promise<void> {
-    return this.request("DELETE", `/view/sessions/${encodeURIComponent(id)}`);
+  async deleteViewSession(id: string): Promise<void> {
+    this.staleViewSessions.add(id);
+    // The daemon reaps dormant sessions after their lease. Bound local tracking as well.
+    if (this.staleViewSessions.size > 8) {
+      const oldest = this.staleViewSessions.values().next().value;
+      if (oldest) this.staleViewSessions.delete(oldest);
+    }
+    try {
+      await this.request("DELETE", `/view/sessions/${encodeURIComponent(id)}`);
+      this.staleViewSessions.delete(id);
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
+        this.staleViewSessions.delete(id);
+        return;
+      }
+      throw err;
+    }
   }
   sendViewInput(id: string, batch: InputBatch): Promise<InputResult> {
     return this.request(

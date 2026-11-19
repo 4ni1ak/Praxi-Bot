@@ -1,10 +1,11 @@
-import { ArrowLeft, Check, ChevronDown, House, Maximize2, Monitor, Plus, RefreshCw, Server, Square, Terminal } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { ArrowLeft, ChevronDown, Eye, House, Monitor, Plus, RefreshCw, Server, Square, Terminal } from "lucide-react";
+import { useCallback, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { isMockMode } from "../api/mockMode";
 import { humanLine } from "../lib/humanError";
 import { homeStatus } from "../lib/home";
 import { hostAcceptsWork } from "../lib/hostState";
+import { lastSyncParts, readLastSync } from "../lib/lastSync";
 import { useDaemon } from "../state/DaemonContext";
 import { useLiveView } from "../state/LiveViewContext";
 import { useServerTerminal } from "../state/ServerTerminalContext";
@@ -14,19 +15,20 @@ import { setHostComputerAccess } from "./ComputerAccess";
 import { CopySetupModal } from "./CopySetupModal";
 import { PairHostModal } from "./PairHostModal";
 import { Popover } from "./Popover";
+import { PeerLinkBadge } from "./PeerLinkBadge";
 import { useToast } from "./Toast";
 
 /**
  * The status chip of the bots' computer. It is not a switch between two worlds: the app follows the
- * home (the host the owner adopted) by itself. The menu manages that computer - add a server, make
- * one the home, sync, look at its screen - and holds the one explicit, temporary exception,
- * "work on this computer for now", with a visible way back.
+ * home (the host the owner adopted) by itself. The menu manages that computer - look at its screen,
+ * sync, add a server, make one the home - and holds the one explicit, temporary exception,
+ * "work on this computer for now", with a visible way back. Only the items that apply are shown.
  */
 export function ComputerPicker() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const toast = useToast();
   const { home, workLocalNow, setWorkLocalNow, hostState, hostList, stopHostRuns, localApi, refreshHosts } = useDaemon();
-  const { openViewer } = useLiveView();
+  const { openViewer, viewerOpen } = useLiveView();
   const serverTerminal = useServerTerminal();
   // Design review (mock mode only): `?menu=1` opens the menu.
   const [open, setOpen] = useState(() => isMockMode() && new URLSearchParams(window.location.search).get("menu") === "1");
@@ -35,6 +37,7 @@ export function ComputerPicker() {
   const [syncHost, setSyncHost] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
+  const linkId = useId();
   const close = useCallback(() => setOpen(false), []);
 
   const status = homeStatus(home, workLocalNow, hostState);
@@ -53,6 +56,13 @@ export function ComputerPicker() {
     void setHostComputerAccess(localApi, homeLink, !pcAllowed)
       .then(() => refreshHosts())
       .catch((e: unknown) => toast.show(humanLine(e), "danger"));
+  };
+
+  // The time the setup was last synced to this server (remembered by this app), once the menu opens.
+  const syncedAt = open && home.kind === "host" ? readLastSync(home.hostId) : null;
+  const syncWhen = (ms: number) => {
+    const p = lastSyncParts(ms, Date.now(), i18n.language);
+    return p.day ? `${p.day} ${p.time}` : t("homeMenu.today", { time: p.time });
   };
 
   const stop = async () => {
@@ -106,6 +116,7 @@ export function ComputerPicker() {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={t("computerPicker.label", { name: label })}
+        aria-describedby={linkId}
         title={t("computerPicker.label", { name: label })}
         data-testid="computer-picker"
         data-computer={home.kind === "host" ? "host" : "local"}
@@ -115,6 +126,7 @@ export function ComputerPicker() {
         <i className={styles.dot} data-tone={tone} aria-hidden="true" />
         <Icon aria-hidden="true" className={styles.icon} />
         <span className={styles.name}>{label}</span>
+        <PeerLinkBadge enabled={status === "online" && !viewerOpen} id={linkId} />
         <ChevronDown aria-hidden="true" className={styles.chevron} />
       </button>
       <Popover
@@ -126,64 +138,68 @@ export function ComputerPicker() {
         width={300}
         className={styles.menu}
       >
-        <p className={styles.heading}>{t("home.menu.title")}</p>
-        <div className={styles.item} data-testid="home-status" aria-live="polite">
-          <i className={styles.dot} data-tone={tone} aria-hidden="true" />
+        <div className={styles.head} data-testid="home-status" aria-live="polite">
           <Icon aria-hidden="true" className={styles.icon} />
-          <span className={styles.itemText}>
-            <b>{label}</b>
-          </span>
+          <div className={styles.headText}>
+            <b>{home.kind === "host" ? name : t("account.localComputer")}</b>
+            <small>
+              <i className={styles.dot} data-tone={tone} aria-hidden="true" />
+              {t(`homeMenu.lives.${status}`, { name })}
+            </small>
+          </div>
         </div>
-        {home.kind === "host" ? (
+        {home.kind === "host" && !workLocalNow ? (
           <>
-            {item("home-sync", <RefreshCw aria-hidden="true" className={styles.icon} />, t("home.menu.sync", { name }), () => setSyncHost(home.hostId))}
             {status === "online"
-              ? item("home-view-screen", <Maximize2 aria-hidden="true" className={styles.icon} />, t("home.menu.viewScreen"), () => openViewer())
+              ? item("home-view-screen", <Eye aria-hidden="true" className={styles.icon} />, t("home.menu.viewScreen"), () => openViewer())
               : null}
             {serverTerminal.available && status === "online"
               ? item("home-terminal", <Terminal aria-hidden="true" className={styles.icon} />, t("home.menu.terminal"), () => serverTerminal.open())
               : null}
-            {hostState && hostAcceptsWork(hostState) && !workLocalNow
-              ? item("computer-stop-host", <Square aria-hidden="true" className={styles.icon} />, t("home.menu.stop", { name }), () => void stop(), {
-                  hint: t("home.menu.stopHint"),
-                  danger: true,
-                  disabled: stopping
-                })
-              : null}
           </>
         ) : null}
+        {home.kind === "host"
+          ? item("home-sync", <RefreshCw aria-hidden="true" className={styles.icon} />, t("homeMenu.sync"), () => setSyncHost(home.hostId), {
+              hint: syncedAt === null ? undefined : t("homeMenu.lastSync", { when: syncWhen(syncedAt) })
+            })
+          : null}
+        {homeLink ? (
+          <>
+            <div className={styles.hr} role="separator" />
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={pcAllowed}
+              className={styles.item}
+              data-testid="home-pc-access"
+              onClick={togglePc}
+            >
+              <Monitor aria-hidden="true" className={styles.icon} />
+              <span className={styles.itemText}>
+                <b>{t("computerAccess.title")}</b>
+                <small>{pcAllowed ? t("homeMenu.pcOn") : t("homeMenu.pcOff")}</small>
+              </span>
+              <span className={styles.tog} data-on={pcAllowed ? "true" : undefined} aria-hidden="true" />
+            </button>
+          </>
+        ) : null}
+        <div className={styles.hr} role="separator" />
+        {item("computer-add", <Plus aria-hidden="true" className={styles.icon} />, t("home.menu.add"), () => setAddOpen(true))}
         {unadopted.map((h) =>
           item(`home-make-${h.id}`, <House aria-hidden="true" className={styles.icon} />, t("home.menu.makeHome", { name: h.name }), () => setSyncHost(h.id))
         )}
-        {item("computer-add", <Plus aria-hidden="true" className={styles.icon} />, t("home.menu.add"), () => setAddOpen(true))}
-        {homeLink ? (
-          <button
-            type="button"
-            role="menuitemcheckbox"
-            aria-checked={pcAllowed}
-            className={styles.item}
-            data-testid="home-pc-access"
-            onClick={() => {
-              setOpen(false);
-              togglePc();
-            }}
-          >
-            <Monitor aria-hidden="true" className={styles.icon} />
-            <span className={styles.itemText}>
-              <b>{t("computerAccess.title")}</b>
-              <small>{pcAllowed ? t("home.menu.pcOn") : t("home.menu.pcOff")}</small>
-            </span>
-            {pcAllowed ? <Check aria-hidden="true" className={styles.check} /> : null}
-          </button>
-        ) : null}
         {home.kind === "host"
           ? workLocalNow
             ? item("home-back", <ArrowLeft aria-hidden="true" className={styles.icon} />, t("home.menu.backHome", { name }), () => setWorkLocalNow(false), {
                 hint: t("home.menu.backHomeHint")
               })
-            : item("home-work-here", <Monitor aria-hidden="true" className={styles.icon} />, t("home.menu.workHere"), () => setWorkLocalNow(true), {
-                hint: t("home.menu.workHereHint")
-              })
+            : item("home-work-here", <Monitor aria-hidden="true" className={styles.icon} />, t("home.menu.workHere"), () => setWorkLocalNow(true))
+          : null}
+        {home.kind === "host" && hostState && hostAcceptsWork(hostState) && !workLocalNow
+          ? item("computer-stop-host", <Square aria-hidden="true" className={styles.icon} />, t("home.menu.stop", { name }), () => void stop(), {
+              danger: true,
+              disabled: stopping
+            })
           : null}
       </Popover>
       <AddServerModal

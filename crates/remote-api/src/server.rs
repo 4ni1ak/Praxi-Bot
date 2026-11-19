@@ -10,13 +10,16 @@ use axum::{
     Router,
     body::Body,
     extract::Request,
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use daemon_api::{AppState, PeerIdentity, PeerRole, peer::PeerName};
+use daemon_api::{
+    AppState, PeerIdentity, PeerRole,
+    peer::{PeerLink, PeerName},
+};
 use hyper::{server::conn::http1, service::service_fn};
 use hyper_util::rt::{TokioIo, TokioTimer};
-use iroh::endpoint::Connection;
+use iroh::endpoint::{Connection, Path};
 use peer_network::{Device, ProtocolHandler, Role};
 use std::{
     collections::HashMap,
@@ -229,8 +232,7 @@ impl ProtocolHandler for ApiProtocol {
                         recv,
                         send,
                         self.router.clone(),
-                        identity.clone(),
-                        name.clone(),
+                        (identity.clone(), name.clone(), conn.clone()),
                         admission,
                         self.tuning,
                     ));
@@ -246,19 +248,30 @@ async fn serve_stream(
     recv: iroh::endpoint::RecvStream,
     send: iroh::endpoint::SendStream,
     router: Router,
-    identity: PeerIdentity,
-    name: PeerName,
+    peer: (PeerIdentity, PeerName, Connection),
     admission: Arc<Admission>,
     tuning: Tuning,
 ) {
     // Fired only by the stall watchdog: it ends this one stream.
     let stalled = CancellationToken::new();
+    let (identity, name, conn) = peer;
     let service =
         {
             let (admission, stalled) = (admission.clone(), stalled.clone());
             service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                 let (router, identity, name) = (router.clone(), identity.clone(), name.clone());
                 let (admission, stalled) = (admission.clone(), stalled.clone());
+                let link = if req.method() == Method::GET && req.uri().path() == "/v1/peer/link" {
+                    conn.paths()
+                        .iter()
+                        .find(Path::is_selected)
+                        .map(|path| PeerLink {
+                            relay: path.is_relay(),
+                            rtt_ms: u32::try_from(path.rtt().as_millis()).unwrap_or(u32::MAX),
+                        })
+                } else {
+                    None
+                };
                 async move {
                     let mut req: Request = req.map(Body::new);
                     if oversized(req.headers()) {
@@ -273,6 +286,9 @@ async fn serve_stream(
                     }
                     req.extensions_mut().insert(identity);
                     req.extensions_mut().insert(name);
+                    if let Some(link) = link {
+                        req.extensions_mut().insert(link);
+                    }
                     let req = req.map(request_body);
                     let response =
                         match tokio::time::timeout(tuning.response_timeout, router.oneshot(req))

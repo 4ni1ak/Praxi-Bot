@@ -2,7 +2,7 @@ import { createContext, type ReactNode, useCallback, useContext, useMemo, useRef
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import type { Bot } from "../api/types";
-import { DialogFooter } from "../components/DialogParts";
+import { DialogFooter, dialogStyles } from "../components/DialogParts";
 import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { type ApprovalLevel, engineOf } from "../lib/botEngine";
@@ -165,45 +165,48 @@ function ConsentDialog({ pending, onDone }: { pending: Pending; onDone: (c: Engi
   const needsFull = level === "full";
   return (
     <Modal open onClose={() => onDone(null)} label={t("engineConsent.title", { cli })} size="sm">
-      <div className={styles.body} data-testid="engine-consent">
-        <h2 className={styles.title}>{t("engineConsent.title", { cli })}</h2>
-        <p className={styles.text}>{t("engineConsent.text", { cli })}</p>
-        <div role="radiogroup" aria-label={t("engineConsent.levelLabel")} className={styles.levels}>
-          {pending.levels.map((l) => {
-            const keys = levelKeys(l);
-            return (
-              <label key={l} className={styles.level} data-testid={`engine-consent-level-${l}`}>
-                <input type="radio" name="engine-consent-level" checked={level === l} onChange={() => setLevel(l)} />
-                <span>
-                  <strong>{t(keys.name)}</strong>
-                  <span className={styles.hint}>{t(keys.text, { cli })}</span>
-                </span>
-              </label>
-            );
-          })}
+      {/* The dialog frame is a row: a column root keeps body above footer (not side by side). */}
+      <div className={dialogStyles.root} data-testid="engine-consent">
+        <div className={styles.body}>
+          <h2 className={styles.title}>{t("engineConsent.title", { cli })}</h2>
+          <p className={styles.text}>{t("engineConsent.text", { cli })}</p>
+          <div role="radiogroup" aria-label={t("engineConsent.levelLabel")} className={styles.levels}>
+            {pending.levels.map((l) => {
+              const keys = levelKeys(l);
+              return (
+                <label key={l} className={styles.level} data-testid={`engine-consent-level-${l}`}>
+                  <input type="radio" name="engine-consent-level" checked={level === l} onChange={() => setLevel(l)} />
+                  <span>
+                    <strong>{t(keys.name)}</strong>
+                    <span className={styles.hint}>{t(keys.text, { cli })}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          {pending.levels.length === 1 && level === "full" ? (
+            <p className={styles.warn} role="note">{t("engineConsent.onlyFull", { cli })}</p>
+          ) : null}
+          {needsFull ? (
+            <label className={styles.full}>
+              <input type="checkbox" checked={full} onChange={(e) => setFull(e.target.checked)} data-testid="engine-consent-full" />
+              <span>{t("engineConsent.fullConsent", { cli })}</span>
+            </label>
+          ) : null}
         </div>
-        {pending.levels.length === 1 && level === "full" ? (
-          <p className={styles.warn} role="note">{t("engineConsent.onlyFull", { cli })}</p>
-        ) : null}
-        {needsFull ? (
-          <label className={styles.full}>
-            <input type="checkbox" checked={full} onChange={(e) => setFull(e.target.checked)} data-testid="engine-consent-full" />
-            <span>{t("engineConsent.fullConsent", { cli })}</span>
-          </label>
-        ) : null}
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onDone(null)}>{t("engineConsent.notNow")}</Button>
+          <Button
+            variant="primary"
+            disabled={needsFull && !full}
+            data-autofocus
+            onClick={() => onDone({ cliId: pending.cliId, level })}
+            data-testid="engine-consent-allow"
+          >
+            {t("engineConsent.allow", { cli })}
+          </Button>
+        </DialogFooter>
       </div>
-      <DialogFooter>
-        <Button variant="ghost" onClick={() => onDone(null)}>{t("engineConsent.notNow")}</Button>
-        <Button
-          variant="primary"
-          disabled={needsFull && !full}
-          data-autofocus
-          onClick={() => onDone({ cliId: pending.cliId, level })}
-          data-testid="engine-consent-allow"
-        >
-          {t("engineConsent.allow", { cli })}
-        </Button>
-      </DialogFooter>
     </Modal>
   );
 }

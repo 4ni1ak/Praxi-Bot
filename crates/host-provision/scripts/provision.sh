@@ -80,12 +80,25 @@ cmd_preflight() {
   if command -v ss >/dev/null 2>&1 && ss -ltnH 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${port}\$"; then kv port_busy 1; else kv port_busy 0; fi
 }
 
+# 1 when a non-snap Chrome/Chromium that Praxi can launch is installed.
+browser_present() {
+  local c
+  for c in /opt/praxi-browser/chrome /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser; do
+    [[ -x "${c}" ]] || continue
+    [[ "$(readlink -f "${c}")" != /snap/* ]] || continue
+    ! head -c 8192 "${c}" | grep -aqE "snap run|/snap/" || continue
+    return 0
+  done
+  return 1
+}
+
 cmd_status() {
   kv version "$("${PREFIX}/bin/bot" --version 2>/dev/null | awk '{print $2}' || true)"
   kv unit_active "$(systemctl is-active praxi.service 2>/dev/null || true)"
   if grep -Eq '^ExecStart=.*/bot serve --host([[:space:]]|$)' "${UNIT}" 2>/dev/null; then kv unit_hostmode 1; else kv unit_hostmode 0; fi
   kv xvfb "$(systemctl is-active praxi-xvfb.service 2>/dev/null || true)"
   kv desktop "$(systemctl is-active praxi-desktop.service 2>/dev/null || true)"
+  if browser_present; then kv browser 1; else kv browser 0; fi
 }
 
 cmd_install_gh() {
