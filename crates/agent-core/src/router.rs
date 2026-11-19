@@ -745,9 +745,8 @@ impl TurnExecutor {
 
     /// Replay the routed workflow through the loop's permission gate.  Never
     /// fails the run: a replay that cannot start or stops early hands over to
-    #[allow(clippy::too_many_lines)] // one ordered replay pass: exposure is recorded before every exit
     /// K4 with a note.
-    #[allow(clippy::too_many_lines)] // one linear replay sequence
+    #[allow(clippy::too_many_lines)] // one ordered replay pass: exposure is recorded before every exit
     pub(crate) async fn exec_workflow(
         &self,
         run: &Run,

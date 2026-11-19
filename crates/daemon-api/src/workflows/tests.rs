@@ -259,7 +259,21 @@ async fn source(env: &Env) -> RunId {
         task_runtime::RunState::Succeeded
     );
     approver.abort();
+    // `run_turn` records no origin; the desktop app's send route marks the
+    // message `owner`, which is what makes a run recordable.
+    mark_owner(env, run);
     run
+}
+
+fn mark_owner(env: &Env, run: RunId) {
+    for m in env.state.storage().list_messages(env.chat).unwrap() {
+        if m.run_id == Some(run) && m.role == "user" {
+            env.state
+                .storage()
+                .set_message_source(m.id, "owner")
+                .unwrap();
+        }
+    }
 }
 
 #[tokio::test]
@@ -428,6 +442,7 @@ allow_egress_after_reads=true
         env.state.agent().wait(id).await.unwrap(),
         task_runtime::RunState::Succeeded
     );
+    mark_owner(&env, id);
     let (status, proposal) = request(
         &env,
         Method::POST,
@@ -565,6 +580,7 @@ async fn short_passwords_do_not_corrupt_tool_correlation_ids() {
         env.state.agent().wait(id).await.unwrap(),
         task_runtime::RunState::Succeeded
     );
+    mark_owner(&env, id);
     let (status, proposal) = request(
         &env,
         Method::POST,
@@ -576,6 +592,40 @@ async fn short_passwords_do_not_corrupt_tool_correlation_ids() {
     assert_eq!(status, StatusCode::OK, "{proposal}");
     assert_eq!(proposal["workflow"]["steps"].as_array().unwrap().len(), 1);
     assert_eq!(proposal["required_params"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn only_owner_typed_runs_are_proposable_not_token_or_telegram_turns() {
+    let env = setup();
+    let id = source(&env).await;
+    let message = env
+        .state
+        .storage()
+        .list_messages(env.chat)
+        .unwrap()
+        .into_iter()
+        .find(|m| m.run_id == Some(id) && m.role == "user")
+        .expect("user message of the run");
+    let path = format!("/v1/runs/{id}/workflow-proposal");
+    let propose = || request(&env, Method::POST, &path, None, true);
+    // A run kind of `turn` is also what a token-only client or Telegram starts;
+    // only the recorded message source tells them apart from the owner.
+    for refused in ["local_api", "telegram", "peer", ""] {
+        env.state
+            .storage()
+            .set_message_source(message.id, refused)
+            .unwrap();
+        assert_eq!(
+            propose().await.0,
+            StatusCode::CONFLICT,
+            "source {refused:?}"
+        );
+    }
+    env.state
+        .storage()
+        .set_message_source(message.id, "owner")
+        .unwrap();
+    assert_eq!(propose().await.0, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -850,6 +900,7 @@ async fn real_browser_fill_short_text_does_not_change_other_step_locators() {
         env.state.agent().wait(id).await.unwrap(),
         task_runtime::RunState::Succeeded
     );
+    mark_owner(&env, id);
     let (status, proposal) = request(
         &env,
         Method::POST,

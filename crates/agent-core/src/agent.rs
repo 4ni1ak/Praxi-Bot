@@ -789,6 +789,14 @@ impl AgentLoop {
         Ok(registry)
     }
 
+    /// Whether every user message of this top-level run came from the owner
+    /// (desktop app or the paired admin desktop). Token-only clients,
+    /// Telegram and peers do not count. Fails closed.
+    #[must_use]
+    pub fn workflow_run_owner_started(&self, run: &storage::Run) -> bool {
+        crate::approval::owner_started_run(&self.sh.storage, run.id, run.parent_run_id)
+    }
+
     /// Whether this run carried untrusted or private content before or while
     /// it ran, rebuilt from storage (parent chain, child runs, prior chat
     /// provenance, persisted exposure facts). The in-memory taint set is lost
@@ -799,7 +807,18 @@ impl AgentLoop {
         let Some(chat_id) = run.chat_id else {
             return true;
         };
-        let taint = self.sh.initial_taint(run, chat_id);
+        let mut taint = self.sh.initial_taint(run, chat_id);
+        // `initial_taint` only sees the bounded model-context window; a
+        // tainted earlier message may have scrolled out of it. Recording
+        // looks at every earlier message and fails closed on a storage error.
+        match self
+            .sh
+            .storage
+            .chat_exposure_until(chat_id, run.id, run.created_at_ms)
+        {
+            Ok((untrusted, private, _)) => taint.exposure.observe(untrusted, private),
+            Err(_) => return true,
+        }
         taint.exposure != permission_engine::ContentExposure::clean()
     }
 

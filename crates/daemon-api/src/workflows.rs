@@ -159,6 +159,10 @@ fn recording(s: &AppState, id: RunId) -> Result<ReviewedRecording, ApiError> {
         || run.state != "succeeded"
         || run.chat_id.is_none()
         || agent_core::initiator_of(&run.kind) != protocol::InitiatorKind::Human
+        // The run kind alone is not proof: a token-only client or Telegram
+        // also starts `turn` runs. Only text the owner typed counts as the
+        // user's own request.
+        || !s.agent().workflow_run_owner_started(&run)
     {
         return Err(ApiError::conflict("this run cannot be recorded"));
     }

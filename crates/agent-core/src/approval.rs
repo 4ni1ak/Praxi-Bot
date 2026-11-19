@@ -307,16 +307,39 @@ impl Shared {
         input: &Value,
         target: Option<&ControlTarget>,
     ) -> (Decision, Option<&'static str>) {
-        if workflow_replay::replay::source_tainted() {
-            self.router.tainted_runs.lock().insert(ctx.run_id);
+        // Taint is kept on the top-level run so subagents spawned after a
+        // tainted replay inherit it and no per-child entry has to be cleaned up.
+        let root = self.root_run_id(ctx);
+        if let Some(root) = root
+            && workflow_replay::replay::source_tainted()
+        {
+            self.router.tainted_runs.lock().insert(root);
         }
         let (decision, reason) =
             self.decide_with_reason_inner(ctx, name, effect, category, input, target);
-        if decision == Decision::Allow && self.router.tainted_runs.lock().contains(&ctx.run_id) {
+        // An unreadable parent chain counts as tainted: ask, never allow.
+        let tainted = root.is_none_or(|r| self.router.tainted_runs.lock().contains(&r));
+        if decision == Decision::Allow && tainted {
             (Decision::ask(), None)
         } else {
             (decision, reason)
         }
+    }
+
+    /// The top-level run above `ctx`, or `None` when the parent chain cannot
+    /// be read or is too deep.
+    fn root_run_id(&self, ctx: &RunCtx) -> Option<RunId> {
+        let mut run_id = ctx.run_id;
+        let mut parent = ctx.parent_run_id;
+        for _ in 0..8 {
+            let Some(p) = parent else { return Some(run_id) };
+            run_id = p;
+            parent = match self.storage.get_run(p) {
+                Ok(Some(r)) => r.parent_run_id,
+                _ => return None,
+            };
+        }
+        parent.is_none().then_some(run_id)
     }
 
     #[allow(clippy::too_many_lines)] // One decision pipeline: deny floors, policy, gate, grants.
@@ -524,28 +547,7 @@ impl Shared {
         if ctx.initiator != InitiatorKind::Human {
             return false;
         }
-        let mut run_id = ctx.run_id;
-        let mut parent = ctx.parent_run_id;
-        for _ in 0..8 {
-            let Some(p) = parent else { break };
-            run_id = p;
-            parent = match self.storage.get_run(p) {
-                Ok(Some(r)) => r.parent_run_id,
-                _ => return false,
-            };
-        }
-        if parent.is_some() {
-            return false;
-        }
-        match self.storage.run_user_message_sources(run_id) {
-            Ok(sources) => {
-                !sources.is_empty()
-                    && sources
-                        .iter()
-                        .all(|s| matches!(s.as_str(), "owner" | "peer_admin"))
-            }
-            Err(_) => false,
-        }
+        owner_started_run(&self.storage, ctx.run_id, ctx.parent_run_id)
     }
 
     /// Record that the autonomy mode, not an approval, let this call run: the
@@ -2289,4 +2291,34 @@ fn note_gate(ctx: &RunCtx, req: &GateRequest) {
     ctx.taint
         .lock()
         .note(req.content, &taint::source_label(&req.tool, &req.input));
+}
+
+/// Whether the top-level run above `run_id` was started and steered only by the
+/// owner: every user message delivered into it is `owner` or `peer_admin`.
+/// Walks the parent chain; fails closed on storage errors and deep chains.
+pub(crate) fn owner_started_run(
+    storage: &storage::Storage,
+    mut run_id: RunId,
+    mut parent: Option<RunId>,
+) -> bool {
+    for _ in 0..8 {
+        let Some(p) = parent else { break };
+        run_id = p;
+        parent = match storage.get_run(p) {
+            Ok(Some(r)) => r.parent_run_id,
+            _ => return false,
+        };
+    }
+    if parent.is_some() {
+        return false;
+    }
+    match storage.run_user_message_sources(run_id) {
+        Ok(sources) => {
+            !sources.is_empty()
+                && sources
+                    .iter()
+                    .all(|s| matches!(s.as_str(), "owner" | "peer_admin"))
+        }
+        Err(_) => false,
+    }
 }

@@ -92,13 +92,11 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/workflows"),
     ("DELETE", "/v1/workflows/{}"),
     ("POST", "/v1/workflows/{}/run"),
+    // saved steps (tools, targets, parameter shapes) are the owner's to read
+    ("GET", "/v1/workflows"),
+    ("GET", "/v1/workflows/{}"),
     // policy, bot authority
     ("PUT", "/v1/policy"),
-    // saved automation replays tool calls without a model; saving, deleting and
-    // starting one (the human entry for runtime values) are the owner's
-    ("POST", "/v1/workflows"),
-    ("DELETE", "/v1/workflows/{}"),
-    ("POST", "/v1/workflows/{}/run"),
     ("POST", "/v1/trusted-folders"),
     ("DELETE", "/v1/trusted-folders"),
     ("PUT", "/v1/bots/{}/files"),
@@ -222,8 +220,6 @@ pub const TOKEN_OK_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/runs/{}/cancel"),
     ("POST", "/v1/runs/{}/resume"),
     ("POST", "/v1/runs/{}/remember"),
-    // read-only review of what a run did; nothing is saved
-    ("POST", "/v1/runs/{}/workflow-proposal"),
     ("POST", "/v1/runs/{}/changes/{}/restore"),
     ("PUT", "/v1/control/state"),
     ("POST", "/v1/schedules/parse"),
@@ -286,6 +282,8 @@ fn in_table(table: &[(&str, &str)], method: &str, path: &str) -> bool {
 /// Whether `method path` needs the owner key.
 #[must_use]
 pub fn is_owner_route(method: &str, path: &str) -> bool {
+    // The CLI passes a query string; the server matches the bare path.
+    let path = path.split_once('?').map_or(path, |(p, _)| p);
     let decoded = percent_encoding::percent_decode_str(path)
         .decode_utf8()
         .map_or_else(|_| path.to_owned(), std::borrow::Cow::into_owned);
