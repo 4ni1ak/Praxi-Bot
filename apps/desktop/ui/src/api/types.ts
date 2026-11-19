@@ -62,6 +62,7 @@ export type HomeInfo = S["HomeDto"];
 export type StopRunsInput = S["StopRunsInput"];
 export type StopRunsResponse = S["StopRunsResponse"];
 export type UsageSummary = S["UsageSummary"];
+export type SpendLimit = S["SpendLimitDto"];
 export type UsageTotals = S["UsageTotals"];
 export type EffectivePolicy = S["EffectivePolicyDto"];
 export type Grant = S["GrantDto"];

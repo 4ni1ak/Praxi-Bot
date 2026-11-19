@@ -573,6 +573,7 @@ export class MockApiClient extends ApiClient {
   readonly messages = new Map<string, Message[]>();
   readonly secrets = new Map<string, number>();
   readonly doctorChecks: DoctorCheck[] = structuredClone(DOCTOR_CHECKS);
+  spendLimit: number | null = null;
   /** Repairs run so far (tests). */
   readonly repairs: string[] = [];
   private readonly liveView = new MockLiveViewService();
@@ -1122,6 +1123,22 @@ export class MockApiClient extends ApiClient {
         }
       case "GET /usage":
         return ok(USAGE);
+      case "GET /spend-limit":
+      case "PUT /spend-limit": {
+        if (method === "PUT") {
+          this.spendLimit = (opts.body as { limit_usd: number | null }).limit_usd;
+        }
+        const spent = 3.4127;
+        const now = Date.now();
+        const start = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), 1).getTime();
+        const end = new Date(new Date(now).getFullYear(), new Date(now).getMonth() + 1, 1).getTime();
+        return ok({
+          limit_usd: this.spendLimit, month_start_ms: start, month_end_ms: end, now_ms: now,
+          spent_usd: spent, unpriced_calls: 2,
+          remaining_usd: this.spendLimit === null ? null : Math.max(0, this.spendLimit - spent),
+          forecast_usd: (spent / Math.max(1, now - start)) * (end - start)
+        });
+      }
       case "GET /doctor": {
         const checks = structuredClone(this.doctorChecks);
         return ok({ ok: checks.every((c) => c.status !== "fail"), checks });
