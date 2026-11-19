@@ -811,6 +811,7 @@
     "close": "Panel schließen",
     "computer": "Computer",
     "edit": "Bot bearbeiten",
+    "isMain": "Das ist der Haupt-Bot",
     "mail": {
       "agentmail": "Eigene Adresse",
       "check": "Verbindung prüfen",
@@ -839,6 +840,7 @@
       "toolsOffHint": "Das Postfach ist verbunden, aber {{name}} sieht noch keine E-Mail-Werkzeuge. Schalte dies ein, damit der Bot E-Mails lesen und schreiben kann.",
       "toolsOnHint": "Lesen ist erlaubt. Senden richtet sich immer nach dem Berechtigungsmodus dieses Bots und fragt standardmäßig zuerst nach."
     },
+    "makeMain": "Zum Haupt-Bot machen",
     "myComputer": "Mein Computer",
     "needsDesktop": "{{name}} hat keine Desktop-Sitzung, daher gibt es keinen Bildschirm zum Anzeigen. Um eine hinzuzufügen, führe auf diesem Computer aus:",
     "noChatMatches": "Keine passenden Chats",

@@ -14,6 +14,10 @@ import { isCliDefault, modelGroups, sourceRecommendations } from "./modelPicker.
  * Everything here is pure so the flow can be tested without a daemon.
  */
 export type FirstRunStep = "brain" | "freedom" | "bot";
+/** The first bot of a fresh home is Praxi, the white ghost: it becomes the main bot (first in the list). */
+export const FIRST_RUN_BOT_SHAPE = "ghost" as const;
+export const FIRST_RUN_BOT_COLOR = "#f4f4f5";
+
 export const FIRST_RUN_STEPS: readonly FirstRunStep[] = ["brain", "freedom", "bot"];
 
 /** `choose`: nothing picked yet; `key`: an API provider waits for its key; `connecting`: a check is running; `connected`: a model is chosen. */
