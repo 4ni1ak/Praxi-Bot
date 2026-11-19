@@ -659,6 +659,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{id}/memory/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["preview_bot_memory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots/{id}/skills": {
         parameters: {
             query?: never;
@@ -2196,6 +2212,54 @@ export interface paths {
         get: operations["list_mcp_tools"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_memories"];
+        put?: never;
+        post: operations["create_memory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["delete_memory"];
+        options?: never;
+        head?: never;
+        patch: operations["update_memory"];
+        trace?: never;
+    };
+    "/v1/memory/{id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["undo_memory"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4141,6 +4205,16 @@ export interface components {
             /** Format: int64 */
             ttl_seconds?: number;
         };
+        /** @description Create a user-authored memory item (`POST /v1/memory`). */
+        CreateMemoryInput: {
+            /**
+             * Format: uuid
+             * @description `None` creates a shared memory across all bots; `Some(bot)` scopes to that bot.
+             */
+            bot_id?: string | null;
+            content: string;
+            kind: components["schemas"]["MemoryKindDto"];
+        };
         CreateSession: {
             /**
              * Format: uuid
@@ -5654,6 +5728,65 @@ export interface components {
             /** @description Endpoint URL. */
             url: string;
         };
+        /** @description One stored memory item and its active undo journal state. */
+        MemoryItemDto: {
+            /**
+             * Format: uuid
+             * @description `None` means shared across all bots of this owner.
+             */
+            bot_id?: string | null;
+            content: string;
+            /** Format: int64 */
+            created_ms: number;
+            deleted: boolean;
+            /** Format: uuid */
+            id: string;
+            /** Format: float */
+            importance: number;
+            kind: components["schemas"]["MemoryKindDto"];
+            /** Format: int64 */
+            last_used_ms: number;
+            /** Format: uuid */
+            source_chat_id?: string | null;
+            /** Format: uuid */
+            source_message_id?: string | null;
+            source_quote?: string | null;
+            trust: components["schemas"]["MemoryTrustDto"];
+            /**
+             * Format: int64
+             * @description Newest active journal entry id that can undo the last change to this memory.
+             */
+            undo_journal_id?: number | null;
+            /** Format: int64 */
+            valid_until_ms?: number | null;
+        };
+        /**
+         * @description Memory category.
+         * @enum {string}
+         */
+        MemoryKindDto: "profile" | "bot" | "episodic" | "procedural" | "lesson";
+        /** @description Exact recall preview for a bot and query (`GET /v1/bots/{id}/memory/preview`). */
+        MemoryPreviewDto: {
+            /** Format: uuid */
+            bot_id: string;
+            budget_tokens: number;
+            estimated_tokens: number;
+            hits: components["schemas"]["MemoryPreviewHitDto"][];
+            query: string;
+            /** @description The exact delimited data block `with_recall` prepends to the user message. */
+            rendered_block: string;
+        };
+        /** @description One recalled memory and its boosted fusion score in a recall preview. */
+        MemoryPreviewHitDto: {
+            memory: components["schemas"]["MemoryItemDto"];
+            /** Format: double */
+            score: number;
+        };
+        /**
+         * @description Provenance trust of a stored memory.
+         * @enum {string}
+         */
+        MemoryTrustDto: "user" | "untrusted";
         /** @description A stored chat message. */
         MessageDto: {
             /** @description Files attached to a user message. */
@@ -6724,6 +6857,10 @@ export interface components {
             programs?: string[] | null;
             /** @description New value (write-only). */
             value?: string | null;
+        };
+        /** @description Edit a memory item's text (`PATCH /v1/memory/{id}`). */
+        UpdateMemoryInput: {
+            content: string;
         };
         /** @description `GET /v1/usage`. */
         UsageSummary: {
@@ -8657,6 +8794,46 @@ export interface operations {
                 };
             };
             /** @description no such bot or grant */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    preview_bot_memory: {
+        parameters: {
+            query: {
+                /** @description Query text to preview recall for */
+                query: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryPreviewDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11957,6 +12134,190 @@ export interface operations {
             };
             /** @description MCP management is not available */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_memories: {
+        parameters: {
+            query?: {
+                /** @description Filter to memories visible to this bot */
+                bot?: string;
+                /** @description Exclude shared memories when filtering by bot */
+                bot_only?: boolean;
+                /** @description Filter by memory category */
+                kind?: components["schemas"]["MemoryKindDto"];
+                /** @description Case-insensitive search text */
+                q?: string;
+                /** @description Include forgotten (soft-deleted) items */
+                include_deleted?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryItemDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_memory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMemoryInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryItemDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_memory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryItemDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update_memory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateMemoryInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryItemDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    undo_memory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryItemDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

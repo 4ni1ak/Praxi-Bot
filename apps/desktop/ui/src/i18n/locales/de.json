@@ -3898,6 +3898,55 @@
       "unsupported": "Praxi kann {{cli}} auf diesem Computer nicht ausführen."
     }
   },
+  "memory": {
+    "title": "Persönliches Gedächtnis",
+    "description": "Sieh dir an, woran sich jeder Bot aus früheren Unterhaltungen erinnert, bearbeite oder vergiss Einträge, mache Änderungen rückgängig und prüfe in der Vorschau, was in die nächste Runde einfließt.",
+    "bot": "Bot",
+    "noBot": "Erstelle einen Bot, um Erinnerungen anzusehen oder hinzuzufügen.",
+    "search": "Erinnerungen durchsuchen",
+    "searchPlaceholder": "Nach Text oder Zitat filtern …",
+    "kindFilter": "Kategorie",
+    "allKinds": "Alle Kategorien",
+    "botOnly": "Nur Erinnerungen dieses Bots",
+    "includeForgotten": "Vergessene Einträge anzeigen",
+    "empty": "Keine Erinnerungen entsprechen diesem Filter.",
+    "scopeShared": "Für alle Bots gemeinsam",
+    "scopeThisBot": "Nur {{bot}}",
+    "forgottenBadge": "Vergessen",
+    "edit": "Bearbeiten",
+    "editLabel": "Erinnerungstext",
+    "saveEdit": "Erinnerung speichern",
+    "forget": "Vergessen",
+    "undo": "Rückgängig",
+    "addTitle": "Erinnerung hinzufügen",
+    "scope": "Bereich",
+    "kind": "Kategorie",
+    "content": "Was gemerkt werden soll",
+    "contentPlaceholder": "Kurze Tatsache oder Präferenz eingeben …",
+    "add": "Erinnerung hinzufügen",
+    "addedNotice": "Erinnerung hinzugefügt.",
+    "updatedNotice": "Erinnerung aktualisiert.",
+    "forgottenNotice": "Erinnerung vergessen.",
+    "undoneNotice": "Letzte Änderung rückgängig gemacht.",
+    "previewTitle": "Was der Bot sieht (Abrufvorschau)",
+    "previewHint": "Gib eine Beispielnachricht ein, um den genauen Datenblock mit abgerufenen Erinnerungen zu sehen, der der Runde vorangestellt wird.",
+    "previewQuery": "Beispiel-Benutzernachricht",
+    "previewPlaceholder": "z. B. Wann erstellen wir die Versionshinweise?",
+    "previewRun": "Abruf testen",
+    "previewTokens": "{{count}} Erinnerungen abgerufen · ~{{used}} / {{budget}} Tokens",
+    "previewEmpty": "Für diese Nachricht würden keine Erinnerungen abgerufen.",
+    "kinds": {
+      "profile": "Benutzerprofil",
+      "bot": "Bot-Wissen",
+      "episodic": "Vergangenes Ereignis",
+      "procedural": "Ablauf",
+      "lesson": "Lektion aus Korrektur"
+    },
+    "trust": {
+      "user": "Vom Benutzer bestätigt",
+      "untrusted": "Nicht vertrauenswürdige Daten"
+    }
+  },
   "voice": {
     "bot": {
       "title": "Stimme für diesen Bot",

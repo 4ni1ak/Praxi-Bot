@@ -1331,6 +1331,7 @@ dependencies = [
  "computer-target",
  "connector-calendar",
  "connector-email",
+ "connector-homeassistant",
  "daemon-api",
  "desktop-api",
  "desktop-linux",
@@ -1558,6 +1559,21 @@ dependencies = [
  "web-tools",
  "webpki-roots",
  "wiremock",
+]
+
+[[package]]
+name = "connector-homeassistant"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "reqwest 0.12.28",
+ "secret-store",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tool-registry",
+ "url",
 ]
 
 [[package]]
