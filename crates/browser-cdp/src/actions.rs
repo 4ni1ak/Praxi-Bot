@@ -98,6 +98,21 @@ pub struct KeySpec {
     pub modifiers: u32,
 }
 
+/// Error text of [`Page::focused_entry`] when no element holds focus.
+const NO_FOCUS: &str = "no element has keyboard focus";
+
+/// `Enter` carries text for the page but never type into a field.
+fn is_navigation_spec(spec: &str) -> bool {
+    matches!(
+        spec.rsplit('+')
+            .next()
+            .unwrap_or(spec)
+            .to_ascii_lowercase()
+            .as_str(),
+        "enter" | "return"
+    )
+}
+
 /// Parse `Enter`, `Tab`, `ArrowDown`, `a`, `Control+a`, `Shift+Tab`, ...
 pub fn parse_key(spec: &str) -> Result<KeySpec> {
     let parts: Vec<&str> = if spec == "+" {
@@ -259,6 +274,9 @@ impl Page {
                     json!({"nodeId": root, "selector": ":focus"}),
                 )
                 .await?;
+            if focus["nodeId"].as_i64().unwrap_or(0) == 0 {
+                return Err(Error::Element(NO_FOCUS.into()));
+            }
             let node = self
                 .cmd_on(
                     session.as_deref(),
@@ -598,6 +616,74 @@ impl Page {
         })
     }
 
+    /// Execution-time sensitivity check: refuses when the element was flagged at snapshot time
+    /// or is (or cannot be shown not to be) a secret field right now.
+    async fn refuse_if_sensitive_now(&self, e: &RefEntry, what: &str) -> Result<()> {
+        let live = self.entry_is_sensitive(e).await.unwrap_or(true);
+        if live {
+            return Err(Error::Element(format!(
+                "refused: the target of this {what} is, or may be, a password / one-time-code / card field; nothing was typed"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Fallback for [`Self::refuse_if_sensitive_now`] on the top document's `activeElement`.
+    /// A focused frame or shadow host cannot be looked into here, so it counts as unknown.
+    async fn refuse_if_active_element_secret(&self) -> Result<()> {
+        let refuse = || {
+            Err(Error::Element(
+                "refused: the target of this key press is, or may be, a password / one-time-code / card field; nothing was typed"
+                    .into(),
+            ))
+        };
+        let Ok(r) = self
+            .cmd(
+                "Runtime.evaluate",
+                json!({"expression": "document.activeElement", "returnByValue": false}),
+            )
+            .await
+        else {
+            return refuse();
+        };
+        let Some(object_id) = r["result"]["objectId"].as_str() else {
+            return Ok(()); // null: nothing is focused
+        };
+        let Ok(d) = self
+            .cmd(
+                "DOM.describeNode",
+                json!({"objectId": object_id, "pierce": true}),
+            )
+            .await
+        else {
+            return refuse();
+        };
+        let node = &d["node"];
+        let name = node["nodeName"].as_str().unwrap_or("").to_ascii_uppercase();
+        if matches!(name.as_str(), "BODY" | "HTML") {
+            return Ok(());
+        }
+        let hosts_other_document = matches!(name.as_str(), "IFRAME" | "FRAME")
+            || node["shadowRoots"]
+                .as_array()
+                .is_some_and(|a| !a.is_empty());
+        let Some(backend_id) = node["backendNodeId"].as_i64() else {
+            return refuse();
+        };
+        if hosts_other_document {
+            return refuse();
+        }
+        let entry = RefEntry {
+            session_id: None,
+            frame_id: String::new(),
+            backend_id,
+            name: String::new(),
+            role: String::new(),
+            sensitive: true,
+        };
+        self.refuse_if_sensitive_now(&entry, "key press").await
+    }
+
     async fn entry_is_sensitive(&self, e: &RefEntry) -> Result<bool> {
         let node = self
             .cmd_on(
@@ -680,6 +766,17 @@ impl Page {
             down["text"] = json!(t);
         }
         self.check_focused_origin(expected).await?;
+        if k.text.is_some() && !is_navigation_spec(spec) {
+            // Printable input: the focused element must still not be a secret field.
+            match self.focused_entry().await {
+                Ok(focused) => self.refuse_if_sensitive_now(&focused, "key press").await?,
+                // `:focus` does not match on a page without OS focus: ask the document itself.
+                Err(Error::Element(m)) if m == NO_FOCUS => {
+                    self.refuse_if_active_element_secret().await?;
+                }
+                Err(e) => return Err(e),
+            }
+        }
         self.cmd("Input.dispatchKeyEvent", down).await?;
         self.check_focused_origin(expected).await?;
         self.cmd(
@@ -747,9 +844,12 @@ impl Page {
         text: &str,
         expected: Option<&str>,
     ) -> Result<ActionResult> {
-        self.fill_secret(r, text, |origin| {
-            expected.is_none_or(|e| grant_origin_matches(origin.as_deref(), e))
-        })
+        self.fill_checked(
+            r,
+            text,
+            |origin| expected.is_none_or(|e| grant_origin_matches(origin.as_deref(), e)),
+            true,
+        )
         .await
     }
 
@@ -762,9 +862,29 @@ impl Page {
     where
         F: Fn(Option<String>) -> bool + Send + Sync,
     {
+        self.fill_checked(r, text, accept, false).await
+    }
+
+    /// Shared fill step. `refuse_sensitive` (plain, non-secret fills) re-reads the target's
+    /// type / name / autocomplete from the live DOM right before writing, so a page that turned
+    /// the field into a password input after the earlier check and the approval cannot get
+    /// text typed into it. Unknown counts as sensitive.
+    async fn fill_checked<F>(
+        &self,
+        r: &str,
+        text: &str,
+        accept: F,
+        refuse_sensitive: bool,
+    ) -> Result<ActionResult>
+    where
+        F: Fn(Option<String>) -> bool + Send + Sync,
+    {
         let before = self.baseline().await?;
         let res = async {
             let e = self.locate(r).await?;
+            if refuse_sensitive {
+                self.refuse_if_sensitive_now(&e, "fill").await?;
+            }
             let nav = self.shared.nav_gen.load(Ordering::SeqCst);
             let first = self.frame_identity(&e).await?;
             if !accept(first.origin.clone()) {
@@ -774,6 +894,9 @@ impl Page {
                 ));
             }
             let second = self.frame_identity(&e).await?;
+            if refuse_sensitive {
+                self.refuse_if_sensitive_now(&e, "fill").await?;
+            }
             if second != first || self.shared.nav_gen.load(Ordering::SeqCst) != nav {
                 return Err(Error::Element(
                     "the field's frame changed while it was being prepared; nothing was typed"

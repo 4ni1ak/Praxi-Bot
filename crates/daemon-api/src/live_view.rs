@@ -1052,9 +1052,9 @@ pub(crate) async fn takeover(
     }
     // The local user's override outranks every paired device: neither the
     // overridden peer (reacquire) nor another one (recover) may re-take the
-    // screen, and a fresh grant alone never suffices: only the local user
-    // clears it (`recover` or release), after which a new takeover also needs
-    // the grant.
+    // screen, and a fresh grant alone never suffices: only the local user or
+    // the host's admin desktop clears it (`recover`),
+    // after which a new takeover also needs the grant.
     if !actor.local
         && s.hub()
             .takeover()
@@ -1446,9 +1446,11 @@ pub(crate) async fn local_override(
     Ok(Json(crate::routes::control_state_dto(&s, Some(&actor))))
 }
 
-/// `POST /v1/control/recover`: the local user clears a takeover latch (also one
-/// restored after a restart) without a registered target or view session. The
-/// bot resumes with a fresh observation.
+/// `POST /v1/control/recover`: the local user, or the paired admin desktop of this host that
+/// still holds screen input (never a phone or a non-admin peer), clears a takeover latch (also
+/// one restored after a restart) without a registered target or view session. The bot resumes
+/// with a fresh observation. A host admin that clears its own takeover keeps its input grant;
+/// a different owner loses theirs, as with any local override.
 #[utoipa::path(post,path="/v1/control/recover",tag="control",security(("bearer"=[])),responses((status=200,body=crate::dto::ControlStateDto),(status=403,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn local_recover(
     State(s): State<AppState>,
@@ -1458,8 +1460,23 @@ pub(crate) async fn local_recover(
     let by = if actor.local { "local" } else { "host_admin" };
     // The stop is in force either way; an unconfirmed key reset must not block
     // clearing the latch (the target is reset again best-effort below).
-    let _ = override_takeover(&s, &actor, Reason::LocalOverride).await;
     let live = s.live_view();
+    // `override_takeover` revokes the takeover owner's input grant. When the host's admin
+    // desktop clears ITS OWN takeover that would lock it out until a restart or a new grant:
+    // put its grant back to what it was (it passed the allowed() check above, so this adds
+    // nothing; an explicit revoke made on the host was refused before we got here).
+    let own_grant =
+        (actor.admin && !actor.local && s.hub().takeover().is_some_and(|t| t.actor == actor.key))
+            .then(|| live.privileges.lock().get(&actor.key).copied());
+    let _ = override_takeover(&s, &actor, Reason::LocalOverride).await;
+    if let Some(prior) = own_grant {
+        match prior {
+            Some(p) => live.set_privileges(actor.key.clone(), p),
+            None => {
+                live.privileges.lock().remove(&actor.key);
+            }
+        }
+    }
     let Ok(_executor) = tokio::time::timeout(BACKEND_CALL_TIMEOUT, live.executor.lock()).await
     else {
         return Err(ApiError::unavailable("the executor is busy; try again"));

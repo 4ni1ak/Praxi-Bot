@@ -1600,6 +1600,25 @@ async fn host_admin_desktop_clears_a_pause_but_other_peers_and_phones_stay_refus
     assert!(t.state.hub().latched().is_none());
 }
 #[tokio::test]
+async fn host_admin_recovering_its_own_takeover_keeps_its_input_grant() {
+    use axum::extract::State;
+    let t = Test::new();
+    let (_id, _owned, _body) = t.active(Some("adm")).await;
+    // A real admin desktop has no explicit entry: the admin default applies.
+    let live = Arc::clone(t.state.live_view());
+    live.privileges.lock().remove("peer:adm");
+    let admin = view_actor("adm", true);
+    assert!(live.allowed(&admin, true));
+    local_recover(State(t.state.clone()), axum::Extension(admin.clone()))
+        .await
+        .unwrap();
+    assert!(t.state.hub().latched().is_none());
+    assert!(
+        live.allowed(&admin, true),
+        "recovering its own takeover must not revoke the admin's input"
+    );
+}
+#[tokio::test]
 async fn reconciling_an_unpaired_owner_acts_once_not_every_tick() {
     let t = Test::new();
     let (_id, _owned, _body) = t.active(Some("alice")).await;

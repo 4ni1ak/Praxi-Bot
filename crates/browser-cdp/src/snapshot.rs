@@ -107,13 +107,44 @@ pub struct DomExtra {
 const SECRET_NAME_WORDS: &[&str] = &[
     "password",
     "passwd",
-    "otp",
     "one-time",
     "cvv",
     "cvc",
     "card number",
     "iban",
 ];
+
+/// Whether `h` contains `otp` as a word of its own (`otp`, `user_otp`, `totp`, `mfaOtp`) and not
+/// inside another word (`footpath`, `hotpot`).
+fn has_otp_word(h: &str) -> bool {
+    let lower = h.to_ascii_lowercase();
+    let (hb, lb) = (h.as_bytes(), lower.as_bytes());
+    let mut from = 0;
+    while let Some(i) = lower[from..].find("otp").map(|i| i + from) {
+        from = i + 1;
+        let mut start = i;
+        // `totp` / `hotp` count as the same word.
+        if i > 0 && matches!(lb[i - 1], b't' | b'h') {
+            start = i - 1;
+        }
+        let before_ok = start == 0
+            || !lb[start - 1].is_ascii_alphanumeric()
+            || (hb[start].is_ascii_uppercase() && hb[start - 1].is_ascii_lowercase());
+        let end = i + 3;
+        let after_ok =
+            end >= lb.len() || !lb[end].is_ascii_alphabetic() || hb[end].is_ascii_uppercase();
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether a name / id / aria-label hint marks a field as holding a secret.
+pub fn name_hint_is_secret(h: &str) -> bool {
+    let l = h.to_ascii_lowercase();
+    SECRET_NAME_WORDS.iter().any(|w| l.contains(w)) || has_otp_word(h)
+}
 
 impl DomExtra {
     /// Whether the element looks clickable although it may have no interactive AX role.
@@ -131,11 +162,7 @@ impl DomExtra {
                 let a = a.to_ascii_lowercase();
                 a.contains("password") || a.contains("cc-") || a.contains("one-time-code")
             })
-            || (self.input_type.is_some()
-                && self.name_hints.iter().any(|h| {
-                    let h = h.to_ascii_lowercase();
-                    SECRET_NAME_WORDS.iter().any(|w| h.contains(w))
-                }))
+            || (self.input_type.is_some() && self.name_hints.iter().any(|h| name_hint_is_secret(h)))
     }
 }
 
@@ -643,7 +670,10 @@ impl Builder<'_> {
 
         // Mask sensitive values.
         let mut value = node.value.clone();
-        let unknown_sensitivity = self.frames[f].extras_failed && FREE_TEXT_ROLES.contains(&role);
+        // A text field with no DOM facts (capture failed, or the input is missing from it) is
+        // unknown, and unknown counts as secret.
+        let unknown_sensitivity =
+            (self.frames[f].extras_failed || extra.is_none()) && FREE_TEXT_ROLES.contains(&role);
         let is_secret = extra.as_ref().is_some_and(DomExtra::is_sensitive);
         if (is_secret || unknown_sensitivity) && value.is_some() {
             value = Some(MASK.to_string());
@@ -806,6 +836,14 @@ mod tests {
             input_type: Some("password".into()),
             ..Default::default()
         });
+        for (backend_id, tag, input_type) in [(10, "input", Some("text")), (14, "select", None)] {
+            f.extras.push(DomExtra {
+                backend_id,
+                tag: tag.into(),
+                input_type: input_type.map(Into::into),
+                ..Default::default()
+            });
+        }
         let mut refs = RefMap::new();
         let t = text(&[f], &SnapshotOptions::default(), &mut refs);
         assert!(t.contains("textbox \"Password\" value=\"[masked]\""), "{t}");
@@ -943,9 +981,29 @@ mod tests {
             frame_id: "main".into(),
             loader_id: Some("L1".into()),
             ax_nodes: ax.as_array().unwrap().clone(),
+            extras: if failed {
+                Vec::new()
+            } else {
+                vec![DomExtra {
+                    backend_id: 2,
+                    tag: "input".into(),
+                    input_type: Some("text".into()),
+                    ..Default::default()
+                }]
+            },
             extras_failed: failed,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_text_field_missing_from_the_dom_facts_is_masked_and_refused() {
+        let mut f = textbox_frame("maybe-a-secret", false);
+        f.extras.clear();
+        let mut refs = RefMap::new();
+        let t = text(&[f], &SnapshotOptions::default(), &mut refs);
+        assert!(!t.contains("maybe-a-secret"), "{t}");
+        assert!(refs.get("e1").unwrap().sensitive);
     }
 
     #[test]
