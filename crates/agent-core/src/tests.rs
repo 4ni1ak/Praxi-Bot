@@ -1115,6 +1115,33 @@ async fn timed_out_call_reaches_the_model_with_a_next_step_and_a_ledger() {
     }));
 }
 
+/// The system prompt tells the model which tool family fits which job: look
+/// things up with the web tools before opening a browser, and never claim a
+/// job done without the result behind it.
+#[tokio::test]
+async fn system_prompt_carries_the_tool_choice_guidance() {
+    let env = setup();
+    let web = Arc::new(tool("web_extract", Effect::Read, "page text"));
+    let browser = Arc::new(tool("browser_open", Effect::Write, "# T (https://a.test/)"));
+    let fake = Fake::new(vec![text("hi")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&web), t(&browser)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let run = lp.run_turn(env.chat, "look something up").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let req = fake.request(0);
+    let system = req.messages[0].content.as_str().unwrap();
+    assert!(system.contains("Choosing tools:"), "{system}");
+    assert!(system.contains("BEFORE opening a browser"), "{system}");
+    assert!(system.contains("[view: ...]"), "{system}");
+    assert!(system.contains("is NOT done"), "{system}");
+}
+
 #[tokio::test]
 async fn large_output_is_spilled_with_preview_and_path() {
     let env = setup();
