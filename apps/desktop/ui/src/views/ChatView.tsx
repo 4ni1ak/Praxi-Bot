@@ -126,6 +126,8 @@ import {
 import ccStyles from "../components/ChatCards.module.css";
 import styles from "./ChatView.module.css";
 import { type ErrorAction, type HumanError, humanError, humanLine, humanToolError } from "../lib/humanError";
+import type { ApiClient } from "../api/client";
+import { sendWithHostRecovery } from "../lib/hostRecovery";
 import { ComputerTargetChip } from "../components/ComputerTargetChip";
 import { ErrorNotice } from "../components/ErrorNotice";
 
@@ -221,7 +223,9 @@ export function ChatView({
     refreshRuns,
     refreshChats,
     refreshBots,
-    restartDaemon
+    restartDaemon,
+    ensureHostOnline,
+    hostStarting
   } = useDaemon();
   const chat = chats.find((c) => c.id === chatId);
   const bot = bots.find((b) => b.id === chat?.bot_id);
@@ -788,13 +792,28 @@ export function ChatView({
     setSendFailure(null);
     try {
       // "@Other do x": the daemon lets Other answer in THIS chat.
-      const res = await client.sendMessage(
-        chatId,
-        body,
-        undefined,
-        await ownerKey(client.baseUrl),
-        attachmentIds
-      );
+      // Nothing answers: this computer's service is started and the message goes out once it
+      // is up; for a paired server the draft stays and the user is told what to do.
+      const outcome = await sendWithHostRecovery({
+        send: async (fresh) => {
+          const c = (fresh as ApiClient | null) ?? client;
+          return c.sendMessage(chatId, body, undefined, await ownerKey(c.baseUrl), attachmentIds);
+        },
+        ensure: ensureHostOnline
+      });
+      if (outcome.kind === "remote_offline") {
+        setSendFailure({
+          code: "host_offline",
+          title: t("hostRecovery.remoteOffline.title"),
+          hint: t("hostRecovery.remoteOffline.hint"),
+          details: humanError(outcome.error).details
+        });
+        return;
+      }
+      if (outcome.kind !== "sent") {
+        throw outcome.error;
+      }
+      const res = outcome.value;
       if (res.run_id) {
         setAckedRunId(res.run_id);
       }
@@ -1491,6 +1510,11 @@ export function ChatView({
         {error ? (
           <p className={styles.error} role="alert">
             {error}
+          </p>
+        ) : null}
+        {hostStarting ? (
+          <p className={styles.error} role="status" data-testid="host-starting">
+            {t("hostRecovery.starting")}
           </p>
         ) : null}
         {sendFailure ? (

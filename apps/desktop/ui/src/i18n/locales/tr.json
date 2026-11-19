@@ -2629,6 +2629,13 @@
     },
     "viewScreen": "Ekranı izle"
   },
+  "hostRecovery": {
+    "remoteOffline": {
+      "hint": "Praxi bir sunucuyu buradan açamaz. Sunucuyu açın (veya üzerinde Praxi'yi başlatın), sonra Yeniden dene'ye basın. Mesajınız kutuda duruyor.",
+      "title": "Sunucu çevrimdışı"
+    },
+    "starting": "Bu bilgisayardaki Praxi servisi başlatılıyor… hazır olur olmaz mesajınız gönderilecek."
+  },
   "hostState": {
     "connecting": "{{name}} sunucusuna bağlanılıyor…",
     "noModelKey": "{{name}} sunucusunda henüz model anahtarı yok. Ekranını izleyebilir ve botlarını yönetebilirsin; sunucuya bir anahtar eklenene kadar sohbetlere yanıt gelmez.",
