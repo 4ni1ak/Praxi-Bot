@@ -21231,31 +21231,49 @@
   },
   "tags": [
     {
-      "name": "view"
-    },
-    {
-      "name": "meta"
-    },
-    {
-      "name": "bots"
-    },
-    {
-      "name": "chats"
+      "name": "admin"
     },
     {
       "name": "approvals"
     },
     {
-      "name": "runs"
+      "name": "bots"
     },
     {
-      "name": "usage"
+      "name": "channels"
+    },
+    {
+      "name": "chats"
+    },
+    {
+      "name": "composio"
+    },
+    {
+      "name": "control"
+    },
+    {
+      "name": "doctor"
+    },
+    {
+      "name": "email"
     },
     {
       "name": "events"
     },
     {
-      "name": "control"
+      "name": "host"
+    },
+    {
+      "name": "mcp"
+    },
+    {
+      "name": "mcp-server"
+    },
+    {
+      "name": "memory"
+    },
+    {
+      "name": "meta"
     },
     {
       "name": "policy"
@@ -21264,46 +21282,28 @@
       "name": "providers"
     },
     {
+      "name": "runs"
+    },
+    {
       "name": "schedules"
-    },
-    {
-      "name": "channels"
-    },
-    {
-      "name": "host"
-    },
-    {
-      "name": "admin"
-    },
-    {
-      "name": "mcp"
     },
     {
       "name": "secrets"
     },
     {
-      "name": "email"
+      "name": "skills"
     },
     {
-      "name": "composio"
+      "name": "usage"
     },
     {
-      "name": "web"
+      "name": "view"
     },
     {
       "name": "voice"
     },
     {
-      "name": "skills"
-    },
-    {
-      "name": "doctor"
-    },
-    {
-      "name": "mcp-server"
-    },
-    {
-      "name": "memory"
+      "name": "web"
     }
   ]
 }
