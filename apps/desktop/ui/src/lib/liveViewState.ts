@@ -54,7 +54,7 @@ export function summarizeTarget(target: TargetInfo): TargetMetadataSummary {
  */
 export function pickDefaultTarget(
   targets: readonly TargetInfo[],
-  opts: { preferredTargetId?: string | null; botId?: string | null } = {}
+  opts: { preferredTargetId?: string | null; botId?: string | null; preferDesktop?: boolean } = {}
 ): TargetInfo | null {
   if (targets.length === 0) {
     return null;
@@ -70,7 +70,9 @@ export function pickDefaultTarget(
     : [];
   const shared = targets.filter((t) => !t.bot_id);
   const available = (t: TargetInfo) => summarizeTarget(t).available;
+  const desktop = opts.preferDesktop ? shared.find((t) => t.kind === "desktop" && available(t)) : null;
   return (
+    desktop ??
     own.find(available) ??
     own[0] ??
     shared.find(available) ??
@@ -895,15 +897,14 @@ export function reconnectDelayMs(attempt: number): number {
 }
 
 /**
- * Whether a capture session (network, decode, heartbeat) is wanted right now. Only the OPEN
- * viewer wants one: the right-panel card never holds a live session (it shows a placeholder and
- * at most one still image a minute), so the host produces no images until someone clicks.
+ * Whether the open viewer or an explicit request from the visible card needs a capture session.
  */
 export function computeWantSession(a: {
   hasClient: boolean;
   documentHidden: boolean;
   target: TargetInfo | null;
   viewerOpen: boolean;
+  cardRequested?: boolean;
 }): boolean {
   return (
     a.hasClient &&
@@ -911,29 +912,7 @@ export function computeWantSession(a: {
     a.target !== null &&
     summarizeTarget(a.target).canView &&
     !a.target.unavailable_reason &&
-    a.viewerOpen
-  );
-}
-
-/** How often the panel may refresh its still image while it is visible and the window is focused. */
-export const THUMBNAIL_REFRESH_MS = 60_000;
-
-/**
- * Whether the card should (re)fetch its still image now: the panel is on screen, the window is
- * visible and focused, no live viewer is open, and the last image is at least a minute old.
- */
-export function thumbnailDue(a: {
-  panelVisible: boolean;
-  viewerOpen: boolean;
-  windowActive: boolean;
-  lastFetchMs: number | null;
-  nowMs: number;
-}): boolean {
-  return (
-    a.panelVisible &&
-    !a.viewerOpen &&
-    a.windowActive &&
-    (a.lastFetchMs === null || a.nowMs - a.lastFetchMs >= THUMBNAIL_REFRESH_MS)
+    (a.viewerOpen || a.cardRequested === true)
   );
 }
 

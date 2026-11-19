@@ -1848,7 +1848,7 @@ impl Shared {
     }
 
     /// This daemon is an always-on host (the bots' own computer).
-    fn is_host_homed(&self) -> bool {
+    pub(crate) fn is_host_homed(&self) -> bool {
         self.computer_provider
             .read()
             .as_ref()

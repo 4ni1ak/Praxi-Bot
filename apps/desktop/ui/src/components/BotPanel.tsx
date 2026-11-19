@@ -10,7 +10,7 @@ import {
   X,
   Zap
 } from "lucide-react";
-import { type CSSProperties, useState } from "react";
+import { type CSSProperties, Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BotAvatar, type BotAvatarState, type BotIdentity } from "ui";
 import { activitySections, librarySections, subagentRows } from "../lib/activityPanel";
@@ -28,6 +28,7 @@ import type { BotSkillsState } from "../state/useBotSkills";
 import { BotComputerBlock } from "./BotComputerBlock";
 import { StopStatusNotice } from "./StopStatusNotice";
 import styles from "./BotPanel.module.css";
+import { BotPanelMail } from "./BotPanelMail";
 import { BotPanelSkills } from "./BotPanelSkills";
 import { BrandMark } from "./BrandMark";
 import { QuotaBlock } from "./QuotaRings";
@@ -106,7 +107,8 @@ export function BotPanel({
   onOpenProfile,
   onOpenSettings,
   onManageSkills,
-  onAddSkill
+  onAddSkill,
+  onOpenMail
 }: {
   bot: BotIdentity;
   /** `provider/model` the bot runs on. */
@@ -130,6 +132,8 @@ export function BotPanel({
   onOpenSettings: () => void;
   onManageSkills: () => void;
   onAddSkill: () => void;
+  /** Open Settings, Mail (connect, edit or remove a mailbox). */
+  onOpenMail: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const { events, refreshRuns } = useDaemon();
@@ -281,7 +285,10 @@ export function BotPanel({
         ) : (
           library.map((id) =>
             id === "skills" ? (
-              <BotPanelSkills key={id} skills={skills} onManage={onManageSkills} onAdd={onAddSkill} />
+              <Fragment key={id}>
+                <BotPanelSkills skills={skills} onManage={onManageSkills} onAdd={onAddSkill} />
+                <BotPanelMail botId={bot.id} botName={bot.name} onOpenMail={onOpenMail} />
+              </Fragment>
             ) : (
               <div key={id}>
         <section className={styles.section} aria-labelledby="bot-panel-chats">
