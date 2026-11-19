@@ -223,3 +223,14 @@ test("Clear pause goes through the verifying runClearPause and the dock uses the
   assert.match(viewer, /foreignTakeoverOwner\(state\)/);
   assert.match(viewer, /liveView\.connectionLost/);
 });
+
+test("clearing a pause hides the banner and both buttons at once and never fails silently", () => {
+  // optimistic: one in-flight flag the banner and the panel card both honour
+  assert.match(context, /pauseClearing/);
+  assert.match(banner, /pauseClearing/);
+  assert.match(panelBlock, /!live\.pauseClearing/);
+  // a refusal (owner key, local-only, busy executor) and a changed state both toast
+  const clear = context.slice(context.indexOf("const clearPauseInner"), context.indexOf("const recoverTakeover"));
+  assert.match(clear, /toast\.show\(outcome\.message/);
+  assert.match(clear, /toast\.show\(t\("liveView\.errors\.pause_changed"\)/);
+});
