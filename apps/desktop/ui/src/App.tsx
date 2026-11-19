@@ -58,6 +58,7 @@ import { chatTitleLabel } from "./lib/chatTitle";
 import { APP_COMMAND_EVENT, type AppCommandTarget } from "./lib/slash";
 import { editorSection } from "./lib/botEditor";
 import { BOT_COLORS, botView, draftFromBot } from "./lib/botProfile";
+import { makeBotMain } from "./lib/botOrder";
 import {
   backFromChatOpensPanel,
   botChats,
@@ -821,6 +822,8 @@ function AppShell() {
               onManageSkills={() => setSkillsOpen(true)}
               onAddSkill={() => setAddSkillOpen(true)}
               onOpenMail={() => setSettingsOpen("mail")}
+              isMain={bots[0]?.id === selectedBot.id}
+              onMakeMain={botIds.length > 1 ? () => updateSettings({ botOrder: makeBotMain(botIds, selectedBot.id) }) : undefined}
             />
           ) : null}
         </SidePanel>
