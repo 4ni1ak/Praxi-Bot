@@ -12,11 +12,6 @@
 #   uninstall|purge                install-linux.sh --uninstall [--purge]
 set -euo pipefail
 
-# Never let apt's needrestart hook restart services (including praxi.service)
-# behind our back: list-only mode, no interactive prompts. Restarts happen only
-# where this script restarts them on purpose.
-export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1
-
 STAGE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX=/opt/praxi
 DATA=/var/lib/praxi
@@ -118,22 +113,26 @@ cmd_status() {
   if browser_present; then kv browser 1; else kv browser 0; fi
 }
 
+# Keep needrestart from restarting the live installation during package setup.
+apt_without_restarts() {
+  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 apt-get "$@"
+}
+
 cmd_install_gh() {
   need_root
   local have; have="$(gh_version || true)"
   if [[ -n "${have}" ]] && version_ge "${have}" "${MIN_GH}"; then log "gh ${have} already installed"; return 0; fi
   if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y -qq curl ca-certificates
+    apt_without_restarts update -qq
+    apt_without_restarts install -y -qq curl ca-certificates
     install -d -m 755 /etc/apt/keyrings
     curl -fsSL --proto '=https' --tlsv1.2 https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
     chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list
-    apt-get update -qq
-    apt-get install -y -qq gh
+    apt_without_restarts update -qq
+    apt_without_restarts install -y -qq gh
   elif command -v dnf >/dev/null 2>&1; then
     dnf install -y -q curl 'dnf-command(config-manager)' || true
     dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 \
@@ -166,7 +165,7 @@ cmd_install() {
   [[ -f "${STAGE}/install-linux.sh" ]] || die "install-linux.sh was not uploaded"
   local args=(--version "${version}" --host-mode)
   [[ "${P[desktop]:-1}" != "1" ]] || args+=(--with-desktop-session)
-  bash "${STAGE}/install-linux.sh" "${args[@]}"
+  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 bash "${STAGE}/install-linux.sh" "${args[@]}"
 }
 
 # `bot` as the unprivileged service user, against the local daemon.

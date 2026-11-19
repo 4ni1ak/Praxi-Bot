@@ -339,6 +339,10 @@ case "${verb}" in
 esac
 EOF
 write_fake_shim apt-get <<'EOF'
+if [[ "${DEBIAN_FRONTEND:-}" != noninteractive || "${NEEDRESTART_MODE:-}" != l || "${NEEDRESTART_SUSPEND:-}" != 1 ]]; then
+  echo "apt-get must suspend needrestart and run noninteractively" >&2
+  exit 1
+fi
 printf '%s\n' "$*" >> "${SANDBOX_STATE}/apt.log"
 if [[ "${FAKE_FAIL_APT:-0}" -eq 1 && "${1:-}" == "install" ]]; then
   echo "E: Unable to fetch some archives (simulated package failure)" >&2
@@ -655,6 +659,7 @@ if FAKE_STATEFUL_SYSTEMCTL=1 FAKE_FAIL_APT=1 \
   fail "expected package install failure to exit non-zero"
 fi
 assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "stop praxi"
+assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "restart praxi"
 assert_prev_install_restored_and_running "5c-1 package failure"
 
 # 5c-2. Disk-full (ENOSPC) failure during binary install after stopping services
@@ -686,6 +691,7 @@ if FAKE_STATEFUL_SYSTEMCTL=1 FAKE_FAIL_START_UNIT="praxi.service" FAKE_FAIL_ONCE
   fail "expected failed startup during upgrade to exit non-zero and trigger rollback"
 fi
 assert_file_contains "${TMP_ROOT}/rollback-start.log" "rolling back to previous working installation"
+assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "restart praxi"
 assert_prev_install_restored_and_running "5c-4 failed start"
 
 # 5c-5. Readiness check failure AFTER new install started & enabled praxi-xvfb, praxi-desktop, praxi
