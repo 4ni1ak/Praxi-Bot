@@ -56,16 +56,17 @@ env_port() {
   printf '%s' "${p}"
 }
 
-# True when the EFFECTIVE start command of praxi.service runs `bot serve --host`.
-# Host mode may come from a systemd drop-in (praxi.service.d/*.conf), so read the
-# merged unit (`systemctl cat`) and use its last ExecStart.
+# Read the manager's effective command after unit and drop-in merging.
 unit_hostmode() {
-  local text last
-  text="$(systemctl cat praxi.service 2>/dev/null || cat "${UNIT}" "${UNIT}.d"/*.conf 2>/dev/null || true)"
-  last="$(printf '%s
-' "${text}" | grep -E '^ExecStart=.+' | tail -n1 || true)"
-  printf '%s
-' "${last}" | grep -Eq '^ExecStart=.*/bot serve --host([[:space:]]|$)'
+  local exec_start executable args
+  exec_start="$(systemctl show --property=ExecStart --value praxi.service 2>/dev/null)" || return 1
+  [[ "${exec_start}" == '{ path='*' ; argv[]='* ]] || return 1
+  executable="${exec_start#'{ path='}"
+  executable="${executable%%' ; argv[]='*}"
+  [[ "${executable##*/}" == bot ]] || return 1
+  args="${exec_start#*' ; argv[]='}"
+  args="${args%%' ; ignore_errors='*}"
+  [[ "${args}" =~ [[:space:]]serve[[:space:]]+([^[:space:]]+[[:space:]]+)*--host([[:space:]]|$) ]]
 }
 
 cmd_preflight() {
