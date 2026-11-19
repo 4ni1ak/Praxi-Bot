@@ -1115,6 +1115,15 @@ impl HostDesktopHandler {
             "fill" => {
                 let t = arg("text");
                 complete_text(&t).map_err(|why| self.refuse(peer, method, &why))?;
+                // Same rule as desktop typing: a password / one-time-code /
+                // card field is never filled by a bot.
+                if driver
+                    .field_target(&arg("ref"))
+                    .await
+                    .is_ok_and(|f| f.sensitive)
+                {
+                    return Err(self.refuse(peer, method, "the element is a password field"));
+                }
                 Some((
                     format!(
                         "type into the open page: {}",
@@ -1314,7 +1323,6 @@ impl HostDesktopHandler {
                 "method": method,
                 "action": preview.action,
                 "target": preview.target,
-                "payload": audit_payload(&preview.payload),
                 "payload_chars": preview.payload.chars().count(),
                 "payload_sha256": sha256_hex(&preview.payload),
             }),
@@ -1446,19 +1454,6 @@ fn absolute_point(a: &Action) -> Option<(f64, f64)> {
         Action::Drag { from, to, .. } => at(from).or_else(|| at(to)),
         _ => None,
     }
-}
-
-/// How much of an action's (already masked) payload the audit row keeps.
-const AUDIT_PAYLOAD_CHARS: usize = 400;
-
-/// The masked payload of an approved action as the audit row keeps it: the
-/// first part of it (the full text is identified by its digest).
-fn audit_payload(masked: &str) -> String {
-    let mut out: String = masked.chars().take(AUDIT_PAYLOAD_CHARS).collect();
-    if masked.chars().count() > AUDIT_PAYLOAD_CHARS {
-        out.push('…');
-    }
-    out
 }
 
 fn sha256_hex(text: &str) -> String {
@@ -2175,6 +2170,8 @@ mod tests {
         snapshots: std::sync::atomic::AtomicUsize,
         /// Bump this epoch while a snapshot is being captured.
         bump: Mutex<Option<Arc<AtomicU64>>>,
+        /// Every field reports itself as a password field.
+        secret_fields: std::sync::atomic::AtomicBool,
         check: Mutex<Option<browser_cdp::DestinationCheck>>,
         /// Every policy installed, in order (one per bot's browser).
         checks: Mutex<Vec<browser_cdp::DestinationCheck>>,
@@ -2205,6 +2202,15 @@ mod tests {
         }
         async fn fill(&self, _: &str, _: &str) -> Result<String, String> {
             Ok("filled".into())
+        }
+        async fn field_target(&self, _: &str) -> Result<browser_cdp::FieldTarget, String> {
+            Ok(browser_cdp::FieldTarget {
+                name: "Password".into(),
+                role: "textbox".into(),
+                frame_origin: None,
+                top_origin: None,
+                sensitive: self.secret_fields.load(Ordering::SeqCst),
+            })
         }
         async fn select(&self, _: &str, _: &str) -> Result<String, String> {
             Ok("selected".into())
@@ -2484,6 +2490,23 @@ mod tests {
         let (res, info) = tokio::join!(snap, answer(&r.requests, true));
         assert!(res.is_ok());
         assert_eq!(info.kind, "session_read");
+    }
+
+    /// Review note 3: a bot never fills a password field through the browser.
+    #[tokio::test]
+    async fn browser_fill_into_a_password_field_is_refused() {
+        let r = rig(false, true);
+        r.access.set_switches("host1", all_families()).unwrap();
+        r.browser.secret_fields.store(true, Ordering::SeqCst);
+        let res = r
+            .h
+            .handle(
+                &device(Role::Host),
+                RPC_BROWSER,
+                serde_json::json!({"op": "fill", "ref": "e1", "text": "hunter2", "bot": {"id": "bot-a", "name": "Ayla"}}),
+            )
+            .await;
+        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
     }
 
     /// Blocker 1: the card shows the complete REAL destination; what cannot be
@@ -2800,9 +2823,11 @@ mod tests {
             .find(|(a, _)| a == "pc_target.act")
             .map(|(_, d)| d.clone())
             .expect("an act row");
-        let payload = act["payload"].as_str().unwrap();
-        assert!(payload.contains("Remove-Item C:/work/old"), "{act}");
+        // Only the length and a digest of the payload are kept, never its text.
+        assert!(act.get("payload").is_none(), "{act}");
+        assert!(!act.to_string().contains("Remove-Item"), "{act}");
         assert!(!act.to_string().contains("hunter2"), "{act}");
+        assert!(act["payload_chars"].as_u64().unwrap() > 0, "{act}");
         assert_eq!(act["bot"], "bot-a");
         assert_eq!(act["payload_sha256"].as_str().unwrap().len(), 64);
     }

@@ -122,10 +122,28 @@ fn classify_v6(ip: Ipv6Addr) -> AddrClass {
         AddrClass::Blocked("link-local address")
     } else if ip.is_multicast() {
         AddrClass::Blocked("multicast address")
-    } else if (s[0] & 0xfe00) == 0xfc00 {
+    } else if (s[0] & 0xfe00) == 0xfc00 || (s[0] & 0xffc0) == 0xfec0 {
+        // Unique-local and (deprecated) site-local.
         AddrClass::Private
+    } else if let Some(v4) = embedded_v4(&s) {
+        // Forms that carry an IPv4 address are judged as that address.
+        classify_v4(v4)
     } else {
         AddrClass::Public
+    }
+}
+
+/// The IPv4 address inside an IPv4-compatible (`::a.b.c.d`), NAT64
+/// (`64:ff9b::/96`) or 6to4 (`2002::/16`) IPv6 address.
+fn embedded_v4(s: &[u16; 8]) -> Option<Ipv4Addr> {
+    let from =
+        |hi: u16, lo: u16| Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8);
+    if s[..6] == [0; 6] || (s[0] == 0x64 && s[1] == 0xff9b && s[2..6] == [0; 4]) {
+        Some(from(s[6], s[7]))
+    } else if s[0] == 0x2002 {
+        Some(from(s[1], s[2]))
+    } else {
+        None
     }
 }
 
@@ -227,5 +245,30 @@ mod tests {
         ] {
             assert_eq!(classify_url(url).await, Verdict::Allow, "{url}");
         }
+    }
+}
+
+#[cfg(test)]
+mod v6_embedded_tests {
+    use super::*;
+
+    #[test]
+    fn ipv6_forms_that_carry_a_private_ipv4_are_not_public() {
+        for (ip, private) in [
+            ("::192.168.1.5", true),
+            ("64:ff9b::10.0.0.1", true),
+            ("2002:c0a8:0105::1", true),
+            ("fec0::1", true),
+            ("64:ff9b::8.8.8.8", false),
+            ("2606:4700::1111", false),
+        ] {
+            let got = classify_ip(ip.parse().unwrap());
+            assert_eq!(matches!(got, AddrClass::Private), private, "{ip}");
+            assert!(!matches!(got, AddrClass::Blocked(_)) || private, "{ip}");
+        }
+        assert!(matches!(
+            classify_ip("64:ff9b::127.0.0.1".parse().unwrap()),
+            AddrClass::Blocked(_)
+        ));
     }
 }

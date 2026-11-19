@@ -55,6 +55,7 @@ fn field(frame: Option<&str>, top: Option<&str>) -> FieldTarget {
         role: "textbox".into(),
         frame_origin: frame.map(str::to_owned),
         top_origin: top.map(str::to_owned),
+        sensitive: false,
     }
 }
 

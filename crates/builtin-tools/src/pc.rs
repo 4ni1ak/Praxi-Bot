@@ -251,6 +251,14 @@ impl Renamed {
             "[ON THE USER'S COMPUTER, not yours; only when the user asked for something on THEIR computer] {}",
             retarget(&spec.description)
         );
+        if spec.name == format!("{PC_PREFIX}desktop_launch") {
+            // Honest about the reach: a program such as a command interpreter
+            // can run commands, so a "Folder only" bot that opted into pc_*
+            // still gets this power, behind the owner's card on the PC.
+            spec.description.push_str(
+                " Note: launching a program (for example a command interpreter) can run commands on that computer; the owner is asked about the full command line every time.",
+            );
+        }
         if let Ok(text) = serde_json::to_string(&spec.input_schema)
             && let Ok(schema) = serde_json::from_str(&retarget(&text))
         {

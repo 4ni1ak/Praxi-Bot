@@ -153,6 +153,16 @@ fn pc_tools_are_hidden_unless_the_bot_explicitly_allows_them() {
         }
         assert!(p.tool_visible("shell_run"));
     }
+    // An allow entry for one pc_ tool opens only that tool, and a bare `*`
+    // next to it never opts into the rest of the family.
+    let one = profile(
+        "[tools]
+allow = [\"*\", \"pc_info\"]
+[files]
+mode = \"computer\"",
+    );
+    assert!(one.tool_visible("pc_info"));
+    assert!(!one.tool_visible("pc_shell_run") && !one.tool_visible("pc_fs_read"));
     let on = profile(PC_ON);
     for t in ["pc_shell_run", "pc_fs_read", "pc_browser_open", "pc_info"] {
         assert!(on.tool_visible(t), "{t}");

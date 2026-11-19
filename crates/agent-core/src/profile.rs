@@ -357,12 +357,14 @@ impl BotProfile {
     /// bot's file access to be "This computer" (a "Folder only" bot, or one
     /// whose unset mode is denied on this host, never reads them).
     fn pc_tool_visible(&self, name: &str, inner: &str) -> bool {
+        // Only an allow entry written for the family (`pc_...`) can match a
+        // `pc_*` name: a bare `*` or `fs_*` next to `pc_info` never widens it.
         let opted_in = self
             .tools
             .allow
             .iter()
-            .any(|g| g.starts_with(builtin_tools::pc::PC_PREFIX))
-            && self.allow.is_match(name);
+            .filter(|g| g.starts_with(builtin_tools::pc::PC_PREFIX))
+            .any(|g| globset::Glob::new(g).is_ok_and(|g| g.compile_matcher().is_match(name)));
         let folder_only = self.files.mode == Some(FileAccessMode::Folder);
         let shell_like = inner.starts_with("shell_") || inner.starts_with("script_");
         let files_ok = match self.files.mode {

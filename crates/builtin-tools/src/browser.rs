@@ -2583,6 +2583,7 @@ mod tests {
             role: "textbox".into(),
             frame_origin: origin.map(str::to_owned),
             top_origin: Some("https://owner.test".into()),
+            sensitive: false,
         };
         fake.targets
             .lock()
