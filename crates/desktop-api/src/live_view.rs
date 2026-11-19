@@ -4483,10 +4483,13 @@ mod tests {
         // `Reason::FrameBudgetExceeded`, and NOT spin in a tight CPU loop.
         let mut tight = EffectiveProfile::live();
         tight.burst_bytes = u32::try_from(MAX_HEADER + 32).unwrap();
+        let started = std::time::Instant::now();
         let err = src.subscribe(tight).await.err();
         assert_eq!(err, Some(ViewError::LimitExceeded));
-        // One capture; a slow debug build may just reach the 500 ms retry, never a tight loop.
-        assert!(calls.load(Ordering::SeqCst) <= 2);
+        // Never a tight loop: at most one capture per retry interval that really elapsed (plus
+        // the first one and one in flight), however slow or loaded the machine is.
+        let allowed = 2 + started.elapsed().as_millis() / UNAVAILABLE_RETRY_INTERVAL.as_millis();
+        assert!(u128::from(calls.load(Ordering::SeqCst)) <= allowed);
         assert_eq!(
             target.stats().last_unavailable_reason,
             Some(Reason::FrameBudgetExceeded)
