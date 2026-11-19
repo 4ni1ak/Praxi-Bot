@@ -1394,6 +1394,7 @@ mod secret_steps {
                 role: "textbox".into(),
                 frame_origin: Some(frame.into()),
                 top_origin: Some(frame.into()),
+                sensitive: false,
             },
         );
         let secrets = secrets();

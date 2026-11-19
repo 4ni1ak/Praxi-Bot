@@ -1343,6 +1343,20 @@ impl Storage {
             .unwrap_or_default())
     }
 
+    /// Recorded origins of every user message delivered into `run` (the one
+    /// that started it and any steered in later).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn run_user_message_sources(&self, run: RunId) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT source FROM messages WHERE run_id = ?1 AND role = 'user' ORDER BY created_at_ms",
+        )?;
+        let rows = stmt.query_map(params![run.to_string()], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     /// Texts of the user messages of `chat` that the owner typed in the desktop app.
     ///
     /// # Errors
@@ -1493,6 +1507,23 @@ impl Storage {
         Ok(st
             .query_map([user_id.to_string()], audit_row)?
             .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Whether one run has an audit fact, without loading other runs' details.
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn has_run_audit_action(
+        &self,
+        user_id: UserId,
+        run_id: RunId,
+        action: &str,
+    ) -> Result<bool> {
+        Ok(self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM audit_log WHERE user_id = ?1 AND run_id = ?2 AND action = ?3)",
+            params![user_id.to_string(), run_id.to_string(), action],
+            |row| row.get(0),
+        )?)
     }
 
     /// The audit rows of one run, oldest first.

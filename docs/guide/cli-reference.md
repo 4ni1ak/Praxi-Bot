@@ -337,7 +337,8 @@ Manage the daemon's MCP servers (see [MCP servers](mcp-servers.md) and
 
 ### `bot host`
 
-Manage the active host and paired devices (see [remote host](remote-host.md)).
+Manage the active host and paired devices (see [remote host](remote-host.md)
+and [host operations](host-operations.md)).
 
 | Subcommand | Meaning |
 | --- | --- |

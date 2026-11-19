@@ -766,6 +766,8 @@
       "deny": "Verweigern"
     },
     "local": "Lokal (dieses Gerät)",
+    "manageBots": "Kann Bots erstellen",
+    "manageBotsHint": "Erlaubt diesem Bot, andere Bots zu erstellen und zu verwalten. Er kann ihnen nie mehr geben, als er selbst hat, und Sie geben jede Änderung vollständig frei.",
     "models": "Modelle",
     "name": "Name",
     "nameRequired": "Ein Name ist erforderlich.",
@@ -968,6 +970,26 @@
         "select": "Erlauben: {{name}}",
         "title": "{{count}} Genehmigungen nötig"
       },
+      "bot": {
+        "allToolsOfCaller": "alle Werkzeuge, die dieser Bot nutzen kann",
+        "ceiling": "Ein Bot kann einem anderen Bot nie mehr geben, als er selbst hat. Diese Freigabe gilt nur für diese Änderung; sie wird jedes Mal erfragt.",
+        "changes": "Was sich ändert",
+        "classifier": "Klassifikator",
+        "deleteNote": "Dieser Bot und seine Einstellungen werden entfernt. Ein Bot mit Chats kann nicht gelöscht werden.",
+        "empty": "(nicht gesetzt)",
+        "except": "außer {{list}}",
+        "model": "Modell",
+        "permissions": "Berechtigungen",
+        "persona": "Persona ({{count}} Zeichen, vollständig angezeigt):",
+        "planner": "Planer",
+        "profile": "Vollständiges Profil",
+        "title": {
+          "create": "Neuen Bot erstellen?",
+          "delete": "Diesen Bot löschen?",
+          "update": "Diesen Bot ändern?"
+        },
+        "tools": "Werkzeuge"
+      },
       "computer": "Diese Aktion läuft auf {{kind}} „{{name}}“ (ID {{id}}).",
       "control": {
         "button": "Diese Aufgabe: {{program}}",
@@ -1021,6 +1043,24 @@
           "browser": "Diese Seite im Browser auf {{where}} öffnen: {{url}}",
           "generic": "Etwas auf {{where}} tun",
           "launch": "Das Programm {{name}} auf {{where}} öffnen",
+          "pcBrowser": "Den Browser auf DEINEM Computer verwenden",
+          "pcBrowserBack": "Im Browser auf DEINEM Computer zurückgehen",
+          "pcBrowserClick": "Element {{ref}} auf der offenen Seite auf DEINEM Computer anklicken",
+          "pcBrowserFill": "In Element {{ref}} auf der offenen Seite auf DEINEM Computer tippen: {{text}}",
+          "pcBrowserLook": "Die offene Seite im Browser auf DEINEM Computer ansehen",
+          "pcBrowserOpen": "Diese Seite im Browser auf DEINEM Computer öffnen: {{url}}",
+          "pcBrowserPress": "{{key}} im Browser auf DEINEM Computer drücken",
+          "pcBrowserSelect": "„{{value}}“ in Element {{ref}} im Browser auf DEINEM Computer wählen",
+          "pcBrowserTab": "Im Browser auf DEINEM Computer zu Tab {{n}} wechseln",
+          "pcLaunch": "Das Programm {{name}} auf DEINEM Computer öffnen",
+          "pcRead": "Dateien auf DEINEM Computer lesen: {{path}}",
+          "pcScreen": "Den Bildschirm von DEINEM Computer verwenden",
+          "pcScreenClick": "Auf dem Bildschirm DEINES Computers klicken",
+          "pcScreenKeys": "{{keys}} auf DEINEM Computer drücken",
+          "pcScreenLook": "Den Bildschirm DEINES Computers ansehen",
+          "pcScreenType": "Auf DEINEM Computer tippen: {{text}}",
+          "pcShell": "Einen Befehl auf DEINEM Computer ausführen: {{command}}",
+          "pcWrite": "Eine Datei auf DEINEM Computer schreiben: {{path}}",
           "screen": "Den Bildschirm von {{where}} verwenden",
           "shell": "Befehl auf {{where}} ausführen: {{command}}"
         },
@@ -1204,6 +1244,7 @@
       "navigate": "navigieren",
       "select": "auswählen"
     },
+    "messageActions": "Nachrichtenaktionen",
     "messageCopied": "Kopiert",
     "mode": {
       "queue": "Einreihen",
@@ -1296,6 +1337,26 @@
         "done": "Dich gefragt",
         "failed": "Du konntest nicht gefragt werden",
         "running": "Fragt dich"
+      },
+      "bot_create": {
+        "done": "Bot erstellt",
+        "failed": "Bot nicht erstellt",
+        "running": "Bot wird erstellt"
+      },
+      "bot_delete": {
+        "done": "Bot gelöscht",
+        "failed": "Bot nicht gelöscht",
+        "running": "Bot wird gelöscht"
+      },
+      "bot_list": {
+        "done": "Ihre Bots geprüft",
+        "failed": "Ihre Bots konnten nicht geprüft werden",
+        "running": "Ihre Bots werden geprüft"
+      },
+      "bot_update": {
+        "done": "Bot geändert",
+        "failed": "Bot nicht geändert",
+        "running": "Bot wird geändert"
       },
       "browser_click": {
         "done": "Auf einer Seite geklickt",
@@ -1592,6 +1653,19 @@
     "description": "Gekoppelte Server können diesen Computer bitten, den Bildschirm anzusehen und darauf zu handeln, nur wenn du es erlaubst.",
     "details": "Genau",
     "explain": "Standardmäßig aus. Wenn an, können die Bots des Servers den Bildschirm dieses Computers ansehen. Alles, was klickt, tippt oder etwas öffnet, fragt dich weiterhin zuerst, und Stopp hat immer Vorrang.",
+    "family": {
+      "browser": "Die Bots auf {{name}} dürfen den Browser dieses Computers verwenden",
+      "commands": "Die Bots auf {{name}} dürfen Befehle auf diesem Computer ausführen",
+      "files": "Die Bots auf {{name}} dürfen Dateien auf diesem Computer lesen",
+      "screen": "Die Bots auf {{name}} dürfen Bildschirm und Eingabe dieses Computers verwenden"
+    },
+    "familyNote": {
+      "browser": "Ein eigenes Browserfenster mit eigenem Profil, nicht deins. Eine Seite zu öffnen oder darin zu tippen fragt dich vorher.",
+      "commands": "Jeder Befehl fragt dich vorher und wird dir vollständig angezeigt.",
+      "files": "Lesen fragt einmal pro Sitzung, Schreiben fragt jedes Mal. Passwörter, Einstellungen anderer Programme und die Daten von Praxi selbst bleiben unerreichbar.",
+      "screen": "Den Bildschirm ansehen, klicken, tippen und Programme starten. Jede Aktion, die etwas ändert, fragt dich vorher."
+    },
+    "fromBotName": "(Bot des Servers, wie er sich selbst nennt: {{name}})",
     "fromServer": "Dieser Name stammt vom Server, nicht von diesem Computer.",
     "fromServerName": "(Servername, wie er sich selbst nennt: {{name}})",
     "looking": "Ein Bot auf {{name}} sieht sich diesen Bildschirm an",

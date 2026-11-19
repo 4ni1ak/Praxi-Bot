@@ -124,6 +124,11 @@ jobs:
         if: matrix.suite != 'embeddings'
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # Workspace feature unification enables the server and masks proxy-only lint failures.
+      - name: Run Clippy for the remote API without the server feature
+        if: (success() || failure()) && runner.os == 'Linux'
+        run: cargo clippy -p remote-api --all-targets -- -D warnings
+
       # Run even when clippy failed so one gate cannot hide another's evidence.
       - name: Run tests
         if: (success() || failure()) && matrix.suite != 'embeddings'

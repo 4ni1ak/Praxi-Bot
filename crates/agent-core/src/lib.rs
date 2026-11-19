@@ -32,6 +32,7 @@ mod scoped_grant;
 mod shared;
 mod subagent;
 mod taint;
+mod tiering;
 mod tool_guidance;
 pub mod usage;
 
@@ -43,6 +44,8 @@ mod control_grant_tests;
 mod egress_tests;
 #[cfg(test)]
 mod mode_tests;
+#[cfg(test)]
+mod pc_scope_tests;
 #[cfg(test)]
 mod router_tests;
 #[cfg(test)]

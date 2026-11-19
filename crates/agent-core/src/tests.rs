@@ -7,6 +7,7 @@ mod composio_approvals;
 mod external_agent;
 mod fill_secret;
 mod planning_pause;
+mod tiering;
 mod usage;
 
 use std::collections::VecDeque;
@@ -6553,6 +6554,9 @@ impl computer_target::ComputerProvider for BoundMachine {
     }
     fn local_identity_bound(&self) -> bool {
         !self.unbound
+    }
+    fn mypc_node(&self) -> Option<computer_target::ComputerNode> {
+        self.inner.pc_target().map(|d| d.node)
     }
 }
 

@@ -30,9 +30,12 @@ pub struct ModelsConfig {
     pub planner: Option<String>,
     /// The model that runs the loop (`provider/model`).
     pub executor: String,
-    /// Router classifier model; informational in v0.
+    /// Optional HTTP model for simple, clean first turns. Unset disables tiering.
+    #[serde(default)]
+    pub light: Option<String>,
+    /// Optional K3 router classifier model.
     pub classifier: Option<String>,
-    /// Fallback models; informational in v0.
+    /// Ordered alternatives after a retryable error or missing capability.
     #[serde(default)]
     pub fallback: Vec<String>,
 }
@@ -211,6 +214,10 @@ pub struct BotProfile {
     restrict: Vec<GlobSet>,
     hide_desktop: bool,
     hide_browser: bool,
+    /// An unset file mode denies files on this daemon (see
+    /// [`Self::with_unset_files_denied`]). Fails closed until the run context
+    /// says otherwise; only the `pc_fs_*` visibility reads it.
+    unset_files_denied: bool,
 }
 
 fn globs(patterns: &[String]) -> Result<GlobSet, String> {
@@ -247,6 +254,7 @@ impl TryFrom<Raw> for BotProfile {
             restrict: Vec::new(),
             hide_desktop: false,
             hide_browser: false,
+            unset_files_denied: true,
             id: r.bot.id,
             name: r.bot.name,
             persona: r.bot.persona,
@@ -263,6 +271,18 @@ impl TryFrom<Raw> for BotProfile {
 }
 
 fn validate_profile_models(models: &ModelsConfig) -> Result<(), String> {
+    if let Some(light) = &models.light {
+        let Some((provider, model)) = light.split_once('/') else {
+            return Err("light model must be an HTTP provider/model reference".into());
+        };
+        if provider.trim().is_empty()
+            || model.trim().is_empty()
+            || light.trim() != light
+            || provider.starts_with("cli:")
+        {
+            return Err("light model must be an HTTP provider/model reference".into());
+        }
+    }
     for role in [models.planner.as_deref(), models.classifier.as_deref()]
         .into_iter()
         .flatten()
@@ -329,6 +349,9 @@ impl BotProfile {
     /// computer availability.
     #[must_use]
     pub fn tool_visible(&self, tool_name: &str) -> bool {
+        if let Some(inner) = tool_name.strip_prefix(builtin_tools::pc::PC_PREFIX) {
+            return self.pc_tool_visible(tool_name, inner);
+        }
         // Shell commands and scripts cannot be confined to folders, so a
         // "Folder only" bot does not get them (honest sandbox, not a pretence).
         (self.files.mode != Some(FileAccessMode::Folder)
@@ -338,6 +361,60 @@ impl BotProfile {
             && (self.tools.allow.is_empty() || self.allow.is_match(tool_name))
             && !self.exclude.is_match(tool_name)
             && self.restrict.iter().all(|g| g.is_match(tool_name))
+    }
+
+    /// The `pc_*` family (the user's own computer) is opt-in per bot: hidden
+    /// unless `[tools] allow` has an entry written for it (one starting with
+    /// `pc_`; a bare `*` is not an opt-in), and every per-bot restriction of
+    /// the same tool on the bot's own computer applies to it as well: the
+    /// `exclude` list and the "Folder only" rule are matched against the name
+    /// without the prefix too, and the files of the user's computer need the
+    /// bot's file access to be "This computer" (a "Folder only" bot, or one
+    /// whose unset mode is denied on this host, never reads them).
+    fn pc_tool_visible(&self, name: &str, inner: &str) -> bool {
+        // Only an allow entry written for the family (`pc_...`) can match a
+        // `pc_*` name: a bare `*` or `fs_*` next to `pc_info` never widens it.
+        let opted_in = self
+            .tools
+            .allow
+            .iter()
+            .filter(|g| g.starts_with(builtin_tools::pc::PC_PREFIX))
+            .any(|g| globset::Glob::new(g).is_ok_and(|g| g.compile_matcher().is_match(name)));
+        let folder_only = self.files.mode == Some(FileAccessMode::Folder);
+        let shell_like = inner.starts_with("shell_") || inner.starts_with("script_");
+        let files_ok = match self.files.mode {
+            Some(FileAccessMode::Computer) => true,
+            Some(FileAccessMode::Folder) => false,
+            None => !self.unset_files_denied,
+        };
+        let excluded = self.exclude.is_match(name) || self.exclude.is_match(inner);
+        let files_denied = inner.starts_with("fs_") && !files_ok;
+        let folder_denied = folder_only && shell_like;
+        opted_in
+            && !folder_denied
+            && !files_denied
+            && !excluded
+            // A narrowed (subagent) surface must name the `pc_` tool itself.
+            && self.restrict.iter().all(|g| g.is_match(name))
+    }
+
+    /// [`Self::tool_visible`] and the category rule together, for a tool of
+    /// this name and category. The `pc_*` family acts on the user's own
+    /// computer, so what the RUN's computer has (a desktop, a browser) does not
+    /// hide it; the profile's own allow/exclude lists still do.
+    #[must_use]
+    pub fn spec_visible(&self, name: &str, category: PermissionCategory) -> bool {
+        self.tool_visible(name)
+            && (name.starts_with(builtin_tools::pc::PC_PREFIX) || self.category_visible(category))
+    }
+
+    /// Copy of this profile that knows whether an UNSET file mode is denied
+    /// on this daemon (an always-on host whose owner never chose one).
+    #[must_use]
+    pub fn with_unset_files_denied(&self, denied: bool) -> Self {
+        let mut p = self.clone();
+        p.unset_files_denied = denied;
+        p
     }
 
     /// Whether a tool's permission category is permitted by the resolved
@@ -386,6 +463,48 @@ impl BotProfile {
             m.clone_into(&mut p.models.executor);
         }
         Ok(p)
+    }
+
+    /// Whether a bot with tool filter `candidate` could never see a tool this
+    /// profile cannot (the ceiling for bots that create bots). Conservative: a
+    /// pattern it cannot prove narrower is refused, so a glob must be one of
+    /// this profile's own allow patterns (or this profile must allow every
+    /// tool), and this profile's exclude patterns must all be carried over.
+    ///
+    /// # Errors
+    /// The first pattern or omission that could widen the tool surface.
+    pub fn covers_tool_filter(&self, candidate: &ToolFilter) -> Result<(), String> {
+        let literal = |p: &str| !p.contains(['*', '?', '[', ']', '{', '}']);
+        if candidate.allow.is_empty() && !self.tools.allow.is_empty() {
+            return Err(
+                "an empty tool list means every tool, which is more than this bot has; name the tools".into(),
+            );
+        }
+        let all_literal = !candidate.allow.is_empty() && candidate.allow.iter().all(|p| literal(p));
+        if !all_literal
+            && let Some(missing) = self
+                .tools
+                .exclude
+                .iter()
+                .find(|e| !candidate.exclude.contains(e))
+        {
+            return Err(format!(
+                "the exclusion {missing:?} of this bot must stay in the new tool filter"
+            ));
+        }
+        for p in &candidate.allow {
+            let ok = if literal(p) {
+                self.tool_visible(p)
+            } else {
+                self.tools.allow.is_empty() || self.tools.allow.contains(p)
+            };
+            if !ok {
+                return Err(format!(
+                    "tool {p:?} is not one this bot has itself (use exact tool names it can see)"
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// The bot's own permission policy; `None` when the profile defines none
@@ -537,5 +656,79 @@ executor = "fake/echo"
             "models": {"executor": "cli:claude/claude-sonnet-4-5", "planner": "openai/gpt-4o-mini"},
         });
         assert!(serde_json::from_value::<BotProfile>(ok).is_ok());
+    }
+
+    fn filter(allow: &[&str], exclude: &[&str]) -> ToolFilter {
+        ToolFilter {
+            allow: allow.iter().map(|s| (*s).to_owned()).collect(),
+            exclude: exclude.iter().map(|s| (*s).to_owned()).collect(),
+        }
+    }
+
+    fn with_tools(allow: &[&str], exclude: &[&str]) -> BotProfile {
+        let mut p = BotProfile::from_toml_str(
+            "[bot]
+id = \"a\"
+name = \"A\"
+[models]
+executor = \"m\"
+",
+        )
+        .unwrap();
+        p.allow = globs(&allow.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>()).unwrap();
+        p.exclude = globs(&exclude.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>()).unwrap();
+        p.tools = filter(allow, exclude);
+        p
+    }
+
+    #[test]
+    fn tool_ceiling_refuses_anything_not_provably_narrower() {
+        let caller = with_tools(&["fs_*", "web_search"], &["fs_delete"]);
+        // Own pattern, a visible literal, and a narrower literal are fine.
+        assert!(
+            caller
+                .covers_tool_filter(&filter(&["fs_*"], &["fs_delete"]))
+                .is_ok()
+        );
+        assert!(
+            caller
+                .covers_tool_filter(&filter(&["web_search", "fs_read"], &[]))
+                .is_ok()
+        );
+        // A tool the caller lacks, an excluded one, a wider glob, "everything".
+        assert!(
+            caller
+                .covers_tool_filter(&filter(&["shell_run"], &[]))
+                .is_err()
+        );
+        assert!(
+            caller
+                .covers_tool_filter(&filter(&["fs_delete"], &[]))
+                .is_err()
+        );
+        assert!(caller.covers_tool_filter(&filter(&["*"], &[])).is_err());
+        assert!(
+            caller
+                .covers_tool_filter(&filter(&["fs_r*"], &["fs_delete"]))
+                .is_err()
+        );
+        assert!(
+            caller
+                .covers_tool_filter(&filter(&[], &["fs_delete"]))
+                .is_err()
+        );
+        // Dropping the caller's exclusion while using its glob would widen.
+        assert!(caller.covers_tool_filter(&filter(&["fs_*"], &[])).is_err());
+        // A caller that sees everything may hand out globs, keeping its exclusions.
+        let open = with_tools(&[], &["shell_run"]);
+        assert!(
+            open.covers_tool_filter(&filter(&["fs_*"], &["shell_run"]))
+                .is_ok()
+        );
+        assert!(open.covers_tool_filter(&filter(&["fs_*"], &[])).is_err());
+        assert!(
+            open.covers_tool_filter(&filter(&["shell_run"], &[]))
+                .is_err()
+        );
     }
 }

@@ -237,6 +237,7 @@ pub fn bot_config(
             "persona": preset.system_prompt(),
             "language": lang.code(),
         },
+        // Tiering is deliberately opt-in: presets never guess a light model.
         "models": { "executor": model },
         "permissions": { "preset": perm.id() },
         "tools": { "allow": preset.tool_allow() },
@@ -246,6 +247,22 @@ pub fn bot_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_presets_leave_optional_model_tiering_disabled() {
+        for preset in BotPreset::ALL {
+            let config = bot_config(
+                preset,
+                PermissionPreset::ApproveDestructive,
+                "Test",
+                "fake/model",
+                Lang::En,
+            );
+            assert_eq!(config["models"], json!({"executor":"fake/model"}));
+            let profile: agent_core::BotProfile = serde_json::from_value(config).unwrap();
+            assert!(profile.models.light.is_none());
+        }
+    }
 
     #[test]
     fn only_general_reaches_mcp_and_no_preset_exposes_email() {
@@ -261,6 +278,18 @@ mod tests {
         assert!(BotPreset::General.tool_allow().contains(&"schedule_*"));
         for p in [BotPreset::Browser, BotPreset::Desktop] {
             assert!(!p.tool_allow().contains(&"schedule_*"), "{}", p.id());
+        }
+    }
+
+    #[test]
+    fn no_preset_offers_the_bot_management_tools() {
+        for p in BotPreset::ALL {
+            let hit: Vec<_> = p
+                .tool_allow()
+                .into_iter()
+                .filter(|g| g.starts_with("bot_") || g.starts_with("bot*") || *g == "*")
+                .collect();
+            assert!(hit.is_empty(), "{}: {hit:?}", p.id());
         }
     }
 }

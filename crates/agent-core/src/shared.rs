@@ -700,6 +700,14 @@ pub(crate) struct RunCtx {
     pub computer: Arc<tokio::sync::OnceCell<tokio::sync::OwnedSemaphorePermit>>,
     pub waiting_computer: Arc<AtomicBool>,
     pub resolved_computer: RunComputer,
+    /// The user's own paired computer, the target of the `pc_*` tools (card 272).
+    /// Not part of `resolved_computer`: a run is placed on ONE computer, the
+    /// per-request target is a second identity with its own grant scope.
+    pub mypc: Option<computer_target::ComputerNode>,
+    /// `pc_*` read families (files, screen, browser) the owner approved in
+    /// THIS run: a read of the user's computer asks once per run and family,
+    /// never once for every run (review blocker 1).
+    pub pc_reads: Mutex<std::collections::BTreeSet<&'static str>>,
     pub run_id: RunId,
     pub chat_id: ChatId,
     pub bot_id: BotId,
@@ -790,6 +798,18 @@ impl RunCtx {
         name: &str,
         category: PermissionCategory,
     ) -> Option<String> {
+        // The `pc_*` family acts on the user's own computer, whatever the run is
+        // placed on. Its scope is that computer's id only: a grant given for the
+        // bot's own computer ("host:..", "browser:..", "pc:..", or none for shell
+        // and files) never matches it, and a grant given here never matches
+        // those. Nothing paired still has a scope of its own, so it cannot fall
+        // back to an unscoped grant.
+        if name.starts_with(builtin_tools::pc::PC_PREFIX) {
+            return Some(format!(
+                "mypc:{}",
+                self.mypc.as_ref().map_or("none", |n| n.id.as_str())
+            ));
+        }
         let computer_tool = matches!(
             category,
             PermissionCategory::Desktop | PermissionCategory::Browser
@@ -1068,6 +1088,14 @@ impl Shared {
             .get(model)
             .copied()
             .or_else(|| self.providers.read().price_for(model))
+    }
+
+    /// The profile a top-level run uses: narrowed to the computer it resolved
+    /// to, and told whether an unset file mode is denied here.
+    fn run_profile(&self, raw: &BotProfile, rc: &RunComputer) -> BotProfile {
+        let unset_denied = matches!(self.unset_file_scope(), builtin_tools::FsScope::Folders(_));
+        raw.with_computer_access(rc.desktop_available, rc.browser)
+            .with_unset_files_denied(unset_denied)
     }
 
     /// Scope of a bot that never chose a file access mode.
@@ -1513,6 +1541,14 @@ impl Shared {
         taint
     }
 
+    /// The user's own paired computer, the target of the `pc_*` tools.
+    fn mypc_node(&self) -> Option<computer_target::ComputerNode> {
+        self.computer_provider
+            .read()
+            .as_ref()
+            .and_then(|p| p.mypc_node())
+    }
+
     /// Per-run context, built on first use (also after a restart).
     pub fn ctx(&self, run: &Run) -> Result<Arc<RunCtx>, ExecError> {
         if let Some(c) = self.runs.lock().get(&run.id) {
@@ -1529,8 +1565,7 @@ impl Shared {
                     .lock()
                     .remove(&run.id)
                     .unwrap_or_else(|| self.resolve_computer_for_run(&raw_profile, Some(run)));
-                let profile =
-                    Arc::new(raw_profile.with_computer_access(rc.desktop_available, rc.browser));
+                let profile = Arc::new(self.run_profile(&raw_profile, &rc));
                 (
                     profile,
                     raw_profile.policy(),
@@ -1590,7 +1625,10 @@ impl Shared {
             .unwrap_or_else(|| Arc::new(tokio::sync::OnceCell::new()));
         let taint = self.initial_taint(run, chat_id);
         let steer = self.pending_steering(run)?;
+        let mypc = self.mypc_node();
         let ctx = Arc::new(RunCtx {
+            mypc,
+            pc_reads: Mutex::new(std::collections::BTreeSet::new()),
             computer,
             waiting_computer: Arc::new(AtomicBool::new(false)),
             resolved_computer,
@@ -1675,8 +1713,7 @@ impl Shared {
     /// visibility (an MCP server's `bots` list).  Call-time enforcement stays
     /// in the tool itself; this keeps hidden tools out of what the model sees.
     pub(crate) fn spec_visible(&self, profile: &BotProfile, bot: BotId, spec: &ToolSpec) -> bool {
-        profile.tool_visible(&spec.name)
-            && profile.category_visible(spec.category)
+        profile.spec_visible(&spec.name, spec.category)
             && platform_ok(&spec.platforms)
             // Fail closed: a name the registry no longer knows is not visible.
             && self
@@ -1842,10 +1879,7 @@ impl Shared {
         } else {
             // Same gate as the spec list: a hidden or wrong-platform tool must
             // not run just because the model named it.
-            if !profile.tool_visible(name)
-                || !profile.category_visible(own.category)
-                || !platform_ok(&own.platforms)
-            {
+            if !profile.spec_visible(name, own.category) || !platform_ok(&own.platforms) {
                 return None;
             }
             (Some(own), name.to_owned())
@@ -2113,6 +2147,12 @@ pub(crate) struct ResultRec {
     /// before the field existed; those rows are not classified from their text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fact: Option<crate::taint::ExecFact>,
+    /// Light-tier steps only: host facts about whether the call ran and whether
+    /// it was valid. A tool cannot label its own output clean.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier_executed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier_invalid: Option<bool>,
     /// How the call ended (ok, error, timed out, denied, ...). Absent on rows
     /// written before the field existed; the ledger classifies those itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]

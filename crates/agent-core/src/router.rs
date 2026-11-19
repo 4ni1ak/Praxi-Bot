@@ -554,7 +554,11 @@ fn workflow_run_by_model(steps: &[RunStep]) -> Option<(String, BTreeMap<String, 
 impl TurnExecutor {
     /// Decide how a fresh top-level turn starts and emit `route_decided`.
     /// `None` for subagents and bots with the router off.
-    pub(crate) async fn route_first(&self, ctx: &Arc<RunCtx>, text: &str) -> Option<Decision> {
+    pub(crate) async fn route_first(
+        &self,
+        ctx: &Arc<RunCtx>,
+        text: &str,
+    ) -> Option<(Decision, Option<&'static str>)> {
         crate::usage::Scope {
             sh: Arc::clone(&self.sh),
             ctx: Arc::clone(ctx),
@@ -563,7 +567,11 @@ impl TurnExecutor {
         .await
     }
 
-    async fn route_first_counted(&self, ctx: &RunCtx, text: &str) -> Option<Decision> {
+    async fn route_first_counted(
+        &self,
+        ctx: &RunCtx,
+        text: &str,
+    ) -> Option<(Decision, Option<&'static str>)> {
         if ctx.sub.is_some()
             || ctx.parent_run_id.is_some()
             || ctx.initiator == protocol::InitiatorKind::ExternalAgent
@@ -585,11 +593,12 @@ impl TurnExecutor {
                     reason: format!("router budget of {budget:?} exceeded"),
                 },
             };
-        self.emit_route(ctx, &decision);
-        Some(decision)
+        let tier = self.initial_tier(ctx, text, Some(&decision));
+        self.emit_route(ctx, &decision, tier);
+        Some((decision, tier))
     }
 
-    fn emit_route(&self, ctx: &RunCtx, decision: &Decision) {
+    fn emit_route(&self, ctx: &RunCtx, decision: &Decision, tier: Option<&str>) {
         self.sh.emit(
             ctx,
             Event::RouteDecided(RouteDecided {
@@ -599,6 +608,7 @@ impl TurnExecutor {
                 confidence: decision.confidence,
                 latency_ms: decision.latency_ms,
                 reason: decision.reason.clone(),
+                tier: tier.map(str::to_owned),
             }),
         );
     }
@@ -628,7 +638,7 @@ impl TurnExecutor {
                     latency_ms: 0,
                     reason: "started by a schedule".to_owned(),
                 };
-                self.emit_route(ctx, &decision);
+                self.emit_route(ctx, &decision, None);
                 let mut spec = StepSpec {
                     name: STEP_USER.to_owned(),
                     input: json!({ "text": raw }),

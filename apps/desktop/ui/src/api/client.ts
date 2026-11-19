@@ -167,6 +167,34 @@ type Query = Record<string, string | number | null | undefined>;
  * Small typed fetch wrapper over the daemon API (`/v1`).  Request / response
  * shapes come from the generated OpenAPI types (see `types.ts`).
  */
+/** What the owner lets one server's bots do on THIS computer; every part is off until turned on. */
+export interface ComputerSwitches {
+  /** Look at the screen, click, type and start programs. */
+  screen: boolean;
+  /** Skip the first-look card each session (screen only). */
+  alwaysRead: boolean;
+  browser: boolean;
+  commands: boolean;
+  files: boolean;
+}
+
+/** The switches a paired server currently has, read from its link info. */
+export function switchesOf(host: {
+  computer_access?: boolean | null;
+  computer_access_always?: boolean | null;
+  computer_browser?: boolean | null;
+  computer_commands?: boolean | null;
+  computer_files?: boolean | null;
+}): ComputerSwitches {
+  return {
+    screen: host.computer_access === true,
+    alwaysRead: host.computer_access_always === true,
+    browser: host.computer_browser === true,
+    commands: host.computer_commands === true,
+    files: host.computer_files === true
+  };
+}
+
 export class ApiClient {
   listKnowledgeEmailCaptures(bot: string): Promise<KnowledgeEmailCapture[]> {
     return this.request("GET", `/bots/${encodeURIComponent(bot)}/knowledge/email-captures`);
@@ -495,9 +523,15 @@ export class ApiClient {
     return this.request("POST", `/hosts/${encodeURIComponent(id)}/connect`);
   }
   /** Let (or stop letting) a paired server's bots use THIS computer (local owner only). */
-  setComputerAccess(id: string, enabled: boolean, alwaysRead: boolean, ownerKey: string): Promise<void> {
+  setComputerAccess(id: string, switches: ComputerSwitches, ownerKey: string): Promise<void> {
     return this.request("PUT", `/hosts/${encodeURIComponent(id)}/computer-access`, {
-      body: { enabled, always_read: alwaysRead },
+      body: {
+        enabled: switches.screen,
+        always_read: switches.screen && switches.alwaysRead,
+        browser: switches.browser,
+        commands: switches.commands,
+        files: switches.files
+      },
       headers: { "x-praxi-owner-key": ownerKey }
     });
   }

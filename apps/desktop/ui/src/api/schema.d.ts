@@ -4049,12 +4049,24 @@ export interface components {
              */
             tools_count?: number | null;
         };
-        /** @description Switches for one host. */
+        /**
+         * @description Switches for one host. Each family is its own switch; all are off until
+         *     the person at this computer turns them on.
+         */
         ComputerAccessInput: {
             /** @description Do not ask before the first look at the screen each session. */
             always_read?: boolean;
-            /** @description Let this host's bots use this computer. */
+            /** @description Let them use this computer's managed browser. */
+            browser?: boolean;
+            /** @description Let them run shell commands here (each one asks). */
+            commands?: boolean;
+            /**
+             * @description Screen and input: let this host's bots look at the screen, click, type
+             *     and start programs on this computer.
+             */
             enabled: boolean;
+            /** @description Let them read files here (writing asks every time). */
+            files?: boolean;
         };
         /** @description A configured provider (never carries a key). */
         ConfiguredProviderDto: {
@@ -4962,6 +4974,12 @@ export interface components {
             computer_access?: boolean;
             /** @description ... and may look at the screen without asking first each session. */
             computer_access_always?: boolean;
+            /** @description The owner lets this host's bots use this computer's browser. */
+            computer_browser?: boolean;
+            /** @description ... run commands on it. */
+            computer_commands?: boolean;
+            /** @description ... read its files. */
+            computer_files?: boolean;
             /** @description One short, path-free sentence for `offline` / `unreachable`. */
             detail?: string | null;
             /** @description Paired device key (public, not a secret). */
@@ -6042,6 +6060,11 @@ export interface components {
         PcRequestInfo: {
             /** @description `click`, `type`, `key`, `scroll`, `launch`, ... */
             action: string;
+            /**
+             * @description Name of the server's bot that is asking (untrusted text, from the
+             *     server). Absent for a run placed on this computer that names no bot.
+             */
+            bot_name?: string | null;
             /** Format: int64 */
             created_ms: number;
             /** @description Paired host the request comes from (public key). */

@@ -15,6 +15,7 @@
 // The tool tables and dispatchers are long but flat declarative code.
 #![allow(clippy::too_many_lines)]
 
+pub mod bots;
 pub mod browser;
 pub mod checkpoint;
 pub mod control;
@@ -26,6 +27,7 @@ mod fill_secret_tests;
 pub mod knowledge;
 pub mod knowledge_brain;
 pub mod meta;
+pub mod pc;
 pub mod provenance;
 pub mod schedule;
 pub mod script;
@@ -51,6 +53,10 @@ use std::sync::Arc;
 use desktop_api::DesktopBackend;
 use tool_registry::{Tool, ToolRegistry};
 
+pub use bots::{
+    BOT_PRESETS, BOT_TOOL_NAMES, BotCaller, BotChange, BotHost, BotPreview, BotRequest, BotView,
+    FieldChange,
+};
 pub use browser::{BrowserDriver, BrowserSettings, CdpDriver, Wait};
 pub use checkpoint::{
     ChangeKind, Checkpoint, CheckpointEntry, CheckpointStore, DiffOmittedReason, FileChange,

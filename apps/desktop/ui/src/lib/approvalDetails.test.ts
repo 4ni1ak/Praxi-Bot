@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { computerDetails, controlGrantDetails, egressDetails, formatFiring, memoryOffer, payloadReviewComplete, scheduleDetails } from "./approvalDetails.ts";
+import { botDetails, computerDetails, controlGrantDetails, egressDetails, formatFiring, memoryOffer, payloadReviewComplete, scheduleDetails } from "./approvalDetails.ts";
 
 test("a control grant block is parsed and its text is made plain", () => {
   const d = controlGrantDetails({
@@ -196,6 +196,55 @@ test("an egress card carries the immutable computer target as its own line", () 
   assert.equal(c.name, "Work PC: x");
   assert.ok(egressDetails(details));
   assert.equal(computerDetails({ kind: "egress" }), null);
+});
+
+const botCard = {
+  kind: "bot",
+  action: "update",
+  bot_id: "b1",
+  name: "Inbox",
+  avatar: "data:image/png;base64,iVBORw0KGgo=",
+  changes: [{ field: "bot.persona", from: "old", to: "new" }],
+  profile: {
+    bot: { name: "Inbox", persona: "Summarise.\nThen stop.", color: "#aabbcc" },
+    models: { executor: "fake/echo", planner: "fake/big" },
+    permissions: { preset: "approve-destructive" },
+    tools: { allow: ["fs_read"], exclude: ["shell_run"] }
+  }
+};
+
+test("a bot card carries the full persona, models, permissions, tools and diff", () => {
+  const d = botDetails(botCard);
+  assert.ok(d);
+  assert.equal(d.action, "update");
+  assert.equal(d.persona, "Summarise.\nThen stop.");
+  assert.equal(d.executor, "fake/echo");
+  assert.equal(d.planner, "fake/big");
+  assert.equal(d.preset, "approve-destructive");
+  assert.deepEqual(d.toolsAllow, ["fs_read"]);
+  assert.deepEqual(d.toolsExclude, ["shell_run"]);
+  assert.equal(d.color, "#aabbcc");
+  assert.deepEqual(d.changes, [{ field: "bot.persona", from: "old", to: "new" }]);
+  assert.match(d.profileJson, /Summarise/);
+});
+
+test("a bot card refuses unknown kinds, unknown actions and non-image avatars", () => {
+  assert.equal(botDetails({ ...botCard, kind: "schedule" }), null);
+  assert.equal(botDetails({ ...botCard, action: "promote" }), null);
+  assert.equal(botDetails(null), null);
+  assert.equal(botDetails({ ...botCard, avatar: "https://evil.example/x.png" })?.avatar, null);
+  assert.equal(
+    botDetails({ ...botCard, avatar: "data:text/html;base64,AAAA" })?.avatar,
+    null
+  );
+  assert.equal(botDetails({ ...botCard, profile: { bot: { color: "red" } } })?.color, "");
+  assert.equal(
+    botDetails({
+      ...botCard,
+      profile: { permissions: { categories: { fs: {} } } }
+    })?.preset,
+    "custom"
+  );
 });
 
 test("a memory target is parsed, and a disguised or oversized one is not offered", () => {
