@@ -2264,13 +2264,25 @@
       "hint": "Versuche es erneut. Wenn es weiter passiert, kopiere die Details und melde es.",
       "title": "Etwas ist schiefgelaufen"
     },
+    "hostBusy": {
+      "hint": "Warte ein paar Sekunden und versuche es erneut.",
+      "title": "Der Host ist beschäftigt"
+    },
     "hostManaged": {
       "hint": "Ändere es in Praxi auf dem Computer, auf dem der Bot läuft.",
       "title": "Das wird auf dem anderen Computer verwaltet"
     },
+    "hostSilent": {
+      "hint": "Prüfe, ob {{name}} eingeschaltet und mit dem Netzwerk verbunden ist, und versuche es erneut.",
+      "title": "{{name}} hat nicht geantwortet"
+    },
     "http_error": {
       "hint": "Versuche es erneut. Wenn es weiter passiert, kopiere die Details und melde es.",
       "title": "Der Dienst hat mit einem Problem geantwortet"
+    },
+    "localOnly": {
+      "hint": "Nutze Praxi direkt auf dem Host-Computer oder hebe es vom Administrator-Desktop aus auf.",
+      "title": "Das kann nur die Person am Host-Computer tun"
     },
     "modelFailed": {
       "hint": "Versuche es erneut oder wähle ein anderes Modell. Die Details unten nennen, was das Modell gemeldet hat.",
@@ -2280,6 +2292,10 @@
       "hint": "Er startet möglicherweise noch. Praxi versucht es von selbst erneut; du kannst den Dienst auch neu starten.",
       "title": "Praxi kann seinen lokalen Dienst nicht erreichen"
     },
+    "noInputBackend": {
+      "hint": "Der Host hat für diesen Bildschirm keinen Tastatur- und Maus-Zugriff (zum Beispiel ein Server ohne Desktop-Sitzung). Du kannst zusehen, aber nicht übernehmen.",
+      "title": "Dieser Bildschirm lässt sich nicht steuern"
+    },
     "openSettings": "Einstellungen öffnen",
     "reload": "Neu laden",
     "restartApp": "Praxi neu starten",
@@ -2287,6 +2303,14 @@
     "restarting": "Wird neu gestartet …",
     "retry": "Erneut versuchen",
     "retrying": "Neuer Versuch in {{seconds}} s",
+    "screenInputDenied": {
+      "hint": "Erlaube die Bildschirmsteuerung für diesen Computer in Praxi auf dem Host und versuche es erneut.",
+      "title": "Bildschirmsteuerung ist für diesen Computer nicht erlaubt"
+    },
+    "screenNoConfirm": {
+      "hint": "Der Bildschirm hat das Loslassen der Tasten nicht bestätigt, deshalb bleibt die Pause bestehen. Versuche es erneut; wenn es weiter scheitert, starte Praxi auf dem Host neu.",
+      "title": "Der Bildschirm hat nicht bestätigt"
+    },
     "sendFailed": {
       "hint": "Prüfe die Verbindung und versuche es erneut.",
       "title": "Deine Nachricht wurde nicht gesendet"
@@ -2681,14 +2705,16 @@
       "botPermissions": "Berechtigungen und Werkzeuge eines Bots werden auf {{name}} selbst verwaltet. Name, Persona und Modell können hier geändert werden.",
       "composio": "App-Verbindungen werden auf der Besitzerseite dieses Computers verwaltet, nicht auf {{name}}.",
       "credentials": "E-Mail- und Suchkonten werden auf {{name}} selbst verbunden.",
-      "generic": "{{name}} hat das nicht erlaubt. Es kann nur auf {{name}} selbst erledigt werden.",
+      "generic": "{{name}} hat das nicht erlaubt: {{reason}}",
       "hostTransfer": "Das Verschieben des Hosts und der Kopplungskanäle erfolgt auf {{name}} selbst.",
       "knowledge": "Wissenseinstellungen werden auf {{name}} selbst verwaltet.",
       "lifecycle": "Kopplung und Host-Updates erfolgen auf {{name}} selbst.",
+      "localOnly": "Das kann nur die Person an {{name}} tun, nicht diese App.",
       "overlay": "Nur die Person an {{name}} kann diese Aufforderung beantworten.",
       "ownerOnly": "Das kann nur auf {{name}} selbst erledigt werden.",
       "policy": "Die Ausführungsrichtlinie wird auf {{name}} selbst festgelegt, nicht über diese App.",
       "role": "{{name}} erlaubt diesem Computer das nicht.",
+      "screenInput": "{{name}} hat diesem Computer die Steuerung des Bildschirms nicht erlaubt. Erlaube sie in Praxi auf {{name}}.",
       "secrets": "Schlüssel und Geheimnisse werden auf {{name}} selbst hinzugefügt, nicht über diese App.",
       "tools": "Werkzeugserver und Skills werden auf {{name}} selbst verwaltet."
     },

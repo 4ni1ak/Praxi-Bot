@@ -4831,3 +4831,24 @@ async fn a_thumbnail_is_one_captured_frame_then_served_from_the_cache_without_a_
     assert_eq!(again.status(), StatusCode::OK);
     assert_eq!(t.target.source.subscribers(), 0);
 }
+
+#[tokio::test]
+async fn the_admin_desktop_keeps_its_screen_input_after_it_clears_its_own_pause() {
+    use axum::extract::State;
+    use axum::response::IntoResponse as _;
+    let t = Test::new();
+    // The admin desktop itself holds the takeover (its entry is the default).
+    let (_id, _owned, _body) = t.active(Some("adm")).await;
+    let admin = view_actor("adm", true);
+    let _ = local_recover(State(t.state.clone()), axum::Extension(admin.clone()))
+        .await
+        .map_err(|e| e.into_response().status())
+        .unwrap();
+    assert!(t.state.hub().takeover().is_none());
+    assert!(t.state.hub().latched().is_none());
+    // The recovery is not the local user's override: it must not revoke the
+    // clearing admin's own input right, or "Take over" is dead until restart.
+    assert!(t.state.live_view().allowed(&admin, true));
+    let rows = audit_count(&t, "takeover.recovered");
+    assert_eq!(rows, 1);
+}
