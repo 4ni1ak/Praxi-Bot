@@ -369,6 +369,9 @@ function BotPermissions({ bot }: { bot: Bot }) {
       {error ? <p className={formStyles.error}>{error}</p> : null}
       {eff ? (
         <>
+          <p className={formStyles.hint}>
+            {t("settings.permissions.mode", { mode: t(`settings.permissions.modes.${eff.mode}`, eff.mode) })}
+          </p>
           <ul className={styles.chips}>
             {Object.entries(eff.categories).map(([cat, d]) => (
               <li
@@ -408,7 +411,12 @@ function BotPermissions({ bot }: { bot: Bot }) {
                             name: t(`botForm.category.${g.target.name}`, g.target.name)
                           })
                         : g.target.kind === "scoped"
-                          ? `${g.target.tool}: ${g.target.pattern}`
+                          ? t("settings.permissions.grantScoped", {
+                              tool: g.target.tool,
+                              target: t(`chat.approval.memory.target.${g.target.scope}`, {
+                                value: g.target.pattern
+                              })
+                            })
                           : t("settings.permissions.grantTool", {
                               name: g.target.name
                             })}

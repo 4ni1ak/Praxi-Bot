@@ -136,6 +136,13 @@
       "grantTool": "Always allow {{name}}",
       "inertGrant": "Inactive: this rule is not tied to a computer and no longer applies.",
       "scopedAllow": "Allowed on {{scopes}}",
+      "grantScoped": "Always allow {{tool}} on {{target}}",
+      "mode": "Mode: {{mode}}",
+      "modes": {
+        "ask": "Ask",
+        "balanced": "Balanced",
+        "full": "Full"
+      },
       "revoke": "Revoke",
       "workspace": {
         "title": "Workspace default",
@@ -349,6 +356,22 @@
       "always": "Always",
       "deny": "Deny",
       "reasonPlaceholder": "Reason for denying (optional)",
+      "memory": {
+        "thisChat": "Allow {{target}} for this chat",
+        "always": "Always allow {{target}} for this bot",
+        "target": {
+          "origin": "the site {{value}}",
+          "folder": "files in {{value}}",
+          "command": "“{{value}}” commands"
+        }
+      },
+      "batch": {
+        "title": "{{count}} approvals needed",
+        "allowSelected": "Allow selected ({{count}})",
+        "denyAll": "Deny all",
+        "repeated": "×{{count}}",
+        "select": "Allow: {{name}}"
+      },
       "control": {
         "button": "This task: {{program}}",
         "offered": "Allow typing into {{program}} for this task only?",

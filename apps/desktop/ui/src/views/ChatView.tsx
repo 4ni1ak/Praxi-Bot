@@ -37,6 +37,7 @@ import {
   TodoCard,
   ToolCard
 } from "../components/ChatCards";
+import { ApprovalBatchCard } from "../components/ApprovalBatchCard";
 import { PendingDecisions, useDecisionActions } from "../components/PendingDecisions";
 import { chatTitleLabel } from "../lib/chatTitle";
 import { pendingForChat } from "../lib/pendingDecisions";
@@ -77,6 +78,7 @@ import { sendButtonDisabled, sendButtonMode } from "../lib/composerRun";
 import { type PendingFile, MAX_ATTACHMENT_BYTES, filesOf, room, uploadErrorKey } from "../lib/attachments";
 import { ComposerFiles, MessageFiles } from "../components/Attachments";
 import { enqueue, putBack, removeQueued, takeForNow, takeForRunEnd } from "../lib/messageQueue";
+import { groupPending, isBatchable, shouldBatch } from "../lib/approvalBatch";
 import { toolSentence } from "../lib/runSentence";
 import { useChatQueue } from "../state/useChatQueue";
 import {
@@ -1140,6 +1142,29 @@ export function ChatView({
         if (item.status === "awaiting_approval" && nested) {
           // A subagent's card is pinned above the composer (never inside a folded card).
           return <p className={ccStyles.nestedText}>{t("chat.pendingPinned")}</p>;
+        }
+        // Several plain approvals of one top-level run share one card; the other pending calls of
+        // the batch render nothing, so each pending call is drawn exactly once. Cards the user
+        // must read (payloads, secrets) stay separate.
+        if (run && isBatchable(item)) {
+          const rows = groupPending(
+            run.items.filter((i): i is Extract<TimelineItem, { kind: "tool" }> => i.kind === "tool")
+          );
+          if (shouldBatch(rows)) {
+            if (rows[0]?.items[0]?.callId !== item.callId) {
+              return null;
+            }
+            return (
+              <ApprovalBatchCard
+                rows={rows}
+                onDecide={async (callIds, decision) => {
+                  for (const callId of callIds) {
+                    await decisions.decide(callId)(decision, decision === "approve" ? "once" : undefined);
+                  }
+                }}
+              />
+            );
+          }
         }
         return item.status === "awaiting_approval" ? (
           <ApprovalCard

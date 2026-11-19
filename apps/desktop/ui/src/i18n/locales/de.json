@@ -136,6 +136,13 @@
       "grantTool": "{{name}} immer erlauben",
       "inertGrant": "Inaktiv: Diese Regel ist an keinen Computer gebunden und gilt nicht mehr.",
       "scopedAllow": "Erlaubt auf {{scopes}}",
+      "grantScoped": "{{tool}} für {{target}} immer erlauben",
+      "mode": "Modus: {{mode}}",
+      "modes": {
+        "ask": "Fragen",
+        "balanced": "Ausgewogen",
+        "full": "Voll"
+      },
       "revoke": "Widerrufen",
       "workspace": {
         "title": "Arbeitsbereich-Standard",
@@ -349,6 +356,22 @@
       "always": "Immer",
       "deny": "Ablehnen",
       "reasonPlaceholder": "Grund für die Ablehnung (optional)",
+      "memory": {
+        "thisChat": "{{target}} für diesen Chat erlauben",
+        "always": "{{target}} für diesen Bot immer erlauben",
+        "target": {
+          "origin": "die Website {{value}}",
+          "folder": "Dateien in {{value}}",
+          "command": "„{{value}}“-Befehle"
+        }
+      },
+      "batch": {
+        "title": "{{count}} Genehmigungen nötig",
+        "allowSelected": "Auswahl erlauben ({{count}})",
+        "denyAll": "Alle ablehnen",
+        "repeated": "×{{count}}",
+        "select": "Erlauben: {{name}}"
+      },
       "control": {
         "button": "Diese Aufgabe: {{program}}",
         "offered": "Eingabe in {{program}} nur für diese Aufgabe erlauben?",

@@ -136,6 +136,13 @@
       "grantTool": "{{name}} için her zaman izin ver",
       "inertGrant": "Etkin değil: bu kural bir bilgisayara bağlı değil ve artık uygulanmıyor.",
       "scopedAllow": "Şu bilgisayarlarda izinli: {{scopes}}",
+      "grantScoped": "{{tool}} aracına {{target}} için her zaman izin ver",
+      "mode": "Mod: {{mode}}",
+      "modes": {
+        "ask": "Sor",
+        "balanced": "Dengeli",
+        "full": "Tam"
+      },
       "revoke": "Geri al",
       "workspace": {
         "title": "Çalışma alanı varsayılanı",
@@ -349,6 +356,22 @@
       "always": "Her zaman",
       "deny": "Reddet",
       "reasonPlaceholder": "Reddetme gerekçesi (isteğe bağlı)",
+      "memory": {
+        "thisChat": "{{target}} için bu sohbette izin ver",
+        "always": "{{target}} için bu botta her zaman izin ver",
+        "target": {
+          "origin": "{{value}} sitesi",
+          "folder": "{{value}} içindeki dosyalar",
+          "command": "“{{value}}” komutları"
+        }
+      },
+      "batch": {
+        "title": "{{count}} onay gerekiyor",
+        "allowSelected": "Seçilenlere izin ver ({{count}})",
+        "denyAll": "Hepsini reddet",
+        "repeated": "×{{count}}",
+        "select": "İzin ver: {{name}}"
+      },
       "control": {
         "button": "Bu görev: {{program}}",
         "offered": "Yalnızca bu görev için {{program}} içine yazmaya izin verilsin mi?",
