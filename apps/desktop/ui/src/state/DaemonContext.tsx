@@ -21,8 +21,15 @@ import type {
   Health,
   HostLinkInfo,
   HostLinkList,
-  Run
+  Run,
+  UpdateChatInput
 } from "../api/types";
+import {
+  applyChatDelete,
+  applyChatPatch,
+  rollbackChatDelete,
+  rollbackChatPatch
+} from "../lib/chatManage";
 import {
   deriveHostState,
   giveUpConnecting,
@@ -114,6 +121,12 @@ export interface DaemonContextValue {
   refreshBots: () => Promise<void>;
   refreshChats: () => Promise<void>;
   refreshRuns: () => Promise<void>;
+  /** Chat ids with an in-flight rename/pin/archive/delete mutation. */
+  pendingChatIds: ReadonlySet<string>;
+  /** Optimistically rename, pin or archive a chat, rolling back if the daemon rejects it. */
+  updateChat: (chatId: string, patch: UpdateChatInput) => Promise<Chat>;
+  /** Optimistically delete a chat, rolling back if the daemon rejects it. */
+  deleteChat: (chatId: string) => Promise<void>;
   recordAnswer: (runId: string, callId: string, answer: string) => void;
   retry: () => void;
   restartDaemon: () => Promise<void>;
@@ -188,6 +201,9 @@ type DaemonData = Pick<
   | "refreshBots"
   | "refreshChats"
   | "refreshRuns"
+  | "pendingChatIds"
+  | "updateChat"
+  | "deleteChat"
   | "recordAnswer"
   | "onDaemonEvent"
 >;
@@ -204,6 +220,9 @@ function useDaemonData(conn: Connection | null): DaemonData {
   const botOrder = useBotOrder();
   const bots = useMemo(() => orderBots(rawBots, botOrder), [rawBots, botOrder]);
   const [chats, setChats] = useState<Chat[]>([]);
+  const chatsRef = useRef<Chat[]>(chats);
+  chatsRef.current = chats;
+  const [pendingChatIds, setPendingChatIds] = useState<ReadonlySet<string>>(() => new Set());
   const [runs, setRuns] = useState<Run[]>([]);
   const [events, dispatch] = useReducer(reducer, EMPTY_EVENTS);
 
@@ -263,6 +282,59 @@ function useDaemonData(conn: Connection | null): DaemonData {
       setRuns(await c.listRuns());
     }
   }, []);
+
+  const setChatPending = useCallback((chatId: string, on: boolean) => {
+    setPendingChatIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(chatId);
+      else next.delete(chatId);
+      return next;
+    });
+  }, []);
+
+  const updateChat = useCallback(
+    async (chatId: string, patch: UpdateChatInput): Promise<Chat> => {
+      const c = clientRef.current;
+      if (!c) {
+        throw new Error("Daemon is not connected");
+      }
+      const { previous } = applyChatPatch(chatsRef.current, chatId, patch);
+      setChats((prev) => applyChatPatch(prev, chatId, patch).next);
+      setChatPending(chatId, true);
+      try {
+        const saved = await c.updateChat(chatId, patch);
+        setChats((prev) => prev.map((x) => (x.id === saved.id ? saved : x)));
+        return saved;
+      } catch (err) {
+        setChats((prev) => rollbackChatPatch(prev, previous));
+        throw err;
+      } finally {
+        setChatPending(chatId, false);
+      }
+    },
+    [setChatPending]
+  );
+
+  const deleteChat = useCallback(
+    async (chatId: string): Promise<void> => {
+      const c = clientRef.current;
+      if (!c) {
+        throw new Error("Daemon is not connected");
+      }
+      const { removed, index } = applyChatDelete(chatsRef.current, chatId);
+      setChats((prev) => applyChatDelete(prev, chatId).next);
+      setChatPending(chatId, true);
+      try {
+        await c.deleteChat(chatId);
+      } catch (err) {
+        setChats((prev) => rollbackChatDelete(prev, removed, index));
+        throw err;
+      } finally {
+        setChatPending(chatId, false);
+      }
+    },
+    [setChatPending]
+  );
 
   // initial data + event stream (replayed from the start: `Last-Event-ID: 0`)
   useEffect(() => {
@@ -376,6 +448,9 @@ function useDaemonData(conn: Connection | null): DaemonData {
     refreshBots,
     refreshChats,
     refreshRuns,
+    pendingChatIds,
+    updateChat,
+    deleteChat,
     recordAnswer,
     onDaemonEvent
   };

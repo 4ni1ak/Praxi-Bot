@@ -9,6 +9,8 @@ export interface LandingChat {
   bot_id: string;
   created_at_ms: number;
   title?: string | null;
+  pinned?: boolean;
+  archived?: boolean;
 }
 
 export type BotLanding =
@@ -16,11 +18,11 @@ export type BotLanding =
   /** No chat yet: the empty state ("new chat" is its only action). */
   | { kind: "bot"; botId: string };
 
-/** The bot's chats, newest first. */
+/** The bot's chats, pinned first then newest first. */
 export function botChats<C extends LandingChat>(chats: readonly C[], botId: string): C[] {
   return chats
     .filter((c) => c.bot_id === botId)
-    .sort((a, b) => b.created_at_ms - a.created_at_ms);
+    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.created_at_ms - a.created_at_ms);
 }
 
 /**
@@ -37,9 +39,9 @@ export function chatDateLabel(createdAtMs: number, locale: string): string {
   }
 }
 
-/** The route a bot opens on. */
+/** The route a bot opens on (prefers non-archived chats, pinned first then newest). */
 export function botLanding(botId: string, chats: readonly LandingChat[]): BotLanding {
-  const latest = botChats(chats, botId)[0];
+  const latest = botChats(chats, botId).find((c) => !c.archived);
   return latest ? { kind: "chat", chatId: latest.id, botId } : { kind: "bot", botId };
 }
 

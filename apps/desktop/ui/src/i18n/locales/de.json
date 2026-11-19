@@ -1634,6 +1634,28 @@
     "working": "Arbeitet …",
     "yesterdayLabel": "Gestern"
   },
+  "chatManage": {
+    "allArchived": "Alle Chats sind archiviert.",
+    "archive": "Archivieren",
+    "archivedToggle": "Archiviert ({{count}})",
+    "delete": "Löschen",
+    "deleteActiveRun": "In diesem Chat läuft gerade ein Auftrag. Stoppe ihn zuerst, bevor du den Chat löschst.",
+    "deleteBody": "„{{title}}“ und alle zugehörigen Nachrichten werden dauerhaft gelöscht. Das lässt sich nicht rückgängig machen.",
+    "deleteConfirm": "Chat löschen",
+    "deleteTitle": "Diesen Chat löschen?",
+    "empty": "Noch keine Chats.",
+    "loading": "Chats werden geladen…",
+    "menuLabel": "Chat-Optionen für {{title}}",
+    "menuTooltip": "Chat-Optionen",
+    "pin": "Anheften",
+    "pinnedBadge": "Angeheftet",
+    "rename": "Umbenennen",
+    "renameEmpty": "Gib einen Titel ein.",
+    "renameInputLabel": "Chat-Titel",
+    "renameTooLong": "Der Titel darf höchstens {{max}} Zeichen lang sein.",
+    "unarchive": "Aus Archiv holen",
+    "unpin": "Lösen"
+  },
   "common": {
     "back": "Zurück",
     "cancel": "Abbrechen",

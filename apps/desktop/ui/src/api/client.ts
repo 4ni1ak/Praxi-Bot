@@ -36,6 +36,7 @@ import type {
   BotEngineInput,
   BotInput,
   Chat,
+  UpdateChatInput,
   ConfiguredProviderDto,
   CliEngineDto,
   CliInstallApproval,
@@ -618,6 +619,12 @@ export class ApiClient {
   }
   createChat(botId: string, title?: string): Promise<Chat> {
     return this.request("POST", "/chats", { body: { bot_id: botId, title } });
+  }
+  updateChat(chatId: string, body: UpdateChatInput): Promise<Chat> {
+    return this.request("PATCH", `/chats/${encodeURIComponent(chatId)}`, { body });
+  }
+  deleteChat(chatId: string): Promise<void> {
+    return this.request("DELETE", `/chats/${encodeURIComponent(chatId)}`);
   }
   listMessages(chatId: string): Promise<Message[]> {
     return this.request("GET", `/chats/${chatId}/messages`);
