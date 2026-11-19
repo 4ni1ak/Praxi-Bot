@@ -839,6 +839,7 @@
     },
     "myComputer": "Benim bilgisayarım",
     "needsDesktop": "{{name}} sunucusunda masaüstü oturumu yok, bu yüzden gösterilecek ekran yok. Eklemek için bu bilgisayarda şunu çalıştır:",
+    "noChatMatches": "Eşleşen sohbet yok",
     "now": {
       "detailTitle": "Şu anki çalışma",
       "open": "Ayrıntıyı aç",
@@ -853,6 +854,7 @@
     "runsOnHost": "{{name}} sunucusunda çalışır",
     "runsOnLocal": "Bu bilgisayarda çalışır",
     "screenListFailed": "{{name}} ekran listesi yüklenemedi. Birazdan yeniden denenecek.",
+    "searchChats": "Sohbetlerde ara…",
     "serverIssue": {
       "connecting": "{{name}} sunucusuna bağlanılıyor… yanıt verince ekranı burada görünür.",
       "notPaired": "{{name}} bu bilgisayarı artık kabul etmiyor. Yeni bir biletle yeniden eşleştir.",
@@ -1182,6 +1184,14 @@
     "export": {
       "done": "Sohbet kaydedildi",
       "you": "Sen"
+    },
+    "find": {
+      "count": "{{current}} / {{total}}",
+      "label": "Bu sohbette ara",
+      "next": "Sonraki eşleşme",
+      "none": "Eşleşme yok",
+      "placeholder": "Sohbette ara…",
+      "prev": "Önceki eşleşme"
     },
     "jumpToLatest": "En sona git",
     "md": {
@@ -2436,6 +2446,8 @@
     "dialogClose": "Pencereyi kapat",
     "dialogFocus": "Pencere içinde odağı taşı",
     "exitLiveFocus": "Canlı görünümde klavye denetiminden çık",
+    "findInChat": "Bu sohbette ara",
+    "findNav": "Arama çubuğunda sonraki / önceki eşleşme, kapat",
     "group": {
       "composer": "Sohbet yazma kutusu",
       "dialogs": "Pencereler",

@@ -47,8 +47,7 @@ fn validate(header: &RecordHeader, payload: usize) -> Result<(), ViewError> {
             if payload == 0
                 || frame.width == 0
                 || frame.height == 0
-                || frame.width > 1920
-                || frame.height > 1080 =>
+                || !crate::wire_size_ok(frame.width, frame.height) =>
         {
             Err(ViewError::InvalidRecord)
         }
