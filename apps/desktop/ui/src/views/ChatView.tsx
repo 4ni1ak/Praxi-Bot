@@ -404,7 +404,7 @@ export function ChatView({
     );
   const ackedLive =
     ackedRunId !== null &&
-    !serverRuns.some((r) => r.id === ackedRunId && !LIVE_STATES.has(r.state)) &&
+    !serverRuns.some((r) => r.id === ackedRunId && !isProcessingRunState(r.state)) &&
     !chatRuns.some((r) => r.id === ackedRunId && r.finishedMs !== undefined)
       ? ackedRunId
       : null;
