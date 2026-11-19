@@ -159,6 +159,71 @@ pub fn attachment_text(
             "document exceeds input limit".into(),
         ));
     }
+    if matches!(extension, "docx" | "xlsx" | "pptx") {
+        check_zip_limits(bytes)?;
+    }
+    // The parsers are bounded by their own budgets; the deadline is the backstop so one
+    // pathological file cannot hold an upload request open. The worker thread is detached
+    // on a timeout and ends by itself.
+    let (cfg, extension, label, bytes) = (
+        cfg.clone(),
+        extension.to_owned(),
+        label.to_owned(),
+        bytes.to_vec(),
+    );
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(attachment_text_inner(
+            &cfg, &extension, &label, &bytes, max_bytes,
+        ));
+    });
+    rx.recv_timeout(ATTACHMENT_EXTRACT_TIMEOUT)
+        .unwrap_or_else(|_| {
+            Err(ToolError::Execution(
+                "reading the document took too long".into(),
+            ))
+        })
+}
+
+/// Longest an attachment extraction may run.
+const ATTACHMENT_EXTRACT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// Most entries an Office archive may hold.
+const MAX_ZIP_ENTRIES: usize = 5_000;
+/// Most bytes all entries of an Office archive may expand to (declared sizes).
+const MAX_ZIP_UNCOMPRESSED: u64 = 128 * 1024 * 1024;
+/// Most bytes one entry may expand to.
+const MAX_ZIP_ENTRY: u64 = 64 * 1024 * 1024;
+
+/// Refuse an Office archive that is built to expand: too many entries or too large a
+/// declared uncompressed size (the reader never yields more than an entry declares).
+fn check_zip_limits(bytes: &[u8]) -> Result<(), ToolError> {
+    let bad = |m: &str| ToolError::InvalidInput(m.into());
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|_| bad("not a valid Office file"))?;
+    if zip.len() > MAX_ZIP_ENTRIES {
+        return Err(bad("the document has too many parts"));
+    }
+    let mut total = 0u64;
+    for i in 0..zip.len() {
+        let size = zip
+            .by_index_raw(i)
+            .map_err(|_| bad("not a valid Office file"))?
+            .size();
+        total = total.saturating_add(size);
+        if size > MAX_ZIP_ENTRY || total > MAX_ZIP_UNCOMPRESSED {
+            return Err(bad("the document expands beyond the size limit"));
+        }
+    }
+    Ok(())
+}
+
+fn attachment_text_inner(
+    cfg: &DocToolsConfig,
+    extension: &str,
+    label: &str,
+    bytes: &[u8],
+    max_bytes: usize,
+) -> Result<String, ToolError> {
     let mut text = match extension {
         "pdf" | "docx" => {
             let mut big = cfg.clone();
@@ -451,5 +516,84 @@ mod call_tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ToolError::InvalidInput(_)));
+    }
+}
+
+#[cfg(test)]
+mod attachment_tests {
+    use std::io::Write as _;
+
+    use super::*;
+
+    fn cfg() -> DocToolsConfig {
+        DocToolsConfig::default()
+    }
+
+    fn zip_of(entries: &[(&str, String)]) -> Vec<u8> {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        for (name, body) in entries {
+            zip.start_file(*name, opts).unwrap();
+            zip.write_all(body.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn pdf_text_layer_is_extracted() {
+        let pdf = crate::pdf::tests::make_pdf(&[&["Quarterly pdf fixture"]]);
+        let t = attachment_text(&cfg(), "pdf", "a.pdf", &pdf, 10_000).unwrap();
+        assert!(t.contains("Quarterly pdf fixture"), "{t}");
+    }
+
+    #[test]
+    fn docx_paragraphs_are_extracted() {
+        let bytes = crate::docx::build_docx(&[crate::docx::WBlock::Paragraph {
+            text: "Hello docx fixture".into(),
+            bold: false,
+        }])
+        .unwrap();
+        let t = attachment_text(&cfg(), "docx", "a.docx", &bytes, 10_000).unwrap();
+        assert!(t.contains("Hello docx fixture"), "{t}");
+    }
+
+    #[test]
+    fn xlsx_cells_are_extracted() {
+        let mut wb = rust_xlsxwriter::Workbook::new();
+        let ws = wb.add_worksheet();
+        ws.write_string(0, 0, "Item").unwrap();
+        ws.write_string(0, 1, "Cell xlsx fixture").unwrap();
+        let bytes = wb.save_to_buffer().unwrap();
+        let t = attachment_text(&cfg(), "xlsx", "a.xlsx", &bytes, 10_000).unwrap();
+        assert!(t.contains("Cell xlsx fixture"), "{t}");
+    }
+
+    #[test]
+    fn pptx_slide_text_is_extracted_and_cut_at_the_limit() {
+        let slide = format!(
+            "<p:sld xmlns:a=\"a\" xmlns:p=\"p\"><a:p><a:r><a:t>{}</a:t></a:r></a:p></p:sld>",
+            "slide text ".repeat(50)
+        );
+        let bytes = zip_of(&[("ppt/slides/slide1.xml", slide)]);
+        let t = attachment_text(&cfg(), "pptx", "a.pptx", &bytes, 100).unwrap();
+        assert!(
+            t.contains("slide text") && t.ends_with("[truncated]"),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn an_archive_that_expands_beyond_the_limits_is_refused() {
+        // 70 MiB of zeros compresses to a few KiB: the classic bomb shape.
+        let bomb = zip_of(&[("ppt/slides/slide1.xml", " ".repeat(70 * 1024 * 1024))]);
+        assert!(bomb.len() < 1024 * 1024);
+        let err = attachment_text(&cfg(), "pptx", "b.pptx", &bomb, 10_000).unwrap_err();
+        assert!(err.to_string().contains("size limit"), "{err}");
+        let many: Vec<(String, String)> = (0..=MAX_ZIP_ENTRIES)
+            .map(|n| (format!("p{n}.xml"), String::new()))
+            .collect();
+        let refs: Vec<(&str, String)> = many.iter().map(|(n, b)| (n.as_str(), b.clone())).collect();
+        let err = attachment_text(&cfg(), "docx", "m.docx", &zip_of(&refs), 10_000).unwrap_err();
+        assert!(err.to_string().contains("too many parts"), "{err}");
     }
 }
