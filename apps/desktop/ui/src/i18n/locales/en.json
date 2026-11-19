@@ -851,6 +851,8 @@
       }
     },
     "timelineLabel": "Conversation",
+    "copyMessage": "Copy message",
+    "messageCopied": "Copied",
     "export": { "you": "You", "done": "Chat saved" },
     "jumpToLatest": "Jump to latest",
     "runBar": {

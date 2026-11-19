@@ -851,6 +851,8 @@
       }
     },
     "timelineLabel": "Unterhaltung",
+    "copyMessage": "Nachricht kopieren",
+    "messageCopied": "Kopiert",
     "export": { "you": "Du", "done": "Chat gespeichert" },
     "jumpToLatest": "Zum Neuesten springen",
     "runBar": {
