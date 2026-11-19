@@ -24,6 +24,11 @@ export function moveBotTo(ids: readonly string[], id: string, to: number): strin
   return next;
 }
 
+/** One-click "Make main": `id` first, everyone else keeps their place (the first bot is the main bot). */
+export function makeBotMain(ids: readonly string[], id: string): string[] {
+  return moveBotTo(ids, id, 0);
+}
+
 /** Keyboard step: one place up (-1) or down (+1). */
 export function moveBotBy(ids: readonly string[], id: string, delta: -1 | 1): string[] {
   return moveBotTo(ids, id, ids.indexOf(id) + delta);

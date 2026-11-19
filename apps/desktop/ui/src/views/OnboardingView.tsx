@@ -12,7 +12,6 @@ import {
   autonomyToPreset,
   type BotDraft,
   configFromDraft,
-  DEFAULT_NEW_BOT_COLOR,
   draftFromBot,
   parseModelRef
 } from "../lib/botProfile";
@@ -22,7 +21,9 @@ import {
   type FirstRunStep,
   firstRunReducer,
   INITIAL_FIRST_RUN,
-  refLabel
+  refLabel,
+  FIRST_RUN_BOT_COLOR,
+  FIRST_RUN_BOT_SHAPE
 } from "../lib/firstRun";
 import { useDaemon } from "../state/DaemonContext";
 import { useEngineConsent } from "../state/EngineConsent";
@@ -70,8 +71,8 @@ export function OnboardingView({ settings, onLanguageChange, onSkip, onComplete,
   });
   const [look, setLook] = useState<BotLook>(() => ({
     name: t("firstRun.bot.defaultName"),
-    shape: "pebble" as BotShapeId,
-    color: DEFAULT_NEW_BOT_COLOR
+    shape: FIRST_RUN_BOT_SHAPE as BotShapeId,
+    color: FIRST_RUN_BOT_COLOR
   }));
   const [creating, setCreating] = useState(false);
   const [botError, setBotError] = useState<string | null>(null);

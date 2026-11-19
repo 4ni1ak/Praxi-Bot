@@ -684,11 +684,12 @@ impl AppState {
     }
 
     pub(crate) async fn stop_components(&self) {
-        self.stop_scheduler().await;
+        // Channels first, so no message arrives while the scheduler winds down.
         let channels = self.0.channels.lock().clone();
         for channel in channels {
             channel.stop().await;
         }
+        self.stop_scheduler().await;
     }
 
     /// Register a messaging channel for `/v1/channels` before automatic
@@ -750,6 +751,9 @@ impl AppState {
 
     /// The running scheduler, or `503` when the daemon did not start one.
     pub(crate) fn scheduler(&self) -> Result<Scheduler, ApiError> {
+        if self.leader().is_starting() {
+            return Err(ApiError::starting());
+        }
         if !self.leader().components_allowed() {
             return Err(ApiError::conflict("this installation is standby"));
         }
@@ -1494,6 +1498,9 @@ pub async fn serve_with_startup(
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<Vec<RunId>> {
     let _cancel_on_drop = state.shutdown_token().drop_guard();
+    state
+        .leader()
+        .set_startup(host::StartupPhase::Starting, None);
     let startup = {
         let leader = state.leader().clone();
         let cancel = state.shutdown_token();
@@ -1509,10 +1516,21 @@ pub async fn serve_with_startup(
                     let elapsed = began.elapsed().as_millis();
                     match result {
                         Ok(()) if leader.components_allowed() => {
+                            leader.set_startup(host::StartupPhase::Ready, None);
                             eprintln!("startup: leader components started in background (+{elapsed} ms)");
                         }
-                        Ok(()) => eprintln!("startup: leader components idle ({elapsed} ms)"),
-                        Err(e) => eprintln!("warning: leader components failed to start ({elapsed} ms): {e}"),
+                        Ok(()) => {
+                            leader.set_startup(host::StartupPhase::Ready, None);
+                            eprintln!("startup: leader components idle ({elapsed} ms)");
+                        }
+                        Err(e) => {
+                            // Fixed text: the error itself may carry a path.
+                            leader.set_startup(
+                                host::StartupPhase::Degraded,
+                                Some("the schedule store could not be opened; the scheduler is not running"),
+                            );
+                            eprintln!("warning: leader components failed to start ({elapsed} ms): {e}");
+                        }
                     }
                 }
             }

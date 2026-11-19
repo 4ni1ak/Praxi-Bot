@@ -5,6 +5,7 @@ import {
   Plus,
   ShieldCheck,
   SlidersHorizontal,
+  Star,
   UserRound,
   X,
   Zap
@@ -114,7 +115,9 @@ export function BotPanel({
   onOpenSettings,
   onManageSkills,
   onAddSkill,
-  onOpenMail
+  onOpenMail,
+  isMain = false,
+  onMakeMain
 }: {
   bot: BotIdentity;
   /** `provider/model` the bot runs on. */
@@ -143,6 +146,10 @@ export function BotPanel({
   onAddSkill: () => void;
   /** Open Settings, Mail (connect, edit or remove a mailbox). */
   onOpenMail: () => void;
+  /** This bot is the main bot (first in the list). */
+  isMain?: boolean;
+  /** Make this bot the main bot; omitted when there is nothing to choose. */
+  onMakeMain?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const { events, refreshRuns } = useDaemon();
@@ -209,6 +216,20 @@ export function BotPanel({
           >
             <PenLine aria-hidden="true" />
           </button>
+          {onMakeMain ? (
+            <button
+              type="button"
+              className={styles.iconBtn}
+              data-testid="bot-panel-make-main"
+              title={isMain ? t("botPanel.isMain") : t("botPanel.makeMain")}
+              aria-label={isMain ? t("botPanel.isMain") : t("botPanel.makeMain")}
+              aria-pressed={isMain}
+              disabled={isMain}
+              onClick={onMakeMain}
+            >
+              <Star aria-hidden="true" fill={isMain ? "currentColor" : "none"} />
+            </button>
+          ) : null}
           <button
             type="button"
             className={styles.iconBtn}

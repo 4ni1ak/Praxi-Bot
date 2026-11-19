@@ -811,6 +811,7 @@
     "close": "Close panel",
     "computer": "Computer",
     "edit": "Edit bot",
+    "isMain": "This is the main bot",
     "mail": {
       "agentmail": "Own address",
       "check": "Check connection",
@@ -839,6 +840,7 @@
       "toolsOffHint": "The mailbox is connected, but {{name}} cannot see any mail tools yet. Turn this on to let it read and write mail.",
       "toolsOnHint": "Reading is allowed. Sending always follows the permission mode of this bot, and asks first by default."
     },
+    "makeMain": "Make main bot",
     "myComputer": "My computer",
     "needsDesktop": "{{name}} has no desktop session, so there is no screen to show. To add one, run this on this computer:",
     "noChatMatches": "No chats match",
@@ -2178,6 +2180,10 @@
       "spend_limit_reached": {
         "hint": "The model was not called. Raise or remove the limit on the Usage page, then run again.",
         "title": "Monthly spending limit reached"
+      },
+      "starting": {
+        "hint": "The app is still starting up. Try again in a few seconds.",
+        "title": "Still starting"
       },
       "terminal_busy": {
         "hint": "Close another terminal on the server, then try again.",

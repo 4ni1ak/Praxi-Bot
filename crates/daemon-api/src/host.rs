@@ -177,6 +177,18 @@ pub enum HostEvent {
     HostConflict(HostConflict),
 }
 
+/// How far background startup of the automatic components has got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StartupPhase {
+    /// Leadership verification and component startup are still running.
+    Starting,
+    /// Startup finished (components run, or this installation is standby).
+    Ready,
+    /// Startup finished but a component could not start.
+    Degraded,
+}
+
 /// Shared handle for handover, API actions and conflict detection. Transitions are serialized.
 #[derive(Clone)]
 pub struct LeaderControl(Arc<LeaderInner>);
@@ -186,6 +198,7 @@ struct LeaderInner {
     transition: tokio::sync::Mutex<()>,
     startup: tokio::sync::Mutex<()>,
     verifying: AtomicBool,
+    phase: Mutex<(StartupPhase, Option<String>)>,
     state: WeakAppState,
     network: Mutex<Option<PeerNetwork>>,
     invites: Mutex<std::collections::VecDeque<std::time::Instant>>,
@@ -202,6 +215,7 @@ impl LeaderControl {
             transition: tokio::sync::Mutex::new(()),
             startup: tokio::sync::Mutex::new(()),
             verifying: AtomicBool::new(false),
+            phase: Mutex::new((StartupPhase::Ready, None)),
             state,
             network: Mutex::new(None),
             invites: Mutex::default(),
@@ -218,6 +232,18 @@ impl LeaderControl {
     #[must_use]
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<HostEvent> {
         self.0.events.subscribe()
+    }
+    /// Record how background startup stands. `reason` must hold no secrets or paths.
+    pub(crate) fn set_startup(&self, phase: StartupPhase, reason: Option<&str>) {
+        *self.0.phase.lock() = (phase, reason.map(str::to_owned));
+    }
+    /// The startup phase and, when degraded, a fixed human-readable reason.
+    pub(crate) fn startup(&self) -> (StartupPhase, Option<String>) {
+        self.0.phase.lock().clone()
+    }
+    /// Whether background startup (peer check, component start) is still running.
+    pub(crate) fn is_starting(&self) -> bool {
+        self.0.phase.lock().0 == StartupPhase::Starting
     }
     /// The attached endpoint, if peer networking is enabled.
     #[must_use]

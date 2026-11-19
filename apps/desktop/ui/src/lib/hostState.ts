@@ -4,6 +4,8 @@
  * (`GET /v1/hosts`) and what the host answered on its public health route.
  */
 
+import { isProcessingRunState } from "./runState.ts";
+
 export type LinkState =
   | "idle"
   | "connecting"
@@ -96,10 +98,8 @@ export function hostCanRunModel(state: HostUiState): boolean {
 }
 
 /** Runs in these states are live and are what "stop on host" lists. */
-const LIVE = new Set(["pending", "running", "waiting_approval"]);
-
 export function liveRunIds(runs: ReadonlyArray<{ id: string; state: string }>): string[] {
-  return runs.filter((r) => LIVE.has(r.state)).map((r) => r.id);
+  return runs.filter((r) => isProcessingRunState(r.state)).map((r) => r.id);
 }
 
 /**

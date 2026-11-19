@@ -811,6 +811,7 @@
     "close": "Paneli kapat",
     "computer": "Bilgisayar",
     "edit": "Botu düzenle",
+    "isMain": "Bu, ana bot",
     "mail": {
       "agentmail": "Kendi adresi",
       "check": "Bağlantıyı denetle",
@@ -839,6 +840,7 @@
       "toolsOffHint": "Posta kutusu bağlı ama {{name}} henüz hiçbir e-posta aracını göremiyor. E-postayı okuyup yazabilmesi için bunu aç.",
       "toolsOnHint": "Okumaya izin var. Göndermek her zaman bu botun izin moduna uyar ve varsayılan olarak önce sorar."
     },
+    "makeMain": "Ana bot yap",
     "myComputer": "Benim bilgisayarım",
     "needsDesktop": "{{name}} sunucusunda masaüstü oturumu yok, bu yüzden gösterilecek ekran yok. Eklemek için bu bilgisayarda şunu çalıştır:",
     "noChatMatches": "Eşleşen sohbet yok",
@@ -2178,6 +2180,10 @@
       "spend_limit_reached": {
         "hint": "Model çağrılmadı. Kullanım sayfasında limiti yükseltin veya kaldırın, sonra yeniden çalıştırın.",
         "title": "Aylık harcama limitine ulaşıldı"
+      },
+      "starting": {
+        "hint": "Uygulama hâlâ başlıyor. Birkaç saniye sonra tekrar dene.",
+        "title": "Hâlâ başlatılıyor"
       },
       "terminal_busy": {
         "hint": "Sunucudaki başka bir terminali kapatıp yeniden dene.",
