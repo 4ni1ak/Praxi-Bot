@@ -30,8 +30,6 @@ use std::time::Duration;
 
 use agent_core::ControlGate;
 use async_trait::async_trait;
-use builtin_tools::BrowserDriver;
-use builtin_tools::pc::{PcFamily, PcInfo, RPC_BROWSER, RPC_INFO, RPC_TOOL, SERVED_TOOLS};
 use daemon_api::pc_access::{PcPreview, PcRequests};
 use desktop_api::{
     ActGuard, Action, ActionResult, Capabilities, ClickMethod, CoordinateSpace, DesktopBackend,
@@ -43,7 +41,6 @@ use peer_network::proto::{ERR_FORBIDDEN, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUN
 use peer_network::{DesktopRpcHandler, Device, Role, RpcHandler, desktop_error_to_rpc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tool_registry::{Tool, ToolContext};
 
 /// How long the owner has to answer a card before it is denied. Must stay below
 /// `peer_network::ACTION_RPC_TIMEOUT` (the transport deadline of such calls).
@@ -53,47 +50,11 @@ pub const ASK_TIMEOUT: Duration = Duration::from_secs(120);
 /// refused instead of being cut.
 const MAX_PAYLOAD_CHARS: usize = 1500;
 
-fn yes() -> bool {
-    true
-}
-
-/// What the owner allowed one host. A file written before the families existed
-/// has no `screen` key and meant "screen and input on", so that defaults to on;
-/// every other family is off until turned on.
-// One flag per family the owner switches separately.
-#[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct HostAccess {
-    /// Screen and input.
-    #[serde(default = "yes")]
-    screen: bool,
     /// The first look each session needs no card.
     #[serde(default)]
     always_read: bool,
-    #[serde(default)]
-    browser: bool,
-    #[serde(default)]
-    commands: bool,
-    #[serde(default)]
-    files: bool,
-}
-
-/// The owner's switches for one host (what `PUT .../computer-access` carries).
-// One flag per family the owner switches separately.
-#[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Switches {
-    pub screen: bool,
-    pub always_read: bool,
-    pub browser: bool,
-    pub commands: bool,
-    pub files: bool,
-}
-
-impl Switches {
-    fn any(self) -> bool {
-        self.screen || self.browser || self.commands || self.files
-    }
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -106,12 +67,8 @@ struct AccessFile {
 pub struct AccessStore {
     path: PathBuf,
     state: Mutex<AccessFile>,
-    /// `(host, family)` pairs whose first look this session was allowed (memory only).
-    session_reads: Mutex<BTreeSet<(String, &'static str)>>,
-    /// How many times a family was switched off for a host. An approval that
-    /// was asked before the latest revocation never runs (a delivered "allow"
-    /// cannot be taken back, so it is checked against this instead).
-    revocations: Mutex<BTreeMap<(String, &'static str), u64>>,
+    /// Hosts whose first look this session was allowed (memory only).
+    session_reads: Mutex<BTreeSet<String>>,
 }
 
 impl AccessStore {
@@ -126,60 +83,12 @@ impl AccessStore {
             path,
             state: Mutex::new(state),
             session_reads: Mutex::new(BTreeSet::new()),
-            revocations: Mutex::new(BTreeMap::new()),
         }
     }
 
-    /// Revocation counter of one family of one host.
-    #[must_use]
-    pub fn family_gen(&self, host_id: &str, family: PcFamily) -> u64 {
-        self.revocations
-            .lock()
-            .get(&(host_id.to_owned(), family.as_str()))
-            .copied()
-            .unwrap_or(0)
-    }
-
-    /// The family is on NOW and has not been switched off since `gen` was read.
-    #[must_use]
-    pub fn family_valid(&self, host_id: &str, family: PcFamily, gen_then: u64) -> bool {
-        self.family_on(host_id, family) && self.family_gen(host_id, family) == gen_then
-    }
-
-    /// Any family is on for this host (the pairing is served at all).
     #[must_use]
     pub fn enabled(&self, host_id: &str) -> bool {
         self.state.lock().hosts.contains_key(host_id)
-    }
-
-    /// This family is on for this host.
-    #[must_use]
-    pub fn family_on(&self, host_id: &str, family: PcFamily) -> bool {
-        self.state
-            .lock()
-            .hosts
-            .get(host_id)
-            .is_some_and(|h| match family {
-                PcFamily::Screen => h.screen,
-                PcFamily::Browser => h.browser,
-                PcFamily::Commands => h.commands,
-                PcFamily::Files => h.files,
-            })
-    }
-
-    #[must_use]
-    pub fn switches(&self, host_id: &str) -> Switches {
-        self.state
-            .lock()
-            .hosts
-            .get(host_id)
-            .map_or_else(Switches::default, |h| Switches {
-                screen: h.screen,
-                always_read: h.always_read,
-                browser: h.browser,
-                commands: h.commands,
-                files: h.files,
-            })
     }
 
     #[must_use]
@@ -196,54 +105,24 @@ impl AccessStore {
         self.state.lock().hosts.keys().cloned().collect()
     }
 
-    fn session_read_allowed(&self, host_id: &str, family: PcFamily) -> bool {
-        self.session_reads
-            .lock()
-            .contains(&(host_id.to_owned(), family.as_str()))
+    fn session_read_allowed(&self, host_id: &str) -> bool {
+        self.session_reads.lock().contains(host_id)
     }
 
-    fn allow_session_read(&self, host_id: &str, family: PcFamily) {
-        self.session_reads
-            .lock()
-            .insert((host_id.to_owned(), family.as_str()));
+    fn allow_session_read(&self, host_id: &str) {
+        self.session_reads.lock().insert(host_id.to_owned());
     }
 
-    /// Screen and input only (the other families keep their switches);
-    /// `on = false` removes every switch of the host.
-    ///
     /// # Errors
     /// The file could not be written; the in-memory switch is left unchanged.
     pub fn set(&self, host_id: &str, on: bool, always_read: bool) -> std::io::Result<()> {
-        let mut current = self.switches(host_id);
-        if on {
-            current.screen = true;
-            current.always_read = always_read;
-        } else {
-            current = Switches::default();
-        }
-        self.set_switches(host_id, current)
-    }
-
-    /// Replace every switch of one host; none on removes the host.
-    ///
-    /// # Errors
-    /// The file could not be written; the in-memory switch is left unchanged.
-    pub fn set_switches(&self, host_id: &str, sw: Switches) -> std::io::Result<()> {
         let mut state = self.state.lock();
         let mut next = AccessFile {
             hosts: state.hosts.clone(),
         };
-        if sw.any() {
-            next.hosts.insert(
-                host_id.to_owned(),
-                HostAccess {
-                    screen: sw.screen,
-                    always_read: sw.screen && sw.always_read,
-                    browser: sw.browser,
-                    commands: sw.commands,
-                    files: sw.files,
-                },
-            );
+        if on {
+            next.hosts
+                .insert(host_id.to_owned(), HostAccess { always_read });
         } else {
             next.hosts.remove(host_id);
         }
@@ -251,42 +130,11 @@ impl AccessStore {
             std::fs::create_dir_all(dir)?;
         }
         std::fs::write(&self.path, serde_json::to_vec(&next)?)?;
-        let before = Self::state_families(&state, host_id);
         *state = next;
-        // Switching a family off revokes what was asked before.
-        let after = Self::state_families(&state, host_id);
-        {
-            let mut revoked = self.revocations.lock();
-            for fam in before.iter().filter(|f| !after.contains(f)) {
-                *revoked.entry((host_id.to_owned(), *fam)).or_insert(0) += 1;
-            }
+        if !on {
+            self.session_reads.lock().remove(host_id);
         }
-        // Switching a family off ends the session allowance of it.
-        let still = Self::state_families(&state, host_id);
-        self.session_reads
-            .lock()
-            .retain(|(h, fam)| h != host_id || still.contains(fam));
         Ok(())
-    }
-
-    fn state_families(state: &AccessFile, host_id: &str) -> Vec<&'static str> {
-        let Some(h) = state.hosts.get(host_id) else {
-            return Vec::new();
-        };
-        let mut v = Vec::new();
-        if h.screen {
-            v.push("screen");
-        }
-        if h.browser {
-            v.push("browser");
-        }
-        if h.commands {
-            v.push("commands");
-        }
-        if h.files {
-            v.push("files");
-        }
-        v
     }
 }
 
@@ -297,7 +145,7 @@ struct PairingFile {
 }
 
 /// The pairing as it is on disk right now (revoking removes the entry).
-pub(crate) fn paired_device(data: &Path, id: &str) -> Option<Device> {
+fn paired_device(data: &Path, id: &str) -> Option<Device> {
     let text = std::fs::read_to_string(data.join("peer").join("devices.json")).ok()?;
     serde_json::from_str::<PairingFile>(&text)
         .ok()?
@@ -468,76 +316,6 @@ pub struct PcTargetDeps {
     /// Mask owner secrets in text shown on a card.
     pub redact: Arc<dyn Fn(&str) -> String + Send + Sync>,
     pub own_pid: u32,
-    /// The real `shell_run` / `fs_*` tools ([`builtin_tools::pc::local_tools`]),
-    /// reachable only through `pc.tool` behind the owner's switches.
-    pub tools: Vec<Arc<dyn Tool>>,
-    /// This computer's own managed browser; `None` = the browser is not served.
-    pub browser: Option<Arc<dyn BrowserDriver>>,
-}
-
-/// Where this computer's served browser may connect (review blocker 4): the
-/// network policy of its requests. Loopback (the daemon's own API, admin UIs),
-/// link-local and cloud-metadata addresses are never reachable; a private-range
-/// host only after the person at this computer allowed exactly that host.
-struct BrowserNet {
-    access: Arc<AccessStore>,
-    requests: Arc<PcRequests>,
-    /// The server whose browser call is being served.
-    current: Mutex<Option<Device>>,
-    /// `(server, host, revocation generation)` the owner allowed this session.
-    allowed: Mutex<BTreeSet<(String, String, u64)>>,
-    timeout: Mutex<Duration>,
-}
-
-impl BrowserNet {
-    async fn check(&self, url: String) -> Result<(), String> {
-        let host = match browser_cdp::classify_url(&url).await {
-            browser_cdp::Verdict::Allow => return Ok(()),
-            browser_cdp::Verdict::Block(why) => {
-                return Err(format!("blocked: {why}"));
-            }
-            browser_cdp::Verdict::Private(host) => host,
-        };
-        let Some(peer) = self.current.lock().clone() else {
-            return Err("blocked: no request is being served".into());
-        };
-        let gen_then = self.access.family_gen(&peer.id, PcFamily::Browser);
-        if !self
-            .access
-            .family_valid(&peer.id, PcFamily::Browser, gen_then)
-        {
-            return Err("blocked: the browser is not allowed on this computer".into());
-        }
-        let key = (peer.id.clone(), host.clone(), gen_then);
-        if self.allowed.lock().contains(&key) {
-            return Ok(());
-        }
-        let timeout = *self.timeout.lock();
-        let ok = self
-            .requests
-            .ask(
-                &peer.id,
-                &peer.name,
-                PcPreview {
-                    kind: "act",
-                    action: "browser private host".into(),
-                    target: format!("{host} (an address inside your own network)"),
-                    payload: url,
-                },
-                timeout,
-            )
-            .await;
-        if ok
-            && self
-                .access
-                .family_valid(&peer.id, PcFamily::Browser, gen_then)
-        {
-            self.allowed.lock().insert(key);
-            Ok(())
-        } else {
-            Err("blocked: a private network address was not allowed".into())
-        }
-    }
 }
 
 /// The shared desktop RPC surface behind the owner's consent.
@@ -545,7 +323,6 @@ pub struct HostDesktopHandler {
     reads: DesktopRpcHandler,
     deps: PcTargetDeps,
     ask_timeout: Duration,
-    net: Arc<BrowserNet>,
 }
 
 impl HostDesktopHandler {
@@ -556,32 +333,16 @@ impl HostDesktopHandler {
             gate: Arc::clone(&deps.gate),
             own_pid: deps.own_pid,
         }));
-        let net = Arc::new(BrowserNet {
-            access: Arc::clone(&deps.access),
-            requests: Arc::clone(&deps.requests),
-            current: Mutex::new(None),
-            allowed: Mutex::new(BTreeSet::new()),
-            timeout: Mutex::new(ASK_TIMEOUT),
-        });
-        if let Some(browser) = &deps.browser {
-            let guard = Arc::clone(&net);
-            browser.set_destination_check(browser_cdp::DestinationCheck::new(move |url| {
-                let guard = Arc::clone(&guard);
-                async move { guard.check(url).await }
-            }));
-        }
         Self {
             reads,
             deps,
             ask_timeout: ASK_TIMEOUT,
-            net,
         }
     }
 
     #[cfg(test)]
     fn with_ask_timeout(mut self, t: Duration) -> Self {
         self.ask_timeout = t;
-        *self.net.timeout.lock() = t;
         self
     }
 
@@ -615,432 +376,55 @@ impl HostDesktopHandler {
         Ok(())
     }
 
-    /// The first look at a family each session asks the owner (the screen
-    /// unless the owner chose "always"; files and the browser always).
-    async fn first_look(
-        &self,
-        peer: &Device,
-        method: &str,
-        family: PcFamily,
-    ) -> Result<(), RpcError> {
-        let skip = family == PcFamily::Screen && self.deps.access.always_read(&peer.id);
-        if skip || self.deps.access.session_read_allowed(&peer.id, family) {
-            return Ok(());
-        }
-        let (target, payload) = match family {
-            PcFamily::Screen => (
-                "this computer's screen",
-                "Allow this server's bots to look at this screen for this session? Praxi's own windows stay hidden.",
-            ),
-            PcFamily::Files => (
-                "this computer's files",
-                "Allow this server's bots to read files on this computer for this session? Passwords, other programs' settings and Praxi's own data stay unreachable. Writing a file asks every time.",
-            ),
-            PcFamily::Browser => (
-                "this computer's browser",
-                "Allow this server's bots to look at pages in this computer's browser for this session? Opening a page or typing in one asks every time.",
-            ),
-            PcFamily::Commands => return Ok(()),
-        };
-        let gen_then = self.deps.access.family_gen(&peer.id, family);
-        let allowed = self
-            .deps
-            .requests
-            .ask(
-                &peer.id,
-                &peer.name,
-                PcPreview {
-                    kind: "session_read",
-                    action: "look".into(),
-                    target: target.into(),
-                    payload: payload.into(),
-                },
-                self.ask_timeout,
-            )
-            .await;
-        if !allowed {
-            return Err(self.refuse(
-                peer,
-                method,
-                "the person at this computer did not allow looking here",
-            ));
-        }
-        if let Err(why) = self.still_authorized(peer) {
-            return Err(self.refuse(peer, method, why));
-        }
-        // An allow that was delivered before the family was switched off must
-        // not bring the session allowance back.
-        if !self.deps.access.family_valid(&peer.id, family, gen_then) {
-            return Err(self.refuse(
-                peer,
-                method,
-                "the owner switched this part of the computer off while the question was open",
-            ));
-        }
-        self.deps.access.allow_session_read(&peer.id, family);
-        Ok(())
-    }
-
-    fn audit_read(&self, peer: &Device, method: &str, detail: &Value) -> Result<(), RpcError> {
-        let mut d = serde_json::json!({"host": peer.id, "method": method});
-        if let (Some(o), Some(extra)) = (d.as_object_mut(), detail.as_object()) {
-            o.extend(extra.clone());
-        }
-        self.audit("pc_target.read", d).map_err(|e| {
-            RpcError::new(
-                ERR_FORBIDDEN,
-                format!("not shared: the local audit log could not be written ({e})"),
-            )
-        })
-    }
-
     async fn read(&self, peer: &Device, method: &str, params: Value) -> Result<Value, RpcError> {
-        self.family_gate(peer, method, PcFamily::Screen)?;
-        self.first_look(peer, method, PcFamily::Screen).await?;
-        self.audit_read(peer, method, &serde_json::json!({}))?;
-        self.deps.requests.note_read(&peer.id, &peer.name);
-        self.reads.handle(peer, method, params).await
-    }
-
-    /// The owner's switch for one family, as it is now. The refusal says where
-    /// to turn it on, in words the bot can pass on.
-    fn family_gate(&self, peer: &Device, method: &str, family: PcFamily) -> Result<(), RpcError> {
-        if self.deps.access.family_on(&peer.id, family) {
-            return Ok(());
-        }
-        let why = match family {
-            PcFamily::Screen => {
-                "the owner has not allowed screen and input on this computer (Settings > Computer)"
-            }
-            PcFamily::Browser => {
-                "the owner has not allowed the browser on this computer (Settings > Computer)"
-            }
-            PcFamily::Commands => {
-                "the owner has not allowed commands on this computer (Settings > Computer)"
-            }
-            PcFamily::Files => {
-                "the owner has not allowed files on this computer (Settings > Computer)"
-            }
-        };
-        Err(self.refuse(peer, method, why))
-    }
-
-    // ── facts ────────────────────────────────────────────────────────────────
-
-    fn info(&self, peer: &Device) -> Result<Value, RpcError> {
-        let sw = self.deps.access.switches(&peer.id);
-        let info = PcInfo {
-            os: std::env::consts::OS.to_owned(),
-            shell: if cfg!(windows) { "PowerShell" } else { "sh" }.to_owned(),
-            home: builtin_tools::user_home().map(|p| p.display().to_string()),
-            hostname: std::env::var("COMPUTERNAME")
-                .or_else(|_| std::env::var("HOSTNAME"))
-                .ok()
-                .filter(|h| !h.is_empty()),
-            screen: sw.screen,
-            browser: sw.browser && self.deps.browser.is_some(),
-            commands: sw.commands,
-            files: sw.files,
-        };
-        serde_json::to_value(info).map_err(|e| RpcError::new(-32603, e.to_string()))
-    }
-
-    // ── commands and files ───────────────────────────────────────────────────
-
-    fn mask_output(&self, mut out: tool_registry::ToolOutput) -> tool_registry::ToolOutput {
-        for part in &mut out.content {
-            if let tool_registry::ContentPart::Text { text } = part {
-                *text = (self.deps.redact)(text);
-            }
-        }
-        out.spill = None;
-        out.exposure = None;
-        out
-    }
-
-    async fn run_served(&self, tool: &Arc<dyn Tool>, input: Value) -> Result<Value, RpcError> {
-        let ctx = ToolContext {
-            run_id: uuid::Uuid::now_v7().to_string(),
-            max_inline_bytes: 60_000,
-            ..ToolContext::default()
-        };
-        match tool.call(&ctx, input).await {
-            Ok(out) => serde_json::to_value(self.mask_output(out))
-                .map_err(|e| RpcError::new(-32603, e.to_string())),
-            Err(e) => Err(RpcError::new(
-                ERR_FORBIDDEN,
-                (self.deps.redact)(&e.to_string()),
-            )),
-        }
-    }
-
-    #[allow(clippy::too_many_lines)] // one flat dispatch per served tool
-    async fn serve_tool(&self, peer: &Device, params: Value) -> Result<Value, RpcError> {
-        #[derive(Deserialize)]
-        struct P {
-            name: String,
-            #[serde(default)]
-            input: Value,
-        }
-        let method = RPC_TOOL;
-        let p: P = serde_json::from_value(params)
-            .map_err(|e| RpcError::new(ERR_INVALID_PARAMS, format!("invalid params: {e}")))?;
-        let Some(name) = SERVED_TOOLS.iter().find(|n| **n == p.name) else {
-            return Err(self.refuse(peer, method, "that tool is not served by this computer"));
-        };
-        let family = PcFamily::of_tool(name).unwrap_or(PcFamily::Commands);
-        self.family_gate(peer, method, family)?;
-        let Some(tool) = self.deps.tools.iter().find(|t| t.spec().name == *name) else {
-            return Err(self.refuse(peer, method, "that tool is not available on this computer"));
-        };
-        let mut input = p.input;
-        match *name {
-            "shell_run" => {
-                let command = str_field(&input, "command")
-                    .ok_or_else(|| RpcError::new(ERR_INVALID_PARAMS, "missing command"))?;
-                // The folder the command runs in is bound BEFORE the owner is
-                // asked: the real folder (links resolved), shown whole.
-                let cwd_raw = str_field(&input, "cwd")
-                    .or_else(|| builtin_tools::user_home().map(|h| h.display().to_string()));
-                let Some(cwd_raw) = cwd_raw else {
-                    return Err(self.refuse(
-                        peer,
-                        method,
-                        "this computer has no home folder to start in",
-                    ));
-                };
-                complete_text(&cwd_raw).map_err(|why| self.refuse(peer, method, &why))?;
-                let cwd = canonical_target(&resolve_path(&cwd_raw))
-                    .map_err(|why| self.refuse(peer, method, &why))?;
-                if !cwd.is_dir() {
-                    return Err(self.refuse(peer, method, "the working folder does not exist"));
-                }
-                let cwd_text = cwd.display().to_string();
-                self.command_refusal(&command, Some(&cwd_text))
-                    .map_err(|why| self.refuse(peer, method, &why))?;
-                if let Some(why) = self.base_refusal(peer, method) {
-                    return Err(self.refuse(peer, method, &why));
-                }
-                let shell = str_field(&input, "shell")
-                    .unwrap_or_else(|| if cfg!(windows) { "powershell" } else { "sh" }.to_owned());
-                let preview = PcPreview {
-                    kind: "act",
-                    action: "run command".into(),
-                    target: format!("in {shell} on this computer, folder: {cwd_text}"),
-                    payload: (self.deps.redact)(&command),
-                };
-                self.approve_and_run(peer, method, preview, PcFamily::Commands)
-                    .await?;
-                if let Some(o) = input.as_object_mut() {
-                    // Run in exactly the folder on the card.
-                    o.insert("cwd".into(), Value::String(cwd_text));
-                }
-            }
-            "fs_write" => {
-                let path = str_field(&input, "path")
-                    .ok_or_else(|| RpcError::new(ERR_INVALID_PARAMS, "missing path"))?;
-                let content = str_field(&input, "content")
-                    .ok_or_else(|| RpcError::new(ERR_INVALID_PARAMS, "missing content"))?;
-                complete_text(&path).map_err(|why| self.refuse(peer, method, &why))?;
-                complete_text(&content).map_err(|why| self.refuse(peer, method, &why))?;
-                // The file that would be written: real location, links
-                // resolved (a new file: its nearest existing folder resolved),
-                // checked and shown whole.
-                let abs = canonical_target(&resolve_path(&path))
-                    .map_err(|why| self.refuse(peer, method, &why))?;
-                write_target_refusal(&abs, &self.deps.data)
-                    .map_err(|why| self.refuse(peer, method, &why))?;
-                if let Some(why) = self.base_refusal(peer, method) {
-                    return Err(self.refuse(peer, method, &why));
-                }
-                let existing = std::fs::metadata(&abs).ok();
-                let what = match existing {
-                    Some(m) if m.is_file() => {
-                        format!("replaces an existing file of {} bytes", m.len())
-                    }
-                    Some(_) => "not a file".to_owned(),
-                    None => "creates a new file".to_owned(),
-                };
-                let preview = PcPreview {
-                    kind: "act",
-                    action: "write file".into(),
-                    target: format!("{} ({what})", abs.display()),
-                    payload: (self.deps.redact)(&content),
-                };
-                self.approve_and_run(peer, method, preview, PcFamily::Files)
-                    .await?;
-                if let Some(o) = input.as_object_mut() {
-                    // The file written is exactly the one on the card.
-                    o.insert("path".into(), Value::String(abs.display().to_string()));
-                }
-            }
-            _ => {
-                if let Some(path) = str_field(&input, "path") {
-                    complete_text(&path).map_err(|why| self.refuse(peer, method, &why))?;
-                }
-                if let Some(why) = self.base_refusal(peer, method) {
-                    return Err(self.refuse(peer, method, &why));
-                }
-                self.first_look(peer, method, PcFamily::Files).await?;
-                self.audit_read(
+        if !self.deps.access.always_read(&peer.id)
+            && !self.deps.access.session_read_allowed(&peer.id)
+        {
+            let allowed = self
+                .deps
+                .requests
+                .ask(
+                    &peer.id,
+                    &peer.name,
+                    PcPreview {
+                        kind: "session_read",
+                        action: "look".into(),
+                        target: "this computer's screen".into(),
+                        payload: "Allow this server's bots to look at this screen for this session? Praxi's own windows stay hidden.".into(),
+                    },
+                    self.ask_timeout,
+                )
+                .await;
+            if !allowed {
+                return Err(self.refuse(
                     peer,
                     method,
-                    &serde_json::json!({"tool": name, "path": str_field(&input, "path")}),
-                )?;
+                    "the person at this computer did not allow looking at the screen",
+                ));
             }
+            if let Err(why) = self.still_authorized(peer) {
+                return Err(self.refuse(peer, method, why));
+            }
+            self.deps.access.allow_session_read(&peer.id);
         }
-        self.run_served(tool, input).await
-    }
-
-    /// Commands that are never run for a server's bot, and what a command may
-    /// not name or start in.
-    fn command_refusal(&self, command: &str, cwd: Option<&str>) -> Result<(), String> {
-        complete_text(command)?;
-        if let Some(cwd) = cwd {
-            complete_text(cwd)?;
-            let canon_data = std::fs::canonicalize(&self.deps.data)
-                .map_or_else(|_| self.deps.data.clone(), strip_verbatim);
-            if let Some(why) = protected_location(Path::new(cwd), &canon_data) {
-                return Err(format!("a command may not run there: {why}"));
-            }
-        }
-        if permission_engine::NeverList::default_list().matches(command) {
-            return Err(
-                "this command is on the list of commands that are never run for a server's bot on this computer"
-                    .into(),
-            );
-        }
-        let lower = command.to_lowercase().replace('\\', "/");
-        let data = self
-            .deps
-            .data
-            .to_string_lossy()
-            .to_lowercase()
-            .replace('\\', "/");
-        if !data.is_empty() && lower.contains(&data) {
-            return Err("Praxi's own data folder is never reachable".into());
-        }
-        Ok(())
-    }
-
-    // ── browser ──────────────────────────────────────────────────────────────
-
-    #[allow(clippy::too_many_lines)] // one flat dispatch table
-    async fn serve_browser(&self, peer: &Device, params: Value) -> Result<Value, RpcError> {
-        let method = RPC_BROWSER;
-        self.family_gate(peer, method, PcFamily::Browser)?;
-        *self.net.current.lock() = Some(peer.clone());
-        let Some(driver) = self.deps.browser.clone() else {
-            return Err(self.refuse(peer, method, "this computer has no browser to use"));
-        };
-        let op = str_field(&params, "op")
-            .ok_or_else(|| RpcError::new(ERR_INVALID_PARAMS, "missing op"))?;
-        let arg = |k: &str| str_field(&params, k).unwrap_or_default();
-        // What is on the card for an input.
-        let write: Option<(String, String)> = match op.as_str() {
-            "open" => {
-                let url = arg("url");
-                complete_text(&url).map_err(|why| self.refuse(peer, method, &why))?;
-                let Some(parsed) = web_url(&url) else {
-                    return Err(self.refuse(
-                        peer,
-                        method,
-                        "only http and https pages can be opened",
-                    ));
-                };
-                // Never-reachable destinations get no card at all.
-                if let browser_cdp::Verdict::Block(why) = browser_cdp::classify_url(&url).await {
-                    return Err(self.refuse(peer, method, &format!("not allowed: {why}")));
-                }
-                Some((
-                    format!(
-                        "opens {} in this computer's browser",
-                        parsed.host_str().unwrap_or_default()
-                    ),
-                    url,
-                ))
-            }
-            "click" => Some((
-                "click in the open page".into(),
-                format!("click element {}", arg("ref")),
-            )),
-            "fill" => {
-                let t = arg("text");
-                complete_text(&t).map_err(|why| self.refuse(peer, method, &why))?;
-                Some((
-                    "type into the open page".into(),
-                    format!(
-                        "type into element {}:\n{}",
-                        arg("ref"),
-                        (self.deps.redact)(&t)
-                    ),
-                ))
-            }
-            "select" => Some((
-                "choose an option in the open page".into(),
-                format!("choose \"{}\" in element {}", arg("value"), arg("ref")),
-            )),
-            "press" => {
-                let k = arg("key");
-                complete_text(&k).map_err(|why| self.refuse(peer, method, &why))?;
-                Some(("press a key in the open page".into(), format!("press {k}")))
-            }
-            "back" => Some(("go back in the open page".into(), "go back".into())),
-            "tabs" if params.get("switch_to").is_some_and(|v| !v.is_null()) => Some((
-                "switch the browser tab".into(),
-                format!("switch to tab {}", params["switch_to"]),
-            )),
-            "snapshot" | "screenshot" | "tabs" | "wait" | "scroll" | "current_url" => None,
-            _ => return Err(self.refuse(peer, method, "that browser operation is not served")),
-        };
-        if let Some((target, payload)) = write {
-            complete_text(&payload).map_err(|why| self.refuse(peer, method, &why))?;
-            if let Some(why) = self.base_refusal(peer, method) {
-                return Err(self.refuse(peer, method, &why));
-            }
-            self.approve_and_run(
-                peer,
-                method,
-                PcPreview {
-                    kind: "act",
-                    action: format!("browser {op}"),
-                    target,
-                    payload,
-                },
-                PcFamily::Browser,
-            )
-            .await?;
-        } else {
-            // The human driving the screen is not watched: no observation while
-            // the control latch is theirs.
-            if let Some(msg) = self.deps.gate.observation_refused() {
-                return Err(self.refuse(peer, method, &msg));
-            }
-            self.first_look(peer, method, PcFamily::Browser).await?;
-            self.audit_read(peer, method, &serde_json::json!({"op": op}))?;
-        }
-        // What the browser returns (a read, or the page a click led to) is
-        // discarded if control changed hands while it was captured.
-        let epoch = self.deps.gate.observation_epoch();
-        let out = run_browser_op(&driver, &op, &params, &self.deps.redact).await;
-        if self.deps.gate.observation_epoch() != epoch
-            || self.deps.gate.observation_refused().is_some()
-        {
-            return Err(self.refuse(
-                peer,
-                method,
-                "the user took control of the screen while this was captured, so it was discarded",
+        if let Err(e) = self.audit(
+            "pc_target.read",
+            serde_json::json!({"host": peer.id, "method": method}),
+        ) {
+            return Err(RpcError::new(
+                ERR_FORBIDDEN,
+                format!("not shared: the local audit log could not be written ({e})"),
             ));
         }
-        out
+        self.deps.requests.note_read(&peer.id, &peer.name);
+        self.reads.handle(peer, method, params).await
     }
 
     async fn act(&self, peer: &Device, params: Value) -> Result<Value, RpcError> {
         let action = parse_action(&params)?;
         let prepared = self.prepare(peer, "desktop.act", &action).await?;
         let preview = prepared.preview("act", action_name(&action));
-        self.approve_and_run(peer, "desktop.act", preview, PcFamily::Screen)
-            .await?;
+        self.approve_and_run(peer, "desktop.act", preview).await?;
         let outcome = self
             .deps
             .raw
@@ -1076,7 +460,7 @@ impl HostDesktopHandler {
             target: "starts a new program on this computer".into(),
             payload: (self.deps.redact)(&command),
         };
-        self.approve_and_run(peer, "desktop.launch", preview, PcFamily::Screen)
+        self.approve_and_run(peer, "desktop.launch", preview)
             .await?;
         let pid = self
             .deps
@@ -1101,9 +485,7 @@ impl HostDesktopHandler {
         peer: &Device,
         method: &str,
         preview: PcPreview,
-        family: PcFamily,
     ) -> Result<(), RpcError> {
-        let gen_then = self.deps.access.family_gen(&peer.id, family);
         let allowed = self
             .deps
             .requests
@@ -1120,15 +502,6 @@ impl HostDesktopHandler {
         // the card was open.
         if let Some(why) = self.base_refusal(peer, method) {
             return Err(self.refuse(peer, method, &why));
-        }
-        // The family this action needs, not just "some family": a delivered
-        // allow does not outlive the switch that was turned off meanwhile.
-        if !self.deps.access.family_valid(&peer.id, family, gen_then) {
-            return Err(self.refuse(
-                peer,
-                method,
-                "the owner switched this part of the computer off while the question was open",
-            ));
         }
         self.audit(
             "pc_target.act",
@@ -1279,212 +652,6 @@ fn complete_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Run one browser operation on `driver` and shape the answer as the wire
-/// carries it.
-async fn run_browser_op(
-    driver: &Arc<dyn BrowserDriver>,
-    op: &str,
-    params: &Value,
-    redact: &Arc<dyn Fn(&str) -> String + Send + Sync>,
-) -> Result<Value, RpcError> {
-    let text = |r: Result<String, String>| -> Result<Value, RpcError> {
-        r.map(|t| serde_json::json!({"text": redact(&t)}))
-            .map_err(|e| RpcError::new(ERR_FORBIDDEN, redact(&e)))
-    };
-    let arg = |k: &str| str_field(params, k).unwrap_or_default();
-    match op {
-        "open" => text(driver.open(&arg("url"), None).await),
-        "snapshot" => text(
-            driver
-                .snapshot(params["interactive_only"].as_bool().unwrap_or(false))
-                .await,
-        ),
-        "click" => text(driver.click(&arg("ref")).await),
-        "fill" => text(driver.fill(&arg("ref"), &arg("text")).await),
-        "select" => text(driver.select(&arg("ref"), &arg("value")).await),
-        "press" => text(driver.press(&arg("key")).await),
-        "back" => text(driver.back().await),
-        "scroll" => text(
-            driver
-                .scroll(
-                    str_field(params, "ref").as_deref(),
-                    params["dx"].as_f64().unwrap_or(0.0),
-                    params["dy"].as_f64().unwrap_or(0.0),
-                )
-                .await,
-        ),
-        "tabs" => text(
-            driver
-                .tabs(
-                    params["switch_to"]
-                        .as_u64()
-                        .and_then(|n| usize::try_from(n).ok()),
-                )
-                .await,
-        ),
-        "wait" => {
-            let cond = if let Some(t) = str_field(&params["cond"], "text") {
-                builtin_tools::Wait::Text(t)
-            } else if let Some(sel) = str_field(&params["cond"], "selector") {
-                builtin_tools::Wait::Selector(sel)
-            } else {
-                builtin_tools::Wait::Idle
-            };
-            let timeout = params["timeout_ms"]
-                .as_u64()
-                .map(|ms| Duration::from_millis(ms.min(60_000)));
-            text(driver.wait(cond, timeout).await)
-        }
-        "screenshot" => {
-            use base64::Engine as _;
-            match driver
-                .screenshot(
-                    params["full_page"].as_bool().unwrap_or(false),
-                    str_field(params, "element").as_deref(),
-                )
-                .await
-            {
-                Ok((bytes, ext)) => Ok(serde_json::json!({
-                    "data_base64": base64::engine::general_purpose::STANDARD.encode(bytes),
-                    "ext": ext,
-                })),
-                Err(e) => Err(RpcError::new(ERR_FORBIDDEN, redact(&e))),
-            }
-        }
-        "current_url" => Ok(serde_json::json!({"url": driver.current_url().await})),
-        _ => Err(RpcError::new(
-            ERR_METHOD_NOT_FOUND,
-            "unknown browser operation",
-        )),
-    }
-}
-
-/// Only http and https pages with a host are opened.
-pub(crate) fn web_url(url: &str) -> Option<url::Url> {
-    url::Url::parse(url)
-        .ok()
-        .filter(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())
-}
-
-fn str_field(v: &Value, key: &str) -> Option<String> {
-    v.get(key).and_then(Value::as_str).map(str::to_owned)
-}
-
-/// Strip the verbatim prefix Windows adds to canonical paths (not for UNC).
-fn strip_verbatim(p: PathBuf) -> PathBuf {
-    let text = p.to_string_lossy().into_owned();
-    if let Some(rest) = text.strip_prefix(r"\\?\")
-        && !rest.starts_with("UNC\\")
-    {
-        return PathBuf::from(rest);
-    }
-    p
-}
-
-/// The real location a path names: links resolved. A path that does not exist
-/// yet is resolved through its nearest existing folder. `..` is refused.
-fn canonical_target(path: &Path) -> Result<PathBuf, String> {
-    if path
-        .components()
-        .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return Err("a path with .. is not accepted; give the full path".into());
-    }
-    let mut tail: Vec<std::ffi::OsString> = Vec::new();
-    let mut cur = path;
-    let base = loop {
-        if let Ok(c) = std::fs::canonicalize(cur) {
-            break c;
-        }
-        let (Some(name), Some(parent)) = (cur.file_name(), cur.parent()) else {
-            return Err("that location cannot be resolved".into());
-        };
-        tail.push(name.to_owned());
-        cur = parent;
-    };
-    let mut out = strip_verbatim(base);
-    for name in tail.into_iter().rev() {
-        out.push(name);
-    }
-    complete_text(&out.display().to_string())?;
-    Ok(out)
-}
-
-const CREDENTIAL_DIRS: [&str; 13] = [
-    ".claude", ".codex", ".gemini", ".cursor", ".config", ".local", ".ssh", ".aws", ".gnupg",
-    ".azure", ".kube", ".docker", "gcloud",
-];
-
-/// Folders no server's bot may use as a location: Praxi's own data and the
-/// credential / tool-configuration folders (SSH, cloud, GPG, container, CLI
-/// settings), judged on the real path.
-fn protected_location(path: &Path, canon_data: &Path) -> Option<&'static str> {
-    if path.starts_with(canon_data) {
-        return Some("that is Praxi's own data folder");
-    }
-    path.components()
-        .any(|c| match c {
-            std::path::Component::Normal(n) => {
-                CREDENTIAL_DIRS.contains(&n.to_string_lossy().to_lowercase().as_str())
-            }
-            _ => false,
-        })
-        .then_some("that is a credential or tool settings folder")
-}
-
-const PROFILES: [&str; 11] = [
-    ".bashrc",
-    ".bash_profile",
-    ".bash_login",
-    ".profile",
-    ".zshrc",
-    ".zprofile",
-    ".zshenv",
-    "config.fish",
-    "profile.ps1",
-    "microsoft.powershell_profile.ps1",
-    "microsoft.vscode_profile.ps1",
-];
-
-/// Places a server's bot may never write on this computer, judged on the REAL
-/// path: Praxi's own data, credential and tool-configuration folders (the
-/// protected-path table), git internals, startup folders and shell profiles.
-fn write_target_refusal(path: &Path, data: &Path) -> Result<(), String> {
-    let canon_data =
-        std::fs::canonicalize(data).map_or_else(|_| data.to_path_buf(), strip_verbatim);
-    if let Some(why) = protected_location(path, &canon_data) {
-        return Err(format!("{why}; it is never writable"));
-    }
-    let lower = path.to_string_lossy().to_lowercase().replace('\\', "/");
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-    if lower.split('/').any(|c| c == ".git") {
-        return Err("git internals (hooks, config) are never writable".into());
-    }
-    if lower.contains("/start menu/programs/startup")
-        || lower.contains("/.config/autostart")
-        || lower.contains("/library/launchagents")
-    {
-        return Err("startup locations are never writable".into());
-    }
-    if PROFILES.contains(&name.as_str()) {
-        return Err("shell start-up files are never writable".into());
-    }
-    Ok(())
-}
-
-/// An absolute path: a relative one is taken from the user's home folder.
-fn resolve_path(raw: &str) -> PathBuf {
-    let p = Path::new(raw);
-    if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        builtin_tools::user_home().unwrap_or_default().join(p)
-    }
-}
-
 fn target_text(t: &Target) -> String {
     match t {
         Target::ByIndex { index, generation } => {
@@ -1574,20 +741,11 @@ impl RpcHandler for HostDesktopHandler {
         }
         match method {
             "node.info" | "desktop.capabilities" => self.reads.handle(peer, method, params).await,
-            RPC_INFO => self.info(peer),
-            RPC_TOOL => self.serve_tool(peer, params).await,
-            RPC_BROWSER => self.serve_browser(peer, params).await,
             "desktop.snapshot" | "desktop.screenshot" | "desktop.windows" => {
                 self.read(peer, method, params).await
             }
-            "desktop.act" => {
-                self.family_gate(peer, method, PcFamily::Screen)?;
-                self.act(peer, params).await
-            }
-            "desktop.launch" => {
-                self.family_gate(peer, method, PcFamily::Screen)?;
-                self.launch(peer, params).await
-            }
+            "desktop.act" => self.act(peer, params).await,
+            "desktop.launch" => self.launch(peer, params).await,
             other => Err(RpcError::new(
                 ERR_METHOD_NOT_FOUND,
                 format!("unknown method '{other}'"),
@@ -1721,18 +879,11 @@ mod tests {
 
     struct Gate {
         epoch: Arc<AtomicU64>,
-        /// The human is driving the screen.
-        refused: Arc<std::sync::atomic::AtomicBool>,
     }
     #[async_trait]
     impl ControlGate for Gate {
         fn observation_epoch(&self) -> u64 {
             self.epoch.load(Ordering::SeqCst)
-        }
-        fn observation_refused(&self) -> Option<String> {
-            self.refused
-                .load(Ordering::SeqCst)
-                .then(|| "the user is driving the screen".to_owned())
         }
         async fn before_action(
             &self,
@@ -1751,12 +902,6 @@ mod tests {
         dir: tempfile::TempDir,
         live: Arc<std::sync::atomic::AtomicBool>,
         audit_ok: Arc<std::sync::atomic::AtomicBool>,
-        epoch: Arc<AtomicU64>,
-        refused: Arc<std::sync::atomic::AtomicBool>,
-        shell: Arc<Recorder>,
-        #[allow(dead_code)]
-        write: Arc<Recorder>,
-        browser: Arc<FakeBrowser>,
     }
 
     fn device(role: Role) -> Device {
@@ -1797,18 +942,12 @@ mod tests {
         let live = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let audit_ok = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let (l, a) = (live.clone(), audit_ok.clone());
-        let refused = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let served = (Recorder::new("shell_run"), Recorder::new("fs_write"));
-        let browser = Arc::new(FakeBrowser::default());
         let h = HostDesktopHandler::new(PcTargetDeps {
             raw: fake.clone(),
             data: dir.path().to_path_buf(),
             access: access.clone(),
             requests: requests.clone(),
-            gate: Arc::new(Gate {
-                epoch: epoch.clone(),
-                refused: refused.clone(),
-            }),
+            gate: Arc::new(Gate { epoch }),
             owner_ui_live: Arc::new(move || l.load(Ordering::SeqCst)),
             audit: Arc::new(move |_, _| {
                 a.load(Ordering::SeqCst)
@@ -1817,11 +956,6 @@ mod tests {
             }),
             redact: Arc::new(|t| t.replace("hunter2", "••••")),
             own_pid: OWN_PID,
-            tools: vec![
-                served.0.clone() as Arc<dyn Tool>,
-                served.1.clone() as Arc<dyn Tool>,
-            ],
-            browser: Some(browser.clone() as Arc<dyn BrowserDriver>),
         })
         .with_ask_timeout(Duration::from_secs(5));
         Rig {
@@ -1832,641 +966,7 @@ mod tests {
             dir,
             live,
             audit_ok,
-            epoch,
-            refused,
-            shell: served.0,
-            write: served.1,
-            browser,
         }
-    }
-
-    /// A served tool that records its inputs and answers with a secret in it.
-    struct Recorder {
-        spec: tool_registry::ToolSpec,
-        inputs: Mutex<Vec<Value>>,
-    }
-
-    impl Recorder {
-        fn new(name: &str) -> Arc<Self> {
-            Arc::new(Self {
-                spec: tool_registry::ToolSpec {
-                    name: name.into(),
-                    description: "test".into(),
-                    input_schema: serde_json::json!({"type": "object"}),
-                    effect: tool_registry::Effect::Write,
-                    category: tool_registry::PermissionCategory::Shell,
-                    platforms: vec![tool_registry::Platform::All],
-                    content: tool_registry::ContentClass::all(),
-                },
-                inputs: Mutex::new(Vec::new()),
-            })
-        }
-    }
-
-    #[async_trait]
-    impl Tool for Recorder {
-        fn spec(&self) -> &tool_registry::ToolSpec {
-            &self.spec
-        }
-        async fn call(
-            &self,
-            _: &ToolContext,
-            input: Value,
-        ) -> Result<tool_registry::ToolOutput, tool_registry::ToolError> {
-            self.inputs.lock().push(input);
-            Ok(tool_registry::ToolOutput::text("done, token hunter2"))
-        }
-    }
-
-    #[derive(Default)]
-    struct FakeBrowser {
-        opened: Mutex<Vec<String>>,
-        snapshots: std::sync::atomic::AtomicUsize,
-        /// Bump this epoch while a snapshot is being captured.
-        bump: Mutex<Option<Arc<AtomicU64>>>,
-        check: Mutex<Option<browser_cdp::DestinationCheck>>,
-    }
-
-    #[async_trait]
-    impl BrowserDriver for FakeBrowser {
-        async fn open(&self, url: &str, _: Option<&str>) -> Result<String, String> {
-            self.opened.lock().push(url.to_owned());
-            Ok(format!("opened {url}"))
-        }
-        fn set_destination_check(&self, check: browser_cdp::DestinationCheck) {
-            *self.check.lock() = Some(check);
-        }
-        async fn snapshot(&self, _: bool) -> Result<String, String> {
-            self.snapshots.fetch_add(1, Ordering::SeqCst);
-            if let Some(epoch) = self.bump.lock().as_ref() {
-                epoch.fetch_add(1, Ordering::SeqCst);
-            }
-            Ok("page".into())
-        }
-        async fn click(&self, _: &str) -> Result<String, String> {
-            Ok("clicked".into())
-        }
-        async fn fill(&self, _: &str, _: &str) -> Result<String, String> {
-            Ok("filled".into())
-        }
-        async fn select(&self, _: &str, _: &str) -> Result<String, String> {
-            Ok("selected".into())
-        }
-        async fn press(&self, _: &str) -> Result<String, String> {
-            Ok("pressed".into())
-        }
-        async fn scroll(&self, _: Option<&str>, _: f64, _: f64) -> Result<String, String> {
-            Ok("scrolled".into())
-        }
-        async fn wait(
-            &self,
-            _: builtin_tools::Wait,
-            _: Option<Duration>,
-        ) -> Result<String, String> {
-            Ok("waited".into())
-        }
-        async fn back(&self) -> Result<String, String> {
-            Ok("back".into())
-        }
-        async fn tabs(&self, _: Option<usize>) -> Result<String, String> {
-            Ok("tabs".into())
-        }
-        async fn screenshot(
-            &self,
-            _: bool,
-            _: Option<&str>,
-        ) -> Result<(Vec<u8>, &'static str), String> {
-            Ok((vec![1], "png"))
-        }
-        async fn eval(&self, _: &str) -> Result<Value, String> {
-            Err("no".into())
-        }
-    }
-
-    fn all_families() -> Switches {
-        Switches {
-            screen: true,
-            always_read: true,
-            browser: true,
-            commands: true,
-            files: true,
-        }
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn tool_params(name: &str, input: Value) -> Value {
-        serde_json::json!({ "name": name, "input": input })
-    }
-
-    /// Each family is its own owner switch: with only screen and input on, a
-    /// command, a file and a browser call are refused at once (no card, nothing
-    /// run), with a reason the bot can pass on; turning the family on serves it.
-    #[tokio::test]
-    async fn every_family_is_refused_while_its_own_switch_is_off() {
-        let r = rig(false, true);
-        let host = device(Role::Host);
-        let calls: [(&str, Value); 3] = [
-            (
-                RPC_TOOL,
-                tool_params("shell_run", serde_json::json!({"command": "dir"})),
-            ),
-            (
-                RPC_TOOL,
-                tool_params("fs_read", serde_json::json!({"path": "C:/x.txt"})),
-            ),
-            (
-                RPC_BROWSER,
-                serde_json::json!({"op": "open", "url": "https://example.com/"}),
-            ),
-        ];
-        for (method, params) in &calls {
-            let res = r.h.handle(&host, method, params.clone()).await;
-            let err = res.unwrap_err();
-            assert_eq!(err.code, ERR_FORBIDDEN, "{method}");
-            assert!(
-                err.message.contains("Settings > Computer"),
-                "{}",
-                err.message
-            );
-        }
-        assert!(
-            r.requests.list().is_empty(),
-            "no card for a switched-off family"
-        );
-        assert!(r.shell.inputs.lock().is_empty() && r.browser.opened.lock().is_empty());
-        // Commands on: still no files, and the screen switch does not stand in.
-        r.access
-            .set_switches(
-                "host1",
-                Switches {
-                    commands: true,
-                    ..Switches::default()
-                },
-            )
-            .unwrap();
-        let res = r.h.handle(&host, RPC_TOOL, calls[1].1.clone()).await;
-        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
-        let res = r.h.handle(&host, "desktop.windows", Value::Null).await;
-        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN, "screen is off");
-    }
-
-    /// A command always asks on THIS computer with the complete masked text, the
-    /// shell and the folder; the never-list, a protected folder, Praxi's own data
-    /// folder and a text too long to show are refused without a card.
-    #[tokio::test]
-    async fn a_command_asks_with_the_full_card_and_dangerous_ones_never_do() {
-        let r = rig(false, true);
-        r.access.set_switches("host1", all_families()).unwrap();
-        let host = device(Role::Host);
-        let call = r.h.handle(
-            &host,
-            RPC_TOOL,
-            tool_params(
-                "shell_run",
-                serde_json::json!({"command": "echo hunter2 && dir"}),
-            ),
-        );
-        let (res, info) = tokio::join!(call, answer(&r.requests, true));
-        let out = res.unwrap();
-        assert_eq!(info.action, "run command");
-        assert!(
-            info.payload.contains("echo •••• && dir"),
-            "{}",
-            info.payload
-        );
-        assert!(!info.payload.contains("hunter2"));
-        assert!(info.target.contains("on this computer"));
-        // The result is masked too, and the tool ran once with the user's home as folder.
-        assert!(!out.to_string().contains("hunter2"), "{out}");
-        assert_eq!(r.shell.inputs.lock().len(), 1);
-        // Refused with no card.
-        let data = r.dir.path().display().to_string();
-        let long = "x".repeat(MAX_PAYLOAD_CHARS + 1);
-        let refused = [
-            "rm -rf /".to_owned(),
-            format!("type {data}/peer/identity.key"),
-            long,
-        ];
-        for command in refused {
-            let res =
-                r.h.handle(
-                    &host,
-                    RPC_TOOL,
-                    tool_params("shell_run", serde_json::json!({"command": command})),
-                )
-                .await;
-            assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN, "{command:.30}");
-        }
-        assert_eq!(r.shell.inputs.lock().len(), 1, "nothing else ran");
-        assert!(r.requests.list().is_empty());
-        // Only the served tools are reachable.
-        let res =
-            r.h.handle(
-                &host,
-                RPC_TOOL,
-                tool_params("script_run", serde_json::json!({})),
-            )
-            .await;
-        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
-    }
-
-    /// Files: the real tools are served, so Praxi's own data and credentials stay
-    /// unreachable; a write asks every time and writes the path on the card.
-    #[tokio::test]
-    async fn files_respect_the_protected_places_and_writes_ask_each_time() {
-        let dir = tempfile::tempdir().unwrap();
-        let data = dir.path().join("data");
-        std::fs::create_dir_all(&data).unwrap();
-        std::fs::write(data.join("secret.txt"), "praxi state").unwrap();
-        let open = dir.path().join("notes.txt");
-        std::fs::write(&open, "hello").unwrap();
-        let r = rig(false, true);
-        // Serve the real tools over this data dir.
-        let real = builtin_tools::pc::local_tools(&data);
-        let h = HostDesktopHandler::new(PcTargetDeps {
-            raw: r.fake.clone(),
-            data: data.clone(),
-            access: r.access.clone(),
-            requests: r.requests.clone(),
-            gate: Arc::new(Gate {
-                epoch: Arc::new(AtomicU64::new(0)),
-                refused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            }),
-            owner_ui_live: Arc::new(|| true),
-            audit: Arc::new(|_, _| Ok(())),
-            redact: Arc::new(str::to_owned),
-            own_pid: OWN_PID,
-            tools: real,
-            browser: None,
-        })
-        .with_ask_timeout(Duration::from_secs(5));
-        write_pairing(&data, "host", "g1");
-        r.access.set_switches("host1", all_families()).unwrap();
-        let host = device(Role::Host);
-        // Praxi's own data is refused by the file tool itself; no card for a refusal.
-        let secret = data.join("secret.txt").display().to_string();
-        let first = h.handle(
-            &host,
-            RPC_TOOL,
-            tool_params("fs_read", serde_json::json!({"path": secret})),
-        );
-        let (res, info) = tokio::join!(first, answer(&r.requests, true));
-        assert_eq!(info.kind, "session_read", "the first look asks once");
-        let err = res.unwrap_err();
-        assert!(
-            !err.message.contains("praxi state"),
-            "Praxi's data is never returned"
-        );
-        // An ordinary file reads (the session allowance is now given).
-        let listing = h
-            .handle(
-                &host,
-                RPC_TOOL,
-                tool_params(
-                    "fs_read",
-                    serde_json::json!({"path": open.display().to_string()}),
-                ),
-            )
-            .await
-            .unwrap();
-        assert!(listing.to_string().contains("hello"), "{listing}");
-        // A write asks with the resolved path; denying it writes nothing.
-        let target = dir.path().join("out.txt");
-        let call = h.handle(
-            &host,
-            RPC_TOOL,
-            tool_params(
-                "fs_write",
-                serde_json::json!({"path": target.display().to_string(), "content": "x"}),
-            ),
-        );
-        let (res, info) = tokio::join!(call, answer(&r.requests, false));
-        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
-        assert_eq!(info.action, "write file");
-        assert!(info.target.contains("out.txt") && info.target.contains("creates a new file"));
-        assert!(!target.exists());
-    }
-
-    /// The browser: opening a page asks with the whole URL; other schemes and
-    /// page scripts are not served.
-    #[tokio::test]
-    async fn the_browser_asks_for_every_input_and_only_opens_web_pages() {
-        let r = rig(false, true);
-        r.access.set_switches("host1", all_families()).unwrap();
-        let host = device(Role::Host);
-        let call = r.h.handle(
-            &host,
-            RPC_BROWSER,
-            serde_json::json!({"op": "open", "url": "https://example.com/a?b=1"}),
-        );
-        let (res, info) = tokio::join!(call, answer(&r.requests, true));
-        assert!(res.is_ok(), "{res:?}");
-        assert_eq!(info.payload, "https://example.com/a?b=1");
-        assert!(info.target.contains("example.com"));
-        assert_eq!(r.browser.opened.lock().len(), 1);
-        for params in [
-            serde_json::json!({"op": "open", "url": "file:///C:/Windows/win.ini"}),
-            serde_json::json!({"op": "open", "url": "javascript:alert(1)"}),
-            serde_json::json!({"op": "eval", "js": "1"}),
-        ] {
-            let res = r.h.handle(&host, RPC_BROWSER, params).await;
-            assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
-        }
-        assert_eq!(r.browser.opened.lock().len(), 1);
-        // Reading the page asks once for the session, then not again.
-        let snap =
-            r.h.handle(&host, RPC_BROWSER, serde_json::json!({"op": "snapshot"}));
-        let (res, info) = tokio::join!(snap, answer(&r.requests, true));
-        assert!(res.is_ok());
-        assert_eq!(info.kind, "session_read");
-    }
-
-    /// Blocker 1: the card shows the complete REAL destination; what cannot be
-    /// shown whole, or is a protected place on its real path, is refused.
-    #[tokio::test]
-    async fn a_write_is_bound_to_its_complete_real_path() {
-        let r = rig(false, true);
-        r.access.set_switches("host1", all_families()).unwrap();
-        let host = device(Role::Host);
-        let outside = tempfile::tempdir().unwrap();
-        let base = outside.path().join("work");
-        std::fs::create_dir_all(&base).unwrap();
-        // A long nested path (over the old 300-character cut) is shown whole.
-        let deep = format!("{}/notes.txt", "nested-folder/".repeat(30));
-        let target = base.join(&deep);
-        let call = r.h.handle(
-            &host,
-            RPC_TOOL,
-            tool_params(
-                "fs_write",
-                serde_json::json!({"path": target.display().to_string(), "content": "x"}),
-            ),
-        );
-        let (res, info) = tokio::join!(call, answer(&r.requests, true));
-        assert!(res.is_ok(), "{res:?}");
-        assert!(info.target.chars().count() > 300);
-        assert!(info.target.contains("notes.txt"), "tail is on the card");
-        // The tool is handed exactly the path on the card.
-        let sent = r.write.inputs.lock()[0]["path"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        assert!(info.target.starts_with(&sent), "{sent}");
-        // Git internals, shell profiles and `..` are refused with no card, also
-        // behind a long prefix.
-        for bad in [
-            format!("{}/{deep}/.git/hooks/post-checkout", base.display()),
-            format!("{}/.bashrc", base.display()),
-            format!("{}/../outside.txt", base.display()),
-        ] {
-            let res =
-                r.h.handle(
-                    &host,
-                    RPC_TOOL,
-                    tool_params("fs_write", serde_json::json!({"path": bad, "content": "x"})),
-                )
-                .await;
-            assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN, "{bad:.60}");
-        }
-        assert!(r.requests.list().is_empty());
-        // A command runs in the real folder on the card, and a folder that
-        // does not exist is refused.
-        let call = r.h.handle(
-            &host,
-            RPC_TOOL,
-            tool_params(
-                "shell_run",
-                serde_json::json!({"command": "dir", "cwd": base.display().to_string()}),
-            ),
-        );
-        let (res, info) = tokio::join!(call, answer(&r.requests, true));
-        assert!(res.is_ok());
-        assert!(info.target.contains("work"), "{}", info.target);
-        let missing = base.join("no-such-folder");
-        let res =
-            r.h.handle(
-                &host,
-                RPC_TOOL,
-                tool_params(
-                    "shell_run",
-                    serde_json::json!({"command": "dir", "cwd": missing.display().to_string()}),
-                ),
-            )
-            .await;
-        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
-    }
-
-    /// Blocker 1 (links): a link out of the folder shows, and writes, the
-    /// destination it really points to.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn a_symlink_shows_its_real_destination() {
-        let r = rig(false, true);
-        r.access.set_switches("host1", all_families()).unwrap();
-        let host = device(Role::Host);
-        let outside = tempfile::tempdir().unwrap();
-        let real = outside.path().join("real");
-        std::fs::create_dir_all(&real).unwrap();
-        let link = outside.path().join("link");
-        std::os::unix::fs::symlink(&real, &link).unwrap();
-        let call = r.h.handle(
-            &host,
-            RPC_TOOL,
-            tool_params(
-                "fs_write",
-                serde_json::json!({"path": link.join("a.txt").display().to_string(), "content": "x"}),
-            ),
-        );
-        let (res, info) = tokio::join!(call, answer(&r.requests, true));
-        assert!(res.is_ok());
-        assert!(info.target.contains("/real/a.txt"), "{}", info.target);
-    }
-
-    /// Blocker 2: the browser is not watched while the human drives, and what
-    /// was captured across a control transition is discarded.
-    #[tokio::test]
-    async fn browser_reads_respect_the_human_latch_and_discard_across_a_transition() {
-        let r = rig(false, true);
-        r.access.set_switches("host1", all_families()).unwrap();
-        let host = device(Role::Host);
-        // First look allowed.
-        let snap = serde_json::json!({"op": "snapshot"});
-        let call = r.h.handle(&host, RPC_BROWSER, snap.clone());
-        let (res, _) = tokio::join!(call, answer(&r.requests, true));
-        assert!(res.is_ok());
-        assert_eq!(r.browser.snapshots.load(Ordering::SeqCst), 1);
-        // The human takes the screen: nothing is read at all.
-        r.refused.store(true, Ordering::SeqCst);
-        for op in ["snapshot", "screenshot", "tabs", "current_url"] {
-            let res =
-                r.h.handle(&host, RPC_BROWSER, serde_json::json!({"op": op}))
-                    .await;
-            assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN, "{op}");
-        }
-        assert_eq!(r.browser.snapshots.load(Ordering::SeqCst), 1);
-        // Control changes hands while a read is captured: discarded.
-        r.refused.store(false, Ordering::SeqCst);
-        *r.browser.bump.lock() = Some(r.epoch.clone());
-        let res = r.h.handle(&host, RPC_BROWSER, snap).await;
-        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
-    }
-
-    /// Blocker 3: an "allow" that was already delivered does not run once ITS
-    /// family was switched off, even though another family is still on, and a
-    /// delivered first-look allow does not restore a session allowance.
-    #[tokio::test]
-    async fn a_delivered_allow_does_not_outlive_its_families_switch() {
-        let r = rig(false, true);
-        r.access.set_switches("host1", all_families()).unwrap();
-        let host = device(Role::Host);
-        let call = r.h.handle(
-            &host,
-            RPC_TOOL,
-            tool_params("shell_run", serde_json::json!({"command": "dir"})),
-        );
-        let change = async {
-            let id = loop {
-                if let Some(i) = r.requests.list().first() {
-                    break i.id.clone();
-                }
-                tokio::task::yield_now().await;
-            };
-            // Commands off, everything else still on; the allow was delivered.
-            let mut sw = all_families();
-            sw.commands = false;
-            r.access.set_switches("host1", sw).unwrap();
-            r.requests.decide(&id, true);
-        };
-        let (res, ()) = tokio::join!(call, change);
-        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
-        assert!(r.shell.inputs.lock().is_empty(), "the command did not run");
-        // The same for a first look: the browser family switched off while its
-        // question is open must not get a session allowance back.
-        let call =
-            r.h.handle(&host, RPC_BROWSER, serde_json::json!({"op": "snapshot"}));
-        let change = async {
-            let id = loop {
-                if let Some(i) = r.requests.list().first() {
-                    break i.id.clone();
-                }
-                tokio::task::yield_now().await;
-            };
-            let mut sw = all_families();
-            sw.commands = false;
-            sw.browser = false;
-            r.access.set_switches("host1", sw).unwrap();
-            r.requests.decide(&id, true);
-        };
-        let (res, ()) = tokio::join!(call, change);
-        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
-        assert_eq!(r.browser.snapshots.load(Ordering::SeqCst), 0);
-        assert!(!r.access.session_read_allowed("host1", PcFamily::Browser));
-    }
-
-    /// Blocker 4: the served browser's network policy: loopback (the daemon's
-    /// own API), link-local/metadata never; a private host only with this
-    /// computer's own card; nothing survives the browser switch being turned off.
-    #[tokio::test]
-    async fn the_served_browser_cannot_reach_internal_services() {
-        let r = rig(false, true);
-        r.access.set_switches("host1", all_families()).unwrap();
-        let host = device(Role::Host);
-        for url in [
-            "http://127.0.0.1:8123/v1/status",
-            "http://169.254.169.254/latest/meta-data/",
-        ] {
-            let res =
-                r.h.handle(
-                    &host,
-                    RPC_BROWSER,
-                    serde_json::json!({"op": "open", "url": url}),
-                )
-                .await;
-            assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN, "{url}");
-        }
-        assert!(
-            r.requests.list().is_empty(),
-            "no card for a blocked address"
-        );
-        assert!(r.browser.opened.lock().is_empty());
-        // Serve one public open so the request context exists, then use the
-        // network policy the way the browser does for every request.
-        let call = r.h.handle(
-            &host,
-            RPC_BROWSER,
-            serde_json::json!({"op": "open", "url": "https://93.184.216.34/"}),
-        );
-        let (res, _) = tokio::join!(call, answer(&r.requests, true));
-        assert!(res.is_ok());
-        let check = r
-            .browser
-            .check
-            .lock()
-            .clone()
-            .expect("a policy is installed");
-        // A redirect or subresource to an internal address.
-        for url in [
-            "http://127.0.0.1:8123/",
-            "http://[::1]/",
-            "http://169.254.169.254/",
-        ] {
-            assert!(check.check(url.into()).await.is_err(), "{url}");
-        }
-        assert!(
-            check
-                .check("https://93.184.216.34/x.png".into())
-                .await
-                .is_ok()
-        );
-        // A private host asks on THIS computer; denied stays blocked.
-        let denied = tokio::join!(
-            check.check("http://10.0.0.5/admin".into()),
-            answer(&r.requests, false)
-        );
-        assert!(denied.0.is_err());
-        let allowed = tokio::join!(
-            check.check("http://10.0.0.5/admin".into()),
-            answer(&r.requests, true)
-        );
-        assert!(allowed.0.is_ok());
-        assert!(
-            check.check("http://10.0.0.5/other".into()).await.is_ok(),
-            "same host, this session"
-        );
-        // Browser switched off: the earlier allowance is gone.
-        let mut sw = all_families();
-        sw.browser = false;
-        r.access.set_switches("host1", sw).unwrap();
-        assert!(check.check("http://10.0.0.5/admin".into()).await.is_err());
-    }
-
-    /// Switching one family off ends its session allowance only.
-    #[test]
-    fn switches_persist_per_family_and_old_files_mean_screen_on() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("peer")).unwrap();
-        // A file written before the families existed.
-        std::fs::write(
-            dir.path().join("peer").join("computer-access.json"),
-            r#"{"hosts":{"h":{"always_read":true}}}"#,
-        )
-        .unwrap();
-        let s = AccessStore::open(dir.path());
-        assert!(s.family_on("h", PcFamily::Screen) && s.always_read("h"));
-        assert!(!s.family_on("h", PcFamily::Commands));
-        s.set_switches(
-            "h",
-            Switches {
-                commands: true,
-                ..Switches::default()
-            },
-        )
-        .unwrap();
-        let again = AccessStore::open(dir.path());
-        assert!(again.family_on("h", PcFamily::Commands));
-        assert!(!again.family_on("h", PcFamily::Screen));
-        again.set_switches("h", Switches::default()).unwrap();
-        assert!(!AccessStore::open(dir.path()).enabled("h"));
     }
 
     async fn answer(requests: &PcRequests, allow: bool) -> daemon_api::pc_access::PcRequestInfo {

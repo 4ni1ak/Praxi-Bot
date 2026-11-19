@@ -199,20 +199,11 @@ fn computer_approval(
     category: PermissionCategory,
     details: &mut Option<Value>,
 ) -> String {
-    // The `pc_*` family names the user's own computer, not the one the run is on.
-    let own = name.starts_with(builtin_tools::pc::PC_PREFIX);
-    let node = if own {
-        ctx.mypc.as_ref()
-    } else {
-        ctx.resolved_computer.node.as_ref()
-    };
-    let computer = ctx.tool_grant_scope(name, category).map(|_| {
-        json!({
-            "kind": if own { "your computer" } else { ctx.resolved_computer.label.as_str() },
-            "node_id": node.map(|n| &n.id),
-            "node_name": node.map_or("Local computer", |n| n.name.as_str()),
-        })
-    });
+    let computer = ctx.tool_grant_scope(name, category).map(|_| json!({
+            "kind": ctx.resolved_computer.label.as_str(),
+            "node_id": ctx.resolved_computer.node.as_ref().map(|n| &n.id),
+            "node_name": ctx.resolved_computer.node.as_ref().map_or("Local computer", |n| n.name.as_str()),
+        }));
     let prefix = computer.as_ref().map_or(String::new(), |c| {
         format!(
             "[{}: {} ({})] ",
@@ -2068,7 +2059,7 @@ impl LoopGate {
             .get(&run_id)
             .cloned()
             .ok_or("script has no active run")?;
-        if !ctx.profile.spec_visible(&req.tool, req.category) {
+        if !ctx.profile.tool_visible(&req.tool) || !ctx.profile.category_visible(req.category) {
             return Err(format!("unknown tool: {}", req.tool));
         }
         let origin = if page_guard && crate::shared::is_page_action(&req.tool) {

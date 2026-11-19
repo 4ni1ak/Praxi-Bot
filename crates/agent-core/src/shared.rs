@@ -700,10 +700,6 @@ pub(crate) struct RunCtx {
     pub computer: Arc<tokio::sync::OnceCell<tokio::sync::OwnedSemaphorePermit>>,
     pub waiting_computer: Arc<AtomicBool>,
     pub resolved_computer: RunComputer,
-    /// The user's own paired computer, the target of the `pc_*` tools (card 272).
-    /// Not part of `resolved_computer`: a run is placed on ONE computer, the
-    /// per-request target is a second identity with its own grant scope.
-    pub mypc: Option<computer_target::ComputerNode>,
     pub run_id: RunId,
     pub chat_id: ChatId,
     pub bot_id: BotId,
@@ -794,18 +790,6 @@ impl RunCtx {
         name: &str,
         category: PermissionCategory,
     ) -> Option<String> {
-        // The `pc_*` family acts on the user's own computer, whatever the run is
-        // placed on. Its scope is that computer's id only: a grant given for the
-        // bot's own computer ("host:..", "browser:..", "pc:..", or none for shell
-        // and files) never matches it, and a grant given here never matches
-        // those. Nothing paired still has a scope of its own, so it cannot fall
-        // back to an unscoped grant.
-        if name.starts_with(builtin_tools::pc::PC_PREFIX) {
-            return Some(format!(
-                "mypc:{}",
-                self.mypc.as_ref().map_or("none", |n| n.id.as_str())
-            ));
-        }
         let computer_tool = matches!(
             category,
             PermissionCategory::Desktop | PermissionCategory::Browser
@@ -1527,14 +1511,6 @@ impl Shared {
         taint
     }
 
-    /// The user's own paired computer, the target of the `pc_*` tools.
-    fn mypc_node(&self) -> Option<computer_target::ComputerNode> {
-        self.computer_provider
-            .read()
-            .as_ref()
-            .and_then(|p| p.mypc_node())
-    }
-
     /// Per-run context, built on first use (also after a restart).
     pub fn ctx(&self, run: &Run) -> Result<Arc<RunCtx>, ExecError> {
         if let Some(c) = self.runs.lock().get(&run.id) {
@@ -1612,9 +1588,7 @@ impl Shared {
             .unwrap_or_else(|| Arc::new(tokio::sync::OnceCell::new()));
         let taint = self.initial_taint(run, chat_id);
         let steer = self.pending_steering(run)?;
-        let mypc = self.mypc_node();
         let ctx = Arc::new(RunCtx {
-            mypc,
             computer,
             waiting_computer: Arc::new(AtomicBool::new(false)),
             resolved_computer,
@@ -1699,7 +1673,8 @@ impl Shared {
     /// visibility (an MCP server's `bots` list).  Call-time enforcement stays
     /// in the tool itself; this keeps hidden tools out of what the model sees.
     pub(crate) fn spec_visible(&self, profile: &BotProfile, bot: BotId, spec: &ToolSpec) -> bool {
-        profile.spec_visible(&spec.name, spec.category)
+        profile.tool_visible(&spec.name)
+            && profile.category_visible(spec.category)
             && platform_ok(&spec.platforms)
             // Fail closed: a name the registry no longer knows is not visible.
             && self
@@ -1865,7 +1840,10 @@ impl Shared {
         } else {
             // Same gate as the spec list: a hidden or wrong-platform tool must
             // not run just because the model named it.
-            if !profile.spec_visible(name, own.category) || !platform_ok(&own.platforms) {
+            if !profile.tool_visible(name)
+                || !profile.category_visible(own.category)
+                || !platform_ok(&own.platforms)
+            {
                 return None;
             }
             (Some(own), name.to_owned())

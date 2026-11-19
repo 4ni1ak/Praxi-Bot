@@ -154,11 +154,6 @@ impl CliHostLinks {
     }
 
     fn info(&self, device: &Device) -> HostLinkInfo {
-        let sw = self
-            .pc
-            .as_ref()
-            .map(|pc| pc.access.switches(&device.id))
-            .unwrap_or_default();
         let mut open = self.open.lock();
         let (state, detail) = match open.get_mut(&device.id) {
             None => (HostLinkState::Idle, None),
@@ -198,11 +193,14 @@ impl CliHostLinks {
             name: device.name.clone(),
             state,
             detail,
-            computer_access: sw.screen,
-            computer_access_always: sw.screen && sw.always_read,
-            computer_browser: sw.browser,
-            computer_commands: sw.commands,
-            computer_files: sw.files,
+            computer_access: self
+                .pc
+                .as_ref()
+                .is_some_and(|pc| pc.access.enabled(&device.id)),
+            computer_access_always: self
+                .pc
+                .as_ref()
+                .is_some_and(|pc| pc.access.always_read(&device.id)),
         }
     }
 }
@@ -296,16 +294,15 @@ impl HostLinks for CliHostLinks {
     async fn set_computer_access(
         &self,
         id: &str,
-        access: &daemon_api::pc_access::ComputerAccessInput,
+        enabled: bool,
+        always_read: bool,
     ) -> Result<(), HostLinkError> {
-        let (enabled, always_read) = (access.enabled, access.always_read);
-        let any = enabled || access.browser || access.commands || access.files;
         let Some(pc) = &self.pc else {
             return Err(HostLinkError::Invalid(
                 "this computer cannot be used by a server".into(),
             ));
         };
-        if pc.handler.is_none() && any {
+        if pc.handler.is_none() && enabled {
             return Err(HostLinkError::Invalid(
                 "this computer has no screen a server could use".into(),
             ));
@@ -317,27 +314,14 @@ impl HostLinks for CliHostLinks {
         {
             return Err(HostLinkError::NotFound);
         }
-        let before = pc.access.switches(id);
-        let next = crate::pc_target::Switches {
-            screen: enabled,
-            always_read,
-            browser: access.browser,
-            commands: access.commands,
-            files: access.files,
-        };
         pc.access
-            .set_switches(id, next)
+            .set(id, enabled, always_read)
             .map_err(|e| HostLinkError::Failed(safe(e)))?;
-        if !any
-            || (before.screen && !next.screen)
-            || (before.browser && !next.browser)
-            || (before.commands && !next.commands)
-            || (before.files && !next.files)
-        {
+        if !enabled {
             // Whatever the host had parked is denied now, not at its timeout.
             pc.requests.cancel_host(id);
         }
-        if any {
+        if enabled {
             self.ensure_beat(id).await?;
         } else if let Some(beat) = self.beats.lock().remove(id) {
             beat.abort();
