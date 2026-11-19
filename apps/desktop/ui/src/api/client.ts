@@ -1,7 +1,23 @@
 import { createSseParser } from "./events.ts";
 import { isLocalBaseUrl } from "../lib/liveViewState.ts";
 import type { Connection } from "./connection";
-import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSourceChange, KnowledgeMutation, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeEmailCapture, KnowledgeEmbeddingProgress, KnowledgeEmbeddingApproval, KnowledgeEmbeddingGrantTarget } from "./types";
+import type {
+  KnowledgeSource,
+  KnowledgeSourceInput,
+  KnowledgeSourceChange,
+  KnowledgeMutation,
+  KnowledgeSettings,
+  KnowledgeSettingsInput,
+  KnowledgeEmailCapture,
+  KnowledgeEmbeddingProgress,
+  KnowledgeEmbeddingApproval,
+  KnowledgeEmbeddingGrantTarget,
+  MemoryItem,
+  MemoryKind,
+  CreateMemoryInput,
+  UpdateMemoryInput,
+  MemoryPreview
+} from "./types";
 import type {
   AcceptedResponse,
   AdminCliEngine,
@@ -45,6 +61,8 @@ import type {
   EmailAccount,
   EmailAccountInput,
   EmailAccountPatch,
+  EmailMessage,
+  EmailSendTestResponse,
   EmailTestReport,
   InputBatch,
   InputResult,
@@ -192,6 +210,46 @@ export class ApiClient {
 
   resetKnowledgeEmbeddingCooldown(bot: string): Promise<void> {
     return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/embedding-cooldown/reset`);
+  }
+
+  listMemories(opts: {
+    bot?: string | null;
+    botOnly?: boolean;
+    kind?: MemoryKind | null;
+    q?: string | null;
+    includeDeleted?: boolean;
+  } = {}): Promise<MemoryItem[]> {
+    return this.request("GET", "/memory", {
+      query: {
+        bot: opts.bot ?? undefined,
+        bot_only: opts.botOnly ? "true" : undefined,
+        kind: opts.kind ?? undefined,
+        q: opts.q?.trim() ? opts.q.trim() : undefined,
+        include_deleted: opts.includeDeleted ? "true" : undefined
+      }
+    });
+  }
+
+  createMemory(body: CreateMemoryInput): Promise<MemoryItem> {
+    return this.request("POST", "/memory", { body });
+  }
+
+  updateMemory(id: string, body: UpdateMemoryInput): Promise<MemoryItem> {
+    return this.request("PATCH", `/memory/${encodeURIComponent(id)}`, { body });
+  }
+
+  deleteMemory(id: string): Promise<MemoryItem> {
+    return this.request("DELETE", `/memory/${encodeURIComponent(id)}`);
+  }
+
+  undoMemory(id: string): Promise<MemoryItem> {
+    return this.request("POST", `/memory/${encodeURIComponent(id)}/undo`);
+  }
+
+  previewBotMemory(bot: string, query: string): Promise<MemoryPreview> {
+    return this.request("GET", `/bots/${encodeURIComponent(bot)}/memory/preview`, {
+      query: { query }
+    });
   }
   readonly baseUrl: string;
   private readonly token: string;
@@ -1026,6 +1084,16 @@ export class ApiClient {
       "POST",
       `/email/accounts/${encodeURIComponent(name)}/test`
     );
+  }
+  /** Newest messages of the inbox, headers only (owner-only; nothing is marked read). */
+  listEmailMessages(name: string, limit = 20): Promise<EmailMessage[]> {
+    return this.request("GET", `/email/accounts/${encodeURIComponent(name)}/messages`, {
+      query: { limit: String(limit) }
+    });
+  }
+  /** One fixed test message from the mailbox to its own address (owner-only). */
+  sendEmailTest(name: string): Promise<EmailSendTestResponse> {
+    return this.request("POST", `/email/accounts/${encodeURIComponent(name)}/send-test`);
   }
   /** The same for an account that is not saved (nothing is stored). */
   testEmailDraft(input: EmailAccountInput): Promise<EmailTestReport> {

@@ -13,6 +13,7 @@ mod computer;
 mod doctor;
 mod email_cmd;
 mod email_host;
+mod homeassistant_host;
 mod host;
 mod host_links;
 mod host_provision;

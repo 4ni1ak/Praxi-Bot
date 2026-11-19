@@ -851,6 +851,8 @@
       }
     },
     "timelineLabel": "Sohbet",
+    "copyMessage": "Mesajı kopyala",
+    "messageCopied": "Kopyalandı",
     "export": { "you": "Sen", "done": "Sohbet kaydedildi" },
     "jumpToLatest": "En sona git",
     "runBar": {
@@ -2971,7 +2973,17 @@
       "toolsLabel": "{{name}} e-posta kullanabilsin",
       "toolsOnHint": "Okumaya izin var. Göndermek her zaman bu botun izin moduna uyar ve varsayılan olarak önce sorar.",
       "toolsOffHint": "Posta kutusu bağlı ama {{name}} henüz hiçbir e-posta aracını göremiyor. E-postayı okuyup yazabilmesi için bunu aç.",
-      "toolsError": "E-posta erişimi değiştirilemedi: {{message}}"
+      "toolsError": "E-posta erişimi değiştirilemedi: {{message}}",
+      "recent": "Son postaları göster",
+      "hideRecent": "Son postaları gizle",
+      "recentError": "Gelen kutusu okunamadı: {{message}}",
+      "noMessages": "Gelen kutusu boş.",
+      "noSubject": "(konu yok)",
+      "sendTest": "Deneme postası gönder",
+      "sendingTest": "Gönderiliyor…",
+      "sendTestHint": "{{address}} adresine, yalnızca kendisine kısa bir deneme iletisi gönderir.",
+      "testSent": "Deneme postası {{address}} adresine gönderildi. Birazdan ulaşmalı.",
+      "testError": "Deneme postası gönderilemedi: {{message}}"
     }
   },
   "terminal": {
@@ -3884,6 +3896,55 @@
       "outdated": "Praxi'nin kullanabilmesi için {{cli}} güncellenmeli. Ayarlar, Yapay zeka'dan güncelle.",
       "sign_in": "{{cli}} oturumu kapalı. Ayarlar, Yapay zeka'dan oturum aç.",
       "unsupported": "Praxi bu bilgisayarda {{cli}} çalıştıramıyor."
+    }
+  },
+  "memory": {
+    "title": "Kişisel hafıza",
+    "description": "Her botun geçmiş sohbetlerden ne hatırladığını görün, herhangi bir kaydı düzenleyin veya unutun, değişiklikleri geri alın ve bir sonraki tura ne gireceğini önizleyin.",
+    "bot": "Bot",
+    "noBot": "Hafıza kayıtlarını görmek veya eklemek için bir bot oluşturun.",
+    "search": "Hafızada ara",
+    "searchPlaceholder": "Metin veya alıntıya göre süz…",
+    "kindFilter": "Kategori",
+    "allKinds": "Tüm kategoriler",
+    "botOnly": "Yalnızca bu bota özel kayıtlar",
+    "includeForgotten": "Unutulan kayıtları göster",
+    "empty": "Bu süzgece uyan hafıza kaydı yok.",
+    "scopeShared": "Tüm botlarda ortak",
+    "scopeThisBot": "Yalnızca {{bot}}",
+    "forgottenBadge": "Unutuldu",
+    "edit": "Düzenle",
+    "editLabel": "Hafıza metni",
+    "saveEdit": "Kaydet",
+    "forget": "Unut",
+    "undo": "Geri al",
+    "addTitle": "Hafıza kaydı ekle",
+    "scope": "Kapsam",
+    "kind": "Kategori",
+    "content": "Hatırlanacak bilgi",
+    "contentPlaceholder": "Kısa bir bilgi veya tercih yazın…",
+    "add": "Hafızaya ekle",
+    "addedNotice": "Hafıza kaydı eklendi.",
+    "updatedNotice": "Hafıza kaydı güncellendi.",
+    "forgottenNotice": "Hafıza kaydı unutuldu.",
+    "undoneNotice": "Son değişiklik geri alındı.",
+    "previewTitle": "Botun göreceği blok (geri çağırma önizlemesi)",
+    "previewHint": "Tura eklenecek tam hatırlanan-notlar veri bloğunu görmek için örnek bir ileti girin.",
+    "previewQuery": "Örnek kullanıcı iletisi",
+    "previewPlaceholder": "ör. Sürüm notlarını ne zaman hazırlıyoruz?",
+    "previewRun": "Geri çağırmayı önizle",
+    "previewTokens": "{{count}} kayıt çağrıldı · ~{{used}} / {{budget}} jeton",
+    "previewEmpty": "Bu ileti için hiçbir hafıza kaydı çağrılmaz.",
+    "kinds": {
+      "profile": "Kullanıcı profili",
+      "bot": "Bot bilgisi",
+      "episodic": "Geçmiş olay",
+      "procedural": "Yordam",
+      "lesson": "Düzeltmeden ders"
+    },
+    "trust": {
+      "user": "Kullanıcı onaylı",
+      "untrusted": "Güvenilmeyen veri"
     }
   },
   "voice": {

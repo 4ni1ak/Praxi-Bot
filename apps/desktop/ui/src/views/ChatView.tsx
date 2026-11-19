@@ -42,6 +42,7 @@ import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
 import { DictateButton } from "../components/DictateButton";
 import { MessageInfo } from "../components/MessageInfo";
+import { CopyButton } from "../components/CopyButton";
 import { useAutoSpeak } from "../components/useAutoSpeak";
 import { SpeakButton } from "../components/SpeakButton";
 import { QueuedMessages } from "../components/QueuedMessages";
@@ -1014,6 +1015,7 @@ export function ChatView({
               {guestName(runGuest(runId))}
               <Markdown text={item.text} />
             </div>
+            <CopyButton text={item.text} />
             <SpeakButton id={`${runId}:${item.ts}`} text={item.text} />
             <MessageInfo side="bot" ts={item.ts} runId={runId} run={run} runDto={runs.find((r) => r.id === runId)} />
             <MessageTime
@@ -1189,6 +1191,7 @@ export function ChatView({
                 return (
                   <div key={e.key} className={styles.userRow}>
                     <MessageTime ts={e.ts} mode={messageTimes} />
+                    <CopyButton text={e.text} />
                     <MessageInfo side="me" ts={e.ts} source={e.source} />
                     <div className={styles.userBubble}>
                       {splitMentions(e.text, mentionBots).map((part, i) =>
@@ -1208,6 +1211,7 @@ export function ChatView({
                       {lead ? guestName(guestBot(e.botId)) : null}
                       <Markdown text={e.text} />
                     </div>
+                    <CopyButton text={e.text} />
                     <SpeakButton id={e.key} text={e.text} />
                     <MessageInfo side="bot" ts={e.ts} runId={e.runId} run={e.runId ? events.runs[e.runId] : undefined} runDto={runs.find((r) => r.id === e.runId)} />
                     <MessageTime ts={e.ts} mode={messageTimes} />
