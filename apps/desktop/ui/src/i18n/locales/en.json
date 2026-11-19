@@ -1231,6 +1231,7 @@
     },
     "modeLabel": "While the bot is working",
     "newChatStarted": "Started a new chat.",
+    "newMessages": "New messages",
     "notFound": "This chat does not exist.",
     "notice": {
       "checkpointRestorePartial": "Restore {{checkpointId}} failed; {{count}} file(s) may still be changed. Recover with safety checkpoint {{safetyId}}.",
@@ -3883,6 +3884,7 @@
     "searchBots": "Search bots",
     "settings": "Settings",
     "unread": "Unread message",
+    "unreadBot": "New messages from this bot",
     "usage": "Usage"
   },
   "stopStatus": {

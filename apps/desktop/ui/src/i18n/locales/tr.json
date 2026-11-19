@@ -1231,6 +1231,7 @@
     },
     "modeLabel": "Bot çalışırken",
     "newChatStarted": "Yeni sohbet başlatıldı.",
+    "newMessages": "Yeni mesajlar",
     "notFound": "Bu sohbet yok.",
     "notice": {
       "checkpointRestorePartial": "{{checkpointId}} geri alma işlemi başarısız; {{count}} dosya hâlâ değişmiş olabilir. {{safetyId}} güvenlik denetim noktasından kurtarabilirsiniz.",
@@ -3883,6 +3884,7 @@
     "searchBots": "Botlarda ara",
     "settings": "Ayarlar",
     "unread": "Okunmamış mesaj",
+    "unreadBot": "Bu bottan yeni mesajlar var",
     "usage": "Kullanım"
   },
   "stopStatus": {
