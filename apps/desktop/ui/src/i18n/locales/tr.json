@@ -874,6 +874,8 @@
       }
     },
     "timelineLabel": "Sohbet",
+    "copyMessage": "Mesajı kopyala",
+    "messageCopied": "Kopyalandı",
     "export": { "you": "Sen", "done": "Sohbet kaydedildi" },
     "jumpToLatest": "En sona git",
     "runBar": {
@@ -886,6 +888,18 @@
       "stopUnconfirmed": "Servis durdurmayı 5 saniyedir onaylamadı, çalışma hâlâ sürüyor olabilir. Bitirmek için Zorla durdur'a bas.",
       "stopUnreachable": "Durdurma, bu botun çalıştığı bilgisayara ulaşamadı. Yeniden deniyor; bağlantıyı kontrol et.",
       "forceStop": "Zorla durdur"
+    },
+    "attach": {
+      "add": "Dosya veya görsel ekle",
+      "remove": "{{name}} dosyasını kaldır",
+      "list": "Eklenen dosyalar",
+      "uploading": "Yükleniyor",
+      "failed": "Bu dosya eklenemedi",
+      "tooLarge": "Çok büyük (en fazla 15 MB)",
+      "unsupported": "Bu dosya türü desteklenmiyor. Görsel, PDF, Word, Excel, PowerPoint veya metin dosyası kullan.",
+      "tooMany": "Bir mesajda en fazla 6 dosya olabilir",
+      "pastedName": "Yapıştırılan dosya",
+      "truncated": "Dosyanın yalnızca başı okundu"
     }
   },
   "botForm": {
@@ -1373,6 +1387,14 @@
       "install_copy_only": {
         "title": "Bu CLI sunucuya otomatik kurulamaz",
         "hint": "Gösterilen komutu ya da resmî sayfayı kullan."
+      },
+      "unsupported_attachment": {
+        "title": "Bu dosya eklenemez",
+        "hint": "Görsel, PDF, Word, Excel, PowerPoint veya metin dosyası kullan."
+      },
+      "attachment_too_large": {
+        "title": "Bu dosya çok büyük",
+        "hint": "Daha küçük bir dosya ekle (en fazla 15 MB, görseller 5 MB)."
       }
     },
     "network": {
@@ -3905,6 +3927,55 @@
       "outdated": "Praxi'nin kullanabilmesi için {{cli}} güncellenmeli. Ayarlar, Yapay zeka'dan güncelle.",
       "sign_in": "{{cli}} oturumu kapalı. Ayarlar, Yapay zeka'dan oturum aç.",
       "unsupported": "Praxi bu bilgisayarda {{cli}} çalıştıramıyor."
+    }
+  },
+  "memory": {
+    "title": "Kişisel hafıza",
+    "description": "Her botun geçmiş sohbetlerden ne hatırladığını görün, herhangi bir kaydı düzenleyin veya unutun, değişiklikleri geri alın ve bir sonraki tura ne gireceğini önizleyin.",
+    "bot": "Bot",
+    "noBot": "Hafıza kayıtlarını görmek veya eklemek için bir bot oluşturun.",
+    "search": "Hafızada ara",
+    "searchPlaceholder": "Metin veya alıntıya göre süz…",
+    "kindFilter": "Kategori",
+    "allKinds": "Tüm kategoriler",
+    "botOnly": "Yalnızca bu bota özel kayıtlar",
+    "includeForgotten": "Unutulan kayıtları göster",
+    "empty": "Bu süzgece uyan hafıza kaydı yok.",
+    "scopeShared": "Tüm botlarda ortak",
+    "scopeThisBot": "Yalnızca {{bot}}",
+    "forgottenBadge": "Unutuldu",
+    "edit": "Düzenle",
+    "editLabel": "Hafıza metni",
+    "saveEdit": "Kaydet",
+    "forget": "Unut",
+    "undo": "Geri al",
+    "addTitle": "Hafıza kaydı ekle",
+    "scope": "Kapsam",
+    "kind": "Kategori",
+    "content": "Hatırlanacak bilgi",
+    "contentPlaceholder": "Kısa bir bilgi veya tercih yazın…",
+    "add": "Hafızaya ekle",
+    "addedNotice": "Hafıza kaydı eklendi.",
+    "updatedNotice": "Hafıza kaydı güncellendi.",
+    "forgottenNotice": "Hafıza kaydı unutuldu.",
+    "undoneNotice": "Son değişiklik geri alındı.",
+    "previewTitle": "Botun göreceği blok (geri çağırma önizlemesi)",
+    "previewHint": "Tura eklenecek tam hatırlanan-notlar veri bloğunu görmek için örnek bir ileti girin.",
+    "previewQuery": "Örnek kullanıcı iletisi",
+    "previewPlaceholder": "ör. Sürüm notlarını ne zaman hazırlıyoruz?",
+    "previewRun": "Geri çağırmayı önizle",
+    "previewTokens": "{{count}} kayıt çağrıldı · ~{{used}} / {{budget}} jeton",
+    "previewEmpty": "Bu ileti için hiçbir hafıza kaydı çağrılmaz.",
+    "kinds": {
+      "profile": "Kullanıcı profili",
+      "bot": "Bot bilgisi",
+      "episodic": "Geçmiş olay",
+      "procedural": "Yordam",
+      "lesson": "Düzeltmeden ders"
+    },
+    "trust": {
+      "user": "Kullanıcı onaylı",
+      "untrusted": "Güvenilmeyen veri"
     }
   },
   "voice": {

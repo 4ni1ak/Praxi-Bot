@@ -1,7 +1,23 @@
 import { createSseParser } from "./events.ts";
 import { isLocalBaseUrl } from "../lib/liveViewState.ts";
 import type { Connection } from "./connection";
-import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSourceChange, KnowledgeMutation, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeEmailCapture, KnowledgeEmbeddingProgress, KnowledgeEmbeddingApproval, KnowledgeEmbeddingGrantTarget } from "./types";
+import type {
+  KnowledgeSource,
+  KnowledgeSourceInput,
+  KnowledgeSourceChange,
+  KnowledgeMutation,
+  KnowledgeSettings,
+  KnowledgeSettingsInput,
+  KnowledgeEmailCapture,
+  KnowledgeEmbeddingProgress,
+  KnowledgeEmbeddingApproval,
+  KnowledgeEmbeddingGrantTarget,
+  MemoryItem,
+  MemoryKind,
+  CreateMemoryInput,
+  UpdateMemoryInput,
+  MemoryPreview
+} from "./types";
 import type {
   AcceptedResponse,
   AdminCliEngine,
@@ -107,7 +123,8 @@ import type {
   PutBotSkillsInput,
   SkillsCatalog,
   StopRunsInput,
-  StopRunsResponse
+  StopRunsResponse,
+  Attachment
 } from "./types";
 
 export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
@@ -191,6 +208,46 @@ export class ApiClient {
   resetKnowledgeEmbeddingCooldown(bot: string): Promise<void> {
     return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/embedding-cooldown/reset`);
   }
+
+  listMemories(opts: {
+    bot?: string | null;
+    botOnly?: boolean;
+    kind?: MemoryKind | null;
+    q?: string | null;
+    includeDeleted?: boolean;
+  } = {}): Promise<MemoryItem[]> {
+    return this.request("GET", "/memory", {
+      query: {
+        bot: opts.bot ?? undefined,
+        bot_only: opts.botOnly ? "true" : undefined,
+        kind: opts.kind ?? undefined,
+        q: opts.q?.trim() ? opts.q.trim() : undefined,
+        include_deleted: opts.includeDeleted ? "true" : undefined
+      }
+    });
+  }
+
+  createMemory(body: CreateMemoryInput): Promise<MemoryItem> {
+    return this.request("POST", "/memory", { body });
+  }
+
+  updateMemory(id: string, body: UpdateMemoryInput): Promise<MemoryItem> {
+    return this.request("PATCH", `/memory/${encodeURIComponent(id)}`, { body });
+  }
+
+  deleteMemory(id: string): Promise<MemoryItem> {
+    return this.request("DELETE", `/memory/${encodeURIComponent(id)}`);
+  }
+
+  undoMemory(id: string): Promise<MemoryItem> {
+    return this.request("POST", `/memory/${encodeURIComponent(id)}/undo`);
+  }
+
+  previewBotMemory(bot: string, query: string): Promise<MemoryPreview> {
+    return this.request("GET", `/bots/${encodeURIComponent(bot)}/memory/preview`, {
+      query: { query }
+    });
+  }
   readonly baseUrl: string;
   private readonly token: string;
   /** Name of the paired host this client talks to (null for this computer). */
@@ -221,7 +278,7 @@ export class ApiClient {
   protected async request<T>(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal; headers?: Record<string, string> } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal; headers?: Record<string, string>; raw?: Blob } = {}
   ): Promise<T> {
     const res = await this.send(method, path, opts);
     if (res.status === 204) {
@@ -254,6 +311,8 @@ export class ApiClient {
       /** Streaming answers (install output) must not be cut by the request timeout. */
       noTimeout?: boolean;
       headers?: Record<string, string>;
+      /** A file body, sent as is (the attachment upload); `body` stays JSON. */
+      raw?: Blob;
     } = {}
   ): Promise<Response> {
     const url = new URL(`${this.baseUrl}/v1${path}`);
@@ -276,13 +335,15 @@ export class ApiClient {
     }
     if (opts.body !== undefined) {
       headers["Content-Type"] = "application/json";
+    } else if (opts.raw !== undefined) {
+      headers["Content-Type"] = "application/octet-stream";
     }
     let res: Response;
     try {
       res = await fetch(url, {
         method,
         headers,
-        body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+        body: opts.raw ?? (opts.body === undefined ? undefined : JSON.stringify(opts.body)),
         signal: AbortSignal.any([
           this.life.signal,
           ...(opts.signal ? [opts.signal] : []),
@@ -532,14 +593,24 @@ export class ApiClient {
     });
   }
 
+  /** Upload one file for the next message of a chat; the daemon sniffs its type and size. */
+  uploadAttachment(chatId: string, file: Blob, name: string): Promise<Attachment> {
+    return this.request("POST", `/chats/${chatId}/attachments`, { raw: file, query: { name } });
+  }
+  /** The stored original of an attachment (an image to show in the message). */
+  attachmentBlob(chatId: string, attachmentId: string): Promise<Blob> {
+    return this.requestBlob("GET", `/chats/${chatId}/attachments/${attachmentId}`);
+  }
+
   sendMessage(
     chatId: string,
     text: string,
     mode?: SendMode,
-    ownerKey?: string
+    ownerKey?: string,
+    attachmentIds?: string[]
   ): Promise<SendResponse> {
     return this.request("POST", `/chats/${chatId}/messages`, {
-      body: { text, mode },
+      body: { text, mode, ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}) },
       ...(ownerKey ? { headers: { "x-praxi-owner-key": ownerKey, "x-praxi-message-source": "local_ui" } } : {})
     });
   }

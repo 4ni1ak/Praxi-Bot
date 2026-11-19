@@ -874,6 +874,8 @@
       }
     },
     "timelineLabel": "Unterhaltung",
+    "copyMessage": "Nachricht kopieren",
+    "messageCopied": "Kopiert",
     "export": { "you": "Du", "done": "Chat gespeichert" },
     "jumpToLatest": "Zum Neuesten springen",
     "runBar": {
@@ -886,6 +888,18 @@
       "stopUnconfirmed": "Der Dienst hat den Stopp nach 5 Sekunden nicht bestätigt, der Lauf arbeitet also möglicherweise noch. Drücke „Stopp erzwingen“, um ihn zu beenden.",
       "stopUnreachable": "Der Stopp konnte den Computer, auf dem dieser Bot läuft, nicht erreichen. Er versucht es weiter; prüfe die Verbindung.",
       "forceStop": "Stopp erzwingen"
+    },
+    "attach": {
+      "add": "Dateien oder Bilder anhängen",
+      "remove": "{{name}} entfernen",
+      "list": "Angehängte Dateien",
+      "uploading": "Wird hochgeladen",
+      "failed": "Diese Datei konnte nicht angehängt werden",
+      "tooLarge": "Zu groß (höchstens 15 MB)",
+      "unsupported": "Dieser Dateityp wird nicht unterstützt. Nutze ein Bild, PDF, Word, Excel, PowerPoint oder eine Textdatei.",
+      "tooMany": "Höchstens 6 Dateien pro Nachricht",
+      "pastedName": "Eingefügte Datei",
+      "truncated": "Nur der Anfang dieser Datei wurde gelesen"
     }
   },
   "botForm": {
@@ -1373,6 +1387,14 @@
       "install_copy_only": {
         "title": "Diese CLI kann nicht automatisch auf dem Server installiert werden",
         "hint": "Verwende den gezeigten Befehl oder die offizielle Seite."
+      },
+      "unsupported_attachment": {
+        "title": "Diese Datei kann nicht angehängt werden",
+        "hint": "Nutze ein Bild, PDF, Word, Excel, PowerPoint oder eine Textdatei."
+      },
+      "attachment_too_large": {
+        "title": "Diese Datei ist zu groß",
+        "hint": "Hänge eine kleinere Datei an (höchstens 15 MB, Bilder 5 MB)."
       }
     },
     "network": {
@@ -3905,6 +3927,55 @@
       "outdated": "{{cli}} braucht ein Update, bevor Praxi es nutzen kann. Aktualisiere es unter Einstellungen, KI.",
       "sign_in": "{{cli}} ist abgemeldet. Melde dich unter Einstellungen, KI dort an.",
       "unsupported": "Praxi kann {{cli}} auf diesem Computer nicht ausführen."
+    }
+  },
+  "memory": {
+    "title": "Persönliches Gedächtnis",
+    "description": "Sieh dir an, woran sich jeder Bot aus früheren Unterhaltungen erinnert, bearbeite oder vergiss Einträge, mache Änderungen rückgängig und prüfe in der Vorschau, was in die nächste Runde einfließt.",
+    "bot": "Bot",
+    "noBot": "Erstelle einen Bot, um Erinnerungen anzusehen oder hinzuzufügen.",
+    "search": "Erinnerungen durchsuchen",
+    "searchPlaceholder": "Nach Text oder Zitat filtern …",
+    "kindFilter": "Kategorie",
+    "allKinds": "Alle Kategorien",
+    "botOnly": "Nur Erinnerungen dieses Bots",
+    "includeForgotten": "Vergessene Einträge anzeigen",
+    "empty": "Keine Erinnerungen entsprechen diesem Filter.",
+    "scopeShared": "Für alle Bots gemeinsam",
+    "scopeThisBot": "Nur {{bot}}",
+    "forgottenBadge": "Vergessen",
+    "edit": "Bearbeiten",
+    "editLabel": "Erinnerungstext",
+    "saveEdit": "Erinnerung speichern",
+    "forget": "Vergessen",
+    "undo": "Rückgängig",
+    "addTitle": "Erinnerung hinzufügen",
+    "scope": "Bereich",
+    "kind": "Kategorie",
+    "content": "Was gemerkt werden soll",
+    "contentPlaceholder": "Kurze Tatsache oder Präferenz eingeben …",
+    "add": "Erinnerung hinzufügen",
+    "addedNotice": "Erinnerung hinzugefügt.",
+    "updatedNotice": "Erinnerung aktualisiert.",
+    "forgottenNotice": "Erinnerung vergessen.",
+    "undoneNotice": "Letzte Änderung rückgängig gemacht.",
+    "previewTitle": "Was der Bot sieht (Abrufvorschau)",
+    "previewHint": "Gib eine Beispielnachricht ein, um den genauen Datenblock mit abgerufenen Erinnerungen zu sehen, der der Runde vorangestellt wird.",
+    "previewQuery": "Beispiel-Benutzernachricht",
+    "previewPlaceholder": "z. B. Wann erstellen wir die Versionshinweise?",
+    "previewRun": "Abruf testen",
+    "previewTokens": "{{count}} Erinnerungen abgerufen · ~{{used}} / {{budget}} Tokens",
+    "previewEmpty": "Für diese Nachricht würden keine Erinnerungen abgerufen.",
+    "kinds": {
+      "profile": "Benutzerprofil",
+      "bot": "Bot-Wissen",
+      "episodic": "Vergangenes Ereignis",
+      "procedural": "Ablauf",
+      "lesson": "Lektion aus Korrektur"
+    },
+    "trust": {
+      "user": "Vom Benutzer bestätigt",
+      "untrusted": "Nicht vertrauenswürdige Daten"
     }
   },
   "voice": {
