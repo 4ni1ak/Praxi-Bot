@@ -259,6 +259,10 @@ host**. It needs no extra port: the app's own daemon opens an outbound iroh
 channel to the host, and every request is checked by the host's peer guard as a
 paired *Desktop*.
 
+Installing and pairing from the owning computer (`bot host add`), and the
+day-to-day checks, are in [Host operations](host-operations.md#pairing-the-desktop-app).
+On a host this guide installed by hand:
+
 1. The host must run as a host: `bot serve --host` (this also turns peer
    networking on). An installed `praxi.service` runs `bot serve`; override it
    with a drop-in (`sudo systemctl edit praxi`):
@@ -273,10 +277,14 @@ paired *Desktop*.
    `praxi host invite --role desktop`
 3. In the app, open the computer selector in the header, **Add a host…**, and
    paste the ticket. The selector then lists the host next to "This computer".
-4. Pairing does not allow screen access by itself. On the host, let the paired
-   desktop watch and take over (kept across restarts, local user only):
+4. An admin desktop (the default for `sudo praxi host invite --role desktop`,
+   which sends the host's owner key) may watch and drive the screen without
+   another command. Any other paired device cannot, until you grant it on the
+   host. The grant survives restarts:
    `praxi host screen --all-desktops` (add `--view-only` for watching only,
-   `--revoke` to remove). `praxi host devices` lists device keys.
+   `--revoke` to remove it, including the admin desktop's default).
+   `praxi host devices` lists device keys. `bot host add` records this grant
+   itself while it pairs.
 
 On a host, a paired Desktop can operate bots, chats and runs and use the screen
 but cannot change secrets or provider keys, MCP servers, skills, email or web
@@ -539,44 +547,12 @@ sudo ./scripts/install-linux.sh --uninstall           # keeps data and user
 sudo ./scripts/install-linux.sh --uninstall --purge   # deletes data too
 ```
 
-### Operating a host: logs, restart, upgrade, rollback
+### Operating a host
 
-**Logs.** The daemon logs to the journal. Start-up writes one line per step
-(`startup: <step> (+N ms)`), so a slow or stuck start shows where it stopped:
-
-```sh
-journalctl -u praxi -n 200 --no-pager
-journalctl -u praxi -u praxi-desktop -u praxi-xvfb -f
-```
-
-The API starts answering at `startup: listening`. The leadership check against
-paired devices runs afterwards in the background and logs
-`startup: leader components started in background`; scheduled work and channels
-start only once it has finished.
-
-**Restart.** Services restart only when you or the installer do it on purpose:
-
-```sh
-sudo systemctl restart praxi.service
-systemctl is-active praxi.service praxi-xvfb.service praxi-desktop.service
-```
-
-The installers set `NEEDRESTART_MODE=l` and `DEBIAN_FRONTEND=noninteractive`
-for their own `apt` calls, so Ubuntu's `needrestart` hook never restarts Praxi
-behind your back. For your own `apt upgrade` runs on the host, set
-`NEEDRESTART_MODE=l` (or `a` only if you accept automatic restarts) the same way.
-
-**Upgrade.** Re-run the installer with the new `--version` (see above) or use
-`bot host upgrade <user@server>` from the desktop machine. Data in
-`/var/lib/praxi` is kept. The installer stops the services, swaps the files and
-starts them again; check `systemctl is-active praxi.service` afterwards.
-
-**Rollback.** If an upgrade fails after the services were stopped, the installer
-restores the previous files and units itself and says so in its output. To go
-back to an older release after a successful upgrade, install that release tag
-again with `--version <old tag>` (the same signed-archive steps as an upgrade).
-Take a copy of `/var/lib/praxi` first when you need to be able to return to its
-earlier contents, because newer versions may migrate data forward.
+Logs, deliberate start and stop, `bot host upgrade` and `bot host repair`,
+rollback, backup of `/var/lib/praxi`, and the fault table are in
+[Host operations](host-operations.md). The installer commands above are the
+manual update path that page points at.
 
 **Is host mode active?** The provisioning checks (`bot host add` / `repair` preflight and status) read the effective unit, including a host-mode `ExecStart` that comes from a systemd drop-in. Manually: `systemctl cat praxi.service | grep ExecStart`.
 
