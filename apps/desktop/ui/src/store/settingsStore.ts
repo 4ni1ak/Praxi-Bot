@@ -55,6 +55,8 @@ export interface AppSettings extends AppearanceSettings {
   voiceRate: number;
   /** Read each finished bot reply aloud automatically. */
   speakReplies: boolean;
+  /** App version whose "What's new" card was last shown (or skipped); "" = never. */
+  lastSeenVersion: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -82,7 +84,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   botOrder: [],
   voiceName: "",
   voiceRate: DEFAULT_VOICE_RATE,
-  speakReplies: false
+  speakReplies: false,
+  lastSeenVersion: ""
 };
 
 export function shouldOpenOnboardingOnStart(
@@ -133,7 +136,8 @@ export function loadSettingsSync(): AppSettings | null {
       botOrder: parseBotOrder(parsed.botOrder),
       voiceName: parseVoiceName(parsed.voiceName),
       voiceRate: parseVoiceRate(parsed.voiceRate),
-      speakReplies: parsed.speakReplies === true
+      speakReplies: parsed.speakReplies === true,
+      lastSeenVersion: typeof parsed.lastSeenVersion === "string" ? parsed.lastSeenVersion : ""
     };
   } catch {
     return null;
@@ -210,6 +214,8 @@ export async function loadSettings(): Promise<AppSettings> {
       const voiceName = parseVoiceName(await store.get<string>("voiceName"));
       const voiceRate = parseVoiceRate(await store.get<number>("voiceRate"));
       const speakReplies = (await store.get<boolean>("speakReplies")) === true;
+      const lastSeen = await store.get<string>("lastSeenVersion");
+      const lastSeenVersion = typeof lastSeen === "string" ? lastSeen : "";
 
       return {
         ...appearance,
@@ -236,7 +242,8 @@ export async function loadSettings(): Promise<AppSettings> {
         botOrder,
         voiceName,
         voiceRate,
-        speakReplies
+        speakReplies,
+        lastSeenVersion
       };
     } catch {
       // Fall back to localStorage below if reading from plugin-store fails
@@ -283,6 +290,7 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
       await store.set("voiceName", settings.voiceName);
       await store.set("voiceRate", settings.voiceRate);
       await store.set("speakReplies", settings.speakReplies);
+      await store.set("lastSeenVersion", settings.lastSeenVersion);
       await store.save();
     } catch {
       // Ignore store write errors in non-Tauri environments

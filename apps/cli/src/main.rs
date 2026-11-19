@@ -166,6 +166,9 @@ enum Command {
     SelfUpdate(update::UpdateArgs),
     /// Show daemon status (also verifies the API token).
     Status,
+    /// With `--remote`: open the tunnel to a paired daemon, print its loopback address and
+    /// token, and keep it open until Ctrl-C (for `scripts/tools/measure-live-link.mjs`).
+    Proxy,
     /// Send a message to a bot and stream the answer.
     Chat {
         /// Bot id (see `bot bots list`).
@@ -604,6 +607,7 @@ fn run() -> Result<()> {
                     | host::HostCmd::Standby
                     | host::HostCmd::Activate { .. }
             } | Command::Status
+                | Command::Proxy
                 | Command::Chat { .. }
                 | Command::Bots { .. }
                 | Command::Approve { .. }
@@ -620,6 +624,10 @@ fn run() -> Result<()> {
         )
     {
         return Err("--remote supports daemon client commands (status, bots, chat, approve, answer, grants, schedules, email, channels telegram pair); this command manages the local installation".into());
+    }
+
+    if cli.remote.is_none() && matches!(command, Command::Proxy) {
+        return Err("`bot proxy` needs --remote <ENDPOINT>".into());
     }
 
     if let Command::Host {
@@ -658,6 +666,7 @@ fn run() -> Result<()> {
         Command::SelfUpdate(args) => return update::run(args),
         Command::Host { .. }
         | Command::Status
+        | Command::Proxy
         | Command::Chat { .. }
         | Command::Bots { .. }
         | Command::Approve { .. }
@@ -732,6 +741,7 @@ fn run() -> Result<()> {
         | Command::Backup(_)
         | Command::Serve { .. }
         | Command::Status
+        | Command::Proxy
         | Command::Chat { .. }
         | Command::Bots { .. }
         | Command::Approve { .. }
@@ -998,6 +1008,22 @@ fn run_telegram(
     }
 }
 
+/// `bot --remote <ENDPOINT> proxy`: print the tunnel's loopback address and token, hold it open.
+async fn proxy_hold(
+    proxy: Option<&remote_api::ApiProxy>,
+    out: &mut dyn std::io::Write,
+) -> Result<()> {
+    let Some(proxy) = proxy else {
+        return Err("`bot proxy` needs --remote <ENDPOINT>".into());
+    };
+    writeln!(out, "url: {}", proxy.base_url)?;
+    writeln!(out, "token: {}", proxy.token)?;
+    writeln!(out, "tunnel open; press Ctrl-C to close it")?;
+    out.flush()?;
+    tokio::signal::ctrl_c().await?;
+    Ok(())
+}
+
 fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1017,6 +1043,7 @@ fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Resul
         match command {
             Command::Host { action } => host::run(&c, action, json, &mut out, data_dir).await,
             Command::Status => remote::status(&c, json, &mut out).await,
+            Command::Proxy => proxy_hold(remote.as_ref().map(|(_, p)| p), &mut out).await,
             Command::Bots {
                 action: BotsCmd::List,
             } => remote::bots_list(&c, json, &mut out).await,
@@ -1639,6 +1666,20 @@ mod tests {
                 "--url",
                 "http://127.0.0.1",
                 "status"
+            ])
+            .is_err()
+        );
+        let cli = Cli::try_parse_from(["bot", "--remote", "endpoint", "proxy"]).unwrap();
+        assert_eq!(cli.remote.as_deref(), Some("endpoint"));
+        assert!(matches!(cli.command, Some(Command::Proxy)));
+        assert!(
+            Cli::try_parse_from([
+                "bot",
+                "--remote",
+                "endpoint",
+                "--url",
+                "http://127.0.0.1",
+                "proxy"
             ])
             .is_err()
         );

@@ -23,7 +23,7 @@ use tool_registry::ToolRegistry;
 use workflow_replay::{Handles, WorkflowStore};
 
 use crate::Result;
-use crate::channels::{self, TelegramRuntime};
+use crate::channels;
 
 /// Providers from `providers.toml`: every enabled one that can be built
 /// (including runnable `cli:*` engines), the effective default active.
@@ -860,26 +860,6 @@ pub struct ServeOptions {
     pub owner_key: Option<String>,
 }
 
-/// Run the daemon on `listener` until `shutdown` resolves, with the Telegram
-/// channel (when it runs) stopped first so no message arrives mid-shutdown.
-///
-/// # Errors
-/// Server errors.
-pub async fn run_daemon(
-    listener: tokio::net::TcpListener,
-    state: AppState,
-    telegram: Option<Arc<TelegramRuntime>>,
-    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
-) -> std::io::Result<Vec<protocol::RunId>> {
-    daemon_api::serve(listener, state, async move {
-        shutdown.await;
-        if let Some(t) = telegram {
-            t.shutdown().await;
-        }
-    })
-    .await
-}
-
 /// What `GET /v1/doctor` learns from `bot serve`: the desktop backend's
 /// capabilities and the production secret redactor (for the support report).
 /// Browsers are launched per run by the browser tools, so there is no shared
@@ -1164,6 +1144,7 @@ pub fn serve(
             .as_ref()
             .and_then(|pc| pc.handler.clone())
             .map(|h| h as Arc<dyn peer_network::RpcHandler>);
+        step("peer stack starting");
         let peer = crate::peer::start_server(
             data_dir,
             host_is_host,
@@ -1261,6 +1242,7 @@ pub fn serve(
             let handle = redactor.clone();
             Arc::new(move |value: &str| handle.register(value))
         };
+        step("mcp host loading configuration");
         let mcp = crate::mcp_host::McpHost::start(
             data_dir,
             mcp_tools,
@@ -1268,7 +1250,7 @@ pub fn serve(
             Some(mcp_redactor),
             Some(mcp_registrar),
         );
-        step("mcp host started");
+        step("mcp host ready, server connections start in background");
         state.set_mcp(Arc::clone(&mcp) as Arc<dyn McpControl>);
         state.set_components(crate::components_host::ComponentHost::system());
         // Composio app connections: the key stays in the secret store (reserved
@@ -1314,48 +1296,6 @@ pub fn serve(
             tokio::net::TcpListener::bind(SocketAddr::from((DAEMON_BIND_IP, port))).await?;
         let addr = listener.local_addr()?;
         step("port bound");
-        // The Telegram channel (when a token is stored and it is enabled) talks
-        // to this daemon through its own loopback address.
-        let telegram = telegram_store.as_ref().map(|store| {
-            let t = channels::telegram_runtime(
-                data_dir,
-                Arc::clone(store),
-                &format!("http://{addr}"),
-                &api_token,
-                state.owner_key().as_deref(),
-                None,
-                Some(state.leader().clone()),
-            );
-            state.add_channel(t.clone());
-            t
-        });
-        // The leadership check waits (up to its deadline) for paired peers'
-        // heartbeats; the API must not wait for it. Until it finishes the
-        // components stay closed (`verifying`), so serving first is safe.
-        if state.leader().config().runs_components() {
-            let leader = state.leader().clone();
-            let telegram = telegram.clone();
-            tokio::spawn(async move {
-                let began = std::time::Instant::now();
-                match leader.start().await {
-                    Ok(()) => eprintln!(
-                        "startup: leader components started in background (+{} ms)",
-                        began.elapsed().as_millis()
-                    ),
-                    Err(e) => eprintln!("warning: leader components did not start: {e}"),
-                }
-                if let Some(t) = &telegram {
-                    use daemon_api::ChannelControl;
-                    let i = t.info();
-                    if i.running {
-                        eprintln!(
-                            "telegram channel: running ({} paired user(s))",
-                            i.paired_users
-                        );
-                    }
-                }
-            });
-        }
         step("listening");
         if json {
             println!(
@@ -1379,8 +1319,36 @@ pub fn serve(
         // MCP children stay up through the agent grace period (a running tool
         // call may still need them) and are stopped once the loop has paused.
         let leader = state.leader().clone();
+        let channel_state = state.clone();
+        let channel_data = data_dir.to_path_buf();
+        let prepare_channels = async move {
+            if let Some(store) = telegram_store {
+                let owner_key = channel_state.owner_key();
+                let leader = channel_state.leader().clone();
+                step("telegram configuration loading");
+                let telegram = tokio::task::spawn_blocking(move || {
+                    channels::telegram_runtime(
+                        &channel_data,
+                        store,
+                        &format!("http://{addr}"),
+                        &api_token,
+                        owner_key.as_deref(),
+                        None,
+                        Some(leader),
+                    )
+                })
+                .await;
+                match telegram {
+                    Ok(channel) => {
+                        channel_state.add_channel(channel);
+                        step("telegram configuration loaded");
+                    }
+                    Err(e) => eprintln!("warning: telegram configuration task failed: {e}"),
+                }
+            }
+        };
         let shutdown_peer = peer.clone();
-        let outcome = run_daemon(listener, state, telegram, async move {
+        let outcome = daemon_api::serve_with_startup(listener, state, prepare_channels, async move {
             shutdown_signal().await;
             if let Some(peer) = shutdown_peer {
                 peer.shutdown().await;

@@ -1,7 +1,6 @@
 import {
   ChevronRight,
   Lock,
-  MessageSquare,
   PenLine,
   Plus,
   ShieldCheck,
@@ -13,11 +12,11 @@ import {
 import { type CSSProperties, Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BotAvatar, type BotAvatarState, type BotIdentity } from "ui";
+import type { UpdateChatInput } from "../api/types";
 import { activitySections, librarySections, subagentRows } from "../lib/activityPanel";
 import { type PermissionTone, permissionTone } from "../lib/botEditor";
 import { chatActivity, chatDateLabel } from "../lib/botLanding";
 import { CHAT_SEARCH_MIN_CHATS, filterChats } from "../lib/chatSearch";
-import { chatTitleLabel } from "../lib/chatTitle";
 import type { PresetChoice } from "../lib/botProfile";
 import { modelLine } from "../lib/modelName";
 import { runNow } from "../lib/runNow";
@@ -32,6 +31,7 @@ import styles from "./BotPanel.module.css";
 import { BotPanelMail } from "./BotPanelMail";
 import { BotPanelSkills } from "./BotPanelSkills";
 import { BrandMark } from "./BrandMark";
+import { ChatList } from "./ChatList";
 import { QuotaBlock } from "./QuotaRings";
 import { SubagentDetail } from "./SubagentDetail";
 import { SubagentList, useNow } from "./SubagentList";
@@ -42,6 +42,8 @@ export interface BotPanelChat {
   id: string;
   title: string;
   createdAtMs: number;
+  pinned?: boolean;
+  archived?: boolean;
 }
 
 const TONE_ICONS: Record<PermissionTone, typeof Lock> = {
@@ -99,12 +101,15 @@ export function BotPanel({
   activeChatId,
   needs,
   runs,
+  pendingChatIds,
   skills,
   newChatBusy,
   visible = true,
   onClose,
   onOpenChat,
   onNewChat,
+  onPatchChat,
+  onDeleteChat,
   onOpenProfile,
   onOpenSettings,
   onManageSkills,
@@ -122,6 +127,7 @@ export function BotPanel({
   activeChatId?: string;
   needs: ReadonlyArray<{ chatId: string }>;
   runs: ReadonlyArray<{ chat_id?: string | null; state: string }>;
+  pendingChatIds: ReadonlySet<string>;
   skills: BotSkillsState;
   newChatBusy: boolean;
   /** The panel is on screen (closing it ends the computer view). */
@@ -129,6 +135,8 @@ export function BotPanel({
   onClose: () => void;
   onOpenChat: (chatId: string) => void;
   onNewChat: () => void;
+  onPatchChat: (chatId: string, patch: UpdateChatInput) => Promise<void>;
+  onDeleteChat: (chatId: string) => Promise<void>;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onManageSkills: () => void;
@@ -142,6 +150,11 @@ export function BotPanel({
   const [openSub, setOpenSub] = useState<string | null>(null);
   const [chatQuery, setChatQuery] = useState("");
   const visibleChats = filterChats(chats, chatQuery, t("botPanel.untitled"));
+  const chatItems = visibleChats.map((c) => ({
+    ...c,
+    dateLabel: chatDateLabel(c.createdAtMs, i18n.language),
+    activity: chatActivity(c.id, needs, runs)
+  }));
   const subs = subagentRows(events, activeChatId);
   const upcoming = useUpcoming(bot.id);
   const quotas = useQuotas();
@@ -310,35 +323,19 @@ export function BotPanel({
         ) : null}
         {visibleChats.length === 0 && chatQuery.trim() ? (
           <p className={styles.chatSearchEmpty} role="status">{t("botPanel.noChatMatches")}</p>
-        ) : null}
-        <ul className={styles.list}>
-            {visibleChats.map((c) => {
-              const chatState = chatActivity(c.id, needs, runs);
-              return (
-                <li key={c.id}>
-                  <button
-                    type="button"
-                    className={styles.chat}
-                    aria-current={c.id === activeChatId ? "true" : undefined}
-                    onClick={() => onOpenChat(c.id)}
-                  >
-                    <MessageSquare aria-hidden="true" />
-                    <span className={styles.chatText}>
-                      <span className={styles.chatTitle}>{chatTitleLabel(c.title, t("botPanel.untitled"))}</span>
-                      <span className={styles.chatDate} data-testid="bot-panel-chat-date">
-                        {chatDateLabel(c.createdAtMs, i18n.language)}
-                      </span>
-                    </span>
-                    {chatState ? (
-                      <span className={styles.chatState} data-state={chatState}>
-                        {t(`bots.chatState.${chatState}`)}
-                      </span>
-                    ) : null}
-                  </button>
-                </li>
-              );
-            })}
-        </ul>
+        ) : (
+          <ChatList
+            chats={chatItems}
+            activeChatId={activeChatId}
+            runs={runs}
+            pendingIds={pendingChatIds}
+            variant="panel"
+            searchActive={chatQuery.trim().length > 0}
+            onOpenChat={onOpenChat}
+            onPatchChat={onPatchChat}
+            onDeleteChat={onDeleteChat}
+          />
+        )}
       </section>
               </div>
             )

@@ -107,6 +107,7 @@ export function LiveViewer({
     recoverTakeover,
     clearPause,
     isLocalClient,
+    canClearForeignPause,
     enqueueInput,
     resetInputState,
     setComposing
@@ -304,7 +305,7 @@ export function LiveViewer({
   const isReleasing = state.pendingRequest?.kind === "release";
   const otherOwner = foreignTakeoverOwner(state);
   const foreignPaused = foreignPausedTakeover(state, controlState);
-  const actions = visibleActions(state, controlState, isLocalClient).dock;
+  const actions = visibleActions(state, controlState, canClearForeignPause).dock;
 
   const tone = state.disconnected || state.streamStale
     ? "paused"

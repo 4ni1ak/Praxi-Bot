@@ -127,6 +127,10 @@ pub fn parse_dom_snapshot(resp: &Value) -> Vec<DomExtra> {
                     .then(|| attr.get("type").copied().unwrap_or("text").to_string()),
                 autocomplete: attr.get("autocomplete").map(|a| (*a).to_string()),
                 text: fallback,
+                name_hints: ["name", "id", "aria-label"]
+                    .iter()
+                    .filter_map(|k| attr.get(k).map(|v| (*v).to_string()))
+                    .collect(),
             });
         }
 
@@ -196,6 +200,17 @@ mod tests {
                 }
             }]
         })
+    }
+
+    #[test]
+    fn secret_looking_names_are_sensitive() {
+        let mk = |hint: &str| DomExtra {
+            input_type: Some("text".into()),
+            name_hints: vec![hint.into()],
+            ..Default::default()
+        };
+        assert!(mk("user_PassWd").is_sensitive() && mk("Card number").is_sensitive());
+        assert!(!mk("username").is_sensitive());
     }
 
     #[test]

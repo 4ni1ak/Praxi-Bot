@@ -1,4 +1,6 @@
 import { BellDot, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2, Minus, Square, X } from "lucide-react";
+import { ApiError } from "./api/client";
+import type { UpdateChatInput } from "./api/types";
 import { isMockMode } from "./api/mockMode";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
@@ -18,6 +20,7 @@ import {
 import styles from "./App.module.css";
 import { AppsPill } from "./components/AppsPill";
 import { BotPanel } from "./components/BotPanel";
+import { ChatList } from "./components/ChatList";
 import { ResizeGrip } from "./components/ResizeGrip";
 import { PRODUCT_CONFIG } from "./config/product";
 import {
@@ -45,6 +48,10 @@ import { AccountMenu, type AccountAction } from "./components/AccountMenu";
 import { Popover } from "./components/Popover";
 import { HealthIndicator } from "./components/HealthIndicator";
 import { HelpModal } from "./components/HelpModal";
+import { WhatsNewModal } from "./components/WhatsNewModal";
+import { notesFor, whatsNewAction, type WhatsNewFile } from "./lib/whatsNew";
+import whatsNewFile from "./whats-new.json";
+import { getVersion } from "@tauri-apps/api/app";
 import { chatTitleLabel } from "./lib/chatTitle";
 import { APP_COMMAND_EVENT, type AppCommandTarget } from "./lib/slash";
 import { editorSection } from "./lib/botEditor";
@@ -53,8 +60,10 @@ import {
   backFromChatOpensPanel,
   botChats,
   botDialogFromScreen,
-  botLanding
+  botLanding,
+  chatActivity
 } from "./lib/botLanding";
+import { nextRouteAfterChatDelete } from "./lib/chatManage";
 import { nativeEngineName } from "./lib/botEngine";
 import { getAutostart, setAutostart } from "./lib/providers";
 import { PausedControlBanner } from "./components/PausedControlBanner";
@@ -165,6 +174,9 @@ function AppShell() {
     client,
     refreshBots,
     refreshChats,
+    pendingChatIds,
+    updateChat,
+    deleteChat,
     retry,
     restartDaemon,
     home,
@@ -241,6 +253,9 @@ function AppShell() {
   const [botSearch, setBotSearch] = useState<string | null>(null);
   const { servers: appServers } = useMcp(true);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
+  const [whatsNewDone, setWhatsNewDone] = useState(false);
   const [layout, setLayout] = useState<ShellLayout>(loadShellLayout);
   const [panelOpen, setPanelOpen] = useState(() => {
     if (!isMockMode() || typeof window === "undefined") {
@@ -320,6 +335,7 @@ function AppShell() {
         if (screen === "home" || screen === "offline") setRoute({ kind: "home" });
       }
       setSettings(merged);
+      setSettingsLoaded(true);
       if (shouldOpenOnboardingOnStart(merged)) {
         setRoute({ kind: "onboarding" });
       }
@@ -636,6 +652,30 @@ function AppShell() {
   useEffect(() => {
     if (dialogOpen) setBotSearch(null);
   }, [dialogOpen]);
+
+  // "What's new": bundled notes of the installed version, shown once per version (never blocks, no network).
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    void getVersion().then(setAppVersion).catch(() => undefined);
+  }, []);
+  const whatsNewNotes = notesFor(whatsNewFile as WhatsNewFile, appVersion, i18n.language);
+  const whatsNewStep = settingsLoaded
+    ? whatsNewAction({
+        version: appVersion,
+        lastSeen: settings.lastSeenVersion,
+        onboardingCompleted: settings.onboardingCompleted,
+        hasNotes: whatsNewNotes !== null
+      })
+    : "none";
+  const recordWhatsNew = () => {
+    setWhatsNewDone(true);
+    updateSettings({ lastSeenVersion: appVersion });
+  };
+  useEffect(() => {
+    if (whatsNewStep === "record") recordWhatsNew();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [whatsNewStep]);
+  const showWhatsNew = whatsNewStep === "show" && !whatsNewDone && route.kind !== "onboarding" && !dialogOpen;
   const mini = isMiniRail(railWidth);
 
   // The computer card asks for the screen itself, only when the owner presses "show screen".
@@ -647,8 +687,41 @@ function AppShell() {
   const togglePanel = () => (panelOpen ? closePanel() : setPanelOpen(true));
   const panelBotView = selectedBot ? botView(selectedBot) : undefined;
   const panelChats = selectedBot
-    ? botChats(chats, selectedBot.id).map((c) => ({ id: c.id, title: c.title ?? "", createdAtMs: c.created_at_ms }))
+    ? botChats(chats, selectedBot.id).map((c) => ({
+        id: c.id,
+        title: c.title ?? "",
+        createdAtMs: c.created_at_ms,
+        pinned: c.pinned,
+        archived: c.archived
+      }))
     : [];
+  const railChats = panelChats.map((c) => ({
+    ...c,
+    activity: chatActivity(c.id, needs, runs)
+  }));
+
+  const handlePatchChat = async (chatId: string, patch: UpdateChatInput) => {
+    try {
+      await updateChat(chatId, patch);
+    } catch (err) {
+      toast.show(humanLine(err), "danger");
+    }
+  };
+
+  const handleDeleteChat = async (chatId: string) => {
+    const target = chats.find((c) => c.id === chatId);
+    const remaining = chats.filter((c) => c.id !== chatId);
+    const next = target ? nextRouteAfterChatDelete(chatId, target.bot_id, remaining, route) : null;
+    try {
+      await deleteChat(chatId);
+      if (next) go(next);
+    } catch (err) {
+      toast.show(
+        err instanceof ApiError && err.code === "conflict" ? t("chatManage.deleteActiveRun") : humanLine(err),
+        "danger"
+      );
+    }
+  };
   // One copy of the selected bot's skills for the panel and every bot dialog.
   const botSkills = useBotSkills(botInView && selectedBot ? selectedBot.id : null, client);
   useEffect(() => {
@@ -724,11 +797,14 @@ function AppShell() {
               preset={draftFromBot(selectedBot).preset}
               needs={needs}
               runs={runs}
+              pendingChatIds={pendingChatIds}
               skills={botSkills}
               newChatBusy={newChatBusy}
               visible={panelVisible}
               onOpenChat={openChat}
               onNewChat={() => void startChat(selectedBot.id)}
+              onPatchChat={handlePatchChat}
+              onDeleteChat={handleDeleteChat}
               onOpenProfile={() => setBotProfileOpen(true)}
               onOpenSettings={() => setBotEditOpen(true)}
               onManageSkills={() => setSkillsOpen(true)}
@@ -770,7 +846,7 @@ function AppShell() {
             {needs.length > 0 ? <SidebarItem className={styles.railItem} active={route.kind === "needs"} title={t("sidebar.needsYou")} aria-label={mini ? t("sidebar.needsYouCount", { count: needs.length }) : undefined} onClick={openNeeds}><BellDot /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.needsYou")}</span><span className={styles.needsBadge} data-testid="needs-you-badge" aria-label={t("sidebar.needsYouCount", { count: needs.length })}>{needs.length}</span></SidebarItem> : null}
             {bots.filter(bot => bot.name.toLowerCase().includes((botSearch ?? "").toLowerCase())).map((bot) => {
               const view = botView(bot);
-              const latest = chats.filter(c => c.bot_id === bot.id).sort((a,b) => b.created_at_ms - a.created_at_ms)[0];
+              const latest = botChats(chats, bot.id).find((c) => !c.archived);
               const config = bot.config as { bot?: { preview?: string; state?: string; unread?: boolean } };
               const live = runs.find(r => r.bot_id === bot.id && ["running", "pending", "waiting_approval"].includes(r.state));
               const state = needs.some(n => n.botId === bot.id) || live?.state === "waiting_approval" ? "waiting-approval" : live ? "working" : isMockMode() ? config.bot?.state : "idle";
@@ -788,6 +864,42 @@ function AppShell() {
               </div>;
             })}
             </div>
+            {!mini && selectedBot && !hostEmpty ? (
+              <section
+                className={styles.railChats}
+                aria-labelledby="rail-chats-heading"
+                data-stale={homeStale ? "true" : undefined}
+                data-testid="rail-chats-section"
+              >
+                <div className={styles.railChatsHead}>
+                  <h3 className={styles.railChatsTitle} id="rail-chats-heading">
+                    {t("botPanel.chats")}
+                  </h3>
+                  <button
+                    type="button"
+                    className={styles.railChatsAdd}
+                    disabled={newChatBusy}
+                    title={t("bots.newChat")}
+                    aria-label={t("bots.newChat")}
+                    data-testid="rail-new-chat"
+                    onClick={() => void startChat(selectedBot.id)}
+                  >
+                    <Plus aria-hidden="true" />
+                  </button>
+                </div>
+                <ChatList
+                  chats={railChats}
+                  activeChatId={route.kind === "chat" ? route.chatId : undefined}
+                  runs={runs}
+                  pendingIds={pendingChatIds}
+                  variant="rail"
+                  loading={phase === "connecting"}
+                  onOpenChat={openChat}
+                  onPatchChat={handlePatchChat}
+                  onDeleteChat={handleDeleteChat}
+                />
+              </section>
+            ) : null}
           </SidebarSection>
 
           <SidebarFooter className={styles.railFoot}>
@@ -1063,6 +1175,7 @@ function AppShell() {
         initialStep={review.installStep ? "install" : undefined}
         onClose={() => setAddSkillOpen(false)}
       />
+      <WhatsNewModal notes={showWhatsNew ? whatsNewNotes : null} onClose={recordWhatsNew} />
       <HelpModal
         open={helpOpen}
         onClose={() => setHelpOpen(false)}
