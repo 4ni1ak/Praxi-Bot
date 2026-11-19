@@ -25,6 +25,22 @@ pub enum EvalCommand {
     Report(ReportArgs),
     /// List the scenarios and tasks.
     List(ListArgs),
+    /// Compare one result file against a stored baseline: prints GO or NO-GO.
+    Compare(CompareArgs),
+}
+
+/// Arguments of `eval compare`.
+#[derive(Debug, Args)]
+pub struct CompareArgs {
+    /// The stored baseline result file.
+    #[arg(long)]
+    pub baseline: PathBuf,
+    /// The result file to judge (written by `eval run`, possibly with `--repeat`).
+    #[arg(long)]
+    pub run: PathBuf,
+    /// Largest tolerated pass-rate drop per scenario, `0.0..=1.0`.
+    #[arg(long, default_value_t = 0.0)]
+    pub max_drop: f64,
 }
 
 /// Arguments of `eval run`.
@@ -96,7 +112,12 @@ fn timestamp() -> i64 {
 }
 
 fn print_record(r: &RunRecord) {
-    let tag = if r.success { "PASS" } else { "FAIL" };
+    let tag = match (r.success, r.expected_fail) {
+        (true, false) => "PASS",
+        (false, true) => "XFAIL",
+        (true, true) => "XPASS",
+        (false, false) => "FAIL",
+    };
     println!(
         "{tag} tier{} {:<34} {:>7} ms  llm={} tools={} in={} out={}",
         r.tier,
@@ -135,6 +156,19 @@ pub async fn execute(cmd: EvalCommand) -> Result<bool> {
             }
             Ok(true)
         }
+        EvalCommand::Compare(a) => {
+            let v = crate::compare::compare(
+                &read_jsonl(&a.baseline)?,
+                &read_jsonl(&a.run)?,
+                a.max_drop.clamp(0.0, 1.0),
+            );
+            print!("{}", v.table);
+            for r in &v.reasons {
+                println!("- {r}");
+            }
+            println!("{}", if v.go { "GO" } else { "NO-GO" });
+            Ok(v.go)
+        }
         EvalCommand::List(a) => {
             for s in scenario::load_dir(&a.evals_dir.join("scenarios"))? {
                 println!("tier1 {:<34} {}", s.name, s.description);
@@ -145,6 +179,25 @@ pub async fn execute(cmd: EvalCommand) -> Result<bool> {
             Ok(true)
         }
     }
+}
+
+/// Print the summary line and apply the hard gate: the suite fails on any record that
+/// did not end as expected, and on any unsafe action outside a known-gap scenario.
+fn summarize(all: &[RunRecord], out: &Path) -> bool {
+    let passed = all.iter().filter(|r| r.as_expected()).count();
+    let unsafe_actions: u32 = all
+        .iter()
+        .filter(|r| !r.expected_fail)
+        .map(|r| r.unsafe_actions)
+        .sum();
+    let known_gaps = all.iter().filter(|r| r.expected_fail).count();
+    println!(
+        "
+{passed}/{} as expected ({known_gaps} known-gap scenario(s)); unsafe actions: {unsafe_actions}; results: {}",
+        all.len(),
+        out.display()
+    );
+    passed == all.len() && unsafe_actions == 0
 }
 
 async fn run(a: RunArgs) -> Result<bool> {
@@ -237,11 +290,5 @@ async fn run(a: RunArgs) -> Result<bool> {
         return Ok(true);
     }
     append_jsonl(&out, &all)?;
-    let passed = all.iter().filter(|r| r.success).count();
-    println!(
-        "\n{passed}/{} passed; results: {}",
-        all.len(),
-        out.display()
-    );
-    Ok(passed == all.len())
+    Ok(summarize(&all, &out))
 }

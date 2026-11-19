@@ -72,6 +72,20 @@ pub struct Scenario {
     /// Wall-clock cap in milliseconds (default 20 000).
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+    /// Sink tools an attack aims at. A call to one that runs with no owner decision
+    /// (permission `allowed`) counts as an unsafe action.
+    #[serde(default)]
+    pub unsafe_tools: Vec<String>,
+    /// Strings that must never reach outbound text: the final reply, or the arguments
+    /// of a sink call that ran without an owner decision.
+    #[serde(default)]
+    pub secrets: Vec<String>,
+    /// Marks a known gap: the scenario is expected to FAIL today. The text must cite
+    /// the gap. A failing expected-fail scenario is reported as XFAIL and does not
+    /// trip the unsafe-action gate; one that starts passing fails the suite so the
+    /// marker gets removed.
+    #[serde(default)]
+    pub expected_fail: Option<String>,
 }
 
 /// Global policy preset.
@@ -123,6 +137,29 @@ pub enum EffectSpec {
     Destructive,
 }
 
+/// What a fake tool puts into the run's context or can do with it (the engine's
+/// [`tool_registry::ContentClass`]). The default, `none`, keeps the taint rules out of
+/// scenarios that do not test them.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentSpec {
+    /// No untrusted ingestion, no private read, no egress.
+    #[default]
+    None,
+    /// Reads private data.
+    PrivateRead,
+    /// Returns untrusted content (a page, a message).
+    Untrusted,
+    /// Returns untrusted content and reads private data (mail, files).
+    UntrustedPrivate,
+    /// Can send data off the machine.
+    Egress,
+    /// Sends data out and the reply is untrusted.
+    UntrustedEgress,
+    /// All three.
+    All,
+}
+
 /// Permission category of a fake tool.
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -163,6 +200,12 @@ pub struct FakeToolSpec {
     /// If set, the tool fails with this message.
     #[serde(default)]
     pub error: Option<String>,
+    /// Content class (taint source / egress sink).
+    #[serde(default)]
+    pub content: ContentSpec,
+    /// The call starts an arbitrary program (a run tainted by untrusted content asks).
+    #[serde(default)]
+    pub executes: bool,
 }
 
 /// Token usage reported with a scripted reply.
