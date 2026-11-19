@@ -1,4 +1,3 @@
-import { isLocalBaseUrl } from "../lib/liveViewState";
 import {
   ArrowDown,
   ArrowLeft,
@@ -39,6 +38,9 @@ import {
   ToolCard
 } from "../components/ChatCards";
 import { ApprovalBatchCard } from "../components/ApprovalBatchCard";
+import { PendingDecisions, useDecisionActions } from "../components/PendingDecisions";
+import { chatTitleLabel } from "../lib/chatTitle";
+import { pendingForChat } from "../lib/pendingDecisions";
 import { Markdown } from "../components/Markdown";
 import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
@@ -212,12 +214,11 @@ export function ChatView({
     bots,
     events,
     runs,
-    recordAnswer,
+    needs,
     refreshRuns,
     refreshChats,
     refreshBots,
-    restartDaemon,
-    home
+    restartDaemon
   } = useDaemon();
   const chat = chats.find((c) => c.id === chatId);
   const bot = bots.find((b) => b.id === chat?.bot_id);
@@ -925,7 +926,13 @@ export function ChatView({
     }
   };
 
-  const awaitingApproval = serverLive?.state === "waiting_approval" || chatRuns.some(run => run.finishedMs === undefined && run.items.some(item => item.kind === "tool" && item.status === "awaiting_approval"));
+  // What waits for the user in this chat, whichever run it belongs to (a subagent's included); the
+  // cards are drawn inline, or pinned above the composer when the timeline cannot draw them.
+  const pending = pendingForChat(needs, events, { id: chatId, botId: chat?.bot_id });
+  const askedHere = pending.own.length > 0;
+  // The daemon says the run waits for the user but no card is known: said plainly, never as a plain wait.
+  const waitLost = serverLive?.state === "waiting_approval" && !askedHere;
+  const awaitingApproval = askedHere || waitLost;
   const chatPhase: ChatRunPhase = running
     ? awaitingApproval
       ? "waiting_approval"
@@ -1017,10 +1024,21 @@ export function ChatView({
     });
     barDetail = t(`${label.key}.${stepPhase(liveTool.status)}`, label.values);
   }
-  const approvalTool = liveRunState?.items.find(
-    (i): i is Extract<TimelineItem, { kind: "tool" }> => i.kind === "tool" && i.status === "awaiting_approval"
-  );
-  const approvalStep = approvalTool ? toolSentence(t, approvalTool) : null;
+  const firstPending = pending.own[0];
+  // The status line says WHAT the run waits for ("Waiting for your approval: Opening example.com").
+  const approvalText = waitLost
+    ? t("runStatus.waitLost")
+    : firstPending?.tool
+      ? t("runStatus.waiting", { step: toolSentence(t, firstPending.tool) })
+      : firstPending?.question
+        ? t("runStatus.waitAnswer", { question: firstPending.question.question.slice(0, 80) })
+        : null;
+  const jumpToPending = () => {
+    const call = firstPending?.callId;
+    const el = call ? document.querySelector(`[data-call-id="${call}"]`) : null;
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+  };
+  const decisions = useDecisionActions();
   const barBotName =
     control.bot && control.bot.botId !== chat?.bot_id
       ? control.bot.botName
@@ -1119,27 +1137,27 @@ export function ChatView({
             />
           );
         }
-        // Several plain approvals of one run share one card; the other pending calls of the
-        // batch render nothing. Cards the user must read (payloads, secrets) stay separate.
+        if (item.status === "awaiting_approval" && nested) {
+          // A subagent's card is pinned above the composer (never inside a folded card).
+          return <p className={ccStyles.nestedText}>{t("chat.pendingPinned")}</p>;
+        }
+        // Several plain approvals of one top-level run share one card; the other pending calls of
+        // the batch render nothing, so each pending call is drawn exactly once. Cards the user
+        // must read (payloads, secrets) stay separate.
         if (run && isBatchable(item)) {
-          const pending = run.items.filter(
-            (i): i is Extract<TimelineItem, { kind: "tool" }> => i.kind === "tool"
+          const rows = groupPending(
+            run.items.filter((i): i is Extract<TimelineItem, { kind: "tool" }> => i.kind === "tool")
           );
-          const rows = groupPending(pending);
           if (shouldBatch(rows)) {
-            const first = rows[0]?.items[0];
-            if (first?.callId !== item.callId) {
+            if (rows[0]?.items[0]?.callId !== item.callId) {
               return null;
             }
             return (
               <ApprovalBatchCard
                 rows={rows}
                 onDecide={async (callIds, decision) => {
-                  if (!client) {
-                    return;
-                  }
                   for (const callId of callIds) {
-                    await client.decideApproval(callId, decision, decision === "approve" ? "once" : undefined);
+                    await decisions.decide(callId)(decision, decision === "approve" ? "once" : undefined);
                   }
                 }}
               />
@@ -1149,46 +1167,22 @@ export function ChatView({
         return item.status === "awaiting_approval" ? (
           <ApprovalCard
             tool={item}
-            serverName={home.kind === "host" ? home.name : null}
-            onTrustFolder={client && isLocalBaseUrl(client.baseUrl) ? async (folder) => {
-              const key = await ownerKey(client.baseUrl);
-              if (!key) throw new Error(t("folderTrust.ownerRequired"));
-              await client.setFolderTrust(folder, true, key);
-            } : undefined}
-            onDecide={async (decision, scope, reason) => {
-              if (!client) {
-                return;
-              }
-              // A standing choice ("always for this chat") carries the owner's authority, which
-              // only the desktop app's own window holds; a plain approval needs no key.
-              const standing = decision === "approve" && scope !== undefined && scope !== "once" && scope !== "run_control";
-              const key = !standing
-                ? undefined
-                : await ownerKey(client.baseUrl);
-              await client.decideApproval(
-                item.callId,
-                decision,
-                scope,
-                reason,
-                key
-              );
-            }}
+            serverName={decisions.serverName}
+            onTrustFolder={decisions.trustFolder}
+            onDecide={decisions.decide(item.callId)}
           />
         ) : (
           <ToolCard tool={item} />
         );
       }
       case "question":
+        if (nested && item.answer === undefined && !item.closed) {
+          return <p className={ccStyles.nestedText}>{t("chat.pendingPinned")}</p>;
+        }
         return (
           <QuestionCard
             q={item}
-            onAnswer={async (answer) => {
-              if (!client) {
-                return;
-              }
-              await client.answerQuestion(item.callId, answer);
-              recordAnswer(runId, item.callId, answer);
-            }}
+            onAnswer={decisions.answer(runId, item.callId)}
           />
         );
       case "todo":
@@ -1490,12 +1484,26 @@ export function ChatView({
             onAction={(a) => (a === "restartService" ? void restartDaemon() : void send())}
           />
         ) : null}
+        <PendingDecisions
+          entries={pending.pinned}
+          caption={(entry) =>
+            entry.chatId === chatId
+              ? null
+              : t("chat.pendingElsewhere", {
+                  chat: chatTitleLabel(
+                    chats.find((c) => c.id === entry.chatId)?.title ?? "",
+                    t("botPanel.untitled")
+                  )
+                })
+          }
+        />
         {!liveChatSlots?.composer ? <div className={styles.dockWrap}>
           <RunStatusLine
             model={barModel}
             botName={barBotName}
             sentence={barDetail}
-            approvalStep={approvalStep}
+            approvalText={approvalText}
+            onJump={firstPending && !waitLost ? jumpToPending : undefined}
             startedMs={barStartedMs}
             runStop={stopUi}
             onStop={() => void stopRun()}

@@ -11310,6 +11310,12 @@
             ],
             "description": "`null` while pending, else `approved` / `denied` / `expired`."
           },
+          "details": {
+            "description": "The tool's card facts from the `approval_needed` event."
+          },
+          "input": {
+            "description": "The call's input, as the `approval_needed` event carried it (so a client that missed the\nevent can still show the full card)."
+          },
           "requested_at_ms": {
             "type": "integer",
             "format": "int64",

@@ -296,6 +296,8 @@
     "newChatFailed": "Could not start a chat: {{detail}}"
   },
   "chat": {
+    "pendingPinned": "Waiting for your decision. The card is above the message box.",
+    "pendingElsewhere": "From another chat of this bot: {{chat}}",
     "notFound": "This chat does not exist.",
     "stop": "Stop",
     "resume": "Resume",
@@ -2882,7 +2884,10 @@
   "runStatus": {
     "working": "Working…",
     "stopping": "Stopping…",
-    "waiting": "Waiting for your approval: {{step}}"
+    "waiting": "Waiting for your approval: {{step}}",
+    "waitAnswer": "Waiting for your answer: {{question}}",
+    "waitLost": "Waiting for an answer that is not available here. Stop the run to continue.",
+    "showCard": "Show"
   },
   "queued": {
     "label": "Queued.",
@@ -3244,8 +3249,8 @@
       "resync_required": "Screen geometry or sequence updated; syncing with latest frame."
     },
     "targetLocked": "Finish control (Bitirdim) before switching the screen target.",
-    "approvalsWaiting": "{{count}} item(s) are waiting for your decision in chat.",
-    "reviewApprovals": "Back to chat to answer",
+    "approvalsWaiting": "{{count}} item(s) are waiting for your decision. Decide below or in the chat.",
+    "reviewApprovals": "Back to the chat",
     "errors": {
       "unauthorized": "Your session is no longer authorized. Reconnect to this computer.",
       "too_many_streams": "This connection has too many open streams. Close another stream and try again.",
