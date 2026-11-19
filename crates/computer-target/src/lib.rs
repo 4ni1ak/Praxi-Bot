@@ -220,14 +220,6 @@ pub trait ComputerProvider: Send + Sync {
         None
     }
 
-    /// The user's own paired computer as a per-request tool target (card 272),
-    /// connected or not. It is a different identity from every `local`, `host`
-    /// and `pc` placement of a run: a grant scoped to it never covers another
-    /// computer and no other computer's grant covers it. `None`: nothing paired.
-    fn mypc_node(&self) -> Option<ComputerNode> {
-        None
-    }
-
     /// Identity of an explicit node, matched by key only.
     fn node_target(&self, _id: &str) -> Option<ComputerDesktop> {
         None

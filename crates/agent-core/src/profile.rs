@@ -340,16 +340,6 @@ impl BotProfile {
             && self.restrict.iter().all(|g| g.is_match(tool_name))
     }
 
-    /// [`Self::tool_visible`] and the category rule together, for a tool of
-    /// this name and category. The `pc_*` family acts on the user's own
-    /// computer, so what the RUN's computer has (a desktop, a browser) does not
-    /// hide it; the profile's own allow/exclude lists still do.
-    #[must_use]
-    pub fn spec_visible(&self, name: &str, category: PermissionCategory) -> bool {
-        self.tool_visible(name)
-            && (name.starts_with(builtin_tools::pc::PC_PREFIX) || self.category_visible(category))
-    }
-
     /// Whether a tool's permission category is permitted by the resolved
     /// computer target.
     #[must_use]

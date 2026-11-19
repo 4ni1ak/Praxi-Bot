@@ -84,18 +84,13 @@ impl Browser {
         }
         .await;
         match connected {
-            Ok((client, endpoint)) => {
-                if let Some(check) = &opts.destination_check {
-                    client.set_destination_check(check.clone());
-                }
-                Ok(Self {
-                    client,
-                    endpoint,
-                    child: Some(child),
-                    own_process_group,
-                    owned_profile: owned,
-                })
-            }
+            Ok((client, endpoint)) => Ok(Self {
+                client,
+                endpoint,
+                child: Some(child),
+                own_process_group,
+                owned_profile: owned,
+            }),
             Err(e) => {
                 let pid = child.id();
                 terminate_and_reap_process_tree(&mut child, pid, own_process_group).await;

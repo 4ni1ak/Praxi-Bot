@@ -1021,13 +1021,6 @@
           "browser": "Diese Seite im Browser auf {{where}} öffnen: {{url}}",
           "generic": "Etwas auf {{where}} tun",
           "launch": "Das Programm {{name}} auf {{where}} öffnen",
-          "pcBrowser": "Den Browser auf DEINEM Computer verwenden",
-          "pcBrowserOpen": "Diese Seite im Browser auf DEINEM Computer öffnen: {{url}}",
-          "pcLaunch": "Das Programm {{name}} auf DEINEM Computer öffnen",
-          "pcRead": "Dateien auf DEINEM Computer lesen: {{path}}",
-          "pcScreen": "Den Bildschirm von DEINEM Computer verwenden",
-          "pcShell": "Einen Befehl auf DEINEM Computer ausführen: {{command}}",
-          "pcWrite": "Eine Datei auf DEINEM Computer schreiben: {{path}}",
           "screen": "Den Bildschirm von {{where}} verwenden",
           "shell": "Befehl auf {{where}} ausführen: {{command}}"
         },
@@ -1599,18 +1592,6 @@
     "description": "Gekoppelte Server können diesen Computer bitten, den Bildschirm anzusehen und darauf zu handeln, nur wenn du es erlaubst.",
     "details": "Genau",
     "explain": "Standardmäßig aus. Wenn an, können die Bots des Servers den Bildschirm dieses Computers ansehen. Alles, was klickt, tippt oder etwas öffnet, fragt dich weiterhin zuerst, und Stopp hat immer Vorrang.",
-    "family": {
-      "browser": "Die Bots auf {{name}} dürfen den Browser dieses Computers verwenden",
-      "commands": "Die Bots auf {{name}} dürfen Befehle auf diesem Computer ausführen",
-      "files": "Die Bots auf {{name}} dürfen Dateien auf diesem Computer lesen",
-      "screen": "Die Bots auf {{name}} dürfen Bildschirm und Eingabe dieses Computers verwenden"
-    },
-    "familyNote": {
-      "browser": "Ein eigenes Browserfenster mit eigenem Profil, nicht deins. Eine Seite zu öffnen oder darin zu tippen fragt dich vorher.",
-      "commands": "Jeder Befehl fragt dich vorher und wird dir vollständig angezeigt.",
-      "files": "Lesen fragt einmal pro Sitzung, Schreiben fragt jedes Mal. Passwörter, Einstellungen anderer Programme und die Daten von Praxi selbst bleiben unerreichbar.",
-      "screen": "Den Bildschirm ansehen, klicken, tippen und Programme starten. Jede Aktion, die etwas ändert, fragt dich vorher."
-    },
     "fromServer": "Dieser Name stammt vom Server, nicht von diesem Computer.",
     "fromServerName": "(Servername, wie er sich selbst nennt: {{name}})",
     "looking": "Ein Bot auf {{name}} sieht sich diesen Bildschirm an",
