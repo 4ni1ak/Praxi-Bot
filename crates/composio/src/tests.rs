@@ -10,6 +10,8 @@ use tool_registry::{ToolContext, ToolError, ToolRegistry};
 use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+mod contract;
+
 use crate::{ComposioError, ComposioService, ConnState, KEY_SECRET, ServiceConfig};
 
 const KEY: &str = "ak_candidate_SECRETKEY_0123456789";

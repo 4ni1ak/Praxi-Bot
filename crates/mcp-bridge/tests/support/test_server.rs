@@ -42,6 +42,18 @@ fn features() -> bool {
     std::env::var("MCP_TEST_MODE").as_deref() == Ok("features")
 }
 
+fn contract() -> bool {
+    std::env::var("MCP_TEST_MODE").as_deref() == Ok("contract")
+}
+
+/// Calls received per tool in `contract` mode (the connector contract tests
+/// assert "sent exactly once").
+fn counts() -> &'static std::sync::Mutex<std::collections::BTreeMap<String, u32>> {
+    static C: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, u32>>> =
+        std::sync::OnceLock::new();
+    C.get_or_init(Default::default)
+}
+
 fn tool(name: &'static str, description: &'static str, read_only: bool) -> Tool {
     let schema: JsonObject = serde_json::from_value(json!({
         "type": "object",
@@ -53,6 +65,39 @@ fn tool(name: &'static str, description: &'static str, read_only: bool) -> Tool 
         t.annotations = Some(ToolAnnotations::new().read_only(true));
     }
     t
+}
+
+/// `contract` mode: count the call first, then act on `mode`.
+async fn contract_call(request: &CallToolRequestParams) -> CallToolResult {
+    // `contract` mode: count the call first, then act on `mode`.
+    let args = request.arguments.clone().unwrap_or_default();
+    let name = request.name.to_string();
+    if name == "calls" {
+        let seen = serde_json::to_string(&*counts().lock().unwrap()).unwrap();
+        return CallToolResult::success(vec![ContentBlock::text(seen)]);
+    }
+    *counts().lock().unwrap().entry(name).or_default() += 1;
+    if let Some(ms) = args.get("sleep_ms").and_then(serde_json::Value::as_u64) {
+        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+    }
+    let text = match args.get("mode").and_then(|v| v.as_str()) {
+        Some("status") => {
+            let status = args.get("status").and_then(serde_json::Value::as_u64);
+            return CallToolResult::error(vec![ContentBlock::text(format!(
+                "upstream returned HTTP {}",
+                status.unwrap_or(500)
+            ))]);
+        }
+        Some("error") => {
+            return CallToolResult::error(vec![ContentBlock::text("it failed")]);
+        }
+        Some("leak") => format!(
+            "token={}",
+            std::env::var("CONTRACT_SECRET").unwrap_or_default()
+        ),
+        _ => "ok".to_owned(),
+    };
+    CallToolResult::success(vec![ContentBlock::text(text)])
 }
 
 impl ServerHandler for TestServer {
@@ -129,6 +174,13 @@ impl ServerHandler for TestServer {
                 ));
             }
             _ => {}
+        }
+        if contract() {
+            return Ok(ListToolsResult::with_all_items(vec![
+                tool("read_item", "Read one record", true),
+                tool("write_item", "Change one record", false),
+                tool("calls", "How many times each tool was called", true),
+            ]));
         }
         let mut tools = vec![
             tool("echo", "Echo the given text back", true),
@@ -246,6 +298,9 @@ impl ServerHandler for TestServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        if contract() {
+            return Ok(contract_call(&request).await.into());
+        }
         let wants_pid = request
             .arguments
             .as_ref()
