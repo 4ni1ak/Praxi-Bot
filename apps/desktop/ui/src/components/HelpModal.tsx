@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import { DEFAULT_STOP_HOTKEY } from "../config/product";
-import { resolveKeys, SHORTCUT_GROUPS, SHORTCUTS } from "../lib/shortcuts";
+import { resolveKeys, SHORTCUT_GROUPS, SHORTCUTS, slashShortcuts } from "../lib/shortcuts";
 import { Modal } from "./Modal";
 import styles from "./HelpModal.module.css";
 
@@ -30,7 +30,7 @@ export function HelpModal({
           <section key={group} className={styles.group}>
             <h3 className={styles.groupTitle}>{t(`help.group.${group}`)}</h3>
             <ul className={styles.list}>
-              {SHORTCUTS.filter((s) => s.group === group).map((s) => (
+              {(group === "slash" ? slashShortcuts() : SHORTCUTS.filter((s) => s.group === group)).map((s) => (
                 <li key={s.id} className={styles.row}>
                   <span>{t(s.labelKey)}</span>
                   <kbd className={styles.kbd}>{resolveKeys(s.keys, ctx)}</kbd>

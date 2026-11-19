@@ -2548,7 +2548,8 @@
     "group": {
       "composer": "Chat-Eingabe",
       "dialogs": "Dialoge",
-      "global": "Global"
+      "global": "Global",
+      "slash": "Slash-Befehle (im Eingabefeld / tippen)"
     },
     "intro": "Praktische Kürzel, solange die App geöffnet ist.",
     "menuAccept": "Markierten Eintrag auswählen",
@@ -2556,6 +2557,7 @@
     "menuMove": "Durch das Slash-/Erwähnungsmenü navigieren",
     "menuNav": "Durch Popup-Menüs navigieren",
     "newline": "Neue Zeile",
+    "openHelp": "Diese Liste anzeigen (wenn kein Textfeld fokussiert ist)",
     "palette": "Befehlspalette",
     "paletteMove": "Befehlspalette: navigieren und ausführen",
     "popoverClose": "Popup-Menü schließen",
@@ -3208,6 +3210,7 @@
     "placeholder": "Befehl eingeben …",
     "runSchedule": "Jetzt ausführen: {{name}}",
     "scheduleStarted": "Zeitplan gestartet",
+    "shortcuts": "Tastaturkürzel",
     "switchBot": "Zu {{name}} wechseln",
     "title": "Befehlspalette"
   },

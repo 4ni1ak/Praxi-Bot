@@ -3,7 +3,9 @@
  * implements it; `shortcuts.test.ts` checks that file still exists and that every source file
  * with key handlers is either listed here or explicitly exempted there.
  */
-export type ShortcutGroup = "global" | "composer" | "dialogs";
+import { APP_COMMANDS, LOCAL_COMMANDS, SLASH_COMMANDS } from "./slash.ts";
+
+export type ShortcutGroup = "global" | "composer" | "slash" | "dialogs";
 
 /** `@send`, `@newline` and `@stop` are resolved at render time from settings. */
 export type ShortcutKeys = string;
@@ -18,10 +20,11 @@ export interface Shortcut {
   source: string;
 }
 
-export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ["global", "composer", "dialogs"];
+export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ["global", "composer", "slash", "dialogs"];
 
 export const SHORTCUTS: readonly Shortcut[] = [
   { id: "palette", group: "global", labelKey: "help.palette", keys: "Ctrl/Cmd+K", source: "state/PaletteHost.tsx" },
+  { id: "openHelp", group: "global", labelKey: "help.openHelp", keys: "?", source: "lib/shortcuts.ts" },
   { id: "settings", group: "global", labelKey: "help.settings", keys: "Ctrl/Cmd+,", source: "App.tsx" },
   { id: "stop", group: "global", labelKey: "help.stop", keys: "@stop", source: "App.tsx" },
   { id: "findInChat", group: "global", labelKey: "help.findInChat", keys: "Ctrl/Cmd+F", source: "views/ChatView.tsx" },
@@ -50,4 +53,23 @@ export function resolveKeys(
   if (keys === "@send") return ctx.sendWith === "enter" ? "Enter" : "Ctrl/Cmd+Enter";
   if (keys === "@newline") return ctx.sendWith === "enter" ? "Shift+Enter" : "Enter";
   return keys;
+}
+
+/** Slash commands of the composer, read from the very lists the composer menu uses (cannot drift). */
+export function slashShortcuts(): { id: string; labelKey: string; keys: string }[] {
+  return [...SLASH_COMMANDS, ...LOCAL_COMMANDS, ...APP_COMMANDS].map((c) => ({
+    id: `slash-${c.name}`,
+    labelKey: c.i18nKey,
+    keys: `/${c.name}`
+  }));
+}
+
+/** True for a bare `?` pressed while no text field has focus (opens the shortcuts dialog). */
+export function isHelpKey(
+  e: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "target">
+): boolean {
+  if (e.key !== "?" || e.ctrlKey || e.metaKey || e.altKey) return false;
+  const el = e.target as HTMLElement | null;
+  if (!el || typeof el.tagName !== "string") return true;
+  return !(/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable);
 }

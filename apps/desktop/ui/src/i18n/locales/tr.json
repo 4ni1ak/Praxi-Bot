@@ -2548,7 +2548,8 @@
     "group": {
       "composer": "Sohbet yazma kutusu",
       "dialogs": "Pencereler",
-      "global": "Genel"
+      "global": "Genel",
+      "slash": "Eğik çizgi komutları (yazı kutusuna / yazın)"
     },
     "intro": "Uygulama açıkken kullanışlı kısayollar.",
     "menuAccept": "Vurgulanan öğeyi seç",
@@ -2556,6 +2557,7 @@
     "menuMove": "Eğik çizgi / anma menüsünde gezin",
     "menuNav": "Açılır menülerde gezin",
     "newline": "Yeni satır",
+    "openHelp": "Bu listeyi göster (metin alanı seçili değilken)",
     "palette": "Komut paleti",
     "paletteMove": "Komut paleti: gezin ve çalıştır",
     "popoverClose": "Açılır menüyü kapat",
@@ -3208,6 +3210,7 @@
     "placeholder": "Bir komut yazın…",
     "runSchedule": "Şimdi çalıştır: {{name}}",
     "scheduleStarted": "Zamanlama başlatıldı",
+    "shortcuts": "Klavye kısayolları",
     "switchBot": "{{name}} botuna geç",
     "title": "Komut paleti"
   },

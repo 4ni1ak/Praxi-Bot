@@ -2548,7 +2548,8 @@
     "group": {
       "composer": "Chat composer",
       "dialogs": "Dialogs",
-      "global": "Global"
+      "global": "Global",
+      "slash": "Slash commands (type / in the composer)"
     },
     "intro": "Handy shortcuts while the app is open.",
     "menuAccept": "Pick the highlighted item",
@@ -2556,6 +2557,7 @@
     "menuMove": "Move through the slash / mention menu",
     "menuNav": "Move through popup menus",
     "newline": "New line",
+    "openHelp": "Show this list (when no text field has focus)",
     "palette": "Command palette",
     "paletteMove": "Command palette: move and run",
     "popoverClose": "Close a popup menu",
@@ -3208,6 +3210,7 @@
     "placeholder": "Type a command…",
     "runSchedule": "Run now: {{name}}",
     "scheduleStarted": "Schedule started",
+    "shortcuts": "Keyboard shortcuts",
     "switchBot": "Switch to {{name}}",
     "title": "Command palette"
   },

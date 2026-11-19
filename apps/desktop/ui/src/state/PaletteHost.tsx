@@ -30,12 +30,14 @@ export function PaletteHost({
   currentBotId,
   onScreen,
   onBot,
-  onChat
+  onChat,
+  onHelp
 }: {
   currentBotId: string | undefined;
   onScreen: (screen: PaletteScreen) => void;
   onBot: (botId: string) => void;
   onChat: (chatId: string, botId: string) => void;
+  onHelp: () => void;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -103,6 +105,13 @@ export function PaletteHost({
         run: () => onScreen(s)
       });
     }
+    out.push({
+      id: "help-shortcuts",
+      title: t("palette.shortcuts"),
+      group: t("palette.group.navigate"),
+      keywords: [t("help.title")],
+      run: onHelp
+    });
     const botId = currentBotId ?? bots[0]?.id;
     if (botId) {
       out.push({
@@ -140,7 +149,7 @@ export function PaletteHost({
       });
     }
     return out;
-  }, [t, bots, schedules, currentBotId, onScreen, onBot, newChat, client, toast]);
+  }, [t, bots, schedules, currentBotId, onScreen, onBot, onHelp, newChat, client, toast]);
 
   return open ? (
     <CommandPalette commands={commands} onClose={() => setOpen(false)} />
