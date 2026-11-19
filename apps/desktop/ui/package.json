@@ -11,7 +11,10 @@
     "gen:api": "openapi-typescript ../../../docs/api/openapi.json -o src/api/schema.d.ts",
     "check:i18n": "node scripts/check-i18n.mjs",
     "test": "node --test \"src/**/*.test.ts\"",
-    "check:themes": "node ../../../packages/ui/scripts/check-themes.mjs"
+    "check:themes": "node ../../../packages/ui/scripts/check-themes.mjs",
+    "check:layout": "node ../../../packages/ui/scripts/check-layout.mjs",
+    "check:layout:browser": "node scripts/check-layout-browser.mjs",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",
@@ -32,6 +35,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "openapi-typescript": "^7.13.0",
+    "playwright-core": "^1.65.1",
     "vite": "^6.2.0"
   }
 }

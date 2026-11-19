@@ -15,6 +15,9 @@ pub enum StorageError {
     /// A required row does not exist.
     #[error("not found: {0}")]
     NotFound(String),
+    /// Optimistic concurrency conflict (stale version).
+    #[error("conflict: {0}")]
+    Conflict(String),
     /// The database was written by a newer schema than this binary knows.
     #[error("database schema version {found} is newer than supported {supported}")]
     SchemaTooNew {

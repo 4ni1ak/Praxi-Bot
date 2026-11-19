@@ -2,12 +2,14 @@ import type { ApiClient } from "../api/client.ts";
 import type {
   Bot,
   BotInput,
+  McpAuthState,
   McpCatalogEntry,
   McpServer,
   McpServerConfig,
   McpServerPatch,
   McpStatus
 } from "../api/types.ts";
+import { writeBotProfile } from "./botWrite.ts";
 import { matchesQuery } from "./searchText.ts";
 
 /** The slice of the daemon client the Apps modal needs (a mock fits too). */
@@ -71,7 +73,10 @@ export function secretStoreName(entryId: string, secretName: string): string {
  * server receives them as environment variables, an http server as the
  * `Authorization` header (the secret holds the full header value).
  */
-export function configFromCatalog(entry: McpCatalogEntry): McpServerConfig {
+export function configFromCatalog(
+  entry: McpCatalogEntry,
+  folder?: string
+): McpServerConfig {
   const { install } = entry;
   const config: McpServerConfig = {
     name: entry.id,
@@ -82,6 +87,9 @@ export function configFromCatalog(entry: McpCatalogEntry): McpServerConfig {
   if (install.transport === "stdio") {
     config.command = install.command;
     config.args = install.args ?? [];
+    if (install.folder && folder) {
+      config.args = withFolder(config.args, folder.trim());
+    }
   } else {
     config.url = install.url;
   }
@@ -105,6 +113,34 @@ export function configFromCatalog(entry: McpCatalogEntry): McpServerConfig {
   return config;
 }
 
+const FS_SERVER_PACKAGE = "@modelcontextprotocol/server-filesystem";
+
+/**
+ * `args` of a filesystem server with its folder replaced by `folder`: everything
+ * up to and including the package spec and any flags is kept, the old roots are
+ * dropped, `folder` is the only root.
+ */
+export function withFolder(args: string[], folder: string): string[] {
+  const at = args.findIndex(
+    (a) => a === FS_SERVER_PACKAGE || a.startsWith(`${FS_SERVER_PACKAGE}@`)
+  );
+  if (at < 0) {
+    return [...args, folder];
+  }
+  return [
+    ...args.slice(0, at + 1),
+    ...args.slice(at + 1).filter((a) => a.startsWith("-")),
+    folder
+  ];
+}
+
+export class MissingFolderError extends Error {
+  constructor() {
+    super("missing: folder");
+    this.name = "MissingFolderError";
+  }
+}
+
 export class MissingSecretError extends Error {
   readonly secrets: string[];
   constructor(secrets: string[]) {
@@ -121,8 +157,12 @@ export class MissingSecretError extends Error {
 export async function connectCatalogEntry(
   api: Pick<McpApi, "setSecret" | "createMcpServer">,
   entry: McpCatalogEntry,
-  values: Record<string, string>
+  values: Record<string, string>,
+  folder?: string
 ): Promise<McpServer> {
+  if (entry.install.folder && !(folder ?? "").trim()) {
+    throw new MissingFolderError();
+  }
   const missing = entry.install.required_secrets
     .filter((s) => !(values[s.name] ?? "").trim())
     .map((s) => s.name);
@@ -135,7 +175,7 @@ export async function connectCatalogEntry(
       values[s.name].trim()
     );
   }
-  return api.createMcpServer(configFromCatalog(entry));
+  return api.createMcpServer(configFromCatalog(entry, folder));
 }
 
 /** Split a command line into arguments, honouring single and double quotes. */
@@ -245,6 +285,7 @@ export function statusTone(status: McpStatus): StatusTone {
     case "quarantined":
       return "bad";
     case "disconnected":
+    case "auth_required":
       return "muted";
   }
 }
@@ -455,7 +496,7 @@ export async function saveServerScope(
  * failure in the apps step can never lead to a second created bot.
  */
 export async function saveBotAndApps(
-  api: Pick<ApiClient, "createBot" | "updateBot" | "listMcpServers" | "updateMcpServer">,
+  api: Pick<ApiClient, "createBot" | "getBot" | "updateBot" | "listMcpServers" | "updateMcpServer">,
   target: Bot | undefined,
   input: BotInput,
   initial: Record<string, boolean>,
@@ -463,7 +504,7 @@ export async function saveBotAndApps(
   allBotIds: string[]
 ): Promise<{ bot: Bot } & AppsResult> {
   const bot = target
-    ? await api.updateBot(target.id, input)
+    ? await writeBotProfile(api, target, () => input)
     : await api.createBot(input);
   const apps = await applyAppsSelection(api, bot.id, initial, allowed, allBotIds);
   return { bot, ...apps };
@@ -511,7 +552,79 @@ export function applyServerEvent(
   }
   return servers.map((s) =>
     s.name === ev.name
-      ? { ...s, status: ev.status, error: ev.status === "error" ? s.error : null }
+      ? {
+          ...s,
+          status: ev.status,
+          error: ev.status === "error" ? s.error : null,
+          // Diagnostics belong to the error they explain.
+          error_kind: ev.status === "error" ? s.error_kind : undefined,
+          stderr_tail: ev.status === "error" ? s.stderr_tail : undefined
+        }
       : s
   );
+}
+
+/**
+ * Whether the authoritative server DTO must be refetched after `ev`. The event
+ * carries only name and status, so any settled transition (error, quarantine,
+ * connected, disconnected) of a known server needs the fresh `error`,
+ * `error_kind` and `stderr_tail`; only "connecting" is final-state free.
+ */
+export function eventNeedsRefetch(
+  servers: McpServer[],
+  ev: { name: string; status: McpStatus }
+): boolean {
+  return (
+    !servers.some((s) => s.name === ev.name) || ev.status !== "connecting"
+  );
+}
+
+/**
+ * The system browser could not be opened for a sign-in.  Typed so the UI shows
+ * its own translated text (review finding 14), never an English message.
+ */
+export class McpBrowserOpenError extends Error {
+  constructor() {
+    super("browser_open_failed");
+    this.name = "McpBrowserOpenError";
+  }
+}
+
+/** The daemon routes of a user-started OAuth sign-in (never reachable by peers). */
+export type McpAuthApi = Pick<ApiClient, "startMcpAuth" | "mcpAuthStatus" | "cancelMcpAuth">;
+
+/**
+ * Sign in to an HTTP MCP server: ask the daemon for the authorization URL,
+ * open it in the system browser, then poll until the one-shot loopback
+ * callback finished (or `deadlineMs` / `signal` stops it, which cancels the
+ * daemon flow).  Resolves with the final state; only a user action may call it.
+ */
+export async function signInMcpServer(
+  api: McpAuthApi,
+  name: string,
+  open: (url: string) => boolean,
+  opts: {
+    pollMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+    signal?: { aborted: boolean };
+  } = {}
+): Promise<McpAuthState> {
+  const pollMs = opts.pollMs ?? 1500;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const started = await api.startMcpAuth(name);
+  if (!open(started.authorization_url)) {
+    await api.cancelMcpAuth(name);
+    throw new McpBrowserOpenError();
+  }
+  const deadline = Date.now() + started.expires_in * 1000;
+  for (;;) {
+    await sleep(pollMs);
+    if (opts.signal?.aborted || Date.now() > deadline) {
+      return api.cancelMcpAuth(name);
+    }
+    const state = await api.mcpAuthStatus(name);
+    if (state !== "signing_in") {
+      return state;
+    }
+  }
 }

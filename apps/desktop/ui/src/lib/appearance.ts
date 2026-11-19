@@ -17,6 +17,12 @@ import {
   type OwnBubble,
   type UiStyle
 } from "ui/theme-model";
+import {
+  DEFAULT_SURFACE,
+  parsePanelBlur,
+  parsePanelTransparency,
+  parseTransparentChat
+} from "ui/surface-model";
 import { DEFAULT_BACKDROP_DIM, NO_BACKDROP, parseBackdrop, parseBackdropDim } from "./backdropCatalog.ts";
 
 /** Everything the Appearance page controls (persisted inside `AppSettings`). */
@@ -33,6 +39,21 @@ export interface AppearanceSettings {
   backdrop: string;
   /** 20..88: how much of the theme background covers the scene. */
   backdropDim: number;
+  /** 0..100: tinted / glass panels, 0 = most opaque, 100 = the legibility floor (card 244-E). */
+  panelTransparency: number;
+  /** Glass blur radius, px (12..48). */
+  panelBlur: number;
+  /** The center chat area has no background of its own (v6 look; derived: `!chatPanel`). */
+  transparentChat: boolean;
+  /**
+   * The owner switched the center panel back on. A separate flag from the old
+   * `transparentChat` on purpose: settings saved before the v6 design stored
+   * `transparentChat: false` without the user ever choosing it, so only this
+   * explicit flag turns the panel on.
+   */
+  chatPanel: boolean;
+  /** Paint the chosen panel style even when the OS asks apps to reduce transparency. */
+  transparencyOverride: boolean;
 }
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
@@ -44,7 +65,12 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   bubble: "soft",
   ownBubble: "tint",
   backdrop: NO_BACKDROP,
-  backdropDim: DEFAULT_BACKDROP_DIM
+  backdropDim: DEFAULT_BACKDROP_DIM,
+  panelTransparency: DEFAULT_SURFACE.transparency,
+  panelBlur: DEFAULT_SURFACE.blur,
+  transparentChat: true,
+  chatPanel: false,
+  transparencyOverride: false
 };
 
 function oneOf<T extends string>(values: readonly T[], v: unknown, fallback: T): T {
@@ -62,6 +88,7 @@ export const parseOwnBubble = (v: unknown): OwnBubble => oneOf(OWN_BUBBLES, v, D
  * to the defaults; old theme names keep working.
  */
 export function normalizeAppearance(raw: Record<string, unknown>): AppearanceSettings {
+  const chatPanel = raw.chatPanel === true;
   return {
     themeMode: parseThemeMode(raw.themeMode),
     customTheme: parseCustomTheme(raw.customTheme),
@@ -71,7 +98,12 @@ export function normalizeAppearance(raw: Record<string, unknown>): AppearanceSet
     bubble: parseBubble(raw.bubble),
     ownBubble: parseOwnBubble(raw.ownBubble),
     backdrop: parseBackdrop(raw.backdrop),
-    backdropDim: parseBackdropDim(raw.backdropDim)
+    backdropDim: parseBackdropDim(raw.backdropDim),
+    panelTransparency: parsePanelTransparency(raw.panelTransparency),
+    panelBlur: parsePanelBlur(raw.panelBlur),
+    transparentChat: !chatPanel,
+    chatPanel,
+    transparencyOverride: raw.transparencyOverride === true
   };
 }
 
@@ -91,12 +123,20 @@ export const isShippedTheme = (id: string): boolean => paletteById(id) !== undef
 /**
  * Appearance overrides from URL parameters (`?mock=1` review screenshots only):
  * `theme`, `accent` (`bot` | `theme` | hex), `style`, `corners`, `bubble`,
- * `meb`, `backdrop`, `dim`.  Absent parameters leave the saved value alone.
+ * `meb`, `backdrop`, `dim`, `alpha` (panel transparency), `blur`, `clear` (transparent chat area, `1`).
+ * Absent parameters leave the saved value alone.
  */
 export function appearanceFromQuery(
   params: { get(name: string): string | null },
   saved: AppearanceSettings
-): AppearanceSettings {
+): AppearanceSettings & { backgroundUrl?: string } {
+  // `bgcolor=rrggbb`: a plain colour as the own-image backdrop (review screenshots of flat backdrops).
+  const flat = /^[0-9a-f]{6}$/i.exec(params.get("bgcolor") ?? "")?.[0];
+  if (flat) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#${flat}"/></svg>`;
+    const rest = appearanceFromQuery({ get: (n) => (n === "bgcolor" ? null : n === "backdrop" ? "custom" : params.get(n)) }, saved);
+    return { ...rest, backgroundUrl: `data:image/svg+xml,${encodeURIComponent(svg)}` };
+  }
   const q = (name: string) => params.get(name) ?? undefined;
   const accent = q("accent");
   const themeMode = q("theme") ?? saved.themeMode;
@@ -109,7 +149,12 @@ export function appearanceFromQuery(
     bubble: q("bubble") ?? saved.bubble,
     ownBubble: q("meb") ?? saved.ownBubble,
     backdrop: q("backdrop") ?? saved.backdrop,
-    backdropDim: q("dim") ?? saved.backdropDim
+    backdropDim: q("dim") ?? saved.backdropDim,
+    panelTransparency: q("alpha") ?? saved.panelTransparency,
+    panelBlur: q("blur") ?? saved.panelBlur,
+    chatPanel: q("clear") !== undefined ? !parseTransparentChat(q("clear")) : saved.chatPanel,
+    // Review screenshots run in headless Chrome, which reports the OS transparency preference too.
+    transparencyOverride: q("rt") === "ignore" ? true : saved.transparencyOverride
   });
   // A theme picked by URL gets the same accent treatment as a click.
   return q("theme") && accent === undefined

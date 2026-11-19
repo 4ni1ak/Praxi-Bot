@@ -8,6 +8,10 @@ pub enum SecretError {
     /// The secret name is empty or contains forbidden characters.
     #[error("invalid secret name {0:?} (use letters, digits, '.', '_', '-', ':', '/')")]
     InvalidName(String),
+    /// The name belongs to the owner-only fill-secret namespace (`fill/`), which
+    /// no configuration may reference.
+    #[error("secret {0:?} is in a reserved namespace and cannot be referenced here")]
+    Reserved(String),
     /// A referenced secret does not exist.
     #[error("secret {0:?} not found")]
     NotFound(String),

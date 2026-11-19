@@ -1,7 +1,7 @@
-import { BellDot, ChevronDown, FlaskConical, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2, Minus, Square, X } from "lucide-react";
+import { BellDot, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2, Minus, Square, X } from "lucide-react";
 import { isMockMode } from "./api/mockMode";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BotAvatar,
@@ -23,6 +23,11 @@ import { PRODUCT_CONFIG } from "./config/product";
 import {
   isMiniRail,
   loadShellLayout,
+  fitRail,
+  railAfterStep,
+  searchPlan,
+  FLOAT_PAD,
+  isFloatShell,
   panelMax,
   panelWidthFromPointer,
   railTier,
@@ -33,30 +38,70 @@ import {
   PANEL_MIN,
   saveShellLayout,
   stepPanel,
-  stepRail,
   type ShellLayout
 } from "./lib/shellLayout";
 import { useMcp } from "./state/useMcp";
 import { AccountMenu, type AccountAction } from "./components/AccountMenu";
+import { Popover } from "./components/Popover";
 import { HealthIndicator } from "./components/HealthIndicator";
 import { HelpModal } from "./components/HelpModal";
-import { BOT_COLORS, botView } from "./lib/botProfile";
+import { editorSection } from "./lib/botEditor";
+import { BOT_COLORS, botView, draftFromBot } from "./lib/botProfile";
+import {
+  backFromChatOpensPanel,
+  botChats,
+  botDialogFromScreen,
+  botLanding
+} from "./lib/botLanding";
+import { nativeEngineName } from "./lib/botEngine";
 import { getAutostart, setAutostart } from "./lib/providers";
 import { PausedControlBanner } from "./components/PausedControlBanner";
+import { RunBar } from "./components/RunBar";
+import { runBarModel } from "./lib/runBar";
 import { ToastProvider } from "./components/Toast";
 import { ControlBridgeHost } from "./state/ControlBridgeHost";
+import { requestStop } from "./state/appStop";
+import { isNewerNativeSnapshot } from "./state/stopStatus";
+import { StopStatusNotice } from "./components/StopStatusNotice";
 import { LiveViewProvider, useLiveView } from "./state/LiveViewContext";
+import { HumanDrivingBanner } from "./components/HumanDrivingBanner";
 import { LiveViewer } from "./views/LiveViewer";
 import { appearanceFromQuery } from "./lib/appearance";
 import { createDebounced } from "./lib/debounce";
-import { CUSTOM_BACKDROP, NO_BACKDROP } from "./lib/backdropCatalog";
+import { backdropIsActive, CUSTOM_BACKDROP, NO_BACKDROP } from "./lib/backdropCatalog";
 import { Backdrop, sceneColors } from "./components/Backdrop";
 import { useApplyAppearance } from "./state/useApplyAppearance";
+import { usePanelReserve } from "./state/usePanelReserve";
+import { useViewportWidth } from "./state/useViewportWidth";
 import { PaletteHost, type PaletteScreen } from "./state/PaletteHost";
 import { ShellBridgeHost } from "./state/ShellBridgeHost";
-import { DaemonProvider, useDaemon } from "./state/DaemonContext";
-import { BotFormView } from "./views/BotFormView";
-import { BotHomeView } from "./views/BotHomeView";
+import { AddSkillModal } from "./components/AddSkillModal";
+import { useToast } from "./components/Toast";
+import { createChatFor, newChatFailureNeedsToast } from "./lib/newChat";
+import { LeaveGuardProvider, useLeaveRegistry } from "./state/LeaveGuard";
+import { SkillsModal } from "./components/SkillsModal";
+import { useBotSkills } from "./state/useBotSkills";
+import { BotEditModal } from "./views/BotEditModal";
+import { BotEmptyView } from "./views/BotEmptyView";
+import { ErrorNotice } from "./components/ErrorNotice";
+import { StartupProblem } from "./components/StartupProblem";
+import { humanService } from "./lib/humanError";
+import { FinishSetupHint } from "./components/FinishSetupHint";
+import { BotProfileModal } from "./views/BotProfileModal";
+import { useBotReorder } from "./components/useBotReorder";
+import { setBotOrderSnapshot } from "./store/botOrderStore";
+import { computerScopePlan } from "./lib/hostState";
+import { ComputerPicker } from "./components/ComputerPicker";
+import { ComputerRequestModal } from "./components/ComputerAccess";
+import { HostEmptyState } from "./components/HostEmptyState";
+import { HostStateBanner } from "./components/HostStateBanner";
+import { onboardingAllowed } from "./lib/hostMode";
+import {
+  DaemonProvider,
+  HostSession,
+  LOCAL_COMPUTER,
+  useDaemon
+} from "./state/DaemonContext";
 import { ChatView } from "./views/ChatView";
 import { NeedsYouView } from "./views/NeedsYouView";
 import { OnboardingView } from "./views/OnboardingView";
@@ -64,6 +109,8 @@ import { SchedulesView } from "./views/SchedulesView";
 import { AppsModal } from "./views/AppsModal";
 import { NewBotModal } from "./views/NewBotModal";
 import { SettingsModal } from "./views/SettingsModal";
+import { OPEN_AI_SETTINGS_EVENT } from "./state/useCliEngineRows";
+import { EngineConsentProvider } from "./state/EngineConsent";
 import type { SettingsSectionId } from "./views/settings/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { i18n, type SupportedLanguage } from "./i18n";
@@ -80,7 +127,6 @@ import {
   resumeBotRun,
   setStopHotkey,
   simulateBotRun,
-  stopBotRun,
   subscribeOverlayEvents,
   takeTheWheel
 } from "./overlay/events";
@@ -92,12 +138,13 @@ import {
   saveSettings,
   shouldOpenOnboardingOnStart
 } from "./store/settingsStore";
+import { humanLine } from "./lib/humanError";
 
 type Route =
   | { kind: "home" }
   | { kind: "onboarding" }
+  /** A bot without any chat yet: the empty state (there is no bot page). */
   | { kind: "bot"; botId: string }
-  | { kind: "botForm"; botId?: string }
   | { kind: "chat"; chatId: string; botId: string }
   | { kind: "needs" }
   | { kind: "schedules" };
@@ -111,22 +158,80 @@ function AppShell() {
     bots,
     chats,
     needs,
+    client,
     refreshBots,
-    retry
+    refreshChats,
+    retry,
+    restartDaemon,
+    home,
+    workLocalNow,
+    homeStale,
+    serviceProblem,
+    startup,
+    retryInSeconds,
+    activeComputerId
   } = useDaemon();
-  const { setThumbnailDemand, overrideStop, openViewer } = useLiveView();
+  const { setThumbnailDemand, openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
-  const [controlState, setControlState] = useState<ControlSnapshot>(
+  // Every route change goes through this gate: a bot dialog with unsaved data asks first, and one
+  // that is saving blocks it (PR #95, finding 4).  Do not call `setRoute` directly elsewhere.
+  const leave = useLeaveRegistry();
+  const go = (next: Route) => {
+    leave.attempt(() => setRoute(next));
+  };
+  const toast = useToast();
+  // Chats, bots and runs belong to one computer: switching computers starts at home.
+  const lastComputer = useRef(activeComputerId);
+  useEffect(() => {
+    if (lastComputer.current !== activeComputerId) {
+      lastComputer.current = activeComputerId;
+      setRoute({ kind: "home" });
+    }
+  }, [activeComputerId]);
+  // The first-run wizard is written for this computer's own daemon: never while a host is selected.
+  const onboardingBlocked = !onboardingAllowed(activeComputerId);
+  // The bots' computer has no bots to show (not set up yet, or not answering): one calm screen, never a blank app.
+  const hostEmpty = onboardingBlocked && phase === "ready" && bots.length === 0;
+  useEffect(() => {
+    if (onboardingBlocked && route.kind === "onboarding") {
+      setRoute({ kind: "home" });
+    }
+  }, [onboardingBlocked, route.kind]);
+  const [controlState, setControlStateRaw] = useState<ControlSnapshot>(
     INITIAL_CONTROL_SNAPSHOT
   );
+  // Native snapshots arrive from events, reads and command replies in any order:
+  // apply only a newer revision (a failed read has none and is ignored).
+  const setControlState = useCallback((snap: ControlSnapshot) => {
+    setControlStateRaw((prev) => (isNewerNativeSnapshot(prev.stateRev ?? -1, snap) ? snap : prev));
+  }, []);
   const [recordingHotkey, setRecordingHotkey] = useState<boolean>(false);
   const [autostartError, setAutostartError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState<SettingsSectionId | null>(
     null
   );
   const [appsOpen, setAppsOpen] = useState(false);
+  // The model picker's "Install <CLI>" rows open Settings > AI, where the install flow lives.
+  useEffect(() => {
+    const open = () => setSettingsOpen("ai");
+    window.addEventListener(OPEN_AI_SETTINGS_EVENT, open);
+    return () => window.removeEventListener(OPEN_AI_SETTINGS_EVENT, open);
+  }, []);
   const [newBotOpen, setNewBotOpen] = useState(false);
+  // The dialogs of a bot (card 244-C): edit and profile replace the old pages; "add skill" can
+  // sit on top of the skills dialog or the edit dialog.
+  const [botEditOpen, setBotEditOpen] = useState(false);
+  const [botProfileOpen, setBotProfileOpen] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
+  const [addSkillOpen, setAddSkillOpen] = useState(false);
+  // Review hooks (mock mode only): `?screen=botform&section=models`, `?screen=addskill&step=install`.
+  const [review] = useState(() => {
+    const q = isMockMode() && typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    return { section: editorSection(q?.get("section")), installStep: q?.get("step") === "install" };
+  });
+  const [newChatBusy, setNewChatBusy] = useState(false);
+  const [newChatError, setNewChatError] = useState<string | null>(null);
   const [botSearch, setBotSearch] = useState<string | null>(null);
   const { servers: appServers } = useMcp(true);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -138,13 +243,8 @@ function AppShell() {
     const q = new URLSearchParams(window.location.search);
     return q.get("lv") === "panel" || q.get("panel") === "1";
   });
-  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const viewportWidth = useViewportWidth();
   const chipRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    const onResize = () => setViewportWidth(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
   // Remember the column widths (after a pause, so a drag writes once).
   const layoutRef = useRef(layout);
   useEffect(() => {
@@ -162,7 +262,7 @@ function AppShell() {
   }, []);
   const setRail = useCallback((rail: number) => setLayout((l) => (l.rail === rail ? l : { ...l, rail })), []);
   const setPanelWidth = useCallback((panel: number) => setLayout((l) => (l.panel === panel ? l : { ...l, panel })), []);
-  const gridPad = () => (document.documentElement.dataset.float === "on" ? 12 : 0);
+  const gridPad = () => (document.documentElement.dataset.float === "on" ? FLOAT_PAD : 0);
   useEffect(() => {
     let mounted = true;
     void loadSettings().then(async (loaded) => {
@@ -185,14 +285,30 @@ function AppShell() {
         if (screen === "settings") setSettingsOpen((params.get("section") ?? "general") as SettingsSectionId);
         if (screen === "apps") setAppsOpen(true);
         if (params.get("panel") === "1") setPanelOpen(true);
+        // Review state of the run bar: `?control=bot_driving|paused|human_driving`.
+        const ctl = params.get("control");
+        if (ctl === "bot_driving" || ctl === "paused" || ctl === "human_driving") {
+          setControlState({
+            ...INITIAL_CONTROL_SNAPSHOT,
+            mode: ctl,
+            stateRev: 1,
+            stopSeq: 0,
+            bot: { botId: "11111111-1111-4111-8111-111111111111", botName: "Atlas" },
+            currentStep: params.get("lang") === "en" ? "Comparing sources in the browser" : "Kaynakları tarayıcıda karşılaştırıyor"
+          });
+        }
         const railParam = Number(params.get("rail"));
         if (railParam > 0) setLayout((l) => ({ ...l, rail: railParam < 150 ? RAIL_MINI : Math.min(RAIL_MAX, railParam) }));
         // Review states of the other routes (mock mode only).
         const atlas = "11111111-1111-4111-8111-111111111111";
         if (screen === "onboarding") merged.onboardingCompleted = false;
-        if (screen === "botform") setRoute({ kind: "botForm", botId: atlas });
+        const botDialog = botDialogFromScreen(screen);
+        if (botDialog === "edit") setBotEditOpen(true);
+        if (botDialog === "profile") setBotProfileOpen(true);
+        if (botDialog === "skills") setSkillsOpen(true);
+        if (botDialog === "addSkill") setAddSkillOpen(true);
         if (screen === "newbot") setNewBotOpen(true);
-        if (screen === "bot") setRoute({ kind: "bot", botId: atlas });
+        if (screen === "bot" || screen === "gone") setRoute({ kind: "bot", botId: screen === "gone" ? "00000000-0000-4000-8000-000000000000" : atlas });
         if (screen === "schedules") setRoute({ kind: "schedules" });
         if (screen === "needs") setRoute({ kind: "needs" });
         if (screen === "home" || screen === "offline") setRoute({ kind: "home" });
@@ -224,7 +340,7 @@ function AppShell() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [setControlState]);
 
   useEffect(() => {
     return subscribeOverlayEvents({
@@ -232,7 +348,7 @@ function AppShell() {
         setControlState(snapshot);
       }
     });
-  }, []);
+  }, [setControlState]);
 
   // Continuous inputs (colour pickers, sliders) apply live but persist / broadcast after a pause.
   const latestSettings = useRef<AppSettings>(settings);
@@ -266,6 +382,18 @@ function AppShell() {
     });
   };
 
+  // Sidebar order: settings hold the ids, the daemon context sorts `bots` with them (top = main bot).
+  useEffect(() => {
+    setBotOrderSnapshot(settings.botOrder);
+  }, [settings.botOrder]);
+  const [orderNote, setOrderNote] = useState("");
+  const botIds = useMemo(() => bots.map((b) => b.id), [bots]);
+  const reorder = useBotReorder(
+    botIds,
+    (botOrder) => updateSettings({ botOrder }),
+    (id, pos) => setOrderNote(t("sidebar.reorderMoved", { name: bots.find((b) => b.id === id)?.name ?? "", pos }))
+  );
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (recordingHotkey) {
@@ -289,12 +417,11 @@ function AppShell() {
       const activeHotkey = controlState.stopHotkey || settings.stopHotkey;
       if (matchesHotkeyEvent(event, activeHotkey)) {
         event.preventDefault();
-        // Plain Stop stays independent: the daemon-wide override latch is only
-        // used while a screen takeover is held (never on key repeat).
+        // One key press = one Stop decision (never on key repeat). The ledger halts
+        // native input, cancels runs and pauses a held takeover.
         if (!event.repeat) {
-          void overrideStop({ onlyIfControlled: true });
+          requestStop("hotkey");
         }
-        void stopBotRun().then(setControlState);
       }
     };
 
@@ -302,7 +429,7 @@ function AppShell() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [recordingHotkey, controlState.stopHotkey, settings.stopHotkey, overrideStop]);
+  }, [recordingHotkey, controlState.stopHotkey, settings.stopHotkey, setControlState]);
 
   // Native title bar on / off (Tauri window decorations; no-op in a browser).
   useEffect(() => {
@@ -343,6 +470,9 @@ function AppShell() {
   };
 
   const handleOpenOnboarding = (restartFromFirstStep: boolean) => {
+    if (onboardingBlocked) {
+      return;
+    }
     if (restartFromFirstStep) {
       updateSettings({
         onboardingStep: 1,
@@ -353,15 +483,11 @@ function AppShell() {
         onboardingSkipped: false
       });
     }
-    setRoute({ kind: "onboarding" });
+    go({ kind: "onboarding" });
   };
 
   const routeBotId =
-    route.kind === "bot" || route.kind === "chat"
-      ? route.botId
-      : route.kind === "botForm"
-        ? route.botId
-        : undefined;
+    route.kind === "bot" || route.kind === "chat" ? route.botId : undefined;
   const selectedBot = bots.find((bot) => bot.id === routeBotId) ?? bots[0];
   const { theme: activeTheme, accent: activeAccent } = useApplyAppearance(
     settings,
@@ -388,7 +514,7 @@ function AppShell() {
     } else if (action === "computer") {
       setSettingsOpen("computer");
     } else if (action === "schedules") {
-      setRoute({ kind: "schedules" });
+      go({ kind: "schedules" });
     } else if (action === "apps") {
       setAppsOpen(true);
     } else {
@@ -412,114 +538,135 @@ function AppShell() {
     if (screen === "settings" || screen === "usage") {
       setSettingsOpen(screen === "usage" ? "usage" : "general");
     } else {
-      setRoute({ kind: screen });
+      go({ kind: screen });
     }
   };
 
   const openChat = (chatId: string) => {
     const chat = chats.find((c) => c.id === chatId);
-    setRoute({ kind: "chat", chatId, botId: chat?.bot_id ?? "" });
+    go({ kind: "chat", chatId, botId: chat?.bot_id ?? "" });
   };
-  const openNeeds = () => setRoute({ kind: "needs" });
+  const openNeeds = () => go({ kind: "needs" });
+  // Selecting a bot: its latest chat, or the empty state when it has none.
+  const goToBot = (botId: string) => go(botLanding(botId, chats));
+  const startChat = async (botId: string) => {
+    if (!client || newChatBusy) {
+      return;
+    }
+    setNewChatBusy(true);
+    setNewChatError(null);
+    const result = await createChatFor(client, botId, refreshChats);
+    if (result.ok) {
+      setBotProfileOpen(false);
+      go({ kind: "chat", chatId: result.chatId, botId });
+    } else {
+      const detail = result.message;
+      setNewChatError(detail);
+      if (newChatFailureNeedsToast(route.kind)) {
+        toast.show(t("bots.newChatFailed", { detail }), "danger");
+      }
+    }
+    setNewChatBusy(false);
+  };
 
-  const mini = isMiniRail(layout.rail);
-  const botInView = selectedBot !== undefined && (route.kind === "chat" || route.kind === "bot" || (route.kind === "botForm" && Boolean(route.botId)));
+  /** A suggested first prompt: open a chat and send the prompt as its first message. */
+  const startChatWith = async (botId: string, prompt: string) => {
+    if (!client || newChatBusy) {
+      return;
+    }
+    setNewChatBusy(true);
+    setNewChatError(null);
+    const result = await createChatFor(client, botId, refreshChats);
+    if (result.ok) {
+      go({ kind: "chat", chatId: result.chatId, botId });
+      try {
+        await client.sendMessage(result.chatId, prompt);
+      } catch (e) {
+        toast.show(humanLine(e), "danger");
+      }
+    } else {
+      setNewChatError(result.message);
+    }
+    setNewChatBusy(false);
+  };
+
+  const botInView = selectedBot !== undefined && (route.kind === "chat" || route.kind === "bot");
+  // The bot dialogs belong to one bot: another bot, or leaving the bot views, closes them.
+  const dialogBotId = botInView ? selectedBot?.id : undefined;
+  const lastDialogBot = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    // (A first selection - mock review links open a dialog together with the route - keeps them.)
+    if (lastDialogBot.current !== undefined) {
+      setBotEditOpen(false);
+      setBotProfileOpen(false);
+      setSkillsOpen(false);
+      setAddSkillOpen(false);
+    }
+    lastDialogBot.current = dialogBotId;
+  }, [dialogBotId]);
   const panelVisible = panelOpen && botInView;
+  const float = isFloatShell(settings.uiStyle, backdropIsActive(settings.backdrop, settings.backgroundUrl));
+  const panelWidth = Math.min(layout.panel, panelMax(viewportWidth, layout.rail, float));
+  const panelReserve = usePanelReserve(panelVisible);
+  const railWidth = fitRail(viewportWidth, layout.rail, panelWidth, float, panelReserve);
+  const fitStored = (candidate: number) => fitRail(viewportWidth, candidate, panelWidth, float, panelReserve);
+  const search = searchPlan(layout.rail, railWidth, botSearch !== null);
+  const searchButtonRef = useRef<HTMLButtonElement | null>(null);
+  const closeSearch = useCallback(() => setBotSearch(null), []);
+  // A dialog opened by a shortcut sits above the Search popover: close the popover instead of leaving it beneath.
+  const dialogOpen = settingsOpen !== null || appsOpen || newBotOpen || helpOpen || botEditOpen || botProfileOpen || skillsOpen || addSkillOpen;
+  useEffect(() => {
+    if (dialogOpen) setBotSearch(null);
+  }, [dialogOpen]);
+  const mini = isMiniRail(railWidth);
 
   useEffect(() => {
     setThumbnailDemand(panelVisible, selectedBot?.id ?? null);
   }, [panelVisible, selectedBot?.id, setThumbnailDemand]);
-  const panelWidth = Math.min(layout.panel, panelMax(viewportWidth, layout.rail));
-  const togglePanel = () => setPanelOpen((open) => !open);
+  const closePanel = () =>
+    leave.attempt(() => {
+      setPanelOpen(false);
+      chipRef.current?.focus();
+    });
+  const togglePanel = () => (panelOpen ? closePanel() : setPanelOpen(true));
   const panelBotView = selectedBot ? botView(selectedBot) : undefined;
   const panelChats = selectedBot
-    ? chats
-        .filter((c) => c.bot_id === selectedBot.id)
-        .sort((a, b) => b.created_at_ms - a.created_at_ms)
-        .slice(0, 8)
-        .map((c) => ({ id: c.id, title: c.title ?? "", createdAtMs: c.created_at_ms }))
+    ? botChats(chats, selectedBot.id).map((c) => ({ id: c.id, title: c.title ?? "", createdAtMs: c.created_at_ms }))
     : [];
+  // One copy of the selected bot's skills for the panel and every bot dialog.
+  const botSkills = useBotSkills(botInView && selectedBot ? selectedBot.id : null, client);
+  useEffect(() => {
+    setNewChatError(null);
+  }, [routeBotId]);
 
-  const isRunActive = controlState.mode !== "idle";
   const isHumanDriving = controlState.mode === "human_driving";
-  const isPaused = controlState.mode === "paused";
-
-  const runBanner = isRunActive ? (
-    <div className={styles.runBannerWrap}>
-      <div className={styles.activeRunBanner} role="status">
-        <div className={styles.activeRunHeader}>
-          <span className={styles.botName}>
-            {controlState.bot?.botName ?? t("dev.runningLabel")}
-          </span>
-          <span
-            className={[
-              styles.activeRunBadge,
-              isHumanDriving ? styles.activeRunBadgeHuman : ""
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          >
-            {t(`widget.status.${controlState.mode}`)}
-          </span>
-        </div>
-        <p className={styles.activeRunStep}>
-          {isHumanDriving
-            ? t("widget.humanDrivingStep")
-            : controlState.currentStep || t("widget.idleStep")}
-        </p>
-        <div className={styles.activeRunControls}>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => {
-              void overrideStop({ onlyIfControlled: true });
-              void stopBotRun().then(setControlState);
-            }}
-          >
-            {t("widget.stop")}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={isHumanDriving}
-            onClick={() => {
-              if (isPaused) {
-                void resumeBotRun().then(setControlState);
-              } else {
-                void pauseBotRun().then(setControlState);
-              }
-            }}
-          >
-            {isPaused ? t("widget.resume") : t("widget.pause")}
-          </Button>
-          <Button
-            variant={isHumanDriving ? "primary" : "secondary"}
-            size="sm"
-            onClick={() => {
-              if (isHumanDriving) {
-                void giveBackControl().then(setControlState);
-              } else {
-                void takeTheWheel().then(setControlState);
-              }
-            }}
-          >
-            {isHumanDriving ? t("widget.giveBack") : t("widget.takeTheWheel")}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => openViewer()}
-          >
-            {t("liveView.expand")}
-          </Button>
-        </div>
-      </div>
-    </div>
-  ) : null;
+  // The chat carries its own run bar (docked on the composer); every other screen
+  // gets the same bar as a strip so Stop is never out of reach.
+  const runBanner =
+    route.kind === "chat" ? null : (
+      <RunBar
+        variant="strip"
+        model={runBarModel({ chat: "none", native: controlState.mode })}
+        botName={controlState.bot?.botName}
+        detail={controlState.mode === "idle" ? null : controlState.currentStep}
+        humanDriving={isHumanDriving}
+        onStop={() => {
+          requestStop("banner");
+        }}
+        onPause={() => void pauseBotRun().then(setControlState)}
+        onResume={() => void resumeBotRun().then(setControlState)}
+        onWheel={() =>
+          void (isHumanDriving ? giveBackControl() : takeTheWheel()).then(
+            setControlState
+          )
+        }
+        onBigView={() => openViewer()}
+      />
+    );
 
   return (
     <SidebarLayout
-      style={{ "--size-sidebar-width": `${layout.rail}px` } as CSSProperties}
+      style={{ "--size-sidebar-width": `${railWidth}px` } as CSSProperties}
       backdrop={
         settings.backdrop !== NO_BACKDROP && settings.backdrop !== CUSTOM_BACKDROP ? (
           <Backdrop
@@ -537,8 +684,7 @@ function AppShell() {
           onKeyDown={(e) => {
             if (e.key === "Escape" && panelVisible) {
               e.stopPropagation();
-              setPanelOpen(false);
-              chipRef.current?.focus();
+              closePanel();
             }
           }}
         >
@@ -547,50 +693,63 @@ function AppShell() {
             label={t("shell.panelGrip")}
             value={panelWidth}
             min={PANEL_MIN}
-            max={panelMax(viewportWidth, layout.rail)}
-            onDrag={(x) => setPanelWidth(panelWidthFromPointer(x, window.innerWidth, gridPad(), layout.rail))}
-            onStep={(dir) => setPanelWidth(stepPanel(panelWidth, dir === -1 ? 1 : -1, window.innerWidth, layout.rail))}
+            max={panelMax(viewportWidth, layout.rail, float)}
+            onDrag={(x) => setPanelWidth(panelWidthFromPointer(x, window.innerWidth, gridPad(), layout.rail, float))}
+            onStep={(dir) => setPanelWidth(stepPanel(panelWidth, dir === -1 ? 1 : -1, window.innerWidth, layout.rail, float))}
           />
           {selectedBot && panelBotView ? (
             <BotPanel
               bot={panelBotView}
               model={panelBotView.executor}
+              engineCli={nativeEngineName(selectedBot.config)}
               chats={panelChats}
               activeChatId={route.kind === "chat" ? route.chatId : undefined}
-              onClose={() => {
-                setPanelOpen(false);
-                chipRef.current?.focus();
-              }}
+              onClose={closePanel}
+              preset={draftFromBot(selectedBot).preset}
+              needs={needs}
+              runs={runs}
+              skills={botSkills}
+              newChatBusy={newChatBusy}
               onOpenChat={openChat}
-              onOpenProfile={() => setRoute({ kind: "bot", botId: selectedBot.id })}
-              onOpenSettings={() => setRoute({ kind: "botForm", botId: selectedBot.id })}
+              onNewChat={() => void startChat(selectedBot.id)}
+              onOpenProfile={() => setBotProfileOpen(true)}
+              onOpenSettings={() => setBotEditOpen(true)}
+              onManageSkills={() => setSkillsOpen(true)}
+              onAddSkill={() => setAddSkillOpen(true)}
             />
           ) : null}
         </SidePanel>
       }
       sidebar={
-        <Sidebar className={[styles.rail, mini ? styles.railMini : ""].filter(Boolean).join(" ")} data-rail-tier={railTier(layout.rail)}>
+        <Sidebar className={[styles.rail, mini ? styles.railMini : ""].filter(Boolean).join(" ")} data-rail-tier={railTier(railWidth)}>
           <ResizeGrip
             side="end"
             label={t("shell.railGrip")}
-            value={layout.rail}
+            value={railWidth}
             min={RAIL_MINI}
             max={RAIL_MAX}
             onDrag={(x) => setRail(railWidthFromPointer(x, gridPad()))}
-            onStep={(dir) => setRail(stepRail(layout.rail, dir))}
+            onStep={(dir) => setRail(railAfterStep(layout.rail, railWidth, dir, fitStored))}
           />
           <SidebarHeader>
             <div className={styles.brand}>
               <b className={styles.brandName}>{PRODUCT_CONFIG.appName}</b>
               <div className={styles.topActions}>
-                <button className={styles.iconButton} title={t("sidebar.searchBots")} aria-label={t("sidebar.searchBots")} onClick={() => { if (mini) setRail(RAIL_MIN); setBotSearch(botSearch === null || mini ? "" : null); }}><Search /></button>
+                <button ref={searchButtonRef} className={styles.iconButton} title={t("sidebar.searchBots")} aria-label={t("sidebar.searchBots")} onClick={() => { if (search.expandStored) setRail(RAIL_MIN); setBotSearch(search.open ? "" : null); }}><Search /></button>
                 <button className={styles.iconButton} title={t("sidebar.newBot")} aria-label={t("sidebar.newBot")} data-testid="new-bot-button" onClick={() => setNewBotOpen(true)}><Plus /></button>
               </div>
             </div>
             {botSearch !== null && !mini ? <input className={styles.botSearch} autoFocus value={botSearch} onChange={e => setBotSearch(e.target.value)} aria-label={t("sidebar.searchBots")} placeholder={t("sidebar.searchBots")} /> : null}
+            {search.popover ? (
+              <Popover open={botSearch !== null} anchor={searchButtonRef} onClose={closeSearch} placement="bottom-start" role="dialog" label={t("sidebar.searchBots")} width={240}>
+                <input className={styles.botSearchPopover} value={botSearch ?? ""} onChange={e => setBotSearch(e.target.value)} aria-label={t("sidebar.searchBots")} placeholder={t("sidebar.searchBots")} />
+              </Popover>
+            ) : null}
           </SidebarHeader>
           <SidebarSection>
-            {needs.length > 0 ? <SidebarItem className={styles.railItem} active={route.kind === "needs"} title={t("sidebar.needsYou")} aria-label={mini ? t("sidebar.needsYouCount", { count: needs.length }) : undefined} onClick={() => setRoute({ kind: "needs" })}><BellDot /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.needsYou")}</span><span className={styles.needsBadge} data-testid="needs-you-badge" aria-label={t("sidebar.needsYouCount", { count: needs.length })}>{needs.length}</span></SidebarItem> : null}
+            <span className={styles.srOnly} role="status" aria-live="polite">{orderNote}</span>
+            <div ref={reorder.containerRef} className={styles.botList} data-stale={homeStale ? "true" : undefined}>
+            {needs.length > 0 ? <SidebarItem className={styles.railItem} active={route.kind === "needs"} title={t("sidebar.needsYou")} aria-label={mini ? t("sidebar.needsYouCount", { count: needs.length }) : undefined} onClick={openNeeds}><BellDot /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.needsYou")}</span><span className={styles.needsBadge} data-testid="needs-you-badge" aria-label={t("sidebar.needsYouCount", { count: needs.length })}>{needs.length}</span></SidebarItem> : null}
             {bots.filter(bot => bot.name.toLowerCase().includes((botSearch ?? "").toLowerCase())).map((bot) => {
               const view = botView(bot);
               const latest = chats.filter(c => c.bot_id === bot.id).sort((a,b) => b.created_at_ms - a.created_at_ms)[0];
@@ -598,11 +757,19 @@ function AppShell() {
               const live = runs.find(r => r.bot_id === bot.id && ["running", "pending", "waiting_approval"].includes(r.state));
               const state = needs.some(n => n.botId === bot.id) || live?.state === "waiting_approval" ? "waiting-approval" : live ? "working" : isMockMode() ? config.bot?.state : "idle";
               const avatarState = state === "thinking" || state === "working" || state === "waiting-approval" || state === "error" ? state : "idle";
-              return <SidebarItem key={bot.id} className={styles.railItem} active={routeBotId === bot.id} title={view.name} aria-label={mini ? view.name : undefined} onClick={() => latest ? openChat(latest.id) : setRoute({ kind: "bot", botId: bot.id })}>
-                <BotAvatar bot={view} size="md" state={avatarState} decorative />
-                <div className={`${styles.botMeta} ${styles.railText}`}><span className={styles.botName}>{view.name}</span><span className={styles.botRole}>{(isMockMode() ? config.bot?.preview : undefined) ?? latest?.title ?? t("bots.newChat")}</span></div>
-              </SidebarItem>;
+              const index = botIds.indexOf(bot.id);
+              const canReorder = botSearch === null || botSearch === "";
+              const drag = reorder.drag;
+              const dropEdge = drag && drag.id !== bot.id && drag.over === index ? (drag.over < drag.from ? "before" : "after") : undefined;
+              return <div key={bot.id} className={styles.botRow} data-dragging={drag?.id === bot.id ? "true" : undefined} data-drop={dropEdge} {...(canReorder ? reorder.rowProps(bot.id) : { "data-bot-id": bot.id })}>
+                <SidebarItem className={styles.railItem} active={routeBotId === bot.id} title={view.name} aria-label={mini ? view.name : undefined} onClick={() => goToBot(bot.id)}>
+                  <BotAvatar bot={view} size="md" state={avatarState} decorative />
+                  <div className={`${styles.botMeta} ${styles.railText}`}><span className={styles.botName}>{view.name}{index === 0 && botIds.length > 1 ? <span className={styles.mainMark} title={t("sidebar.mainBotHint")}><Star aria-hidden="true" />{t("sidebar.mainBot")}</span> : null}</span><span className={styles.botRole}>{(isMockMode() ? config.bot?.preview : undefined) ?? latest?.title ?? t("bots.newChat")}</span></div>
+                </SidebarItem>
+                {canReorder && !mini && botIds.length > 1 ? <button type="button" className={styles.grip} aria-label={t("sidebar.reorderBot", { name: view.name })} title={t("sidebar.reorderHint")} {...reorder.gripProps(bot.id)}><GripVertical aria-hidden="true" /></button> : null}
+              </div>;
             })}
+            </div>
           </SidebarSection>
 
           <SidebarFooter className={styles.railFoot}>
@@ -617,7 +784,7 @@ function AppShell() {
     >
       <div className={styles.mainColumn}>
         <div className={styles.titleBar} data-tauri-drag-region>
-          <span />
+          <span className={styles.runtimeLabel} data-tauri-drag-region><i className={styles.liveDot} aria-hidden="true" />{home.kind === "host" && !workLocalNow ? home.name || t("computerPicker.host") : t("account.localComputer")}</span>
           {botInView && panelBotView ? (
             <button
               ref={chipRef}
@@ -635,7 +802,7 @@ function AppShell() {
             </button>
           ) : <span />}
           <div className={styles.windowActions} data-tauri-drag-region>
-            <span className={styles.runtimeLabel} data-tauri-drag-region><i className={styles.liveDot} aria-hidden="true" />{t("account.localComputer")}</span>
+            <ComputerPicker />
             <button className={styles.iconButton} title={t("account.settings")} aria-label={t("account.settings")} onClick={() => setSettingsOpen("general")}><Settings2 /></button>
             {isTauriRuntime() && !settings.windowFrame ? <>
               <button className={styles.iconButton} title={t("window.minimize")} aria-label={t("window.minimize")} onClick={() => void getCurrentWindow().minimize()}><Minus /></button>
@@ -644,57 +811,58 @@ function AppShell() {
             </> : null}
           </div>
         </div>
-        <HealthIndicator />
+        {activeComputerId === LOCAL_COMPUTER ? <HealthIndicator /> : null}
+        <HostStateBanner />
         <ShellBridgeHost
           settings={settings}
           onOpenChat={openChat}
           onOpenNeeds={openNeeds}
         />
+        <HumanDrivingBanner />
         {runBanner}
+        {settings.onboardingSkipped && !settings.onboardingCompleted && route.kind !== "onboarding" ? (
+          <FinishSetupHint onClick={() => handleOpenOnboarding(false)} />
+        ) : null}
+        {panelVisible || route.kind === "chat" ? null : <StopStatusNotice variant="main" />}
         <PausedControlBanner />
-        {route.kind === "onboarding" ? (
+        {route.kind === "onboarding" && !onboardingBlocked ? (
           <OnboardingView
             settings={settings}
-            onUpdateSettings={updateSettings}
             onLanguageChange={handleLanguageChange}
-            onSkip={(currentStep) => {
-              updateSettings({
-                onboardingSkipped: true,
-                onboardingStep: currentStep
-              });
-              setRoute({ kind: "home" });
+            onSkip={() => {
+              updateSettings({ onboardingSkipped: true });
+              go({ kind: "home" });
             }}
-            onComplete={({ botId, chatId }) => {
-              updateSettings({
-                onboardingCompleted: true,
-                onboardingSkipped: false,
-                onboardingStep: 5,
-                ...(botId ? { onboardingBotId: botId } : {})
-              });
-              if (chatId && botId) {
-                setRoute({ kind: "chat", chatId, botId });
-              } else if (botId) {
-                setRoute({ kind: "bot", botId });
+            onComplete={({ botId }) => {
+              updateSettings({ onboardingCompleted: true, onboardingSkipped: false });
+              if (botId) {
+                go({ kind: "bot", botId });
               } else {
-                setRoute({ kind: "home" });
+                go({ kind: "home" });
               }
             }}
           />
         ) : null}
-        {route.kind === "home" ? (
+        {hostEmpty && (route.kind === "home" || route.kind === "chat" || route.kind === "bot") ? (
+          <HostEmptyState onNewBot={() => setNewBotOpen(true)} onConnectModel={() => setSettingsOpen("ai")} />
+        ) : null}
+        {route.kind === "home" && !hostEmpty ? (
           <div className={styles.centerPane}>
             <Card padding="lg" className={styles.emptyStateCard}>
-              {phase === "error" ? (
+              {phase !== "ready" && startup ? (
+                <StartupProblem startup={startup} raw={daemonError ?? ""} />
+              ) : phase === "error" ? (
                 <div className={styles.selectedBotContent} data-testid="daemon-offline-empty-state">
-                  <span className={`${styles.stateIcon} ${styles.stateIconDanger}`}><ServerOff /></span><h1 className={styles.emptyStateTitle}>
-                    {t("main.daemonOfflineTitle")}
-                  </h1>
-                  <p className={styles.emptyStateDescription}>
-                    {t("main.daemonOfflineDescription")}
-                  </p>
-                  {daemonError ? <pre className={styles.errorDetailMono}>{daemonError}</pre> : null}
+                  <span className={`${styles.stateIcon} ${styles.stateIconDanger}`}><ServerOff /></span>
+                  <ErrorNotice error={humanService(serviceProblem ?? "down", daemonError ?? "")} />
+                  {retryInSeconds ? (
+                    <p className={styles.emptyStateDescription}>{t("errors.retrying", { seconds: retryInSeconds })}</p>
+                  ) : null}
                   <div className={styles.optionRow}>
-                    <Button variant="primary" onClick={retry}>
+                    <Button variant="primary" onClick={() => void restartDaemon()}>
+                      {t("errors.restartService")}
+                    </Button>
+                    <Button variant="secondary" onClick={retry}>
                       {t("main.daemonRetry")}
                     </Button>
                     <Button variant="secondary" onClick={() => handleOpenOnboarding(false)}>
@@ -765,37 +933,33 @@ function AppShell() {
             </Card>
           </div>
         ) : null}
-        {route.kind === "bot" ? (
-          <BotHomeView
+        {route.kind === "bot" && !hostEmpty ? (
+          <BotEmptyView
             key={route.botId}
-            botId={route.botId}
-            onOpenChat={openChat}
-            onEdit={() => setRoute({ kind: "botForm", botId: route.botId })}
-            onDeleted={() => setRoute({ kind: "home" })}
+            bot={panelBotView && selectedBot?.id === route.botId ? panelBotView : undefined}
+            busy={newChatBusy}
+            error={newChatError}
+            onNewChat={() => void startChat(route.botId)}
+            onSuggest={(prompt) => void startChatWith(route.botId, prompt)}
+            firstBot={bots[0] ? { id: bots[0].id, name: bots[0].name } : undefined}
+            onGoFirst={goToBot}
+            onCreateBot={() => setNewBotOpen(true)}
           />
         ) : null}
-        {route.kind === "botForm" ? (
-          <BotFormView
-            key={route.botId ?? "new"}
-            botId={route.botId}
-            onDone={(botId) => setRoute({ kind: "bot", botId })}
-            onCancel={() =>
-              setRoute(
-                route.botId
-                  ? { kind: "bot", botId: route.botId }
-                  : { kind: "home" }
-              )
-            }
-          />
-        ) : null}
-        {route.kind === "chat" ? (
+        {route.kind === "chat" && !hostEmpty ? (
           <ChatView
             key={route.chatId}
             chatId={route.chatId}
-            onBack={() => setRoute({ kind: "bot", botId: route.botId })}
+            onBack={() => {
+              // There is no bot page to go back to: the chat list lives in the right panel.
+              if (backFromChatOpensPanel(panelOpen)) setPanelOpen(true);
+            }}
+            control={controlState}
+            onControl={setControlState}
             onSwitchChat={openChat}
             showAgentRoute={settings.showAgentRoute}
             sendWith={settings.sendWith}
+            messageTimes={settings.messageTimes}
           />
         ) : null}
         {route.kind === "needs" ? <NeedsYouView onOpenChat={openChat} /> : null}
@@ -806,8 +970,8 @@ function AppShell() {
       <PaletteHost
         currentBotId={routeBotId}
         onScreen={handlePaletteScreen}
-        onBot={(botId) => setRoute({ kind: "bot", botId })}
-        onChat={(chatId, botId) => setRoute({ kind: "chat", chatId, botId })}
+        onBot={goToBot}
+        onChat={(chatId, botId) => go({ kind: "chat", chatId, botId })}
       />
       <SettingsModal
         open={settingsOpen !== null}
@@ -836,21 +1000,86 @@ function AppShell() {
         onClose={() => setNewBotOpen(false)}
         onDone={(botId) => {
           setNewBotOpen(false);
-          setRoute({ kind: "bot", botId });
+          goToBot(botId);
         }}
+      />
+      <BotProfileModal
+        open={botProfileOpen && botInView}
+        bot={selectedBot}
+        skills={botSkills}
+        newChatBusy={newChatBusy}
+        onClose={() => setBotProfileOpen(false)}
+        onEdit={() => {
+          setBotProfileOpen(false);
+          setBotEditOpen(true);
+        }}
+        onNewChat={() => {
+          if (selectedBot) void startChat(selectedBot.id);
+        }}
+      />
+      <BotEditModal
+        open={botEditOpen && botInView}
+        bot={selectedBot}
+        skills={botSkills}
+        initialSection={review.section}
+        onClose={() => setBotEditOpen(false)}
+        onAddSkill={() => setAddSkillOpen(true)}
+        onDeleted={() => {
+          setBotEditOpen(false);
+          setRoute({ kind: "home" });
+        }}
+      />
+      <SkillsModal
+        open={skillsOpen && botInView}
+        botName={panelBotView?.name ?? ""}
+        skills={botSkills}
+        onClose={() => setSkillsOpen(false)}
+        onAddSkill={() => setAddSkillOpen(true)}
+      />
+      <AddSkillModal
+        open={addSkillOpen && botInView}
+        client={client}
+        botName={panelBotView?.name ?? ""}
+        skills={botSkills}
+        initialStep={review.installStep ? "install" : undefined}
+        onClose={() => setAddSkillOpen(false)}
       />
       <HelpModal
         open={helpOpen}
         onClose={() => setHelpOpen(false)}
         stopHotkey={controlState.stopHotkey || settings.stopHotkey}
-        sendKeys={settings.sendWith === "enter" ? "Enter" : "Ctrl+Enter"}
+        sendWith={settings.sendWith}
         onSetup={() => {
           setHelpOpen(false);
           handleOpenOnboarding(false);
         }}
       />
       <LiveViewer />
+      {activeComputerId !== LOCAL_COMPUTER ? <LiveViewer source="local" /> : null}
     </SidebarLayout>
+  );
+}
+
+/**
+ * The local daemon's safety machinery (heartbeat, native Stop and tray, local event
+ * stream, approval overlays) stays connected to THIS computer whichever computer the
+ * views show. Selecting a host only swaps the daemon the chat and panel views talk
+ * to (a second session and live view, rebuilt per host).
+ */
+export function ComputerScope({ children }: { children: ReactNode }) {
+  const { activeComputerId } = useDaemon();
+  const plan = computerScopePlan(activeComputerId, LOCAL_COMPUTER);
+  return (
+    <LiveViewProvider scope="local">
+      {plan.localBridge ? <ControlBridgeHost /> : null}
+      {!plan.hostSession ? (
+        <Fragment key={LOCAL_COMPUTER}>{children}</Fragment>
+      ) : (
+        <HostSession key={activeComputerId}>
+          <LiveViewProvider>{children}</LiveViewProvider>
+        </HostSession>
+      )}
+    </LiveViewProvider>
   );
 }
 
@@ -858,10 +1087,14 @@ export function App() {
   return (
     <ToastProvider>
       <DaemonProvider>
-        <LiveViewProvider>
-          <ControlBridgeHost />
-          <AppShell />
-        </LiveViewProvider>
+        <ComputerRequestModal />
+        <ComputerScope>
+          <LeaveGuardProvider>
+            <EngineConsentProvider>
+              <AppShell />
+            </EngineConsentProvider>
+          </LeaveGuardProvider>
+        </ComputerScope>
       </DaemonProvider>
     </ToastProvider>
   );

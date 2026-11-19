@@ -45,6 +45,14 @@ pub(crate) fn split(content: &str) -> Result<(String, String), String> {
 
 fn unquote(s: &str) -> String {
     let s = s.trim();
+    // Owner form input uses JSON-compatible double-quoted YAML scalars. Decode
+    // those escapes while retaining the legacy minimal-parser behavior for
+    // older non-JSON quoted values.
+    if s.starts_with('"')
+        && let Ok(decoded) = serde_json::from_str::<String>(s)
+    {
+        return decoded;
+    }
     for q in ['"', '\''] {
         if s.len() >= 2 && s.starts_with(q) && s.ends_with(q) {
             return s[1..s.len() - 1].to_string();

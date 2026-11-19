@@ -73,11 +73,23 @@ struct Input {
 pub struct ShellTool {
     spec: ToolSpec,
     spill_dir: PathBuf,
+    /// Ledger of untrusted-origin files: what the command fetches (`git clone`, `curl`, `wget`,
+    /// `unzip` ...) is recorded before it runs.
+    provenance: Option<Arc<dyn crate::provenance::Provenance>>,
 }
 
 /// Build the shell tool; `data_dir` hosts spill files.
 #[must_use]
 pub fn tool(data_dir: &Path) -> Arc<dyn Tool> {
+    tool_with_provenance(data_dir, None)
+}
+
+/// [`tool`] that records what a command fetches in the provenance ledger.
+#[must_use]
+pub fn tool_with_provenance(
+    data_dir: &Path,
+    provenance: Option<Arc<dyn crate::provenance::Provenance>>,
+) -> Arc<dyn Tool> {
     Arc::new(ShellTool {
         spec: spec(
             "shell_run",
@@ -92,6 +104,7 @@ pub fn tool(data_dir: &Path) -> Arc<dyn Tool> {
             PermissionCategory::Shell,
         ),
         spill_dir: data_dir.join("spill"),
+        provenance,
     })
 }
 
@@ -312,6 +325,26 @@ fn format_output(code: Option<i32>, stdout: &[u8], stderr: &[u8], note: Option<&
     s
 }
 
+// Drop also reconciles cancelled/failed commands, which may have partially written files.
+struct FetchMarks<'a>(
+    Option<&'a dyn crate::provenance::Provenance>,
+    Vec<(PathBuf, bool)>,
+);
+impl FetchMarks<'_> {
+    fn record(&self) {
+        if let Some(ledger) = self.0 {
+            for (path, tree) in &self.1 {
+                crate::provenance::mark_path(ledger, path, *tree, "fetched by a shell command");
+            }
+        }
+    }
+}
+impl Drop for FetchMarks<'_> {
+    fn drop(&mut self) {
+        self.record();
+    }
+}
+
 #[async_trait]
 impl Tool for ShellTool {
     fn spec(&self) -> &ToolSpec {
@@ -323,6 +356,17 @@ impl Tool for ShellTool {
         if i.command.trim().is_empty() {
             return Err(ToolError::InvalidInput("command is empty".into()));
         }
+        let cwd = i
+            .cwd
+            .as_ref()
+            .map(PathBuf::from)
+            .or_else(|| std::env::current_dir().ok());
+        let fetched: Vec<_> = cwd
+            .iter()
+            .flat_map(|cwd| crate::provenance::shell_fetch_targets(&i.command, cwd))
+            .collect();
+        let fetch_marks = FetchMarks(self.provenance.as_deref(), fetched);
+        fetch_marks.record();
         let kind = i.shell.unwrap_or_else(ShellKind::default_for_host);
         let timeout = Duration::from_secs(resolved_timeout_secs(i.timeout));
         let mut cmd = build_command(kind, &i.command);
@@ -398,6 +442,7 @@ impl Tool for ShellTool {
         if note.is_none() {
             guard.armed = false;
         }
+        fetch_marks.record();
         let stdout = std::mem::take(&mut *out_buf.lock());
         let stderr = std::mem::take(&mut *err_buf.lock());
         let text = format_output(code, &stdout, &stderr, note.as_deref());
@@ -547,6 +592,10 @@ mod tests {
             run_id: "r".into(),
             max_inline_bytes: 1000,
             bot_id: None,
+            content_tainted: false,
+            exposure_untrusted: false,
+            expected_origin: None,
+            control_guard: None,
         };
         let out = t
             .call(

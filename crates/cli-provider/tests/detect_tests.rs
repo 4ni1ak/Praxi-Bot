@@ -31,7 +31,9 @@ async fn test_all_missing() {
     let detector = Detector::with_env(env);
 
     let detected = detector.detect(false).await;
-    assert_eq!(detected.len(), 6);
+    // Gemini CLI is retired: never listed unless it is already installed.
+    assert_eq!(detected.len(), 5);
+    assert!(detected.iter().all(|cli| cli.id != "gemini"));
 
     for cli in &detected {
         assert!(!cli.installed);
@@ -60,8 +62,7 @@ async fn test_claude_signed_in_and_signed_out() {
     assert!(claude.detail.is_none());
 
     // Signed out
-    let env =
-        PathEnv::for_test(temp.path().to_path_buf()).with_env_var("FAKE_AUTH_SIGNED_OUT", "1");
+    let env = PathEnv::for_test(temp.path().to_path_buf()).with_env_var("FAKE_SIGNED_OUT", "1");
     let detector = Detector::with_env(env);
     let detected = detector.detect(true).await;
     let claude = detected.iter().find(|c| c.id == "claude").unwrap();
@@ -114,15 +115,11 @@ async fn test_codex_status_variants() {
         Some("The installed Codex cannot disable unified_exec, so Praxi will not run it.")
     );
 
-    // chatgpt-plan follows codex installation, auth is unknown
-    let chatgpt = detected.iter().find(|c| c.id == "chatgpt-plan").unwrap();
-    assert!(chatgpt.installed);
-    assert_eq!(chatgpt.auth, AuthState::Unknown);
-    assert_eq!(chatgpt.version.as_deref(), Some("fake 1.2.3"));
+    // The same codex.cmd is never reported twice.
+    assert!(detected.iter().all(|c| c.id != "chatgpt-plan"));
 
     // Signed out: "Not logged in"
-    let env =
-        PathEnv::for_test(temp.path().to_path_buf()).with_env_var("FAKE_AUTH_SIGNED_OUT", "1");
+    let env = PathEnv::for_test(temp.path().to_path_buf()).with_env_var("FAKE_SIGNED_OUT", "1");
     let detector = Detector::with_env(env);
     let detected = detector.detect(true).await;
     let codex = detected.iter().find(|c| c.id == "codex").unwrap();
@@ -152,8 +149,7 @@ async fn test_cursor_status_variants() {
     assert_eq!(cursor.auth, AuthState::SignedIn);
 
     // JSON unauthenticated
-    let env =
-        PathEnv::for_test(temp.path().to_path_buf()).with_env_var("FAKE_AUTH_SIGNED_OUT", "1");
+    let env = PathEnv::for_test(temp.path().to_path_buf()).with_env_var("FAKE_SIGNED_OUT", "1");
     let detector = Detector::with_env(env);
     let detected = detector.detect(true).await;
     let cursor = detected.iter().find(|c| c.id == "cursor").unwrap();
@@ -172,23 +168,23 @@ async fn test_opencode_variants() {
     let temp = fixture_dir();
     install_fake(temp.path(), "opencode");
 
-    // Signed in via OPENCODE_API_KEY
+    // An ambient key is not forwarded and cannot prove CLI sign-in.
     let env = PathEnv::for_test(temp.path().to_path_buf())
         .with_env_var("OPENCODE_API_KEY", "some_key_value");
     let detector = Detector::with_env(env);
     let detected = detector.detect(false).await;
     let opencode = detected.iter().find(|c| c.id == "opencode").unwrap();
     assert!(opencode.installed);
-    assert_eq!(opencode.auth, AuthState::SignedIn);
+    assert_eq!(opencode.auth, AuthState::Unknown);
     let debug_str = format!("{opencode:?}");
     assert!(!debug_str.contains("some_key_value"));
 
-    // Signed out when no key and no auth.json
+    // No verified status command: missing files cannot rule out a keychain.
     let env = PathEnv::for_test(temp.path().to_path_buf());
     let detector = Detector::with_env(env);
     let detected = detector.detect(true).await;
     let opencode = detected.iter().find(|c| c.id == "opencode").unwrap();
-    assert_eq!(opencode.auth, AuthState::SignedOut);
+    assert_eq!(opencode.auth, AuthState::Unknown);
 
     // Unknown when auth.json exists
     let auth_dir = temp.path().join("local_app").join("opencode");
@@ -210,30 +206,30 @@ async fn test_gemini_variants() {
     let temp = fixture_dir();
     install_fake(temp.path(), "gemini");
 
-    // Signed in via GEMINI_API_KEY
+    // Ambient provider keys are not forwarded.
     let env = PathEnv::for_test(temp.path().to_path_buf())
         .with_env_var("GEMINI_API_KEY", "gemini_secret_key");
     let detector = Detector::with_env(env);
     let detected = detector.detect(false).await;
     let gemini = detected.iter().find(|c| c.id == "gemini").unwrap();
     assert!(gemini.installed);
-    assert_eq!(gemini.auth, AuthState::SignedIn);
+    assert_eq!(gemini.auth, AuthState::Unknown);
     assert!(!format!("{gemini:?}").contains("gemini_secret_key"));
 
-    // Signed in via GOOGLE_API_KEY
+    // Ambient provider keys are not forwarded.
     let env = PathEnv::for_test(temp.path().to_path_buf())
         .with_env_var("GOOGLE_API_KEY", "google_secret_key");
     let detector = Detector::with_env(env);
     let detected = detector.detect(true).await;
     let gemini = detected.iter().find(|c| c.id == "gemini").unwrap();
-    assert_eq!(gemini.auth, AuthState::SignedIn);
+    assert_eq!(gemini.auth, AuthState::Unknown);
 
-    // Signed out when no key and no oauth_creds.json
+    // No verified status command: missing files cannot rule out a keychain.
     let env = PathEnv::for_test(temp.path().to_path_buf());
     let detector = Detector::with_env(env);
     let detected = detector.detect(true).await;
     let gemini = detected.iter().find(|c| c.id == "gemini").unwrap();
-    assert_eq!(gemini.auth, AuthState::SignedOut);
+    assert_eq!(gemini.auth, AuthState::Unknown);
 
     // Unknown when oauth_creds.json exists
     let gemini_dir = temp.path().join("home").join(".gemini");
@@ -438,7 +434,7 @@ async fn test_caching_and_refresh() {
 }
 
 #[tokio::test]
-async fn only_installed_claude_and_codex_are_runnable() {
+async fn only_installed_claude_is_runnable() {
     let temp = fixture_dir();
     for name in ["claude", "codex", "cursor-agent", "opencode", "gemini"] {
         install_fake(temp.path(), name);
@@ -512,13 +508,17 @@ fn npm_shim_uses_package_exe_and_js_bins_stay_refused() {
         .join("node_modules")
         .join("@anthropic-ai")
         .join("claude-code");
-    let exe = std::fs::canonicalize(package.join("bin").join("claude.exe")).unwrap();
+    let exe = cli_provider::search::plain_path(
+        std::fs::canonicalize(package.join("bin").join("claude.exe")).unwrap(),
+    );
     assert_eq!(resolved.program, exe);
     assert_eq!(resolved.args, [] as [String; 0]);
     assert!(
         resolved
             .program
-            .starts_with(std::fs::canonicalize(&package).unwrap())
+            .starts_with(cli_provider::search::plain_path(
+                std::fs::canonicalize(&package).unwrap()
+            ))
     );
 
     write_package(
@@ -608,27 +608,65 @@ fn cli_engines_catalog_marks_only_claude_runnable() {
     let ids: Vec<&str> = cli_provider::CLI_ENGINES.iter().map(|e| e.id).collect();
     assert_eq!(
         ids,
-        [
-            "claude",
-            "codex",
-            "cursor",
-            "opencode",
-            "gemini",
-            "chatgpt-plan",
-        ]
+        ["claude", "codex", "cursor", "opencode", "gemini", "agy",]
     );
     let claude = cli_provider::engine_spec("claude").expect("claude spec");
     assert!(claude.runnable);
     assert_eq!(claude.command, "claude");
 
-    for id in ["codex", "chatgpt-plan", "cursor", "opencode", "gemini"] {
+    for id in ["codex", "cursor", "opencode", "gemini", "agy"] {
         let spec = cli_provider::engine_spec(id).expect("spec exists");
         assert!(!spec.runnable, "{id} must not be runnable");
         let msg = cli_provider::enable_refusal_message(id);
         assert_ne!(msg, "", "{id} refusal message must not be empty");
     }
     assert!(cli_provider::enable_refusal_message("codex").contains("unified_exec"));
-    assert!(cli_provider::enable_refusal_message("chatgpt-plan").contains("unified_exec"));
     assert!(cli_provider::engine_spec("unknown").is_none());
     assert_ne!(cli_provider::enable_refusal_message("unknown"), "");
+}
+
+#[test]
+fn explicit_and_linked_working_directory_executables_are_refused() {
+    let cwd = std::env::current_dir().unwrap();
+    let env = PathEnv::for_test(cwd.clone());
+    assert!(resolve_spawn(&cwd.join("Cargo.toml"), &env).is_err());
+    assert!(resolve_spawn(Path::new("Cargo.toml"), &env).is_err());
+    #[cfg(unix)]
+    {
+        // A safe PATH wrapper must not redirect into the working directory.
+        let dir = fixture_dir();
+        std::os::unix::fs::symlink(cwd.join("Cargo.toml"), dir.path().join("payload.exe")).unwrap();
+        let shim = dir.path().join("claude.cmd");
+        std::fs::write(&shim, "\"%~dp0payload.exe\" %*\r\n").unwrap();
+        assert!(resolve_spawn(&shim, &PathEnv::for_test(dir.path().into())).is_err());
+    }
+}
+
+#[test]
+fn npm_js_bin_runs_through_node_with_a_plain_path() {
+    // `@openai/codex` ships `bin/codex.js`; node cannot realpath a verbatim
+    // `\?\C:\...` script path (EISDIR lstat 'C:'), so the path handed to it is plain.
+    let temp = fixture_dir();
+    let root = temp.path();
+    write_package(
+        root,
+        "@openai/codex",
+        "@openai/codex",
+        "codex",
+        "bin/codex.js",
+        b"#!/usr/bin/env node\nconsole.log('codex')\n",
+    );
+    npm_shim(root, "codex", "@openai/codex");
+    std::fs::write(root.join("node.exe"), b"fixture").unwrap();
+    let env = PathEnv::for_test(root.to_path_buf());
+    let resolved = resolve_spawn(&root.join("codex.cmd"), &env).unwrap();
+    assert!(resolved.program.ends_with("node.exe"));
+    assert_eq!(resolved.args.len(), 1);
+    assert!(
+        resolved.args[0].ends_with("codex.js"),
+        "{:?}",
+        resolved.args
+    );
+    assert!(!resolved.args[0].starts_with(r"\?\"), "{:?}", resolved.args);
+    assert!(!resolved.program.to_string_lossy().starts_with(r"\?\"));
 }

@@ -76,14 +76,19 @@ export type TimelineItem =
   | TodoListItem
   | NoticeItem;
 
+/** What the daemon reports (error event and `run_finished.error`) for a run the user stopped. */
+export const RUN_CANCELLED = "cancelled";
+
 export interface RunState {
   id: string;
   chatId: string;
   botId: string;
   startedMs: number;
   finishedMs?: number;
-  /** `undefined` while running; `null` = finished fine. */
+  /** `undefined` while running; `null` = finished fine (or stopped by the user, see `stopped`). */
   error?: string | null;
+  /** The user (or a hard stop) cancelled the run: not an error. */
+  stopped?: boolean;
   items: TimelineItem[];
   /** The schedule that started this run (scheduled runs only). */
   scheduleId?: string;
@@ -257,7 +262,9 @@ function reduce(
       return withRun(state, e.run_id, ts, (r) => ({
         ...r,
         finishedMs: ts,
-        error: e.error,
+        // A user Stop is not a failure: the daemon reports it as the error "cancelled".
+        error: e.error === RUN_CANCELLED ? null : e.error,
+        stopped: e.error === RUN_CANCELLED,
         // an unanswered question cannot be answered once the run is over
         items: closeOpenItems(r.items)
       }));
@@ -422,6 +429,9 @@ function reduce(
         ]
       }));
     case "error":
+      if (e.message === RUN_CANCELLED) {
+        return state; // the end of a user Stop, shown as "Stopped" instead of an error
+      }
       return withRun(state, e.run_id, ts, (r) => ({
         ...r,
         items: [
@@ -454,6 +464,26 @@ function reduce(
           }
         ]
       }));
+
+    case "checkpoint_restored":
+      return withRun(state, e.run_id, ts, (r) => ({
+        ...r,
+        items: [
+          ...r.items,
+          {
+            kind: "notice",
+            key: `notice-${seq}`,
+            ts,
+            tone: e.partial ? "danger" : "info",
+            i18nKey: e.partial ? "chat.notice.checkpointRestorePartial" : "chat.notice.checkpointRestored",
+            values: {
+              count: String(e.restored.length),
+              checkpointId: e.checkpoint_id,
+              safetyId: e.safety_checkpoint_id
+            }
+          }
+        ]
+      }));
     case "route_decided":
       return withRun(state, e.run_id, ts, (r) => ({
         ...r,
@@ -469,6 +499,7 @@ function reduce(
     case "workflow_step_completed":
     case "control_requested":
     case "control_state_changed":
+    case "view_targets_changed":
     case "mcp_server_changed":
       return state;
   }

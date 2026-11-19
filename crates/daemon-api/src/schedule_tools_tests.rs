@@ -46,6 +46,7 @@ fn limits(max: usize, min_secs: u64) -> ScheduleLimits {
         max_per_bot: max,
         min_interval_secs: min_secs,
         timezone: Some("Europe/Istanbul".into()),
+        watch_roots: Vec::new(),
     }
 }
 
@@ -111,6 +112,11 @@ fn fx_at(l: ScheduleLimits, start_ms: i64, known_user: bool) -> Fx {
             updated_at_ms: now_ms(),
             parent_run_id: None,
             spec: None,
+            computer_target: None,
+            computer_node: None,
+            computer_node_name: None,
+            paused_at_ms: None,
+            pause_reason: None,
         })
         .unwrap();
     let store = Arc::new(ScheduleStore::open(dir.path()).unwrap());
@@ -911,7 +917,7 @@ fn names_and_prompts_are_capped_and_stripped_of_control_and_bidi_characters() {
 // ---------------------------------------------------------------- audit & events
 
 #[test]
-fn every_create_update_pause_delete_is_audited_with_bot_run_and_old_values() {
+fn every_create_update_pause_delete_is_audited_with_ids_and_hashes_without_content() {
     let f = fx(limits(20, 300));
     let v = f.make(&f.caller_a(), &when("n", "daily")).unwrap();
     f.edit(
@@ -964,7 +970,18 @@ fn every_create_update_pause_delete_is_audited_with_bot_run_and_old_values() {
         "SHA-256 of the old prompt"
     );
     assert_eq!(upd["prompt_sha256"], sha("a new prompt"));
-    assert_eq!(upd["old_schedule"], "Every day at 09:00");
+    for entry in &log {
+        for field in [
+            "name",
+            "old_name",
+            "schedule",
+            "old_schedule",
+            "prompt",
+            "error",
+        ] {
+            assert!(entry.detail.get(field).is_none(), "user content in {field}");
+        }
+    }
 }
 
 #[test]
@@ -982,6 +999,7 @@ fn a_failed_audit_write_fails_the_operation_before_anything_is_committed() {
     f.store
         .set_trigger(sc.id, &scheduler::Trigger::Webhook { secret: "s".into() })
         .unwrap();
+    let revision = f.store.get(sc.id).unwrap().unwrap().revision;
     assert!(
         f.edit(
             &f.caller_a(),
@@ -995,7 +1013,7 @@ fn a_failed_audit_write_fails_the_operation_before_anything_is_committed() {
     let after = f.store.get(sc.id).unwrap().unwrap();
     assert!(after.enabled);
     assert!(matches!(after.payload, Payload::AgentPrompt { ref text } if text == "keep"));
-    assert_eq!(after.revision, sc.revision);
+    assert_eq!(after.revision, revision);
     assert!(
         f.store.get_trigger(sc.id).unwrap().is_some(),
         "a refused delete removes nothing, the webhook trigger included"
@@ -1029,7 +1047,8 @@ fn a_change_that_fails_after_the_audit_entry_leaves_a_failed_entry() {
     let log = f.storage.list_audit(f.user).unwrap();
     let e = log.iter().find(|e| e.action == "schedule.failed").unwrap();
     assert_eq!(e.detail["attempted"], "schedule.update");
-    assert_eq!(e.detail["error"], "disk full");
+    assert_eq!(e.detail["error_code"], "schedule_change_failed");
+    assert!(e.detail.get("error").is_none());
     assert_eq!(e.detail["schedule_id"], sc.id.0.to_string());
     assert_eq!(e.actor, "bot");
 }
@@ -1663,11 +1682,112 @@ fn schedule_failed_is_written_when_the_store_fails_after_the_audit_entry() {
         ]
     );
     for e in log.iter().filter(|e| e.action == "schedule.failed") {
-        assert!(e.detail["error"].as_str().unwrap().contains("disk on fire"));
+        assert_eq!(e.detail["error_code"], "schedule_change_failed");
+        assert!(e.detail.get("error").is_none());
         assert_eq!(e.detail["bot_id"], f.a.to_string());
     }
     // Nothing changed.
     let still = f.store.list_by_bot(f.a).unwrap();
     assert_eq!(still.len(), 1);
     assert!(still[0].enabled);
+}
+
+#[test]
+fn c225_bot_precheck_full_source_is_previewed_frozen_and_persisted_exactly() {
+    let mut f = fx(limits(20, 300));
+    let agent = AgentLoop::new(
+        f.storage.clone(),
+        ToolRegistry::new(),
+        Providers::single(Arc::new(FakeProvider)),
+        LoopConfig::default(),
+    );
+    agent.add_profile(
+        f.a,
+        agent_core::BotProfile::from_toml_str(
+            "[bot]\nid='fixture'\nname='Fixture'\npersona='Fixture'\n[models]\nexecutor='fake/m'\n",
+        )
+        .unwrap(),
+    );
+    f.host = f.host.with_agent(agent);
+    let mut request = when("bounded check", "daily");
+    let code =
+        "// full source stays visible\nconst text = 'untrusted';\nreturn {run:false,input:text};";
+    request.precheck = Some(json!({"kind":"script","code":code}));
+    let caller = f.caller_a();
+    let preview = f
+        .host
+        .preview(&caller, &ScheduleChange::Create(request.clone()))
+        .unwrap();
+    assert!(preview.prompt.contains(code));
+    let mut changed = request.clone();
+    changed.precheck = Some(json!({"kind":"script","code":"return true;"}));
+    assert!(f.host.create(&caller, &changed).is_err());
+    let stored = f.host.create(&caller, &request).unwrap();
+    let row = f
+        .store
+        .get(scheduler::TaskId(
+            uuid::Uuid::parse_str(&stored.id).unwrap(),
+        ))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.precheck,
+        Some(scheduler::Precheck::Script { code: code.into() })
+    );
+    assert_eq!(
+        row.payload,
+        Payload::AgentPrompt {
+            text: "do the thing".into()
+        }
+    );
+    assert!(
+        f.audit()
+            .iter()
+            .all(|entry| !entry.detail.to_string().contains(code))
+    );
+}
+
+#[test]
+fn c225_event_trigger_approval_and_list_show_poll_cadence_without_timer_promises() {
+    for (trigger, cadence) in [
+        (
+            scheduler::Trigger::FileWatch {
+                path: "fixture".into(),
+                glob: "*.txt".into(),
+                events: vec![scheduler::FileEvent::Created],
+                debounce_ms: 1000,
+            },
+            "30s",
+        ),
+        (
+            scheduler::Trigger::Email {
+                account: "fixture".into(),
+                from_filter: "sender@example.test".into(),
+                subject_filter: None,
+            },
+            "120s",
+        ),
+    ] {
+        let f = fx(limits(20, 300));
+        let sc = f.insert(f.a, ScheduleOrigin::Bot, user_every_hour(), text("review"));
+        f.store.set_trigger(sc.id, &trigger).unwrap();
+        let view = f.host.list(&f.caller_a()).unwrap().remove(0);
+        assert!(view.schedule.contains(cadence));
+        assert!(view.next_runs.is_empty());
+        let card = f
+            .host
+            .preview(
+                &f.caller_a(),
+                &ScheduleChange::Resume {
+                    id: sc.id.to_string(),
+                },
+            )
+            .unwrap();
+        assert!(card.schedule.contains(cadence));
+        assert!(card.next_runs.is_empty());
+        assert!(
+            card.prompt
+                .contains(&serde_json::to_string_pretty(&trigger).unwrap())
+        );
+    }
 }

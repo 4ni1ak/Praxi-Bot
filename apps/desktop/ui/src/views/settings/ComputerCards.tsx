@@ -1,3 +1,4 @@
+import { TrustedFolders } from "../../components/TrustedFolders";
 import { Monitor } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -11,6 +12,7 @@ import {
 import { useLiveView } from "../../state/LiveViewContext";
 import styles from "../SettingsModal.module.css";
 import { PermissionsSection } from "../SettingsSections";
+import { ComputerAccessCard } from "../../components/ComputerAccess";
 import { EmailCard } from "./EmailCard";
 import { WebSearchCard } from "./WebSearchCard";
 import type { CardDef, SettingsBridge } from "./types";
@@ -110,6 +112,24 @@ export function computerCards(b: SettingsBridge, t: TFunction): CardDef[] {
           <OpenLiveViewerRow />
         </div>
       )
+    },
+    {
+      id: "my-computer",
+      section: "computer",
+      kind: "block",
+      title: t("computerAccess.title"),
+      description: t("computerAccess.description"),
+      keywords: "bots use computer server host bilgisayar sunucu botlarim izin",
+      node: <ComputerAccessCard />
+    },
+    {
+      id: "trusted-folders",
+      section: "computer",
+      kind: "block",
+      title: t("folderTrust.title"),
+      description: t("folderTrust.description"),
+      keywords: "trust folder repository klasor guven depo",
+      node: <TrustedFolders />
     },
     {
       id: "permissions",

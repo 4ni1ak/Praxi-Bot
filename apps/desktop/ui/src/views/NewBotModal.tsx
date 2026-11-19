@@ -1,17 +1,16 @@
 import { type FormEvent, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
-import { BotAvatar, Button } from "ui";
+import { Button } from "ui";
 import type { Bot } from "../api/types";
+import { BotAvatarUploadField, useBotFormDeps } from "../components/BotAdvancedFields";
 import {
-  BotAppsFields,
-  BotAvatarUploadField,
-  BotModelRolesFields,
-  BotPermissionsFields,
-  BotRuntimeFields,
-  useBotFormDeps
-} from "../components/BotAdvancedFields";
-import { CharacterColorRow, CharacterShapeGrid } from "../components/CharacterPicker";
+  AdvancedFields,
+  AppFields,
+  ModelFields,
+  PermissionFields
+} from "../components/BotEditorFields";
+import { BotIdentityPicker } from "../components/BotIdentityPicker";
 import formStyles from "../components/Form.module.css";
 import { Modal } from "../components/Modal";
 import { ModelPicker } from "../components/ModelPicker";
@@ -31,10 +30,15 @@ import {
   presetToAutonomy,
   resolveAutoExecutorRef
 } from "../lib/botProfile";
+import { invalidCustomRoles } from "../lib/botEditor";
 import { botHasAccess, changedApps, saveBotAndApps } from "../lib/mcpApps";
+import { botWriteMessage } from "../lib/botWrite";
 import { modelGroups } from "../lib/modelPicker";
-import { useDaemon } from "../state/DaemonContext";
+import { LOCAL_COMPUTER, useDaemon } from "../state/DaemonContext";
+import { useEngineConsent } from "../state/EngineConsent";
+import { useCustomText } from "../state/useCustomText";
 import styles from "./NewBotModal.module.css";
+import { HomeHint } from "../components/HomeHint";
 
 function NewBotDialogContent({
   onDone,
@@ -44,18 +48,18 @@ function NewBotDialogContent({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const { client, bots, conn, refreshBots } = useDaemon();
+  const { client, bots, conn, refreshBots, activeComputerId, activeHostName } = useDaemon();
+  const { askEngine, applyEngine } = useEngineConsent();
+  const host = activeComputerId === LOCAL_COMPUTER ? null : { name: activeHostName ?? t("computerPicker.host") };
   const {
     providersDto,
-    providerIds,
-    httpProviders,
     servers,
     setServers,
     allowed,
     setAllowed,
     initialApps,
     setInitialApps
-  } = useBotFormDeps(client, undefined, Boolean(conn?.fake_provider), true);
+  } = useBotFormDeps(client, undefined, true);
 
   const [createdBot, setCreatedBot] = useState<Bot | null>(null);
   const [templateId, setTemplateId] = useState<BotTemplateId | null>("blank");
@@ -69,7 +73,11 @@ function NewBotDialogContent({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const patch = (p: Partial<BotDraft>) => setDraft((d) => ({ ...d, ...p }));
+  const { customText, setCustom, forgetFor } = useCustomText(setDraft);
+  const patch = (p: Partial<BotDraft>) => {
+    setDraft((d) => ({ ...d, ...p }));
+    forgetFor(p);
+  };
 
   const autoExecutor = useMemo(
     () => resolveAutoExecutorRef(providersDto, Boolean(conn?.fake_provider)),
@@ -103,14 +111,23 @@ function NewBotDialogContent({
   const activeAutonomy = presetToAutonomy(draft.preset);
   const nameMissing = draft.name.trim() === "";
   const executorMissing = effectiveExecutor.model.trim() === "";
+  // An unusable hand-typed id blocks creating the bot, as it blocks saving an edit.
+  const [pendingFallback, setPendingFallback] = useState("");
+  const customInvalid =
+    invalidCustomRoles(customText).length > 0 || pendingFallback.trim() !== "";
 
   const save = async () => {
-    if (!client || nameMissing || executorMissing || saving) {
+    if (!client || nameMissing || executorMissing || customInvalid || saving) {
       return;
     }
     setSaving(true);
     setError(null);
     try {
+      // A CLI model that only works with its own tools: the one consent step, before creating.
+      const answer = await askEngine(formatModelRef(effectiveDraft.executor), createdBot?.config);
+      if (answer === null) {
+        return;
+      }
       const target = createdBot ?? undefined;
       const config = configFromDraft(effectiveDraft, target);
       const input = { name: effectiveDraft.name.trim(), config };
@@ -125,6 +142,7 @@ function NewBotDialogContent({
       if (!target) {
         setCreatedBot(bot);
       }
+      await applyEngine(bot.id, answer);
       await refreshBots().catch(() => {});
       if (failed.length > 0 || notApplied.length > 0) {
         const fresh = await client.listMcpServers().catch(() => null);
@@ -170,7 +188,7 @@ function NewBotDialogContent({
       }
       onDone(bot.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(botWriteMessage(err, t));
     } finally {
       setSaving(false);
     }
@@ -185,6 +203,7 @@ function NewBotDialogContent({
     <form className={styles.modalForm} onSubmit={handleSubmit}>
       <header className={styles.header}>
         <h2 className={styles.title}>{t("newBot.title")}</h2>
+        <HomeHint />
         <button
           type="button"
           className={styles.closeButton}
@@ -216,50 +235,21 @@ function NewBotDialogContent({
           })}
         </div>
 
-        <div className={styles.preview}>
-          <BotAvatar
-            bot={{
-              id: createdBot?.id ?? "new-bot-preview",
-              name: draft.name.trim() || t("newBot.title"),
-              shape: draft.shape,
-              color: draft.color,
-              avatar: draft.avatar
-            }}
-            size="hero"
-            live
-            decorative
-          />
-        </div>
-
-        <div className={styles.nameWrap}>
-          <input
-            type="text"
-            className={styles.nameInput}
-            data-autofocus
-            data-testid="new-bot-name"
-            maxLength={24}
-            value={draft.name}
-            placeholder={t("newBot.namePlaceholder")}
-            aria-label={t("botForm.name")}
-            onChange={(e) => {
-              setTemplateId(null);
-              patch({ name: e.target.value });
-            }}
-          />
-        </div>
-
-        <CharacterShapeGrid
-          value={draft.shape}
+        <BotIdentityPicker
+          previewId={createdBot?.id ?? "new-bot-preview"}
+          name={draft.name}
+          shape={draft.shape}
           color={draft.color}
-          onChange={(shape) => {
+          avatar={draft.avatar}
+          onName={(name) => {
+            setTemplateId(null);
+            patch({ name });
+          }}
+          onShape={(shape) => {
             setTemplateId(null);
             patch({ shape });
           }}
-        />
-
-        <CharacterColorRow
-          value={draft.color}
-          onChange={(color) => {
+          onColor={(color) => {
             setTemplateId(null);
             patch({ color });
           }}
@@ -282,6 +272,7 @@ function NewBotDialogContent({
                 }}
                 reviewOpen={false}
                 placement="bottom-end"
+                engines
                 testId="new-bot-brain"
                 onPick={(ref) => {
                   const i = ref.indexOf("/");
@@ -353,12 +344,12 @@ function NewBotDialogContent({
 
             <div>
               <h3 className={styles.advancedHeading}>{t("botForm.models")}</h3>
-              <BotModelRolesFields
+              <ModelFields
                 draft={effectiveDraft}
-                providerIds={providerIds}
-                httpProviders={httpProviders}
                 providersDto={providersDto}
                 executorMissing={executorMissing}
+                pendingFallback={pendingFallback}
+                onPendingFallback={setPendingFallback}
                 patch={(next) => {
                   if (next.executor) {
                     setBrainMode("manual");
@@ -370,12 +361,12 @@ function NewBotDialogContent({
 
             <div>
               <h3 className={styles.advancedHeading}>{t("botForm.permissions")}</h3>
-              <BotPermissionsFields draft={draft} patch={patch} />
+              <PermissionFields draft={draft} patch={patch} />
             </div>
 
             <div>
               <h3 className={styles.advancedHeading}>{t("botForm.apps.title")}</h3>
-              <BotAppsFields
+              <AppFields
                 servers={servers}
                 allowed={allowed}
                 onToggle={(name, checked) =>
@@ -384,13 +375,27 @@ function NewBotDialogContent({
               />
             </div>
 
-            <div>
-              <h3 className={styles.advancedHeading}>{t("botForm.runtime")}</h3>
-              <BotRuntimeFields draft={draft} patch={patch} />
-            </div>
+            <AdvancedFields
+              draft={effectiveDraft}
+              customText={customText}
+              onCustomText={(role, text) => {
+                if (role === "executor") setBrainMode("manual");
+                setCustom(role, text);
+              }}
+              computerTarget="local"
+              browserTarget="local"
+              deleteBlocked={null}
+              chatCount={0}
+              runCount={0}
+            />
           </div>
         ) : null}
 
+        {host && executorMissing ? (
+          <p className={styles.alert} role="status" data-testid="new-bot-host-needs-model">
+            {t("hostMode.newBotNeedsModel", { name: host.name })}
+          </p>
+        ) : null}
         {error ? (
           <p className={styles.alert} role="alert">
             {error}
@@ -405,7 +410,7 @@ function NewBotDialogContent({
         <Button
           type="submit"
           variant="primary"
-          disabled={saving || nameMissing || executorMissing}
+          disabled={saving || nameMissing || executorMissing || customInvalid}
           data-testid="new-bot-submit"
         >
           {t("newBot.create")}

@@ -36,6 +36,14 @@ wildcards = "deny"
 # only enforced for our direct dependencies: Tauri's Linux GTK stack pulls in
 # several unmaintained-but-stable crates we cannot replace.
 unmaintained = "workspace"
+# chrono / chrono-tz were flagged unmaintained in 2026. They are used across our crates (schedules,
+# timestamps) and by async-imap (email connector); no chrono-free release exists within semver.
+# Unmaintained is not a vulnerability. Added 2026-11-17; revisit when migrating to jiff/time or
+# when async-imap drops chrono, then delete these two entries.
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained; no vulnerability, see note above" },
+    { id = "RUSTSEC-2026-0555", reason = "chrono-tz unmaintained; no vulnerability, see note above" },
+]
 
 [sources]
 # Only allow crates from crates.io.

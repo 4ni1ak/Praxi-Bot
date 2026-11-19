@@ -3,6 +3,7 @@ import { type ReactNode, useId, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { brandIcon } from "../lib/brandIcons";
+import { formatClock, formatStamp, formatStepDuration, type MessageTimes } from "../lib/messageTime";
 import { type Chain, chainSeconds, type ChainStep } from "../lib/thinkingChain";
 import { describeTool, stepPhase } from "../lib/toolLabels";
 import type { ToolItem } from "../state/timeline";
@@ -35,8 +36,18 @@ const brandName = (name: string): string | null => {
   return b.known ? b.name : null;
 };
 
-function ToolStep({ tool }: { tool: ToolItem }) {
-  const { t } = useTranslation();
+/** Daemon-measured run time, else request to completion. */
+function stepMs(tool: ToolItem): number | undefined {
+  if (tool.durationMs !== undefined) {
+    return tool.durationMs;
+  }
+  return tool.completedMs !== undefined ? tool.completedMs - tool.requestedMs : undefined;
+}
+
+function ToolStep({ tool, times }: { tool: ToolItem; times: MessageTimes }) {
+  const { t, i18n } = useTranslation();
+  const ms = stepMs(tool);
+  const clock = times === "off" ? null : formatClock(tool.requestedMs, i18n.language, true);
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const label = describeTool(tool.name, tool.input, brandName);
@@ -75,6 +86,21 @@ function ToolStep({ tool }: { tool: ToolItem }) {
           >
             <ChevronRight className={open ? styles.moreOpen : undefined} />
           </button>
+          {clock ? (
+            <span
+              className={styles.stepTime}
+              title={formatStamp(tool.requestedMs, i18n.language)}
+              data-testid="step-time"
+            >
+              {clock}
+              {ms !== undefined && !active
+                ? ` · ${formatStepDuration(ms, i18n.language, {
+                    s: t("chat.duration.shortSeconds"),
+                    m: t("chat.duration.shortMinutes")
+                  })}`
+                : ""}
+            </span>
+          ) : null}
         </div>
         {label.chips.length > 0 ? (
           <div className={styles.chips}>
@@ -97,13 +123,13 @@ function ToolStep({ tool }: { tool: ToolItem }) {
   );
 }
 
-function Step({ step }: { step: ChainStep }) {
+function Step({ step, times }: { step: ChainStep; times: MessageTimes }) {
   return step.kind === "thought" ? (
     <li className={styles.thought}>
       <Markdown text={step.text} />
     </li>
   ) : (
-    <ToolStep tool={step.tool} />
+    <ToolStep tool={step.tool} times={times} />
   );
 }
 
@@ -114,13 +140,16 @@ function Step({ step }: { step: ChainStep }) {
  */
 export function ThinkingChain({
   chain,
-  avatar
+  avatar,
+  times = "minutes"
 }: {
   chain: Chain;
+  /** Settings, General: step times off / on. */
+  times?: MessageTimes;
   /** The bot's character, shown at the start of the line. */
   avatar?: ReactNode;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const listId = useId();
   const open = userOpen ?? chain.live;
@@ -129,6 +158,15 @@ export function ThinkingChain({
     : t("chat.chain.thought", {
         duration: formatSpan(t, chainSeconds(chain))
       });
+  const span =
+    times === "off"
+      ? undefined
+      : chain.live
+        ? t("chat.chain.started", { start: formatStamp(chain.spanStartMs, i18n.language) })
+        : t("chat.chain.startedFinished", {
+            start: formatStamp(chain.spanStartMs, i18n.language),
+            end: formatStamp(chain.endMs, i18n.language)
+          });
   return (
     <div
       className={styles.chain}
@@ -140,6 +178,7 @@ export function ThinkingChain({
         className={styles.head}
         aria-expanded={open}
         aria-controls={listId}
+        title={span}
         onClick={() => setUserOpen(!open)}
       >
         {avatar}
@@ -159,7 +198,7 @@ export function ThinkingChain({
       {open ? (
         <ol id={listId} className={styles.steps}>
           {chain.steps.map((s) => (
-            <Step key={s.key} step={s} />
+            <Step key={s.key} step={s} times={times} />
           ))}
         </ol>
       ) : null}

@@ -54,6 +54,9 @@ jobs:
         run: |
           $triple = (rustc -Vv | Select-String "host:").ToString().Split(":")[1].Trim()
           Write-Host "Target triple: $triple"
+          # The release tag this build belongs to (v0.1.0-alpha.1): `bot host add` tells the server
+          # which GitHub release to install; the Cargo version alone (0.1.0) is not that tag.
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:PRAXI_RELEASE_TAG = $env:GITHUB_REF_NAME }
           cargo build --release -p cli
           New-Item -ItemType Directory -Force -Path apps/desktop/binaries | Out-Null
           Copy-Item "target/release/bot.exe" "apps/desktop/binaries/bot-$triple.exe" -Force

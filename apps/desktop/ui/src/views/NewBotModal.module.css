@@ -95,37 +95,6 @@
   color: var(--color-text);
 }
 
-.preview {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-1) var(--space-0);
-}
-
-.nameWrap {
-  width: 100%;
-  max-width: calc(var(--space-16) * 4.25);
-}
-
-.nameInput {
-  width: 100%;
-  height: calc(var(--size-control-lg) + var(--size-border-thick));
-  padding: var(--space-0) var(--space-4);
-  border: var(--size-border) solid var(--color-border);
-  border-radius: var(--radius-card);
-  background-color: var(--color-surface-elevated);
-  color: var(--color-text);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  text-align: center;
-}
-
-.nameInput:focus-visible {
-  outline: none;
-  border-color: var(--color-focus);
-  box-shadow: var(--shadow-focus);
-}
-
 .settingsGroup {
   width: 100%;
 }

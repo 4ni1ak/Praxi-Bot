@@ -19,8 +19,11 @@ import {
   canSendLiveInput,
   createInitialLiveViewState,
   foreignPausedTakeover,
+  isActivelyOwningTakeover,
   isLocalBaseUrl,
+  markRemoteBaseUrl,
   RELEASE_LEASE_MAX_MS,
+  sessionProfile,
   visibleActions,
   type LiveViewControllerState
 } from "./liveViewState.ts";
@@ -462,4 +465,112 @@ test("wiring: one poller under Tauri, ordered snapshots, labelled foreign clear,
     const j = JSON.parse(read(`../i18n/locales/${l}.json`));
     assert.match(j.liveView.clearForeignPause, /\{\{owner\}\}/, l);
   }
+});
+
+// ---- follow-ups from the final review ---------------------------------------
+
+import { admitSnapshot } from "./snapshotOrder.ts";
+
+test("latch fallback: a release refusal because a peer just took control aborts instead of recovering", async () => {
+  const calls: string[] = [];
+  let reads = 0;
+  const out = await runClearPause(
+    {
+      getControlState: async () => {
+        reads += 1;
+        // 1st read: plain latch; 2nd read (after the refusal): a peer holds control
+        return reads === 1 ? dto(null, "paused") : dto(tk({ id: NIL, owner: "peer:p" }));
+      },
+      releaseLatch: async () => {
+        calls.push("release");
+        throw new Error("409 owned takeover");
+      },
+      recover: async () => {
+        calls.push("recover");
+        return dto(null);
+      }
+    },
+    { kind: "latch" }
+  );
+  assert.equal(out.kind, "aborted");
+  assert.deepEqual(calls, ["release"], "recover never interrupts the peer");
+
+  // still no takeover and still paused: the unreadable-latch fallback applies
+  const calls2: string[] = [];
+  const ok = await runClearPause(
+    {
+      getControlState: async () => dto(null, "paused"),
+      releaseLatch: async () => {
+        calls2.push("release");
+        throw new Error("409");
+      },
+      recover: async () => {
+        calls2.push("recover");
+        return dto(null);
+      }
+    },
+    { kind: "latch" }
+  );
+  assert.equal(ok.kind, "cleared");
+  assert.deepEqual(calls2, ["release", "recover"]);
+
+  // latch no longer paused after the refusal: nothing to recover
+  let n = 0;
+  const gone = await runClearPause(
+    {
+      getControlState: async () => (++n === 1 ? dto(null, "paused") : dto(null)),
+      releaseLatch: async () => {
+        throw new Error("409");
+      },
+      recover: async () => dto(null)
+    },
+    { kind: "latch" }
+  );
+  assert.equal(gone.kind, "aborted");
+});
+
+test("an untagged snapshot (action response) invalidates older in-flight GETs", () => {
+  const seq = createSnapshotSequencer();
+  const inFlight = seq.issue(); // refreshTargets GET
+  assert.equal(admitSnapshot(seq, undefined), true, "native Pause / Stop / release response");
+  assert.equal(admitSnapshot(seq, inFlight), false, "the older GET no longer overwrites it");
+  assert.equal(admitSnapshot(seq, seq.issue()), true);
+});
+
+test("the dock renders its buttons from visibleActions (so the state table constrains it)", () => {
+  const viewer = read("../views/LiveViewer.tsx");
+  assert.match(viewer, /actions\.includes\("bitirdim"\) \|\| actions\.includes\("retry_bitirdim"\)/);
+  assert.match(viewer, /actions\.includes\("retry_bitirdim"\)/);
+  assert.match(viewer, /recoveryPrompt && actions\.includes\("clear_pause"\)/);
+  assert.match(viewer, /actions\.includes\("reacquire"\)/);
+  assert.match(viewer, /actions\.includes\("stop"\)/);
+  assert.doesNotMatch(viewer, /ownsActive \|\| isReleasing/);
+  assert.match(read("../state/LiveViewContext.tsx"), /admitSnapshot\(sequencer, ticket\)/);
+});
+
+test("a loopback proxy to a paired host is a peer connection, not the local user", () => {
+  const url = "http://127.0.0.1:54321";
+  assert.equal(isLocalBaseUrl(url), true);
+  const unmark = markRemoteBaseUrl(`${url}/`);
+  assert.equal(isLocalBaseUrl(url), false);
+  assert.equal(isLocalBaseUrl("http://127.0.0.1:54322"), true);
+  unmark();
+  assert.equal(isLocalBaseUrl(url), true);
+});
+
+test("a preview never reports the human as driving: only an accepted take-over is live", () => {
+  // The right panel's card, in every state a passive look can reach.
+  let st = watching();
+  for (const step of [
+    (s: LiveViewControllerState) => s,
+    (s: LiveViewControllerState) => applyFrameRendered(s, frame, 2000),
+    (s: LiveViewControllerState) => applyStatusRecord(s, { ...statusActive, input_allowed: false }, 2100)
+  ]) {
+    st = step(st);
+    assert.equal(sessionProfile(st), "watch");
+    assert.equal(isActivelyOwningTakeover(st), false);
+    assert.equal(buildSessionHeartbeat(st).takeover_id, undefined, "no take-over lease is renewed");
+  }
+  // The explicit take-over is the only thing that makes it live.
+  assert.equal(sessionProfile(owning()), "live");
 });

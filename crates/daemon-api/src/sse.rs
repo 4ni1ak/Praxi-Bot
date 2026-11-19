@@ -132,6 +132,8 @@ struct Feed {
     mcp_rx: Option<broadcast::Receiver<McpServerChanged>>,
     /// `control_state_changed` notifications (global stream only).
     control_rx: Option<broadcast::Receiver<crate::dto::ControlStateChanged>>,
+    /// `view_targets_changed` notifications (global stream only).
+    targets_rx: Option<broadcast::Receiver<()>>,
     // ---- both ----
     storage: Arc<Storage>,
     data_dir: PathBuf,
@@ -513,6 +515,19 @@ impl Feed {
                         continue;
                     }
                 },
+                t = async {
+                    match &mut self.targets_rx {
+                        Some(r) => r.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => match t {
+                    // A lost hint still means "something changed": refetch.
+                    Ok(()) | Err(RecvError::Lagged(_)) => return Some(Out::TargetsChanged),
+                    Err(RecvError::Closed) => {
+                        self.targets_rx = None;
+                        continue;
+                    }
+                },
             };
             match received {
                 Ok(item) => {
@@ -545,6 +560,7 @@ pub(crate) enum Out {
     Host(crate::host::HostEvent),
     Mcp(McpServerChanged),
     Control(crate::dto::ControlStateChanged),
+    TargetsChanged,
     Gap(Gap),
     Unavailable(u64),
 }
@@ -955,6 +971,11 @@ fn event_stream(feed: Feed, local: bool) -> impl Stream<Item = Result<SseEvent, 
                 .event("control_state_changed")
                 .json_data(&change)
                 .unwrap_or_else(|_| SseEvent::default().comment("unserialisable event")),
+            // Fixed, pixel-free shape: "refetch GET /v1/view/targets".
+            Out::TargetsChanged => SseEvent::default()
+                .event("view_targets_changed")
+                .json_data(serde_json::json!({"type": "view_targets_changed"}))
+                .unwrap_or_else(|_| SseEvent::default().comment("unserialisable event")),
         };
         Some((Ok(ev), (feed, local)))
     })
@@ -1017,6 +1038,9 @@ pub(crate) async fn events(
             .then(|| state.mcp().map(|m| m.subscribe()))
             .flatten(),
         control_rx: scoped_run.is_none().then(|| state.hub().subscribe_events()),
+        targets_rx: scoped_run
+            .is_none()
+            .then(|| state.live_view().registry.subscribe_changes()),
         storage: state.storage_arc(),
         data_dir: state.data_dir(),
         logs: Arc::default(),
@@ -1333,6 +1357,7 @@ mod tests {
             host_rx: None,
             mcp_rx: None,
             control_rx: None,
+            targets_rx: None,
             storage: Arc::clone(&storage),
             data_dir: dir.path().to_owned(),
             logs: Arc::default(),

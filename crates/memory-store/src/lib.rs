@@ -23,6 +23,7 @@ mod types;
 mod vec;
 
 pub mod embed;
+pub mod knowledge;
 pub mod prompts;
 
 #[cfg(feature = "fastembed")]

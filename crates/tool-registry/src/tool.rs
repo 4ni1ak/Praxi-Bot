@@ -29,6 +29,24 @@ pub enum ContentPart {
     Binary { mime_type: String, base64: String },
 }
 
+/// Trust of a tool output, recorded by daemon code.
+///
+/// This is not read back from the bytes shown to the model. A tool sets it
+/// when the output's trust is not the tool's own declared class (discovery
+/// returning someone else's description, for example).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputExposure {
+    /// The output contains untrusted text.
+    pub ingests_untrusted: bool,
+    /// The output contains private data.
+    pub reads_private: bool,
+    /// Short source label for an approval card. Empty means the caller picks one.
+    pub label: String,
+    /// A validated local repository folder whose read caused this exposure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_folder: Option<String>,
+}
+
 /// The result of a successful tool call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolOutput {
@@ -39,6 +57,10 @@ pub struct ToolOutput {
     /// If the full output exceeded the in-memory budget, the remainder was
     /// written to a temporary file and a pointer is returned here.
     pub spill: Option<SpillRef>,
+    /// Trust of this output when it differs from the tool's declared class.
+    /// `None` means "use the spec". Never derived from [`Self::content`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposure: Option<OutputExposure>,
 }
 
 impl ToolOutput {
@@ -47,7 +69,68 @@ impl ToolOutput {
         Self {
             content: vec![ContentPart::Text { text: text.into() }],
             spill: None,
+            exposure: None,
         }
+    }
+}
+
+/// One running program as the daemon names it for a control grant: image
+/// path, process id and process start time. A reused pid has another start
+/// time and is another program.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ControlIdentity {
+    /// Full path of the executable image.
+    pub image_path: String,
+    /// Process id.
+    pub pid: u32,
+    /// Process start time in OS ticks.
+    pub start_time: u64,
+}
+
+/// Which kind of input a control call sends. Only these three can ever be
+/// covered by a run-scoped control grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlKind {
+    /// `desktop_type`.
+    Type,
+    /// `desktop_set_value`.
+    SetValue,
+    /// `desktop_key`.
+    Key,
+}
+
+/// The program and window a desktop input call would reach, resolved by the
+/// tool before the permission decision (card 243-1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlTarget {
+    /// What the call sends.
+    pub kind: ControlKind,
+    /// The program that would receive the input.
+    pub identity: ControlIdentity,
+    /// Window title, for the card.
+    pub window_title: String,
+    /// Why no grant may cover this call or be offered for it (a stable code
+    /// such as `terminal`, `elevated`, `password_field`, `chord`, `dialog`).
+    /// `None` = a grant may cover it.
+    pub refusal: Option<String>,
+}
+
+impl ControlTarget {
+    /// File name of the program, for the card.
+    #[must_use]
+    pub fn program_name(&self) -> String {
+        let p = &self.identity.image_path;
+        p.rsplit(['\\', '/']).next().unwrap_or(p).to_owned()
+    }
+
+    /// A grant may cover this call and may be offered on its card.
+    #[must_use]
+    pub fn eligible(&self) -> bool {
+        self.refusal.is_none()
+            && self.identity.pid != 0
+            && self.identity.start_time != 0
+            && !self.identity.image_path.trim().is_empty()
     }
 }
 
@@ -63,6 +146,21 @@ pub struct ToolContext {
     /// MCP servers with a `bots` allowlist refuse a call whose id is missing
     /// or not listed. `None` here is not "every bot".
     pub bot_id: Option<String>,
+    /// The run has already read untrusted or private content. A skill saved
+    /// from this call is stored as untrusted data, not as a trusted instruction.
+    pub content_tainted: bool,
+    /// The run holds UNTRUSTED content (a page, mail, a download, another bot's reply). Files
+    /// written or moved by a tool in such a run get an untrusted origin mark.
+    pub exposure_untrusted: bool,
+    /// The origin (`scheme://host:port`) the loop saw the browser page on when it allowed this
+    /// page action. The browser tool refuses to act if the page is on another origin by then
+    /// (a navigation or redirect in between), so an allowance never follows the page elsewhere.
+    pub expected_origin: Option<String>,
+    /// Set by the loop only when a run-scoped control grant covers this call:
+    /// the tool must send its input through the backend's guarded path, so the
+    /// window that would receive it is checked against this program right
+    /// before the OS call. `None` for every other call.
+    pub control_guard: Option<ControlIdentity>,
 }
 
 impl Default for ToolContext {
@@ -71,14 +169,32 @@ impl Default for ToolContext {
             run_id: String::new(),
             max_inline_bytes: 1024 * 1024, // 1 MiB
             bot_id: None,
+            content_tainted: false,
+            exposure_untrusted: false,
+            expected_origin: None,
+            control_guard: None,
         }
     }
+}
+
+/// A narrow, owner-created standing authorisation that stands in for the
+/// approval card of one specific call (for example "this secret on this exact
+/// origin"). Returned by [`Tool::standing_grant`]; the loop records it in the
+/// audit log and does not ask. It is never a policy waiver: nothing but the
+/// tool itself can produce one, and only after it re-verified the exact facts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandingGrant {
+    /// The grant's id (safe to audit: no value).
+    pub id: String,
+    /// One line saying what was authorised (names and origins only).
+    pub label: String,
 }
 
 /// A callable tool.
 ///
 /// **Delegation rule:** a `Tool` that forwards calls to another tool (a
 /// wrapper, bridge or dispatcher) must also forward [`Tool::always_ask`],
+/// [`Tool::always_ask_for`], [`Tool::standing_grant`],
 /// [`Tool::approval_details`] and [`Tool::approval_closed`] to it, otherwise
 /// the wrapped tool's confirmation guarantees are silently lost. Prefer
 /// implementing [`ToolWrapper`] (where the hooks are required methods with no
@@ -93,6 +209,13 @@ impl Default for ToolContext {
 pub trait Tool: Send + Sync {
     /// Return the static specification for this tool.
     fn spec(&self) -> &ToolSpec;
+
+    /// Host-derived per-bot egress classification, when it differs from a
+    /// static tool declaration. `None` keeps the native gate's static/default
+    /// classification; this metadata alone does not authorize an operation.
+    fn egress_for(&self, _bot_id: Option<&str>) -> Option<bool> {
+        None
+    }
 
     /// Whether the bot `bot_id` (`None` = no bot) may see this tool in
     /// discovery and in the model's tool list.  Default: every bot.  This is
@@ -135,6 +258,52 @@ pub trait Tool: Send + Sync {
     fn always_ask(&self) -> bool {
         false
     }
+
+    /// The program and window this call would send input to, for a run-scoped
+    /// control grant (card 243-1). Resolved before the permission decision.
+    /// `None` (the default) means the tool has no such target, so no grant is
+    /// offered for it and behaviour is unchanged.
+    async fn control_target(&self, _ctx: &ToolContext, _input: &Value) -> Option<ControlTarget> {
+        None
+    }
+
+    /// The origin a page action would act on right now, read from the browser itself (`None`:
+    /// not a page action, no session, or unknown: the call then stays once-only).
+    async fn current_origin(&self, _ctx: &ToolContext, _input: &Value) -> Option<String> {
+        None
+    }
+
+    /// Host the call actually contacts when the input does not name one.
+    ///
+    /// `OpenAPI` tools use this so the card footer shows the API host, not the
+    /// operation name. `None` leaves the card's own host text.
+    fn egress_host(&self, _input: &Value) -> Option<String> {
+        None
+    }
+
+    /// Lines the tool itself adds to the outgoing text: a default browser
+    /// profile, the search backend that will be used, a skill body that is
+    /// not in the arguments. Empty when the input already shows everything.
+    fn egress_extra(&self, _ctx: &ToolContext, _input: &Value) -> Option<String> {
+        None
+    }
+
+    /// Like [`Tool::always_ask`] but decided from this call's input: a call
+    /// that types an owner-stored secret must be confirmed every time, however
+    /// permissive the policy, grants, read shortcuts or presets are. Only an
+    /// outright deny is stricter. Default: no.
+    fn always_ask_for(&self, _input: &Value) -> bool {
+        false
+    }
+
+    /// An owner-created standing authorisation covering exactly this call, if
+    /// there is one, checked against the facts the tool itself verifies at this
+    /// moment (never against what the model claims). `Some` lets the loop skip
+    /// the approval card for this call and audit the grant's id; it does not
+    /// skip [`Tool::call`]'s own checks. Default: none.
+    async fn standing_grant(&self, _ctx: &ToolContext, _input: &Value) -> Option<StandingGrant> {
+        None
+    }
 }
 
 /// A wrapper trait for tools that delegate to another [`Tool`].
@@ -146,6 +315,9 @@ pub trait Tool: Send + Sync {
 pub trait ToolWrapper: Send + Sync {
     /// Return the static specification for this tool.
     fn spec(&self) -> &ToolSpec;
+
+    /// Forward the wrapped tool's dynamic egress classification.
+    fn egress_for(&self, bot_id: Option<&str>) -> Option<bool>;
 
     /// Whether the bot `bot_id` (`None` = no bot) may see this tool.
     fn visible_to(&self, _bot_id: Option<&str>) -> bool {
@@ -160,6 +332,12 @@ pub trait ToolWrapper: Send + Sync {
 
     /// Forward [`Tool::always_ask`] to the wrapped tool.
     fn always_ask(&self) -> bool;
+
+    /// Forward [`Tool::always_ask_for`] to the wrapped tool.
+    fn always_ask_for(&self, input: &Value) -> bool;
+
+    /// Forward [`Tool::standing_grant`] to the wrapped tool.
+    async fn standing_grant(&self, ctx: &ToolContext, input: &Value) -> Option<StandingGrant>;
 
     /// Forward [`Tool::approval_details`] to the wrapped tool.
     ///
@@ -179,6 +357,10 @@ pub trait ToolWrapper: Send + Sync {
 impl<W: ToolWrapper> Tool for W {
     fn spec(&self) -> &ToolSpec {
         ToolWrapper::spec(self)
+    }
+
+    fn egress_for(&self, bot_id: Option<&str>) -> Option<bool> {
+        ToolWrapper::egress_for(self, bot_id)
     }
 
     fn visible_to(&self, bot_id: Option<&str>) -> bool {
@@ -204,12 +386,22 @@ impl<W: ToolWrapper> Tool for W {
     fn always_ask(&self) -> bool {
         ToolWrapper::always_ask(self)
     }
+
+    fn always_ask_for(&self, input: &Value) -> bool {
+        ToolWrapper::always_ask_for(self, input)
+    }
+
+    async fn standing_grant(&self, ctx: &ToolContext, input: &Value) -> Option<StandingGrant> {
+        ToolWrapper::standing_grant(self, ctx, input).await
+    }
 }
 
 #[cfg(test)]
 mod delegation_guard {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
+
+    use crate::ContentClass;
 
     use syn::visit::{self, Visit};
     use syn::{
@@ -259,7 +451,13 @@ mod delegation_guard {
         "Discovery",
     ];
 
-    const REQUIRED_HOOKS: &[&str] = &["always_ask", "approval_details", "approval_closed"];
+    const REQUIRED_HOOKS: &[&str] = &[
+        "always_ask",
+        "always_ask_for",
+        "standing_grant",
+        "approval_details",
+        "approval_closed",
+    ];
 
     #[derive(Default)]
     struct TypeInfo {
@@ -568,6 +766,7 @@ impl Tool for B {
         assert_eq!(missing_hooks_in_source(src), vec!["A"]);
     }
 
+    #[allow(clippy::too_many_lines)] // one long table of cases / hooks, flat on purpose
     #[test]
     fn bypass_vectors_are_caught() {
         // 1. Box<dyn Tool>, Vec<Arc<dyn Tool>>, dyn Tool + Send + Sync, tuple struct,
@@ -650,6 +849,12 @@ impl tool_registry::Tool for Good {
     fn always_ask(&self) -> bool {
         self.inner.always_ask()
     }
+    fn always_ask_for(&self, i: &Value) -> bool {
+        self.inner.always_ask_for(i)
+    }
+    async fn standing_grant(&self, c: &ToolContext, i: &Value) -> Option<StandingGrant> {
+        self.inner.standing_grant(c, i).await
+    }
     async fn approval_details(&self, c: &ToolContext, i: &Value) -> Result<Option<Value>, ToolError> {
         self.inner.approval_details(c, i).await
     }
@@ -659,10 +864,27 @@ impl tool_registry::Tool for Good {
 }
 "#;
         assert!(missing_hooks_in_source(genuine).is_empty(), "{genuine}");
+
+        // A wrapper that forwards the three older hooks but forgets the
+        // per-call ones silently loses "this call must always ask".
+        let forgets_per_call = r"
+struct W { inner: Arc<dyn Tool> }
+impl Tool for W {
+    fn always_ask(&self) -> bool { self.inner.always_ask() }
+    async fn approval_details(&self, c: &ToolContext, i: &Value) -> Result<Option<Value>, ToolError> {
+        self.inner.approval_details(c, i).await
+    }
+    fn approval_closed(&self, c: &ToolContext, i: &Value, t: Option<&str>) {
+        self.inner.approval_closed(c, i, t);
+    }
+}
+";
+        assert_eq!(missing_hooks_in_source(forgets_per_call), vec!["W"]);
     }
 
-    #[test]
-    fn tool_wrapper_trait_forwards_all_approval_hooks() {
+    #[allow(clippy::too_many_lines)] // one long table of cases / hooks, flat on purpose
+    #[tokio::test]
+    async fn tool_wrapper_trait_forwards_all_approval_hooks() {
         use crate::{Effect, ToolError, ToolSpec};
         use protocol::PermissionCategory;
         use std::sync::Arc;
@@ -688,6 +910,19 @@ impl tool_registry::Tool for Good {
             fn always_ask(&self) -> bool {
                 true
             }
+            fn always_ask_for(&self, input: &serde_json::Value) -> bool {
+                input.get("secret").is_some()
+            }
+            async fn standing_grant(
+                &self,
+                _ctx: &crate::ToolContext,
+                _input: &serde_json::Value,
+            ) -> Option<crate::StandingGrant> {
+                Some(crate::StandingGrant {
+                    id: "g1".into(),
+                    label: "inner".into(),
+                })
+            }
             async fn approval_details(
                 &self,
                 _ctx: &crate::ToolContext,
@@ -712,6 +947,9 @@ impl tool_registry::Tool for Good {
             fn spec(&self) -> &ToolSpec {
                 self.0.spec()
             }
+            fn egress_for(&self, bot_id: Option<&str>) -> Option<bool> {
+                self.0.egress_for(bot_id)
+            }
             async fn call(
                 &self,
                 ctx: &crate::ToolContext,
@@ -721,6 +959,16 @@ impl tool_registry::Tool for Good {
             }
             fn always_ask(&self) -> bool {
                 self.0.always_ask()
+            }
+            fn always_ask_for(&self, input: &serde_json::Value) -> bool {
+                self.0.always_ask_for(input)
+            }
+            async fn standing_grant(
+                &self,
+                ctx: &crate::ToolContext,
+                input: &serde_json::Value,
+            ) -> Option<crate::StandingGrant> {
+                self.0.standing_grant(ctx, input).await
             }
             async fn approval_details(
                 &self,
@@ -748,11 +996,22 @@ impl tool_registry::Tool for Good {
                 effect: Effect::Write,
                 category: PermissionCategory::System,
                 platforms: vec![protocol::Platform::All],
+
+                content: ContentClass::none(),
             },
             closed: Arc::clone(&closed),
         });
         let wrapped: Arc<dyn crate::Tool> = Arc::new(Wrap(inner));
         assert!(wrapped.always_ask());
+        // The per-call hooks must come back with the INNER tool's distinctive
+        // answers, not the trait defaults (false / None).
+        assert!(wrapped.always_ask_for(&serde_json::json!({"secret": "x"})));
+        assert!(!wrapped.always_ask_for(&serde_json::json!({"text": "x"})));
+        let grant = wrapped
+            .standing_grant(&crate::ToolContext::default(), &serde_json::json!({}))
+            .await
+            .expect("the inner standing grant is forwarded");
+        assert_eq!(grant.id, "g1");
         wrapped.approval_closed(
             &crate::ToolContext::default(),
             &serde_json::json!({}),

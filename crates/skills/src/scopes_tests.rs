@@ -348,35 +348,27 @@ fn prompt_resolver_is_per_bot_and_botless_prompt_contains_no_private_suggestions
 
 fn link_dir(target: &Path, link: &Path) -> bool {
     #[cfg(unix)]
-    let result = std::os::unix::fs::symlink(target, link);
+    let linked = std::os::unix::fs::symlink(target, link).is_ok();
     #[cfg(windows)]
-    let result = std::os::windows::fs::symlink_dir(target, link);
+    let linked = {
+        // mklink parses forward slashes as switches, even inside absolute paths.
+        let target: std::path::PathBuf = target.components().collect();
+        let link: std::path::PathBuf = link.components().collect();
+        std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .output()
+            .is_ok_and(|out| out.status.success())
+            || std::os::windows::fs::symlink_dir(target, link).is_ok()
+    };
     #[cfg(not(any(unix, windows)))]
-    let result: std::io::Result<()> = Err(std::io::ErrorKind::Unsupported.into());
-    match result {
-        Ok(()) => true,
-        // ERROR_PRIVILEGE_NOT_HELD (1314) is not always mapped to PermissionDenied.
-        Err(error)
-            if cfg!(windows)
-                && (error.kind() == std::io::ErrorKind::PermissionDenied
-                    || error.raw_os_error() == Some(1314)) =>
-        {
-            // A junction needs no privilege and is also a reparse point.
-            let junction = std::process::Command::new("cmd")
-                .args(["/C", "mklink", "/J"])
-                .arg(link)
-                .arg(target)
-                .output()
-                .is_ok_and(|out| out.status.success());
-            if !junction {
-                eprintln!(
-                    "Skipping directory link assertion: neither symlink nor junction could be created ({error})"
-                );
-            }
-            junction
-        }
-        Err(error) => panic!("create test symlink: {error}"),
-    }
+    let linked = false;
+    assert!(
+        linked || std::env::var_os("CI").is_none(),
+        "directory link could not be created on CI"
+    );
+    linked
 }
 
 #[test]
@@ -634,4 +626,329 @@ fn an_unchanged_scope_is_not_reloaded_on_every_resolution() {
     after_external.write("m", &content("m", "mine")).unwrap();
     root.reload();
     assert!(root.for_bot(Some("a")).unwrap().get("m").is_some());
+}
+
+// ---------- per-bot skill assignments ----------
+
+struct MapAssignments {
+    map: parking_lot::Mutex<
+        std::collections::HashMap<String, Result<Option<crate::Assignment>, String>>,
+    >,
+    generation: std::sync::atomic::AtomicU64,
+    panic_for: parking_lot::Mutex<Option<String>>,
+}
+
+impl MapAssignments {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            map: parking_lot::Mutex::default(),
+            generation: std::sync::atomic::AtomicU64::new(1),
+            panic_for: parking_lot::Mutex::default(),
+        })
+    }
+
+    fn set(&self, bot_id: &str, value: Result<Option<crate::Assignment>, String>) {
+        self.map.lock().insert(bot_id.to_owned(), value);
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
+
+    fn set_selected(&self, bot_id: &str, names: &[&str]) {
+        self.set(
+            bot_id,
+            Ok(Some(crate::Assignment {
+                mode: crate::AssignmentMode::Selected,
+                names: names.iter().map(|s| (*s).to_owned()).collect(),
+            })),
+        );
+    }
+
+    fn clear(&self, bot_id: &str) {
+        self.map.lock().remove(bot_id);
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+impl crate::AssignmentSource for MapAssignments {
+    fn assignment(&self, bot_id: &str) -> Result<Option<crate::Assignment>, String> {
+        assert!(
+            self.panic_for.lock().as_deref() != Some(bot_id),
+            "simulated assignment source panic"
+        );
+        self.map.lock().get(bot_id).cloned().unwrap_or(Ok(None))
+    }
+
+    fn generation(&self) -> u64 {
+        self.generation.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+#[test]
+fn no_assignment_source_or_no_row_matches_unfiltered_view() {
+    let tmp = TempDir::new().unwrap();
+    let bundled = tmp.path().join("bundled");
+    let shared = tmp.path().join("skills");
+    let bot_a = tmp.path().join("bots/a/skills");
+    put(&bundled, "z-bundled", "shipped");
+    put(&shared, "x-shared", "shared x");
+    put(&bot_a, "m-learned", "learned");
+
+    let plain = SkillIndex::load_roots(SkillRoots {
+        bundled: Some(bundled.clone()),
+        ..SkillRoots::from_data_dir(tmp.path())
+    });
+    let golden: Vec<String> = plain
+        .for_bot(Some("a"))
+        .unwrap()
+        .list()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+
+    let src = MapAssignments::new();
+    let with_src = plain.with_assignments(src);
+    let actual: Vec<String> = with_src
+        .for_bot(Some("a"))
+        .unwrap()
+        .list()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert_eq!(actual, golden);
+    assert!(actual.contains(&"z-bundled".to_owned()));
+    assert!(actual.contains(&"x-shared".to_owned()));
+    assert!(actual.contains(&"m-learned".to_owned()));
+}
+
+#[tokio::test]
+async fn selected_assignment_filters_shared_and_bundled_but_keeps_bot_own_and_shadow() {
+    let tmp = TempDir::new().unwrap();
+    let bundled = tmp.path().join("bundled");
+    let shared = tmp.path().join("skills");
+    let bot_a = tmp.path().join("bots/a/skills");
+    put(&bundled, "z", "bundled z");
+    put(&shared, "x", "shared x");
+    put(&shared, "y", "shared y");
+    put(&bot_a, "learned", "bot learned");
+    // Bot-scope skill named `y` shadows the unassigned shared `y`.
+    put(&bot_a, "y", "bot shadow y");
+
+    let src = MapAssignments::new();
+    src.set_selected("a", &["x"]);
+    let index = SkillIndex::load_roots(SkillRoots {
+        bundled: Some(bundled),
+        ..SkillRoots::from_data_dir(tmp.path())
+    })
+    .with_assignments(src);
+
+    let list_out = tool(&index, "skill_list")
+        .call(&context(Some("a")), json!({}))
+        .await
+        .unwrap();
+    let listed_names: Vec<&str> = data(&list_out)
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(listed_names, vec!["learned", "x", "y"]);
+
+    // `skill_read z` (unassigned bundled) fails "unknown".
+    let err = tool(&index, "skill_read")
+        .call(&context(Some("a")), json!({ "name": "z" }))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("unknown"), "{err}");
+
+    // `y` resolves to the bot's own shadow, not shared `y`.
+    let view = index.for_bot(Some("a")).unwrap();
+    assert_eq!(view.read("y", None).unwrap(), "bot shadow y");
+    assert_eq!(view.get("y").unwrap().source, Source::Bot);
+
+    // Prompt block includes `x`, `learned`, `y`, and omits `z` (and `custom-dropdowns` if unassigned).
+    let block = index
+        .prompt_block_for_bot(Some("a"), &SkillContext::default(), &[])
+        .unwrap();
+    assert!(block.contains("- x:"), "{block}");
+    assert!(block.contains("- learned:"), "{block}");
+    assert!(block.contains("- y:"), "{block}");
+    assert!(!block.contains("- z:"), "{block}");
+    assert!(!block.contains("custom-dropdowns"), "{block}");
+}
+
+#[test]
+fn other_bot_without_row_is_unaffected_and_cache_does_not_leak() {
+    let tmp = TempDir::new().unwrap();
+    let bundled = tmp.path().join("bundled");
+    let shared = tmp.path().join("skills");
+    put(&bundled, "z", "bundled z");
+    put(&shared, "x", "shared x");
+    put(&shared, "y", "shared y");
+
+    let src = MapAssignments::new();
+    src.set_selected("a", &["x"]);
+    let index = SkillIndex::load_roots(SkillRoots {
+        bundled: Some(bundled),
+        ..SkillRoots::from_data_dir(tmp.path())
+    })
+    .with_assignments(src);
+    index.set_racy_window(std::time::Duration::ZERO);
+
+    let view_a = index.for_bot(Some("a")).unwrap();
+    let view_b = index.for_bot(Some("b")).unwrap();
+    assert!(!view_a.same_view(&view_b));
+    assert!(view_a.get("y").is_none());
+    assert!(view_a.get("z").is_none());
+    assert!(view_b.get("x").is_some());
+    assert!(view_b.get("y").is_some());
+    assert!(view_b.get("z").is_some());
+    // Cache hit for B still keeps all skills after A's filtered lookup.
+    assert!(index.for_bot(Some("b")).unwrap().same_view(&view_b));
+}
+
+#[test]
+fn assignment_generation_bump_invalidates_cache_without_mtime_change() {
+    let tmp = TempDir::new().unwrap();
+    let shared = tmp.path().join("skills");
+    put(&shared, "x", "shared x");
+    put(&shared, "y", "shared y");
+
+    let src = MapAssignments::new();
+    src.set_selected("a", &["x"]);
+    let index = SkillIndex::load_roots(SkillRoots::from_data_dir(tmp.path()))
+        .with_assignments(Arc::clone(&src) as Arc<dyn crate::AssignmentSource>);
+    index.set_racy_window(std::time::Duration::ZERO);
+
+    let v1 = index.for_bot(Some("a")).unwrap();
+    assert!(v1.get("x").is_some());
+    assert!(v1.get("y").is_none());
+    // Same generation -> cached view returned.
+    assert!(index.for_bot(Some("a")).unwrap().same_view(&v1));
+
+    // Change assignment without touching filesystem.
+    src.set_selected("a", &["y"]);
+    let v2 = index.for_bot(Some("a")).unwrap();
+    assert!(!v2.same_view(&v1));
+    assert!(v2.get("x").is_none());
+    assert!(v2.get("y").is_some());
+
+    // Clearing back to default (`None`) restores all skills immediately.
+    src.clear("a");
+    let v3 = index.for_bot(Some("a")).unwrap();
+    assert!(v3.get("x").is_some());
+    assert!(v3.get("y").is_some());
+}
+
+#[test]
+fn assignment_source_error_or_panic_fails_closed() {
+    let tmp = TempDir::new().unwrap();
+    let shared = tmp.path().join("skills");
+    put(&shared, "x", "shared x");
+
+    let src = MapAssignments::new();
+    src.set("a", Err("db busy".into()));
+    *src.panic_for.lock() = Some("b".into());
+
+    let index = SkillIndex::load_roots(SkillRoots::from_data_dir(tmp.path()))
+        .with_assignments(Arc::clone(&src) as Arc<dyn crate::AssignmentSource>);
+    index.set_racy_window(std::time::Duration::ZERO);
+
+    let err_view = index.for_bot(Some("a")).unwrap();
+    assert!(
+        err_view.list().is_empty(),
+        "shared/bundled must not leak on error"
+    );
+
+    let panic_view = index.for_bot(Some("b")).unwrap();
+    assert!(
+        panic_view.list().is_empty(),
+        "shared/bundled must not leak on panic"
+    );
+
+    // Failed views are never cached: once source recovers, bot sees assigned skills.
+    src.set_selected("a", &["x"]);
+    assert!(index.for_bot(Some("a")).unwrap().get("x").is_some());
+}
+
+#[tokio::test]
+async fn skill_publish_does_not_auto_assign_to_selected_bot() {
+    let tmp = TempDir::new().unwrap();
+    let shared = tmp.path().join("skills");
+    put(&shared, "existing", "shared existing");
+
+    let src = MapAssignments::new();
+    src.set_selected("b", &["existing"]);
+    let index = SkillIndex::load_roots(SkillRoots::from_data_dir(tmp.path())).with_assignments(src);
+
+    // Bot A learns and publishes `new-skill` to shared.
+    tool(&index, "skill_write")
+        .call(
+            &context(Some("a")),
+            json!({"name":"new-skill","content":content("new-skill","fresh")}),
+        )
+        .await
+        .unwrap();
+    tool(&index, "skill_publish")
+        .call(&context(Some("a")), json!({"name":"new-skill"}))
+        .await
+        .unwrap();
+
+    // Bot B (in selected mode) still only sees `existing`, not `new-skill`.
+    let view_b = index.for_bot(Some("b")).unwrap();
+    assert!(view_b.get("existing").is_some());
+    assert!(view_b.get("new-skill").is_none());
+    // Botless catalog sees `new-skill`.
+    assert!(index.for_bot(None).unwrap().get("new-skill").is_some());
+}
+
+#[test]
+fn root_with_assignments_fails_closed_on_direct_reads_and_unsafe_bot_paths() {
+    let tmp = TempDir::new().unwrap();
+    let shared = tmp.path().join("skills");
+    put(&shared, "secret-shared", "shared body");
+    put(&tmp.path().join("bots/b/skills"), "b-own", "B own");
+
+    let src = MapAssignments::new();
+    src.set_selected("a", &[]);
+    let index = SkillIndex::load_roots(SkillRoots::from_data_dir(tmp.path())).with_assignments(src);
+    assert!(index.has_assignments());
+
+    // Direct unfiltered calls on the root index fail closed (empty).
+    assert_eq!(index.list(), Vec::new());
+    assert!(index.get("secret-shared").is_none());
+    assert_eq!(
+        index.prompt_block_suggesting(&SkillContext::default(), &["secret-shared".to_owned()]),
+        ""
+    );
+
+    // Invalid bot id returns Err on prompt_block_for_bot and for_bot.
+    assert!(
+        index
+            .prompt_block_for_bot(Some("../escape"), &SkillContext::default(), &[])
+            .is_err()
+    );
+    assert!(
+        index
+            .prompt_block_for_bot(Some("con"), &SkillContext::default(), &[])
+            .is_err()
+    );
+
+    // Symlink / junction at bots/a/skills returns Err (reparse point).
+    fs::create_dir_all(tmp.path().join("bots/a")).unwrap();
+    if link_dir(
+        &tmp.path().join("bots/b/skills"),
+        &tmp.path().join("bots/a/skills"),
+    ) {
+        assert!(
+            index
+                .prompt_block_for_bot(Some("a"), &SkillContext::default(), &[])
+                .is_err()
+        );
+    }
+
+    // Catalog via for_bot(None) still lists shared and bundled skills.
+    let (catalog, _) = index.catalog().unwrap();
+    assert!(catalog.iter().any(|s| s.name == "secret-shared"));
 }

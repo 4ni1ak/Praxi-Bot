@@ -102,7 +102,7 @@ test("configuredCliIds collects enabled cli:* ids and ignores disabled ones", ()
   assert.equal(signInCommand("codex"), "codex login");
 });
 
-test("MockApiClient serves detected providers and enables claude idempotently while refusing codex", async () => {
+test("MockApiClient serves detected providers and enables claude idempotently while refusing detect-only engines", async () => {
   const client = new MockApiClient();
   const rows = await client.detectedProviders(true);
   assert.equal(rows.length, 6);
@@ -129,5 +129,5 @@ test("MockApiClient serves detected providers and enables claude idempotently wh
   const reEnabled = await client.enableCliProvider("claude");
   assert.equal(reEnabled.default_model, "claude-sonnet-4-5");
 
-  await assert.rejects(() => client.enableCliProvider("codex"));
+  await assert.rejects(() => client.enableCliProvider("cursor"));
 });

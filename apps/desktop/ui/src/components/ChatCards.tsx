@@ -1,5 +1,5 @@
-import { type ReactNode, useEffect, useState } from "react";
-import { CalendarClock, Clock, ShieldAlert } from "lucide-react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { AppWindow, CalendarClock, Clock, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import type { Scope } from "../api/types";
@@ -15,8 +15,16 @@ import {
   type ToolItem
 } from "../state/timeline";
 import {
+  computerDetails,
+  controlGrantDetails,
+  egressDetails,
+  payloadReviewComplete,
+  appActionDetails,
   formatFiring,
+  brainDetails,
   scheduleDetails,
+  type ControlGrantDetails,
+  type EgressApprovalDetails,
   type ScheduleApprovalDetails
 } from "../lib/approvalDetails";
 import { brandIcon } from "../lib/brandIcons";
@@ -24,6 +32,9 @@ import { describeTool, isSendTool } from "../lib/toolLabels";
 import { StepIcon } from "./StepIcon";
 import formStyles from "./Form.module.css";
 import styles from "./ChatCards.module.css";
+import { humanLine, humanToolError } from "../lib/humanError";
+import { actionText, reasonLine, type T } from "../lib/approvalPlain";
+import { ErrorNotice } from "./ErrorNotice";
 
 const brandName = (name: string): string | null => {
   const b = brandIcon(name);
@@ -135,8 +146,7 @@ export function ToolBody({ tool }: { tool: ToolItem }) {
       ) : null}
       {tool.error ? (
         <>
-          <span className={styles.bodyLabel}>{t("chat.tool.result")}</span>
-          <pre className={styles.code}>{tool.error}</pre>
+          <ErrorNotice compact error={humanToolError(tool.error)} />
         </>
       ) : null}
       {!tool.error && tool.outputPreview ? (
@@ -175,6 +185,9 @@ export interface ApprovalCardProps {
   ) => Promise<void>;
   /** Auto-deny deadline (epoch ms), when the daemon sets a timeout. */
   expiresAtMs?: number;
+  /** Name of the server that is the bots' home; `null` when the home is this computer. */
+  serverName?: string | null;
+  onTrustFolder?: (folder: string) => Promise<void>;
 }
 
 /** What a bot-made schedule will do, shown before the user approves it. */
@@ -242,10 +255,110 @@ function ScheduleApprovalBody({ d }: { d: ScheduleApprovalDetails }) {
   );
 }
 
+function EgressApprovalBody({ d, onReviewed }: {
+  d: EgressApprovalDetails;
+  onReviewed: (payload: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [expandedPayload, setExpandedPayload] = useState<string | null>(null);
+  const expanded = expandedPayload === d.payload;
+  const view = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (view.current && payloadReviewComplete(expanded, view.current)) onReviewed(d.payload);
+  }, [expanded, d.payload, onReviewed]);
+  const kind = d.payloadKind === "query" || d.payloadKind === "url" ? d.payloadKind : "body";
+  return (
+    <div data-testid="approval-egress">
+      <p className={styles.bodyLabel}>{t("chat.approval.egress.host", { host: d.host })}</p>
+      {d.read.length > 0 ? (
+        <p className={styles.bodyLabel}>
+          {t("chat.approval.egress.read", { list: d.read.join(", ") })}
+        </p>
+      ) : null}
+      <span className={styles.bodyLabel}>{t(`chat.approval.egress.payload.${kind}`)}</span>
+      {d.payloadLines != null && d.payloadChars != null ? (
+        <p className={styles.bodyLabel}>
+          {t("chat.approval.egress.size", {
+            lines: d.payloadLines,
+            chars: d.payloadChars,
+            hidden: d.hiddenChars ?? 0
+          })}
+        </p>
+      ) : null}
+      {d.reviewFullPayload ? (
+        <>
+          <p className={styles.bodyLabel}>{t("chat.approval.egress.large", { bytes: d.payloadBytes ?? 0 })}</p>
+          <Button size="sm" variant="secondary" onClick={() => setExpandedPayload(d.payload)}>
+            {t("chat.approval.egress.reviewFull")}
+          </Button>
+        </>
+      ) : null}
+      {!d.reviewFullPayload || expanded ? (
+        <pre
+          ref={view}
+          className={[styles.egressCode, d.reviewFullPayload ? styles.fullPayload : ""].join(" ")}
+          tabIndex={0}
+          onScroll={(event) => {
+            if (payloadReviewComplete(expanded, event.currentTarget)) onReviewed(d.payload);
+          }}
+        >
+          {d.payload}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
+/** What a run-scoped control grant covers, or why this call cannot get one. */
+function ControlGrantBody({ d }: { d: ControlGrantDetails }) {
+  const { t } = useTranslation();
+  return (
+    <div className={styles.controlGrant} data-testid="approval-control-grant">
+      <p className={styles.controlHead}>
+        {d.offered ? (
+          <ShieldCheck size={16} aria-hidden="true" />
+        ) : (
+          <ShieldAlert size={16} aria-hidden="true" />
+        )}
+        <span>
+          {d.offered
+            ? t("chat.approval.control.offered", { program: d.program })
+            : t("chat.approval.control.refused", { program: d.program })}
+        </span>
+      </p>
+      <p className={styles.controlLine}>
+        <AppWindow size={14} aria-hidden="true" />
+        <span>
+          {d.program}
+          {d.windowTitle ? ` · ${d.windowTitle}` : ""}
+        </span>
+      </p>
+      {d.imagePath ? <p className={styles.controlPath}>{d.imagePath}</p> : null}
+      {d.offered ? (
+        <>
+          <p className={styles.bodyText}>
+            {t("chat.approval.control.covers", { program: d.program, path: d.imagePath })}
+          </p>
+          <p className={styles.bodyText}>{t("chat.approval.control.risk")}</p>
+          <p className={styles.bodyText}>{t("chat.approval.control.stillAsks")}</p>
+        </>
+      ) : (
+        <p className={styles.bodyText}>
+          {t(`chat.approval.control.reason.${d.refusal}`, {
+            defaultValue: t("chat.approval.control.reason.unknown")
+          })}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function ApprovalCard({
   tool,
   onDecide,
-  expiresAtMs
+  expiresAtMs,
+  serverName = null,
+  onTrustFolder
 }: ApprovalCardProps) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
@@ -254,6 +367,22 @@ export function ApprovalCard({
   const outbound = isOutboundSend(tool.name);
   const remaining = useCountdown(expiresAtMs);
   const schedule = scheduleDetails(tool.details);
+  const egress = egressDetails(tool.details);
+  const computer = computerDetails(tool.details);
+  const control = controlGrantDetails(tool.details);
+  const [reviewedPayload, setReviewedPayload] = useState<string | null>(null);
+  const reviewPending = egress?.reviewFullPayload && reviewedPayload !== egress.payload;
+  const app = appActionDetails(tool.details);
+  const brain = brainDetails(tool.details);
+  const unrenderable =
+    (tool.details as { kind?: unknown } | null | undefined)?.kind === "app_action" && !app;
+  const [trustedFolders, setTrustedFolders] = useState<string[]>([]);
+  const folderFacts = (tool.details as { trust_folders?: unknown } | null)?.trust_folders;
+  const folders = Array.isArray(folderFacts) ? folderFacts.filter((f): f is string => typeof f === "string") : [];
+  const facts = tool.details as { why?: unknown; once_only?: unknown } | null | undefined;
+  const why = typeof facts?.why === "string" ? facts.why : null;
+  // The daemon says whether a standing choice may be offered; older events: any details mean once only.
+  const onceOnly = typeof facts?.once_only === "boolean" ? facts.once_only : tool.details != null;
 
   const decide = async (
     decision: "approve" | "deny",
@@ -265,13 +394,30 @@ export function ApprovalCard({
     try {
       await onDecide(decision, scope, why);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
       setBusy(false);
     }
   };
 
   const disabled = busy || remaining === 0;
   const glyph = describeTool(tool.name, tool.input, brandName);
+  const tt = t as unknown as T;
+  const plainAction = actionText(tool.name, tool.input, { computer, serverName }, tt);
+  const plainReason = egress ? reasonLine(egress, tt) : null;
+  const detailBody = (
+    <>
+      {computer && (egress || schedule) ? (
+        <p className={styles.bodyLabel} data-testid="approval-computer">
+          {t("chat.approval.computer", {
+            kind: computer.kind,
+            name: computer.name,
+            id: computer.nodeId
+          })}
+        </p>
+      ) : null}
+      {egress ? <EgressApprovalBody d={egress} onReviewed={setReviewedPayload} /> : null}
+    </>
+  );
   return (
     <div
       className={[styles.approval, outbound ? styles.outbound : ""]
@@ -295,7 +441,26 @@ export function ApprovalCard({
             </span>
           ) : null}
         </div>
-        {schedule ? (
+        {app ? (
+          <div data-testid="approval-app-action">
+            <p className={styles.approvalSummary}>{app.app} · {app.action}</p>
+            <p className={styles.bodyLabel}>{app.class} · {app.version}</p>
+            <details open={app.count <= 1000}>
+              <summary>{t("chat.approval.app.arguments", { count: app.count })}</summary>
+              <pre className={styles.code} tabIndex={0}>{app.argumentsText}</pre>
+            </details>
+            <p className={styles.bodyLabel}>{t("chat.approval.app.footer")}</p>
+          </div>
+        ) : brain ? (
+          <section className={styles.brainReview}>
+            <strong>{t("knowledge.brainApproval")}</strong>
+            <p className={formStyles.hint}>{t("knowledge.brainApprovalHint")}</p>
+            <code>{brain.path}</code>
+            <label>{t("knowledge.brainHash")}<code>{brain.sha256}</code></label>
+            {brain.sources.length ? <ul aria-label={t("knowledge.brainSources")}>{brain.sources.map((source) => <li key={source.id}>{source.label} · {source.id} · v{source.revision}</li>)}</ul> : null}
+            <pre className={styles.brainContent}>{brain.content}</pre>
+          </section>
+        ) : schedule ? (
           <>
             <p className={styles.approvalSummary}>
               {t(`chat.approval.schedule.title.${schedule.action}`)}
@@ -307,7 +472,12 @@ export function ApprovalCard({
           </>
         ) : (
           <>
-            <p className={styles.approvalSummary}>{tool.summary ?? tool.name}</p>
+            <p className={styles.approvalSummary}>
+              {plainAction || plainReason || egress?.reason || tool.summary || tool.name}
+            </p>
+            {plainAction && plainReason ? (
+              <p className={styles.bodyLabel} data-testid="approval-reason">{plainReason}</p>
+            ) : null}
             <div className={styles.approvalMeta}>
               <span className={styles.approvalTool}>{tool.name}</span>
               <span className={styles.inputSummary}>
@@ -316,19 +486,55 @@ export function ApprovalCard({
             </div>
           </>
         )}
+        {why ? (
+          <p className={styles.bodyLabel} data-testid="approval-why">
+            {t(`chat.approval.why.${why}`, { defaultValue: "" })}
+          </p>
+        ) : null}
+        {control ? <ControlGrantBody d={control} /> : null}
+        {plainAction && (egress || computer) ? (
+          <details open={egress?.reviewFullPayload === true} data-testid="approval-details">
+            <summary className={styles.bodyLabel}>{t("chat.approval.plain.details")}</summary>
+            {detailBody}
+          </details>
+        ) : (
+          detailBody
+        )}
+        {onTrustFolder ? folders.map((folder) => (
+          <Button key={folder} size="sm" variant="secondary" disabled={disabled || trustedFolders.includes(folder)}
+            onClick={() => {
+              setBusy(true);
+              setError(null);
+              void onTrustFolder(folder).then(() => setTrustedFolders((prev) => [...prev, folder]))
+                .catch((e: unknown) => setError(humanLine(e))).finally(() => setBusy(false));
+            }}>
+            {t(trustedFolders.includes(folder) ? "folderTrust.saved" : "folderTrust.action", { folder })}
+          </Button>
+        )) : null}
         <div className={styles.actions}>
           <Button
             size="sm"
             variant="primary"
-            disabled={disabled}
+            disabled={disabled || reviewPending || unrenderable}
             onClick={() => void decide("approve", "once")}
           >
             {isSendTool(tool.name)
               ? t("chat.approval.sendOnce")
               : t("chat.approval.once")}
           </Button>
-          {/* The daemon refuses a standing grant for any card with details. */}
-          {tool.details != null ? null : (
+          {/* One program, until this task ends: only when the daemon offered it. */}
+          {control?.offered ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={disabled || reviewPending}
+              onClick={() => void decide("approve", "run_control")}
+            >
+              {t("chat.approval.control.button", { program: control.program })}
+            </Button>
+          ) : null}
+          {/* The daemon refuses a standing grant for a once-only card. */}
+          {onceOnly ? null : (
             <>
               <Button
                 size="sm"
@@ -338,6 +544,8 @@ export function ApprovalCard({
               >
                 {t("chat.approval.thisChat")}
               </Button>
+              {/* A taint-gate card keeps its choice to this chat (tool class and site). */}
+              {why === "egress" || why === "executes" ? null : (
               <Button
                 size="sm"
                 variant="ghost"
@@ -346,6 +554,7 @@ export function ApprovalCard({
               >
                 {t("chat.approval.always")}
               </Button>
+              )}
             </>
           )}
           <Button
@@ -396,7 +605,7 @@ export function QuestionCard({
     try {
       await onAnswer(answer.trim());
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     } finally {
       setBusy(false);
     }
@@ -498,7 +707,7 @@ export function NoticeLine({ n }: { n: NoticeItem }) {
       className={[styles.notice, styles[`notice_${n.tone}`]].join(" ")}
       role="status"
     >
-      {t(n.i18nKey, n.values)}
+      {n.i18nKey === "chat.notice.error" ? humanLine(n.values?.message ?? "") : t(n.i18nKey, n.values)}
     </p>
   );
 }
@@ -537,7 +746,7 @@ export function SubagentCard({ run, renderItem, onCancel }: SubagentCardProps) {
     try {
       await onCancel(run.id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     } finally {
       setBusy(false);
     }
