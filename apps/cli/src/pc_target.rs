@@ -652,10 +652,22 @@ impl HostDesktopHandler {
             allowed: Mutex::new(BTreeSet::new()),
             timeout: self.ask_timeout,
         });
-        driver.set_destination_check(browser_cdp::DestinationCheck::new(move |url| {
-            let net = Arc::clone(&net);
-            async move { net.check(url).await }
-        }));
+        let host_net = Arc::clone(&net);
+        driver.set_served_network(browser_cdp::ServedNetwork {
+            check: browser_cdp::DestinationCheck::new(move |url| {
+                let net = Arc::clone(&net);
+                async move { net.check(url).await }
+            }),
+            // The proxy resolved the name itself: a private-range host asks
+            // the person at this computer (once per bot and host).
+            private_host: browser_cdp::DestinationCheck::new(move |host: String| {
+                let net = Arc::clone(&host_net);
+                async move {
+                    let shown = format!("the server's bot asks to connect to {host}");
+                    net.private_host(host, shown).await
+                }
+            }),
+        });
         open.push((key, Arc::clone(&driver)));
         while open.len() > MAX_BROWSERS {
             let (_, old) = open.remove(0);
@@ -2051,6 +2063,8 @@ mod tests {
         check: Mutex<Option<browser_cdp::DestinationCheck>>,
         /// Every policy installed, in order (one per bot's browser).
         checks: Mutex<Vec<browser_cdp::DestinationCheck>>,
+        /// The proxy's private-host decisions, in the same order.
+        hosts: Mutex<Vec<browser_cdp::DestinationCheck>>,
     }
 
     #[async_trait]
@@ -2059,9 +2073,10 @@ mod tests {
             self.opened.lock().push(url.to_owned());
             Ok(format!("opened {url}"))
         }
-        fn set_destination_check(&self, check: browser_cdp::DestinationCheck) {
-            self.checks.lock().push(check.clone());
-            *self.check.lock() = Some(check);
+        fn set_served_network(&self, net: browser_cdp::ServedNetwork) {
+            self.checks.lock().push(net.check.clone());
+            self.hosts.lock().push(net.private_host);
+            *self.check.lock() = Some(net.check);
         }
         async fn snapshot(&self, _: bool) -> Result<String, String> {
             self.snapshots.fetch_add(1, Ordering::SeqCst);
@@ -2952,5 +2967,26 @@ mod tests {
         );
         assert!(res.is_err(), "bot B did not inherit bot A's allowance");
         assert_eq!(info.bot_name.as_deref(), Some("Bot bot-b"));
+    }
+    /// Review blocker 2: the filtering proxy of a bot's browser asks the
+    /// person at this computer about a private-range host it resolved (with
+    /// the bot's name); loopback never gets that far.
+    #[tokio::test]
+    async fn the_proxy_asks_about_a_private_host_for_that_bot_only() {
+        let r = rig(false, true);
+        r.access.set_switches("host1", all_families()).unwrap();
+        let host = device(Role::Host);
+        let snap = as_bot(serde_json::json!({"op": "snapshot"}), "bot-a");
+        let (res, _) = tokio::join!(
+            r.h.handle(&host, RPC_BROWSER, snap),
+            answer(&r.requests, true)
+        );
+        assert!(res.is_ok());
+        let decide = r.browser.hosts.lock()[0].clone();
+        let (res, info) = tokio::join!(decide.check("nas.home".into()), answer(&r.requests, true));
+        assert!(res.is_ok());
+        assert!(info.target.contains("nas.home"), "{}", info.target);
+        assert_eq!(info.bot_name.as_deref(), Some("Bot bot-a"));
+        assert!(decide.check("nas.home".into()).await.is_ok(), "asked once");
     }
 }

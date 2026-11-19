@@ -3,11 +3,14 @@
 //! A browser that another computer drives must not become a way into the
 //! machine's own network: its loopback services (the Praxi daemon API, admin
 //! UIs), link-local and metadata endpoints (169.254.169.254) and, unless the
-//! owner allows a host, private ranges. The policy is enforced where requests
-//! leave the browser (CDP `Fetch` interception, see
-//! [`crate::CdpClient::set_destination_check`]), so it covers top-level
-//! navigation, every redirect hop and every subresource, and it judges the
-//! ADDRESSES a name resolves to, not only the text of the URL.
+//! owner allows a host, private ranges. The policy is enforced twice:
+//! - at the network: every request of a served browser goes through
+//!   [`crate::FilterProxy`], which resolves the name itself and connects to
+//!   exactly the address it judged (so DNS rebinding cannot split the check
+//!   from the connection), and covers popups, workers and WebSockets;
+//! - inside the browser (CDP `Fetch` interception, see
+//!   [`crate::CdpClient::set_destination_check`]), with every new target
+//!   paused until the check is on it.
 
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -43,6 +46,18 @@ impl std::fmt::Debug for DestinationCheck {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("DestinationCheck")
     }
+}
+
+/// The network guard of a browser another computer drives: every request
+/// goes through a [`crate::FilterProxy`] (which asks `private_host` about a
+/// host in a private range), and every page, popup, frame and worker is
+/// paused at start until `check` judges its requests (CDP `Fetch`).
+#[derive(Clone, Debug)]
+pub struct ServedNetwork {
+    /// Judges one request URL (defence in depth inside the browser).
+    pub check: DestinationCheck,
+    /// Judges a private-range HOST the proxy resolved (the owner's allowance).
+    pub private_host: DestinationCheck,
 }
 
 /// What the policy says about a destination before any owner decision.

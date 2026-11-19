@@ -57,11 +57,14 @@ pub trait BrowserDriver: Send + Sync {
     fn for_headless(&self, _headless: bool) -> Option<Arc<dyn BrowserDriver>> {
         None
     }
-    /// Put a destination policy on every request this driver's browser makes
-    /// (loopback, link-local/metadata and private ranges). Used for browsers a
-    /// paired computer drives; the local managed-browser tools do not set one.
-    /// Takes effect for sessions launched afterwards. Default: ignored.
-    fn set_destination_check(&self, _check: browser_cdp::DestinationCheck) {}
+    /// Put the network guard of a served browser on this driver: every
+    /// request through a filtering proxy that resolves and classifies the
+    /// address itself (loopback, link-local/metadata never; private ranges
+    /// only with the owner's allowance), popups blocked, and every new
+    /// target paused until its requests are checked. Used for browsers a
+    /// paired computer drives; the local managed-browser tools do not set
+    /// one. Takes effect for sessions launched afterwards. Default: ignored.
+    fn set_served_network(&self, _net: browser_cdp::ServedNetwork) {}
     /// Close every browser this driver owns (bot deleted, daemon stopping).
     async fn close_all(&self) {}
     /// Navigate to `url` (starting the browser if needed); returns the page snapshot.
@@ -268,8 +271,8 @@ pub struct CdpDriver {
     /// Live-view slot of this bot's browser: idle until a session launches,
     /// then bound to its page. Capture stays lazy (viewer-driven).
     view: Option<Arc<browser_cdp::BrowserViewTarget>>,
-    /// Network destination policy of served sessions (`None`: unrestricted).
-    destination: parking_lot::RwLock<Option<browser_cdp::DestinationCheck>>,
+    /// Network guard of served sessions (`None`: unrestricted).
+    served: parking_lot::RwLock<Option<browser_cdp::ServedNetwork>>,
 }
 
 /// Reports whether real bot work is going on (see [`CdpDriver::set_activity_probe`]).
@@ -366,7 +369,7 @@ impl CdpDriver {
             activity: Arc::new(std::sync::RwLock::new(None)),
             reaper_started: std::sync::atomic::AtomicBool::new(false),
             view: None,
-            destination: parking_lot::RwLock::new(None),
+            served: parking_lot::RwLock::new(None),
         }
     }
 
@@ -437,7 +440,7 @@ impl CdpDriver {
             executable: self.settings.executable.clone(),
             headless,
             user_data_dir: self.profile_path(profile)?,
-            destination_check: self.destination.read().clone(),
+            served: self.served.read().clone(),
             ..LaunchOptions::default()
         };
         let browser = Browser::launch(opts).await.map_err(s)?;
@@ -715,8 +718,8 @@ impl BrowserDriver for CdpDriver {
             .map(|view| view.status().active_profile.is_some())
     }
 
-    fn set_destination_check(&self, check: browser_cdp::DestinationCheck) {
-        *self.destination.write() = Some(check);
+    fn set_served_network(&self, net: browser_cdp::ServedNetwork) {
+        *self.served.write() = Some(net);
     }
 
     fn for_headless(&self, headless: bool) -> Option<Arc<dyn BrowserDriver>> {
@@ -742,7 +745,7 @@ impl BrowserDriver for CdpDriver {
                     // alternate driver binds it when it launches (and retires
                     // the other mode's page from it).
                     driver.view.clone_from(&self.view);
-                    (*driver.destination.write()).clone_from(&self.destination.read());
+                    (*driver.served.write()).clone_from(&self.served.read());
                     Arc::new(driver)
                 })
                 .clone(),
