@@ -321,7 +321,7 @@ export function ProvidersSection() {
 // ---------------------------------------------------------------- permissions
 
 function grantLabel(g: GrantTarget): string {
-  return `${g.kind}:${g.name}`;
+  return g.kind === "scoped" ? `scoped:${g.tool}:${g.scope}:${g.pattern}` : `${g.kind}:${g.name}`;
 }
 
 function BotPermissions({ bot }: { bot: Bot }) {
@@ -407,9 +407,11 @@ function BotPermissions({ bot }: { bot: Bot }) {
                         ? t("settings.permissions.grantCategory", {
                             name: t(`botForm.category.${g.target.name}`, g.target.name)
                           })
-                        : t("settings.permissions.grantTool", {
-                            name: g.target.name
-                          })}
+                        : g.target.kind === "scoped"
+                          ? `${g.target.tool}: ${g.target.pattern}`
+                          : t("settings.permissions.grantTool", {
+                              name: g.target.name
+                            })}
                     </span>
                     {g.computer ? (
                       <span className={styles.rowMeta}>{g.computer}</span>
