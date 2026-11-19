@@ -1611,6 +1611,7 @@
       "files": "Lesen fragt einmal pro Sitzung, Schreiben fragt jedes Mal. Passwörter, Einstellungen anderer Programme und die Daten von Praxi selbst bleiben unerreichbar.",
       "screen": "Den Bildschirm ansehen, klicken, tippen und Programme starten. Jede Aktion, die etwas ändert, fragt dich vorher."
     },
+    "fromBotName": "(Bot des Servers, wie er sich selbst nennt: {{name}})",
     "fromServer": "Dieser Name stammt vom Server, nicht von diesem Computer.",
     "fromServerName": "(Servername, wie er sich selbst nennt: {{name}})",
     "looking": "Ein Bot auf {{name}} sieht sich diesen Bildschirm an",

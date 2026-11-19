@@ -26,6 +26,10 @@ pub struct PcRequestInfo {
     pub host_id: String,
     /// Name the host announced (untrusted text, shown as "from the server").
     pub host_name: String,
+    /// Name of the server's bot that is asking (untrusted text, from the
+    /// server). Absent for a run placed on this computer that names no bot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_name: Option<String>,
     /// `session_read` (first look at the screen this session) or `act`.
     pub kind: String,
     /// `click`, `type`, `key`, `scroll`, `launch`, ...
@@ -134,6 +138,19 @@ impl PcRequests {
         preview: PcPreview,
         timeout: Duration,
     ) -> bool {
+        self.ask_as(host_id, host_name, None, preview, timeout)
+            .await
+    }
+
+    /// [`Self::ask`] for one named bot of the host (shown on the card).
+    pub async fn ask_as(
+        &self,
+        host_id: &str,
+        host_name: &str,
+        bot_name: Option<&str>,
+        preview: PcPreview,
+        timeout: Duration,
+    ) -> bool {
         // A card never shows less than what would run: a field that would be
         // cut or altered to fit makes the request be refused instead.
         if !fits(&preview) {
@@ -153,6 +170,7 @@ impl PcRequests {
                     id: id.clone(),
                     host_id: host_id.to_owned(),
                     host_name: clean(host_name, 64),
+                    bot_name: bot_name.map(|b| clean(b, 64)),
                     kind: preview.kind.to_owned(),
                     action: clean(&preview.action, 32),
                     target: clean(&preview.target, MAX_TARGET),

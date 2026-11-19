@@ -9,8 +9,9 @@
 //! 2. Off by default, per host, by the owner (`PUT /v1/hosts/{id}/computer-access`,
 //!    owner authority only). Serving also needs the owner's desktop app to be
 //!    running (its heartbeat is the lease).
-//! 3. Reads: the first look each session asks the owner (unless the owner chose
-//!    "always"); Praxi's own windows never appear in a read (listing, snapshot,
+//! 3. Reads: the first look each session asks the owner, per server, BOT and
+//!    family (the "always" switch covers only a run placed on this computer,
+//!    never a named bot's `pc_*` tools); Praxi's own windows never appear in a read (listing, snapshot,
 //!    screenshot); an observation is discarded when the human took control
 //!    while it was captured; every read is audited (an audit failure blocks it)
 //!    and shows a "looking" indicator.
@@ -31,7 +32,9 @@ use std::time::Duration;
 use agent_core::ControlGate;
 use async_trait::async_trait;
 use builtin_tools::BrowserDriver;
-use builtin_tools::pc::{PcFamily, PcInfo, RPC_BROWSER, RPC_INFO, RPC_TOOL, SERVED_TOOLS};
+use builtin_tools::pc::{
+    CALLER_KEY, PcFamily, PcInfo, RPC_BROWSER, RPC_INFO, RPC_TOOL, SERVED_TOOLS,
+};
 use daemon_api::pc_access::{PcPreview, PcRequests};
 use desktop_api::{
     ActGuard, Action, ActionResult, Capabilities, ClickMethod, CoordinateSpace, DesktopBackend,
@@ -106,8 +109,10 @@ struct AccessFile {
 pub struct AccessStore {
     path: PathBuf,
     state: Mutex<AccessFile>,
-    /// `(host, family)` pairs whose first look this session was allowed (memory only).
-    session_reads: Mutex<BTreeSet<(String, &'static str)>>,
+    /// `(host, bot, family)` whose first look this session was allowed (memory
+    /// only). The bot is `""` for a run placed on this computer that names
+    /// none; an allowance for one bot never covers another.
+    session_reads: Mutex<BTreeSet<(String, String, &'static str)>>,
     /// How many times a family was switched off for a host. An approval that
     /// was asked before the latest revocation never runs (a delivered "allow"
     /// cannot be taken back, so it is checked against this instead).
@@ -196,16 +201,16 @@ impl AccessStore {
         self.state.lock().hosts.keys().cloned().collect()
     }
 
-    fn session_read_allowed(&self, host_id: &str, family: PcFamily) -> bool {
+    fn session_read_allowed(&self, host_id: &str, bot: &str, family: PcFamily) -> bool {
         self.session_reads
             .lock()
-            .contains(&(host_id.to_owned(), family.as_str()))
+            .contains(&(host_id.to_owned(), bot.to_owned(), family.as_str()))
     }
 
-    fn allow_session_read(&self, host_id: &str, family: PcFamily) {
+    fn allow_session_read(&self, host_id: &str, bot: &str, family: PcFamily) {
         self.session_reads
             .lock()
-            .insert((host_id.to_owned(), family.as_str()));
+            .insert((host_id.to_owned(), bot.to_owned(), family.as_str()));
     }
 
     /// Screen and input only (the other families keep their switches);
@@ -265,7 +270,7 @@ impl AccessStore {
         let still = Self::state_families(&state, host_id);
         self.session_reads
             .lock()
-            .retain(|(h, fam)| h != host_id || still.contains(fam));
+            .retain(|(h, _, fam)| h != host_id || still.contains(fam));
         Ok(())
     }
 
@@ -454,6 +459,58 @@ impl DesktopBackend for ReadBackend {
 /// Writes one audit row; an error blocks what it was written for.
 pub type AuditFn = Arc<dyn Fn(&str, Value) -> Result<(), String> + Send + Sync>;
 
+/// Makes a NEW managed browser for one bot of one server (its own process
+/// and profile: tabs, page state and cookies are never shared).
+pub type BrowserFactory = Arc<dyn Fn() -> Arc<dyn BrowserDriver> + Send + Sync>;
+
+/// At most this many bots' browsers are open at once; the oldest is closed.
+const MAX_BROWSERS: usize = 3;
+
+/// The bot of the server a request is for (`bot` in the request).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Caller {
+    id: String,
+    name: String,
+}
+
+/// The calling bot of a request: `None` when the request names none (a run
+/// placed on this computer); a malformed one is refused.
+fn caller_of(params: &Value) -> Result<Option<Caller>, String> {
+    let Some(v) = params.get(CALLER_KEY) else {
+        return Ok(None);
+    };
+    let id = v
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| {
+            !id.is_empty()
+                && id.len() <= 64
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+        .ok_or("the request names its bot in a form this computer does not accept")?;
+    let name = v
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or(id);
+    if name.chars().count() > 64
+        || name.chars().any(char::is_control)
+        || protocol::approval_text::hides_characters(name)
+    {
+        return Err("the bot's name cannot be shown completely, so the request was refused".into());
+    }
+    Ok(Some(Caller {
+        id: id.to_owned(),
+        name: name.trim().to_owned(),
+    }))
+}
+
+fn bot_key(caller: Option<&Caller>) -> &str {
+    caller.map_or("", |c| c.id.as_str())
+}
+
 /// Everything the handler needs from the daemon.
 pub struct PcTargetDeps {
     pub raw: Arc<dyn DesktopBackend>,
@@ -471,8 +528,9 @@ pub struct PcTargetDeps {
     /// The real `shell_run` / `fs_*` tools ([`builtin_tools::pc::local_tools`]),
     /// reachable only through `pc.tool` behind the owner's switches.
     pub tools: Vec<Arc<dyn Tool>>,
-    /// This computer's own managed browser; `None` = the browser is not served.
-    pub browser: Option<Arc<dyn BrowserDriver>>,
+    /// Makes this computer's managed browser, one per bot; `None` = the
+    /// browser is not served.
+    pub browser: Option<BrowserFactory>,
 }
 
 /// Where this computer's served browser may connect (review blocker 4): the
@@ -482,11 +540,12 @@ pub struct PcTargetDeps {
 struct BrowserNet {
     access: Arc<AccessStore>,
     requests: Arc<PcRequests>,
-    /// The server whose browser call is being served.
-    current: Mutex<Option<Device>>,
-    /// `(server, host, revocation generation)` the owner allowed this session.
-    allowed: Mutex<BTreeSet<(String, String, u64)>>,
-    timeout: Mutex<Duration>,
+    /// The server and the bot this browser belongs to (fixed at creation).
+    peer: Device,
+    bot: Caller,
+    /// `(host, revocation generation)` the owner allowed THIS bot this session.
+    allowed: Mutex<BTreeSet<(String, u64)>>,
+    timeout: Duration,
 }
 
 impl BrowserNet {
@@ -498,9 +557,12 @@ impl BrowserNet {
             }
             browser_cdp::Verdict::Private(host) => host,
         };
-        let Some(peer) = self.current.lock().clone() else {
-            return Err("blocked: no request is being served".into());
-        };
+        self.private_host(host, url).await
+    }
+
+    /// A private-range host: only with this computer's own card, per bot.
+    async fn private_host(&self, host: String, shown: String) -> Result<(), String> {
+        let peer = &self.peer;
         let gen_then = self.access.family_gen(&peer.id, PcFamily::Browser);
         if !self
             .access
@@ -508,23 +570,23 @@ impl BrowserNet {
         {
             return Err("blocked: the browser is not allowed on this computer".into());
         }
-        let key = (peer.id.clone(), host.clone(), gen_then);
+        let key = (host.clone(), gen_then);
         if self.allowed.lock().contains(&key) {
             return Ok(());
         }
-        let timeout = *self.timeout.lock();
         let ok = self
             .requests
-            .ask(
+            .ask_as(
                 &peer.id,
                 &peer.name,
+                Some(&self.bot.name),
                 PcPreview {
                     kind: "act",
                     action: "browser private host".into(),
                     target: format!("{host} (an address inside your own network)"),
-                    payload: url,
+                    payload: shown,
                 },
-                timeout,
+                self.timeout,
             )
             .await;
         if ok
@@ -545,7 +607,8 @@ pub struct HostDesktopHandler {
     reads: DesktopRpcHandler,
     deps: PcTargetDeps,
     ask_timeout: Duration,
-    net: Arc<BrowserNet>,
+    /// One browser per `(server, bot)`, oldest first.
+    browsers: Mutex<Vec<((String, String), Arc<dyn BrowserDriver>)>>,
 }
 
 impl HostDesktopHandler {
@@ -556,33 +619,63 @@ impl HostDesktopHandler {
             gate: Arc::clone(&deps.gate),
             own_pid: deps.own_pid,
         }));
-        let net = Arc::new(BrowserNet {
-            access: Arc::clone(&deps.access),
-            requests: Arc::clone(&deps.requests),
-            current: Mutex::new(None),
-            allowed: Mutex::new(BTreeSet::new()),
-            timeout: Mutex::new(ASK_TIMEOUT),
-        });
-        if let Some(browser) = &deps.browser {
-            let guard = Arc::clone(&net);
-            browser.set_destination_check(browser_cdp::DestinationCheck::new(move |url| {
-                let guard = Arc::clone(&guard);
-                async move { guard.check(url).await }
-            }));
-        }
         Self {
             reads,
             deps,
             ask_timeout: ASK_TIMEOUT,
-            net,
+            browsers: Mutex::new(Vec::new()),
         }
     }
 
     #[cfg(test)]
     fn with_ask_timeout(mut self, t: Duration) -> Self {
         self.ask_timeout = t;
-        *self.net.timeout.lock() = t;
         self
+    }
+
+    /// The browser of one bot of one server: its own instance (tabs, page
+    /// state, cookies) with its own network policy and private-host
+    /// allowances. Made on first use; the oldest is closed past the cap.
+    fn browser_for(&self, peer: &Device, bot: &Caller) -> Option<Arc<dyn BrowserDriver>> {
+        let make = self.deps.browser.as_ref()?;
+        let key = (peer.id.clone(), bot.id.clone());
+        let mut open = self.browsers.lock();
+        if let Some((_, b)) = open.iter().find(|(k, _)| *k == key) {
+            return Some(Arc::clone(b));
+        }
+        let driver = make();
+        let net = Arc::new(BrowserNet {
+            access: Arc::clone(&self.deps.access),
+            requests: Arc::clone(&self.deps.requests),
+            peer: peer.clone(),
+            bot: bot.clone(),
+            allowed: Mutex::new(BTreeSet::new()),
+            timeout: self.ask_timeout,
+        });
+        driver.set_destination_check(browser_cdp::DestinationCheck::new(move |url| {
+            let net = Arc::clone(&net);
+            async move { net.check(url).await }
+        }));
+        open.push((key, Arc::clone(&driver)));
+        while open.len() > MAX_BROWSERS {
+            let (_, old) = open.remove(0);
+            tokio::spawn(async move { old.close_all().await });
+        }
+        Some(driver)
+    }
+
+    /// Park a card for this request (the bot's name on it) and wait.
+    async fn ask(&self, peer: &Device, caller: Option<&Caller>, preview: PcPreview) -> bool {
+        self.deps
+            .requests
+            .ask_as(
+                &peer.id,
+                &peer.name,
+                caller.map(|c| c.name.as_str()),
+                preview,
+                self.ask_timeout,
+            )
+            .await
     }
 
     fn audit(&self, action: &str, detail: Value) -> Result<(), String> {
@@ -620,42 +713,55 @@ impl HostDesktopHandler {
     async fn first_look(
         &self,
         peer: &Device,
+        caller: Option<&Caller>,
         method: &str,
         family: PcFamily,
     ) -> Result<(), RpcError> {
-        let skip = family == PcFamily::Screen && self.deps.access.always_read(&peer.id);
-        if skip || self.deps.access.session_read_allowed(&peer.id, family) {
+        let bot = bot_key(caller);
+        // "Always" is the switch of a run placed on this computer; a named
+        // bot's first look asks for that bot.
+        let skip = family == PcFamily::Screen
+            && caller.is_none()
+            && self.deps.access.always_read(&peer.id);
+        if skip || self.deps.access.session_read_allowed(&peer.id, bot, family) {
             return Ok(());
         }
+        let who = caller.map_or_else(
+            || "this server's bots".to_owned(),
+            |c| format!("the bot \"{}\" of this server", c.name),
+        );
         let (target, payload) = match family {
             PcFamily::Screen => (
                 "this computer's screen",
-                "Allow this server's bots to look at this screen for this session? Praxi's own windows stay hidden.",
+                format!(
+                    "Allow {who} to look at this screen for this session? Praxi's own windows stay hidden."
+                ),
             ),
             PcFamily::Files => (
                 "this computer's files",
-                "Allow this server's bots to read files on this computer for this session? Passwords, other programs' settings and Praxi's own data stay unreachable. Writing a file asks every time.",
+                format!(
+                    "Allow {who} to read files on this computer for this session? Passwords, other programs' settings and Praxi's own data stay unreachable. Writing a file asks every time."
+                ),
             ),
             PcFamily::Browser => (
                 "this computer's browser",
-                "Allow this server's bots to look at pages in this computer's browser for this session? Opening a page or typing in one asks every time.",
+                format!(
+                    "Allow {who} to look at pages in its browser on this computer for this session? Opening a page or typing in one asks every time."
+                ),
             ),
             PcFamily::Commands => return Ok(()),
         };
         let gen_then = self.deps.access.family_gen(&peer.id, family);
         let allowed = self
-            .deps
-            .requests
             .ask(
-                &peer.id,
-                &peer.name,
+                peer,
+                caller,
                 PcPreview {
                     kind: "session_read",
                     action: "look".into(),
                     target: target.into(),
-                    payload: payload.into(),
+                    payload,
                 },
-                self.ask_timeout,
             )
             .await;
         if !allowed {
@@ -677,12 +783,18 @@ impl HostDesktopHandler {
                 "the owner switched this part of the computer off while the question was open",
             ));
         }
-        self.deps.access.allow_session_read(&peer.id, family);
+        self.deps.access.allow_session_read(&peer.id, bot, family);
         Ok(())
     }
 
-    fn audit_read(&self, peer: &Device, method: &str, detail: &Value) -> Result<(), RpcError> {
-        let mut d = serde_json::json!({"host": peer.id, "method": method});
+    fn audit_read(
+        &self,
+        peer: &Device,
+        caller: Option<&Caller>,
+        method: &str,
+        detail: &Value,
+    ) -> Result<(), RpcError> {
+        let mut d = serde_json::json!({"host": peer.id, "bot": bot_key(caller), "method": method});
         if let (Some(o), Some(extra)) = (d.as_object_mut(), detail.as_object()) {
             o.extend(extra.clone());
         }
@@ -694,10 +806,17 @@ impl HostDesktopHandler {
         })
     }
 
-    async fn read(&self, peer: &Device, method: &str, params: Value) -> Result<Value, RpcError> {
+    async fn read(
+        &self,
+        peer: &Device,
+        caller: Option<&Caller>,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, RpcError> {
         self.family_gate(peer, method, PcFamily::Screen)?;
-        self.first_look(peer, method, PcFamily::Screen).await?;
-        self.audit_read(peer, method, &serde_json::json!({}))?;
+        self.first_look(peer, caller, method, PcFamily::Screen)
+            .await?;
+        self.audit_read(peer, caller, method, &serde_json::json!({}))?;
         self.deps.requests.note_read(&peer.id, &peer.name);
         self.reads.handle(peer, method, params).await
     }
@@ -775,7 +894,12 @@ impl HostDesktopHandler {
     }
 
     #[allow(clippy::too_many_lines)] // one flat dispatch per served tool
-    async fn serve_tool(&self, peer: &Device, params: Value) -> Result<Value, RpcError> {
+    async fn serve_tool(
+        &self,
+        peer: &Device,
+        caller: &Caller,
+        params: Value,
+    ) -> Result<Value, RpcError> {
         #[derive(Deserialize)]
         struct P {
             name: String,
@@ -829,7 +953,7 @@ impl HostDesktopHandler {
                     target: format!("in {shell} on this computer, folder: {cwd_text}"),
                     payload: (self.deps.redact)(&command),
                 };
-                self.approve_and_run(peer, method, preview, PcFamily::Commands)
+                self.approve_and_run(peer, Some(caller), method, preview, PcFamily::Commands)
                     .await?;
                 if let Some(o) = input.as_object_mut() {
                     // Run in exactly the folder on the card.
@@ -867,7 +991,7 @@ impl HostDesktopHandler {
                     target: format!("{} ({what})", abs.display()),
                     payload: (self.deps.redact)(&content),
                 };
-                self.approve_and_run(peer, method, preview, PcFamily::Files)
+                self.approve_and_run(peer, Some(caller), method, preview, PcFamily::Files)
                     .await?;
                 if let Some(o) = input.as_object_mut() {
                     // The file written is exactly the one on the card.
@@ -881,9 +1005,11 @@ impl HostDesktopHandler {
                 if let Some(why) = self.base_refusal(peer, method) {
                     return Err(self.refuse(peer, method, &why));
                 }
-                self.first_look(peer, method, PcFamily::Files).await?;
+                self.first_look(peer, Some(caller), method, PcFamily::Files)
+                    .await?;
                 self.audit_read(
                     peer,
+                    Some(caller),
                     method,
                     &serde_json::json!({"tool": name, "path": str_field(&input, "path")}),
                 )?;
@@ -926,11 +1052,15 @@ impl HostDesktopHandler {
     // ── browser ──────────────────────────────────────────────────────────────
 
     #[allow(clippy::too_many_lines)] // one flat dispatch table
-    async fn serve_browser(&self, peer: &Device, params: Value) -> Result<Value, RpcError> {
+    async fn serve_browser(
+        &self,
+        peer: &Device,
+        caller: &Caller,
+        params: Value,
+    ) -> Result<Value, RpcError> {
         let method = RPC_BROWSER;
         self.family_gate(peer, method, PcFamily::Browser)?;
-        *self.net.current.lock() = Some(peer.clone());
-        let Some(driver) = self.deps.browser.clone() else {
+        let Some(driver) = self.browser_for(peer, caller) else {
             return Err(self.refuse(peer, method, "this computer has no browser to use"));
         };
         let op = str_field(&params, "op")
@@ -1000,6 +1130,7 @@ impl HostDesktopHandler {
             }
             self.approve_and_run(
                 peer,
+                Some(caller),
                 method,
                 PcPreview {
                     kind: "act",
@@ -1016,8 +1147,9 @@ impl HostDesktopHandler {
             if let Some(msg) = self.deps.gate.observation_refused() {
                 return Err(self.refuse(peer, method, &msg));
             }
-            self.first_look(peer, method, PcFamily::Browser).await?;
-            self.audit_read(peer, method, &serde_json::json!({"op": op}))?;
+            self.first_look(peer, Some(caller), method, PcFamily::Browser)
+                .await?;
+            self.audit_read(peer, Some(caller), method, &serde_json::json!({"op": op}))?;
         }
         // What the browser returns (a read, or the page a click led to) is
         // discarded if control changed hands while it was captured.
@@ -1035,11 +1167,16 @@ impl HostDesktopHandler {
         out
     }
 
-    async fn act(&self, peer: &Device, params: Value) -> Result<Value, RpcError> {
+    async fn act(
+        &self,
+        peer: &Device,
+        caller: Option<&Caller>,
+        params: Value,
+    ) -> Result<Value, RpcError> {
         let action = parse_action(&params)?;
         let prepared = self.prepare(peer, "desktop.act", &action).await?;
         let preview = prepared.preview("act", action_name(&action));
-        self.approve_and_run(peer, "desktop.act", preview, PcFamily::Screen)
+        self.approve_and_run(peer, caller, "desktop.act", preview, PcFamily::Screen)
             .await?;
         let outcome = self
             .deps
@@ -1055,7 +1192,12 @@ impl HostDesktopHandler {
         serde_json::to_value(outcome).map_err(|e| RpcError::new(-32603, e.to_string()))
     }
 
-    async fn launch(&self, peer: &Device, params: Value) -> Result<Value, RpcError> {
+    async fn launch(
+        &self,
+        peer: &Device,
+        caller: Option<&Caller>,
+        params: Value,
+    ) -> Result<Value, RpcError> {
         #[derive(Deserialize)]
         struct P {
             app: AppSpec,
@@ -1076,7 +1218,7 @@ impl HostDesktopHandler {
             target: "starts a new program on this computer".into(),
             payload: (self.deps.redact)(&command),
         };
-        self.approve_and_run(peer, "desktop.launch", preview, PcFamily::Screen)
+        self.approve_and_run(peer, caller, "desktop.launch", preview, PcFamily::Screen)
             .await?;
         let pid = self
             .deps
@@ -1099,16 +1241,13 @@ impl HostDesktopHandler {
     async fn approve_and_run(
         &self,
         peer: &Device,
+        caller: Option<&Caller>,
         method: &str,
         preview: PcPreview,
         family: PcFamily,
     ) -> Result<(), RpcError> {
         let gen_then = self.deps.access.family_gen(&peer.id, family);
-        let allowed = self
-            .deps
-            .requests
-            .ask(&peer.id, &peer.name, preview.clone(), self.ask_timeout)
-            .await;
+        let allowed = self.ask(peer, caller, preview.clone()).await;
         if !allowed {
             return Err(self.refuse(
                 peer,
@@ -1132,7 +1271,7 @@ impl HostDesktopHandler {
         }
         self.audit(
             "pc_target.act",
-            serde_json::json!({"host": peer.id, "method": method, "action": preview.action, "target": preview.target}),
+            serde_json::json!({"host": peer.id, "bot": bot_key(caller), "method": method, "action": preview.action, "target": preview.target}),
         )
         .map_err(|e| {
             RpcError::new(
@@ -1572,21 +1711,36 @@ impl RpcHandler for HostDesktopHandler {
         if let Err(why) = self.still_authorized(peer) {
             return Err(self.refuse(peer, method, why));
         }
+        let caller = caller_of(&params).map_err(|why| self.refuse(peer, method, &why))?;
+        // The `pc_*` families always name the bot asking: every allowance and
+        // card here is per bot.
+        let named = |method: &str| -> Result<&Caller, RpcError> {
+            caller.as_ref().ok_or_else(|| {
+                self.refuse(
+                    peer,
+                    method,
+                    "the server did not say which of its bots is asking, so this was refused",
+                )
+            })
+        };
         match method {
             "node.info" | "desktop.capabilities" => self.reads.handle(peer, method, params).await,
-            RPC_INFO => self.info(peer),
-            RPC_TOOL => self.serve_tool(peer, params).await,
-            RPC_BROWSER => self.serve_browser(peer, params).await,
+            RPC_INFO => {
+                named(method)?;
+                self.info(peer)
+            }
+            RPC_TOOL => self.serve_tool(peer, named(method)?, params).await,
+            RPC_BROWSER => self.serve_browser(peer, named(method)?, params).await,
             "desktop.snapshot" | "desktop.screenshot" | "desktop.windows" => {
-                self.read(peer, method, params).await
+                self.read(peer, caller.as_ref(), method, params).await
             }
             "desktop.act" => {
                 self.family_gate(peer, method, PcFamily::Screen)?;
-                self.act(peer, params).await
+                self.act(peer, caller.as_ref(), params).await
             }
             "desktop.launch" => {
                 self.family_gate(peer, method, PcFamily::Screen)?;
-                self.launch(peer, params).await
+                self.launch(peer, caller.as_ref(), params).await
             }
             other => Err(RpcError::new(
                 ERR_METHOD_NOT_FOUND,
@@ -1757,6 +1911,8 @@ mod tests {
         #[allow(dead_code)]
         write: Arc<Recorder>,
         browser: Arc<FakeBrowser>,
+        /// Browsers the factory made (one per bot).
+        browsers_made: Arc<AtomicUsize>,
     }
 
     fn device(role: Role) -> Device {
@@ -1800,6 +1956,12 @@ mod tests {
         let refused = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let served = (Recorder::new("shell_run"), Recorder::new("fs_write"));
         let browser = Arc::new(FakeBrowser::default());
+        let browsers_made = Arc::new(AtomicUsize::new(0));
+        let (made, fake_browser) = (browsers_made.clone(), browser.clone());
+        let factory: BrowserFactory = Arc::new(move || {
+            made.fetch_add(1, Ordering::SeqCst);
+            fake_browser.clone() as Arc<dyn BrowserDriver>
+        });
         let h = HostDesktopHandler::new(PcTargetDeps {
             raw: fake.clone(),
             data: dir.path().to_path_buf(),
@@ -1820,8 +1982,9 @@ mod tests {
             tools: vec![
                 served.0.clone() as Arc<dyn Tool>,
                 served.1.clone() as Arc<dyn Tool>,
+                Recorder::new("fs_read") as Arc<dyn Tool>,
             ],
-            browser: Some(browser.clone() as Arc<dyn BrowserDriver>),
+            browser: Some(factory),
         })
         .with_ask_timeout(Duration::from_secs(5));
         Rig {
@@ -1837,6 +2000,7 @@ mod tests {
             shell: served.0,
             write: served.1,
             browser,
+            browsers_made,
         }
     }
 
@@ -1885,6 +2049,8 @@ mod tests {
         /// Bump this epoch while a snapshot is being captured.
         bump: Mutex<Option<Arc<AtomicU64>>>,
         check: Mutex<Option<browser_cdp::DestinationCheck>>,
+        /// Every policy installed, in order (one per bot's browser).
+        checks: Mutex<Vec<browser_cdp::DestinationCheck>>,
     }
 
     #[async_trait]
@@ -1894,6 +2060,7 @@ mod tests {
             Ok(format!("opened {url}"))
         }
         fn set_destination_check(&self, check: browser_cdp::DestinationCheck) {
+            self.checks.lock().push(check.clone());
             *self.check.lock() = Some(check);
         }
         async fn snapshot(&self, _: bool) -> Result<String, String> {
@@ -1955,7 +2122,12 @@ mod tests {
 
     #[allow(clippy::needless_pass_by_value)]
     fn tool_params(name: &str, input: Value) -> Value {
-        serde_json::json!({ "name": name, "input": input })
+        as_bot(serde_json::json!({ "name": name, "input": input }), "bot-a")
+    }
+
+    fn as_bot(mut v: Value, id: &str) -> Value {
+        v[CALLER_KEY] = serde_json::json!({"id": id, "name": format!("Bot {id}")});
+        v
     }
 
     /// Each family is its own owner switch: with only screen and input on, a
@@ -1976,7 +2148,7 @@ mod tests {
             ),
             (
                 RPC_BROWSER,
-                serde_json::json!({"op": "open", "url": "https://example.com/"}),
+                serde_json::json!({"op": "open", "url": "https://example.com/", "bot": {"id": "bot-a", "name": "Ayla"}}),
             ),
         ];
         for (method, params) in &calls {
@@ -2157,7 +2329,7 @@ mod tests {
         let call = r.h.handle(
             &host,
             RPC_BROWSER,
-            serde_json::json!({"op": "open", "url": "https://example.com/a?b=1"}),
+            serde_json::json!({"op": "open", "url": "https://example.com/a?b=1", "bot": {"id": "bot-a", "name": "Ayla"}}),
         );
         let (res, info) = tokio::join!(call, answer(&r.requests, true));
         assert!(res.is_ok(), "{res:?}");
@@ -2165,17 +2337,20 @@ mod tests {
         assert!(info.target.contains("example.com"));
         assert_eq!(r.browser.opened.lock().len(), 1);
         for params in [
-            serde_json::json!({"op": "open", "url": "file:///C:/Windows/win.ini"}),
-            serde_json::json!({"op": "open", "url": "javascript:alert(1)"}),
-            serde_json::json!({"op": "eval", "js": "1"}),
+            serde_json::json!({"op": "open", "url": "file:///C:/Windows/win.ini", "bot": {"id": "bot-a", "name": "Ayla"}}),
+            serde_json::json!({"op": "open", "url": "javascript:alert(1)", "bot": {"id": "bot-a", "name": "Ayla"}}),
+            serde_json::json!({"op": "eval", "js": "1", "bot": {"id": "bot-a", "name": "Ayla"}}),
         ] {
             let res = r.h.handle(&host, RPC_BROWSER, params).await;
             assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
         }
         assert_eq!(r.browser.opened.lock().len(), 1);
         // Reading the page asks once for the session, then not again.
-        let snap =
-            r.h.handle(&host, RPC_BROWSER, serde_json::json!({"op": "snapshot"}));
+        let snap = r.h.handle(
+            &host,
+            RPC_BROWSER,
+            serde_json::json!({"op": "snapshot", "bot": {"id": "bot-a", "name": "Ayla"}}),
+        );
         let (res, info) = tokio::join!(snap, answer(&r.requests, true));
         assert!(res.is_ok());
         assert_eq!(info.kind, "session_read");
@@ -2290,7 +2465,7 @@ mod tests {
         r.access.set_switches("host1", all_families()).unwrap();
         let host = device(Role::Host);
         // First look allowed.
-        let snap = serde_json::json!({"op": "snapshot"});
+        let snap = serde_json::json!({"op": "snapshot", "bot": {"id": "bot-a", "name": "Ayla"}});
         let call = r.h.handle(&host, RPC_BROWSER, snap.clone());
         let (res, _) = tokio::join!(call, answer(&r.requests, true));
         assert!(res.is_ok());
@@ -2299,8 +2474,12 @@ mod tests {
         r.refused.store(true, Ordering::SeqCst);
         for op in ["snapshot", "screenshot", "tabs", "current_url"] {
             let res =
-                r.h.handle(&host, RPC_BROWSER, serde_json::json!({"op": op}))
-                    .await;
+                r.h.handle(
+                    &host,
+                    RPC_BROWSER,
+                    serde_json::json!({"op": op, "bot": {"id": "bot-a", "name": "Ayla"}}),
+                )
+                .await;
             assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN, "{op}");
         }
         assert_eq!(r.browser.snapshots.load(Ordering::SeqCst), 1);
@@ -2342,8 +2521,11 @@ mod tests {
         assert!(r.shell.inputs.lock().is_empty(), "the command did not run");
         // The same for a first look: the browser family switched off while its
         // question is open must not get a session allowance back.
-        let call =
-            r.h.handle(&host, RPC_BROWSER, serde_json::json!({"op": "snapshot"}));
+        let call = r.h.handle(
+            &host,
+            RPC_BROWSER,
+            serde_json::json!({"op": "snapshot", "bot": {"id": "bot-a", "name": "Ayla"}}),
+        );
         let change = async {
             let id = loop {
                 if let Some(i) = r.requests.list().first() {
@@ -2360,7 +2542,10 @@ mod tests {
         let (res, ()) = tokio::join!(call, change);
         assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
         assert_eq!(r.browser.snapshots.load(Ordering::SeqCst), 0);
-        assert!(!r.access.session_read_allowed("host1", PcFamily::Browser));
+        assert!(
+            !r.access
+                .session_read_allowed("host1", "bot-a", PcFamily::Browser)
+        );
     }
 
     /// Blocker 4: the served browser's network policy: loopback (the daemon's
@@ -2379,7 +2564,7 @@ mod tests {
                 r.h.handle(
                     &host,
                     RPC_BROWSER,
-                    serde_json::json!({"op": "open", "url": url}),
+                    serde_json::json!({"op": "open", "url": url, "bot": {"id": "bot-a", "name": "Ayla"}}),
                 )
                 .await;
             assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN, "{url}");
@@ -2394,7 +2579,7 @@ mod tests {
         let call = r.h.handle(
             &host,
             RPC_BROWSER,
-            serde_json::json!({"op": "open", "url": "https://93.184.216.34/"}),
+            serde_json::json!({"op": "open", "url": "https://93.184.216.34/", "bot": {"id": "bot-a", "name": "Ayla"}}),
         );
         let (res, _) = tokio::join!(call, answer(&r.requests, true));
         assert!(res.is_ok());
@@ -2669,5 +2854,103 @@ mod tests {
             r.h.handle(&device(Role::Host), "desktop.windows", Value::Null)
                 .await;
         assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
+    }
+
+    /// Review blocker 1: what the person at this computer allowed for one
+    /// bot (a session's first look, the screen's "always") never covers
+    /// another bot of the same server, and the card names the bot.
+    #[tokio::test]
+    async fn a_session_allowance_for_one_bot_does_not_cover_another() {
+        let r = rig(false, true);
+        r.access.set_switches("host1", all_families()).unwrap();
+        let host = device(Role::Host);
+        let read = |bot: &str| {
+            as_bot(
+                serde_json::json!({"name": "fs_read", "input": {"path": "C:/x.txt"}}),
+                bot,
+            )
+        };
+        // Bot A: first look asks (allowed), then reads without a card.
+        let (res, info) = tokio::join!(
+            r.h.handle(&host, RPC_TOOL, read("bot-a")),
+            answer(&r.requests, true)
+        );
+        assert!(res.is_ok(), "{res:?}");
+        assert_eq!(info.kind, "session_read");
+        assert_eq!(info.bot_name.as_deref(), Some("Bot bot-a"));
+        assert!(r.h.handle(&host, RPC_TOOL, read("bot-a")).await.is_ok());
+        assert_eq!(r.write.inputs.lock().len() + r.shell.inputs.lock().len(), 0);
+        // Bot B of the same server asks again; denied, nothing is read.
+        let (res, info) = tokio::join!(
+            r.h.handle(&host, RPC_TOOL, read("bot-b")),
+            answer(&r.requests, false)
+        );
+        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
+        assert_eq!(info.bot_name.as_deref(), Some("Bot bot-b"));
+        // The screen's "always" switch (on in this rig) covers a run placed
+        // here, never a named bot's first look.
+        assert!(
+            r.h.handle(&host, "desktop.windows", Value::Null)
+                .await
+                .is_ok()
+        );
+        let (res, info) = tokio::join!(
+            r.h.handle(
+                &host,
+                "desktop.windows",
+                as_bot(serde_json::json!({}), "bot-b")
+            ),
+            answer(&r.requests, false)
+        );
+        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
+        assert_eq!(info.kind, "session_read");
+        // A `pc.*` call that names no bot is refused without a card.
+        let res =
+            r.h.handle(
+                &host,
+                RPC_TOOL,
+                serde_json::json!({"name": "fs_read", "input": {"path": "C:/x.txt"}}),
+            )
+            .await;
+        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
+        assert!(r.requests.list().is_empty());
+    }
+
+    /// Review blocker 1: each bot gets its own browser at this computer (tabs,
+    /// page state, cookies) and its own private-host allowances.
+    #[tokio::test]
+    async fn each_bot_has_its_own_browser_and_private_host_allowance() {
+        let r = rig(false, true);
+        r.access.set_switches("host1", all_families()).unwrap();
+        let host = device(Role::Host);
+        let snap = |bot: &str| as_bot(serde_json::json!({"op": "snapshot"}), bot);
+        let (res, _) = tokio::join!(
+            r.h.handle(&host, RPC_BROWSER, snap("bot-a")),
+            answer(&r.requests, true)
+        );
+        assert!(res.is_ok());
+        let (res, _) = tokio::join!(
+            r.h.handle(&host, RPC_BROWSER, snap("bot-b")),
+            answer(&r.requests, true)
+        );
+        assert!(res.is_ok());
+        assert!(r.h.handle(&host, RPC_BROWSER, snap("bot-a")).await.is_ok());
+        assert_eq!(r.browsers_made.load(Ordering::SeqCst), 2, "one per bot");
+        let (check_a, check_b) = {
+            let c = r.browser.checks.lock();
+            (c[0].clone(), c[1].clone())
+        };
+        let allowed = tokio::join!(
+            check_a.check("http://10.0.0.5/admin".into()),
+            answer(&r.requests, true)
+        );
+        assert!(allowed.0.is_ok());
+        assert!(check_a.check("http://10.0.0.5/x".into()).await.is_ok());
+        let (res, info) = tokio::join!(
+            check_b.check("http://10.0.0.5/admin".into()),
+            answer(&r.requests, false)
+        );
+        assert!(res.is_err(), "bot B did not inherit bot A's allowance");
+        assert_eq!(info.bot_name.as_deref(), Some("Bot bot-b"));
     }
 }

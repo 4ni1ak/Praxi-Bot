@@ -1611,6 +1611,7 @@
       "files": "Reading asks once per session; writing a file asks every time. Passwords, other programs' settings and Praxi's own data stay unreachable.",
       "screen": "Look at the screen, click, type and start programs. Every action that changes something asks you first."
     },
+    "fromBotName": "(the server's bot, as it calls itself: {{name}})",
     "fromServer": "This name comes from the server, not from this computer.",
     "fromServerName": "(server name, as it calls itself: {{name}})",
     "looking": "A bot on {{name}} is looking at this screen",

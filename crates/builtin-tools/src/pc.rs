@@ -14,7 +14,8 @@
 //! The PC-side counterpart lives in `apps/cli/src/pc_target.rs`; the wire names
 //! are the `PC_*` constants below.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -52,6 +53,49 @@ pub const SERVED_TOOLS: [&str; 4] = ["shell_run", "fs_read", "fs_list", "fs_writ
 pub const PC_CALL_TIMEOUT: Duration = Duration::from_secs(150);
 /// Deadline of a call that never asks (info, a read once allowed).
 pub const PC_QUICK_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// The key of the calling bot in every `pc.*` and `desktop.*` request.
+pub const CALLER_KEY: &str = "bot";
+
+/// Which bot of the server is asking. The computer keys every allowance on
+/// it (and shows the name on its cards), so what was allowed for one bot is
+/// never used by another.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PcCaller {
+    /// The bot's id on the server.
+    pub id: String,
+    /// The bot's display name (what the card at the computer shows).
+    pub name: String,
+}
+
+impl PcCaller {
+    /// Put the caller into a request's parameters (an object; anything else
+    /// becomes one).
+    #[must_use]
+    pub fn attach(&self, params: Value) -> Value {
+        let mut obj = match params {
+            Value::Object(o) => o,
+            _ => serde_json::Map::new(),
+        };
+        obj.insert(CALLER_KEY.into(), json!({"id": self.id, "name": self.name}));
+        Value::Object(obj)
+    }
+}
+
+/// Looks up a bot's display name by id (`None`: unknown, the id is shown).
+pub type BotNames = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+fn caller_of(ctx: &ToolContext, names: &BotNames) -> Result<PcCaller, ToolError> {
+    let id = ctx
+        .bot_id
+        .clone()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| {
+            ToolError::Execution("the user's computer is used only by a bot of this server".into())
+        })?;
+    let name = names(&id).unwrap_or_else(|| id.clone());
+    Ok(PcCaller { id, name })
+}
 
 /// The four things the owner switches on separately.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -142,11 +186,12 @@ impl std::fmt::Display for PcError {
 pub trait PcLink: Send + Sync {
     /// One RPC to the computer.
     async fn call(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, PcError>;
-    /// The computer's desktop (observe, input, launch) over the same link.
+    /// The computer's desktop (observe, input, launch) over the same link,
+    /// every request of it naming `caller`.
     ///
     /// # Errors
     /// Why the computer cannot be used right now.
-    fn desktop(&self) -> Result<Arc<dyn DesktopBackend>, PcError>;
+    fn desktop(&self, caller: &PcCaller) -> Result<Arc<dyn DesktopBackend>, PcError>;
 }
 
 /// A late-bound [`PcLink`]: the tools are registered before the peer stack
@@ -177,8 +222,8 @@ impl PcLink for PcLinkSlot {
         self.get()?.call(method, params, timeout).await
     }
 
-    fn desktop(&self) -> Result<Arc<dyn DesktopBackend>, PcError> {
-        self.get()?.desktop()
+    fn desktop(&self, caller: &PcCaller) -> Result<Arc<dyn DesktopBackend>, PcError> {
+        self.get()?.desktop(caller)
     }
 }
 
@@ -264,12 +309,13 @@ impl ToolWrapper for Renamed {
 /// computer is the error text the model reads.
 struct PcDesktop {
     link: Arc<dyn PcLink>,
+    caller: PcCaller,
 }
 
 impl PcDesktop {
     fn backend(&self) -> Result<Arc<dyn DesktopBackend>, DesktopError> {
         self.link
-            .desktop()
+            .desktop(&self.caller)
             .map_err(|e| DesktopError::Unsupported(e.to_string()))
     }
 }
@@ -309,19 +355,20 @@ impl DesktopBackend for PcDesktop {
 /// one `pc.browser` RPC. Typing owner secrets and page scripts are not served.
 pub struct RemoteBrowserDriver {
     link: Arc<dyn PcLink>,
+    caller: PcCaller,
 }
 
 impl RemoteBrowserDriver {
-    /// The user's own computer.
+    /// The user's own computer, driven for `caller` (its own browser there).
     #[must_use]
-    pub fn new(link: Arc<dyn PcLink>) -> Self {
-        Self { link }
+    pub fn new(link: Arc<dyn PcLink>, caller: PcCaller) -> Self {
+        Self { link, caller }
     }
 
     async fn op(&self, op: &str, mut args: Value) -> Result<Value, String> {
         args["op"] = json!(op);
         self.link
-            .call(RPC_BROWSER, args, PC_CALL_TIMEOUT)
+            .call(RPC_BROWSER, self.caller.attach(args), PC_CALL_TIMEOUT)
             .await
             .map_err(|e| e.to_string())
     }
@@ -430,6 +477,7 @@ impl BrowserDriver for RemoteBrowserDriver {
 struct InfoTool {
     spec: ToolSpec,
     link: Arc<dyn PcLink>,
+    names: BotNames,
 }
 
 #[async_trait]
@@ -437,10 +485,11 @@ impl Tool for InfoTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
     }
-    async fn call(&self, _ctx: &ToolContext, _input: Value) -> Result<ToolOutput, ToolError> {
+    async fn call(&self, ctx: &ToolContext, _input: Value) -> Result<ToolOutput, ToolError> {
+        let caller = caller_of(ctx, &self.names)?;
         let v = self
             .link
-            .call(RPC_INFO, Value::Null, PC_QUICK_TIMEOUT)
+            .call(RPC_INFO, caller.attach(Value::Null), PC_QUICK_TIMEOUT)
             .await
             .map_err(|e| ToolError::Execution(e.to_string()))?;
         let info: PcInfo = serde_json::from_value(v)
@@ -480,6 +529,7 @@ struct RemoteTool {
     spec: ToolSpec,
     remote_name: &'static str,
     link: Arc<dyn PcLink>,
+    names: BotNames,
 }
 
 #[async_trait]
@@ -487,12 +537,13 @@ impl Tool for RemoteTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
     }
-    async fn call(&self, _ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
+    async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
+        let caller = caller_of(ctx, &self.names)?;
         let v = self
             .link
             .call(
                 RPC_TOOL,
-                json!({"name": self.remote_name, "input": input}),
+                caller.attach(json!({"name": self.remote_name, "input": input})),
                 PC_CALL_TIMEOUT,
             )
             .await
@@ -512,7 +563,12 @@ impl Tool for RemoteTool {
     }
 }
 
-fn remote_tool(inner: &Arc<dyn Tool>, name: &'static str, link: &Arc<dyn PcLink>) -> Arc<dyn Tool> {
+fn remote_tool(
+    inner: &Arc<dyn Tool>,
+    name: &'static str,
+    link: &Arc<dyn PcLink>,
+    names: &BotNames,
+) -> Arc<dyn Tool> {
     let mut spec = inner.spec().clone();
     spec.name = format!("{PC_PREFIX}{name}");
     spec.description = format!(
@@ -530,13 +586,126 @@ fn remote_tool(inner: &Arc<dyn Tool>, name: &'static str, link: &Arc<dyn PcLink>
         spec,
         remote_name: name,
         link: Arc::clone(link),
+        names: Arc::clone(names),
     })
+}
+
+/// The desktop and browser tools of the user's computer, one set PER BOT:
+/// element generations, `ref`s, the open tab and the browser at the computer
+/// (its own cookie jar there) are never shared between two bots. Built on a
+/// bot's first call.
+struct PerBot {
+    link: Arc<dyn PcLink>,
+    data_dir: PathBuf,
+    names: BotNames,
+    sets: parking_lot::Mutex<HashMap<String, Arc<HashMap<String, Arc<dyn Tool>>>>>,
+}
+
+impl PerBot {
+    fn build(link: &Arc<dyn PcLink>, data_dir: &Path, caller: &PcCaller) -> Vec<Arc<dyn Tool>> {
+        let mut out: Vec<Arc<dyn Tool>> = Vec::new();
+        // Screen and input: the same tools as the bot's own desktop, on the
+        // PC's screen, with their own observation state.
+        let backend: Arc<dyn DesktopBackend> = Arc::new(PcDesktop {
+            link: Arc::clone(link),
+            caller: caller.clone(),
+        });
+        out.extend(
+            crate::desktop::tools_dynamic_with_secrets(
+                Some(backend),
+                None,
+                &data_dir.join("pc"),
+                crate::DesktopSettings::default(),
+                None,
+                None,
+            )
+            .into_iter()
+            .map(Renamed::wrap),
+        );
+        // Browser: the computer's managed browser (no page scripts, no secrets).
+        let driver: Arc<dyn BrowserDriver> =
+            Arc::new(RemoteBrowserDriver::new(Arc::clone(link), caller.clone()));
+        out.extend(
+            crate::browser::tools_with_secrets(driver, &data_dir.join("pc"), None, None)
+                .into_iter()
+                .filter(|t| t.spec().name != "browser_eval")
+                .map(Renamed::wrap),
+        );
+        out
+    }
+
+    fn tool(&self, ctx: &ToolContext, name: &str) -> Result<Arc<dyn Tool>, ToolError> {
+        let caller = caller_of(ctx, &self.names)?;
+        let set = {
+            let mut sets = self.sets.lock();
+            Arc::clone(sets.entry(caller.id.clone()).or_insert_with(|| {
+                Arc::new(
+                    Self::build(&self.link, &self.data_dir, &caller)
+                        .into_iter()
+                        .map(|t| (t.spec().name.clone(), t))
+                        .collect(),
+                )
+            }))
+        };
+        set.get(name)
+            .cloned()
+            .ok_or_else(|| ToolError::Execution(format!("{name} is not available")))
+    }
+}
+
+/// One `pc_desktop_*` / `pc_browser_*` tool as the registry sees it: the
+/// spec of the family, every call run by the calling bot's own instance.
+struct Dispatch {
+    spec: ToolSpec,
+    /// The instance built for no bot: class-level answers only (it never runs).
+    proto: Arc<dyn Tool>,
+    family: Arc<PerBot>,
+}
+
+#[async_trait]
+impl ToolWrapper for Dispatch {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+    fn egress_for(&self, bot_id: Option<&str>) -> Option<bool> {
+        self.proto.egress_for(bot_id)
+    }
+    async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
+        self.family
+            .tool(ctx, &self.spec.name)?
+            .call(ctx, input)
+            .await
+    }
+    fn always_ask(&self) -> bool {
+        self.proto.always_ask()
+    }
+    fn always_ask_for(&self, input: &Value) -> bool {
+        self.proto.always_ask_for(input)
+    }
+    async fn standing_grant(&self, _ctx: &ToolContext, _input: &Value) -> Option<StandingGrant> {
+        None
+    }
+    async fn approval_details(
+        &self,
+        ctx: &ToolContext,
+        input: &Value,
+    ) -> Result<Option<Value>, ToolError> {
+        match self.family.tool(ctx, &self.spec.name) {
+            Ok(t) => t.approval_details(ctx, input).await,
+            Err(_) => Ok(None),
+        }
+    }
+    fn approval_closed(&self, ctx: &ToolContext, input: &Value, token: Option<&str>) {
+        if let Ok(t) = self.family.tool(ctx, &self.spec.name) {
+            t.approval_closed(ctx, input, token);
+        }
+    }
 }
 
 /// The whole family for the model. `data_dir` holds the screenshots of the
 /// desktop tools. Built once; every call resolves the link when it runs.
 #[must_use]
-pub fn pc_tools(link: &Arc<dyn PcLink>, data_dir: &Path) -> Vec<Arc<dyn Tool>> {
+pub fn pc_tools(link: &Arc<dyn PcLink>, data_dir: &Path, names: &BotNames) -> Vec<Arc<dyn Tool>> {
     let mut out: Vec<Arc<dyn Tool>> = Vec::new();
     out.push(Arc::new(InfoTool {
         spec: ToolSpec {
@@ -549,37 +718,32 @@ pub fn pc_tools(link: &Arc<dyn PcLink>, data_dir: &Path) -> Vec<Arc<dyn Tool>> {
             content: ContentClass::none(),
         },
         link: Arc::clone(link),
+        names: Arc::clone(names),
     }));
-    // Screen and input: the same tools as the bot's own desktop, on the PC's
-    // screen, with their own observation state.
-    let backend: Arc<dyn DesktopBackend> = Arc::new(PcDesktop {
+    // Screen, input and browser: one instance set per bot, behind one
+    // registered tool per name.
+    let family = Arc::new(PerBot {
         link: Arc::clone(link),
+        data_dir: data_dir.to_path_buf(),
+        names: Arc::clone(names),
+        sets: parking_lot::Mutex::new(HashMap::new()),
     });
-    out.extend(
-        crate::desktop::tools_dynamic_with_secrets(
-            Some(backend),
-            None,
-            &data_dir.join("pc"),
-            crate::DesktopSettings::default(),
-            None,
-            None,
-        )
-        .into_iter()
-        .map(Renamed::wrap),
-    );
-    // Browser: the computer's managed browser (no page scripts, no secrets).
-    let driver: Arc<dyn BrowserDriver> = Arc::new(RemoteBrowserDriver::new(Arc::clone(link)));
-    out.extend(
-        crate::browser::tools_with_secrets(driver, &data_dir.join("pc"), None, None)
-            .into_iter()
-            .filter(|t| t.spec().name != "browser_eval")
-            .map(Renamed::wrap),
-    );
+    let proto_caller = PcCaller {
+        id: String::new(),
+        name: String::new(),
+    };
+    for proto in PerBot::build(link, data_dir, &proto_caller) {
+        out.push(Arc::new(Dispatch {
+            spec: proto.spec().clone(),
+            proto,
+            family: Arc::clone(&family),
+        }));
+    }
     // Commands and files: specs of the real tools, executed over there.
     for inner in local_tools(data_dir) {
         let name = inner.spec().name.clone();
         if let Some(served) = SERVED_TOOLS.iter().find(|n| **n == name) {
-            out.push(remote_tool(&inner, served, link));
+            out.push(remote_tool(&inner, served, link, names));
         }
     }
     out
@@ -620,9 +784,79 @@ mod tests {
         async fn call(&self, _: &str, _: Value, _: Duration) -> Result<Value, PcError> {
             Err(PcError::Offline)
         }
-        fn desktop(&self) -> Result<Arc<dyn DesktopBackend>, PcError> {
+        fn desktop(&self, _: &PcCaller) -> Result<Arc<dyn DesktopBackend>, PcError> {
             Err(PcError::Offline)
         }
+    }
+
+    fn no_names() -> BotNames {
+        Arc::new(|id: &str| (id == "bot-a").then(|| "Ayla".to_owned()))
+    }
+
+    fn ctx_of(bot: &str) -> ToolContext {
+        ToolContext {
+            bot_id: Some(bot.into()),
+            ..ToolContext::default()
+        }
+    }
+
+    /// Records what each request carried and which bot each desktop is for.
+    #[derive(Default)]
+    struct Recording {
+        params: parking_lot::Mutex<Vec<Value>>,
+        desktops: parking_lot::Mutex<Vec<PcCaller>>,
+    }
+
+    #[async_trait]
+    impl PcLink for Recording {
+        async fn call(&self, _: &str, params: Value, _: Duration) -> Result<Value, PcError> {
+            self.params.lock().push(params);
+            Err(PcError::Offline)
+        }
+        fn desktop(&self, caller: &PcCaller) -> Result<Arc<dyn DesktopBackend>, PcError> {
+            self.desktops.lock().push(caller.clone());
+            Err(PcError::Offline)
+        }
+    }
+
+    /// Review blocker 1: every request names the calling bot, and the desktop
+    /// and browser state of one bot is never the instance another bot uses.
+    #[tokio::test]
+    async fn every_request_names_its_bot_and_bots_never_share_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let rec = Arc::new(Recording::default());
+        let link: Arc<dyn PcLink> = rec.clone();
+        let tools = pc_tools(&link, dir.path(), &no_names());
+        let find = |n: &str| tools.iter().find(|t| t.spec().name == n).unwrap();
+        for (tool, input) in [
+            ("pc_shell_run", json!({"command": "dir"})),
+            ("pc_info", json!({})),
+            ("pc_browser_snapshot", json!({})),
+        ] {
+            let _ = find(tool).call(&ctx_of("bot-a"), input).await;
+        }
+        for p in rec.params.lock().iter() {
+            assert_eq!(p[CALLER_KEY]["id"], "bot-a", "{p}");
+            assert_eq!(p[CALLER_KEY]["name"], "Ayla", "{p}");
+        }
+        assert_eq!(rec.params.lock().len(), 3);
+        // No bot, no call.
+        let err = find("pc_shell_run")
+            .call(&ToolContext::default(), json!({"command": "dir"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("bot"), "{err}");
+        assert_eq!(rec.params.lock().len(), 3);
+        // Each bot's desktop calls go through a backend bound to THAT bot.
+        let list = find("pc_desktop_list_apps");
+        let _ = list.call(&ctx_of("bot-a"), json!({})).await;
+        let _ = list.call(&ctx_of("bot-b"), json!({})).await;
+        let ids: Vec<String> = rec.desktops.lock().iter().map(|c| c.id.clone()).collect();
+        assert!(
+            ids.contains(&"bot-a".to_owned()) && ids.contains(&"bot-b".to_owned()),
+            "{ids:?}"
+        );
+        assert!(!ids.iter().any(String::is_empty), "{ids:?}");
     }
 
     /// The family has its own names, its descriptions point at them, and an
@@ -631,7 +865,7 @@ mod tests {
     async fn the_family_is_separate_and_fails_fast_when_the_computer_is_off() {
         let dir = tempfile::tempdir().unwrap();
         let link: Arc<dyn PcLink> = Arc::new(Off);
-        let tools = pc_tools(&link, dir.path());
+        let tools = pc_tools(&link, dir.path(), &no_names());
         let names: Vec<String> = tools.iter().map(|t| t.spec().name.clone()).collect();
         for t in &names {
             assert!(t.starts_with("pc_"), "{t}");
@@ -655,7 +889,7 @@ mod tests {
         let started = std::time::Instant::now();
         let err = shell
             .unwrap()
-            .call(&ToolContext::default(), json!({"command": "dir"}))
+            .call(&ctx_of("bot-a"), json!({"command": "dir"}))
             .await
             .unwrap_err()
             .to_string();
@@ -666,7 +900,7 @@ mod tests {
             .find(|t| t.spec().name == "pc_desktop_list_apps")
             .unwrap();
         let err = desktop
-            .call(&ToolContext::default(), json!({}))
+            .call(&ctx_of("bot-a"), json!({}))
             .await
             .unwrap_err()
             .to_string();

@@ -1611,6 +1611,7 @@
       "files": "Okuma oturum başına bir kez sorar; dosya yazmak her seferinde sorar. Parolalar, diğer programların ayarları ve Praxi'nin kendi verisi erişilemez kalır.",
       "screen": "Ekrana bakar, tıklar, yazar ve program başlatır. Bir şeyi değiştiren her işlem önce size sorar."
     },
+    "fromBotName": "(sunucunun botu, kendi verdiği adla: {{name}})",
     "fromServer": "Bu ad sunucudan gelir, bu bilgisayardan değil.",
     "fromServerName": "(sunucunun kendini adlandırdığı ad: {{name}})",
     "looking": "{{name}} üzerindeki bir bot bu ekrana bakıyor",

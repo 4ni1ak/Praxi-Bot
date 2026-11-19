@@ -164,6 +164,14 @@ export function ComputerRequestModal() {
               <span className={styles.untrusted} title={t("computerAccess.fromServer")}>
                 {t("computerAccess.fromServerName", { name: current.host_name })}
               </span>
+              {current.bot_name ? (
+                <>
+                  {" "}
+                  <span className={styles.untrusted} title={t("computerAccess.fromServer")} data-testid="computer-request-bot">
+                    {t("computerAccess.fromBotName", { name: current.bot_name })}
+                  </span>
+                </>
+              ) : null}
             </p>
             <dl className={styles.facts}>
               <dt>{t("computerAccess.what")}</dt>

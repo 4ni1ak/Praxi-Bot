@@ -441,10 +441,17 @@ impl PcLink for CliPcLink {
         }
     }
 
-    fn desktop(&self) -> Result<Arc<dyn DesktopBackend>, PcError> {
-        self.provider
-            .mypc_remote()
-            .map(|r| r as Arc<dyn DesktopBackend>)
+    fn desktop(
+        &self,
+        caller: &builtin_tools::pc::PcCaller,
+    ) -> Result<Arc<dyn DesktopBackend>, PcError> {
+        let remote = self.provider.mypc_remote()?;
+        let mut extra = serde_json::Map::new();
+        extra.insert(
+            builtin_tools::pc::CALLER_KEY.into(),
+            serde_json::json!({"id": caller.id, "name": caller.name}),
+        );
+        Ok(Arc::new(remote.attributed(extra)))
     }
 }
 
