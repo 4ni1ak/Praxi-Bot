@@ -34,6 +34,11 @@ error.
   `bot doctor` runs more checks that need a terminal (port probe, browser
   launch, `--online` connection tests).
 
+## The always-on host
+
+Logs, restart, upgrade, backup and the host-offline / slow-start / peer table
+are in [Host operations](host-operations.md).
+
 ## `daemon not reachable at http://127.0.0.1:47821` (exit code 3)
 
 The daemon is not running, or it listens on another port.

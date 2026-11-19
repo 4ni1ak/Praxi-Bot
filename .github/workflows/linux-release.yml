@@ -705,10 +705,12 @@ jobs:
               --file dist/praxi-linux-x86_64.tar.gz --custom-trusted-root "$RUNNER_TEMP/trusted_root.jsonl"
           cp dist/praxi-linux-x86_64.tar.gz "$RUNNER_TEMP/tampered.tar.gz"
           printf 'tampered' >> "$RUNNER_TEMP/tampered.tar.gz"
-          # gh 2.80.0 error texts: cli/cli pkg/cmd/attestation/verify/attestation.go
-          # and verification/extensions.go. The digest is checked in the Sigstore
-          # stage; ref and repository are checked in the later policy stage.
-          expect_verify_failure 'tampered artifact' '✗ Sigstore verification failed' \
+          # gh >= 2.80.0 error texts: cli/cli pkg/cmd/attestation/verification/sigstore.go
+          # and extensions.go. When stdout is not a TTY (e.g. captured in $()),
+          # io.Handler.Println suppresses the "✗ Sigstore/Policy verification failed"
+          # banner, so gh prints only the returned Cobra error. The digest is checked
+          # in the Sigstore stage; ref and repository are checked in the later policy stage.
+          expect_verify_failure 'tampered artifact' 'Error: verifying with issuer "sigstore.dev"' \
             "$RUNNER_TEMP/tampered.tar.gz" emreocell/Praxi-Bot "$GITHUB_REF"
           expect_verify_failure 'wrong ref' 'expected SourceRepositoryRef to be refs/tags/v0.0.0-wrong-ref' \
             dist/install-linux.sh emreocell/Praxi-Bot refs/tags/v0.0.0-wrong-ref
