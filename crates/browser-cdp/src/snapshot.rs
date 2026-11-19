@@ -99,7 +99,21 @@ pub struct DomExtra {
     pub autocomplete: Option<String>,
     /// Visible text / label for clickable candidates.
     pub text: String,
+    /// `name`, `id` and `aria-label` attributes (page-chosen names that often reveal a secret field).
+    pub name_hints: Vec<String>,
 }
+
+/// Words in a field's name / id / aria-label that mark it as holding a secret.
+const SECRET_NAME_WORDS: &[&str] = &[
+    "password",
+    "passwd",
+    "otp",
+    "one-time",
+    "cvv",
+    "cvc",
+    "card number",
+    "iban",
+];
 
 impl DomExtra {
     /// Whether the element looks clickable although it may have no interactive AX role.
@@ -117,6 +131,11 @@ impl DomExtra {
                 let a = a.to_ascii_lowercase();
                 a.contains("password") || a.contains("cc-") || a.contains("one-time-code")
             })
+            || (self.input_type.is_some()
+                && self.name_hints.iter().any(|h| {
+                    let h = h.to_ascii_lowercase();
+                    SECRET_NAME_WORDS.iter().any(|w| h.contains(w))
+                }))
     }
 }
 
@@ -629,7 +648,8 @@ impl Builder<'_> {
         if (is_secret || unknown_sensitivity) && value.is_some() {
             value = Some(MASK.to_string());
         }
-        self.cur_sensitive = is_secret;
+        // Unknown sensitivity counts as secret: refuse rather than guess.
+        self.cur_sensitive = is_secret || unknown_sensitivity;
 
         let child_depth = if skip_line { depth } else { depth + 1 };
         if !skip_line {

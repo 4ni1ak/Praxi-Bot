@@ -280,4 +280,16 @@ mod tests {
             assert!(!p.tool_allow().contains(&"schedule_*"), "{}", p.id());
         }
     }
+
+    #[test]
+    fn no_preset_offers_the_bot_management_tools() {
+        for p in BotPreset::ALL {
+            let hit: Vec<_> = p
+                .tool_allow()
+                .into_iter()
+                .filter(|g| g.starts_with("bot_") || g.starts_with("bot*") || *g == "*")
+                .collect();
+            assert!(hit.is_empty(), "{}: {hit:?}", p.id());
+        }
+    }
 }

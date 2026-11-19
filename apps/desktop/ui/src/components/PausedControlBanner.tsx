@@ -16,9 +16,9 @@ import styles from "./PausedControlBanner.module.css";
  */
 export function PausedControlBanner() {
   const { t } = useTranslation();
-  const { state, controlState, clearPause, pauseClearing, openViewer, isLocalClient } =
+  const { state, controlState, clearPause, pauseClearing, openViewer, canClearForeignPause } =
     useLiveView();
-  const actions = visibleActions(state, controlState, isLocalClient).banner;
+  const actions = visibleActions(state, controlState, canClearForeignPause).banner;
   // Optimistic: gone the moment the user clicks; a failure brings it back with a toast.
   if (actions.length === 0 || pauseClearing) {
     return null;

@@ -122,8 +122,13 @@ fn classify_v6(ip: Ipv6Addr) -> AddrClass {
         AddrClass::Blocked("link-local address")
     } else if ip.is_multicast() {
         AddrClass::Blocked("multicast address")
-    } else if (s[0] & 0xfe00) == 0xfc00 || (s[0] & 0xffc0) == 0xfec0 {
-        // Unique-local and (deprecated) site-local.
+    } else if (s[0] & 0xfe00) == 0xfc00
+        || (s[0] & 0xffc0) == 0xfec0
+        || (s[0] == 0x64 && s[1] == 0xff9b && s[2] == 1)
+        || (s[0] == 0x2001 && s[1] == 0)
+    {
+        // Unique-local, (deprecated) site-local, local-use NAT64
+        // (`64:ff9b:1::/48`) and Teredo (`2001::/32`).
         AddrClass::Private
     } else if let Some(v4) = embedded_v4(&s) {
         // Forms that carry an IPv4 address are judged as that address.
@@ -261,6 +266,8 @@ mod v6_embedded_tests {
             ("fec0::1", true),
             ("64:ff9b::8.8.8.8", false),
             ("2606:4700::1111", false),
+            ("64:ff9b:1::1", true),
+            ("2001:0:4136:e378:8000:63bf:3fff:fdd2", true),
         ] {
             let got = classify_ip(ip.parse().unwrap());
             assert_eq!(matches!(got, AddrClass::Private), private, "{ip}");

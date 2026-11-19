@@ -81,9 +81,9 @@
 
 .userRow {
   display: flex;
+  flex-direction: column;
   align-items: flex-end;
-  justify-content: flex-end;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 .userBubble {
@@ -98,8 +98,9 @@
 
 .assistantRow {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  gap: var(--space-3);
+  gap: var(--space-1);
 }
 
 .lane {
@@ -108,7 +109,8 @@
 }
 
 .assistantBubble {
-  flex: 1;
+  flex: 0 0 auto;
+  width: 100%;
   min-width: var(--space-0);
   max-width: 100%;
   padding: var(--space-1) var(--space-0) var(--space-0);
@@ -309,7 +311,8 @@
 }
 
 :global(:root[data-bubble="soft"]) .assistantBubble {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
+  width: auto;
   max-width: 88%;
   padding: var(--space-3) var(--space-4);
   border-radius: var(--bubble-radius) var(--bubble-radius) var(--bubble-radius) var(--bubble-tail);
@@ -323,7 +326,8 @@
   border: var(--size-border) solid color-mix(in srgb, var(--color-text) 15%, transparent);
 }
 :global(:root[data-bubble="glass"]) .assistantBubble {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
+  width: auto;
   max-width: 88%;
   padding: var(--space-3) var(--space-4);
   border-radius: var(--bubble-radius) var(--bubble-radius) var(--bubble-radius) var(--bubble-tail);
@@ -335,7 +339,8 @@
   background-image: none;
 }
 :global(:root[data-bubble="line"]) .assistantBubble {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
+  width: auto;
   max-width: 88%;
   padding: var(--space-3) var(--space-4);
   border-radius: var(--bubble-radius) var(--bubble-radius) var(--bubble-radius) var(--bubble-tail);

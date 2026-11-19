@@ -33,6 +33,8 @@ API token from `BOT_API_TOKEN` when that variable is set, otherwise from
 `--remote` reaches a paired daemon for `status`, `chat`, `bots`, `answer`,
 `approve`, `grants`, `schedules`, `email`, `channels telegram pair`, and
 `host invite`, `status`, `devices`, `revoke`, `standby` and `activate`.
+`bot --remote <ENDPOINT> proxy` opens the tunnel, prints its loopback `url` and `token` and keeps it
+open until Ctrl-C (used by the [link measurement guide](../design/live-view-link-measurement.md)).
 `host join`, `screen`, `admin`, `add`, `repair`, `upgrade` and `remove`,
 plus `token`, `mcp`, `doctor` and `setup`, stay on this machine.
 `screen`, `admin` and the SSH host commands still use the local daemon.

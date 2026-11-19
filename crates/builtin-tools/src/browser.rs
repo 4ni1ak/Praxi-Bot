@@ -103,6 +103,11 @@ pub trait BrowserDriver: Send + Sync {
         let _ = r;
         Err(NO_SECRET_FILL.into())
     }
+    /// The element that has keyboard focus now. Backends that cannot say
+    /// refuse (callers treat that as "may be a secret").
+    async fn focused_target(&self) -> Result<FieldTarget, String> {
+        Err(NO_SECRET_FILL.into())
+    }
     /// Type `text` (an owner-stored secret) into field `r`, but only while the
     /// field's frame origin, re-read from the browser immediately before the
     /// text is inserted, satisfies `accept`. Never put `text` in the result.
@@ -832,6 +837,12 @@ impl BrowserDriver for CdpDriver {
     async fn field_target(&self, r: &str) -> Result<FieldTarget, String> {
         with_session!(self, None, false, |sess| {
             sess.page.field_target(r).await
+        })
+    }
+
+    async fn focused_target(&self) -> Result<FieldTarget, String> {
+        with_session!(self, None, false, |sess| {
+            sess.page.focused_target().await
         })
     }
 

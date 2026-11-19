@@ -36,6 +36,7 @@ import type {
   BotEngineInput,
   BotInput,
   Chat,
+  UpdateChatInput,
   ConfiguredProviderDto,
   CliEngineDto,
   CliInstallApproval,
@@ -145,6 +146,13 @@ export class ApiError extends Error {
   readonly body?: unknown;
   /** Name of the paired host the request went to, when it was not this computer (see `humanError`). */
   readonly host?: string;
+  /**
+   * Only for `code === "network"`: why no answer came. `connect` = the connection itself failed
+   * (refused / unreachable: the request never reached a service); `timeout` = the request ran into
+   * its time limit; `aborted` = the client was disposed or the caller cancelled. Only `connect` is
+   * proof that nothing received the request.
+   */
+  readonly netKind?: "connect" | "timeout" | "aborted";
 
   constructor(status: number, code: string, message: string, body?: unknown, host?: string) {
     super(message);
@@ -383,11 +391,16 @@ export class ApiClient {
         ])
       });
     } catch (e) {
-      throw new ApiError(
-        0,
-        "network",
-        e instanceof Error ? e.message : String(e)
-      );
+      const name = e instanceof Error ? e.name : "";
+      const netKind: "connect" | "timeout" | "aborted" =
+        this.life.signal.aborted || name === "AbortError"
+          ? "aborted"
+          : name === "TimeoutError"
+            ? "timeout"
+            : "connect";
+      const err = new ApiError(0, "network", e instanceof Error ? e.message : String(e));
+      (err as { netKind?: string }).netKind = netKind;
+      throw err;
     }
     if (!res.ok) {
       let code = "http_error";
@@ -618,6 +631,12 @@ export class ApiClient {
   }
   createChat(botId: string, title?: string): Promise<Chat> {
     return this.request("POST", "/chats", { body: { bot_id: botId, title } });
+  }
+  updateChat(chatId: string, body: UpdateChatInput): Promise<Chat> {
+    return this.request("PATCH", `/chats/${encodeURIComponent(chatId)}`, { body });
+  }
+  deleteChat(chatId: string): Promise<void> {
+    return this.request("DELETE", `/chats/${encodeURIComponent(chatId)}`);
   }
   listMessages(chatId: string): Promise<Message[]> {
     return this.request("GET", `/chats/${chatId}/messages`);

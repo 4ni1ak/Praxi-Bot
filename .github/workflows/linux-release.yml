@@ -60,9 +60,14 @@ jobs:
           for action in uses:
               assert re.fullmatch(r"[^@\s]+@[0-9a-f]{40}(?:\s+#.*)?", action), action
           print(f"Verified {len(uses)} immutable action references")
+          # Build job-level conditions without writing the expression opener literally: GitHub evaluates
+          # every dollar-brace pair in a run block, and status functions are not allowed there.
+          def job_if(condition):
+              return "    if: " + chr(36) + "{{ " + condition + " }}"
           # FINAL tags: reviewer-gated attestation and publication, unchanged.
           release = workflow.split("\n  release:\n", 1)[1]
-          assert "    if: needs.plan.outputs.kind == 'final' && needs.plan.outputs.publish == 'true'" in release
+          assert job_if("!cancelled() && needs.verify-tagged-release.result == 'success' && needs.plan.outputs.kind == 'final' && needs.plan.outputs.publish == 'true'") in release
+          assert "needs.verify-tagged-release.result == 'success'" in release
           assert "    needs: [plan, verify-tagged-release]" in release
           assert "    environment: release" in release
           attest = workflow.split("\n  attest:\n", 1)[1].split("\n  verify-tagged-release:\n", 1)[0]
@@ -80,6 +85,8 @@ jobs:
           assert "environment:" not in publish_pre
           assert "    needs: [plan, verify-tagged-release]" in publish_pre
           assert "needs.plan.outputs.kind == 'pre'" in publish_pre
+          assert job_if("!cancelled() && needs.verify-tagged-release.result == 'success' && needs.plan.outputs.kind == 'pre' && needs.plan.outputs.publish == 'true' && github.repository == 'emreocell/Praxi-Bot'") in publish_pre
+          assert "needs.verify-tagged-release.result == 'success'" in publish_pre
           assert "publish-linux-assets.sh" in publish_pre and "publish-linux-assets.sh" in release
           script = pathlib.Path("scripts/release/publish-linux-assets.sh").read_text()
           assert '--clobber' not in script and 'gh release edit' not in script and 'gh release delete' not in script
@@ -720,7 +727,9 @@ jobs:
   publish-prerelease:
     name: Publish pre-release assets
     needs: [plan, verify-tagged-release]
-    if: needs.plan.outputs.kind == 'pre' && needs.plan.outputs.publish == 'true' && github.repository == 'emreocell/Praxi-Bot'
+    # !cancelled() + an explicit result check: the implicit success() would also fail when the sibling
+    # attest job (final-only or pre-only) was skipped. Verification must still have succeeded.
+    if: ${{ !cancelled() && needs.verify-tagged-release.result == 'success' && needs.plan.outputs.kind == 'pre' && needs.plan.outputs.publish == 'true' && github.repository == 'emreocell/Praxi-Bot' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -745,7 +754,8 @@ jobs:
   release:
     name: Publish verified immutable release
     needs: [plan, verify-tagged-release]
-    if: needs.plan.outputs.kind == 'final' && needs.plan.outputs.publish == 'true'
+    # See publish-prerelease: explicit verification result instead of the implicit success().
+    if: ${{ !cancelled() && needs.verify-tagged-release.result == 'success' && needs.plan.outputs.kind == 'final' && needs.plan.outputs.publish == 'true' }}
     environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
