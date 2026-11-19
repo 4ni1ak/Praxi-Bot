@@ -1275,18 +1275,32 @@ pub fn serve(
             state.add_channel(t.clone());
             t
         });
+        // The leadership check waits (up to its deadline) for paired peers'
+        // heartbeats; the API must not wait for it. Until it finishes the
+        // components stay closed (`verifying`), so serving first is safe.
         if state.leader().config().runs_components() {
-            state.leader().start().await?;
-        }
-        if let Some(t) = &telegram {
-            use daemon_api::ChannelControl;
-            let i = t.info();
-            if i.running {
-                eprintln!(
-                    "telegram channel: running ({} paired user(s))",
-                    i.paired_users
-                );
-            }
+            let leader = state.leader().clone();
+            let telegram = telegram.clone();
+            tokio::spawn(async move {
+                let began = std::time::Instant::now();
+                match leader.start().await {
+                    Ok(()) => eprintln!(
+                        "startup: leader components started in background (+{} ms)",
+                        began.elapsed().as_millis()
+                    ),
+                    Err(e) => eprintln!("warning: leader components did not start: {e}"),
+                }
+                if let Some(t) = &telegram {
+                    use daemon_api::ChannelControl;
+                    let i = t.info();
+                    if i.running {
+                        eprintln!(
+                            "telegram channel: running ({} paired user(s))",
+                            i.paired_users
+                        );
+                    }
+                }
+            });
         }
         step("listening");
         if json {
