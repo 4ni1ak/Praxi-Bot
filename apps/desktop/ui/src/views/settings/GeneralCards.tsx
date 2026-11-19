@@ -117,6 +117,22 @@ export function generalCards(b: SettingsBridge, t: TFunction): CardDef[] {
       { keywords: "saat zaman time clock seconds saniye mesaj" }
     ),
     card(
+      "speak-replies",
+      t("voice.speakAuto.title"),
+      t("voice.speakAuto.description"),
+      <SettingRow
+        title={t("voice.speakAuto.title")}
+        description={t("voice.speakAuto.description")}
+      >
+        <Switch
+          label={t("voice.speakAuto.title")}
+          checked={settings.speakReplies}
+          onChange={(speakReplies) => update({ speakReplies })}
+        />
+      </SettingRow>,
+      { keywords: "ses voice speak read aloud tts sesli oku vorlesen" }
+    ),
+    card(
       "voice",
       t("voice.title"),
       t("voice.description"),

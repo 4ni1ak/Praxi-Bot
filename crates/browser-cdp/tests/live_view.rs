@@ -339,6 +339,9 @@ fn build_reply(state: &FakeServerState, id: u64, method: &str, params: &Value) -
             }
             json!({ "success": true })
         }
+        "Page.captureScreenshot" => json!({
+            "data": base64::engine::general_purpose::STANDARD.encode(minimal_jpeg(640, 400, 0))
+        }),
         "Page.getLayoutMetrics" => state.layout_metrics.lock().expect("layout lock").clone(),
         "Page.getFrameTree" => json!({
             "frameTree": {
@@ -545,9 +548,9 @@ async fn subscribe_before_start_and_single_tab_close_never_falls_back() {
         .find(|c| c.method == "Page.startScreencast")
         .expect("startScreencast recorded");
     assert_eq!(start_cmd.params["format"], "jpeg");
-    assert_eq!(start_cmd.params["quality"], 45);
-    assert_eq!(start_cmd.params["maxWidth"], 960);
-    assert_eq!(start_cmd.params["maxHeight"], 600);
+    assert_eq!(start_cmd.params["quality"], 70);
+    assert_eq!(start_cmd.params["maxWidth"], 1920);
+    assert_eq!(start_cmd.params["maxHeight"], 1080);
     assert_eq!(start_cmd.params["everyNthFrame"], 10);
     assert_eq!(start_cmd.session_id.as_deref(), Some(sess_a.as_str()));
 
@@ -2260,4 +2263,53 @@ async fn target_close_during_live_cold_start_boost_stops_worker_without_cached_f
     })
     .await
     .expect("screencast sink unregistered on worker exit");
+}
+
+#[tokio::test]
+async fn static_tab_publishes_first_frame_from_a_viewport_screenshot() {
+    let server = FakeCdpServer::start().await;
+    let browser = Browser::connect(&server.ws_url()).await.unwrap();
+    let page = browser.new_page("about:blank").await.unwrap();
+    *server.state.layout_metrics.lock().unwrap() = json!({
+        "cssVisualViewport": {"clientWidth": 640, "clientHeight": 400, "scale": 1}
+    });
+    let clock = ManualClock::new();
+    let view = page.live_view(BrowserViewConfig {
+        clock: ViewClock::Manual(clock.clone()),
+        ..BrowserViewConfig::default()
+    });
+    let mut sub = view
+        .frame_source()
+        .subscribe(EffectiveProfile::watch())
+        .await
+        .unwrap();
+    clock.advance(Duration::from_millis(210));
+    server
+        .state
+        .wait_for_method_count("Page.startScreencast", 2)
+        .await;
+    let frame_clock = clock.clone();
+    let advance = tokio::spawn(async move {
+        // Advance until the worker processes the successful CDP start and opens its paint window.
+        loop {
+            frame_clock.advance(Duration::from_millis(200));
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    });
+    let frame = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if let Some(frame) = sub.frames.borrow_and_update().clone() {
+                break frame;
+            }
+            sub.frames.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    advance.abort();
+    assert_eq!((frame.metadata.width, frame.metadata.height), (640, 400));
+    assert_eq!(
+        server.state.capture_screenshot_calls.load(Ordering::SeqCst),
+        1
+    );
 }

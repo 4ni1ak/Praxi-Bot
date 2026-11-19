@@ -12,7 +12,7 @@ use crate::{
     changes, cli_login, components, composio, composio_routes, doctor, doctor_routes, dto, email,
     email_routes, error, file_access, fill_routes, host, host_admin, host_copy, host_import,
     host_links, host_setup, knowledge, knowledge_settings, live_view, mcp, mcp_routes, mcp_server,
-    routes, skill_hub, skill_management, skills, sse, terminal, trusted_folders, voice,
+    peer, routes, skill_hub, skill_management, skills, sse, terminal, trusted_folders, voice,
     voice_routes, web, web_routes,
 };
 
@@ -51,6 +51,7 @@ impl Modify for Security {
         routes::health,
         live_view::targets,
         live_view::availability,
+        peer::link,
         live_view::status,
         terminal::open, terminal::output, terminal::input, terminal::resize, terminal::close_route,
         terminal::host_open, terminal::host_output, terminal::host_input, terminal::host_resize, terminal::host_close,
@@ -91,6 +92,8 @@ impl Modify for Security {
         routes::create_chat,
         routes::list_messages,
         routes::send_message,
+        crate::attachment_routes::upload,
+        crate::attachment_routes::download,
         routes::list_approvals,
         routes::decide_approval,
         routes::answer_question,
@@ -182,9 +185,10 @@ impl Modify for Security {
         events_doc,
     ),
     components(schemas(
+        peer::PeerLink,
         terminal::OpenTerminalInput, terminal::TerminalInfo, terminal::TerminalOutput, terminal::TerminalInput, terminal::TerminalResize, ::live_view::ScreenStatus, ::live_view::ScreenStreamState, ::live_view::RecordHeader, ::live_view::FrameMetadata, ::live_view::SourceRect,
         dto::ReleaseResult, dto::ControlStateChanged, dto::ScreenPrivilegesInput, sse::SseStatus, sse::Gap, dto::Health, dto::HostInfo, dto::BotDto, dto::BotInput, dto::BotPatchInput, dto::BotPatchOp, dto::BotPatchKind, dto::BotConflictBody, dto::RuntimeConfigDto, dto::ChatDto, dto::CreateChat,
-        dto::MessageDto, dto::RunUsageDto, dto::Mode, dto::SendMessage, dto::DeliveryKind, dto::SendResponse,
+        dto::MessageDto, dto::RunUsageDto, dto::Mode, dto::SendMessage, dto::AttachmentDto, dto::DeliveryKind, dto::SendResponse,
         dto::ApprovalDto, dto::Decision, dto::Scope, dto::DecideApproval,
         dto::DecisionResponse, dto::RunDto, dto::StopScope, dto::StopRunsInput, dto::StopOutcome, dto::StopRunResult, dto::StopRunsResponse, dto::UsageTotals, dto::BotUsage,
         dto::UsageSummary, dto::AnswerQuestion, dto::AnswerResponse, dto::GrantDto,

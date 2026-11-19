@@ -559,6 +559,7 @@
       "code": "kod"
     },
     "slash": {
+      "export": "Bu sohbeti Markdown dosyası olarak kaydet",
       "new": "Yeni bir sohbet başlat",
       "stop": "Çalışan işi durdur",
       "help": "Yardımı ve kısayolları aç",
@@ -850,6 +851,7 @@
       }
     },
     "timelineLabel": "Sohbet",
+    "export": { "you": "Sen", "done": "Sohbet kaydedildi" },
     "jumpToLatest": "En sona git",
     "runBar": {
       "label": "Çalışma kontrolleri",
@@ -973,7 +975,7 @@
     "runs": "Çalışmalar",
     "modelCalls": "Model çağrıları",
     "tokens": "Token",
-    "empty": "Henüz kullanım yok.",
+    "empty": "Henüz kullanım yok. Bir bota mesaj gönderdiğinde token kullanımı burada görünür.",
     "bot": "Bot",
     "calls": "Çağrı",
     "prompt": "İstem",
@@ -987,7 +989,7 @@
   "needs": {
     "title": "Senden bekleyenler",
     "subtitle": "Tüm sohbetlerde bekleyen onaylar ve sorular.",
-    "empty": "Senden bekleyen bir şey yok.",
+    "empty": "Senden bekleyen bir şey yok. Bir bot onay istediğinde ya da soru sorduğunda burada görünür.",
     "kind": {
       "approval": "Onay",
       "question": "Soru"
@@ -1072,6 +1074,10 @@
       "component_conflict": {
         "title": "Şu an kurulacak bir şey yok",
         "hint": "Zaten kurulu ya da kuruluyor olabilir veya bu bilgisayarda kurulum aracı yok."
+      },
+      "attachment_too_large": {
+        "title": "Bu ek çok büyük",
+        "hint": "Kaldır veya daha küçük bir dosya seçip yeniden dene."
       },
       "approval_once_only": {
         "title": "Bu onay yalnızca bir kez verilebilir",
@@ -1328,6 +1334,10 @@
       "unavailable": {
         "title": "Bu şu an kullanılamıyor",
         "hint": "Biraz sonra yeniden dene."
+      },
+      "unsupported_attachment": {
+        "title": "Bu ek desteklenmiyor",
+        "hint": "Dosyanın boş veya bozuk olmadığından emin ol ya da başka bir dosya dene."
       },
       "unsupported_media_type": {
         "title": "Bu dosya türü desteklenmiyor",
@@ -2812,6 +2822,7 @@
       "localNoSystem": "Bot burada çalışıyor"
     },
     "reason": {
+      "timeout": "Ekran zamanında başlatılamadı",
       "connecting": "{{name}} sunucusuna bağlanılıyor…",
       "offline": "Sunucuya ulaşılamıyor",
       "notPaired": "Sunucu bu bilgisayarı artık kabul etmiyor",
@@ -3193,6 +3204,12 @@
     "approvalsWaiting": "Sohbette kararınızı bekleyen {{count}} öğe var.",
     "reviewApprovals": "Yanıtlamak için sohbete dön",
     "errors": {
+      "unauthorized": "Oturumunuzun yetkisi artık geçerli değil. Bu bilgisayara yeniden bağlanın.",
+      "too_many_streams": "Bu bağlantıda çok fazla akış açık. Başka bir akışı kapatıp tekrar deneyin.",
+      "network": "Ekran bağlantısı kesildi. Ağınızı kontrol edip tekrar deneyin.",
+      "view_quota": "Sunucuda çok fazla ekran oturumu açık. Kullanmadığınız bir ekranı kapatın veya biraz sonra tekrar deneyin.",
+      "server_restarting": "Sunucu yeniden başlatılıyor olabilir. Çevrimiçi olduğunda tekrar deneyin.",
+      "timeout": "Ekran zamanında başlatılamadı.",
       "generic": "İstek başarısız oldu. Bağlantıyı kontrol edip tekrar deneyin.",
       "release_failed": "Kontrol geri verilemedi. Bot duraklatılmış kalır; Bitirdim'i yeniden deneyin.",
       "release_unconfirmed": "Daemon devralmanızı hâlâ etkin gösteriyor. Bitirdim'i yeniden deneyin.",
@@ -3442,6 +3459,10 @@
     "dismiss": "Kapat",
     "stopAllNow": "Hepsini şimdi durdur",
     "letContinue": "Devam etsinler"
+  },
+  "peerLink": {
+    "direct": "Doğrudan · {{rtt}} ms",
+    "relay": "Röle · {{rtt}} ms"
   },
   "computerPicker": {
     "label": "Bilgisayar: {{name}}",
@@ -3875,6 +3896,10 @@
     "auto": "Otomatik (uygulama diline göre)",
     "online": "çevrimiçi",
     "speed": "Hız",
-    "unsupported": "Bu sistemde konuşma sesi yok."
+    "unsupported": "Bu sistemde konuşma sesi yok.",
+    "speakAuto": {
+      "title": "Cevapları sesli oku",
+      "description": "Biten her cevabı otomatik olarak sesli oku."
+    }
   }
 }

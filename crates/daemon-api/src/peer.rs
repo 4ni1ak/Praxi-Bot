@@ -2,7 +2,7 @@
 //! HTTP headers can never grant a role.
 use crate::{ApiError, AppState};
 use axum::{
-    Router,
+    Extension, Json, Router,
     extract::{Request, State},
     http::Method,
     middleware::Next,
@@ -23,6 +23,19 @@ pub enum PeerRole {
 pub struct PeerIdentity {
     pub key: String,
     pub role: PeerRole,
+}
+
+/// The selected path of the authenticated QUIC connection, without peer addresses.
+#[derive(Clone, Copy, Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct PeerLink {
+    pub relay: bool,
+    pub rtt_ms: u32,
+}
+
+/// Return the path for this request's tunnel, or null on local HTTP.
+#[utoipa::path(get, path = "/v1/peer/link", tag = "peer", security(("bearer" = [])), responses((status = 200, body = Option<PeerLink>)))]
+pub(crate) async fn link(path: Option<Extension<PeerLink>>) -> Json<Option<PeerLink>> {
+    Json(path.map(|Extension(info)| info))
 }
 
 /// Generic JSON/TOML profile editors retain ordinary bot editing, but cannot

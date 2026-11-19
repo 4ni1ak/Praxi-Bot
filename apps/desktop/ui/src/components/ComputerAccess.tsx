@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import type { ApiClient } from "../api/client";
 import type { PcRequestInfo } from "../api/types";
+import { humanLine } from "../lib/humanError";
 import { useDaemon } from "../state/DaemonContext";
 import { Modal } from "./Modal";
 import { SettingRow, Switch } from "./SettingsUi";
@@ -60,7 +61,7 @@ export function ComputerAccessCard() {
                 )
                 .then(() => refreshHosts())
                 .catch((e: unknown) =>
-                  setError(e instanceof Error ? e.message : String(e))
+                  setError(humanLine(e))
                 );
             }}
           />
@@ -83,7 +84,7 @@ export function ComputerAccessCard() {
                   .then((key) => localApi?.setComputerAccess(h.id, true, always, key))
                   .then(() => refreshHosts())
                   .catch((e: unknown) =>
-                    setError(e instanceof Error ? e.message : String(e))
+                    setError(humanLine(e))
                   );
               }}
             />

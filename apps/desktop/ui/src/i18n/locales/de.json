@@ -559,6 +559,7 @@
       "code": "Code"
     },
     "slash": {
+      "export": "Diesen Chat als Markdown-Datei speichern",
       "new": "Neuen Chat starten",
       "stop": "Aktuellen Lauf stoppen",
       "help": "Hilfe und Tastenkürzel öffnen",
@@ -850,6 +851,7 @@
       }
     },
     "timelineLabel": "Unterhaltung",
+    "export": { "you": "Du", "done": "Chat gespeichert" },
     "jumpToLatest": "Zum Neuesten springen",
     "runBar": {
       "label": "Lauf-Steuerung",
@@ -973,7 +975,7 @@
     "runs": "Läufe",
     "modelCalls": "Modellaufrufe",
     "tokens": "Tokens",
-    "empty": "Noch keine Nutzung.",
+    "empty": "Noch keine Nutzung. Sobald du einem Bot schreibst, erscheint der Token-Verbrauch hier.",
     "bot": "Bot",
     "calls": "Aufrufe",
     "prompt": "Prompt",
@@ -987,7 +989,7 @@
   "needs": {
     "title": "Braucht dich",
     "subtitle": "Genehmigungen und Fragen, die in allen Chats warten.",
-    "empty": "Nichts wartet auf dich.",
+    "empty": "Nichts wartet auf dich. Wenn ein Bot eine Freigabe braucht oder eine Frage hat, erscheint sie hier.",
     "kind": {
       "approval": "Genehmigung",
       "question": "Frage"
@@ -1072,6 +1074,10 @@
       "component_conflict": {
         "title": "Gerade nichts zu installieren",
         "hint": "Es ist bereits installiert oder wird gerade installiert, oder auf diesem Computer ist kein Installationsprogramm verfügbar."
+      },
+      "attachment_too_large": {
+        "title": "Dieser Anhang ist zu groß",
+        "hint": "Entferne ihn oder wähle eine kleinere Datei und versuche es dann erneut."
       },
       "approval_once_only": {
         "title": "Diese Genehmigung kann nur einmal erteilt werden",
@@ -1328,6 +1334,10 @@
       "unavailable": {
         "title": "Das ist gerade nicht verfügbar",
         "hint": "Versuche es gleich noch einmal."
+      },
+      "unsupported_attachment": {
+        "title": "Dieser Anhang wird nicht unterstützt",
+        "hint": "Prüfe, ob die Datei nicht leer oder beschädigt ist, oder versuche eine andere Datei."
       },
       "unsupported_media_type": {
         "title": "Dieser Dateityp wird nicht unterstützt",
@@ -2812,6 +2822,7 @@
       "localNoSystem": "Der Bot arbeitet hier"
     },
     "reason": {
+      "timeout": "Der Bildschirm konnte nicht rechtzeitig gestartet werden",
       "connecting": "Verbindung zu {{name}} wird hergestellt …",
       "offline": "Server nicht erreichbar",
       "notPaired": "Der Server akzeptiert diesen Computer nicht mehr",
@@ -3193,6 +3204,12 @@
     "approvalsWaiting": "{{count}} Element(e) warten im Chat auf deine Entscheidung.",
     "reviewApprovals": "Zurück zum Chat, um zu antworten",
     "errors": {
+      "unauthorized": "Ihre Sitzung ist nicht mehr autorisiert. Verbinden Sie sich erneut mit diesem Computer.",
+      "too_many_streams": "Auf dieser Verbindung sind zu viele Streams offen. Schließen Sie einen anderen Stream und versuchen Sie es erneut.",
+      "network": "Die Bildschirmverbindung wurde unterbrochen. Prüfen Sie Ihr Netzwerk und versuchen Sie es erneut.",
+      "view_quota": "Auf dem Server sind zu viele Bildschirm-Sitzungen offen. Schließen Sie eine unbenutzte Ansicht oder versuchen Sie es gleich erneut.",
+      "server_restarting": "Der Server wird möglicherweise neu gestartet. Versuchen Sie es erneut, sobald er wieder online ist.",
+      "timeout": "Der Bildschirm konnte nicht rechtzeitig gestartet werden.",
       "generic": "Die Anfrage ist fehlgeschlagen. Prüfe die Verbindung und versuche es erneut.",
       "release_failed": "Die Kontrolle konnte nicht zurückgegeben werden. Der Bot bleibt pausiert; versuche Bitirdim erneut.",
       "release_unconfirmed": "Der Daemon meldet deine Übernahme weiterhin als aktiv. Versuche Bitirdim erneut.",
@@ -3442,6 +3459,10 @@
     "dismiss": "Verwerfen",
     "stopAllNow": "Jetzt alles stoppen",
     "letContinue": "Weiterlaufen lassen"
+  },
+  "peerLink": {
+    "direct": "Direkt · {{rtt}} ms",
+    "relay": "Relay · {{rtt}} ms"
   },
   "computerPicker": {
     "label": "Computer: {{name}}",
@@ -3875,6 +3896,10 @@
     "auto": "Automatisch (passend zur App-Sprache)",
     "online": "online",
     "speed": "Tempo",
-    "unsupported": "Dieses System bietet keine Sprachausgabe-Stimmen."
+    "unsupported": "Dieses System bietet keine Sprachausgabe-Stimmen.",
+    "speakAuto": {
+      "title": "Antworten vorlesen",
+      "description": "Jede fertige Antwort automatisch vorlesen."
+    }
   }
 }

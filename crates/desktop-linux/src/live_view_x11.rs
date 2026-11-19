@@ -2602,7 +2602,7 @@ mod tests {
 
         let info = target.info();
         assert!(info.capabilities.view && !info.capabilities.input);
-        assert_eq!(info.capabilities.codecs, vec![Codec::Jpeg]);
+        assert_eq!(info.capabilities.codecs, vec![Codec::Jpeg, Codec::Webp]);
         assert!(target.input_sink().is_none());
 
         let src = target.frame_source();

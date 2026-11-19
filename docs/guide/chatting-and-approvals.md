@@ -26,6 +26,24 @@ If a turn is already running in the chat, `--mode` decides what happens:
 - `queue` (default): the message waits and runs as the next turn.
 - `steer`: the message is added to the running turn so you can redirect the bot.
 
+### Attaching files and images
+
+Upload a file with `POST /v1/chats/{id}/attachments` (raw body, `?name=` for the
+display name) and pass the returned ids as `attachment_ids` when you send the
+message; the text may then be empty. The file type is detected from its content,
+not its name:
+
+- Images (PNG, JPEG, GIF, WebP, up to 5 MB) go to the model as pictures. A model
+  without vision support is skipped or the turn reports that no model supports it.
+- PDF, Word (`docx`), Excel (`xlsx`) and PowerPoint (`pptx`) files and plain text
+  files (up to 15 MB) are read once, secrets are masked, and the text (at most
+  about 60 KB) is given to the model as data, never as instructions.
+- Audio, video, archives, legacy Office files and other binaries are refused with
+  a clear message; nothing speech-to-text is available yet.
+
+A message carries at most 6 files. Files are stored in the data directory under
+`attachments/`.
+
 ### Slash commands
 
 When the router is enabled, a few messages never reach the model at all:
