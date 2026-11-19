@@ -865,6 +865,18 @@
       "stopUnconfirmed": "The service has not confirmed the stop after 5 seconds, so the run may still be working. Press Force stop to end it.",
       "stopUnreachable": "The Stop could not reach the computer this bot runs on. It keeps retrying; check the connection.",
       "forceStop": "Force stop"
+    },
+    "attach": {
+      "add": "Attach files or images",
+      "remove": "Remove {{name}}",
+      "list": "Attached files",
+      "uploading": "Uploading",
+      "failed": "Could not attach this file",
+      "tooLarge": "Too large (15 MB at most)",
+      "unsupported": "This file type is not supported. Use an image, PDF, Word, Excel, PowerPoint or a text file.",
+      "tooMany": "At most 6 files per message",
+      "pastedName": "Pasted file",
+      "truncated": "Only the start of this file was read"
     }
   },
   "botForm": {
@@ -1352,6 +1364,14 @@
       "install_copy_only": {
         "title": "This CLI cannot be installed on the server automatically",
         "hint": "Use the command shown or the official page."
+      },
+      "unsupported_attachment": {
+        "title": "That file cannot be attached",
+        "hint": "Use an image, PDF, Word, Excel, PowerPoint or a text file."
+      },
+      "attachment_too_large": {
+        "title": "That file is too large",
+        "hint": "Attach a smaller file (15 MB at most, images 5 MB)."
       }
     },
     "network": {

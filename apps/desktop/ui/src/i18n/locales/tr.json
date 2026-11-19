@@ -865,6 +865,18 @@
       "stopUnconfirmed": "Servis durdurmayı 5 saniyedir onaylamadı, çalışma hâlâ sürüyor olabilir. Bitirmek için Zorla durdur'a bas.",
       "stopUnreachable": "Durdurma, bu botun çalıştığı bilgisayara ulaşamadı. Yeniden deniyor; bağlantıyı kontrol et.",
       "forceStop": "Zorla durdur"
+    },
+    "attach": {
+      "add": "Dosya veya görsel ekle",
+      "remove": "{{name}} dosyasını kaldır",
+      "list": "Eklenen dosyalar",
+      "uploading": "Yükleniyor",
+      "failed": "Bu dosya eklenemedi",
+      "tooLarge": "Çok büyük (en fazla 15 MB)",
+      "unsupported": "Bu dosya türü desteklenmiyor. Görsel, PDF, Word, Excel, PowerPoint veya metin dosyası kullan.",
+      "tooMany": "Bir mesajda en fazla 6 dosya olabilir",
+      "pastedName": "Yapıştırılan dosya",
+      "truncated": "Dosyanın yalnızca başı okundu"
     }
   },
   "botForm": {
@@ -1352,6 +1364,14 @@
       "install_copy_only": {
         "title": "Bu CLI sunucuya otomatik kurulamaz",
         "hint": "Gösterilen komutu ya da resmî sayfayı kullan."
+      },
+      "unsupported_attachment": {
+        "title": "Bu dosya eklenemez",
+        "hint": "Görsel, PDF, Word, Excel, PowerPoint veya metin dosyası kullan."
+      },
+      "attachment_too_large": {
+        "title": "Bu dosya çok büyük",
+        "hint": "Daha küçük bir dosya ekle (en fazla 15 MB, görseller 5 MB)."
       }
     },
     "network": {
