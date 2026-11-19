@@ -995,6 +995,22 @@ fn run_telegram(
     }
 }
 
+/// `bot --remote <ENDPOINT> proxy`: print the tunnel's loopback address and token, hold it open.
+async fn proxy_hold(
+    proxy: Option<&remote_api::ApiProxy>,
+    out: &mut dyn std::io::Write,
+) -> Result<()> {
+    let Some(proxy) = proxy else {
+        return Err("`bot proxy` needs --remote <ENDPOINT>".into());
+    };
+    writeln!(out, "url: {}", proxy.base_url)?;
+    writeln!(out, "token: {}", proxy.token)?;
+    writeln!(out, "tunnel open; press Ctrl-C to close it")?;
+    out.flush()?;
+    tokio::signal::ctrl_c().await?;
+    Ok(())
+}
+
 fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1014,17 +1030,7 @@ fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Resul
         match command {
             Command::Host { action } => host::run(&c, action, json, &mut out, data_dir).await,
             Command::Status => remote::status(&c, json, &mut out).await,
-            Command::Proxy => match &remote {
-                Some((_, proxy)) => {
-                    writeln!(out, "url: {}
-token: {}", proxy.base_url, proxy.token)?;
-                    writeln!(out, "tunnel open; press Ctrl-C to close it")?;
-                    out.flush()?;
-                    tokio::signal::ctrl_c().await?;
-                    Ok(())
-                }
-                None => Err("`bot proxy` needs --remote <ENDPOINT>".into()),
-            },
+            Command::Proxy => proxy_hold(remote.as_ref().map(|(_, p)| p), &mut out).await,
             Command::Bots {
                 action: BotsCmd::List,
             } => remote::bots_list(&c, json, &mut out).await,
