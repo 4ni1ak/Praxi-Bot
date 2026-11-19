@@ -10,7 +10,16 @@
 // HTTP). Pass the token in BOT_API_TOKEN, not on the command line (visible in `ps`/history);
 // --token exists but is discouraged. Against a local daemon /v1/peer/link is null and only the
 // HTTP round trip is measured.
+import { Buffer } from "node:buffer";
+import console from "node:console";
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
+import process from "node:process";
+import { clearInterval, clearTimeout, setInterval, setTimeout } from "node:timers";
+import { URL } from "node:url";
+
+// fetch and AbortController have no node: module; take them from globalThis (Node 18+).
+const { AbortController, fetch } = globalThis;
 const MEDIA = "application/vnd.praxi.live-view.v1";
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((acc, a, i, all) => {
@@ -29,7 +38,9 @@ let host = "";
 try {
   const u = new URL(base);
   host = u.protocol === "http:" ? u.hostname : "";
-} catch {}
+} catch {
+  host = ""; // unparsable URL: refused below
+}
 if (!["127.0.0.1", "localhost", "[::1]"].includes(host)) {
   console.error(`refusing --url ${base}: only a loopback http URL (127.0.0.1, localhost, [::1]) is allowed, because the bearer token would otherwise cross the network in clear text. Use the url printed by \`bot --remote <ENDPOINT> proxy\`.`);
   process.exit(2);
