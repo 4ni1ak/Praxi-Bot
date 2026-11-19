@@ -35,6 +35,7 @@ mod host_slice;
 mod knowledge;
 mod knowledge_brain;
 mod mcp;
+mod memory;
 mod model_catalog;
 mod peer_knowledge;
 mod schedules;

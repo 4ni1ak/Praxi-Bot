@@ -1053,6 +1053,7 @@ impl TurnExecutor {
                     let tctx = ToolContext {
                         run_id: ctx.run_id.to_string(),
                         bot_id: Some(ctx.bot_id.to_string()),
+                        lane: ctx.lane(),
                         ..ToolContext::default()
                     };
                     tool.control_target(&tctx, &resolved.input).await
@@ -1064,6 +1065,7 @@ impl TurnExecutor {
                 let tctx = ToolContext {
                     run_id: ctx.run_id.to_string(),
                     bot_id: Some(ctx.bot_id.to_string()),
+                    lane: ctx.lane(),
                     ..ToolContext::default()
                 };
                 let origin = resolved.tool.current_origin(&tctx, &resolved.input).await;
@@ -1436,7 +1438,13 @@ impl TurnExecutor {
         let outcome = crate::control::pause_aware_timeout(
             g.tool_timeout,
             control,
-            Arc::clone(&ctx.waiting_computer),
+            // The clock stops while the run waits for the computer slot or is parked on a card
+            // (a call that asks the user from inside the tool, such as a script's inner call).
+            || {
+                ctx.waiting_computer
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    || self.sh.parked.lock().contains_key(&run.id)
+            },
             async {
                 if matches!(
                     tool.spec().category,
@@ -1469,6 +1477,7 @@ impl TurnExecutor {
                     exposure_untrusted: exposure.untrusted,
                     expected_origin,
                     control_guard,
+                    lane: ctx.lane(),
                 };
                 tool.call(&tctx, input).await
             },

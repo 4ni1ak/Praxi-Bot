@@ -749,6 +749,12 @@
   font-weight: 600;
 }
 
+/* A file dragged over the composer */
+.composer[data-dragover="true"] .box {
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-card), 0 0 0 var(--size-border-thick) color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
 .composer[data-live-view="true"] {
   padding: var(--space-0);
 }
