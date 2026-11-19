@@ -712,9 +712,9 @@ function AppShell() {
     const target = chats.find((c) => c.id === chatId);
     const remaining = chats.filter((c) => c.id !== chatId);
     const next = target ? nextRouteAfterChatDelete(chatId, target.bot_id, remaining, route) : null;
-    if (next) go(next);
     try {
       await deleteChat(chatId);
+      if (next) go(next);
     } catch (err) {
       toast.show(
         err instanceof ApiError && err.code === "conflict" ? t("chatManage.deleteActiveRun") : humanLine(err),
