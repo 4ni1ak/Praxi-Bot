@@ -21,6 +21,7 @@ const LOCAL_ONLY: Record<string, string> = {
   "components/AccountMenu.tsx": "arrow keys inside the account menu (covered by popup menu rows)",
   "components/BotEditorFields.tsx": "Enter inside a single field",
   "components/BotPanel.tsx": "arrow keys on the panel tabs",
+  "components/ChatList.tsx": "Enter/Escape in inline rename and arrow keys on chat menu trigger",
   "components/ModelPicker.tsx": "arrow keys inside the model picker list",
   "components/ResizeGrip.tsx": "arrow keys on a resize handle",
   "components/ServerSignInModal.tsx": "Enter inside a single field",

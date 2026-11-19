@@ -1,5 +1,13 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { AppWindow, CalendarClock, Clock, ShieldAlert, ShieldCheck } from "lucide-react";
+import {
+  AppWindow,
+  Bot,
+  CalendarClock,
+  Clock,
+  ShieldAlert,
+  ShieldCheck,
+  Wrench
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import type { Scope } from "../api/types";
@@ -15,6 +23,8 @@ import {
   type ToolItem
 } from "../state/timeline";
 import {
+  botDetails,
+  type BotApprovalDetails,
   computerDetails,
   controlGrantDetails,
   egressDetails,
@@ -354,6 +364,92 @@ function ControlGrantBody({ d }: { d: ControlGrantDetails }) {
   );
 }
 
+/** The complete profile a bot-made bot will have (or loses), shown before the user approves. */
+function BotApprovalBody({ d }: { d: BotApprovalDetails }) {
+  const { t } = useTranslation();
+  const empty = t("chat.approval.bot.empty");
+  const models = [
+    [t("chat.approval.bot.model"), d.executor],
+    [t("chat.approval.bot.planner"), d.planner],
+    [t("chat.approval.bot.classifier"), d.classifier]
+  ].filter(([, v]) => v);
+  return (
+    <div className={styles.scheduleBody} data-testid="approval-bot">
+      <div className={styles.botHead}>
+        {d.avatar ? (
+          <img className={styles.botAvatar} src={d.avatar} alt="" />
+        ) : (
+          <span
+            className={styles.botSwatch}
+            style={d.color ? { backgroundColor: d.color } : undefined}
+            aria-hidden="true"
+          >
+            <Bot size={14} />
+          </span>
+        )}
+        <span className={styles.scheduleWhen}>{d.name}</span>
+      </div>
+      {d.action !== "delete" || d.persona ? (
+        <>
+          <span className={styles.bodyLabel}>
+            {t("chat.approval.bot.persona", { count: [...d.persona].length })}
+          </span>
+          <pre className={styles.code} tabIndex={0} data-testid="approval-bot-persona">
+            {d.persona}
+          </pre>
+        </>
+      ) : null}
+      {models.map(([label, value]) => (
+        <div key={label} className={styles.scheduleRow}>
+          <span className={styles.bodyLabel}>{label}</span>
+          <span className={styles.botValue}>{value}</span>
+        </div>
+      ))}
+      <div className={styles.scheduleRow} data-testid="approval-bot-permission">
+        <ShieldAlert size={14} aria-hidden="true" />
+        <span>
+          {t("chat.approval.bot.permissions")}:{" "}
+          <strong>{d.preset}</strong>
+        </span>
+      </div>
+      <div className={styles.scheduleRow} data-testid="approval-bot-tools">
+        <Wrench size={14} aria-hidden="true" />
+        <span className={styles.botValue}>
+          {t("chat.approval.bot.tools")}:{" "}
+          {d.toolsAllow.length > 0
+            ? d.toolsAllow.join(", ")
+            : t("chat.approval.bot.allToolsOfCaller")}
+          {d.toolsExclude.length > 0
+            ? ` (${t("chat.approval.bot.except", { list: d.toolsExclude.join(", ") })})`
+            : ""}
+        </span>
+      </div>
+      {d.changes.length > 0 ? (
+        <div className={styles.scheduleWas} data-testid="approval-bot-changes">
+          <span className={styles.bodyLabel}>{t("chat.approval.bot.changes")}</span>
+          {d.changes.map((c) => (
+            <div key={c.field} className={styles.botChange}>
+              <code>{c.field}</code>
+              <span className={styles.botFrom}>{c.from ?? empty}</span>
+              <span aria-hidden="true">→</span>
+              <span className={styles.botTo}>{c.to ?? empty}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <details className={styles.botProfile}>
+        <summary>{t("chat.approval.bot.profile")}</summary>
+        <pre className={styles.code} tabIndex={0} data-testid="approval-bot-profile">
+          {d.profileJson}
+        </pre>
+      </details>
+      <p className={styles.bodyLabel}>
+        {d.action === "delete" ? t("chat.approval.bot.deleteNote") : t("chat.approval.bot.ceiling")}
+      </p>
+    </div>
+  );
+}
+
 export function ApprovalCard({
   tool,
   onDecide,
@@ -366,6 +462,7 @@ export function ApprovalCard({
   const [error, setError] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const outbound = isOutboundSend(tool.name);
+  const bot = botDetails(tool.details);
   const remaining = useCountdown(expiresAtMs);
   const schedule = scheduleDetails(tool.details);
   const egress = egressDetails(tool.details);
@@ -448,7 +545,15 @@ export function ApprovalCard({
             </span>
           ) : null}
         </div>
-        {app ? (
+        {bot ? (
+          <>
+            <p className={styles.approvalSummary}>{t(`chat.approval.bot.title.${bot.action}`)}</p>
+            <BotApprovalBody d={bot} />
+            <div className={styles.approvalMeta}>
+              <span className={styles.approvalTool}>{tool.name}</span>
+            </div>
+          </>
+        ) : app ? (
           <div data-testid="approval-app-action">
             <p className={styles.approvalSummary}>{app.app} · {app.action}</p>
             <p className={styles.bodyLabel}>{app.class} · {app.version}</p>

@@ -10,6 +10,7 @@ import {
   useState
 } from "react";
 import { ApiClient } from "../api/client";
+import { isNetworkFailure, type EnsureHost } from "../lib/hostRecovery";
 import { type Connection, connectDaemon, type StartupDiagnostics, startupDiagnostics } from "../api/connection";
 import { subscribeEvents } from "../api/events";
 import { MOCK_HOST_ID, mockHostScenario } from "../api/mockHostScenario";
@@ -21,8 +22,16 @@ import type {
   Health,
   HostLinkInfo,
   HostLinkList,
-  Run
+  Run,
+  UpdateChatInput
 } from "../api/types";
+import {
+  applyChatDelete,
+  applyChatPatch,
+  mergeChatRefresh,
+  rollbackChatDelete,
+  rollbackChatPatch
+} from "../lib/chatManage";
 import {
   deriveHostState,
   giveUpConnecting,
@@ -114,9 +123,24 @@ export interface DaemonContextValue {
   refreshBots: () => Promise<void>;
   refreshChats: () => Promise<void>;
   refreshRuns: () => Promise<void>;
+  /** Chat ids with an in-flight rename/pin/archive/delete mutation. */
+  pendingChatIds: ReadonlySet<string>;
+  /** Optimistically rename, pin or archive a chat, rolling back if the daemon rejects it. */
+  updateChat: (chatId: string, patch: UpdateChatInput) => Promise<Chat>;
+  /** Optimistically delete a chat, rolling back if the daemon rejects it. */
+  deleteChat: (chatId: string) => Promise<void>;
   recordAnswer: (runId: string, callId: string, answer: string) => void;
   retry: () => void;
   restartDaemon: () => Promise<void>;
+  /**
+   * A send failed because nothing answered. This computer's own service is probed and, if it is
+   * down, started the way the app does at launch (`hostStarting` is true meanwhile); a paired
+   * server cannot be started by the app (`remote`). Never touches the view's phase, so the
+   * composer and its draft stay mounted.
+   */
+  ensureHostOnline: () => Promise<EnsureHost>;
+  /** The app is starting this computer's service because the user sent a message. */
+  hostStarting: boolean;
   /** Why the local service is not answering (null while it is); the UI words it, see `humanService`. */
   serviceProblem: ServiceProblem | null;
   /** What the shell knows about a start that is slow or failed; null while connected or outside the app. */
@@ -188,6 +212,9 @@ type DaemonData = Pick<
   | "refreshBots"
   | "refreshChats"
   | "refreshRuns"
+  | "pendingChatIds"
+  | "updateChat"
+  | "deleteChat"
   | "recordAnswer"
   | "onDaemonEvent"
 >;
@@ -204,6 +231,9 @@ function useDaemonData(conn: Connection | null): DaemonData {
   const botOrder = useBotOrder();
   const bots = useMemo(() => orderBots(rawBots, botOrder), [rawBots, botOrder]);
   const [chats, setChats] = useState<Chat[]>([]);
+  const chatsRef = useRef<Chat[]>(chats);
+  chatsRef.current = chats;
+  const [pendingChatIds, setPendingChatIds] = useState<ReadonlySet<string>>(() => new Set());
   const [runs, setRuns] = useState<Run[]>([]);
   const [events, dispatch] = useReducer(reducer, EMPTY_EVENTS);
 
@@ -251,10 +281,15 @@ function useDaemonData(conn: Connection | null): DaemonData {
       setBots(await c.listBots());
     }
   }, []);
+  // Chat ids whose delete is in flight or done, and ids with a patch in flight: a list
+  // refresh must not resurrect the first or undo the optimistic copy of the second.
+  const deletedChatIds = useRef(new Set<string>());
+  const patchingChatIds = useRef(new Set<string>());
   const refreshChats = useCallback(async () => {
     const c = clientRef.current;
     if (c) {
-      setChats(await c.listChats());
+      const fresh = await c.listChats();
+      setChats((prev) => mergeChatRefresh(fresh, prev, deletedChatIds.current, patchingChatIds.current));
     }
   }, []);
   const refreshRuns = useCallback(async () => {
@@ -263,6 +298,65 @@ function useDaemonData(conn: Connection | null): DaemonData {
       setRuns(await c.listRuns());
     }
   }, []);
+
+  const setChatPending = useCallback((chatId: string, on: boolean) => {
+    setPendingChatIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(chatId);
+      else next.delete(chatId);
+      return next;
+    });
+  }, []);
+
+  const updateChat = useCallback(
+    async (chatId: string, patch: UpdateChatInput): Promise<Chat> => {
+      const c = clientRef.current;
+      if (!c) {
+        throw new Error("Daemon is not connected");
+      }
+      const { previous } = applyChatPatch(chatsRef.current, chatId, patch);
+      setChats((prev) => applyChatPatch(prev, chatId, patch).next);
+      setChatPending(chatId, true);
+      patchingChatIds.current.add(chatId);
+      try {
+        const saved = await c.updateChat(chatId, patch);
+        setChats((prev) => prev.map((x) => (x.id === saved.id ? saved : x)));
+        return saved;
+      } catch (err) {
+        setChats((prev) => rollbackChatPatch(prev, previous, patch));
+        throw err;
+      } finally {
+        patchingChatIds.current.delete(chatId);
+        setChatPending(chatId, false);
+      }
+    },
+    [setChatPending]
+  );
+
+  const deleteChat = useCallback(
+    async (chatId: string): Promise<void> => {
+      const c = clientRef.current;
+      if (!c) {
+        throw new Error("Daemon is not connected");
+      }
+      const { removed, index } = applyChatDelete(chatsRef.current, chatId);
+      setChats((prev) => applyChatDelete(prev, chatId).next);
+      setChatPending(chatId, true);
+      deletedChatIds.current.add(chatId);
+      try {
+        await c.deleteChat(chatId);
+        // A refresh that landed mid-flight may have re-added the row.
+        setChats((prev) => applyChatDelete(prev, chatId).next);
+      } catch (err) {
+        deletedChatIds.current.delete(chatId);
+        setChats((prev) => rollbackChatDelete(prev, removed, index));
+        throw err;
+      } finally {
+        setChatPending(chatId, false);
+      }
+    },
+    [setChatPending]
+  );
 
   // initial data + event stream (replayed from the start: `Last-Event-ID: 0`)
   useEffect(() => {
@@ -376,6 +470,9 @@ function useDaemonData(conn: Connection | null): DaemonData {
     refreshBots,
     refreshChats,
     refreshRuns,
+    pendingChatIds,
+    updateChat,
+    deleteChat,
     recordAnswer,
     onDaemonEvent
   };
@@ -653,6 +750,57 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     [hostList]
   );
 
+  const [hostStarting, setHostStarting] = useState(false);
+  const startingRef = useRef<Promise<EnsureHost> | null>(null);
+  const ensureHostOnline = useCallback((): Promise<EnsureHost> => {
+    if (activeIdRef.current !== LOCAL_COMPUTER) {
+      return Promise.resolve({ kind: "remote" });
+    }
+    // One start at a time: a second message waits for the same one.
+    if (startingRef.current) {
+      return startingRef.current;
+    }
+    const p = (async (): Promise<EnsureHost> => {
+      try {
+        const known = localClientRef.current;
+        if (!known) {
+          return { kind: "reachable" }; // mock / no connection yet: nothing to start
+        }
+        try {
+          await Promise.race([
+            known.health(),
+            new Promise((_, no) => window.setTimeout(() => no(new Error("health probe timed out")), 5000))
+          ]);
+          return { kind: "reachable" };
+        } catch (probe) {
+          // Only a refused / unreachable connection proves the service is down. A slow probe or
+          // any answer means it may be alive (and busy): never start or re-send then.
+          if (!isNetworkFailure(probe)) {
+            return { kind: "reachable" };
+          }
+        }
+        setHostStarting(true);
+        const c = await connectDaemon();
+        setLocalConn((prev) => (prev && prev.base_url === c.base_url && prev.token === c.token ? prev : c));
+        setPhase("ready");
+        setError(null);
+        return { kind: "started", client: new ApiClient(c) };
+      } finally {
+        setHostStarting(false);
+      }
+    })();
+    startingRef.current = p;
+    // Clear on the promise itself so an early-settled promise is never cached.
+    void p.then(
+      () => {
+        startingRef.current = null;
+      },
+      () => {
+        startingRef.current = null;
+      }
+    );
+    return startingRef.current;
+  }, []);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   const restartDaemon = useCallback(async () => {
     setPhase("connecting");
@@ -674,6 +822,8 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     conn: localConn,
     retry,
     restartDaemon,
+    ensureHostOnline,
+    hostStarting,
     serviceProblem:
       phase !== "error"
         ? null
@@ -775,6 +925,8 @@ export function HostSession({ children }: { children: ReactNode }) {
     ...data,
     ...(stale ? lastLists.current : {}),
     homeStale: stale,
+    ensureHostOnline: async () => ({ kind: "remote" }),
+    hostStarting: false,
     phase: "ready",
     error: null,
     conn: hostConn,
