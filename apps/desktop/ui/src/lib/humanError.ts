@@ -144,6 +144,8 @@ const ACTIONS: Record<string, ErrorAction> = {
   starting: "retry",
   internal: "retry",
   busy: "retry",
+  hostBusy: "retry",
+  screenNoConfirm: "retry",
   http_error: "retry",
   timeout: "retry",
   sendFailed: "retry",
@@ -172,6 +174,15 @@ const STATUS_CODE: Record<number, string> = {
   429: "too_many_requests",
   503: "unavailable"
 };
+
+/** Daemon refusals with a concrete reason: they beat the bare status/code class (a 409 `conflict` is not just "reload"). */
+const REASONS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/screen:(input|view) denied|input grant for this device/i, "screenInputDenied"],
+  [/only the local user (may do this|can clear it)|local user stopped the takeover/i, "localOnly"],
+  [/no input backend/i, "noInputBackend"],
+  [/did not confirm|pressed-key reset did not complete|did not answer in time/i, "screenNoConfirm"],
+  [/executor is busy|is busy; (try|retry)|previous input still draining|already in progress/i, "hostBusy"]
+];
 
 /** Raw-text patterns, for tool results and plain errors that carry no code. First match wins. */
 const PATTERNS: ReadonlyArray<readonly [RegExp, string, ((m: RegExpExecArray) => Record<string, string>)?]> = [
@@ -245,14 +256,29 @@ export function humanError(err: unknown): HumanError {
 
   // A paired host's refusal: one sentence naming the server (the raw daemon text stays in details).
   const host = typeof env.host === "string" ? env.host : undefined;
+  // The host never answered (no connection, or the proxy timed out waiting for it): not a refusal.
+  if (host && (code === "network" || status === 502 || status === 504)) {
+    return {
+      code: "host_silent",
+      title: tr("errors.hostSilent.title", { name: host }),
+      hint: tr("errors.hostSilent.hint", { name: host }),
+      action: "retry",
+      details
+    };
+  }
   const refusal = host ? hostRefusalKey(status, raw) : null;
   if (host && refusal) {
     return {
       code: "host_refusal",
-      title: tr(`hostMode.refusal.${refusal}`, { name: host }),
+      title: tr(`hostMode.refusal.${refusal}`, { name: host, reason: raw }),
       hint: "",
       details
     };
+  }
+  for (const [re, key] of REASONS) {
+    if (re.test(raw)) {
+      return pack(key, key, details);
+    }
   }
   if (code === "network") {
     return pack("network", "network", details);

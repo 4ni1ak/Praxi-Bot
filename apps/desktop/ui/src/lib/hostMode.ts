@@ -41,6 +41,12 @@ const REFUSALS: ReadonlyArray<readonly [needle: string, key: string]> = [
   ["knowledge settings are managed by the local owner", "knowledge"],
   ["composio connections are managed by the owner", "composio"],
   ["only the local user answers overlay questions", "overlay"],
+  ["only the local user may do this", "localOnly"],
+  ["only the local user can clear it", "localOnly"],
+  ["the local user stopped the takeover", "localOnly"],
+  ["screen:input denied", "screenInput"],
+  ["screen:view denied", "screenInput"],
+  ["input grant for this device", "screenInput"],
   ["local-owner only", "ownerOnly"],
   ["peer role does not allow this operation", "role"],
   ["paired peer identity required", "role"]
