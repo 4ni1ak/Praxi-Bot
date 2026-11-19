@@ -917,7 +917,7 @@ async fn explicit_reacquisition_rotates_epoch_and_old_input_never_applies() {
     );
 }
 #[tokio::test(start_paused = true)]
-async fn blocked_body_is_cancelled_after_two_seconds_and_capture_is_dropped() {
+async fn blocked_body_is_cancelled_after_eight_seconds_and_capture_is_dropped() {
     let t = Test::new();
     let id = t.session(None).await;
     let response = t
@@ -933,7 +933,7 @@ async fn blocked_body_is_cancelled_after_two_seconds_and_capture_is_dropped() {
         t.target.frame(seq, 1);
     }
     tokio::task::yield_now().await;
-    tokio::time::advance(Duration::from_millis(2100)).await;
+    tokio::time::advance(Duration::from_millis(8100)).await;
     for _ in 0..20 {
         tokio::task::yield_now().await;
     }

@@ -2,7 +2,7 @@
 //! HTTP headers can never grant a role.
 use crate::{ApiError, AppState};
 use axum::{
-    Router,
+    Extension, Json, Router,
     extract::{Request, State},
     http::Method,
     middleware::Next,
@@ -23,6 +23,19 @@ pub enum PeerRole {
 pub struct PeerIdentity {
     pub key: String,
     pub role: PeerRole,
+}
+
+/// The selected path of the authenticated QUIC connection, without peer addresses.
+#[derive(Clone, Copy, Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct PeerLink {
+    pub relay: bool,
+    pub rtt_ms: u32,
+}
+
+/// Return the path for this request's tunnel, or null on local HTTP.
+#[utoipa::path(get, path = "/v1/peer/link", tag = "peer", security(("bearer" = [])), responses((status = 200, body = Option<PeerLink>)))]
+pub(crate) async fn link(path: Option<Extension<PeerLink>>) -> Json<Option<PeerLink>> {
+    Json(path.map(|Extension(info)| info))
 }
 
 /// Generic JSON/TOML profile editors retain ordinary bot editing, but cannot
@@ -329,6 +342,13 @@ fn encoded_slash_in_mcp_path(raw: &str, decoded: &str) -> bool {
     is_mcp_path(decoded) && raw.to_ascii_lowercase().contains("%2f")
 }
 
+/// `GET /v1/email/accounts/{name}/messages`: the headers of a mailbox.
+fn is_email_messages_path(path: &str) -> bool {
+    path.strip_prefix("/v1/email/accounts/")
+        .and_then(|rest| rest.strip_suffix("/messages"))
+        .is_some_and(|name| !name.is_empty() && !name.contains('/'))
+}
+
 /// `/v1/mcp/servers` or anything below it (decoded and slash-normalized).
 fn is_mcp_servers_path(path: &str) -> bool {
     path.strip_prefix("/v1/mcp/servers")
@@ -413,6 +433,10 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     }
     if is_components_path(&check_path) && peer.role != PeerRole::Desktop {
         return ApiError::forbidden("components are managed by the owner's desktop only")
+            .into_response();
+    }
+    if is_email_messages_path(&check_path) && peer.role != PeerRole::Desktop {
+        return ApiError::forbidden("mailboxes are read from the owner's desktop only")
             .into_response();
     }
     if is_composio_path(&check_path) && peer.role != PeerRole::Desktop {

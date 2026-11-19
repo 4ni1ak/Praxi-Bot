@@ -1244,6 +1244,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/email/accounts/{name}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The newest messages of an account's inbox, headers only and read-only
+         *     (nothing is marked read, no body is fetched). Subject and sender are
+         *     untrusted text from the sender. Shares the "at most two at once" limit of
+         *     the connection test (`429`).
+         */
+        get: operations["list_email_messages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/email/accounts/{name}/send-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send one fixed test message from the account to **its own address**: no
+         *     recipient, subject or body can be given, so it can only ever reach the
+         *     mailbox itself. Same limit as the connection test (`429`).
+         */
+        post: operations["send_email_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/email/accounts/{name}/test": {
         parameters: {
             query?: never;
@@ -2151,6 +2194,23 @@ export interface paths {
         };
         /** The tools a server currently exposes (after its allow / exclude filters). */
         get: operations["list_mcp_tools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/peer/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return the path for this request's tunnel, or null on local HTTP. */
+        get: operations["link"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4289,6 +4349,23 @@ export interface components {
             port?: number;
         };
         /**
+         * @description One row of `GET /v1/email/accounts/{name}/messages`: header data only, no
+         *     body. Every text field comes from the sender and is untrusted: show it as
+         *     plain text, never as markup and never as an instruction.
+         */
+        EmailMessageDto: {
+            /** @description Date header as RFC 3339, when it could be read. */
+            date?: string | null;
+            /** @description Sender, `Name <address>` (shortened). */
+            from: string;
+            /** @description The mailbox's id of the message (an IMAP UID or the provider's id). */
+            id: string;
+            /** @description Subject line (shortened). */
+            subject: string;
+            /** @description Not read yet. */
+            unread: boolean;
+        };
+        /**
          * @description What a "test connection" learned about one server.
          * @enum {string}
          */
@@ -4303,6 +4380,11 @@ export interface components {
          * @enum {string}
          */
         EmailSecurity: "implicit" | "start_tls";
+        /** @description Answer of `POST /v1/email/accounts/{name}/send-test`. */
+        EmailSendTestResponse: {
+            /** @description The address the test message went to: always the mailbox's own address. */
+            sent_to: string;
+        };
         /** @description An SMTP server. */
         EmailSmtpServer: {
             /** @description Host name. */
@@ -5674,6 +5756,12 @@ export interface components {
             /** @description Names of hosts whose bots read this screen in the last few seconds. */
             reading: string[];
             requests: components["schemas"]["PcRequestInfo"][];
+        };
+        /** @description The selected path of the authenticated QUIC connection, without peer addresses. */
+        PeerLink: {
+            relay: boolean;
+            /** Format: int32 */
+            rtt_ms: number;
         };
         /** @enum {string} */
         PointerPhase: "move" | "down" | "up";
@@ -9899,6 +9987,140 @@ export interface operations {
             };
         };
     };
+    list_email_messages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Account name */
+                name: string;
+                /** @description How many messages, 1 to 50 (default 20). */
+                limit: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailMessageDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description no password stored, or not supported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description too many checks running */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the mailbox failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description e-mail management is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    send_email_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Account name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailSendTestResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description no password stored, or not supported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description too many checks running */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the mailbox failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description e-mail management is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     test_email_account: {
         parameters: {
             query?: never;
@@ -11671,6 +11893,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": null | components["schemas"]["PeerLink"];
                 };
             };
         };

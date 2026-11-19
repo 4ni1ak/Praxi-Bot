@@ -34,6 +34,15 @@ export const APP_COMMANDS: readonly AppCommand[] = [
   { name: "schedules", i18nKey: "chat.slash.schedules", target: "schedules" }
 ] as const;
 
+/** Commands the composer runs on the open chat itself (nothing is sent to the bot). */
+export const LOCAL_COMMANDS: readonly SlashCommand[] = [{ name: "export", i18nKey: "chat.slash.export" }] as const;
+
+/** True when the message is exactly `/export`. */
+export function isExportCommand(text: string): boolean {
+  const parsed = parseSlashInput(text);
+  return parsed !== null && parsed.args === "" && parsed.name === "export";
+}
+
 /** The app command a message is, when it is exactly `/name` (no arguments); otherwise `null`. */
 export function appCommandFor(text: string): AppCommand | null {
   const parsed = parseSlashInput(text);

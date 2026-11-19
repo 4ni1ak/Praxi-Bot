@@ -18,6 +18,13 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+/// A takeover is interrupted when no heartbeat/frame publication was seen for this long
+/// (was 2 s: one slow relay round trip dropped control).
+const TAKEOVER_STALE_AFTER: Duration = Duration::from_secs(5);
+/// How long the producer waits for the transport to take the next chunk before it ends the
+/// stream (was 2 s). Only the newest frame is kept while waiting.
+const SEND_STALL: Duration = Duration::from_secs(8);
+
 pub(super) fn spawn_reaper(s: &AppState, id: Uuid, actor: Actor) {
     let weak = Arc::downgrade(&s.0);
     tokio::spawn(async move {
@@ -58,7 +65,7 @@ pub(super) fn spawn_reaper(s: &AppState, id: Uuid, actor: Actor) {
                         .lock()
                         .get(&id)
                         .and_then(|s| s.geometry)
-                        .is_some_and(|(_, _, at)| at.elapsed() > Duration::from_secs(2))
+                        .is_some_and(|(_, _, at)| at.elapsed() > TAKEOVER_STALE_AFTER)
                 {
                     let _ = interrupt(&s, &actor, &t, Reason::Stale).await;
                 }
@@ -130,6 +137,7 @@ pub(crate) async fn frames(
         let mut sub = subscription;
         let mut last_status = Vec::new();
         let mut last_frame: Option<(u64, u64)> = None;
+        let mut over_budget = 0u32;
         let mut publication = true;
         let mut heartbeat_at = Instant::now();
         // Heartbeat records flow every 5 s; the audit proves the trail is
@@ -150,7 +158,7 @@ pub(crate) async fn frames(
             let permit = tokio::select! {
                 () = cancel.cancelled() => break,
                 () = shutdown.cancelled() => break,
-                p = tokio::time::timeout(Duration::from_secs(2),tx.reserve()) => match p { Ok(Ok(p)) => p,_ => break },
+                p = tokio::time::timeout(SEND_STALL,tx.reserve()) => match p { Ok(Ok(p)) => p,_ => break },
             };
             if live.session(&actor, id).is_err() {
                 break;
@@ -224,11 +232,16 @@ pub(crate) async fn frames(
                     } else {
                         break;
                     }
+                    // Slow down instead of wrecking the picture: fewer frames, same size and
+                    // quality; the source re-encodes under the current profile.
+                    over_budget = over_budget.saturating_add(1);
                     let mut degraded = profile;
-                    degraded.quality = 30;
-                    degraded.max_width = degraded.max_width.min(640);
-                    degraded.max_height = degraded.max_height.min(400);
-                    degraded.max_fps = degraded.max_fps.min(4);
+                    degraded.max_fps = degraded.max_fps.div_ceil(2).max(1);
+                    if over_budget > 20 {
+                        // Persistent: only now give up some size (the quality floor stays).
+                        degraded.max_width = degraded.max_width.min(1280);
+                        degraded.max_height = degraded.max_height.min(720);
+                    }
                     if let Some(session) = live.sessions.lock().get_mut(&id) {
                         session.profile = degraded.clone();
                         session.geometry = None;
@@ -266,7 +279,7 @@ pub(crate) async fn frames(
                     ) {
                         Duration::ZERO
                     } else {
-                        Duration::from_secs(3)
+                        Duration::from_secs_f64(1.0 / f64::from(profile.max_fps.max(1)))
                     }
                 } else {
                     Duration::from_secs_f64(1.0 / f64::from(profile.max_fps.max(1)))
@@ -288,6 +301,7 @@ pub(crate) async fn frames(
                         tokens -= f64::from(u32::try_from(bytes.len()).unwrap_or(u32::MAX));
                         permit.send(Ok(Bytes::from(bytes)));
                         last_frame = Some(frame_key);
+                        over_budget = 0;
                         last_sent = now;
                         continue;
                     }
