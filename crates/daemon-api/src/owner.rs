@@ -86,6 +86,12 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/control/recover"),
     ("POST", "/v1/control/release"),
     ("PUT", "/v1/view/privileges/{}"),
+    // recorded automation: proposing, saving, deleting and running a workflow
+    // are the owner's own actions, never a token holder's (CLI engine, MCP)
+    ("POST", "/v1/runs/{}/workflow-proposal"),
+    ("POST", "/v1/workflows"),
+    ("DELETE", "/v1/workflows/{}"),
+    ("POST", "/v1/workflows/{}/run"),
     // policy, bot authority
     ("PUT", "/v1/policy"),
     ("POST", "/v1/trusted-folders"),

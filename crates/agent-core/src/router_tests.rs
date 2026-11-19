@@ -1276,7 +1276,11 @@ async fn workflow_replay_enforces_selected_bot_skill_assignment() {
         tool: "skill_read".into(),
         input: json!({ "name": "unassigned-skill" }),
     })];
-    store.save(&denied_wf).unwrap();
+    store
+        .for_bot(&env.bot.to_string())
+        .unwrap()
+        .save(&denied_wf)
+        .unwrap();
 
     let mut allowed_wf = Workflow::new("read_assigned");
     allowed_wf.description = "read an assigned skill".into();
@@ -1284,7 +1288,11 @@ async fn workflow_replay_enforces_selected_bot_skill_assignment() {
         tool: "skill_read".into(),
         input: json!({ "name": "assigned-skill" }),
     })];
-    store.save(&allowed_wf).unwrap();
+    store
+        .for_bot(&env.bot.to_string())
+        .unwrap()
+        .save(&allowed_wf)
+        .unwrap();
 
     let script = Script::new(vec![("fake/m", vec![Rep::Text("fallback")])]);
     let lp = make(&env, &script, &[], "")

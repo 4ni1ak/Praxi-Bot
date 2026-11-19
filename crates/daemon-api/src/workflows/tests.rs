@@ -55,6 +55,8 @@ impl ChatProvider for Provider {
     }
 }
 
+const OWNER_KEY: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
+
 struct TestTool {
     spec: ToolSpec,
     calls: Arc<AtomicUsize>,
@@ -153,6 +155,7 @@ fn setup() -> Env {
         crate::DaemonConfig::new("test-token"),
     )
     .unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     let profile = agent_core::BotProfile::from_toml_str("[bot]\nid='test'\nname='test'\n[models]\nexecutor='fake/echo'\nclassifier='fake/classifier'\n").unwrap();
     let bot = storage::Bot {
         id: protocol::BotId::new(),
@@ -208,7 +211,9 @@ async fn request(
         .uri(scoped)
         .header("host", "127.0.0.1");
     if authenticated {
-        req = req.header("authorization", "Bearer test-token");
+        req = req
+            .header("authorization", "Bearer test-token")
+            .header(crate::owner::OWNER_HEADER, OWNER_KEY);
     }
     let req = req
         .header("content-type", "application/json")

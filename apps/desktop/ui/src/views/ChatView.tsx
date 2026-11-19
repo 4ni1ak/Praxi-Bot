@@ -1415,8 +1415,8 @@ export function ChatView({
                   </div>
                 );
               }
-  | { kind: "remember"; key: string; ts: number; run: RunState }
-  | { kind: "workflow"; key: string; ts: number; run: RunState };
+              case "workflow":
+                return client ? <div key={e.key} className={styles.rememberRow}><WorkflowReview client={client} runId={e.run.id} canRemember={true} /></div> : null;
               case "remember": {
                 const st = remember[e.run.id] ?? "idle";
                 return (
