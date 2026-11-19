@@ -236,6 +236,7 @@ pub struct GateHost {
     run_id: String,
     max_inline_bytes: usize,
     bot_id: Option<String>,
+    lane: Option<String>,
 }
 
 impl GateHost {
@@ -258,6 +259,7 @@ impl GateHost {
             run_id,
             max_inline_bytes,
             bot_id,
+            lane: None,
         }
     }
 }
@@ -298,6 +300,7 @@ impl ScriptHost for GateHost {
             expected_origin,
             // A script is never covered by a run-scoped control grant.
             control_guard: None,
+            lane: self.lane.clone(),
         };
         let out = if let Some(action) = &self.action {
             crate::control::scope_action(action.clone(), tool.call(&ctx, input)).await
@@ -388,6 +391,8 @@ impl Tool for ScriptTool {
         if self.control.is_some() {
             host.action = Some(Arc::default());
         }
+        // A subagent's script keeps the subagent's own browser tab.
+        host.lane.clone_from(&ctx.lane);
         let host = Arc::new(host);
         // QuickJS is synchronous CPU work: a busy loop would block the async
         // worker (and `tokio::time::timeout` cannot preempt it). Run it on the
