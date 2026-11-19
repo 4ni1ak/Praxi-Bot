@@ -73,6 +73,11 @@ impl Tool for TestTool {
   [e1] textbox "Search"
   [e2] button "Go"
 "#
+        } else if self.spec.name == "local_write" {
+            // Empty output keeps a recording of this tool clean: any non-empty
+            // tool text taints a recording, and a tainted replay cannot carry
+            // a runtime secret (approval cards must not show registered secrets).
+            ""
         } else {
             "done"
         }))
@@ -95,6 +100,7 @@ fn setup() -> Env {
     let inputs = Arc::new(parking_lot::Mutex::new(Vec::new()));
     for (name, effect) in [
         ("mutate", Effect::Write),
+        ("local_write", Effect::Write),
         ("browser_fill", Effect::Write),
         ("browser_click", Effect::Write),
         ("desktop_drag", Effect::Write),
@@ -113,6 +119,8 @@ fn setup() -> Env {
                 content: match name {
                     "fs_read" => tool_registry::ContentClass::private_read(),
                     "browser_snapshot" => tool_registry::ContentClass::untrusted_private(),
+                    // No egress: the secret-replay test must not need a card that shows a secret.
+                    "local_write" => tool_registry::ContentClass::declared(false, false, false),
                     _ => tool_registry::ContentClass::all(),
                 },
             },
@@ -414,7 +422,7 @@ allow_egress_after_reads=true
     let id = env
         .state
         .agent()
-        .run_turn(env.chat, "call:mutate {\"password\":\"p4ssword-218\"}")
+        .run_turn(env.chat, "call:local_write {\"password\":\"p4ssword-218\"}")
         .unwrap();
     assert_eq!(
         env.state.agent().wait(id).await.unwrap(),
