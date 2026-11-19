@@ -975,7 +975,7 @@
     "runs": "Läufe",
     "modelCalls": "Modellaufrufe",
     "tokens": "Tokens",
-    "empty": "Noch keine Nutzung.",
+    "empty": "Noch keine Nutzung. Sobald du einem Bot schreibst, erscheint der Token-Verbrauch hier.",
     "bot": "Bot",
     "calls": "Aufrufe",
     "prompt": "Prompt",
@@ -989,7 +989,7 @@
   "needs": {
     "title": "Braucht dich",
     "subtitle": "Genehmigungen und Fragen, die in allen Chats warten.",
-    "empty": "Nichts wartet auf dich.",
+    "empty": "Nichts wartet auf dich. Wenn ein Bot eine Freigabe braucht oder eine Frage hat, erscheint sie hier.",
     "kind": {
       "approval": "Genehmigung",
       "question": "Frage"

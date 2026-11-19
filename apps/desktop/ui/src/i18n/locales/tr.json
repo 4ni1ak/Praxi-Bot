@@ -975,7 +975,7 @@
     "runs": "Çalışmalar",
     "modelCalls": "Model çağrıları",
     "tokens": "Token",
-    "empty": "Henüz kullanım yok.",
+    "empty": "Henüz kullanım yok. Bir bota mesaj gönderdiğinde token kullanımı burada görünür.",
     "bot": "Bot",
     "calls": "Çağrı",
     "prompt": "İstem",
@@ -989,7 +989,7 @@
   "needs": {
     "title": "Senden bekleyenler",
     "subtitle": "Tüm sohbetlerde bekleyen onaylar ve sorular.",
-    "empty": "Senden bekleyen bir şey yok.",
+    "empty": "Senden bekleyen bir şey yok. Bir bot onay istediğinde ya da soru sorduğunda burada görünür.",
     "kind": {
       "approval": "Onay",
       "question": "Soru"
