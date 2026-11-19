@@ -1285,6 +1285,16 @@
       "notEligible": "This run cannot be remembered.",
       "saved": "Remembered"
     },
+    "resend": {
+      "acted": "This run already used tools that act outside the chat. Redoing it will not undo what they did.",
+      "cancel": "Cancel",
+      "earlier": "Earlier version",
+      "edit": "Edit message",
+      "editLabel": "Edit your message",
+      "regenerate": "Regenerate",
+      "regenerateAnyway": "Regenerate anyway",
+      "save": "Save and resend"
+    },
     "resume": "Resume",
     "route": {
       "agent": "Agent ({{level}})",
@@ -2072,6 +2082,14 @@
       "mcp_rate_limit": {
         "hint": "Wait a moment and try again.",
         "title": "That app is being asked too often"
+      },
+      "message_not_editable": {
+        "hint": "Only your own latest message can be edited or regenerated, and only once the bot has finished.",
+        "title": "This message can't be edited"
+      },
+      "message_not_last": {
+        "hint": "The chat has moved on. Reload it, then edit or regenerate the newest message.",
+        "title": "This is no longer the last message"
       },
       "modified_since": {
         "hint": "Restoring would overwrite your newer changes. Review them first.",

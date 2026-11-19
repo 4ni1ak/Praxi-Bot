@@ -843,11 +843,61 @@ impl Storage {
     pub fn list_messages(&self, chat_id: ChatId) -> Result<Vec<Message>> {
         let conn = self.conn();
         let mut st = conn.prepare(
+            "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources FROM messages WHERE chat_id = ?1 AND superseded = 0 ORDER BY created_at_ms, id",
+        )?;
+        Ok(st
+            .query_map([chat_id.to_string()], message_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Ids of a chat's superseded messages (replaced by an edit or regenerated).
+    /// They are kept as audit data; [`Self::list_messages`] and the history
+    /// reads leave them out.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn superseded_message_ids(
+        &self,
+        chat_id: ChatId,
+    ) -> Result<std::collections::HashSet<Uuid>> {
+        let conn = self.conn();
+        let mut st =
+            conn.prepare("SELECT id FROM messages WHERE chat_id = ?1 AND superseded = 1")?;
+        let ids = st
+            .query_map([chat_id.to_string()], |r| uuid_at(r, 0))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(ids)
+    }
+
+    /// A chat's messages including superseded ones, oldest first (for the UI).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn list_messages_with_superseded(&self, chat_id: ChatId) -> Result<Vec<Message>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
             "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources FROM messages WHERE chat_id = ?1 ORDER BY created_at_ms, id",
         )?;
         Ok(st
             .query_map([chat_id.to_string()], message_row)?
             .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Mark messages superseded (`true`) or restore them (`false`). Never deletes.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn set_messages_superseded(&self, ids: &[Uuid], superseded: bool) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        for id in ids {
+            tx.execute(
+                "UPDATE messages SET superseded = ?2 WHERE id = ?1",
+                params![id.to_string(), i64::from(superseded)],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// Read the newest contiguous suffix of a chat within both limits.
@@ -872,7 +922,7 @@ impl Storage {
         let conn = self.conn();
         let mut st = conn.prepare(
             "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources, length(CAST(content AS BLOB)) \
-             FROM messages WHERE chat_id = ?1 AND (?2 IS NULL OR run_id IS NULL OR run_id <> ?2) \
+             FROM messages WHERE chat_id = ?1 AND superseded = 0 AND (?2 IS NULL OR run_id IS NULL OR run_id <> ?2) \
              ORDER BY created_at_ms DESC, id DESC LIMIT ?3",
         )?;
         let limit = i64::try_from(max_messages.saturating_add(1)).unwrap_or(i64::MAX);
@@ -1364,7 +1414,7 @@ impl Storage {
     pub fn owner_message_texts(&self, chat: ChatId) -> Result<Vec<String>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT content FROM messages WHERE chat_id = ?1 AND role = 'user' AND source = 'owner'
+            "SELECT content FROM messages WHERE chat_id = ?1 AND role = 'user' AND source = 'owner' AND superseded = 0
              ORDER BY created_at_ms DESC LIMIT 200",
         )?;
         let rows = stmt.query_map(params![chat.to_string()], |r| r.get::<_, String>(0))?;
@@ -2023,6 +2073,44 @@ mod tests {
         assert_eq!(f.st.list_chats(other.id).unwrap().len(), 0);
         run(&f);
         assert_eq!(f.st.list_runs(other.id).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn superseded_messages_stay_stored_but_leave_every_context_read() {
+        let f = fx();
+        let mut ids = Vec::new();
+        for i in 0..3u32 {
+            let id = Uuid::from_u128(u128::from(i) + 1);
+            ids.push(id);
+            f.st.insert_message(&Message {
+                id,
+                user_id: f.user.id,
+                chat_id: f.chat.id,
+                run_id: None,
+                role: "user".into(),
+                content: format!("m{i}"),
+                created_at_ms: i64::from(i),
+                exposure_untrusted: true,
+                exposure_private: false,
+                exposure_sources: Vec::new(),
+            })
+            .unwrap();
+            f.st.set_message_source(id, "owner").unwrap();
+        }
+        f.st.set_messages_superseded(&ids[1..], true).unwrap();
+        assert_eq!(f.st.list_messages(f.chat.id).unwrap().len(), 1);
+        let (bounded, _) =
+            f.st.list_messages_bounded(f.chat.id, None, 10, 100)
+                .unwrap();
+        assert_eq!(bounded.len(), 1);
+        assert_eq!(f.st.owner_message_texts(f.chat.id).unwrap(), ["m0"]);
+        assert_eq!(
+            f.st.list_messages_with_superseded(f.chat.id).unwrap().len(),
+            3
+        );
+        assert_eq!(f.st.superseded_message_ids(f.chat.id).unwrap().len(), 2);
+        f.st.set_messages_superseded(&ids[1..], false).unwrap();
+        assert_eq!(f.st.list_messages(f.chat.id).unwrap().len(), 3);
     }
 
     #[test]

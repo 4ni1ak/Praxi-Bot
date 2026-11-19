@@ -30,9 +30,9 @@ use crate::dto::{
     Decision, DecisionResponse, DeliveryKind, DetectedProviderDto, EffectivePolicyDto,
     EnableCliProviderInput, GrantDto, GrantTargetDto, Health, LatestCursor, MessageDto, Mode,
     ParseSchedule, ParsedSchedule, PolicyDto, PolicyInput, ProvidersDto, ReloadResponse,
-    RememberResponse, RevokeGrant, RunDto, RunUsageDto, RuntimeConfigDto, ScheduleChangeKind,
-    ScheduleDto, ScheduleInput, Scope, SendMessage, SendResponse, UpdateChat, UsageSummary,
-    UsageTotals,
+    RememberResponse, ResendMessage, ResendResponse, RevokeGrant, RunDto, RunUsageDto,
+    RuntimeConfigDto, ScheduleChangeKind, ScheduleDto, ScheduleInput, Scope, SendMessage,
+    SendResponse, UpdateChat, UsageSummary, UsageTotals,
 };
 use crate::error::{ApiError, ErrorBody};
 
@@ -1023,7 +1023,24 @@ pub(crate) async fn list_messages(
     let mut run_bots: std::collections::HashMap<RunId, Option<Uuid>> =
         std::collections::HashMap::new();
     let mut out = Vec::new();
-    for m in s.storage().list_messages(chat.id)? {
+    let superseded = s.storage().superseded_message_ids(chat.id)?;
+    let all = s.storage().list_messages_with_superseded(chat.id)?;
+    // Only the last turn (from the last live user message on) can be redone, so only
+    // its runs are checked for tools that acted.
+    let turn_start = all
+        .iter()
+        .rposition(|m| m.role == "user" && !superseded.contains(&m.id))
+        .unwrap_or(all.len());
+    let mut acted: std::collections::HashMap<RunId, bool> = std::collections::HashMap::new();
+    for (idx, m) in all.into_iter().enumerate() {
+        let used_write_tools = idx >= turn_start
+            && !superseded.contains(&m.id)
+            && match m.run_id {
+                Some(run) => *acted
+                    .entry(run)
+                    .or_insert_with(|| s.agent().run_used_non_read_tools(run).unwrap_or(true)),
+                None => false,
+            };
         let bot_id = match m.run_id {
             Some(run) => *run_bots
                 .entry(run)
@@ -1057,9 +1074,59 @@ pub(crate) async fn list_messages(
             source,
             content,
             attachments,
+            superseded: superseded.contains(&m.id),
+            used_write_tools,
         });
     }
     Ok(Json(out))
+}
+
+/// Regenerate the last answer, or edit the last user message and resend it.
+///
+/// Owner only. The chat must be idle, the message must still be the chat's last
+/// user message, written in this app, and every run of that turn finished. The old
+/// messages are marked superseded (kept, not in the model context); a new run
+/// starts. Tools that already acted in the old run are not undone.
+#[utoipa::path(post, path = "/v1/chats/{id}/resend", tag = "chats", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Chat id")),
+    request_body = ResendMessage,
+    responses((status = 202, body = ResendResponse), (status = 403, body = ErrorBody),
+              (status = 404, body = ErrorBody),
+              (status = 409, description = "Chat busy or message no longer last", body = ErrorBody),
+              (status = 422, description = "Turn cannot be edited", body = ErrorBody)))]
+pub(crate) async fn resend_last_turn(
+    State(s): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(cid): Path<String>,
+    ApiJson(input): ApiJson<ResendMessage>,
+) -> Result<(StatusCode, Json<ResendResponse>), ApiError> {
+    // Also guards the peer path, which skips the router-level owner gate.
+    s.require_owner(&headers)?;
+    let chat = s.chat_of_user(ChatId(id(&cid)?))?;
+    if input
+        .text
+        .as_deref()
+        .is_some_and(|t| t.trim().is_empty() && !has_attachments(&s, chat.id, input.message_id))
+    {
+        return Err(ApiError::bad_request("text must not be empty"));
+    }
+    let run = s
+        .agent()
+        .resend_last_turn(chat.id, input.message_id, input.text.as_deref())?;
+    Ok((StatusCode::ACCEPTED, Json(ResendResponse { run_id: run.0 })))
+}
+
+fn has_attachments(s: &AppState, chat: ChatId, message: Uuid) -> bool {
+    s.storage()
+        .get_message(message)
+        .ok()
+        .flatten()
+        .is_some_and(|m| {
+            m.chat_id == chat
+                && !agent_core::attachments::split_marker(&m.content)
+                    .1
+                    .is_empty()
+        })
 }
 
 /// Send a user message.  Starts a turn when the chat is idle (returns its run

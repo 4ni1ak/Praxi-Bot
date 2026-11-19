@@ -1285,6 +1285,16 @@
       "notEligible": "Dieser Lauf kann nicht gemerkt werden.",
       "saved": "Gemerkt"
     },
+    "resend": {
+      "acted": "Dieser Lauf hat Werkzeuge genutzt, die außerhalb des Chats handeln. Ein erneuter Lauf macht ihre Wirkung nicht rückgängig.",
+      "cancel": "Abbrechen",
+      "earlier": "Frühere Version",
+      "edit": "Nachricht bearbeiten",
+      "editLabel": "Deine Nachricht bearbeiten",
+      "regenerate": "Neu erzeugen",
+      "regenerateAnyway": "Trotzdem neu erzeugen",
+      "save": "Speichern und erneut senden"
+    },
     "resume": "Fortsetzen",
     "route": {
       "agent": "Agent ({{level}})",
@@ -2072,6 +2082,14 @@
       "mcp_rate_limit": {
         "hint": "Warte einen Moment und versuche es erneut.",
         "title": "Diese App wird zu oft angefragt"
+      },
+      "message_not_editable": {
+        "hint": "Nur deine eigene letzte Nachricht lässt sich bearbeiten oder neu erzeugen, und zwar erst, wenn der Bot fertig ist.",
+        "title": "Diese Nachricht lässt sich nicht bearbeiten"
+      },
+      "message_not_last": {
+        "hint": "Der Chat ist weitergegangen. Lade ihn neu und bearbeite oder erzeuge dann die neueste Nachricht neu.",
+        "title": "Das ist nicht mehr die letzte Nachricht"
       },
       "modified_since": {
         "hint": "Beim Wiederherstellen würden deine neueren Änderungen überschrieben. Prüfe sie zuerst.",

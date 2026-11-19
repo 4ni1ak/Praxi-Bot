@@ -1058,6 +1058,99 @@ impl AgentLoop {
         )?))
     }
 
+    /// Re-run the chat's last user turn as a NEW run (regenerate), or replace
+    /// the last user message with `new_text` and run it (edit & resend).
+    ///
+    /// Only the owner's own desktop message that is still the last user
+    /// message, with every run of that turn terminal and no run active in the
+    /// chat. The old user message and its answers are marked superseded (kept
+    /// in storage, left out of the model context and of the prompt's exposure
+    /// provenance); the new user message is stored with source `owner`.
+    /// Side effects of the old run are NOT undone. If the new run cannot start,
+    /// the old messages are restored.
+    ///
+    /// # Errors
+    /// [`LoopError::NotLastMessage`], [`LoopError::NotResendable`],
+    /// [`LoopError::Busy`], or the normal turn-start errors.
+    pub fn resend_last_turn(
+        &self,
+        chat_id: ChatId,
+        message_id: Uuid,
+        new_text: Option<&str>,
+    ) -> Result<RunId> {
+        if self.sh.active.lock().contains_key(&chat_id) {
+            return Err(LoopError::Busy(chat_id));
+        }
+        let messages = self.sh.storage.list_messages(chat_id)?;
+        let Some(idx) = messages.iter().rposition(|m| m.role == "user") else {
+            return Err(LoopError::NotLastMessage);
+        };
+        let last = &messages[idx];
+        if last.id != message_id {
+            return Err(LoopError::NotLastMessage);
+        }
+        if self.sh.storage.message_source(last.id)? != "owner" {
+            return Err(LoopError::NotResendable(
+                "only your own messages can be edited",
+            ));
+        }
+        let turn = &messages[idx..];
+        if turn[1..].iter().any(|m| m.role != "assistant") {
+            return Err(LoopError::NotResendable("the turn holds other messages"));
+        }
+        for run_id in turn.iter().filter_map(|m| m.run_id).collect::<HashSet<_>>() {
+            let terminal = self
+                .sh
+                .storage
+                .get_run(run_id)?
+                .and_then(|r| RunState::parse(&r.state))
+                .is_some_and(RunState::is_terminal);
+            if !terminal {
+                return Err(LoopError::NotResendable(
+                    "the previous run has not finished",
+                ));
+            }
+        }
+        let text = match new_text {
+            Some(t) => {
+                let (_, ids) = crate::attachments::split_marker(&last.content);
+                crate::attachments::with_marker(t, &ids)
+            }
+            None => last.content.clone(),
+        };
+        let ids: Vec<Uuid> = turn.iter().map(|m| m.id).collect();
+        self.sh.storage.set_messages_superseded(&ids, true)?;
+        match self.start_turn_from(
+            chat_id,
+            &text,
+            &kind_for(InitiatorKind::Human),
+            None,
+            None,
+            "owner",
+        ) {
+            Ok(run) => Ok(run),
+            Err(e) => {
+                let _ = self.sh.storage.set_messages_superseded(&ids, false);
+                Err(e)
+            }
+        }
+    }
+
+    /// Whether a finished run executed any tool that is not read-only, i.e.
+    /// whether redoing its turn could repeat an effect on the outside world.
+    /// Conservative: any tool batch not marked replay-safe counts.
+    ///
+    /// # Errors
+    /// Fails on storage errors.
+    pub fn run_used_non_read_tools(&self, run_id: RunId) -> Result<bool> {
+        Ok(self
+            .sh
+            .storage
+            .list_steps(run_id)?
+            .iter()
+            .any(|s| s.name == STEP_TOOLS && !s.idempotent))
+    }
+
     /// The running turn of `chat_id` when `text` is the `/stop` command and
     /// the bot's router is enabled (K0 is deterministic: no ladder needed).
     fn stop_command_target(&self, chat_id: ChatId, text: &str) -> Option<RunId> {

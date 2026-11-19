@@ -1259,6 +1259,7 @@ fn api_routes() -> Router<AppState> {
             "/v1/chats/{id}/messages",
             get(r::list_messages).post(r::send_message),
         )
+        .route("/v1/chats/{id}/resend", post(r::resend_last_turn))
         .route(
             "/v1/chats/{id}/attachments",
             post(attachment_routes::upload).layer(axum::extract::DefaultBodyLimit::max(

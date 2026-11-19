@@ -830,6 +830,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/chats/{id}/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Regenerate the last answer, or edit the last user message and resend it.
+         * @description Owner only. The chat must be idle, the message must still be the chat's last
+         *     user message, written in this app, and every run of that turn finished. The old
+         *     messages are marked superseded (kept, not in the model context); a new run
+         *     starts. Tools that already acted in the old run are not undone.
+         */
+        post: operations["resend_last_turn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/components": {
         parameters: {
             query?: never;
@@ -5921,6 +5944,16 @@ export interface components {
              *     `local_api`); absent for older messages and for replies.
              */
             source?: string | null;
+            /**
+             * @description Replaced by an edit or regenerated: kept as audit data, no longer part of
+             *     the model context.
+             */
+            superseded?: boolean;
+            /**
+             * @description Only set on the messages of the chat's last turn: the run behind it used
+             *     a tool that is not read-only, so redoing the turn could repeat an effect.
+             */
+            used_write_tools?: boolean;
         };
         /**
          * @description What to do when the chat already has a running turn.
@@ -6184,6 +6217,27 @@ export interface components {
             detail: string;
             /** @description The repair that ran. */
             repair: components["schemas"]["Repair"];
+        };
+        /**
+         * @description `POST /v1/chats/{id}/resend`: re-run the last turn (regenerate), or replace the
+         *     last user message and run it (edit & resend).
+         */
+        ResendMessage: {
+            /**
+             * Format: uuid
+             * @description The user message the client believes is the chat's last one.
+             */
+            message_id: string;
+            /** @description The edited text; absent regenerates with the original text. */
+            text?: string | null;
+        };
+        /** @description The new run started by a resend. */
+        ResendResponse: {
+            /**
+             * Format: uuid
+             * @description The run to follow.
+             */
+            run_id: string;
         };
         /**
          * @description Action a restore operation will apply to a path.
@@ -9417,6 +9471,66 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    resend_last_turn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Chat id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResendMessage"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResendResponse"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Chat busy or message no longer last */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Turn cannot be edited */
             422: {
                 headers: {
                     [name: string]: unknown;

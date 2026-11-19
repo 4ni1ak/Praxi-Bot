@@ -1285,6 +1285,16 @@
       "notEligible": "Bu çalıştırma hatırlanamaz.",
       "saved": "Hatırlandı"
     },
+    "resend": {
+      "acted": "Bu çalışma sohbetin dışında iş yapan araçlar kullandı. Yeniden yapmak onların yaptıklarını geri almaz.",
+      "cancel": "Vazgeç",
+      "earlier": "Önceki sürüm",
+      "edit": "Mesajı düzenle",
+      "editLabel": "Mesajınızı düzenleyin",
+      "regenerate": "Yeniden oluştur",
+      "regenerateAnyway": "Yine de yeniden oluştur",
+      "save": "Kaydet ve yeniden gönder"
+    },
     "resume": "Sürdür",
     "route": {
       "agent": "Ajan ({{level}})",
@@ -2072,6 +2082,14 @@
       "mcp_rate_limit": {
         "hint": "Biraz bekleyip yeniden dene.",
         "title": "Bu uygulamaya çok sık istek gidiyor"
+      },
+      "message_not_editable": {
+        "hint": "Yalnızca kendi son mesajınız düzenlenebilir veya yeniden oluşturulabilir, o da bot işini bitirdikten sonra.",
+        "title": "Bu mesaj düzenlenemez"
+      },
+      "message_not_last": {
+        "hint": "Sohbet ilerledi. Yeniden yükleyin, sonra en yeni mesajı düzenleyin ya da yeniden oluşturun.",
+        "title": "Bu artık son mesaj değil"
       },
       "modified_since": {
         "hint": "Geri yüklemek daha yeni değişikliklerinin üzerine yazar. Önce bak.",
