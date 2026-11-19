@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use agent_core::{
     ApprovalScope, BotProfile, Delivery, EffectivePolicy, Grant, GrantTarget, MessageMode,
-    PolicyDecision,
+    PolicyDecision, Scope as RuleScope, ScopeKind,
 };
 use axum::extract::{FromRequest, Path, Query, Request, State};
 use axum::http::StatusCode;
@@ -90,6 +90,11 @@ fn grant_dto(g: &Grant) -> GrantDto {
             GrantTarget::Category(c) => GrantTargetDto::Category {
                 name: category_name(*c),
             },
+            GrantTarget::Scoped { tool, scope } => GrantTargetDto::Scoped {
+                tool: tool.clone(),
+                scope: scope.kind.as_str().to_owned(),
+                pattern: scope.pattern.clone(),
+            },
         },
         granted_at_ms: g.granted_at_ms,
         inert: g.inert,
@@ -100,6 +105,19 @@ fn grant_target(t: GrantTargetDto) -> Result<GrantTarget, ApiError> {
     match t {
         GrantTargetDto::Tool { name } if !name.trim().is_empty() => Ok(GrantTarget::Tool(name)),
         GrantTargetDto::Tool { .. } => Err(ApiError::bad_request("tool name must not be empty")),
+        GrantTargetDto::Scoped {
+            tool,
+            scope,
+            pattern,
+        } => match ScopeKind::parse(&scope) {
+            Some(kind) if !tool.trim().is_empty() && !pattern.is_empty() => {
+                Ok(GrantTarget::Scoped {
+                    tool,
+                    scope: RuleScope { kind, pattern },
+                })
+            }
+            _ => Err(ApiError::bad_request("invalid scoped rule")),
+        },
         GrantTargetDto::Category { name } => {
             match serde_json::from_value::<PermissionCategory>(Value::String(name.clone())) {
                 // `meta` is always allowed; a grant on it would mean nothing.
@@ -134,6 +152,7 @@ fn effective_policy_dto(e: EffectivePolicy) -> EffectivePolicyDto {
                 )
             })
             .collect(),
+        mode: e.mode.as_str().to_owned(),
         grants: e.grants.iter().map(grant_dto).collect(),
     }
 }
@@ -192,6 +211,8 @@ fn run_approvals(s: &AppState, run: &storage::Run) -> Result<Vec<ApprovalDto>, A
                 run_id: run.id.0,
                 tool_name: n.tool_name,
                 summary: n.summary,
+                input: Some(n.input),
+                details: n.details,
                 decision: (!waiting).then(|| "expired".to_owned()),
                 requested_at_ms: ms(env.ts_ms),
                 decided_at_ms: None,
@@ -201,11 +222,12 @@ fn run_approvals(s: &AppState, run: &storage::Run) -> Result<Vec<ApprovalDto>, A
             _ => {}
         }
     }
-    // Only the newest approval of a waiting run can still be pending.
+    // A card is pending only while its wait is parked in the loop. One that is not (its tool timed
+    // out, the wait was dropped, the daemon restarted) has expired, whatever the run's state says;
+    // several cards of one run (parallel permission requests) can be pending at once.
     if waiting {
-        let n = out.len();
-        for (i, a) in out.iter_mut().enumerate() {
-            if a.decision.is_none() && i + 1 != n {
+        for a in &mut out {
+            if a.decision.is_none() && !s.agent().is_pending(ToolCallId(a.call_id)) {
                 a.decision = Some("expired".to_owned());
             }
         }

@@ -24,8 +24,10 @@ export interface RunStatusLineProps {
   botName?: string;
   /** The current step as one sentence ("Searching the web"). */
   sentence: string | null;
-  /** The step that waits for the owner, as a sentence; set only while an approval is pending. */
-  approvalStep: string | null;
+  /** What the run waits for, as the whole sentence; set only while a card (or a lost wait) is pending. */
+  approvalText: string | null;
+  /** Scrolls to the card the run waits for; offered only while that card exists. */
+  onJump?: () => void;
   startedMs: number | null;
   /** This chat's Stop progress (the one stop function of the chat decides it). */
   runStop: RunStopUi | null;
@@ -48,7 +50,8 @@ export function RunStatusLine({
   model,
   botName,
   sentence,
-  approvalStep,
+  approvalText,
+  onJump,
   startedMs,
   runStop: stop,
   onStop,
@@ -73,9 +76,7 @@ export function RunStatusLine({
         : stop?.phase === "failed"
         ? (stop.error ?? t("stopStatus.title.partial"))
         : approval
-          ? approvalStep
-            ? t("runStatus.waiting", { step: approvalStep })
-            : t("chat.runBar.waiting")
+          ? (approvalText ?? t("chat.runBar.waiting"))
           : model?.kind === "paused"
             ? t("chat.runBar.paused")
             : model?.kind === "human"
@@ -95,6 +96,11 @@ export function RunStatusLine({
           <span className={styles.pulse} aria-hidden="true" />
           <span className={styles.text}>{botName ? `${botName} · ${text}` : text}</span>
           <span className={styles.actions}>
+            {approval && onJump ? (
+              <button type="button" className={styles.link} onClick={onJump} data-testid="show-pending">
+                {t("runStatus.showCard")}
+              </button>
+            ) : null}
             {stop?.phase === "unconfirmed" || stop?.phase === "failed" ? (
               <button type="button" className={styles.link} onClick={onStop} data-testid="force-stop">
                 {t("chat.runBar.forceStop")}

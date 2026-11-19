@@ -1115,6 +1115,13 @@ impl AgentLoop {
             .map_err(|_| LoopError::NoPendingApproval(call_id))
     }
 
+    /// Whether a card (approval or question) with this call id is waiting for the user right
+    /// now. The approval list reads this, so a card whose wait is gone never shows as pending.
+    #[must_use]
+    pub fn is_pending(&self, call_id: ToolCallId) -> bool {
+        self.sh.pending.lock().contains_key(&call_id)
+    }
+
     /// The pending card is a taint-gate card whose "always for this chat" choice is a grant.
     /// Channels that carry owner authority (the desktop app) may give it; a bare API token or a
     /// peer may not (the HTTP route checks this before calling [`Self::approve`]).
@@ -1824,6 +1831,7 @@ impl AgentLoop {
         })
         .collect();
         Ok(EffectivePolicy {
+            mode: profile.permissions.mode(),
             policy,
             categories,
             grants: self.list_grants(bot_id),
@@ -2512,7 +2520,9 @@ fn legacy_unscoped_computer(g: &Grant) -> bool {
             category,
             PermissionCategory::Desktop | PermissionCategory::Browser
         ),
-        GrantTarget::Tool(name) => name.starts_with("desktop_") || name.starts_with("browser_"),
+        GrantTarget::Tool(name) | GrantTarget::Scoped { tool: name, .. } => {
+            name.starts_with("desktop_") || name.starts_with("browser_")
+        }
     }
 }
 

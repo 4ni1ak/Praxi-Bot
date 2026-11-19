@@ -86,6 +86,13 @@ A call whose target cannot be derived (for example a shell command with `;` or `
 only. A rule never covers a hard-stop class and never another target. Rules are persisted per bot
 in the audit log (like existing grants), listed in the bot's Permissions page, and revocable.
 
+Standing choices (this chat, always) need the owner's authority, as gate grants already do. A
+remembered site also satisfies the egress gate for a plain navigation (one argument, `url`) to
+exactly that origin, like a URL the user typed; a remembered command never satisfies the
+"untrusted content, then run a program" gate. Risky programs (shells, interpreters, `rm`, `curl`,
+`ssh`, `sudo`, ...) and commands with arguments other than flags and one sub-command word are
+never remembered. The old tool-wide and category-wide rules keep working for other tools.
+
 ### Batching and quiet notifications (step 3)
 
 Identical pending approvals of one run are shown once; several different approvals of one run are

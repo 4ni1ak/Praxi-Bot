@@ -161,6 +161,10 @@ pub struct ToolContext {
     /// window that would receive it is checked against this program right
     /// before the OS call. `None` for every other call.
     pub control_guard: Option<ControlIdentity>,
+    /// Set for a subagent run (its own run id): a tool with per-run state, such
+    /// as the browser, keeps this run apart from the parent and its siblings.
+    /// `None` for a top-level run, which uses the shared state.
+    pub lane: Option<String>,
 }
 
 impl Default for ToolContext {
@@ -173,6 +177,7 @@ impl Default for ToolContext {
             exposure_untrusted: false,
             expected_origin: None,
             control_guard: None,
+            lane: None,
         }
     }
 }
