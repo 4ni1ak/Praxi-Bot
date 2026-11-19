@@ -180,6 +180,7 @@ mod tests {
             exposure_untrusted: false,
             expected_origin: None,
             control_guard: None,
+            lane: None,
         };
         let text = "é".repeat(2000);
         let out = finish_text(&ctx, dir.path(), text.clone());
@@ -217,6 +218,7 @@ mod tests {
                     exposure_untrusted: false,
                     expected_origin: None,
                     control_guard: None,
+                    lane: None,
                 };
                 let out = finish_text(&ctx, dir.path(), text.clone());
                 assert!(out.spill.is_some());
@@ -240,6 +242,7 @@ mod tests {
             exposure_untrusted: false,
             expected_origin: None,
             control_guard: None,
+            lane: None,
         };
         let out = finish_text(&ctx, &blocker.join("sub"), "é".repeat(500));
         assert!(out.spill.is_none());
