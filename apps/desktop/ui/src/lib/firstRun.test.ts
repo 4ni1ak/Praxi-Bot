@@ -68,3 +68,9 @@ test("the automatic model follows the picker's recommendation rules; errors are 
   assert.equal(classifyConnectError("dns error: failed to resolve host", "anthropic"), "offline");
   assert.equal(classifyConnectError("something odd", "anthropic"), "unknown");
 });
+
+test("the first bot of a fresh home is Praxi, the white ghost", async () => {
+  const { FIRST_RUN_BOT_COLOR, FIRST_RUN_BOT_SHAPE } = await import("./firstRun.ts");
+  assert.equal(FIRST_RUN_BOT_SHAPE, "ghost");
+  assert.equal(FIRST_RUN_BOT_COLOR, "#f4f4f5");
+});

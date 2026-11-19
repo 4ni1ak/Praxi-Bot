@@ -15,6 +15,7 @@
 //! Everything goes through the public [`agent_core::AgentLoop`] API.
 
 pub mod cli;
+pub mod compare;
 pub mod fake;
 pub mod harness;
 pub mod live;
