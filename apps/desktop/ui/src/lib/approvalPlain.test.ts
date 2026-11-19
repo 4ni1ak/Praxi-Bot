@@ -69,3 +69,29 @@ test("the user's computer is named as a separate target only for a call the daem
   assert.match(plain.actionText("desktop_launch", { executable: "notepad.exe" }, { computer: pc, serverName: "Praxi host" }, t)!, /on your computer \(Praxi desktop\)/);
   assert.match(plain.actionText("shell_run", { command: "ls" }, { computer: pc, serverName: "Praxi host" }, t)!, /the Praxi host server/);
 });
+
+test("every pc_* tool reads as a sentence about YOUR computer, in both languages", async () => {
+  const w = { computer: null, serverName: "Praxi host" };
+  for (const lang of ["en", "tr"]) {
+    await i18n.changeLanguage(lang);
+    const t = ((k: string, v?: Record<string, unknown>) => i18n.t(k, v)) as import("./approvalPlain.ts").T;
+    const calls: [string, Record<string, unknown>][] = [
+      ["pc_shell_run", { command: "dir" }],
+      ["pc_fs_write", { path: "C:/a.txt" }],
+      ["pc_fs_read", { path: "C:/a.txt" }],
+      ["pc_fs_list", { path: "C:/" }],
+      ["pc_browser_open", { url: "https://example.com" }],
+      ["pc_browser_click", {}],
+      ["pc_desktop_launch", { executable: "notepad.exe" }],
+      ["pc_desktop_click", {}]
+    ];
+    for (const [tool, input] of calls) {
+      const text = plain.actionText(tool, input, w, t)!;
+      assert.ok(text && !text.includes("{{") && !text.startsWith("chat."), `${lang} ${tool}: ${text}`);
+      assert.doesNotMatch(text, /Praxi host/, "never the server's name");
+    }
+  }
+  await i18n.changeLanguage("en");
+  const t = ((k: string, v?: Record<string, unknown>) => i18n.t(k, v)) as import("./approvalPlain.ts").T;
+  assert.equal(plain.actionText("pc_shell_run", { command: "dir" }, w, t), "Run a command on YOUR computer: dir");
+});

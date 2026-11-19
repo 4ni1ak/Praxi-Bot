@@ -179,6 +179,9 @@ impl crate::host_links::HostLinks for Recorder {
         vec![crate::host_links::HostLinkInfo {
             computer_access: false,
             computer_access_always: false,
+            computer_browser: false,
+            computer_commands: false,
+            computer_files: false,
             id: "abc123".into(),
             name: "h".into(),
             state: crate::host_links::HostLinkState::Idle,
@@ -432,6 +435,9 @@ impl crate::host_links::HostLinks for Loopback {
         vec![crate::host_links::HostLinkInfo {
             computer_access: false,
             computer_access_always: false,
+            computer_browser: false,
+            computer_commands: false,
+            computer_files: false,
             id: "h1".into(),
             name: "Oracle".into(),
             state: crate::host_links::HostLinkState::Idle,

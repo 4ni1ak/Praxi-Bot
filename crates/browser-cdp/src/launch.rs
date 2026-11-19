@@ -28,6 +28,9 @@ pub struct LaunchOptions {
     pub window_size: (u32, u32),
     /// How long to wait for the debugging endpoint to appear.
     pub startup_timeout: Duration,
+    /// Destination policy for a served session (installed before the first
+    /// page attaches); `None`: no network policy.
+    pub destination_check: Option<crate::destination::DestinationCheck>,
 }
 
 impl Default for LaunchOptions {
@@ -39,6 +42,7 @@ impl Default for LaunchOptions {
             args: Vec::new(),
             window_size: (1280, 800),
             startup_timeout: Duration::from_secs(20),
+            destination_check: None,
         }
     }
 }
