@@ -2,7 +2,7 @@
 //! HTTP headers can never grant a role.
 use crate::{ApiError, AppState};
 use axum::{
-    Router,
+    Extension, Json, Router,
     extract::{Request, State},
     http::Method,
     middleware::Next,
@@ -23,6 +23,19 @@ pub enum PeerRole {
 pub struct PeerIdentity {
     pub key: String,
     pub role: PeerRole,
+}
+
+/// The selected path of the authenticated QUIC connection, without peer addresses.
+#[derive(Clone, Copy, Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct PeerLink {
+    pub relay: bool,
+    pub rtt_ms: u32,
+}
+
+/// Return the path for this request's tunnel, or null on local HTTP.
+#[utoipa::path(get, path = "/v1/peer/link", tag = "peer", security(("bearer" = [])), responses((status = 200, body = Option<PeerLink>)))]
+pub(crate) async fn link(path: Option<Extension<PeerLink>>) -> Json<Option<PeerLink>> {
+    Json(path.map(|Extension(info)| info))
 }
 
 /// Generic JSON/TOML profile editors retain ordinary bot editing, but cannot
@@ -161,6 +174,11 @@ fn host_mode_desktop_denial(method: &Method, check_path: &str) -> Option<&'stati
     }
     if (under("/v1/email") || under("/v1/web/search")) && mutating {
         return Some("account credentials are managed on the host itself");
+    }
+    // The dictation key and endpoint: audio could be redirected to another service.
+    // Transcribing (POST /v1/voice/transcribe) stays open to the operator.
+    if check_path == "/v1/voice" && mutating {
+        return Some("the dictation service and its key are managed on the host itself");
     }
     if *method == Method::POST
         && (PHONE_DENIED_POST_PATHS.contains(&check_path)
@@ -318,6 +336,11 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
     {
         return Some("knowledge sources and embedding authority are managed by the local owner");
     }
+    if !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+        && (check_path == "/v1/memory" || check_path.starts_with("/v1/memory/"))
+    {
+        return Some("personal memory is managed by the local owner");
+    }
     if is_bot_engine_path(check_path) && *method != Method::GET {
         return Some("a bot's engine settings can only be changed at this computer");
     }
@@ -327,6 +350,13 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
 /// An encoded `/` (`%2F`) inside a path that is under `/v1/mcp`.
 fn encoded_slash_in_mcp_path(raw: &str, decoded: &str) -> bool {
     is_mcp_path(decoded) && raw.to_ascii_lowercase().contains("%2f")
+}
+
+/// `GET /v1/email/accounts/{name}/messages`: the headers of a mailbox.
+fn is_email_messages_path(path: &str) -> bool {
+    path.strip_prefix("/v1/email/accounts/")
+        .and_then(|rest| rest.strip_suffix("/messages"))
+        .is_some_and(|name| !name.is_empty() && !name.contains('/'))
 }
 
 /// `/v1/mcp/servers` or anything below it (decoded and slash-normalized).
@@ -415,6 +445,10 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         return ApiError::forbidden("components are managed by the owner's desktop only")
             .into_response();
     }
+    if is_email_messages_path(&check_path) && peer.role != PeerRole::Desktop {
+        return ApiError::forbidden("mailboxes are read from the owner's desktop only")
+            .into_response();
+    }
     if is_composio_path(&check_path) && peer.role != PeerRole::Desktop {
         return ApiError::forbidden("Composio connections are managed by the owner's desktop only")
             .into_response();
@@ -461,7 +495,7 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         return ApiError::bad_request("URL credentials are forbidden").into_response();
     }
     req.extensions_mut()
-        .insert(crate::live_view::Actor::peer(&peer));
+        .insert(crate::live_view::Actor::peer_for(&state, &peer));
     // New schedule source/read capabilities remain local-owner only even on
     // encoded or slash-normalized aliases. Existing plain timer requests keep
     // their earlier peer policy; handlers also guard already-configured rows.
@@ -498,7 +532,7 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         // denial is coalesced there): it must not write a decision row per try.
         let granted = state
             .live_view()
-            .allowed(&crate::live_view::Actor::peer(&peer), true);
+            .allowed(&crate::live_view::Actor::peer_for(&state, &peer), true);
         let changed = granted && (input.release || state.hub().reported_mode() != Some(input.mode));
         (
             Request::from_parts(parts, axum::body::Body::from(bytes)),
@@ -519,7 +553,7 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
             | "/v1/control/recover"
     ) && !state
         .live_view()
-        .allowed(&crate::live_view::Actor::peer(&peer), true);
+        .allowed(&crate::live_view::Actor::peer_for(&state, &peer), true);
     if (req.method() == Method::POST
         && !refused_control
         && (path.starts_with("/v1/approvals/")

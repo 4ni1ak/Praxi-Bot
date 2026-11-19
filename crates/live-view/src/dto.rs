@@ -98,6 +98,11 @@ pub enum Profile {
 #[serde(rename_all = "snake_case")]
 pub enum Reason {
     BrowserIdle,
+    /// The viewer showed no sign of life (no input, window hidden or unfocused)
+    /// for the idle limit: the host stopped producing images to save resources.
+    ViewerIdle,
+    /// The session reached its hard time limit.
+    TimeLimit,
     RemoteNodeLiveView,
     Unsupported,
     Unavailable,
@@ -213,17 +218,31 @@ pub struct EffectiveProfile {
     pub codec: Codec,
 }
 
+/// Largest long edge of a frame on the wire: 1920 px, in either orientation (landscape
+/// 1920x1080 or portrait 1080x1920).
+#[must_use]
+pub const fn wire_size_ok(width: u32, height: u32) -> bool {
+    (width <= 1920 && height <= 1080) || (width <= 1080 && height <= 1920)
+}
+
+/// Whether a frame fits a profile's size box; a portrait frame may use the box turned on its side.
+#[must_use]
+pub const fn fits_box(width: u32, height: u32, max_width: u32, max_height: u32) -> bool {
+    (width <= max_width && height <= max_height)
+        || (height > width && width <= max_height && height <= max_width)
+}
+
 impl EffectiveProfile {
     #[must_use]
     pub fn watch() -> Self {
         Self {
             profile: Profile::Watch,
-            max_width: 960,
-            max_height: 600,
-            quality: 45,
-            max_fps: 1,
-            bytes_per_second: 128 * 1024,
-            burst_bytes: 256 * 1024,
+            max_width: 1920,
+            max_height: 1080,
+            quality: 70,
+            max_fps: 5,
+            bytes_per_second: 1024 * 1024,
+            burst_bytes: 1024 * 1024,
             codec: Codec::Jpeg,
         }
     }
@@ -231,12 +250,12 @@ impl EffectiveProfile {
     pub fn live() -> Self {
         Self {
             profile: Profile::Live,
-            max_width: 1280,
-            max_height: 800,
-            quality: 60,
+            max_width: 1920,
+            max_height: 1080,
+            quality: 75,
             max_fps: 10,
-            bytes_per_second: 768 * 1024,
-            burst_bytes: 1024 * 1024,
+            bytes_per_second: 1536 * 1024,
+            burst_bytes: 2 * 1024 * 1024,
             codec: Codec::Jpeg,
         }
     }
@@ -289,6 +308,41 @@ pub struct SessionUpdate {
 pub struct Heartbeat {
     pub takeover_id: Option<Uuid>,
     pub control_epoch: Option<u64>,
+    /// `false`: the viewer is hidden or unfocused right now. Leave it out (or
+    /// `true`) while someone is looking; a session whose viewer reports
+    /// inactive for the idle limit is ended by the host.
+    #[serde(default)]
+    pub active: Option<bool>,
+}
+
+/// What a viewer needs to know before it asks for the live screen.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenStreamState {
+    /// No live session: the host produces no images.
+    Idle,
+    /// A session exists, its first frame is not out yet.
+    Starting,
+    /// Frames are flowing to this viewer.
+    Live,
+    /// The last live session was ended by the idle or time limit.
+    PausedIdle,
+    /// There is no screen to show (see `reason`).
+    Unavailable,
+}
+
+/// `GET /v1/view/status`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ScreenStatus {
+    pub state: ScreenStreamState,
+    /// Fixed code when `unavailable` (the same codes as `GET /v1/view/availability`).
+    pub reason: Option<UnavailableCode>,
+    /// Seconds without a sign of life after which the host stops the stream.
+    pub idle_timeout_secs: u64,
+    /// Longest a single live session may run, in seconds.
+    pub hard_cap_secs: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

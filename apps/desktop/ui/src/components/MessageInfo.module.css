@@ -1,0 +1,66 @@
+.info {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  align-self: flex-end;
+  width: var(--size-info-button);
+  height: var(--size-info-button);
+  padding: var(--space-0);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-faint);
+  opacity: 0.55;
+  cursor: pointer;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-easing-standard),
+    background-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.info:hover,
+.info:focus-visible,
+.info[aria-expanded="true"] {
+  background-color: var(--color-surface-active);
+  color: var(--color-text);
+  opacity: 1;
+}
+
+.info:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.info > svg {
+  width: calc(var(--space-1) * 3.25);
+  height: calc(var(--space-1) * 3.25);
+}
+
+.pop {
+  width: var(--size-info-popover);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-card);
+}
+
+.list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: calc(var(--space-1) * 1.25) var(--space-3);
+  margin: var(--space-0);
+  font-size: var(--font-size-xs);
+}
+
+.row {
+  display: contents;
+}
+
+.row dt {
+  color: var(--color-text-muted);
+}
+
+.row dd {
+  margin: var(--space-0);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}

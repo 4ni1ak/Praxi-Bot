@@ -190,6 +190,30 @@ impl AgentLoop {
         self
     }
 
+    /// Register the model-callable memory and session tools (`memory_search`,
+    /// `session_search`, `memory_save`, `memory_forget`) when
+    /// [`LoopConfig::memory`] is configured and enabled. When memory is `None`
+    /// or disabled, no memory tools are registered.
+    #[must_use]
+    pub fn with_memory_tools(self) -> Self {
+        if let Some(m) = self.sh.cfg.memory.as_ref().filter(|m| m.enabled) {
+            let redactor = self.sh.cfg.redactor.clone();
+            let secret_checker: Option<memory_store::tools::SecretChecker> = redactor.map(|r| {
+                Arc::new(move |text: &str| r.contains_secret(text))
+                    as memory_store::tools::SecretChecker
+            });
+            for tool in memory_store::tools::tools(
+                &m.store,
+                &self.sh.storage,
+                m.recall_budget_tokens,
+                secret_checker.as_ref(),
+            ) {
+                let _ = self.sh.tools.register(tool);
+            }
+        }
+        self
+    }
+
     /// Tell the loop what is in the foreground (browser page host, application)
     /// so skills that match it are listed as suggested; without a source the
     /// turn's text is matched against skill keywords instead.
@@ -306,6 +330,22 @@ impl AgentLoop {
         let mut names: Vec<String> = self.sh.tools.list().into_iter().map(|s| s.name).collect();
         names.sort();
         names
+    }
+
+    /// Configured memory store, if the memory hook is attached to this loop.
+    #[must_use]
+    pub fn memory_store(&self) -> Option<Arc<memory_store::MemoryStore>> {
+        self.sh.cfg.memory.as_ref().map(|m| Arc::clone(&m.store))
+    }
+
+    /// Recall token budget configured on this loop (defaults to 800).
+    #[must_use]
+    pub fn memory_recall_budget_tokens(&self) -> usize {
+        self.sh
+            .cfg
+            .memory
+            .as_ref()
+            .map_or(800, |m| m.recall_budget_tokens)
     }
 
     /// Mask registered secrets in external data before an authorized source
@@ -1061,6 +1101,13 @@ impl AgentLoop {
             .map_err(|_| LoopError::NoPendingApproval(call_id))
     }
 
+    /// Whether a card (approval or question) with this call id is waiting for the user right
+    /// now. The approval list reads this, so a card whose wait is gone never shows as pending.
+    #[must_use]
+    pub fn is_pending(&self, call_id: ToolCallId) -> bool {
+        self.sh.pending.lock().contains_key(&call_id)
+    }
+
     /// The pending card is a taint-gate card whose "always for this chat" choice is a grant.
     /// Channels that carry owner authority (the desktop app) may give it; a bare API token or a
     /// peer may not (the HTTP route checks this before calling [`Self::approve`]).
@@ -1770,6 +1817,7 @@ impl AgentLoop {
         })
         .collect();
         Ok(EffectivePolicy {
+            mode: profile.permissions.mode(),
             policy,
             categories,
             grants: self.list_grants(bot_id),
@@ -1820,7 +1868,7 @@ impl AgentLoop {
         source: &str,
     ) -> Result<String> {
         let id = id.unwrap_or_else(Uuid::now_v7);
-        self.sh.storage.insert_message(&DbMessage {
+        let msg = DbMessage {
             id,
             user_id,
             chat_id,
@@ -1841,8 +1889,12 @@ impl AgentLoop {
             exposure_untrusted: false,
             exposure_private: false,
             exposure_sources: Vec::new(),
-        })?;
+        };
+        self.sh.storage.insert_message(&msg)?;
         self.sh.storage.set_message_source(id, source)?;
+        if let Some(m) = self.sh.cfg.memory.as_ref().filter(|m| m.enabled) {
+            let _ = m.store.index_message(&msg);
+        }
         Ok(content)
     }
 
@@ -2185,7 +2237,7 @@ impl AgentLoop {
             // streamed deltas is only whole here).
             let text = self.sh.redact(text);
             let exposure = ctx.as_ref().map(|c| c.taint.lock().clone());
-            let _ = self.sh.storage.insert_message(&DbMessage {
+            let msg = DbMessage {
                 id: Uuid::now_v7(),
                 user_id: run.user_id,
                 chat_id,
@@ -2196,7 +2248,11 @@ impl AgentLoop {
                 exposure_untrusted: exposure.as_ref().is_some_and(|t| t.exposure.untrusted),
                 exposure_private: exposure.as_ref().is_some_and(|t| t.exposure.private),
                 exposure_sources: exposure.map(|t| t.sources().to_vec()).unwrap_or_default(),
-            });
+            };
+            let _ = self.sh.storage.insert_message(&msg);
+            if let Some(m) = self.sh.cfg.memory.as_ref().filter(|m| m.enabled) {
+                let _ = m.store.index_message(&msg);
+            }
             self.enqueue_memory(run, &text);
         }
         if let Some(ctx) = &ctx {
@@ -2450,7 +2506,9 @@ fn legacy_unscoped_computer(g: &Grant) -> bool {
             category,
             PermissionCategory::Desktop | PermissionCategory::Browser
         ),
-        GrantTarget::Tool(name) => name.starts_with("desktop_") || name.starts_with("browser_"),
+        GrantTarget::Tool(name) | GrantTarget::Scoped { tool: name, .. } => {
+            name.starts_with("desktop_") || name.starts_with("browser_")
+        }
     }
 }
 

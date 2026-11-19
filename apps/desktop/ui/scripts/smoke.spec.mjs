@@ -1,4 +1,4 @@
-// The flows of the real-app smoke run (card 263). Driven by scripts/smoke.mjs; no test framework:
+// The flows of the real-app smoke run. Driven by scripts/smoke.mjs; no test framework:
 // each step is a function, a thrown error fails it, and every step ends with a screenshot plus a
 // check for error banners, danger toasts, console errors and failed requests.
 /* global window, document, location, fetch, URL, console, setInterval, clearInterval, setTimeout */
@@ -267,7 +267,7 @@ export async function flows(ctx) {
     if (!text || /error:|panic|ssh:|exception|\bat \w+\./i.test(text)) throw new Error(`not a human error: "${text}"`);
     await page.keyboard.press('Escape');
   }, { expectError: true });
-  // ---- permissions and screen control (cards 259, 262: #138 + #140 + #141 together)
+  // ---- permissions and screen control
   const auth = (extra = {}) => ({ authorization: `Bearer ${ctx.token}`, 'content-type': 'application/json', 'x-praxi-owner-key': ctx.ownerKey, ...extra });
   const sendLines = async (page, lines) => {
     // A run that is still finishing would queue the next message instead of starting it.
@@ -354,7 +354,7 @@ export async function flows(ctx) {
     const foreign = await fetch(`${ctx.base}/v1/bots`, { headers: auth({ origin: 'http://evil.example' }) });
     if (foreign.status !== 403) throw new Error(`a foreign origin got ${foreign.status}, not 403`);
   });
-  await run(s, 'owner routes refuse the general token alone and accept the owner key (card 262)', async () => {
+  await run(s, 'owner routes refuse the general token alone and accept the owner key', async () => {
     // The UI flows above already did these things with the owner key; here the same routes are
     // called the way a CLI engine or a script holding only the API token would call them.
     const post = (path, body, owner) => fetch(`${ctx.base}${path}`, {
@@ -376,7 +376,7 @@ export async function flows(ctx) {
       if (ownerCode === 'owner_key_required') throw new Error(`${path}: refused even with the owner key`);
     }
   });
-  // ---- Stop must work every time (card 280): press Stop in the real UI, then ask the daemon.
+  // ---- Stop must work every time: press Stop in the real UI, then ask the daemon.
   const api = (path, init = {}) => fetch(`${ctx.base}/v1${path}`, { ...init, headers: auth(init.headers) });
   const runsNow = async () => (await api('/runs')).json();
   const isTerminal = (st) => ['succeeded', 'failed', 'cancelled'].includes(st);
@@ -398,13 +398,14 @@ export async function flows(ctx) {
   const abortCount = () => ctx.stubLog.filter((l) => l === 'MODEL_ABORTED').length;
   /** Press Stop, then within 3 s: run cancelled in the daemon, UI out of the running state, composer usable. */
   const stopAndCheck = async (page, before, { appearWithin = 15000 } = {}) => {
-    const stopBtn = page.getByTestId('run-bar-stop');
+    // The send button is the Stop button (a rounded square) while the bot works and the box is empty.
+    const stopBtn = page.locator('[data-testid="send-button"][data-mode="stop"]');
     await stopBtn.waitFor({ timeout: appearWithin });
     const t0 = Date.now();
     await stopBtn.click();
     await until('run reaches "cancelled" in the daemon', async () => (await runsNow()).find((r) => !before.has(r.id) && !r.parent_run_id && r.state === 'cancelled'), STOP_WITHIN);
-    await page.getByTestId('run-bar').waitFor({ state: 'hidden', timeout: Math.max(STOP_WITHIN - (Date.now() - t0), 500) });
-    if (await page.getByTestId('run-bar-stop').isVisible()) throw new Error('the Stop button is still shown after the run stopped');
+    await page.getByTestId('run-status').waitFor({ state: 'hidden', timeout: Math.max(STOP_WITHIN - (Date.now() - t0), 500) });
+    if (await stopBtn.isVisible()) throw new Error('the Stop button is still shown after the run stopped');
     const c = composer(page);
     await c.fill('x');
     await page.getByRole('button', { name: /^send$/i }).and(page.locator(':enabled')).waitFor({ timeout: 3000 });
@@ -413,7 +414,7 @@ export async function flows(ctx) {
   const gotoBot = async (page, name) => {
     await page.locator('[class*="railItem"]', { hasText: name }).first().click();
     await openFirstChat(page);
-    await page.getByTestId('run-bar').waitFor({ state: 'hidden', timeout: 30000 }).catch(() => {});
+    await page.getByTestId('run-status').waitFor({ state: 'hidden', timeout: 30000 }).catch(() => {});
   };
   await run(s, 'Stop (a): during a slow model response the request is aborted and the run is cancelled', async (page) => {
     await gotoBot(page, 'Fulla');

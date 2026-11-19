@@ -141,6 +141,23 @@ pub trait BrowserDriver: Send + Sync {
     async fn current_url(&self) -> Option<String> {
         None
     }
+    /// Whether the user is watching this browser right now (a live view is
+    /// attached). `None`: the driver cannot tell, so nothing is claimed.
+    fn live_view_attached(&self) -> Option<bool> {
+        None
+    }
+}
+
+/// The last line of a browser tool result: whether the user can see the page.
+/// The model must not tell the user a page "is open" on their screen unless
+/// this says so.
+#[must_use]
+pub fn view_line(attached: bool) -> &'static str {
+    if attached {
+        "[view: visible to the user in the live view]"
+    } else {
+        "[view: NOT visible to the user (no live view attached); this is the assistant's own browser, do not say they can see it]"
+    }
 }
 
 /// `scheme://host:port` of an http(s) URL: lower case, no trailing dot, default port explicit.
@@ -190,9 +207,44 @@ impl BrowserSettings {
 struct Session {
     browser: Browser,
     page: Page,
+    /// Own tab per subagent run (ADR 0025): `(lane, page)`, least recently used
+    /// first. The top-level run keeps `page`; a lane's page is swapped into
+    /// `page` for the length of one driver call (see [`with_session!`]).
+    lanes: Vec<(String, Page)>,
     profile: Option<String>,
     headless: bool,
     last_work: tokio::time::Instant,
+}
+
+/// Tabs kept for subagent runs at once; the least recently used one is closed
+/// when a new lane needs room.
+const MAX_LANES: usize = 6;
+
+impl Session {
+    /// Make sure `lane` has its own tab (opened blank on first use).
+    async fn ensure_lane(&mut self, lane: &str) -> Result<(), String> {
+        if let Some(i) = self.lanes.iter().position(|(l, _)| l == lane) {
+            let entry = self.lanes.remove(i);
+            self.lanes.push(entry);
+            return Ok(());
+        }
+        if self.lanes.len() >= MAX_LANES {
+            let (_, oldest) = self.lanes.remove(0);
+            let _ = oldest.close().await;
+        }
+        let page = self.browser.new_page("about:blank").await.map_err(s)?;
+        self.lanes.push((lane.to_owned(), page));
+        Ok(())
+    }
+
+    /// Exchange the shared page with `lane`'s page. Calling it twice restores
+    /// the original arrangement, so a driver call that runs between the two
+    /// swaps sees the lane's tab as `self.page`.
+    fn swap_lane(&mut self, lane: &str) {
+        if let Some((_, page)) = self.lanes.iter_mut().find(|(l, _)| l == lane) {
+            std::mem::swap(&mut self.page, page);
+        }
+    }
 }
 
 /// [`BrowserDriver`] over Chrome/Edge via `browser-cdp`, launched lazily.
@@ -395,6 +447,7 @@ impl CdpDriver {
             ),
             headless,
             last_work: tokio::time::Instant::now(),
+            lanes: Vec::new(),
         })
     }
 
@@ -586,6 +639,15 @@ tokio::task_local! {
     static EXPECTED_PAGE_ORIGIN: Option<String>;
 }
 
+tokio::task_local! {
+    // The subagent run whose browser tab this call uses (`None`: the shared tab).
+    static BROWSER_LANE: Option<String>;
+}
+
+fn current_lane() -> Option<String> {
+    BROWSER_LANE.try_with(Clone::clone).ok().flatten()
+}
+
 fn expected_input_origin() -> Option<String> {
     EXPECTED_PAGE_ORIGIN.try_with(Clone::clone).ok().flatten()
 }
@@ -602,7 +664,16 @@ macro_rules! with_session {
             let mut guard = $self.session.lock().await;
             let step = {
                 let $sess = $self.ensure(&mut guard, $profile, $allow_launch).await?;
-                $body
+                match current_lane() {
+                    Some(lane) => {
+                        $sess.ensure_lane(&lane).await?;
+                        $sess.swap_lane(&lane);
+                        let outcome = $body;
+                        $sess.swap_lane(&lane);
+                        outcome
+                    }
+                    None => $body,
+                }
             };
             if let Some(session) = guard.as_mut() {
                 session.last_work = tokio::time::Instant::now();
@@ -626,6 +697,13 @@ macro_rules! with_session {
 impl BrowserDriver for CdpDriver {
     fn on_desktop(&self) -> bool {
         !self.desired_headless() && browser_cdp::host::has_display()
+    }
+
+    fn live_view_attached(&self) -> Option<bool> {
+        // A screencast runs only while a viewer is subscribed.
+        self.view
+            .as_ref()
+            .map(|view| view.status().active_profile.is_some())
     }
 
     fn for_headless(&self, headless: bool) -> Option<Arc<dyn BrowserDriver>> {
@@ -805,7 +883,20 @@ impl BrowserDriver for CdpDriver {
     async fn tabs(&self, switch_to: Option<usize>) -> Result<String, String> {
         with_session!(self, None, switch_to.is_some(), |sess| {
             let listed: Result<String, browser_cdp::Error> = async {
-                let pages = sess.browser.pages().await?;
+                let mut pages = sess.browser.pages().await?;
+                // A run sees only its own tabs: a subagent just its tab, the
+                // top-level run everything except the subagents' tabs.
+                if current_lane().is_some() {
+                    let own = sess.page.target_id().to_string();
+                    pages.retain(|t| t.target_id == own);
+                } else {
+                    let hidden: Vec<String> = sess
+                        .lanes
+                        .iter()
+                        .map(|(_, p)| p.target_id().to_string())
+                        .collect();
+                    pages.retain(|t| !hidden.contains(&t.target_id));
+                }
                 if let Some(n) = switch_to {
                     let t = n
                         .checked_sub(1)
@@ -1085,7 +1176,7 @@ fn tools_with_pool(
             Op::Open,
             spec(
                 "browser_open",
-                "Open a URL in the bot's own managed browser and return the page snapshot. This is not the user's browser; to see what the user has open, use desktop_list_apps. Example: {\"url\":\"https://example.com\"}",
+                "Open a URL in the assistant's own managed browser and return the page snapshot. Use this only when a real page is needed (logging in, clicking, forms, pages that need scripts, or the user wants to watch); to read or look something up use web_search and web_extract first, they are faster and need no browser. The result ends with a [view: ...] line saying whether the user can see the page. This is not the user's browser; to see what the user has open, use desktop_list_apps. Example: {\"url\":\"https://example.com\"}",
                 json!({"type":"object","properties":{
                     "url":{"type":"string","description":"Full URL."},
                     "profile":{"type":"string","description":"Profile name, or 'isolated' for a disposable profile. Omit to use the configured per-bot default. Only honoured when the browser starts."},
@@ -1231,7 +1322,7 @@ fn tools_with_pool(
             Op::Eval,
             spec(
                 "browser_eval",
-                "Run JavaScript in the page and return the JSON result. Last resort. Example: {\"js\":\"document.title\"}",
+                "Run JavaScript in the page and return the JSON result. Last resort, not for reading a page (use browser_snapshot or web_extract). Example: {\"js\":\"document.title\"}",
                 json!({"type":"object","properties":{
                     "js":{"type":"string","description":"A JavaScript expression."}
                 },"required":["js"]}),
@@ -1941,13 +2032,8 @@ impl BrowserTool {
     }
 }
 
-#[async_trait]
-impl Tool for BrowserTool {
-    fn spec(&self) -> &ToolSpec {
-        &self.spec
-    }
-
-    async fn current_origin(&self, ctx: &ToolContext, input: &Value) -> Option<String> {
+impl BrowserTool {
+    async fn current_origin_in_lane(&self, ctx: &ToolContext, input: &Value) -> Option<String> {
         // Only the actions that act on the page that is open now (not open/eval/tabs/back).
         if !matches!(self.op, Op::Click | Op::Fill | Op::Select | Op::Press) {
             return None;
@@ -1964,32 +2050,11 @@ impl Tool for BrowserTool {
             .and_then(|o| origin_of(&o))
     }
 
-    fn egress_extra(&self, _ctx: &ToolContext, input: &Value) -> Option<String> {
-        if !matches!(self.op, Op::Open) {
-            return None;
-        }
-        let named = input
-            .get("profile")
-            .and_then(Value::as_str)
-            .filter(|name| !name.is_empty());
-        let line = match named {
-            Some("isolated") => "profile: isolated (temporary, not logged in)".to_owned(),
-            Some(name) => format!("profile: {name} (named profile, may be logged in)"),
-            None if self.shared.managed.is_some() => {
-                "profile: default (persistent per-bot profile, may be logged in)".to_owned()
-            }
-            None => "profile: isolated (temporary, not logged in)".to_owned(),
-        };
-        Some(line)
-    }
-
-    /// Typing an owner-stored secret is confirmed on every call, however
-    /// permissive the policy, preset, grants or read shortcuts are.
-    fn always_ask_for(&self, input: &Value) -> bool {
-        self.op == Op::Fill && names_a_secret(input)
-    }
-
-    async fn standing_grant(&self, ctx: &ToolContext, input: &Value) -> Option<StandingGrant> {
+    async fn standing_grant_in_lane(
+        &self,
+        ctx: &ToolContext,
+        input: &Value,
+    ) -> Option<StandingGrant> {
         let (name, target, grant) = self.secret_fill_facts(ctx, input).await.ok().flatten()?;
         let id = grant?;
         let origin = target.frame_origin?;
@@ -2003,7 +2068,7 @@ impl Tool for BrowserTool {
         })
     }
 
-    async fn approval_details(
+    async fn approval_details_in_lane(
         &self,
         ctx: &ToolContext,
         input: &Value,
@@ -2032,7 +2097,7 @@ impl Tool for BrowserTool {
         })))
     }
 
-    async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
+    async fn call_in_lane(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         if self
             .shared
             .control
@@ -2068,7 +2133,76 @@ impl Tool for BrowserTool {
                 selected.run(&ctx.run_id, input),
             )
             .await?;
-        Ok(finish_text(ctx, &self.shared.data_dir.join("spill"), text))
+        let view = selected.shared.driver.live_view_attached();
+        let mut out = finish_text(ctx, &self.shared.data_dir.join("spill"), text);
+        // Honest "seen by user" signal, after any truncation so it is never cut.
+        if let Some(attached) = view
+            && let Some(tool_registry::ContentPart::Text { text }) = out.content.first_mut()
+        {
+            text.push('\n');
+            text.push_str(view_line(attached));
+        }
+        Ok(out)
+    }
+}
+
+#[async_trait]
+impl Tool for BrowserTool {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    fn egress_extra(&self, _ctx: &ToolContext, input: &Value) -> Option<String> {
+        if !matches!(self.op, Op::Open) {
+            return None;
+        }
+        let named = input
+            .get("profile")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty());
+        let line = match named {
+            Some("isolated") => "profile: isolated (temporary, not logged in)".to_owned(),
+            Some(name) => format!("profile: {name} (named profile, may be logged in)"),
+            None if self.shared.managed.is_some() => {
+                "profile: default (persistent per-bot profile, may be logged in)".to_owned()
+            }
+            None => "profile: isolated (temporary, not logged in)".to_owned(),
+        };
+        Some(line)
+    }
+
+    /// Typing an owner-stored secret is confirmed on every call, however
+    /// permissive the policy, preset, grants or read shortcuts are.
+    fn always_ask_for(&self, input: &Value) -> bool {
+        self.op == Op::Fill && names_a_secret(input)
+    }
+
+    async fn current_origin(&self, ctx: &ToolContext, input: &Value) -> Option<String> {
+        BROWSER_LANE
+            .scope(ctx.lane.clone(), self.current_origin_in_lane(ctx, input))
+            .await
+    }
+
+    async fn standing_grant(&self, ctx: &ToolContext, input: &Value) -> Option<StandingGrant> {
+        BROWSER_LANE
+            .scope(ctx.lane.clone(), self.standing_grant_in_lane(ctx, input))
+            .await
+    }
+
+    async fn approval_details(
+        &self,
+        ctx: &ToolContext,
+        input: &Value,
+    ) -> Result<Option<Value>, ToolError> {
+        BROWSER_LANE
+            .scope(ctx.lane.clone(), self.approval_details_in_lane(ctx, input))
+            .await
+    }
+
+    async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
+        BROWSER_LANE
+            .scope(ctx.lane.clone(), self.call_in_lane(ctx, input))
+            .await
     }
 }
 
@@ -2103,6 +2237,8 @@ pub(crate) mod fake {
         pub raw_secret_output: PMutex<String>,
         /// Make the page echo the typed value in the action result.
         pub echo_value: bool,
+        /// What `live_view_attached` reports (`None`: cannot tell).
+        pub watched: PMutex<Option<bool>>,
     }
 
     impl FakeBrowser {
@@ -2122,6 +2258,10 @@ pub(crate) mod fake {
 
     #[async_trait]
     impl BrowserDriver for FakeBrowser {
+        fn live_view_attached(&self) -> Option<bool> {
+            *self.watched.lock()
+        }
+
         async fn input_origin(&self, r: Option<&str>) -> Option<String> {
             self.targets
                 .lock()
@@ -2505,6 +2645,23 @@ mod tests {
                 "scroll:-:0:100"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn results_say_whether_the_user_can_see_the_page() {
+        let (_d, fake, t) = build();
+        let ctx = ToolContext::default();
+        let open = get(&t, "browser_open");
+        let call = || open.call(&ctx, json!({"url": "https://example.com"}));
+        // A driver that cannot tell claims nothing.
+        assert!(!text(&call().await.unwrap()).contains("[view:"));
+        *fake.watched.lock() = Some(false);
+        let hidden = text(&call().await.unwrap());
+        assert!(hidden.ends_with(view_line(false)), "{hidden}");
+        assert!(hidden.contains("NOT visible to the user"), "{hidden}");
+        *fake.watched.lock() = Some(true);
+        let seen = text(&call().await.unwrap());
+        assert!(seen.ends_with("[view: visible to the user in the live view]"));
     }
 
     #[tokio::test]
@@ -3069,6 +3226,12 @@ mod tests {
                 }]
             }),
             "Target.attachToTarget" => json!({"sessionId": "s1"}),
+            "Target.createTarget" => {
+                static NEXT: std::sync::atomic::AtomicUsize =
+                    std::sync::atomic::AtomicUsize::new(1);
+                let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                json!({"targetId": format!("lane{n}")})
+            }
             _ => json!({}),
         };
         json!({"id": id, "result": result})
@@ -3226,6 +3389,7 @@ mod tests {
             profile: None,
             headless: true,
             last_work: tokio::time::Instant::now(),
+            lanes: Vec::new(),
         });
         let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let probe = Arc::clone(&active);
@@ -3264,6 +3428,46 @@ mod tests {
             profile.join("login-fixture").exists(),
             "persistent login profiles survive close"
         );
+        server.kill();
+    }
+
+    /// ADR 0025: each subagent run works in its own tab; the top-level run keeps
+    /// the shared one, and a lane keeps its tab across calls.
+    #[tokio::test]
+    async fn subagent_runs_keep_their_own_tab_apart_from_the_shared_one() {
+        async fn tab(driver: &CdpDriver, lane: Option<&str>) -> String {
+            BROWSER_LANE
+                .scope(lane.map(str::to_owned), async {
+                    with_session!(driver, None, false, |sess| {
+                        Ok::<String, browser_cdp::Error>(sess.page.target_id().to_string())
+                    })
+                })
+                .await
+                .unwrap()
+        }
+        let server = FakeCdp::start();
+        let dir = tempfile::tempdir().unwrap();
+        let driver = CdpDriver::new(BrowserSettings::isolated(dir.path()));
+        *driver.session.lock().await = Some(session_for(&server).await);
+        let shared = tab(&driver, None).await;
+        let a = tab(&driver, Some("run-a")).await;
+        let b = tab(&driver, Some("run-b")).await;
+        assert_eq!(shared, "t1");
+        assert_ne!(a, shared);
+        assert_ne!(b, shared);
+        assert_ne!(a, b);
+        assert_eq!(tab(&driver, Some("run-a")).await, a, "a lane keeps its tab");
+        assert_eq!(
+            tab(&driver, None).await,
+            shared,
+            "the shared tab is untouched"
+        );
+        // A subagent lists only its own tab; the top-level run does not list the lanes' tabs.
+        let listed_in_lane = BROWSER_LANE
+            .scope(Some("run-a".to_owned()), driver.tabs(None))
+            .await
+            .unwrap();
+        assert!(!listed_in_lane.contains("about:blank"), "{listed_in_lane}");
         server.kill();
     }
 
@@ -3322,6 +3526,7 @@ mod tests {
             profile: None,
             headless: true,
             last_work: tokio::time::Instant::now(),
+            lanes: Vec::new(),
         });
         driver.set_takeover_pin(true);
         driver.start_idle_reaper();
@@ -3368,6 +3573,7 @@ mod tests {
             profile: None,
             headless: true,
             last_work: tokio::time::Instant::now(),
+            lanes: Vec::new(),
         });
         // Connected over real I/O; from here the clock is frozen and advanced by hand.
         tokio::time::pause();
@@ -3424,6 +3630,7 @@ mod tests {
             profile: None,
             headless: true,
             last_work: tokio::time::Instant::now(),
+            lanes: Vec::new(),
         });
         tokio::time::pause();
         let timeout = Duration::from_millis(40);
@@ -3494,6 +3701,7 @@ mod tests {
             profile: None,
             headless: true,
             last_work: tokio::time::Instant::now(),
+            lanes: Vec::new(),
         });
         let tools = tools(drv, dir.path(), None);
         let err = get(&tools, "browser_open")
@@ -3549,6 +3757,7 @@ mod tests {
             profile: None,
             headless: true,
             last_work: tokio::time::Instant::now(),
+            lanes: Vec::new(),
         });
         let tools = tools(
             Arc::clone(&drv) as Arc<dyn BrowserDriver>,
@@ -3628,6 +3837,7 @@ mod tests {
             profile: None,
             headless: true,
             last_work: tokio::time::Instant::now(),
+            lanes: Vec::new(),
         }
     }
 
@@ -3803,6 +4013,7 @@ mod tests {
                 profile: None,
                 headless: true,
                 last_work: tokio::time::Instant::now(),
+                lanes: Vec::new(),
             });
             // Delete the bot.
             assert_eq!(registry.retire_bot(id), 1);

@@ -101,7 +101,7 @@ pub enum ControlKind {
 }
 
 /// The program and window a desktop input call would reach, resolved by the
-/// tool before the permission decision (card 243-1).
+/// tool before the permission decision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ControlTarget {
     /// What the call sends.
@@ -161,6 +161,10 @@ pub struct ToolContext {
     /// window that would receive it is checked against this program right
     /// before the OS call. `None` for every other call.
     pub control_guard: Option<ControlIdentity>,
+    /// Set for a subagent run (its own run id): a tool with per-run state, such
+    /// as the browser, keeps this run apart from the parent and its siblings.
+    /// `None` for a top-level run, which uses the shared state.
+    pub lane: Option<String>,
 }
 
 impl Default for ToolContext {
@@ -173,6 +177,7 @@ impl Default for ToolContext {
             exposure_untrusted: false,
             expected_origin: None,
             control_guard: None,
+            lane: None,
         }
     }
 }
@@ -260,7 +265,7 @@ pub trait Tool: Send + Sync {
     }
 
     /// The program and window this call would send input to, for a run-scoped
-    /// control grant (card 243-1). Resolved before the permission decision.
+    /// control grant. Resolved before the permission decision.
     /// `None` (the default) means the tool has no such target, so no grant is
     /// offered for it and behaviour is unchanged.
     async fn control_target(&self, _ctx: &ToolContext, _input: &Value) -> Option<ControlTarget> {

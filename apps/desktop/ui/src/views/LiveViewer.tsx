@@ -16,7 +16,9 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { PeerLinkBadge } from "../components/PeerLinkBadge";
 import { Button } from "ui";
+import { PendingDecisions } from "../components/PendingDecisions";
 import { TargetPicker } from "../components/TargetPicker";
 import type { HumanAction, TargetInfo } from "../api/types";
 import {
@@ -40,6 +42,7 @@ import {
 import { viewerKeyAction } from "../lib/liveViewLayers";
 import { layerStack } from "../lib/modalStack";
 import { useDaemon } from "../state/DaemonContext";
+import { LiveViewerChat, type LiveChatSlots } from "./LiveViewerChat";
 import { useLiveView, useLocalLiveView } from "../state/LiveViewContext";
 import { requestStop } from "../state/appStop";
 import styles from "./LiveViewer.module.css";
@@ -69,9 +72,16 @@ function targetOptionHint(
  * The screen viewer. `source="local"` is the one of THIS computer while a server is home (the
  * right panel's "my computer" screen); by default it follows the views' computer.
  */
-export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = {}) {
+export function LiveViewer({
+  source = "home",
+  onChatSlots
+}: {
+  source?: "home" | "local";
+  onChatSlots?: (slots: LiveChatSlots | null) => void;
+} = {}) {
   const { t } = useTranslation();
   const { bots, needs } = useDaemon();
+  const questionCount = needs.filter((item) => item.kind === "question").length;
   const homeView = useLiveView();
   const localView = useLocalLiveView();
   const view = source === "local" ? localView : homeView;
@@ -81,6 +91,9 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
     controlState,
     state,
     frameUrl,
+    streamFailure,
+    targetsError,
+    retryStream,
     viewerOpen,
     loadingTargets,
     panelAction,
@@ -99,6 +112,7 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
     setComposing
   } = view;
 
+  const viewFailure = streamFailure ?? (!frameUrl ? targetsError : null);
   const [selectedOutcome, setSelectedOutcome] = useState<HumanAction | "none">(
     "none"
   );
@@ -424,6 +438,7 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
         </div>
 
         <div className={styles.headerRight}>
+          <PeerLinkBadge enabled={source === "home" && !isLocalClient} className={styles.stateBadge} />
           <span
             className={styles.stateBadge}
             data-tone={tone}
@@ -448,18 +463,26 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
         </div>
       </header>
 
-      {otherOwner || state.lastError || state.disconnected || state.needsResync ? (
+      {otherOwner || state.lastError || viewFailure || state.disconnected || state.needsResync ? (
         <div className={styles.statusLine} role="status">
           {otherOwner ? (
             <strong>{t("liveView.otherOwner", { owner: otherOwner })}</strong>
           ) : null}
-          {state.lastError ? (
+          {state.lastError || viewFailure ? (
             <span className={styles.errorInline} role="alert">
-              {t(`liveView.errors.${state.lastError.code}`, {
-                defaultValue: t(`liveView.reasons.${state.lastError.code}`, {
+              {t(`liveView.errors.${state.lastError?.code ?? viewFailure}`, {
+                defaultValue: t(`liveView.reasons.${state.lastError?.code ?? viewFailure}`, {
                   defaultValue: t("liveView.errors.generic")
                 })
               })}
+              {viewFailure && !frameUrl ? (
+                <Button variant="secondary" size="sm" onClick={() => {
+                  retryStream();
+                  void refreshTargets();
+                }}>
+                  {t("computerCard.retry")}
+                </Button>
+              ) : null}
             </span>
           ) : state.disconnected ? (
             <span className={styles.errorInline}>{t("liveView.reconnecting")}</span>
@@ -471,21 +494,25 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
         </div>
       ) : null}
 
-      {needs.length > 0 ? (
+      {questionCount > 0 ? (
         <div
           className={styles.approvalBar}
           role="status"
           data-testid="live-viewer-approvals"
         >
-          <span>{t("liveView.approvalsWaiting", { count: needs.length })}</span>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void closeViewer()}
-            data-testid="live-viewer-approvals-open"
-          >
-            {t("liveView.reviewApprovals")}
-          </Button>
+          <div className={styles.approvalHead}>
+            <span>{t("liveView.approvalsWaiting", { count: questionCount })}</span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void closeViewer()}
+              data-testid="live-viewer-approvals-open"
+            >
+              {t("liveView.reviewApprovals")}
+            </Button>
+          </div>
+          {/* The chat beside the screen holds the approvals; the questions are answered right here. */}
+          <PendingDecisions entries={needs.filter((item) => item.kind === "question")} />
         </div>
       ) : null}
 
@@ -634,6 +661,7 @@ export function LiveViewer({ source = "home" }: { source?: "home" | "local" } = 
           <Info aria-hidden="true" />
           <span>{t("liveView.privacyNotice")}</span>
         </p>
+        <LiveViewerChat onChatSlots={onChatSlots} />
       </div>
 
       <div className={styles.bottomDock} data-testid="live-view-bar">

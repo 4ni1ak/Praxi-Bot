@@ -7,6 +7,7 @@ import {
   type AppearanceSettings
 } from "../lib/appearance";
 import { parseBotOrder } from "../lib/botOrder";
+import { DEFAULT_VOICE_RATE, parseVoiceName, parseVoiceRate } from "../lib/voicePrefs";
 import { type MessageTimes, parseMessageTimes } from "../lib/messageTime";
 import {
   type ComputerTarget,
@@ -48,6 +49,12 @@ export interface AppSettings extends AppearanceSettings {
   computerTarget: ComputerTarget;
   /** Sidebar bot order (bot ids); the first bot is the main bot. Empty = daemon order. */
   botOrder: string[];
+  /** OS speech voice used to read replies aloud; "" = automatic (matches the UI language). */
+  voiceName: string;
+  /** Speaking speed of read-aloud replies (0.5 - 2). */
+  voiceRate: number;
+  /** Read each finished bot reply aloud automatically. */
+  speakReplies: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -72,7 +79,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sendWith: "enter",
   messageTimes: "minutes",
   computerTarget: "this-pc",
-  botOrder: []
+  botOrder: [],
+  voiceName: "",
+  voiceRate: DEFAULT_VOICE_RATE,
+  speakReplies: false
 };
 
 export function shouldOpenOnboardingOnStart(
@@ -120,7 +130,10 @@ export function loadSettingsSync(): AppSettings | null {
       ...normalizeAppearance(parsed as Record<string, unknown>),
       computerTarget: parseComputerTarget(parsed.computerTarget),
       messageTimes: parseMessageTimes(parsed.messageTimes),
-      botOrder: parseBotOrder(parsed.botOrder)
+      botOrder: parseBotOrder(parsed.botOrder),
+      voiceName: parseVoiceName(parsed.voiceName),
+      voiceRate: parseVoiceRate(parsed.voiceRate),
+      speakReplies: parsed.speakReplies === true
     };
   } catch {
     return null;
@@ -194,6 +207,9 @@ export async function loadSettings(): Promise<AppSettings> {
       );
 
       const botOrder = parseBotOrder(await store.get<unknown>("botOrder"));
+      const voiceName = parseVoiceName(await store.get<string>("voiceName"));
+      const voiceRate = parseVoiceRate(await store.get<number>("voiceRate"));
+      const speakReplies = (await store.get<boolean>("speakReplies")) === true;
 
       return {
         ...appearance,
@@ -217,7 +233,10 @@ export async function loadSettings(): Promise<AppSettings> {
         sendWith,
         messageTimes,
         computerTarget,
-        botOrder
+        botOrder,
+        voiceName,
+        voiceRate,
+        speakReplies
       };
     } catch {
       // Fall back to localStorage below if reading from plugin-store fails
@@ -261,6 +280,9 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
       await store.set("messageTimes", settings.messageTimes);
       await store.set("computerTarget", settings.computerTarget);
       await store.set("botOrder", settings.botOrder);
+      await store.set("voiceName", settings.voiceName);
+      await store.set("voiceRate", settings.voiceRate);
+      await store.set("speakReplies", settings.speakReplies);
       await store.save();
     } catch {
       // Ignore store write errors in non-Tauri environments

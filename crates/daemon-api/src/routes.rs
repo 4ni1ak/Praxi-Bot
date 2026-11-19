@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use agent_core::{
     ApprovalScope, BotProfile, Delivery, EffectivePolicy, Grant, GrantTarget, MessageMode,
-    PolicyDecision,
+    PolicyDecision, Scope as RuleScope, ScopeKind,
 };
 use axum::extract::{FromRequest, Path, Query, Request, State};
 use axum::http::StatusCode;
@@ -30,8 +30,8 @@ use crate::dto::{
     Decision, DecisionResponse, DeliveryKind, DetectedProviderDto, EffectivePolicyDto,
     EnableCliProviderInput, GrantDto, GrantTargetDto, Health, LatestCursor, MessageDto, Mode,
     ParseSchedule, ParsedSchedule, PolicyDto, PolicyInput, ProvidersDto, ReloadResponse,
-    RememberResponse, RevokeGrant, RunDto, RuntimeConfigDto, ScheduleChangeKind, ScheduleDto,
-    ScheduleInput, Scope, SendMessage, SendResponse, UsageSummary, UsageTotals,
+    RememberResponse, RevokeGrant, RunDto, RunUsageDto, RuntimeConfigDto, ScheduleChangeKind,
+    ScheduleDto, ScheduleInput, Scope, SendMessage, SendResponse, UsageSummary, UsageTotals,
 };
 use crate::error::{ApiError, ErrorBody};
 
@@ -90,6 +90,11 @@ fn grant_dto(g: &Grant) -> GrantDto {
             GrantTarget::Category(c) => GrantTargetDto::Category {
                 name: category_name(*c),
             },
+            GrantTarget::Scoped { tool, scope } => GrantTargetDto::Scoped {
+                tool: tool.clone(),
+                scope: scope.kind.as_str().to_owned(),
+                pattern: scope.pattern.clone(),
+            },
         },
         granted_at_ms: g.granted_at_ms,
         inert: g.inert,
@@ -100,6 +105,19 @@ fn grant_target(t: GrantTargetDto) -> Result<GrantTarget, ApiError> {
     match t {
         GrantTargetDto::Tool { name } if !name.trim().is_empty() => Ok(GrantTarget::Tool(name)),
         GrantTargetDto::Tool { .. } => Err(ApiError::bad_request("tool name must not be empty")),
+        GrantTargetDto::Scoped {
+            tool,
+            scope,
+            pattern,
+        } => match ScopeKind::parse(&scope) {
+            Some(kind) if !tool.trim().is_empty() && !pattern.is_empty() => {
+                Ok(GrantTarget::Scoped {
+                    tool,
+                    scope: RuleScope { kind, pattern },
+                })
+            }
+            _ => Err(ApiError::bad_request("invalid scoped rule")),
+        },
         GrantTargetDto::Category { name } => {
             match serde_json::from_value::<PermissionCategory>(Value::String(name.clone())) {
                 // `meta` is always allowed; a grant on it would mean nothing.
@@ -134,6 +152,7 @@ fn effective_policy_dto(e: EffectivePolicy) -> EffectivePolicyDto {
                 )
             })
             .collect(),
+        mode: e.mode.as_str().to_owned(),
         grants: e.grants.iter().map(grant_dto).collect(),
     }
 }
@@ -192,6 +211,8 @@ fn run_approvals(s: &AppState, run: &storage::Run) -> Result<Vec<ApprovalDto>, A
                 run_id: run.id.0,
                 tool_name: n.tool_name,
                 summary: n.summary,
+                input: Some(n.input),
+                details: n.details,
                 decision: (!waiting).then(|| "expired".to_owned()),
                 requested_at_ms: ms(env.ts_ms),
                 decided_at_ms: None,
@@ -201,11 +222,12 @@ fn run_approvals(s: &AppState, run: &storage::Run) -> Result<Vec<ApprovalDto>, A
             _ => {}
         }
     }
-    // Only the newest approval of a waiting run can still be pending.
+    // A card is pending only while its wait is parked in the loop. One that is not (its tool timed
+    // out, the wait was dropped, the daemon restarted) has expired, whatever the run's state says;
+    // several cards of one run (parallel permission requests) can be pending at once.
     if waiting {
-        let n = out.len();
-        for (i, a) in out.iter_mut().enumerate() {
-            if a.decision.is_none() && i + 1 != n {
+        for a in &mut out {
+            if a.decision.is_none() && !s.agent().is_pending(ToolCallId(a.call_id)) {
                 a.decision = Some("expired".to_owned());
             }
         }
@@ -936,14 +958,33 @@ pub(crate) async fn list_messages(
                 .or_insert_with(|| s.storage().get_run(run).ok().flatten().map(|r| r.bot_id.0)),
             None => None,
         };
+        let source = (m.role == "user")
+            .then(|| s.storage().message_source(m.id).ok())
+            .flatten()
+            .filter(|v| !v.is_empty());
+        let (content, attachments) = if m.role == "user" {
+            let (text, ids) = agent_core::attachments::split_marker(&m.content);
+            let dtos = ids
+                .into_iter()
+                .filter_map(|a| {
+                    agent_core::attachments::meta(s.storage().data_dir(), chat.id, a).ok()
+                })
+                .map(|a| crate::dto::AttachmentDto::from(&a))
+                .collect::<Vec<_>>();
+            (text.to_owned(), dtos)
+        } else {
+            (m.content, Vec::new())
+        };
         out.push(MessageDto {
             id: m.id,
             chat_id: m.chat_id.0,
             run_id: m.run_id.map(|r| r.0),
             bot_id,
             role: m.role,
-            content: m.content,
             created_at_ms: m.created_at_ms,
+            source,
+            content,
+            attachments,
         });
     }
     Ok(Json(out))
@@ -965,9 +1006,19 @@ pub(crate) async fn send_message(
     ApiJson(input): ApiJson<SendMessage>,
 ) -> Result<(StatusCode, Json<SendResponse>), ApiError> {
     let chat = s.chat_of_user(ChatId(id(&cid)?))?;
-    if input.text.trim().is_empty() {
+    if input.text.trim().is_empty() && input.attachment_ids.is_empty() {
         return Err(ApiError::bad_request("text must not be empty"));
     }
+    if input.attachment_ids.len() > agent_core::attachments::MAX_PER_MESSAGE {
+        return Err(ApiError::bad_request(format!(
+            "at most {} attachments per message",
+            agent_core::attachments::MAX_PER_MESSAGE
+        )));
+    }
+    for att in &input.attachment_ids {
+        agent_core::attachments::meta(s.storage().data_dir(), chat.id, *att)?;
+    }
+    let text = agent_core::attachments::with_marker(&input.text, &input.attachment_ids);
     let mode = match input.mode {
         Mode::Steer => MessageMode::Steer,
         Mode::Queue => MessageMode::Queue,
@@ -985,16 +1036,15 @@ pub(crate) async fn send_message(
     } else {
         "local_api"
     };
-    let (delivery, run_id) =
-        match s
-            .agent()
-            .send_user_message_from(chat.id, &input.text, mode, source)?
-        {
-            Delivery::NewTurn(r) => (DeliveryKind::NewTurn, Some(r.0)),
-            Delivery::Steered(r) => (DeliveryKind::Steered, Some(r.0)),
-            Delivery::Queued => (DeliveryKind::Queued, None),
-            Delivery::Stopped(r) => (DeliveryKind::Stopped, Some(r.0)),
-        };
+    let (delivery, run_id) = match s
+        .agent()
+        .send_user_message_from(chat.id, &text, mode, source)?
+    {
+        Delivery::NewTurn(r) => (DeliveryKind::NewTurn, Some(r.0)),
+        Delivery::Steered(r) => (DeliveryKind::Steered, Some(r.0)),
+        Delivery::Queued => (DeliveryKind::Queued, None),
+        Delivery::Stopped(r) => (DeliveryKind::Stopped, Some(r.0)),
+    };
     Ok((
         StatusCode::ACCEPTED,
         Json(SendResponse { delivery, run_id }),
@@ -1287,6 +1337,63 @@ pub(crate) async fn usage(
             .map(|(bot_id, totals)| BotUsage { bot_id, totals })
             .collect(),
     }))
+}
+
+/// Model and token usage of one run (read-only; feeds the chat's message info).
+#[utoipa::path(get, path = "/v1/runs/{id}/usage", tag = "runs", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Run id")),
+    responses((status = 200, body = RunUsageDto), (status = 404, body = ErrorBody)))]
+pub(crate) async fn run_usage(
+    State(s): State<AppState>,
+    Path(rid): Path<String>,
+) -> Result<Json<RunUsageDto>, ApiError> {
+    let run = s.run_of_user(RunId(id(&rid)?))?;
+    let st = s.storage();
+    let mut out = RunUsageDto {
+        model: None,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        model_calls: 0,
+    };
+    let audit = st.list_audit_for_run(s.user_id(), run.id)?;
+    let calls = agent_core::usage::calls_from_audit(&audit);
+    let mut recorded_steps = std::collections::HashSet::new();
+    for call in calls.get(&run.id).into_iter().flatten() {
+        if !matches!(
+            call.purpose,
+            agent_core::CallPurpose::Executor | agent_core::CallPurpose::GuardClose
+        ) {
+            continue;
+        }
+        recorded_steps.insert(call.step_n);
+        out.model = Some(call.model.clone());
+        out.model_calls += 1;
+        if let Some(u) = call.tokens {
+            out.prompt_tokens = out.prompt_tokens.saturating_add(u.prompt_tokens);
+            out.completion_tokens = out.completion_tokens.saturating_add(u.completion_tokens);
+        }
+    }
+    // Pre-ledger runs: the model step carries the model and usage.
+    for step in st.list_steps(run.id)? {
+        if step.name != "model" || recorded_steps.contains(&step.idx) {
+            continue;
+        }
+        let Some(output) = step.output.as_ref() else {
+            continue;
+        };
+        if let Some(m) = output.get("model").and_then(Value::as_str) {
+            out.model = Some(m.to_owned());
+        }
+        out.model_calls += 1;
+        if let Some(u) = output
+            .get("usage")
+            .and_then(|u| serde_json::from_value::<Usage>(u.clone()).ok())
+        {
+            out.prompt_tokens = out.prompt_tokens.saturating_add(u.prompt_tokens);
+            out.completion_tokens = out.completion_tokens.saturating_add(u.completion_tokens);
+        }
+    }
+    Ok(Json(out))
 }
 
 // --------------------------------------------------------------- control
@@ -1993,6 +2100,7 @@ fn schedule_dto(sc: &Schedule, has_webhook: bool) -> ScheduleDto {
         skipped_by_precheck: 0,
         consecutive_errors: 0,
         origin: sc.origin.as_str().to_owned(),
+        missed_occurrences: sc.missed_occurrences,
         moved_to: None,
     }
 }

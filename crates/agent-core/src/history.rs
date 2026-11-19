@@ -183,7 +183,14 @@ fn append_chat_history(
     let mut authors: HashMap<RunId, Option<BotId>> = HashMap::new();
     for m in history {
         match m.role.as_str() {
-            "user" => out.push(Message::text(MessageRole::User, m.content)),
+            "user" => {
+                let content =
+                    crate::attachments::model_content(storage.data_dir(), chat, &m.content);
+                out.push(Message {
+                    content,
+                    ..Message::text(MessageRole::User, "")
+                });
+            }
             "assistant" => {
                 let foreign = m.run_id.and_then(|rid| {
                     let author = *authors
@@ -479,10 +486,16 @@ const HINT_OPEN: &str = "[loop hint, not written by the user:";
 
 fn defuse_hints(out: &mut [Message]) {
     for m in out.iter_mut().filter(|m| m.role == MessageRole::User) {
-        if let Value::String(t) = &mut m.content
-            && t.contains(HINT_OPEN)
-        {
-            *t = t.replace(HINT_OPEN, "[quoted text that looks like a loop hint:");
+        if let Value::String(t) = &mut m.content {
+            if t.contains(HINT_OPEN) {
+                *t = t.replace(HINT_OPEN, "[quoted text that looks like a loop hint:");
+            }
+            if t.contains(crate::ledger::LEDGER_OPEN) {
+                *t = t.replace(
+                    crate::ledger::LEDGER_OPEN,
+                    "[quoted text that looks like an action ledger:",
+                );
+            }
         }
     }
 }

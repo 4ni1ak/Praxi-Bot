@@ -22,6 +22,7 @@ import {
   appActionDetails,
   formatFiring,
   brainDetails,
+  memoryOffer,
   scheduleDetails,
   type ControlGrantDetails,
   type EgressApprovalDetails,
@@ -381,6 +382,11 @@ export function ApprovalCard({
   const folders = Array.isArray(folderFacts) ? folderFacts.filter((f): f is string => typeof f === "string") : [];
   const facts = tool.details as { why?: unknown; once_only?: unknown } | null | undefined;
   const why = typeof facts?.why === "string" ? facts.why : null;
+  // What "this chat" / "always" would remember: one site, folder or command, never the whole tool.
+  const memory = memoryOffer(tool.details);
+  const memoryTarget = memory
+    ? t(`chat.approval.memory.target.${memory.kind}`, { value: memory.pattern })
+    : null;
   // The daemon says whether a standing choice may be offered; older events: any details mean once only.
   const onceOnly = typeof facts?.once_only === "boolean" ? facts.once_only : tool.details != null;
 
@@ -426,6 +432,7 @@ export function ApprovalCard({
       role="group"
       aria-label={t(outbound ? "chat.approval.sendTitle" : "chat.approval.title")}
       data-testid={outbound ? "approval-card-outbound" : "approval-card"}
+      data-call-id={tool.callId}
     >
       <span className={styles.approvalIcon}>
         <StepIcon icon={glyph.icon} brand={glyph.brand} size={22} />
@@ -542,7 +549,9 @@ export function ApprovalCard({
                 disabled={disabled}
                 onClick={() => void decide("approve", "this_chat")}
               >
-                {t("chat.approval.thisChat")}
+                {memoryTarget
+                  ? t("chat.approval.memory.thisChat", { target: memoryTarget })
+                  : t("chat.approval.thisChat")}
               </Button>
               {/* A taint-gate card keeps its choice to this chat (tool class and site). */}
               {why === "egress" || why === "executes" ? null : (
@@ -552,7 +561,9 @@ export function ApprovalCard({
                 disabled={disabled}
                 onClick={() => void decide("approve", "always")}
               >
-                {t("chat.approval.always")}
+                {memoryTarget
+                  ? t("chat.approval.memory.always", { target: memoryTarget })
+                  : t("chat.approval.always")}
               </Button>
               )}
             </>
@@ -612,7 +623,7 @@ export function QuestionCard({
   };
 
   return (
-    <div className={styles.question} data-testid="question-card">
+    <div className={styles.question} data-testid="question-card" data-call-id={q.callId}>
       <span className={styles.approvalTitle}>{t("chat.question.title")}</span>
       <p className={styles.approvalSummary}>{q.question}</p>
       {answered ? (
@@ -735,8 +746,11 @@ export function SubagentCard({ run, renderItem, onCancel }: SubagentCardProps) {
   const [error, setError] = useState<string | null>(null);
   const status = subagentStatus(run);
   const waiting = status === "waiting_approval";
-  // an approval inside the card must never stay hidden
-  const expanded = open || waiting;
+  // an approval or a question inside the card must never stay hidden
+  const asking = run.items.some(
+    (i) => i.kind === "question" && i.answer === undefined && !i.closed
+  );
+  const expanded = open || waiting || asking;
   const cancellable = status === "running" || waiting;
   const task = run.task ?? "";
 

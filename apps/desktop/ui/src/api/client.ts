@@ -1,7 +1,23 @@
 import { createSseParser } from "./events.ts";
 import { isLocalBaseUrl } from "../lib/liveViewState.ts";
 import type { Connection } from "./connection";
-import type { KnowledgeSource, KnowledgeSourceInput, KnowledgeSourceChange, KnowledgeMutation, KnowledgeSettings, KnowledgeSettingsInput, KnowledgeEmailCapture, KnowledgeEmbeddingProgress, KnowledgeEmbeddingApproval, KnowledgeEmbeddingGrantTarget } from "./types";
+import type {
+  KnowledgeSource,
+  KnowledgeSourceInput,
+  KnowledgeSourceChange,
+  KnowledgeMutation,
+  KnowledgeSettings,
+  KnowledgeSettingsInput,
+  KnowledgeEmailCapture,
+  KnowledgeEmbeddingProgress,
+  KnowledgeEmbeddingApproval,
+  KnowledgeEmbeddingGrantTarget,
+  MemoryItem,
+  MemoryKind,
+  CreateMemoryInput,
+  UpdateMemoryInput,
+  MemoryPreview
+} from "./types";
 import type {
   AcceptedResponse,
   AdminCliEngine,
@@ -45,6 +61,8 @@ import type {
   EmailAccount,
   EmailAccountInput,
   EmailAccountPatch,
+  EmailMessage,
+  EmailSendTestResponse,
   EmailTestReport,
   InputBatch,
   InputResult,
@@ -78,6 +96,7 @@ import type {
   ScheduleInput,
   Scope,
   ScreenPrivilegesInput,
+  RunUsage,
   SendMode,
   SendResponse,
   SessionInfo,
@@ -86,8 +105,16 @@ import type {
   TakeoverRequest,
   TargetInfo,
   TargetUnavailable,
+  PeerLink,
+  ScreenStatus,
+  TerminalInfo,
+  TerminalOutput,
   UsageSummary,
   ViewHeartbeat,
+  TranscribeInput,
+  TranscribeOutput,
+  VoiceConfig,
+  VoiceConfigInput,
   WebSearchConfig,
   WebSearchConfigInput,
   WebSearchTestInput,
@@ -100,7 +127,8 @@ import type {
   PutBotSkillsInput,
   SkillsCatalog,
   StopRunsInput,
-  StopRunsResponse
+  StopRunsResponse,
+  Attachment
 } from "./types";
 
 export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
@@ -184,6 +212,46 @@ export class ApiClient {
   resetKnowledgeEmbeddingCooldown(bot: string): Promise<void> {
     return this.request("POST", `/bots/${encodeURIComponent(bot)}/knowledge/embedding-cooldown/reset`);
   }
+
+  listMemories(opts: {
+    bot?: string | null;
+    botOnly?: boolean;
+    kind?: MemoryKind | null;
+    q?: string | null;
+    includeDeleted?: boolean;
+  } = {}): Promise<MemoryItem[]> {
+    return this.request("GET", "/memory", {
+      query: {
+        bot: opts.bot ?? undefined,
+        bot_only: opts.botOnly ? "true" : undefined,
+        kind: opts.kind ?? undefined,
+        q: opts.q?.trim() ? opts.q.trim() : undefined,
+        include_deleted: opts.includeDeleted ? "true" : undefined
+      }
+    });
+  }
+
+  createMemory(body: CreateMemoryInput): Promise<MemoryItem> {
+    return this.request("POST", "/memory", { body });
+  }
+
+  updateMemory(id: string, body: UpdateMemoryInput): Promise<MemoryItem> {
+    return this.request("PATCH", `/memory/${encodeURIComponent(id)}`, { body });
+  }
+
+  deleteMemory(id: string): Promise<MemoryItem> {
+    return this.request("DELETE", `/memory/${encodeURIComponent(id)}`);
+  }
+
+  undoMemory(id: string): Promise<MemoryItem> {
+    return this.request("POST", `/memory/${encodeURIComponent(id)}/undo`);
+  }
+
+  previewBotMemory(bot: string, query: string): Promise<MemoryPreview> {
+    return this.request("GET", `/bots/${encodeURIComponent(bot)}/memory/preview`, {
+      query: { query }
+    });
+  }
   readonly baseUrl: string;
   private readonly token: string;
   /** Name of the paired host this client talks to (null for this computer). */
@@ -214,13 +282,19 @@ export class ApiClient {
   protected async request<T>(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal; headers?: Record<string, string> } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal; headers?: Record<string, string>; raw?: Blob } = {}
   ): Promise<T> {
     const res = await this.send(method, path, opts);
     if (res.status === 204) {
       return undefined as T;
     }
     return (await res.json()) as T;
+  }
+
+  /** Like `request`, for routes that answer with binary data (an image). */
+  protected async requestBlob(method: string, path: string): Promise<Blob> {
+    const res = await this.send(method, path);
+    return res.blob();
   }
 
   /** Like `request`, for routes that answer with text (Markdown). */
@@ -241,6 +315,8 @@ export class ApiClient {
       /** Streaming answers (install output) must not be cut by the request timeout. */
       noTimeout?: boolean;
       headers?: Record<string, string>;
+      /** A file body, sent as is (the attachment upload); `body` stays JSON. */
+      raw?: Blob;
     } = {}
   ): Promise<Response> {
     const url = new URL(`${this.baseUrl}/v1${path}`);
@@ -263,13 +339,15 @@ export class ApiClient {
     }
     if (opts.body !== undefined) {
       headers["Content-Type"] = "application/json";
+    } else if (opts.raw !== undefined) {
+      headers["Content-Type"] = "application/octet-stream";
     }
     let res: Response;
     try {
       res = await fetch(url, {
         method,
         headers,
-        body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+        body: opts.raw ?? (opts.body === undefined ? undefined : JSON.stringify(opts.body)),
         signal: AbortSignal.any([
           this.life.signal,
           ...(opts.signal ? [opts.signal] : []),
@@ -519,14 +597,24 @@ export class ApiClient {
     });
   }
 
+  /** Upload one file for the next message of a chat; the daemon sniffs its type and size. */
+  uploadAttachment(chatId: string, file: Blob, name: string): Promise<Attachment> {
+    return this.request("POST", `/chats/${chatId}/attachments`, { raw: file, query: { name } });
+  }
+  /** The stored original of an attachment (an image to show in the message). */
+  attachmentBlob(chatId: string, attachmentId: string): Promise<Blob> {
+    return this.requestBlob("GET", `/chats/${chatId}/attachments/${attachmentId}`);
+  }
+
   sendMessage(
     chatId: string,
     text: string,
     mode?: SendMode,
-    ownerKey?: string
+    ownerKey?: string,
+    attachmentIds?: string[]
   ): Promise<SendResponse> {
     return this.request("POST", `/chats/${chatId}/messages`, {
-      body: { text, mode },
+      body: { text, mode, ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}) },
       ...(ownerKey ? { headers: { "x-praxi-owner-key": ownerKey, "x-praxi-message-source": "local_ui" } } : {})
     });
   }
@@ -543,6 +631,10 @@ export class ApiClient {
    */
   stopRuns(body: StopRunsInput, signal?: AbortSignal): Promise<StopRunsResponse> {
     return this.request("POST", "/runs/stop", { body, signal });
+  }
+  /** Model and token usage of one run (read-only; the message info popover). */
+  getRunUsage(runId: string): Promise<RunUsage> {
+    return this.request("GET", `/runs/${encodeURIComponent(runId)}/usage`);
   }
   resumeRun(runId: string): Promise<Run> {
     return this.request("POST", `/runs/${runId}/resume`);
@@ -681,8 +773,52 @@ export class ApiClient {
   listViewAvailability(): Promise<TargetUnavailable[]> {
     return this.request("GET", "/view/availability");
   }
-  createViewSession(input: CreateSessionInput): Promise<SessionInfo> {
-    return this.request("POST", "/view/sessions", { body: input });
+  /** Idle / starting / live / paused-idle / unavailable, and the host's idle limit. */
+  peerLink(signal?: AbortSignal): Promise<PeerLink | null> {
+    return this.request("GET", "/peer/link", { signal });
+  }
+
+  viewStatus(): Promise<ScreenStatus> {
+    return this.request("GET", "/view/status");
+  }
+  /** One still image of a screen (the host captures a single frame, then stops capturing). */
+  async viewThumbnail(targetId: string, signal?: AbortSignal): Promise<Blob> {
+    const res = await this.send("GET", `/view/targets/${encodeURIComponent(targetId)}/thumbnail`, { signal });
+    return res.blob();
+  }
+  // ---- Server terminal (this computer's daemon forwards to the host; owner key is added by `send`)
+  terminalOpen(hostId: string, cols: number, rows: number): Promise<TerminalInfo> {
+    return this.request("POST", `/hosts/${encodeURIComponent(hostId)}/terminal`, { body: { cols, rows } });
+  }
+  terminalOutput(hostId: string, id: string, after: number, waitMs: number, signal?: AbortSignal): Promise<TerminalOutput> {
+    return this.request("GET", `/hosts/${encodeURIComponent(hostId)}/terminal/${encodeURIComponent(id)}/output`, {
+      query: { after, wait_ms: waitMs },
+      signal
+    });
+  }
+  terminalInput(hostId: string, id: string, data: string): Promise<void> {
+    return this.request("POST", `/hosts/${encodeURIComponent(hostId)}/terminal/${encodeURIComponent(id)}/input`, { body: { data } });
+  }
+  terminalResize(hostId: string, id: string, cols: number, rows: number): Promise<void> {
+    return this.request("POST", `/hosts/${encodeURIComponent(hostId)}/terminal/${encodeURIComponent(id)}/resize`, { body: { cols, rows } });
+  }
+  terminalClose(hostId: string, id: string): Promise<void> {
+    return this.request("DELETE", `/hosts/${encodeURIComponent(hostId)}/terminal/${encodeURIComponent(id)}`);
+  }
+  private readonly staleViewSessions = new Set<string>();
+
+  async createViewSession(input: CreateSessionInput): Promise<SessionInfo> {
+    const create = () => this.request<SessionInfo>("POST", "/view/sessions", { body: input });
+    try {
+      return await create();
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.code !== "view_quota" || this.staleViewSessions.size === 0) {
+        throw err;
+      }
+      // Retry only DELETEs for sessions this client has already abandoned.
+      await Promise.allSettled([...this.staleViewSessions].map((id) => this.deleteViewSession(id)));
+      return create();
+    }
   }
   updateViewSession(
     id: string,
@@ -699,8 +835,23 @@ export class ApiClient {
       { body: input }
     );
   }
-  deleteViewSession(id: string): Promise<void> {
-    return this.request("DELETE", `/view/sessions/${encodeURIComponent(id)}`);
+  async deleteViewSession(id: string): Promise<void> {
+    this.staleViewSessions.add(id);
+    // The daemon reaps dormant sessions after their lease. Bound local tracking as well.
+    if (this.staleViewSessions.size > 8) {
+      const oldest = this.staleViewSessions.values().next().value;
+      if (oldest) this.staleViewSessions.delete(oldest);
+    }
+    try {
+      await this.request("DELETE", `/view/sessions/${encodeURIComponent(id)}`);
+      this.staleViewSessions.delete(id);
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
+        this.staleViewSessions.delete(id);
+        return;
+      }
+      throw err;
+    }
   }
   sendViewInput(id: string, batch: InputBatch): Promise<InputResult> {
     return this.request(
@@ -892,6 +1043,10 @@ export class ApiClient {
   composioApps(): Promise<ComposioApp[]> {
     return this.request("GET", "/composio/apps");
   }
+  /** The app's logo as the daemon fetched, validated and cached it (404 when none is known). */
+  composioLogo(slug: string): Promise<Blob> {
+    return this.requestBlob("GET", `/composio/logos/${encodeURIComponent(slug)}`);
+  }
   composioApp(slug: string): Promise<ComposioApp> {
     return this.request("GET", `/composio/apps/${encodeURIComponent(slug)}`);
   }
@@ -945,6 +1100,16 @@ export class ApiClient {
       `/email/accounts/${encodeURIComponent(name)}/test`
     );
   }
+  /** Newest messages of the inbox, headers only (owner-only; nothing is marked read). */
+  listEmailMessages(name: string, limit = 20): Promise<EmailMessage[]> {
+    return this.request("GET", `/email/accounts/${encodeURIComponent(name)}/messages`, {
+      query: { limit: String(limit) }
+    });
+  }
+  /** One fixed test message from the mailbox to its own address (owner-only). */
+  sendEmailTest(name: string): Promise<EmailSendTestResponse> {
+    return this.request("POST", `/email/accounts/${encodeURIComponent(name)}/send-test`);
+  }
   /** The same for an account that is not saved (nothing is stored). */
   testEmailDraft(input: EmailAccountInput): Promise<EmailTestReport> {
     return this.request("POST", "/email/test", { body: input });
@@ -970,6 +1135,19 @@ export class ApiClient {
   /** Redacted Markdown support report. */
   doctorReport(): Promise<string> {
     return this.requestText("GET", "/doctor/report");
+  }
+
+  getVoice(): Promise<VoiceConfig> {
+    return this.request("GET", "/voice");
+  }
+
+  updateVoice(input: VoiceConfigInput): Promise<VoiceConfig> {
+    return this.request("PUT", "/voice", { body: input });
+  }
+
+  /** Dictation: the recording goes to the service the owner configured. */
+  transcribe(input: TranscribeInput): Promise<TranscribeOutput> {
+    return this.request("POST", "/voice/transcribe", { body: input });
   }
 
   getWebSearch(): Promise<WebSearchConfig> {

@@ -113,8 +113,10 @@ fn last_user(req: &ChatRequest) -> String {
     req.messages
         .iter()
         .rev()
-        .find(|m| m.role == MessageRole::User)
-        .and_then(|m| m.content.as_str())
+        // The loop's own action ledger is a user-role message too; it is not the task.
+        .filter(|m| m.role == MessageRole::User)
+        .filter_map(|m| m.content.as_str())
+        .find(|t| !t.starts_with("[action ledger"))
         .unwrap_or_default()
         .to_owned()
 }
