@@ -7,6 +7,11 @@
 # bootstrap from a reviewed copy of this repository; replace the example tag:
 #   (
 #     set -euo pipefail
+
+# Never let apt's needrestart hook restart services (including praxi.service)
+# behind our back: list-only mode, no interactive prompts. Restarts happen only
+# where this script restarts them on purpose.
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1
 #     version=v0.1.0
 #     work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 #     base="https://github.com/emreocell/Praxi-Bot/releases/download/$version"
