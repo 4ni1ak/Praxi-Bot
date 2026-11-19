@@ -14,8 +14,10 @@ model calls**. There are three related mechanisms. Know which exist today:
 
 A workflow belongs to one bot and is stored at
 `<data dir>/bots/<bot-id>/workflows/<name>.toml`. Its index is rebuilt automatically.
+Legacy files at `<data dir>/workflows` are not discovered, because a workflow must
+belong to exactly one bot. To keep an old one, review it and copy the file into
+that bot's `workflows/` folder by hand.
 This location is inside the daemon state boundary protected from bot file tools.
-Legacy files at `<data dir>/workflows` are not discovered by the daemon.
 A workflow has **parameters** and a list of **steps**. `workflow_list` and
 `workflow_run` use the calling bot's store.
 

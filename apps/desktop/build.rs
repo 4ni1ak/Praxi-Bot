@@ -2,7 +2,10 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
+include!("src/command_names.rs");
+
 fn main() {
+    println!("cargo:rerun-if-changed=src/command_names.rs");
     let dist_dir = Path::new("ui/dist");
     if !dist_dir.exists() {
         let _ = fs::create_dir_all(dist_dir);
@@ -39,5 +42,14 @@ fn main() {
         }
     }
 
-    tauri_build::build();
+    // Every custom command needs an explicit `allow-<command>` permission in a
+    // capability; without the app manifest they would be callable from every
+    // window.
+    if let Err(error) = tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .app_manifest(tauri_build::AppManifest::new().commands(COMMAND_NAMES)),
+    ) {
+        println!("{error:#}");
+        std::process::exit(1);
+    }
 }

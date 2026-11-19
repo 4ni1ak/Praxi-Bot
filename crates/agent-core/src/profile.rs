@@ -3,10 +3,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use cli_provider::{ApprovalLevel, EngineMode};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use permission_engine::{Policy, Rule};
 use protocol::PermissionCategory;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Errors while loading a profile.
 #[derive(Debug, thiserror::Error)]
@@ -44,6 +45,21 @@ pub struct PermissionsConfig {
     /// Per-category rules layered over the preset.
     #[serde(default)]
     pub categories: BTreeMap<PermissionCategory, Rule>,
+    /// This bot may send data off the machine after a run has read untrusted
+    /// or private content, without an extra prompt. Default `false`. A tool
+    /// grant does not turn this on. Not a permission level: [`BotProfile::policy`]
+    /// ignores it.
+    #[serde(default)]
+    pub allow_egress_after_reads: bool,
+}
+
+impl PermissionsConfig {
+    /// The bot's autonomy mode, derived from the preset (see
+    /// [`permission_engine::AutonomyMode::from_preset`]).
+    #[must_use]
+    pub fn mode(&self) -> permission_engine::AutonomyMode {
+        permission_engine::AutonomyMode::from_preset(self.preset.as_deref())
+    }
 }
 
 /// `[tools]` table: allow / exclude globs over tool names.
@@ -77,6 +93,66 @@ impl Default for RouterSettings {
     }
 }
 
+/// `[files]` table: what the built-in file tools may reach.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct FilesConfig {
+    /// `computer` or `folder`; unset = the loop's default (This computer, but
+    /// nothing on an always-on host until its owner chooses).
+    #[serde(default)]
+    pub mode: Option<FileAccessMode>,
+    /// Folders for `folder` mode. Empty in that mode denies every file call.
+    #[serde(default)]
+    pub folders: Vec<String>,
+}
+
+/// Where the file tools may go.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileAccessMode {
+    /// "This computer": anywhere the user can, protected locations excepted.
+    #[default]
+    Computer,
+    /// "Folder only": `folders` and nothing else.
+    Folder,
+}
+
+impl FilesConfig {
+    /// The scope the file tools enforce; `unset_default` applies when the
+    /// owner never chose a mode.
+    #[must_use]
+    pub fn scope(&self, unset_default: &builtin_tools::FsScope) -> builtin_tools::FsScope {
+        match self.mode {
+            None => unset_default.clone(),
+            Some(FileAccessMode::Computer) => builtin_tools::FsScope::Computer,
+            Some(FileAccessMode::Folder) => builtin_tools::FsScope::Folders(
+                self.folders.iter().map(std::path::PathBuf::from).collect(),
+            ),
+        }
+    }
+}
+
+/// When the owner consented to the risky engine settings of this bot.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EngineConsent {
+    /// The owner agreed that a CLI runs this bot's file and shell actions.
+    pub native_tools_at_ms: Option<i64>,
+    /// The owner agreed to "Full access" (no approval prompts) for this bot.
+    pub full_access_at_ms: Option<i64>,
+}
+
+/// `[engine]` table: who runs this bot's file and shell actions. Only the local
+/// owner can change it (`PUT /v1/bots/{id}/engine`); bot create / update refuse it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EngineSettings {
+    pub mode: EngineMode,
+    pub approval_level: ApprovalLevel,
+    /// Absolute folder chosen by the owner; required in `native_tools` mode.
+    pub workspace: Option<String>,
+    pub consent: EngineConsent,
+}
+
 #[derive(Deserialize)]
 struct BotSection {
     id: String,
@@ -96,6 +172,12 @@ struct Raw {
     tools: ToolFilter,
     #[serde(default)]
     router: RouterSettings,
+    #[serde(default)]
+    runtime: computer_target::RuntimeConfig,
+    #[serde(default)]
+    files: FilesConfig,
+    #[serde(default)]
+    engine: EngineSettings,
 }
 
 /// A loaded bot profile.
@@ -117,10 +199,18 @@ pub struct BotProfile {
     pub tools: ToolFilter,
     /// Decision-ladder settings.
     pub router: RouterSettings,
+    /// Runtime configuration (`[runtime]`, including `computer` target).
+    pub runtime: computer_target::RuntimeConfig,
+    /// File access mode (`[files]`).
+    pub files: FilesConfig,
+    /// Engine mode, approval level and workspace of a CLI-backed bot.
+    pub engine: EngineSettings,
     allow: GlobSet,
     exclude: GlobSet,
     /// Extra allow-lists a tool must also match (subagent narrowing).
     restrict: Vec<GlobSet>,
+    hide_desktop: bool,
+    hide_browser: bool,
 }
 
 fn globs(patterns: &[String]) -> Result<GlobSet, String> {
@@ -155,6 +245,8 @@ impl TryFrom<Raw> for BotProfile {
             allow: globs(&r.tools.allow)?,
             exclude: globs(&r.tools.exclude)?,
             restrict: Vec::new(),
+            hide_desktop: false,
+            hide_browser: false,
             id: r.bot.id,
             name: r.bot.name,
             persona: r.bot.persona,
@@ -163,6 +255,9 @@ impl TryFrom<Raw> for BotProfile {
             permissions: r.permissions,
             tools: r.tools,
             router: r.router,
+            runtime: r.runtime,
+            files: r.files,
+            engine: r.engine,
         })
     }
 }
@@ -230,12 +325,40 @@ impl BotProfile {
             .filter(|_| self.router.k3.unwrap_or(true))
     }
 
-    /// Whether `tool_name` passes the allow / exclude lists.
+    /// Whether `tool_name` passes the allow / exclude lists and resolved
+    /// computer availability.
     #[must_use]
     pub fn tool_visible(&self, tool_name: &str) -> bool {
-        (self.tools.allow.is_empty() || self.allow.is_match(tool_name))
+        // Shell commands and scripts cannot be confined to folders, so a
+        // "Folder only" bot does not get them (honest sandbox, not a pretence).
+        (self.files.mode != Some(FileAccessMode::Folder)
+            || !(tool_name.starts_with("shell_") || tool_name.starts_with("script_")))
+            && (!self.hide_desktop || !tool_name.starts_with("desktop_"))
+            && (!self.hide_browser || !tool_name.starts_with("browser_"))
+            && (self.tools.allow.is_empty() || self.allow.is_match(tool_name))
             && !self.exclude.is_match(tool_name)
             && self.restrict.iter().all(|g| g.is_match(tool_name))
+    }
+
+    /// Whether a tool's permission category is permitted by the resolved
+    /// computer target.
+    #[must_use]
+    pub fn category_visible(&self, category: PermissionCategory) -> bool {
+        match category {
+            PermissionCategory::Desktop => !self.hide_desktop,
+            PermissionCategory::Browser => !self.hide_browser,
+            _ => true,
+        }
+    }
+
+    /// Copy of this profile narrowed to the desktop/browser availability
+    /// resolved at run start.
+    #[must_use]
+    pub fn with_computer_access(&self, desktop: bool, browser: bool) -> Self {
+        let mut p = self.clone();
+        p.hide_desktop = !desktop;
+        p.hide_browser = !browser;
+        p
     }
 
     /// The profile a subagent runs with: the same bot (persona, permissions,
@@ -307,6 +430,44 @@ preset = "approve-destructive"
 allow = ["fs.*", "plan.*"]
 exclude = ["fs.delete*"]
 "#;
+
+    #[test]
+    fn runtime_computer_parses_defaults_values_aliases_and_rejects_unknown() {
+        use computer_target::ComputerTarget;
+
+        let minimal = r#"
+[bot]
+id = "b"
+name = "B"
+persona = "p"
+
+[models]
+executor = "fake/echo"
+"#;
+        let p = BotProfile::from_toml_str(minimal).unwrap();
+        assert_eq!(p.runtime.computer, ComputerTarget::Auto);
+
+        for (raw, expected) in [
+            ("auto", ComputerTarget::Auto),
+            ("pc", ComputerTarget::Pc),
+            ("local", ComputerTarget::Pc),
+            ("host", ComputerTarget::Host),
+            ("browser", ComputerTarget::Browser),
+            ("off", ComputerTarget::Off),
+            ("node:pc-1", ComputerTarget::Node("node:pc-1".into())),
+        ] {
+            let src = format!("{minimal}\n[runtime]\ncomputer = \"{raw}\"\n");
+            let parsed = BotProfile::from_toml_str(&src).unwrap();
+            assert_eq!(parsed.runtime.computer, expected);
+        }
+
+        let bad = format!("{minimal}\n[runtime]\ncomputer = \"unknown_target\"\n");
+        assert!(BotProfile::from_toml_str(&bad).is_err());
+
+        // Existing fixture uses legacy alias `computer = "local"`.
+        let legacy = BotProfile::from_toml_str(TOML).unwrap();
+        assert_eq!(legacy.runtime.computer, ComputerTarget::Pc);
+    }
 
     #[test]
     fn parses_and_filters_tools() {

@@ -12,8 +12,8 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tool_registry::{
-    ContentPart, Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError, ToolOutput,
-    ToolSpec,
+    ContentClass, ContentPart, Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError,
+    ToolOutput, ToolSpec,
 };
 
 use crate::config::AccountKind;
@@ -62,6 +62,47 @@ fn spec(name: &str, description: &str, schema: Value, effect: Effect) -> ToolSpe
         effect,
         category: PermissionCategory::Messaging,
         platforms: vec![Platform::All],
+        content: match name {
+            // The call sends model-controlled fields (folder, query, ids) to
+            // the mail server and the reply can be untrusted private mail.
+            READ | SEARCH => ContentClass::all(),
+            // Folder names come back; the account name is sent to the server.
+            LIST_FOLDERS => ContentClass::declared(false, true, true),
+            // mark_read does not return the message, but the folder and the
+            // message id are sent to the remote mailbox, same as a draft or a send.
+            DRAFT | SEND | MARK_READ => ContentClass::egress(),
+            _ => ContentClass::none(),
+        },
+    }
+}
+
+#[cfg(test)]
+mod class_tests {
+    use super::*;
+
+    #[test]
+    fn remote_mailbox_calls_are_egress() {
+        let schema = json!({});
+        assert!(spec(READ, "", schema.clone(), Effect::Read).content.egress);
+        assert!(
+            spec(SEARCH, "", schema.clone(), Effect::Read)
+                .content
+                .egress
+        );
+        assert!(
+            spec(SEARCH, "", schema.clone(), Effect::Read)
+                .content
+                .ingests_untrusted
+        );
+        assert!(
+            spec(MARK_READ, "", schema.clone(), Effect::Write)
+                .content
+                .egress
+        );
+        let folders = spec(LIST_FOLDERS, "", schema.clone(), Effect::Read).content;
+        assert!(folders.egress);
+        assert!(folders.reads_private);
+        assert!(spec(SEND, "", schema, Effect::Write).content.egress);
     }
 }
 
@@ -189,6 +230,7 @@ fn json_out(v: Value) -> ToolOutput {
     ToolOutput {
         content: vec![ContentPart::Json { data: v }],
         spill: None,
+        exposure: None,
     }
 }
 
@@ -291,10 +333,63 @@ struct MailInput {
     mail: OutgoingMail,
 }
 
+fn attachment_line(item: &Value) -> (String, u64) {
+    let (name, path) = match item {
+        Value::String(text) => (file_name(text), Some(text.as_str())),
+        Value::Object(map) => {
+            let path = map.get("path").and_then(Value::as_str);
+            let name = map
+                .get("filename")
+                .and_then(Value::as_str)
+                .or_else(|| map.get("name").and_then(Value::as_str))
+                .map(str::to_owned)
+                .or_else(|| path.map(file_name))
+                .unwrap_or_else(|| "attachment".to_owned());
+            (name, path)
+        }
+        _ => ("attachment".to_owned(), None),
+    };
+    let bytes = path
+        .and_then(|p| std::fs::metadata(p).ok())
+        .map_or(0, |meta| meta.len());
+    (name, bytes)
+}
+
+fn file_name(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| path.to_owned())
+}
+
 #[async_trait]
 impl Tool for EmailTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
+    }
+
+    fn egress_extra(&self, ctx: &ToolContext, input: &Value) -> Option<String> {
+        if !matches!(self.kind, Kind::Draft | Kind::Send) {
+            return None;
+        }
+        let mut lines = Vec::new();
+        if input.get("account").and_then(Value::as_str).is_none()
+            && let Ok(name) = self.conn.scoped(ctx.bot_id.as_deref()).resolve_name(None)
+        {
+            lines.push(format!("account: {name} (default)"));
+        }
+        if let Some(items) = input.get("attachments").and_then(Value::as_array) {
+            for item in items {
+                let (name, bytes) = attachment_line(item);
+                lines.push(format!("attachment: {name}, {bytes} bytes"));
+            }
+        }
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines.join("\n"))
+        }
     }
 
     /// Hidden from a bot that has no usable account (none bound to it and no

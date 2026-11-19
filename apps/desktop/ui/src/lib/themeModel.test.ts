@@ -18,6 +18,8 @@ import {
   parseThemeMode,
   pushContrast,
   resolveAccent,
+  selectionColors,
+  MIN_SELECTION_CONTRAST,
   themeFor,
   DEFAULT_CUSTOM_THEME
 } from "ui/theme-model";
@@ -77,10 +79,10 @@ test("faded text stays readable on every derived surface", () => {
   }
 });
 
-test("ships the 29 prototype themes with the five favourites", () => {
-  assert.equal(PALETTES.length, 29);
+test("ships the 31 themes (29 + 2 high contrast) with the five favourites", () => {
+  assert.equal(PALETTES.length, 31);
   assert.deepEqual(FAVORITE_THEMES, ["obsidian", "cobalt", "clay", "porcelain", "moss"]);
-  assert.equal(PALETTES.filter((p) => p.accent).length, 15);
+  assert.equal(PALETTES.filter((p) => p.accent).length, 17);
   // cobalt and raven keep the accents they had before v6.
   assert.equal(paletteById("cobalt")!.accent, "#9DBBFF");
   assert.equal(paletteById("raven")!.accent, "#E4B683");
@@ -202,5 +204,17 @@ test("muted text is visibly different from text on every shipped theme", () => {
     const d = deriveTheme(p);
     assert.notEqual(d.muted, d.text, p.id);
     assert.notEqual(d.secondary, d.muted, p.id);
+  }
+});
+
+test("selectionColors stay visible on every bot colour and theme bubble, and keep readable text", () => {
+  const bots = ["#f4f4f5", "#b98a5e", "#f2545b", "#f5803e", "#f2b233", "#34c77b", "#2fc4b2", "#4c8dff", "#9b7bff", "#f25fa8", "#8e9099", "#e11d48"];
+  for (const [bg, text] of [["#111217", "#ecedf1"], ["#010102", "#f3f3f5"], ["#f6f1e9", "#2b2622"]]) {
+    for (const accent of bots) {
+      const bubble = [mix(bg, accent, 0.2), mix(bg, accent, 0.32)];
+      const sel = selectionColors(bubble, text);
+      for (const b of bubble) assert.ok(contrastRatio(sel.background, b) >= MIN_SELECTION_CONTRAST, `${bg} ${accent}`);
+      assert.ok(contrastRatio(sel.foreground, sel.background) >= 4.5, `text ${bg} ${accent}`);
+    }
   }
 });

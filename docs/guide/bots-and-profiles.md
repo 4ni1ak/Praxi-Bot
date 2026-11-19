@@ -124,7 +124,8 @@ interface (`find_tool`, `get_tool_details`, `use_tool`) instead of the whole lis
 | --- | --- |
 | List bots | `bot bots list` |
 | Inspect one, including its effective policy | `GET /v1/bots/{id}` (API; desktop app) |
-| Replace a profile | `PUT /v1/bots/{id}` (API; desktop app) |
+| Replace a profile | `PUT /v1/bots/{id}` with the `expected_version` from the profile being replaced; missing precondition is `428 precondition_required`, stale is `409 version_conflict` with the current bot. Legacy callers must reload and explicitly retry; the server never upgrades a stale full document automatically |
+| Change single fields safely | `PATCH /v1/bots/{id}` with `expected_version` and `ops` (`set` / `unset` on JSON Pointer paths such as `/models/planner` or `/permissions/categories/fs/level`); a stale version is a `409` that returns the current bot. `GET` and list return profile + `version` in one storage snapshot. Successful profile writes and skill assignment changes advance the same bot revision in their write transaction. The edit modal saves with this. At most 128 operations, 32 path segments / resulting JSON levels, 4096 path bytes and a conservative 1 MiB escaped JSON budget; excessive input is refused before applying it |
 | Delete a bot | `DELETE /v1/bots/{id}`; only possible while it has no chats or runs |
 | See or revoke its "always allow" grants | `bot grants list <bot-id>`, `bot grants revoke ...` |
 
@@ -143,3 +144,48 @@ permissive than the bot that started it.
 The design documents describe things that are not part of the profile yet:
 runtime selection (which computer a bot controls), memory settings, per-bot
 connector accounts, and a profile import/export format for sharing bots.
+
+
+### Computer target
+
+A profile's `[runtime]` section accepts `computer = "auto"`, `"pc"`, `"host"`,
+`"browser"`, or `"off"` (default: `auto`). `local` is a legacy alias for `pc`.
+`node:<canonical peer public key>` selects a specific paired desktop-capable node;
+display names and differently cased keys are never used for lookup.
+
+`pc` selects a connected peer with the `desktop` role, or the local desktop on a
+standalone PC. Server nodes are available only by explicit key. `auto` prefers a
+PC, then the host desktop, then a browser. An explicit `host` requires a local
+desktop; a missing display fails the run with a reason. Explicit `pc` fails if
+peer networking is disabled and no local PC desktop is available.
+
+Remote PC runs expose desktop tools only. Browser tools and browser workflow
+steps are disabled because the browser driver runs on the daemon computer.
+Choose `browser` for a browser on the daemon, or `host` for its desktop and
+browser. Local PC runs can use their local browser. Headed and headless browser
+sessions have separate session keys and profile directories, so they do not
+share cookies or logins, and a run that switches launch mode does not reuse the
+managed profile of the other mode.
+
+The local computer id stored on grants and runs is this daemon's identity-key
+fingerprint. The display name stays "Local computer". The word `local` is not
+an identity: a grant or run written as `local` on one machine does not become
+valid on another machine that receives `bot.db`.
+
+Every run records `computer_target`, `computer_node`, and `computer_node_name`.
+A resumed run uses its original PC key, including after a profile edit. A paused
+run from before computer targets were stored has no target; resuming it binds
+this daemon's own computer and does not follow `auto` onto a paired PC. If a
+stored PC is offline (or the provider has not been installed yet), the run pauses
+with `waiting_for_pc`; another PC or the host desktop cannot take over. A legacy
+PC run without a recoverable node key also pauses rather than guessing. Runs that
+have never selected a PC can bind their first PC when it arrives. Waiting expires
+after 24 hours measured from `paused_at_ms`, independent of other row updates.
+When `auto` has a paired PC that is not reachable and falls through to the host
+or the browser, the run records that choice.
+
+Computer approvals include the target kind, name, and key. Desktop/browser
+"always allow" and "this chat" grants apply only to that concrete target. Old
+unscoped computer grants stay visible and authorize nothing. API bot updates
+that omit `runtime` preserve its stored value; conflicting runtime declarations
+in the request and profile are rejected.

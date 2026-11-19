@@ -73,11 +73,23 @@ struct Input {
 pub struct ShellTool {
     spec: ToolSpec,
     spill_dir: PathBuf,
+    /// Ledger of untrusted-origin files: what the command fetches (`git clone`, `curl`, `wget`,
+    /// `unzip` ...) is recorded before it runs.
+    provenance: Option<Arc<dyn crate::provenance::Provenance>>,
 }
 
 /// Build the shell tool; `data_dir` hosts spill files.
 #[must_use]
 pub fn tool(data_dir: &Path) -> Arc<dyn Tool> {
+    tool_with_provenance(data_dir, None)
+}
+
+/// [`tool`] that records what a command fetches in the provenance ledger.
+#[must_use]
+pub fn tool_with_provenance(
+    data_dir: &Path,
+    provenance: Option<Arc<dyn crate::provenance::Provenance>>,
+) -> Arc<dyn Tool> {
     Arc::new(ShellTool {
         spec: spec(
             "shell_run",
@@ -92,6 +104,7 @@ pub fn tool(data_dir: &Path) -> Arc<dyn Tool> {
             PermissionCategory::Shell,
         ),
         spill_dir: data_dir.join("spill"),
+        provenance,
     })
 }
 
@@ -173,6 +186,12 @@ const CHILD_ENV_ALLOWLIST: &[&str] = &[
     "LC_TIME",
     "TZ",
     "TERM",
+    // Where this computer's screen is (Linux host: Xvfb `:99` and its cookie
+    // file; plain paths and a display name, no secret). Without them a GUI
+    // program started from the shell, or a probe for "is there a display",
+    // wrongly says there is no screen.
+    "DISPLAY",
+    "XAUTHORITY",
 ];
 
 fn child_env_allowed(name: &OsStr) -> bool {
@@ -194,14 +213,67 @@ fn retained_child_env(
         .collect()
 }
 
-/// Replace the child's environment with the allowlist, read from the daemon
+/// The environment of a shell child (`shell_run`, `script_run`) on this computer: the allowlist
+/// read from the daemon (no secret: vault, bearer, owner key and provider credentials are not on
+/// it), and the managed browser's path as `PRAXI_BROWSER_PATH` so a script can start it on the
+/// screen named by `DISPLAY`. The `bot` binary is deliberately NOT on its `PATH`: the CLI reads
+/// the owner key file itself, so a bot's shell must not get it for free.
+#[must_use]
+pub fn child_env() -> Vec<(OsString, OsString)> {
+    #[allow(unused_mut)] // only unix adds the browser path
+    let mut env = retained_child_env(std::env::vars_os());
+    #[cfg(unix)]
+    if let Ok(browser) = browser_cdp::find_browser() {
+        env.push(("PRAXI_BROWSER_PATH".into(), browser.into_os_string()));
+    }
+    env
+}
+
+/// The environment of the owner's in-app terminal: [`child_env`] plus the directory of the
+/// running `bot` binary on `PATH`, so `bot ...` exists in the owner's own shell.
+#[must_use]
+pub fn terminal_env() -> Vec<(OsString, OsString)> {
+    let mut env = child_env();
+    if let Some(path) = path_with_bot_dir(
+        std::env::var_os("PATH").as_deref(),
+        std::env::current_exe().ok().as_deref(),
+    ) {
+        match env
+            .iter_mut()
+            .find(|(k, _)| k.to_string_lossy().eq_ignore_ascii_case("PATH"))
+        {
+            Some((_, v)) => *v = path,
+            None => env.push(("PATH".into(), path)),
+        }
+    }
+    env
+}
+
+/// Replace the child's environment with [`child_env`], read from the daemon
 /// without modifying it.
 fn apply_child_env(cmd: &mut Command) {
-    let kept = retained_child_env(std::env::vars_os());
     cmd.env_clear();
-    for (key, value) in kept {
+    for (key, value) in child_env() {
         cmd.env(key, value);
     }
+}
+
+/// `path` with the directory of `exe` appended, when `exe` is the `bot`
+/// binary and its directory is not on `path` yet; `None` when nothing changes.
+fn path_with_bot_dir(path: Option<&OsStr>, exe: Option<&Path>) -> Option<OsString> {
+    let exe = exe?;
+    if exe.file_stem()? != "bot" {
+        return None;
+    }
+    let dir = exe.parent()?;
+    let mut dirs: Vec<PathBuf> = path
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    if dirs.iter().any(|d| d == dir) {
+        return None;
+    }
+    dirs.push(dir.to_path_buf());
+    std::env::join_paths(dirs).ok()
 }
 
 /// Unix process group so `killpg` reaches the tree, Windows job object so
@@ -312,6 +384,26 @@ fn format_output(code: Option<i32>, stdout: &[u8], stderr: &[u8], note: Option<&
     s
 }
 
+// Drop also reconciles cancelled/failed commands, which may have partially written files.
+struct FetchMarks<'a>(
+    Option<&'a dyn crate::provenance::Provenance>,
+    Vec<(PathBuf, bool)>,
+);
+impl FetchMarks<'_> {
+    fn record(&self) {
+        if let Some(ledger) = self.0 {
+            for (path, tree) in &self.1 {
+                crate::provenance::mark_path(ledger, path, *tree, "fetched by a shell command");
+            }
+        }
+    }
+}
+impl Drop for FetchMarks<'_> {
+    fn drop(&mut self) {
+        self.record();
+    }
+}
+
 #[async_trait]
 impl Tool for ShellTool {
     fn spec(&self) -> &ToolSpec {
@@ -323,6 +415,17 @@ impl Tool for ShellTool {
         if i.command.trim().is_empty() {
             return Err(ToolError::InvalidInput("command is empty".into()));
         }
+        let cwd = i
+            .cwd
+            .as_ref()
+            .map(PathBuf::from)
+            .or_else(|| std::env::current_dir().ok());
+        let fetched: Vec<_> = cwd
+            .iter()
+            .flat_map(|cwd| crate::provenance::shell_fetch_targets(&i.command, cwd))
+            .collect();
+        let fetch_marks = FetchMarks(self.provenance.as_deref(), fetched);
+        fetch_marks.record();
         let kind = i.shell.unwrap_or_else(ShellKind::default_for_host);
         let timeout = Duration::from_secs(resolved_timeout_secs(i.timeout));
         let mut cmd = build_command(kind, &i.command);
@@ -398,6 +501,7 @@ impl Tool for ShellTool {
         if note.is_none() {
             guard.armed = false;
         }
+        fetch_marks.record();
         let stdout = std::mem::take(&mut *out_buf.lock());
         let stderr = std::mem::take(&mut *err_buf.lock());
         let text = format_output(code, &stdout, &stderr, note.as_deref());
@@ -547,6 +651,11 @@ mod tests {
             run_id: "r".into(),
             max_inline_bytes: 1000,
             bot_id: None,
+            content_tainted: false,
+            exposure_untrusted: false,
+            expected_origin: None,
+            control_guard: None,
+            lane: None,
         };
         let out = t
             .call(
@@ -1130,6 +1239,46 @@ mod tests {
         assert!(
             stays_alive(pid, Duration::from_secs(5)).await,
             "background child {pid} was killed after a successful shell_run"
+        );
+    }
+
+    #[test]
+    fn child_env_keeps_the_display_and_gets_the_bot_directory_on_path() {
+        let vars = [
+            ("DISPLAY", ":99"),
+            ("XAUTHORITY", "/run/praxi/xauth"),
+            ("BOT_DATA_DIR", "/var/lib/praxi"),
+            ("BOT_API_TOKEN", "token-sentinel"),
+        ];
+        let kept = retained_child_env(
+            vars.into_iter()
+                .map(|(k, v)| (std::ffi::OsString::from(k), std::ffi::OsString::from(v))),
+        );
+        // A shell tool child never gets the bot directory (the owner's terminal does).
+        let path_of = |env: &[(OsString, OsString)]| {
+            env.iter()
+                .find(|(k, _)| k.to_string_lossy().eq_ignore_ascii_case("PATH"))
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(path_of(&child_env()), std::env::var_os("PATH"));
+        let names: Vec<String> = kept
+            .iter()
+            .map(|(k, _)| k.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["DISPLAY", "XAUTHORITY"]);
+        // `bot` (not any other program) puts its directory on PATH, once.
+        let path = OsString::from(if cfg!(windows) { r"C:\x" } else { "/usr/bin" });
+        let bot = if cfg!(windows) {
+            PathBuf::from(r"C:\praxi\bin\bot.exe")
+        } else {
+            PathBuf::from("/opt/praxi/bin/bot")
+        };
+        let joined = path_with_bot_dir(Some(&path), Some(&bot)).expect("dir appended");
+        let dirs: Vec<PathBuf> = std::env::split_paths(&joined).collect();
+        assert_eq!(dirs.last().map(PathBuf::as_path), bot.parent());
+        assert!(path_with_bot_dir(Some(&joined), Some(&bot)).is_none());
+        assert!(
+            path_with_bot_dir(Some(&path), Some(Path::new("/tmp/other-test-binary"))).is_none()
         );
     }
 

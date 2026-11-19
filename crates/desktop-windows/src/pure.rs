@@ -272,6 +272,7 @@ pub fn denormalize(x: f64, y: f64, rect: &Rect) -> (f64, f64) {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     fn raw(role: &'static str, name: &str) -> RawNode {

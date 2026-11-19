@@ -10,9 +10,12 @@ import {
   DEFAULT_STOP_HOTKEY,
   HOTKEY_PRESETS
 } from "../../config/product";
+import { MESSAGE_TIMES_VALUES } from "../../lib/messageTime";
 import { SEND_WITH_VALUES } from "../../lib/settingsPrefs";
 import { NotificationSettings } from "../NotificationSettings";
 import styles from "../SettingsModal.module.css";
+import { DictationCard } from "./DictationCard";
+import { VoiceSettings } from "./VoiceSettings";
 import type { CardDef, SettingsBridge } from "./types";
 
 /** Cards of the "General" section. */
@@ -67,7 +70,8 @@ export function generalCards(b: SettingsBridge, t: TFunction): CardDef[] {
           onChange={b.onLanguage}
           options={[
             { value: "en", label: t("settings.language.en") },
-            { value: "tr", label: t("settings.language.tr") }
+            { value: "tr", label: t("settings.language.tr") },
+            { value: "de", label: t("settings.language.de") }
           ]}
         />
       </SettingRow>,
@@ -92,6 +96,56 @@ export function generalCards(b: SettingsBridge, t: TFunction): CardDef[] {
         />
       </SettingRow>,
       { keywords: "enter ctrl gonder send" }
+    ),
+    card(
+      "times",
+      t("settingsModal.general.times.title"),
+      t("settingsModal.general.times.description"),
+      <SettingRow
+        title={t("settingsModal.general.times.title")}
+        description={t("settingsModal.general.times.description")}
+      >
+        <Segmented
+          label={t("settingsModal.general.times.title")}
+          value={settings.messageTimes}
+          onChange={(messageTimes) => update({ messageTimes })}
+          options={MESSAGE_TIMES_VALUES.map((v) => ({
+            value: v,
+            label: t(`settingsModal.general.times.${v}`)
+          }))}
+        />
+      </SettingRow>,
+      { keywords: "saat zaman time clock seconds saniye mesaj" }
+    ),
+    card(
+      "speak-replies",
+      t("voice.speakAuto.title"),
+      t("voice.speakAuto.description"),
+      <SettingRow
+        title={t("voice.speakAuto.title")}
+        description={t("voice.speakAuto.description")}
+      >
+        <Switch
+          label={t("voice.speakAuto.title")}
+          checked={settings.speakReplies}
+          onChange={(speakReplies) => update({ speakReplies })}
+        />
+      </SettingRow>,
+      { keywords: "ses voice speak read aloud tts sesli oku vorlesen" }
+    ),
+    card(
+      "voice",
+      t("voice.title"),
+      t("voice.description"),
+      <VoiceSettings settings={settings} update={update} />,
+      { keywords: "ses voice speech tts sesli oku vorlesen stimme" }
+    ),
+    card(
+      "dictation",
+      t("voice.stt.title"),
+      t("voice.stt.description"),
+      <DictationCard />,
+      { keywords: "dictation mikrofon microphone whisper transcribe yazdir diktat" }
     ),
     card(
       "autostart",

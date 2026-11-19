@@ -89,6 +89,8 @@ pub struct TurnTrace {
     pub wall: Duration,
     /// Model calls.
     pub llm_calls: u32,
+    /// Actual invocations by purpose, including retries, router and descendants.
+    pub llm_calls_by_purpose: BTreeMap<String, u32>,
     /// Prompt tokens.
     pub input_tokens: u64,
     /// Completion tokens.
@@ -355,6 +357,7 @@ pub async fn run_turn(cfg: TurnConfig) -> Result<TurnTrace> {
         }
     }
     let wall = t0.elapsed();
+    lp.flush_background().await;
 
     Ok(collect(
         &storage, user, chat, run, state, events, timed_out, wall, started_ms, &cfg.model, dir,
@@ -474,14 +477,37 @@ fn collect(
         }
     }
 
-    let audit: Vec<Value> = storage
-        .list_audit(user)
-        .unwrap_or_default()
-        .into_iter()
+    let rows = storage.list_audit(user).unwrap_or_default();
+    let mut related = std::collections::HashSet::from([run]);
+    let mut queue = vec![run];
+    while let Some(parent) = queue.pop() {
+        for child in storage.list_child_runs(parent).unwrap_or_default() {
+            if child.user_id == user && related.insert(child.id) {
+                queue.push(child.id);
+            }
+        }
+    }
+    let mut llm_calls_by_purpose = BTreeMap::<String, u32>::new();
+    for (id, calls) in agent_core::usage::calls_from_audit(&rows) {
+        if !related.contains(&id) {
+            continue;
+        }
+        for call in calls {
+            let key = if id == run {
+                call.purpose.as_str()
+            } else {
+                "subagent"
+            };
+            let count = llm_calls_by_purpose.entry(key.into()).or_default();
+            *count = count.saturating_add(1);
+        }
+    }
+    let audit: Vec<&Value> = rows
+        .iter()
         .filter(|a| a.action == "usage" && a.run_id == Some(run))
-        .map(|a| a.detail)
+        .map(|a| &a.detail)
         .collect();
-    let (input_tokens, output_tokens, cached_tokens, cost_usd) = sum_usage(&audit);
+    let (input_tokens, output_tokens, cached_tokens, cost_usd) = sum_usage(audit);
 
     let perception = perception_usage(
         calls.iter().map(|c| c.tool.as_str()),
@@ -507,6 +533,7 @@ fn collect(
         started_ms,
         wall,
         llm_calls,
+        llm_calls_by_purpose,
         input_tokens,
         output_tokens,
         cached_tokens,

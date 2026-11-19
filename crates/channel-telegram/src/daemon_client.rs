@@ -83,6 +83,8 @@ pub enum ApprovalScope {
     Always,
     /// Persist a grant for the tool's category on the bot.
     AlwaysCategory,
+    /// Let this run type into the one program the card names, until it ends.
+    RunControl,
 }
 
 /// Daemon status summary for `/status`.
@@ -113,7 +115,7 @@ pub trait DaemonClient: Send + Sync {
     async fn send_message(&self, chat_id: ChatId, text: &str) -> Result<SendOutcome>;
 
     /// Deliver with a stable key such as `tg:123`. HTTP adapters forward this in
-    /// `Idempotency-Key`; in-process adapters can override it when task 136 is available.
+    /// `Idempotency-Key`; in-process adapters can override it when durable start idempotency is available.
     ///
     /// The compatibility default cannot deduplicate an ambiguous remote acceptance.
     async fn send_message_idempotent(
@@ -171,6 +173,7 @@ pub type ApiClient = dyn DaemonClient;
 pub struct HttpDaemonClient {
     base_url: String,
     token: SecretValue,
+    owner_key: Option<SecretValue>,
     http: Client,
 }
 
@@ -191,8 +194,18 @@ impl HttpDaemonClient {
         Self {
             base_url,
             token,
+            owner_key: None,
             http: Client::new(),
         }
+    }
+
+    /// Also present the daemon's owner key (`x-praxi-owner-key`), which the
+    /// approval decision route requires: the channel decides for the owner's
+    /// own authenticated chat.
+    #[must_use]
+    pub fn with_owner_key(mut self, key: Option<SecretValue>) -> Self {
+        self.owner_key = key;
+        self
     }
 
     async fn request(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value> {
@@ -211,6 +224,12 @@ impl HttpDaemonClient {
             .request(method, format!("{}{path}", self.base_url))
             .bearer_auth(self.token.expose())
             .timeout(Duration::from_secs(30));
+        if path.starts_with("/v1/chats/") && path.ends_with("/messages") {
+            rb = rb.header("x-praxi-message-source", "telegram");
+        }
+        if let Some(key) = &self.owner_key {
+            rb = rb.header("x-praxi-owner-key", key.expose());
+        }
         if let Some(b) = body {
             rb = rb.json(&b);
         }
@@ -494,6 +513,11 @@ pub fn parse_approval_callback(
     match action {
         "once" => Some((call_id, ApprovalDecision::Approve, ApprovalScope::Once)),
         "always" => Some((call_id, ApprovalDecision::Approve, ApprovalScope::Always)),
+        "run" => Some((
+            call_id,
+            ApprovalDecision::Approve,
+            ApprovalScope::RunControl,
+        )),
         "deny" => Some((call_id, ApprovalDecision::Deny, ApprovalScope::Once)),
         _ => None,
     }

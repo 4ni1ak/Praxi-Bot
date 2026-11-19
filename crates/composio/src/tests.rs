@@ -1,0 +1,983 @@
+//! Service and tool tests against a fake Composio server on loopback.  No
+//! network, no real key.
+
+use std::sync::Arc;
+
+use parking_lot::Mutex;
+use secret_store::{MemoryStore, SecretStore};
+use serde_json::{Value, json};
+use tool_registry::{ToolContext, ToolError, ToolRegistry};
+use wiremock::matchers::{header, method, path, query_param};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+use crate::{ComposioError, ComposioService, ConnState, KEY_SECRET, ServiceConfig};
+
+const KEY: &str = "ak_candidate_SECRETKEY_0123456789";
+
+#[derive(Default)]
+struct Rows(Mutex<Vec<(String, Value)>>, std::sync::atomic::AtomicBool);
+
+impl crate::Audit for Rows {
+    fn record(&self, action: &str, detail: Value) -> Result<(), String> {
+        if self.1.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("injected audit failure".into());
+        }
+        self.0.lock().push((action.to_owned(), detail));
+        Ok(())
+    }
+}
+
+struct Harness {
+    svc: ComposioService,
+    registry: ToolRegistry,
+    store: Arc<MemoryStore>,
+    rows: Arc<Rows>,
+    dir: tempfile::TempDir,
+    server: MockServer,
+    redactor: agent_core::SharedRedactor,
+}
+
+async fn harness() -> Harness {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let registry = ToolRegistry::new();
+    let rows = Arc::new(Rows::default());
+    let redactor = agent_core::SharedRedactor::default();
+    assert_eq!(redactor.redact(KEY), KEY, "fixture must not be pre-masked");
+    let mask = redactor.clone();
+    let register = redactor.clone();
+    let svc = ComposioService::new(ServiceConfig {
+        data_dir: dir.path().to_path_buf(),
+        keys: Arc::new(crate::LocalKeySource::new(store.clone())),
+        registry: registry.clone(),
+        redact: Arc::new(move |s| mask.redact(s)),
+        register_secret: Arc::new(move |value| register.register(value)),
+        audit: rows.clone(),
+        loopback_base: Some(server.uri()),
+    })
+    .unwrap();
+    Harness {
+        svc,
+        registry,
+        store,
+        rows,
+        dir,
+        server,
+        redactor,
+    }
+}
+
+async fn ok_key(h: &Harness) {
+    for slug in ["github", "slack"] {
+        Mock::given(path("/toolkits"))
+            .and(query_param("search", slug))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"items":[{"slug":slug,"name":slug}]})),
+            )
+            .mount(&h.server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/auth_configs"))
+        .and(header("x-api-key", KEY))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": []})))
+        .mount(&h.server)
+        .await;
+}
+
+fn accounts(status: &str) -> Value {
+    json!({"items": [{"id": "ca_secret_conn_1", "status": status, "toolkit": {"slug": "github"}}]})
+}
+
+async fn mount_accounts(h: &Harness, status: &str) {
+    h.server.reset().await;
+    ok_key(h).await;
+    Mock::given(method("GET"))
+        .and(path("/connected_accounts"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(accounts(status)))
+        .mount(&h.server)
+        .await;
+    let mut items = Vec::new();
+    for i in 0..30 {
+        items.push(
+            json!({"slug": format!("GITHUB_DO_THING_{i}"), "description": format!("thing {i}"),
+            "toolkit":{"slug":"github"}, "version":"20260901_00",
+            "input_parameters": {"type": "object", "properties": {"x": {"type": "string"}}}}),
+        );
+    }
+    items.push(json!({"slug": "GITHUB_LIST_REPOSITORY_ISSUES", "description": "list issues", "toolkit":{"slug":"github"}, "version":"20260901_00",
+        "input_parameters": {"type": "object", "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}},
+        "required": ["owner", "repo"]}}));
+    Mock::given(method("GET"))
+        .and(path("/tools"))
+        .and(query_param("toolkit_slug", "github"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": items})))
+        .mount(&h.server)
+        .await;
+}
+
+fn ctx() -> ToolContext {
+    ToolContext {
+        run_id: "run-1".into(),
+        bot_id: Some("bot-1".into()),
+        ..ToolContext::default()
+    }
+}
+
+/// Every place the key or a connection id could leak to, concatenated.
+fn leak_surface(h: &Harness) -> String {
+    use std::fmt::Write as _;
+    let mut s = std::fs::read_to_string(h.svc.state_path()).unwrap_or_default();
+    let _ = write!(s, "{:?}", h.rows.0.lock());
+    for sp in h.registry.list() {
+        let _ = write!(s, "{} {} {}", sp.name, sp.description, sp.input_schema);
+    }
+    let _ = write!(s, "{:?}", h.svc.apps());
+    s
+}
+
+async fn connected(h: &Harness) {
+    ok_key(h).await;
+    h.svc.set_key(KEY).await.unwrap();
+    mount_accounts(h, "INITIATED").await;
+    Mock::given(method("GET"))
+        .and(path("/auth_configs"))
+        .and(query_param("toolkit_slug", "github"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [{"id": "ac_1"}]})))
+        .mount(&h.server)
+        .await;
+    Mock::given(method("POST")).and(path("/connected_accounts/link"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "link_token": "lt_secret_link_token", "redirect_url": "https://connect.composio.dev/link/lk_1",
+            "expires_at": "2030-01-01T00:00:00Z", "connected_account_id": "ca_secret_conn_1"})))
+        .mount(&h.server).await;
+    Mock::given(method("POST"))
+        .and(path("/auth_configs"))
+        .respond_with(
+            ResponseTemplate::new(201).set_body_json(json!({"auth_config": {"id": "ac_1"}})),
+        )
+        .mount(&h.server)
+        .await;
+    h.svc.connect("github").await.unwrap();
+    mount_accounts(h, "ACTIVE").await;
+    h.svc.app_status("github").await.unwrap();
+}
+
+#[tokio::test]
+async fn a_rejected_key_is_not_stored_and_a_good_one_is_never_echoed() {
+    let h = harness().await;
+    Mock::given(method("GET"))
+        .and(path("/auth_configs"))
+        .respond_with(
+            ResponseTemplate::new(401)
+                .set_body_json(json!({"error": {"message": format!("bad key {KEY}")}})),
+        )
+        .mount(&h.server)
+        .await;
+    let err = h.svc.set_key(KEY).await.unwrap_err();
+    assert!(matches!(err, ComposioError::Invalid(_)), "{err}");
+    assert!(!err.to_string().contains(KEY));
+    assert!(!h.svc.configured());
+    assert!(h.store.get(KEY_SECRET).unwrap().is_none());
+    for bad in ["", "has space", "line\nbreak", &"x".repeat(600)] {
+        assert!(matches!(
+            h.svc.set_key(bad).await,
+            Err(ComposioError::Invalid(_))
+        ));
+    }
+    h.server.reset().await;
+    ok_key(&h).await;
+    h.svc.set_key(&format!("  {KEY}  ")).await.unwrap();
+    assert!(h.svc.configured());
+    assert_eq!(h.store.get(KEY_SECRET).unwrap().unwrap().expose(), KEY);
+    assert!(!leak_surface(&h).contains(KEY));
+    // Positive control: the scan really sees a planted key.
+    std::fs::write(
+        h.dir.path().join("composio.toml"),
+        format!("planted = \"{KEY}\""),
+    )
+    .unwrap();
+    assert!(leak_surface(&h).contains(KEY));
+}
+
+#[tokio::test]
+async fn connect_pending_active_and_expired_drive_the_tools() {
+    let h = harness().await;
+    ok_key(&h).await;
+    h.svc.set_key(KEY).await.unwrap();
+    // Not connected: no tools but the two native ones, and they are hidden.
+    assert_eq!(h.svc.registered_tools("github"), Vec::<String>::new());
+    connected(&h).await;
+    let apps = h.svc.apps();
+    assert_eq!(apps[0].state, ConnState::Active);
+    assert!(
+        !apps[0].native_first,
+        "native_first is empty until a zero-setup path exists"
+    );
+    let tools = h.svc.registered_tools("github");
+    // Cap 20; the known read-only action is selected first although listed last.
+    assert_eq!(tools.len(), 20);
+    assert!(tools.contains(&"app:github/list_repository_issues".to_owned()));
+    let t = h.registry.get("app:github/list_repository_issues").unwrap();
+    assert!(t.visible_to(Some("bot-1")));
+    assert!(
+        t.always_ask(),
+        "the read table is display and ordering only"
+    );
+    assert!(
+        h.registry
+            .get("app:github/do_thing_0")
+            .unwrap()
+            .always_ask()
+    );
+    // Disabled: tools vanish.
+    h.svc.set_enabled("github", false).await.unwrap();
+    assert!(h.registry.get("app:github/do_thing_0").is_none());
+    h.svc.set_enabled("github", true).await.unwrap();
+    assert!(h.registry.get("app:github/do_thing_0").is_some());
+    // Expired: tools vanish and the state says so.
+    mount_accounts(&h, "EXPIRED").await;
+    assert_eq!(
+        h.svc.app_status("github").await.unwrap().state,
+        ConnState::Expired
+    );
+    assert!(h.registry.get("app:github/do_thing_0").is_none());
+    let actions: Vec<String> = h.rows.0.lock().iter().map(|r| r.0.clone()).collect();
+    assert!(actions.contains(&"composio.connected".to_owned()));
+    assert!(actions.contains(&"composio.expired".to_owned()));
+    let surface = leak_surface(&h);
+    for secret in [KEY, "lt_secret_link_token"] {
+        assert!(!surface.contains(secret), "{secret} leaked");
+    }
+}
+
+#[tokio::test]
+async fn a_connect_link_outside_composios_domain_is_discarded() {
+    let h = harness().await;
+    ok_key(&h).await;
+    h.svc.set_key(KEY).await.unwrap();
+    Mock::given(method("GET"))
+        .and(path("/auth_configs"))
+        .and(query_param("toolkit_slug", "slack"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [{"id": "ac_1"}]})))
+        .mount(&h.server)
+        .await;
+    for bad in [
+        "http://169.254.169.254/latest/meta-data",
+        "https://evil.example.com/x",
+        "http://connect.composio.dev/x",
+    ] {
+        h.server.reset().await;
+        ok_key(&h).await;
+        Mock::given(method("GET"))
+            .and(path("/auth_configs"))
+            .and(query_param("toolkit_slug", "slack"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"items": [{"id": "ac_1"}]})),
+            )
+            .mount(&h.server)
+            .await;
+        Mock::given(method("POST")).and(path("/connected_accounts/link"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"redirect_url": bad, "expires_at": "x", "link_token": "t", "connected_account_id": "c"})))
+            .mount(&h.server).await;
+        let err = h.svc.connect("slack").await.unwrap_err();
+        assert!(matches!(err, ComposioError::Upstream(_)), "{bad}: {err}");
+        assert!(!err.to_string().contains("169.254"));
+    }
+    assert!(h.svc.apps().is_empty(), "a failed connect opts nothing in");
+    assert!(h.svc.connect("../etc").await.is_err());
+}
+
+#[tokio::test]
+async fn execute_sends_only_host_chosen_identity_and_validated_arguments() {
+    let h = harness().await;
+    connected(&h).await;
+    Mock::given(method("POST"))
+        .and(path("/tools/execute/GITHUB_LIST_REPOSITORY_ISSUES"))
+        .and(header("x-api-key", KEY))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                json!({"data": {"issues": ["a"]}, "successful": true, "error": null}),
+            ),
+        )
+        .expect(1)
+        .mount(&h.server)
+        .await;
+    let t = h.registry.get("app:github/list_repository_issues").unwrap();
+    // Model-chosen identity or unknown arguments are refused before anything is sent.
+    for bad in [
+        json!({"owner": "o", "repo": "r", "user_id": "someone-else"}),
+        json!({"owner": "o"}),
+        json!({"owner": 1, "repo": "r"}),
+    ] {
+        assert!(matches!(
+            t.call(&ctx(), bad).await,
+            Err(ToolError::InvalidInput(_))
+        ));
+    }
+    t.approval_details(&ctx(), &json!({"owner":"o", "repo":"r"}))
+        .await
+        .unwrap();
+    let out = t
+        .call(&ctx(), json!({"owner": "o", "repo": "r"}))
+        .await
+        .unwrap();
+    let text = format!("{:?}", out.content);
+    assert!(text.contains("Untrusted") && text.contains("issues"));
+    let sent = h.server.received_requests().await.unwrap();
+    let call = sent
+        .iter()
+        .find(|r| r.url.path().starts_with("/tools/execute"))
+        .unwrap();
+    let body: Value = serde_json::from_slice(&call.body).unwrap();
+    assert_eq!(body["connected_account_id"], "ca_secret_conn_1");
+    assert_eq!(body["version"], "20260901_00");
+    assert_eq!(body["arguments"], json!({"owner": "o", "repo": "r"}));
+    assert!(body["user_id"].as_str().unwrap().starts_with("praxi-"));
+    let rows = h.rows.0.lock();
+    let started = rows.iter().filter(|r| r.0 == "composio.call").count();
+    assert_eq!(started, 2, "started + ok rows");
+    let row = &rows.iter().rfind(|r| r.0 == "composio.call").unwrap().1;
+    assert_eq!(row["status"], "ok");
+    assert_eq!(row["args_sha256"].as_str().unwrap().len(), 64);
+    assert!(
+        !row.to_string().contains("\"repo\""),
+        "arguments are hashed, never stored"
+    );
+}
+
+#[tokio::test]
+async fn approval_card_shows_app_action_and_exact_arguments() {
+    let h = harness().await;
+    connected(&h).await;
+    let t = h.registry.get("app:github/do_thing_3").unwrap();
+    let args = json!({"x": "exact value"});
+    let d = t.approval_details(&ctx(), &args).await.unwrap().unwrap();
+    assert_eq!(d["app"], "github");
+    assert_eq!(d["action"], "do_thing_3");
+    assert_eq!(d["via"], "Composio");
+    assert_eq!(d["arguments"], args);
+    assert!(
+        t.approval_details(&ctx(), &json!({"nope": 1}))
+            .await
+            .is_err()
+    );
+    assert_eq!(t.spec().effect, tool_registry::Effect::Destructive);
+}
+
+#[tokio::test]
+async fn find_and_run_reach_actions_without_a_direct_tool() {
+    let h = harness().await;
+    connected(&h).await;
+    Mock::given(method("POST"))
+        .and(path("/tools/execute/GITHUB_DO_THING_29"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"data": {"done": true}, "successful": true})),
+        )
+        .mount(&h.server)
+        .await;
+    let find = h.registry.get("apps_find_action").unwrap();
+    let out = find
+        .call(&ctx(), json!({"app": "github", "query": "thing 29"}))
+        .await
+        .unwrap();
+    let text = format!("{:?}", out.content);
+    assert!(
+        text.contains("do_thing_29") && text.contains("\\\"direct_tool\\\":false"),
+        "{text}"
+    );
+    let run = h.registry.get("apps_run_action").unwrap();
+    assert!(run.always_ask());
+    assert!(
+        run.call(&ctx(), json!({"app": "github", "action": "does_not_exist"}))
+            .await
+            .is_err()
+    );
+    assert!(
+        run.call(&ctx(), json!({"app": "slack", "action": "x"}))
+            .await
+            .is_err(),
+        "unconnected app"
+    );
+    run.approval_details(
+        &ctx(),
+        &json!({"app":"github","action":"do_thing_29","arguments":{"x":"v"}}),
+    )
+    .await
+    .unwrap();
+    let ok = run
+        .call(
+            &ctx(),
+            json!({"app": "github", "action": "do_thing_29", "arguments": {"x": "v"}}),
+        )
+        .await
+        .unwrap();
+    assert!(format!("{:?}", ok.content).contains("done"));
+    // Hidden from a bot the app is not enabled for.
+    assert!(find.visible_to(Some("bot-1")));
+}
+
+#[tokio::test]
+async fn rate_limit_oversize_and_redirects_are_handled() {
+    let h = harness().await;
+    connected(&h).await;
+    let t = h.registry.get("app:github/list_repository_issues").unwrap();
+    let args = json!({"owner": "o", "repo": "r"});
+
+    Mock::given(method("POST"))
+        .and(path("/tools/execute/GITHUB_LIST_REPOSITORY_ISSUES"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "7"))
+        .with_priority(2)
+        .mount(&h.server)
+        .await;
+    t.approval_details(&ctx(), &args).await.unwrap();
+    let err = t.call(&ctx(), args.clone()).await.unwrap_err().to_string();
+    assert!(err.contains("retry after 7"), "{err}");
+
+    Mock::given(method("POST"))
+        .and(path("/tools/execute/GITHUB_LIST_REPOSITORY_ISSUES"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![b'a'; 2 * 1024 * 1024]))
+        .with_priority(1)
+        .mount(&h.server)
+        .await;
+    t.approval_details(&ctx(), &args).await.unwrap();
+    assert!(
+        t.call(&ctx(), args.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("allowed size")
+    );
+    // A redirect is not followed: the target never gets a request (or the key).
+
+    mount_accounts(&h, "ACTIVE").await;
+    let target = format!("{}/stolen", h.server.uri());
+    Mock::given(method("POST"))
+        .and(path("/tools/execute/GITHUB_LIST_REPOSITORY_ISSUES"))
+        .respond_with(ResponseTemplate::new(302).insert_header("Location", target.as_str()))
+        .mount(&h.server)
+        .await;
+    Mock::given(path("/stolen"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&h.server)
+        .await;
+    t.approval_details(&ctx(), &args).await.unwrap();
+    assert!(t.call(&ctx(), args).await.is_err());
+}
+
+#[tokio::test]
+async fn disconnect_deletes_the_remote_account_and_forgets_the_app() {
+    let h = harness().await;
+    connected(&h).await;
+    Mock::given(method("DELETE"))
+        .and(path("/connected_accounts/ca_secret_conn_1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+        .expect(1)
+        .mount(&h.server)
+        .await;
+    assert!(h.svc.disconnect("github").await.unwrap());
+    assert_eq!(h.svc.apps(), vec![]);
+    assert!(h.registry.get("app:github/do_thing_0").is_none());
+    assert!(matches!(
+        h.svc.disconnect("github").await,
+        Err(ComposioError::NotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn removing_the_key_hides_every_tool() {
+    let h = harness().await;
+    connected(&h).await;
+    h.svc.remove_key().await.unwrap();
+    assert!(!h.svc.configured());
+    assert!(h.store.get(KEY_SECRET).unwrap().is_none());
+    assert!(h.registry.get("app:github/do_thing_0").is_none());
+    let t = h.registry.get("apps_find_action").unwrap();
+    assert!(!t.visible_to(None));
+    assert!(matches!(
+        h.svc.connect("github").await,
+        Err(ComposioError::NotConfigured)
+    ));
+}
+
+#[tokio::test]
+async fn the_catalog_is_paged_searchable_and_cached() {
+    let h = harness().await;
+    ok_key(&h).await;
+    h.svc.set_key(KEY).await.unwrap();
+    Mock::given(method("GET")).and(path("/toolkits")).and(query_param("search", "insta"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "items": [{"slug": "instagram", "name": "Instagram", "meta": {"description": "Photos", "categories": [{"name": "social"}, "media"], "tools_count": 42}}],
+            "next_cursor": "c2"})))
+        .expect(1).mount(&h.server).await;
+    for _ in 0..2 {
+        let p = h.svc.toolkits(Some("insta"), None, None, 50).await.unwrap();
+        assert_eq!(p.items[0].slug, "instagram");
+        assert_eq!(p.items[0].categories, ["social", "media"]);
+        assert_eq!(p.next_cursor.as_deref(), Some("c2"));
+    }
+}
+
+#[tokio::test]
+async fn candidate_is_registered_before_validation_and_upstream_bodies_are_never_relayed() {
+    for status in [400, 500] {
+        let h = harness().await;
+        let redactor = h.redactor.clone();
+        Mock::given(path("/auth_configs"))
+            .respond_with(move |_: &wiremock::Request| {
+                assert!(
+                    !redactor.redact(KEY).contains(KEY),
+                    "candidate was not registered before HTTP"
+                );
+                ResponseTemplate::new(status).set_body_json(
+                    json!({"error":{"message":format!("{KEY} private upstream diagnostics")}}),
+                )
+            })
+            .mount(&h.server)
+            .await;
+        let err = h.svc.set_key(KEY).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("({status})")));
+        assert!(!err.contains(KEY) && !err.contains("private upstream diagnostics"));
+        assert!(h.store.get(KEY_SECRET).unwrap().is_none());
+    }
+}
+
+#[tokio::test]
+async fn controls_foreign_parents_and_unknown_kinds_never_reach_discovery_or_execution() {
+    let h = harness().await;
+    connected(&h).await;
+    for app in [
+        "composio",
+        "composio_search",
+        "codeinterpreter",
+        "remote_bash",
+        "tool_router",
+        "workbench",
+        "auth_config",
+    ] {
+        let before = h.server.received_requests().await.unwrap().len();
+        assert!(h.svc.connect(app).await.is_err(), "{app}");
+        assert_eq!(
+            h.server.received_requests().await.unwrap().len(),
+            before,
+            "forbidden toolkit reached upstream: {app}"
+        );
+        assert!(
+            h.registry
+                .get("apps_run_action")
+                .unwrap()
+                .approval_details(&ctx(), &json!({"app":app,"action":"execute_tool"}))
+                .await
+                .is_err()
+        );
+        assert_eq!(h.server.received_requests().await.unwrap().len(), before);
+
+        assert!(h.svc.find(app, "", None).await.is_err());
+        assert!(
+            h.registry
+                .get("apps_run_action")
+                .unwrap()
+                .call(&ctx(), json!({"app":app,"action":"execute_tool"}))
+                .await
+                .is_err()
+        );
+    }
+    let tools = json!({"items":[
+        {"slug":"GITHUB_SAFE","toolkit":{"slug":"github"},"version":"20260901_00","input_parameters":{"type":"object","properties":{}}},
+        {"slug":"GMAIL_FOREIGN","toolkit":{"slug":"gmail"},"version":"20260901_00","input_parameters":{"type":"object"}},
+        {"slug":"GITHUB_MYSTERY","kind":"mystery","toolkit":{"slug":"github"},"version":"20260901_00","input_parameters":{"type":"object"}},
+        {"slug":"GITHUB_REMOTE_BASH","toolkit":{"slug":"github"},"version":"20260901_00","input_parameters":{"type":"object"}},
+        {"slug":"COMPOSIO_EXECUTE_TOOL","toolkit":{"slug":"composio"},"version":"20260901_00","input_parameters":{"type":"object"}}
+    ]});
+    Mock::given(path("/tools"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(tools))
+        .with_priority(1)
+        .mount(&h.server)
+        .await;
+    // Execution must refetch discovery; it must not use a mismatched cached action.
+    let t = h.registry.get("app:github/do_thing_0").unwrap();
+    let args = json!({"x":"v"});
+    t.approval_details(&ctx(), &args).await.unwrap();
+    assert!(t.call(&ctx(), args).await.is_err());
+    let found = h.svc.find("github", "", None).await.unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].0.tool_slug, "GITHUB_SAFE");
+    for action in [
+        "foreign",
+        "gmail_foreign",
+        "mystery",
+        "remote_bash",
+        "execute_tool",
+    ] {
+        assert!(h.svc.action("github", action, None).await.is_err());
+    }
+}
+
+#[tokio::test]
+async fn changed_account_version_or_schema_requires_a_new_approval() {
+    for change in ["multiple", "foreign", "wrong_toolkit", "version", "schema"] {
+        let h = harness().await;
+        connected(&h).await;
+        let t = h.registry.get("app:github/do_thing_0").unwrap();
+        let args = json!({"x":"v"});
+        t.approval_details(&ctx(), &args).await.unwrap();
+        if matches!(change, "multiple" | "foreign" | "wrong_toolkit") {
+            let mut a = accounts("ACTIVE");
+            if change == "multiple" {
+                let second = a["items"][0].clone();
+                a["items"].as_array_mut().unwrap().push(second);
+            }
+            if change == "foreign" {
+                a["items"][0]["id"] = json!("ca_from_another_flow");
+            }
+            if change == "wrong_toolkit" {
+                a["items"][0]["toolkit"]["slug"] = json!("gmail");
+            }
+            Mock::given(path("/connected_accounts"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(a))
+                .with_priority(1)
+                .mount(&h.server)
+                .await;
+        } else {
+            let mut schema = json!({"type":"object", "properties":{"x":{"type":"string"}}});
+            if change == "schema" {
+                schema["properties"]["x"]["maxLength"] = json!(1);
+            }
+            let version = if change == "version" {
+                "20260902_00"
+            } else {
+                "20260901_00"
+            };
+            Mock::given(path("/tools")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"items":[{"slug":"GITHUB_DO_THING_0","description":"thing 0", "toolkit":{"slug":"github"},"version":version,"input_parameters":schema}]}))).with_priority(1).mount(&h.server).await;
+        }
+        Mock::given(method("POST"))
+            .and(path("/tools/execute/GITHUB_DO_THING_0"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&h.server)
+            .await;
+        assert!(t.call(&ctx(), args).await.is_err(), "{change}");
+        if matches!(change, "multiple" | "foreign" | "wrong_toolkit") {
+            assert!(h.svc.app_status("github").await.is_err());
+            assert_eq!(h.svc.registered_tools("github"), Vec::<String>::new());
+            assert!(!h.svc.disconnect("github").await.unwrap());
+            assert!(
+                !h.server
+                    .received_requests()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|r| r.method.as_str() == "DELETE")
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn execution_audit_precedes_http_and_audit_failure_sends_nothing() {
+    let h = harness().await;
+    connected(&h).await;
+    let t = h.registry.get("app:github/do_thing_0").unwrap();
+    let args = json!({"x":"v"});
+    let rows = h.rows.clone();
+    Mock::given(path("/tools/execute/GITHUB_DO_THING_0"))
+        .respond_with(move |_: &wiremock::Request| {
+            assert!(rows.0.lock().iter().any(|(a, d)| a == "composio.call"
+                && d["status"] == "started"
+                && d["run"] == "run-1"
+                && d["bot"] == "bot-1"));
+            ResponseTemplate::new(200).set_body_json(json!({"successful":true,"data":{}}))
+        })
+        .expect(1)
+        .mount(&h.server)
+        .await;
+    assert!(
+        t.call(&ctx(), args.clone()).await.is_err(),
+        "no approval prepared"
+    );
+    t.approval_details(&ctx(), &args).await.unwrap();
+    h.rows.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        t.call(&ctx(), args.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("audit")
+    );
+    t.approval_details(&ctx(), &args).await.unwrap();
+    h.rows.1.store(false, std::sync::atomic::Ordering::SeqCst);
+    t.call(&ctx(), args).await.unwrap();
+}
+
+#[tokio::test]
+async fn successful_http_action_errors_also_use_fixed_messages() {
+    let h = harness().await;
+    connected(&h).await;
+    Mock::given(path("/tools/execute/GITHUB_DO_THING_0"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"successful":false,"error":"PRIVATE UPSTREAM DIAGNOSTICS"})),
+        )
+        .mount(&h.server)
+        .await;
+    let tool = h.registry.get("app:github/do_thing_0").unwrap();
+    let args = json!({"x":"value"});
+    tool.approval_details(&ctx(), &args).await.unwrap();
+    let error = tool.call(&ctx(), args).await.unwrap_err().to_string();
+    assert!(error.contains("Composio action failed (200)"));
+    assert!(!error.contains("PRIVATE UPSTREAM DIAGNOSTICS"));
+}
+
+#[tokio::test]
+async fn unknown_toolkit_kind_cannot_start_a_connect_flow() {
+    let h = harness().await;
+    ok_key(&h).await;
+    h.svc.set_key(KEY).await.unwrap();
+    Mock::given(path("/toolkits"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                json!({"items":[{"slug":"github","kind":"unknown_control_surface"}]}),
+            ),
+        )
+        .with_priority(1)
+        .mount(&h.server)
+        .await;
+    assert!(
+        h.svc
+            .connect("github")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported")
+    );
+    assert!(
+        !h.server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.method.as_str() == "POST")
+    );
+    assert_eq!(h.svc.apps(), Vec::new());
+}
+
+#[tokio::test]
+async fn reentering_a_key_recovers_saved_account_binding_without_new_consent() {
+    let h = harness().await;
+    connected(&h).await;
+    let identity = crate::StateFile::load(h.svc.state_path()).unwrap();
+    h.svc.remove_key().await.unwrap();
+    mount_accounts(&h, "ACTIVE").await;
+    h.svc.set_key(KEY).await.unwrap();
+    assert_eq!(
+        crate::StateFile::load(h.svc.state_path()).unwrap(),
+        identity
+    );
+    assert_ne!(h.svc.registered_tools("github"), Vec::<String>::new());
+    assert_eq!(h.svc.apps()[0].state, ConnState::Active);
+    assert!(
+        !h.server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.method.as_str() == "POST")
+    );
+}
+
+// --- browser login, router link, connect state machine, offline catalog ------
+
+const USER_KEY: &str = "uak_browser_SECRET_9876543210";
+
+async fn mount_login(h: &Harness, linked: bool) {
+    Mock::given(method("POST"))
+        .and(path("/cli/create-session"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"id": "sess-1", "code": "ABC123", "expiresAt": "2030-01-01T00:00:00Z", "status": "pending"}),
+        ))
+        .mount(&h.server)
+        .await;
+    let body = if linked {
+        json!({"id": "sess-1", "status": "linked", "api_key": USER_KEY})
+    } else {
+        json!({"id": "sess-1", "status": "pending", "api_key": null})
+    };
+    Mock::given(method("GET"))
+        .and(path("/cli/get-session"))
+        .and(query_param("id", "sess-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .mount(&h.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/auth/session/info"))
+        .and(header("x-user-api-key", USER_KEY))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"project": {"id": "pr_1", "org": {"id": "org_1"}}})),
+        )
+        .mount(&h.server)
+        .await;
+}
+
+async fn mount_router(h: &Harness, account_status: &str) {
+    Mock::given(method("POST"))
+        .and(path("/tool_router/session"))
+        .and(header("x-user-api-key", USER_KEY))
+        .and(header("x-org-id", "org_1"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({"session_id": "trs_1"})))
+        .mount(&h.server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/tool_router/session/trs_1/link"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "redirect_url": "https://connect.composio.dev/link/lk_9", "connected_account_id": "ca_secret_conn_1"})))
+        .mount(&h.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/connected_accounts"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(accounts(account_status)))
+        .mount(&h.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/toolkits"))
+        .and(query_param("search", "github"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"items":[{"slug":"github","name":"GitHub"}]})),
+        )
+        .mount(&h.server)
+        .await;
+}
+
+async fn logged_in(h: &Harness) {
+    mount_login(h, true).await;
+    h.svc.login_start().await.unwrap();
+    assert_eq!(h.svc.login_poll().await.unwrap(), crate::LoginState::Linked);
+}
+
+#[tokio::test]
+async fn browser_login_links_without_a_pasted_key_and_never_leaks_the_user_key() {
+    let h = harness().await;
+    assert_eq!(h.svc.login_poll().await.unwrap(), crate::LoginState::Idle);
+    mount_login(&h, false).await;
+    let start = h.svc.login_start().await.unwrap();
+    assert_eq!(
+        start.login_url,
+        "https://dashboard.composio.dev/?cliKey=sess-1"
+    );
+    assert_eq!(
+        h.svc.login_poll().await.unwrap(),
+        crate::LoginState::Pending
+    );
+    assert!(!h.svc.configured());
+    h.server.reset().await;
+    mount_login(&h, true).await;
+    assert_eq!(h.svc.login_poll().await.unwrap(), crate::LoginState::Linked);
+    assert!(h.svc.configured());
+    assert_eq!(h.svc.linkage(), crate::Linkage::Login);
+    let stored = h.store.get(KEY_SECRET).unwrap().unwrap();
+    assert_eq!(stored.expose(), format!("user-login:{USER_KEY}"));
+    let toml = std::fs::read_to_string(h.svc.state_path()).unwrap();
+    assert!(toml.contains("org_1") && !toml.contains(USER_KEY));
+    assert!(!leak_surface(&h).contains(USER_KEY));
+    // Remove = sign out of Composio.
+    h.svc.remove_key().await.unwrap();
+    assert_eq!(h.svc.linkage(), crate::Linkage::None);
+    assert!(h.store.get(KEY_SECRET).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn connect_flow_link_pending_connected_failed_and_timeout() {
+    let h = harness().await;
+    logged_in(&h).await;
+    mount_router(&h, "INITIATED").await;
+    let link = h.svc.connect("github").await.unwrap();
+    assert_eq!(link.redirect_url, "https://connect.composio.dev/link/lk_9");
+    assert_eq!(h.svc.apps()[0].state, ConnState::Pending);
+    assert_eq!(
+        h.svc.app_status("github").await.unwrap().state,
+        ConnState::Pending
+    );
+    // The user finishes in the browser.
+    h.server.reset().await;
+    mount_login(&h, true).await;
+    mount_router(&h, "ACTIVE").await;
+    assert_eq!(
+        h.svc.app_status("github").await.unwrap().state,
+        ConnState::Active
+    );
+    // A refused consent shows up as failed, not as a silent "not connected".
+    h.server.reset().await;
+    mount_login(&h, true).await;
+    mount_router(&h, "INITIATED").await;
+    h.svc.connect("github").await.unwrap();
+    h.server.reset().await;
+    mount_router(&h, "FAILED").await;
+    assert_eq!(
+        h.svc.app_status("github").await.unwrap().state,
+        ConnState::Failed
+    );
+    // An unfinished sign-in times out.
+    h.server.reset().await;
+    mount_login(&h, true).await;
+    mount_router(&h, "INITIATED").await;
+    h.svc.connect("github").await.unwrap();
+    h.svc.0.pending_since.lock().insert(
+        "github".into(),
+        std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(700))
+            .unwrap(),
+    );
+    assert_eq!(
+        h.svc.app_status("github").await.unwrap().state,
+        ConnState::Failed
+    );
+    let surface = leak_surface(&h);
+    assert!(!surface.contains(USER_KEY), "user key leaked");
+}
+
+#[tokio::test]
+async fn catalog_serves_bundled_then_cache_instantly_and_survives_a_dead_network() {
+    let h = harness().await;
+    // Nothing cached, nothing linked: the bundled popular apps, at once.
+    let v = h.svc.catalog_view(None, None, None, 5);
+    assert_eq!(v.source, crate::CatalogSource::Bundled);
+    assert_eq!(v.items[0].0.slug, "gmail");
+    logged_in(&h).await;
+    let items: Vec<Value> = (0..150)
+        .map(|i| json!({"slug": format!("app{i}"), "name": format!("App {i}"), "meta": {"description": "d", "categories": [{"name": "Email"}]}}))
+        .collect();
+    Mock::given(method("GET"))
+        .and(path("/toolkits"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": items})))
+        .mount(&h.server)
+        .await;
+    h.svc.refresh_catalog().await.unwrap();
+    let live = h.svc.catalog_view(Some("app14"), None, None, 10);
+    assert_eq!(live.source, crate::CatalogSource::Cache);
+    assert!(live.items.iter().any(|(t, _)| t.slug == "app14"));
+    // The network dies: the view still answers from memory, a refresh fails
+    // with a short fixed reason, and a restarted service reads the disk cache.
+    h.server.reset().await;
+    let again = h.svc.refresh_catalog().await;
+    assert!(again.is_err());
+    assert!(h.svc.catalog_error().is_some());
+    assert_eq!(h.svc.catalog_view(None, None, None, 10).items.len(), 10);
+    let svc2 = ComposioService::new(ServiceConfig {
+        data_dir: h.dir.path().to_path_buf(),
+        keys: Arc::new(crate::LocalKeySource::new(h.store.clone())),
+        registry: ToolRegistry::new(),
+        redact: Arc::new(str::to_owned),
+        register_secret: Arc::new(|_| {}),
+        audit: h.rows.clone(),
+        loopback_base: Some("http://127.0.0.1:1".into()),
+    })
+    .unwrap();
+    let offline = svc2.catalog_view(Some("app149"), None, None, 10);
+    assert_eq!(offline.source, crate::CatalogSource::Cache);
+    assert_eq!(offline.items.len(), 1);
+}

@@ -153,7 +153,13 @@ struct ReviewedRecording {
 fn recording(s: &AppState, id: RunId) -> Result<ReviewedRecording, ApiError> {
     let run = s.run_of_user(id)?;
     // Successful human top-level runs are recordable, including ordinary K4.
-    if run.parent_run_id.is_some() || run.state != "succeeded" || run.chat_id.is_none() {
+    // Runs started by a channel, external agent, schedule or routine carry
+    // third-party text that must never count as the user's own request.
+    if run.parent_run_id.is_some()
+        || run.state != "succeeded"
+        || run.chat_id.is_none()
+        || agent_core::initiator_of(&run.kind) != protocol::InitiatorKind::Human
+    {
         return Err(ApiError::conflict("this run cannot be recorded"));
     }
     let bot = s.bot_of_user(run.bot_id)?;

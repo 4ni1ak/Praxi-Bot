@@ -91,6 +91,32 @@ fn incompatible_schema(db: &str, found: u32, supported: u32) -> ImportError {
 /// becomes the inert `imported_note` role that is never sent to the model, and
 /// is never turned into a user message, which would carry the owner's
 /// authority. Nothing is deleted.
+/// Engine settings and consent are written only by the local owner's engine route.
+/// An imported bot comes back Praxi-governed / Ask / no consent, whatever the
+/// bundle says: consent cannot travel in a file.
+fn reset_imported_engines(conn: &Connection) -> rusqlite::Result<()> {
+    let rows: Vec<(String, String)> = {
+        let mut stmt = conn.prepare("SELECT id, config_json FROM bots")?;
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    for (id, config) in rows {
+        let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&config) else {
+            continue;
+        };
+        if value
+            .as_object_mut()
+            .is_some_and(|o| o.remove("engine").is_some())
+        {
+            conn.execute(
+                "UPDATE bots SET config_json = ?2 WHERE id = ?1",
+                rusqlite::params![id, value.to_string()],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn neutralise_system_messages(conn: &Connection) -> rusqlite::Result<()> {
     let rows: Vec<(String, String, String)> = {
         let mut stmt = conn.prepare(
@@ -166,8 +192,10 @@ fn prepare_database(path: &Path, db: &str, manifest: &Manifest) -> Result<()> {
                 other => database_error(db, other),
             })?;
             let conn = open()?;
+            crate::knowledge::attest_bot_schema(&conn)?;
             validate_run_ancestry(&conn)?;
             neutralise_system_messages(&conn).map_err(|error| database_error(db, error))?;
+            reset_imported_engines(&conn).map_err(|error| database_error(db, error))?;
             drop(conn);
         }
         "schedules.db" => {
@@ -187,6 +215,11 @@ fn prepare_database(path: &Path, db: &str, manifest: &Manifest) -> Result<()> {
                 }
                 other => database_error(db, other),
             })?;
+        }
+        _ if crate::knowledge::bot_from_path(db).is_some() => {
+            drop(conn);
+            memory_store::knowledge::KnowledgeStore::validate_and_migrate(path)
+                .map_err(|error| database_error(db, error))?;
         }
         _ => return Err(database_error(db, "unsupported database")),
     }
@@ -223,9 +256,20 @@ fn prepare_database(path: &Path, db: &str, manifest: &Manifest) -> Result<()> {
 
 pub(crate) fn prepare(staging: &Path, manifest: &Manifest, opts: &ImportOptions) -> Result<()> {
     const DATABASES: &[&str] = &["bot.db", "schedules.db", "memory.db"];
+    let composio = staging.join("composio.toml");
+    if composio.exists() {
+        let text = fs::read_to_string(composio)?;
+        let state: composio::StateFile =
+            toml::from_str(&text).map_err(|_| invalid("invalid composio.toml"))?;
+        state
+            .validate()
+            .map_err(|_| invalid("invalid Composio installation state"))?;
+    }
     if let Some(schemas) = &manifest.db_schemas {
         for db in schemas.keys() {
-            if !DATABASES.contains(&db.as_str()) || !staging.join(db).is_file() {
+            if (!DATABASES.contains(&db.as_str()) && crate::knowledge::bot_from_path(db).is_none())
+                || !staging.join(db).is_file()
+            {
                 return Err(database_error(db, "manifest schema entry has no database"));
             }
         }
@@ -236,6 +280,12 @@ pub(crate) fn prepare(staging: &Path, manifest: &Manifest, opts: &ImportOptions)
             prepare_database(&path, db, manifest)?;
         }
     }
+    for record in &manifest.files {
+        if crate::knowledge::bot_from_path(&record.path).is_some() {
+            prepare_database(&staging.join(&record.path), &record.path, manifest)?;
+        }
+    }
+    crate::knowledge::prepare(staging, manifest)?;
     if !matches!(opts.host_mode.as_str(), "standalone" | "host" | "client")
         || !matches!(opts.host_state.as_str(), "fresh" | "standby" | "active")
     {
@@ -313,6 +363,10 @@ pub(crate) fn commit(
     incoming_policy: &Policy,
     allow_policy_relaxation: bool,
 ) -> Result<Option<PathBuf>> {
+    // A bundle can never write a reserved integration secret (the Composio key).
+    if let Some(name) = secrets.keys().find(|n| secret_store::is_reserved_name(n)) {
+        return Err(secret_store::SecretError::InvalidName(name.clone()).into());
+    }
     let roots = roots();
     let mut old_roots = Vec::new();
     for root in &roots {

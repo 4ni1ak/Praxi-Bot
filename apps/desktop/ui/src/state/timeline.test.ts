@@ -12,6 +12,7 @@ import {
   type EventsState,
   needsYou,
   reconcile,
+  restorePending,
   runText,
   type ToolItem
 } from "./timeline.ts";
@@ -173,6 +174,132 @@ test("reconcile expires approvals the daemon no longer knows", () => {
       .items[0] as ToolItem).status,
     "awaiting_approval"
   );
+});
+
+const PENDING = {
+  call_id: "c7",
+  run_id: RUN,
+  tool_name: "browser_click",
+  summary: "browser_click {}",
+  input: { selector: "#buy" },
+  details: { why: "ask" },
+  decision: null,
+  requested_at_ms: 1000
+};
+const RUN_FACT = {
+  id: RUN,
+  chat_id: "chat-1",
+  bot_id: "bot-1",
+  state: "waiting_approval",
+  created_at_ms: 900
+};
+
+test("an approval the daemon still holds comes back as a card the events never delivered", () => {
+  // the stream missed approval_needed: the run is known, the card is not
+  const s = restorePending(started(), [PENDING], [RUN_FACT], 5000);
+  const card = needsYou(s);
+  assert.equal(card.length, 1);
+  assert.equal(card[0].callId, "c7");
+  assert.equal(card[0].chatId, "chat-1");
+  assert.equal(card[0].tool?.name, "browser_click");
+  assert.deepEqual(card[0].tool?.input, { selector: "#buy" });
+  assert.deepEqual(card[0].tool?.details, { why: "ask" });
+});
+
+test("a card that the events or reconcile closed while the daemon still waits is revived", () => {
+  let s = started();
+  s = feed(s, {
+    type: "approval_needed",
+    run_id: RUN,
+    call_id: "c7",
+    tool_name: "browser_click",
+    input: {},
+    summary: "browser_click {}"
+  });
+  s = reconcile(s, new Set(), new Set([RUN]), 5000); // the list had missed it: expired
+  assert.equal(needsYou(s).length, 0);
+  s = restorePending(s, [PENDING], [RUN_FACT], 5000);
+  assert.equal(needsYou(s).length, 1);
+  assert.equal((s.runs[RUN].items[0] as ToolItem).status, "awaiting_approval");
+});
+
+test("restore does not undo a decision, a finished run or a newer event", () => {
+  let s = started();
+  s = feed(s, {
+    type: "approval_needed",
+    run_id: RUN,
+    call_id: "c7",
+    tool_name: "browser_click",
+    input: {},
+    summary: "x"
+  });
+  s = feed(s, { type: "tool_call_approved", run_id: RUN, call_id: "c7", approved_by: "u" });
+  assert.equal(needsYou(restorePending(s, [PENDING], [RUN_FACT], 5000)).length, 0, "approved");
+  const done = feed(started(), { type: "run_finished", run_id: RUN, error: null });
+  assert.equal(needsYou(restorePending(done, [PENDING], [RUN_FACT], 5000)).length, 0, "finished");
+  // the daemon expired it after the list was read: the newer event wins
+  let late = started();
+  late = feed(late, {
+    type: "approval_needed",
+    run_id: RUN,
+    call_id: "c7",
+    tool_name: "browser_click",
+    input: {},
+    summary: "x"
+  });
+  late = feed(late, {
+    type: "tool_call_denied",
+    run_id: RUN,
+    call_id: "c7",
+    denied_by: "u",
+    reason: "expired: nobody answered in time"
+  }, 4800);
+  assert.equal((late.runs[RUN].items[0] as ToolItem).status, "expired");
+  assert.equal(needsYou(restorePending(late, [PENDING], [RUN_FACT], 4000)).length, 0, "newer event");
+});
+
+test("a run the events never introduced is placed by the daemon's run list", () => {
+  gseq = 0;
+  const s = restorePending(EMPTY_EVENTS, [PENDING], [RUN_FACT], 5000);
+  assert.equal(needsYou(s)[0].chatId, "chat-1");
+  assert.equal(topLevelRuns(s, "chat-1").length, 1);
+  // events only: no chat, but the run list still says where it belongs
+  let ghost = feed(EMPTY_EVENTS, {
+    type: "approval_needed",
+    run_id: RUN,
+    call_id: "c8",
+    tool_name: "fs_write",
+    input: {},
+    summary: "x"
+  });
+  assert.equal(needsYou(ghost)[0].chatId, "");
+  assert.equal(needsYou(ghost, [RUN_FACT])[0].chatId, "chat-1");
+  ghost = restorePending(ghost, [], [], 5000);
+  assert.equal(needsYou(ghost).length, 1);
+});
+
+test("an expired denial closes the card as expired, and a question with it", () => {
+  let s = started();
+  s = feed(s, {
+    type: "approval_needed",
+    run_id: RUN,
+    call_id: "c1",
+    tool_name: "fs_write",
+    input: {},
+    summary: "x"
+  });
+  s = feed(s, {
+    type: "question_asked",
+    run_id: RUN,
+    call_id: "q1",
+    question: "Which?",
+    options: []
+  });
+  assert.equal(needsYou(s).length, 2);
+  s = feed(s, { type: "tool_call_denied", run_id: RUN, call_id: "c1", denied_by: "u", reason: "expired: nobody answered in time" });
+  s = feed(s, { type: "tool_call_denied", run_id: RUN, call_id: "q1", denied_by: "u", reason: "expired: nobody answered in time" });
+  assert.equal(needsYou(s).length, 0);
+  assert.equal((s.runs[RUN].items[0] as ToolItem).status, "expired");
 });
 
 // ------------------------------------------------------------- subagents
@@ -403,4 +530,27 @@ test("approval details reach the tool item for the card", () => {
   });
   const tool = s.runs[RUN].items.find((i) => i.kind === "tool") as ToolItem;
   assert.deepEqual(tool.details, { kind: "schedule", action: "create", prompt: "p" });
+});
+
+test("checkpoint_restored appends an informational notice item", () => {
+  let s = started();
+  s = feed(s, { type: "run_finished", run_id: RUN, error: null });
+  s = feed(s, {
+    type: "checkpoint_restored",
+    run_id: RUN,
+    checkpoint_id: "cp-abc",
+    safety_checkpoint_id: "cp-safe",
+    restored: ["/tmp/a.txt", "/tmp/b.txt"]
+  });
+  const notice = s.runs[RUN].items.find((i) => i.kind === "notice");
+  assert.equal(notice?.i18nKey, "chat.notice.checkpointRestored");
+  assert.deepEqual(notice?.values, { count: "2", checkpointId: "cp-abc", safetyId: "cp-safe" });
+});
+
+test("partial restore persists a warning and the safety recovery id", () => {
+  const state = feed(started(), { type: "checkpoint_restored", run_id: RUN, checkpoint_id: "all", safety_checkpoint_id: "cp-safe", restored: [], partial: true });
+  const notice = state.runs[RUN].items.find((item) => item.kind === "notice");
+  assert.equal(notice?.tone, "danger");
+  assert.equal(notice?.i18nKey, "chat.notice.checkpointRestorePartial");
+  assert.equal(notice?.values?.safetyId, "cp-safe");
 });

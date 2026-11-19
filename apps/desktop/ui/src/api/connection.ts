@@ -51,3 +51,53 @@ export async function connectDaemon(restart = false): Promise<Connection> {
   }
   throw new Error("daemon_unavailable_outside_tauri");
 }
+
+/** How far the shell's start of the local service got (mirrors `daemon::Diagnostics` in the app). */
+export type StartupStage =
+  | "idle"
+  | "spawning"
+  | "waiting"
+  | "ready"
+  | "sidecar_missing"
+  | "sidecar_blocked"
+  | "spawn_failed"
+  | "exited"
+  | "not_responding"
+  | "port_in_use"
+  | "unreachable";
+
+export interface StartupDiagnostics {
+  stage: StartupStage;
+  elapsed_ms: number;
+  port: number;
+  base_url: string;
+  data_dir: string;
+  log_path: string;
+  sidecar: string;
+  sidecar_exists: boolean;
+  pid: number | null;
+  exit_code: number | null;
+  error: string | null;
+  log_tail: string[];
+  app_version: string;
+  os: string;
+}
+
+/** What the shell knows about the start of the local service; `null` outside the app. */
+export async function startupDiagnostics(): Promise<StartupDiagnostics | null> {
+  if (isMockMode() || !isTauriRuntime()) {
+    return null;
+  }
+  try {
+    return await invoke<StartupDiagnostics>("daemon_diagnostics");
+  } catch {
+    return null;
+  }
+}
+
+/** Show the folder with `desktop-daemon.log` in the file manager (app only). */
+export async function openLogFolder(): Promise<void> {
+  if (isTauriRuntime() && !isMockMode()) {
+    await invoke("open_log_folder");
+  }
+}

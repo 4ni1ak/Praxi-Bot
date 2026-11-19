@@ -1,7 +1,9 @@
 /**
- * Geometry of the app shell (card 198-B): the resizable left rail and right panel.
+ * Geometry of the app shell: the resizable left rail and right panel.
  * Pure functions plus a tolerant localStorage mirror, so the numbers are testable.
  */
+import { paintedUiStyle } from "ui/surface-model";
+import type { UiStyle } from "ui/theme-model";
 
 /** Rail widths in px.  Below `RAIL_COLLAPSE_BELOW` the rail snaps to icons only. */
 export const RAIL_MINI = 68;
@@ -50,16 +52,132 @@ export function railWidthFromPointer(x: number, pad = 0): number {
 /** The chat keeps at least this much room next to the rail and the panel. */
 export const MAIN_MIN = 320;
 
+/** Floating shell (glass style or a backdrop): outer padding and the gap between columns, px. */
+export const FLOAT_PAD = 12;
+export const FLOAT_GAP = 12;
+
+/**
+ * The shell floats in the glass and tinted styles or over a backdrop (mirrors `applyTheme`'s
+ * `data-float`).  `style` is the saved style; the painted one may differ on this platform
+ * (reduced transparency paints solid), which `painted` resolves.
+ */
+export function isFloatShell(
+  style: string,
+  backdropActive: boolean,
+  painted: (style: UiStyle) => UiStyle = paintedUiStyle
+): boolean {
+  const s = painted(style as UiStyle);
+  return s === "glass" || s === "tinted" || backdropActive;
+}
+
+/**
+ * Horizontal room the floating chrome takes from the columns: the outer padding on both sides
+ * and one gap per neighbouring pair.  A closed panel pulls its gap back with a negative margin.
+ */
+export function shellChrome(float: boolean, panelOpen = true): number {
+  if (!float) return 0;
+  return FLOAT_PAD * 2 + FLOAT_GAP * (panelOpen ? 2 : 1);
+}
+
 /** Largest panel width the window allows, leaving the chat `MAIN_MIN` next to the rail. */
-export function panelMax(viewportWidth: number, rail = 0): number {
+export function panelMax(viewportWidth: number, rail = 0, float = false): number {
   const byShare = Math.round(viewportWidth * PANEL_MAX_FRACTION);
-  return Math.max(PANEL_MIN, Math.min(byShare, viewportWidth - rail - MAIN_MIN));
+  const byRoom = viewportWidth - shellChrome(float) - rail - MAIN_MIN;
+  return Math.max(PANEL_MIN, Math.min(byShare, byRoom));
+}
+
+/**
+ * The panel's width/margin transition lasts `--motion-duration-slow`.  The rail keeps the geometry
+ * of the OPEN panel for that long (plus a small margin) after the panel starts closing, so the chat
+ * column never drops below `MAIN_MIN` at any frame of the transition.  The delay is derived from
+ * the same token the CSS transition uses, so the two cannot drift (checked by check:layout).
+ */
+export const RESERVE_MARGIN_MS = 50;
+/** Used only when the token cannot be read at run time. */
+export const RESERVE_FALLBACK_MS = 500;
+
+/** Parse a CSS `<time>` (`450ms`, `0.45s`) into milliseconds; undefined for anything else. */
+export function parseDurationMs(text: string | undefined): number | undefined {
+  const m = /^\s*(\d*\.?\d+)\s*(ms|s)\s*$/i.exec(text ?? "");
+  if (!m) return undefined;
+  const ms = Number(m[1]) * (m[2].toLowerCase() === "s" ? 1000 : 1);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/** How long after closing starts the rail still reserves the open panel (0: no transition, no delay). */
+export function reserveDelayMs(slideMs: number | undefined, reducedMotion: boolean): number {
+  if (reducedMotion || slideMs === 0) return 0;
+  return slideMs === undefined ? RESERVE_FALLBACK_MS : slideMs + RESERVE_MARGIN_MS;
+}
+
+/** Whether the panel is still reserved `msSinceClose` after it started closing. */
+export function reserveActive(open: boolean, msSinceClose: number, delayMs: number): boolean {
+  return open || msSinceClose < delayMs;
+}
+
+/** Room the rail may take next to the panel while the chat keeps `MAIN_MIN`. */
+export function railRoom(viewportWidth: number, panelWidth: number, float: boolean, panelOpen: boolean): number {
+  return viewportWidth - shellChrome(float, panelOpen) - (panelOpen ? panelWidth : 0) - MAIN_MIN;
+}
+
+/**
+ * Rail width that fits next to the panel: the panel clamp wins, so a rail that would squeeze the
+ * chat below `MAIN_MIN` is narrowed, and snaps to icons when it would drop below `RAIL_MIN`.
+ * `panelOpen` is the panel's RESERVED state (open, or closing and not yet settled).
+ */
+export function fitRail(
+  viewportWidth: number,
+  rail: number,
+  panelWidth: number,
+  float: boolean,
+  panelOpen: boolean
+): number {
+  const room = railRoom(viewportWidth, panelWidth, float, panelOpen);
+  if (rail <= room) return rail;
+  return room >= RAIL_MIN ? room : RAIL_MINI;
+}
+
+/**
+ * Explicit keyboard resize of the rail.  The step starts from the DISPLAYED (fitted) width and the
+ * result becomes the stored preference, so the arrow keys always move what the user sees.  A step
+ * that would only widen the stored value beyond what fits (no visible change) leaves the stored
+ * preference alone instead of silently overwriting it.
+ */
+export function railAfterStep(
+  stored: number,
+  displayed: number,
+  dir: -1 | 1,
+  fitted: (candidate: number) => number
+): number {
+  const next = stepRail(displayed, dir);
+  return fitted(next) === displayed && next !== displayed ? stored : next;
+}
+
+/**
+ * The Search button.  A rail the user collapsed (stored width = icons) expands as before; a rail that is
+ * only collapsed by fitting keeps the stored preference and shows the field as a compact popover.
+ */
+export function searchPlan(
+  storedRail: number,
+  displayedRail: number,
+  searchOpen: boolean
+): { expandStored: boolean; popover: boolean; open: boolean } {
+  const userMini = isMiniRail(storedRail);
+  const displayedMini = isMiniRail(displayedRail);
+  const expandStored = displayedMini && userMini;
+  return { expandStored, popover: displayedMini && !userMini, open: !searchOpen || expandStored };
 }
 
 /** Panel width for a pointer at `x`, measured from the window's right edge. */
-export function panelWidthFromPointer(x: number, viewportWidth: number, pad = 0, rail = 0): number {
+export function panelWidthFromPointer(
+  x: number,
+  viewportWidth: number,
+  pad = 0,
+  rail = 0,
+  float = false
+): number {
   const w = viewportWidth - x - pad;
-  return Math.round(Math.min(panelMax(viewportWidth, rail), Math.max(PANEL_MIN, w)));
+  return Math.round(Math.min(panelMax(viewportWidth, rail, float), Math.max(PANEL_MIN, w)));
 }
 
 /** Keyboard step on the rail grip: -1 narrows (snapping to icons), +1 widens. */
@@ -69,8 +187,14 @@ export function stepRail(width: number, dir: -1 | 1): number {
 }
 
 /** Keyboard step on the panel grip: +1 widens, -1 narrows. */
-export function stepPanel(width: number, dir: -1 | 1, viewportWidth: number, rail = 0): number {
-  return Math.round(Math.min(panelMax(viewportWidth, rail), Math.max(PANEL_MIN, width + dir * 16)));
+export function stepPanel(
+  width: number,
+  dir: -1 | 1,
+  viewportWidth: number,
+  rail = 0,
+  float = false
+): number {
+  return Math.round(Math.min(panelMax(viewportWidth, rail, float), Math.max(PANEL_MIN, width + dir * 16)));
 }
 
 /** Coerce stored values: unknown shapes fall back to the defaults, numbers are clamped. */

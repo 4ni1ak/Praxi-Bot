@@ -21,6 +21,13 @@ pub enum DesktopError {
     #[error("unsupported on this platform: {0}")]
     Unsupported(String),
 
+    /// The window that would receive input was not the program the call was
+    /// approved for, or could not be checked, or a guarded send stopped. The
+    /// text says truthfully what was and was not delivered; it is never
+    /// prefixed here (a partial send is not "not sent").
+    #[error("{0}")]
+    GuardRefused(String),
+
     /// An unrecoverable internal error.
     #[error("internal error: {0}")]
     Internal(String),

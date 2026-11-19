@@ -73,6 +73,11 @@ impl Tool for TestTool {
   [e1] textbox "Search"
   [e2] button "Go"
 "#
+        } else if self.spec.name == "mutate" {
+            // Empty output keeps a recording of this tool clean: any non-empty
+            // tool text taints a recording, and a tainted replay cannot carry
+            // a runtime secret (approval cards must not show registered secrets).
+            ""
         } else {
             "done"
         }))
@@ -109,6 +114,11 @@ fn setup() -> Env {
                 effect,
                 category: PermissionCategory::Fs,
                 platforms: vec![Platform::All],
+                content: tool_registry::ContentClass::declared(
+                    effect == Effect::Read,
+                    effect == Effect::Read,
+                    false,
+                ),
             },
             calls: calls.clone(),
             inputs: inputs.clone(),
@@ -536,11 +546,19 @@ async fn failed_and_child_runs_conflict_and_run_endpoint_keeps_permissions() {
     let env = setup();
     let id = source(&env).await;
     let original = env.state.storage().get_run(id).unwrap().unwrap();
-    for (state, parent) in [("failed", None), ("succeeded", Some(id))] {
+    // Third-party initiated runs (channel/external agent/schedule/routine)
+    // must not be proposable: their text would count as the user's request.
+    for (state, parent, kind) in [
+        ("failed", None, original.kind.as_str()),
+        ("succeeded", Some(id), original.kind.as_str()),
+        ("succeeded", None, "turn:channel"),
+        ("succeeded", None, "turn:external_agent:abc"),
+    ] {
         let mut row = original.clone();
         row.id = RunId::new();
         row.state = state.into();
         row.parent_run_id = parent;
+        row.kind = kind.into();
         env.state.storage().insert_run(&row).unwrap();
         assert_eq!(
             request(
@@ -751,15 +769,19 @@ async fn tainted_proposal_requires_each_step_confirmation_and_persists_source() 
     .await;
     let run = RunId(replay["run_id"].as_str().unwrap().parse().unwrap());
     for index in 0..3 {
-        let call_id = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let waited = tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
                 if let Event::ApprovalNeeded(a) = events.recv().await.unwrap().envelope.event {
                     break a.call_id;
                 }
             }
         })
-        .await
-        .unwrap();
+        .await;
+        let Ok(call_id) = waited else {
+            let state = env.state.agent().wait(run).await;
+            let steps = env.state.storage().list_steps(run).unwrap();
+            panic!("no approval for replay step {index}: {state:?} {steps:?}");
+        };
         assert_eq!(env.calls.load(Ordering::SeqCst), before + index);
         // Even an always grant cannot waive the following tainted step.
         env.state

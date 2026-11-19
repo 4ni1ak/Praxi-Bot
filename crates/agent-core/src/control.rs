@@ -142,6 +142,40 @@ impl DesktopControlGate for LoopControl {
     async fn admit_background_action(&self, req: &ToolRequest) -> Result<ActionPermit, String> {
         self.admit(req, false).await
     }
+
+    fn desktop_for_run(
+        &self,
+        run_id: &str,
+    ) -> Option<std::sync::Arc<dyn desktop_api::DesktopBackend>> {
+        let sh = self.sh.upgrade()?;
+        let id = run_id.parse::<Uuid>().ok().map(RunId)?;
+        sh.runs
+            .lock()
+            .get(&id)
+            .and_then(|ctx| ctx.resolved_computer.desktop.clone())
+    }
+
+    fn browser_available_for_run(&self, run_id: &str) -> bool {
+        let Some(sh) = self.sh.upgrade() else {
+            return false;
+        };
+        let Some(id) = run_id.parse::<Uuid>().ok().map(RunId) else {
+            return false;
+        };
+        sh.runs
+            .lock()
+            .get(&id)
+            .is_some_and(|ctx| ctx.resolved_computer.browser)
+    }
+
+    fn browser_headless_for_run(&self, run_id: &str) -> Option<bool> {
+        let sh = self.sh.upgrade()?;
+        let id = run_id.parse::<Uuid>().ok().map(RunId)?;
+        sh.runs
+            .lock()
+            .get(&id)
+            .and_then(|ctx| ctx.resolved_computer.browser_headless)
+    }
 }
 impl LoopControl {
     async fn admit(&self, req: &ToolRequest, highlight: bool) -> Result<ActionPermit, String> {
@@ -240,19 +274,19 @@ pub(crate) async fn acquire_computer_slot(
     Ok(())
 }
 
-/// Tool timeouts count active time; a human pause remains a cancellable wait.
+/// Tool timeouts count active time; a human pause, a wait for the computer slot or a wait for the
+/// user's approval (`waiting`) remains a cancellable wait that does not use the budget.
 pub(crate) async fn pause_aware_timeout<F: std::future::Future>(
     budget: std::time::Duration,
     gate: Option<Arc<dyn ControlGate>>,
-    waiting: Arc<std::sync::atomic::AtomicBool>,
+    waiting: impl Fn() -> bool,
     future: F,
 ) -> Result<F::Output, ()> {
     tokio::pin!(future);
     let mut left = budget;
     loop {
         let started = tokio::time::Instant::now();
-        let paused = gate.as_ref().is_some_and(|g| g.is_paused())
-            || waiting.load(std::sync::atomic::Ordering::SeqCst);
+        let paused = gate.as_ref().is_some_and(|g| g.is_paused()) || waiting();
         let slice = if paused {
             std::time::Duration::from_millis(50)
         } else {
@@ -262,7 +296,7 @@ pub(crate) async fn pause_aware_timeout<F: std::future::Future>(
             biased;
             out = &mut future => return Ok(out),
             () = tokio::time::sleep(slice) => {
-                if !paused && !gate.as_ref().is_some_and(|g| g.is_paused()) && !waiting.load(std::sync::atomic::Ordering::SeqCst) { left = left.saturating_sub(started.elapsed()); if left.is_zero() { return Err(()); } }
+                if !paused && !gate.as_ref().is_some_and(|g| g.is_paused()) && !waiting() { left = left.saturating_sub(started.elapsed()); if left.is_zero() { return Err(()); } }
             }
         }
     }
@@ -299,7 +333,10 @@ mod tests {
         let worker = tokio::spawn(pause_aware_timeout(
             std::time::Duration::from_millis(10),
             Some(Arc::new(Paused)),
-            waiting.clone(),
+            {
+                let waiting = waiting.clone();
+                move || waiting.load(std::sync::atomic::Ordering::SeqCst)
+            },
             async { rx.await.unwrap() },
         ));
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -309,7 +346,7 @@ mod tests {
         let worker = tokio::spawn(pause_aware_timeout(
             std::time::Duration::from_millis(10),
             Some(Arc::new(Paused)),
-            waiting,
+            move || waiting.load(std::sync::atomic::Ordering::SeqCst),
             std::future::pending::<()>(),
         ));
         worker.abort();

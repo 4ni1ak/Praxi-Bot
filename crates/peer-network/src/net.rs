@@ -430,12 +430,32 @@ impl PeerNetwork {
     ///
     /// Never in practice.
     pub async fn create_invite_with_ttl(&self, role: Role, ttl: Duration) -> Invite {
+        self.create_invite_with_options(role, ttl, false).await
+    }
+
+    /// [`create_invite_with_ttl`](Self::create_invite_with_ttl) for the owner
+    /// of this installation: with `admin` the joining desktop is paired with
+    /// host administration (only honoured for the `desktop` role). The flag
+    /// stays on this side; it is not part of the ticket.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice.
+    pub async fn create_invite_with_options(
+        &self,
+        role: Role,
+        ttl: Duration,
+        admin: bool,
+    ) -> Invite {
         let ttl = ttl.min(MAX_INVITE_TTL);
         if self.inner.config.relay != RelayConfig::Disabled {
             let _ =
                 tokio::time::timeout(Duration::from_secs(10), self.inner.endpoint.online()).await;
         }
-        let (secret, code) = self.inner.invites.create(role, ttl);
+        let (secret, code) = self
+            .inner
+            .invites
+            .create(role, ttl, admin && role == Role::Desktop);
         let ticket = PairTicket {
             addr: self.addr(),
             secret,
@@ -545,10 +565,31 @@ impl PeerNetwork {
                     capabilities,
                     addr: Some(addr),
                     paired_at: now_secs(),
+                    pairing_generation: String::new(),
+                    admin: false,
                 };
-                self.inner.store.upsert(device.clone())?;
-                Ok(device)
+                self.inner.store.upsert(device)?;
+                self.inner
+                    .store
+                    .get(&id)
+                    .ok_or_else(|| PeerError::UnknownDevice(key_to_string(&id)))
             }
+        }
+    }
+
+    /// Grant or withdraw host administration for a paired desktop (an action
+    /// of this installation's owner). Returns `false` for an unknown device.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the device list cannot be persisted, or if the device is not
+    /// a `desktop` (no other role can ever hold the capability).
+    pub fn set_device_admin(&self, peer: &PublicKey, admin: bool) -> Result<bool> {
+        match self.inner.store.get(peer) {
+            Some(d) if admin && d.role != Role::Desktop => Err(PeerError::Protocol(
+                "only a paired desktop can administer this host".into(),
+            )),
+            _ => self.inner.store.set_admin(peer, admin),
         }
     }
 
@@ -570,6 +611,18 @@ impl PeerNetwork {
             }
         });
         self.inner.peer_leaders.lock().remove(peer);
+        if removed {
+            let _ = self.inner.events.send(PeerEvent {
+                peer: *peer,
+                leader: None,
+                event: Event {
+                    kind: "revoked".into(),
+                    ts_ms: now_secs() * 1000,
+                    data: Value::Null,
+                    leader: None,
+                },
+            });
+        }
         Ok(removed)
     }
 
@@ -762,8 +815,8 @@ fn decide_pairing(inner: &Inner, remote: PublicKey, req: PairRequest) -> PairRes
             ),
         );
     }
-    match inner.invites.redeem(&req.secret, &req.code, req.role) {
-        Ok(()) => {}
+    let admin = match inner.invites.redeem(&req.secret, &req.code, req.role) {
+        Ok(admin) => admin,
         Err(RedeemError::Expired) => {
             return rejected(
                 RejectReason::Expired,
@@ -782,7 +835,7 @@ fn decide_pairing(inner: &Inner, remote: PublicKey, req: PairRequest) -> PairRes
                 "invalid or already used invite",
             );
         }
-    }
+    };
     // The identity is the authenticated connection key, never a claimed one.
     let addr = if req.addr.id == remote {
         req.addr
@@ -796,6 +849,8 @@ fn decide_pairing(inner: &Inner, remote: PublicKey, req: PairRequest) -> PairRes
         capabilities: req.capabilities,
         addr: Some(addr),
         paired_at: now_secs(),
+        pairing_generation: String::new(),
+        admin: admin && req.role == Role::Desktop,
     };
     if let Err(e) = inner.store.upsert(device) {
         return rejected(

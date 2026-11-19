@@ -9,8 +9,8 @@ use axum::http::StatusCode;
 
 use crate::AppState;
 use crate::email::{
-    EmailAccountDto, EmailAccountInput, EmailControl, EmailControlError, EmailProviderKind,
-    EmailTestReport,
+    EmailAccountDto, EmailAccountInput, EmailControl, EmailControlError, EmailMessageDto,
+    EmailProviderKind, EmailSendTestResponse, EmailTestReport,
 };
 use crate::error::{ApiError, ErrorBody};
 use crate::mcp_routes::MAX_BOT_ID_LEN;
@@ -181,19 +181,42 @@ pub(crate) async fn update_email_account(
         .get("bot")
         .and_then(serde_json::Value::as_str)
         .map(str::to_owned);
-    let updated = control.update(&name, patch).await?;
-    if let Some(bot) = bound
-        && let Err(e) = canonical_bot(&s, &bot)
-    {
-        // Same race as on create: put the previous binding back.
-        if let Some(prev) = previous {
-            let _ = control
-                .update(&name, serde_json::json!({ "bot": prev }))
-                .await;
+    // Reserve the bounded scan before mutating the mailbox. The detached task
+    // owns both guards, so disconnecting the HTTP request cannot skip cleanup.
+    let permit = crate::knowledge::worker_permit(s.data_dir())?;
+    tokio::spawn(async move {
+        let _knowledge_authority = crate::knowledge::email_authorities(&s, &name).await?;
+        let updated = control.update(&name, patch).await?;
+        if let Some(bot) = bound
+            && let Err(e) = canonical_bot(&s, &bot)
+        {
+            if let Some(prev) = &previous {
+                let _ = control
+                    .update(&name, serde_json::json!({ "bot": prev }))
+                    .await;
+            }
+            return Err(e);
         }
-        return Err(e);
-    }
-    Ok(Json(updated))
+        if previous.as_ref() != Some(&updated.bot) {
+            let state = s.clone();
+            let account = name.clone();
+            if let Err(error) = crate::knowledge::blocking_with_permit(permit, move || {
+                crate::knowledge::revoke_email_sources(&state, &account)
+            })
+            .await
+            {
+                if let Some(prev) = &previous {
+                    let _ = control
+                        .update(&name, serde_json::json!({ "bot": prev }))
+                        .await;
+                }
+                return Err(error);
+            }
+        }
+        Ok(Json(updated))
+    })
+    .await
+    .map_err(|_| ApiError::internal("email authority task failed"))?
 }
 
 /// Query of `DELETE /v1/email/accounts/{name}`.
@@ -221,8 +244,19 @@ pub(crate) async fn delete_email_account(
     Path(name): Path<String>,
     Query(q): Query<DeleteAccountQuery>,
 ) -> Result<StatusCode, ApiError> {
-    email(&s)?.remove_account(&name, q.delete_inbox).await?;
-    Ok(StatusCode::NO_CONTENT)
+    let control = email(&s)?;
+    let permit = crate::knowledge::worker_permit(s.data_dir())?;
+    tokio::spawn(async move {
+        let _knowledge_authority = crate::knowledge::email_authorities(&s, &name).await?;
+        control.remove_account(&name, q.delete_inbox).await?;
+        crate::knowledge::blocking_with_permit(permit, move || {
+            crate::knowledge::revoke_email_sources(&s, &name)
+        })
+        .await?;
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
+    .map_err(|_| ApiError::internal("email authority task failed"))?
 }
 
 /// Try IMAP login and SMTP authentication for a stored account. TLS exactly as
@@ -269,4 +303,61 @@ pub(crate) async fn test_email_draft(
     }
     let _permit = s.email_test_permit()?;
     Ok(Json(control.test_draft(input).await?))
+}
+
+/// Most messages `GET .../messages` returns.
+const MAX_MESSAGES: usize = 50;
+/// Default page of `GET .../messages`.
+const DEFAULT_MESSAGES: usize = 20;
+
+/// Query of `GET /v1/email/accounts/{name}/messages`.
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+pub(crate) struct MessagesQuery {
+    /// How many messages, 1 to 50 (default 20).
+    limit: Option<usize>,
+}
+
+/// The newest messages of an account's inbox, headers only and read-only
+/// (nothing is marked read, no body is fetched). Subject and sender are
+/// untrusted text from the sender. Shares the "at most two at once" limit of
+/// the connection test (`429`).
+#[utoipa::path(get, path = "/v1/email/accounts/{name}/messages", tag = "email",
+    security(("bearer" = [])),
+    params(("name" = String, Path, description = "Account name"), MessagesQuery),
+    responses((status = 200, body = Vec<EmailMessageDto>), (status = 404, body = ErrorBody),
+              (status = 422, body = ErrorBody, description = "no password stored, or not supported"),
+              (status = 429, body = ErrorBody, description = "too many checks running"),
+              (status = 502, body = ErrorBody, description = "the mailbox failed"),
+              (status = 503, body = ErrorBody, description = "e-mail management is not available")))]
+pub(crate) async fn list_email_messages(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+    Query(q): Query<MessagesQuery>,
+) -> Result<Json<Vec<EmailMessageDto>>, ApiError> {
+    let control = email(&s)?;
+    let _permit = s.email_test_permit()?;
+    let limit = q.limit.unwrap_or(DEFAULT_MESSAGES).clamp(1, MAX_MESSAGES);
+    Ok(Json(control.recent_messages(&name, limit).await?))
+}
+
+/// Send one fixed test message from the account to **its own address**: no
+/// recipient, subject or body can be given, so it can only ever reach the
+/// mailbox itself. Same limit as the connection test (`429`).
+#[utoipa::path(post, path = "/v1/email/accounts/{name}/send-test", tag = "email",
+    security(("bearer" = [])),
+    params(("name" = String, Path, description = "Account name")),
+    responses((status = 200, body = EmailSendTestResponse), (status = 404, body = ErrorBody),
+              (status = 422, body = ErrorBody, description = "no password stored, or not supported"),
+              (status = 429, body = ErrorBody, description = "too many checks running"),
+              (status = 502, body = ErrorBody, description = "the mailbox failed"),
+              (status = 503, body = ErrorBody, description = "e-mail management is not available")))]
+pub(crate) async fn send_email_test(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<EmailSendTestResponse>, ApiError> {
+    let control = email(&s)?;
+    let _permit = s.email_test_permit()?;
+    Ok(Json(EmailSendTestResponse {
+        sent_to: control.send_test(&name).await?,
+    }))
 }

@@ -8,6 +8,7 @@ import {
 import { useToast } from "../components/Toast";
 import { botView } from "../lib/botProfile";
 import { useDaemon } from "./DaemonContext";
+import { humanLine } from "../lib/humanError";
 
 export type PaletteScreen =
   | "home"
@@ -86,7 +87,7 @@ export function PaletteHost({
         await refreshChats().catch(() => {});
         onChat(chat.id, botId);
       } catch (e) {
-        toast.show(e instanceof Error ? e.message : String(e), "danger");
+        toast.show(humanLine(e), "danger");
       }
     },
     [client, refreshChats, onChat, toast]
@@ -133,7 +134,7 @@ export function PaletteHost({
             ?.runScheduleNow(s.id)
             .then(() => toast.show(t("palette.scheduleStarted"), "success"))
             .catch((e: unknown) =>
-              toast.show(e instanceof Error ? e.message : String(e), "danger")
+              toast.show(humanLine(e), "danger")
             );
         }
       });

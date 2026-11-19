@@ -42,6 +42,7 @@ fn setup_with(policy: Policy) -> T {
         },
     );
     let state = AppState::new(agent.clone(), storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(crate::tests::OWNER_KEY.into());
     T {
         app: router(state.clone()),
         state,
@@ -189,6 +190,7 @@ async fn schedule_crud_and_validation() {
     assert_eq!(s["misfire_policy"], "skip");
     assert!(s["next_run_at_ms"].as_i64().unwrap() > storage::now_ms());
     assert!(s["last_run_at_ms"].is_null());
+    assert_eq!(s["missed_occurrences"], 0);
 
     let list = call(&t, Method::GET, "/v1/schedules", None).await.json();
     assert_eq!(list.as_array().unwrap().len(), 1);
@@ -728,7 +730,9 @@ async fn webhook_auth_size_and_status_codes() {
             _ => None,
         })
         .collect();
-    assert_eq!(echoed.trim(), "echo: deploy said v1.2");
+    assert!(echoed.contains("deploy said"));
+    assert!(echoed.contains("v1.2"));
+    assert!(echoed.contains("untrusted source data"));
     settled(&t).await;
 
     // 409: disabled.
@@ -993,4 +997,239 @@ async fn a_schedule_approval_over_http_cannot_be_an_always_grant() {
     assert_eq!(d["kind"], "schedule");
     assert_eq!(d["prompt"], "say hi");
     assert_eq!(d["schedule"], "Every weekday at 10:30");
+}
+
+#[tokio::test]
+async fn c225_false_precheck_creates_no_run_or_model_event_and_counts_skip() {
+    let t = super::setup();
+    let (bot, _) = make_chat(&t).await;
+    let mut body = new_schedule(&bot, prompt("must never run"));
+    body["precheck"] = json!({"kind":"script","code":"return false;"});
+    let created = create(&t, body).await;
+    let id = created["id"].as_str().unwrap();
+    t.state.start_scheduler().unwrap();
+    let mut rx = t.agent.subscribe();
+    for _ in 0..3 {
+        let result = call(
+            &t,
+            Method::POST,
+            &format!("/v1/schedules/{id}/run-now"),
+            None,
+        )
+        .await;
+        assert_eq!(result.status, StatusCode::ACCEPTED);
+        settled(&t).await;
+    }
+    assert!(
+        t.state
+            .storage()
+            .list_runs(t.state.user_id())
+            .unwrap()
+            .is_empty()
+    );
+    assert!(rx.try_recv().is_err());
+    let result = call(&t, Method::GET, &format!("/v1/schedules/{id}"), None).await;
+    assert_eq!(result.json()["skipped_by_precheck"], 3);
+    t.state.scheduler().unwrap().shutdown().await;
+}
+
+#[tokio::test]
+async fn c225_precheck_error_starts_external_run_with_fixed_note_not_upstream_error() {
+    let t = super::setup();
+    let (bot, _) = make_chat(&t).await;
+    let mut body = new_schedule(&bot, prompt("review status"));
+    body["precheck"] = json!({"kind":"script","code":"throw new Error('UPSTREAM_PRIVATE_ERROR');"});
+    let created = create(&t, body).await;
+    let id = created["id"].as_str().unwrap();
+    t.state.start_scheduler().unwrap();
+    let mut rx = t.agent.subscribe();
+    let result = call(
+        &t,
+        Method::POST,
+        &format!("/v1/schedules/{id}/run-now"),
+        None,
+    )
+    .await;
+    assert_eq!(result.status, StatusCode::ACCEPTED);
+    let (run, _) = scheduled_run(&mut rx, id).await;
+    settled(&t).await;
+    let row = t.state.storage().get_run(run).unwrap().unwrap();
+    assert!(row.kind.starts_with("turn:external_schedule:"));
+    let messages = t
+        .state
+        .storage()
+        .list_messages(row.chat_id.unwrap())
+        .unwrap();
+    let source = messages
+        .iter()
+        .find(|m| m.role == "external_schedule")
+        .unwrap();
+    assert!(source.content.contains(scheduler::precheck::FAILURE_NOTE));
+    assert!(!source.content.contains("UPSTREAM_PRIVATE_ERROR"));
+    assert!(messages.iter().all(|m| m.role != "user"));
+    t.state.scheduler().unwrap().shutdown().await;
+}
+
+#[tokio::test]
+async fn c225_plain_firing_after_webhook_or_removed_precheck_never_reuses_external_history() {
+    for with_precheck in [false, true] {
+        let t = super::setup();
+        let (bot, _) = make_chat(&t).await;
+        t.state.start_scheduler().unwrap();
+        let mut body = new_schedule(&bot, prompt("review source {input}"));
+        if with_precheck {
+            body["precheck"] =
+                json!({"kind":"script","code":"return {run:true,input:'external notice'};"});
+        } else {
+            body["webhook_secret"] = json!("fake-secret");
+        }
+        let created = create(&t, body).await;
+        let sid = created["id"].as_str().unwrap();
+        let mut rx = t.agent.subscribe();
+        let response = if with_precheck {
+            call(
+                &t,
+                Method::POST,
+                &format!("/v1/schedules/{sid}/run-now"),
+                None,
+            )
+            .await
+        } else {
+            hook(
+                &t,
+                sid,
+                "external notice",
+                &[("x-signature-256", &sig("fake-secret", "external notice"))],
+            )
+            .await
+        };
+        assert_eq!(response.status, StatusCode::ACCEPTED);
+        let (external_run, _) = scheduled_run(&mut rx, sid).await;
+        settled(&t).await;
+        let external = t.state.storage().get_run(external_run).unwrap().unwrap();
+        let external_chat = external.chat_id.unwrap();
+        assert!(external.kind.starts_with("turn:external_schedule:"));
+        // Both implicit same-title reuse and an explicitly selected isolated
+        // chat must fall back to a normal chat, without weakening isolation.
+        for explicit in [false, true] {
+            let mut edit = new_schedule(&bot, prompt("ordinary timer work"));
+            edit["precheck"] = Value::Null;
+            if explicit {
+                edit["chat_id"] = json!(external_chat.to_string());
+            }
+            let response = call(&t, Method::PUT, &format!("/v1/schedules/{sid}"), Some(edit)).await;
+            assert_eq!(response.status, StatusCode::OK, "{:?}", response.json());
+            let mut rx = t.agent.subscribe();
+            assert_eq!(
+                call(
+                    &t,
+                    Method::POST,
+                    &format!("/v1/schedules/{sid}/run-now"),
+                    None
+                )
+                .await
+                .status,
+                StatusCode::ACCEPTED
+            );
+            let (plain_run, _) = scheduled_run(&mut rx, sid).await;
+            settled(&t).await;
+            let plain = t.state.storage().get_run(plain_run).unwrap().unwrap();
+            assert!(plain.kind.starts_with("turn:schedule:"));
+            assert_ne!(plain.chat_id, Some(external_chat));
+            assert!(
+                t.state
+                    .storage()
+                    .list_messages(plain.chat_id.unwrap())
+                    .unwrap()
+                    .iter()
+                    .all(|m| m.role != "external_schedule")
+            );
+        }
+        assert!(
+            t.agent
+                .run_turn(external_chat, "ordinary follow-up")
+                .is_err()
+        );
+        t.state.stop_scheduler().await;
+    }
+}
+
+#[tokio::test]
+async fn c225_real_temp_folder_and_fake_clock_fire_one_external_run_for_five_matching_names() {
+    let t = super::setup();
+    let workspace = tempfile::tempdir().unwrap();
+    let mut builtins = builtin_tools::BuiltinConfig::new(
+        t.state.storage().data_dir().to_path_buf(),
+        Arc::new(builtin_tools::ResolverGate::new(
+            permission_engine::PermissionResolver::new(),
+            Policy::full(),
+            None,
+            protocol::InitiatorKind::Schedule,
+        )),
+    );
+    builtins.fs_allowed_roots = vec![workspace.path().to_path_buf()];
+    let _ = t.agent.clone().with_builtin_tools(builtins);
+    t.agent.set_global_policy(Policy::full());
+    let (bot, _) = make_chat(&t).await;
+    let clock = Arc::new(scheduler::FakeClock::new(storage::now_ms()));
+    *t.state.0.scheduler_clock.lock() = Some(clock.clone());
+    let mut body = new_schedule(&bot, prompt("review {input}"));
+    body["trigger"] = json!({"kind":"file_watch","path":workspace.path(),"glob":"*.txt","events":["created"],"debounce_ms":1000});
+    let created = create(&t, body).await;
+    assert!(created["next_run_at_ms"].is_null());
+    let sid = created["id"].as_str().unwrap();
+    t.state.start_scheduler().unwrap();
+    settled(&t).await;
+    for n in 0..5 {
+        std::fs::write(
+            workspace.path().join(format!("file{n}.txt")),
+            "PRIVATE_FILE_BODY",
+        )
+        .unwrap();
+    }
+    std::fs::write(workspace.path().join("excluded.csv"), "PRIVATE_FILE_BODY").unwrap();
+    clock.advance_ms(30_000);
+    settled(&t).await;
+    assert_eq!(
+        call(&t, Method::GET, "/v1/runs", None).await.json(),
+        json!([])
+    );
+    clock.advance_ms(999);
+    settled(&t).await;
+    assert_eq!(
+        call(&t, Method::GET, "/v1/runs", None).await.json(),
+        json!([])
+    );
+    let mut rx = t.agent.subscribe();
+    clock.advance_ms(1);
+    settled(&t).await;
+    let (run, _) = scheduled_run(&mut rx, sid).await;
+    let row = t.state.storage().get_run(run).unwrap().unwrap();
+    assert!(row.kind.starts_with("turn:external_schedule:"));
+    let messages = t
+        .state
+        .storage()
+        .list_messages(row.chat_id.unwrap())
+        .unwrap();
+    let source = messages
+        .iter()
+        .find(|m| m.role == "external_schedule")
+        .unwrap();
+    for n in 0..5 {
+        assert!(source.content.contains(&format!("file{n}.txt")));
+    }
+    assert!(!source.content.contains("excluded.csv"));
+    assert!(!source.content.contains("PRIVATE_FILE_BODY"));
+    clock.advance_ms(30_000);
+    settled(&t).await;
+    assert_eq!(
+        call(&t, Method::GET, "/v1/runs", None)
+            .await
+            .json()
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    t.state.stop_scheduler().await;
 }

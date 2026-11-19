@@ -1,4 +1,5 @@
 #![allow(clippy::too_many_lines)]
+mod availability_scope;
 mod browser_target_loss;
 use super::*;
 use ::live_view::*;
@@ -15,6 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tower::ServiceExt;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const OWNER_KEY: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
 const PIXEL_SECRET: &[u8] = b"pixel-password-OTP-never-persist-4815162342";
 const TEXT_SECRET: &str = "human-input-secret-never-persist-7654321";
 #[derive(Default)]
@@ -207,6 +209,7 @@ impl Test {
             agent_core::LoopConfig::default(),
         );
         let state = AppState::new(agent, storage, crate::DaemonConfig::new(TOKEN)).unwrap();
+        state.set_owner_key(OWNER_KEY.into());
         let target = Arc::new(Target::new());
         state.live_view().registry.register(target.clone());
         Self {
@@ -227,6 +230,7 @@ impl Test {
             agent_core::LoopConfig::default(),
         );
         let state = AppState::new(agent, storage, crate::DaemonConfig::new(TOKEN)).unwrap();
+        state.set_owner_key(OWNER_KEY.into());
         state.live_view().registry.register(self.target.clone());
         Self {
             state,
@@ -264,6 +268,7 @@ impl Test {
             .uri(path)
             .header("host", "localhost")
             .header("authorization", format!("Bearer {TOKEN}"))
+            .header("x-praxi-owner-key", OWNER_KEY)
             .header("accept", MEDIA_TYPE)
             .header("content-type", "application/json")
             .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
@@ -363,6 +368,7 @@ async fn all_routes_require_auth_host_origin_and_never_query_tokens() {
     let id = Uuid::now_v7();
     for (method, path, body) in [
         (Method::GET, "/v1/view/targets".into(), None),
+        (Method::GET, "/v1/view/availability".into(), None),
         (Method::POST, "/v1/view/sessions".into(), Some(json!({}))),
         (Method::GET, format!("/v1/view/sessions/{id}/frames"), None),
         (
@@ -911,7 +917,7 @@ async fn explicit_reacquisition_rotates_epoch_and_old_input_never_applies() {
     );
 }
 #[tokio::test(start_paused = true)]
-async fn blocked_body_is_cancelled_after_two_seconds_and_capture_is_dropped() {
+async fn blocked_body_is_cancelled_after_eight_seconds_and_capture_is_dropped() {
     let t = Test::new();
     let id = t.session(None).await;
     let response = t
@@ -927,7 +933,7 @@ async fn blocked_body_is_cancelled_after_two_seconds_and_capture_is_dropped() {
         t.target.frame(seq, 1);
     }
     tokio::task::yield_now().await;
-    tokio::time::advance(Duration::from_millis(2100)).await;
+    tokio::time::advance(Duration::from_millis(8100)).await;
     for _ in 0..20 {
         tokio::task::yield_now().await;
     }
@@ -976,6 +982,11 @@ fn completed_run(t: &Test) -> (protocol::RunId, protocol::ChatId) {
             updated_at_ms: now,
             parent_run_id: None,
             spec: None,
+            computer_target: None,
+            computer_node: None,
+            computer_node_name: None,
+            paused_at_ms: None,
+            pause_reason: None,
         })
         .unwrap();
     t.target.info.lock().run_id = Some(run.0);
@@ -1121,7 +1132,7 @@ async fn a_cancelled_input_request_aborts_its_inject_invalidates_the_epoch_and_o
     assert!(!t.state.hub().override_pending().0);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn bounded_duplicate_window_requires_resync_after_sixty_four_batches() {
     let t = Test::new();
     let (id, owned, _body) = t.active(None).await;
@@ -1132,13 +1143,12 @@ async fn bounded_duplicate_window_requires_resync_after_sixty_four_batches() {
         batch
     };
     for seq in 1..=65 {
-        assert_eq!(
-            t.call(None, Method::POST, &path, Some(request(seq)))
-                .await
-                .0,
-            StatusCode::OK
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        if seq == 65 {
+            // Refill one token beyond the 64-event burst without aging out the frame.
+            tokio::time::advance(Duration::from_millis(10)).await;
+        }
+        let (status, result) = t.call(None, Method::POST, &path, Some(request(seq))).await;
+        assert_eq!(status, StatusCode::OK, "batch {seq}: {result}");
     }
     let (status, result) = t.call(None, Method::POST, &path, Some(request(1))).await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -1191,6 +1201,54 @@ async fn takeover_session_binding_and_text_byte_rate_are_independent_limits() {
         .await
         .0,
         StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+/// 244-V: why a screen is missing is served under the same rule as the target
+/// list: no token = 401, a peer without screen:view = 403, nothing is leaked.
+/// The reason is a fixed code, never free text.
+#[tokio::test]
+async fn availability_follows_the_target_list_access_rule_and_carries_a_code() {
+    let t = Test::new();
+    // Nothing recorded: an empty list for the local user.
+    let (status, body) = t
+        .call(None, Method::GET, "/v1/view/availability", None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([]));
+    t.state
+        .live_view()
+        .registry
+        .note_unavailable(live_view::TargetUnavailable {
+            kind: live_view::TargetKind::Desktop,
+            host_id: "local".into(),
+            reason: live_view::Reason::Unavailable,
+            code: live_view::UnavailableCode::DesktopOff,
+        });
+    let (status, body) = t
+        .call(None, Method::GET, "/v1/view/availability", None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body[0]["kind"], "desktop");
+    assert_eq!(body[0]["reason"], "unavailable");
+    assert_eq!(body[0]["code"], "desktop_off");
+    assert!(
+        body[0].get("detail").is_none(),
+        "no free text on the wire: {body}"
+    );
+    // A granted peer reads it; an ungranted one is refused like for the targets.
+    assert_eq!(
+        t.call(Some("alice"), Method::GET, "/v1/view/availability", None)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    t.auto_grant.store(false, Ordering::SeqCst);
+    assert_eq!(
+        t.call(Some("bob"), Method::GET, "/v1/view/availability", None)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
     );
 }
 
@@ -1979,6 +2037,7 @@ fn alice_actor() -> Actor {
         key: "peer:alice".into(),
         recovery: true,
         local: false,
+        admin: false,
     }
 }
 
@@ -2570,7 +2629,7 @@ async fn a_queued_batch_is_validated_again_after_the_lock() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_stop_between_the_validation_and_the_first_event_injects_nothing() {
     let t = Test::new();
     let (id, owned, _body) = t.active(Some("alice")).await;
@@ -3768,6 +3827,7 @@ async fn a_revoked_input_grant_stops_applying_while_the_executor_is_busy() {
         key: "peer:alice".into(),
         recovery: false,
         local: false,
+        admin: false,
     };
     assert!(live.allowed(&peer, true));
     let busy = live.executor.lock().await; // a long input batch holds it
@@ -3944,7 +4004,7 @@ async fn a_peers_own_pause_stays_clearable_by_a_granted_peer_and_the_bit_is_pers
 }
 
 // ---- audit2 F3: owed work never touches an active takeover
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn owed_reset_and_audit_work_never_touches_an_active_takeover() {
     let t = Test::new();
     let (_id, _owned, _body) = t.active(Some("alice")).await;
@@ -3970,7 +4030,7 @@ async fn owed_reset_and_audit_work_never_touches_an_active_takeover() {
 }
 
 // ---- R7-7: a failed reset after a partial injection is retried
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_reset_that_failed_after_a_partial_injection_is_retried_by_the_heartbeat() {
     let t = Test::new();
     let (id, owned, _body) = t.active(Some("alice")).await;
@@ -4209,4 +4269,521 @@ async fn one_rejected_takeover_counts_as_one_denial() {
         "the handler and the ingress shared one request: {:?}",
         window.1
     );
+}
+
+#[tokio::test]
+async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geometry_is_stale() {
+    use desktop_api::live_view::{
+        CaptureDriver, CaptureFailure, CapturedRawInfo, DesktopViewTarget, DesktopViewTargetConfig,
+        GeometrySnapshot, InputDriver, LiveViewOptions, PixelFormat, PixelRect,
+    };
+
+    // Deterministic freeze of the display worker: the first capture of the new geometry passes
+    // (it publishes revision 2), every later one parks until released, so no further frame
+    // publication can reach the daemon's frame task while the stale batch is exercised.
+    struct CaptureGate {
+        new_geometry_captures: AtomicUsize,
+        parked: AtomicBool,
+        release: AtomicBool,
+    }
+    struct ReleaseGateOnDrop(Arc<CaptureGate>);
+    impl Drop for ReleaseGateOnDrop {
+        fn drop(&mut self) {
+            self.0.release.store(true, Ordering::SeqCst);
+        }
+    }
+    struct AbortOnDrop(tokio::task::JoinHandle<()>);
+    impl Drop for AbortOnDrop {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    async fn wait_for(what: &'static str, cond: &dyn Fn() -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while !cond() {
+            assert!(std::time::Instant::now() < deadline, "timed out: {what}");
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+
+    struct MockDesktopCapture {
+        geom: Arc<Mutex<GeometrySnapshot>>,
+        gate: Arc<CaptureGate>,
+    }
+    impl CaptureDriver for MockDesktopCapture {
+        fn capture(&mut self, raw_buf: &mut Vec<u8>) -> Result<CapturedRawInfo, CaptureFailure> {
+            let geom = *self.geom.lock();
+            if geom.display_token == 2
+                && self
+                    .gate
+                    .new_geometry_captures
+                    .fetch_add(1, Ordering::SeqCst)
+                    >= 1
+            {
+                self.gate.parked.store(true, Ordering::SeqCst);
+                while !self.gate.release.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                self.gate.parked.store(false, Ordering::SeqCst);
+            }
+            let stride = usize::try_from(geom.rect.width).unwrap() * 4;
+            raw_buf.resize(stride * usize::try_from(geom.rect.height).unwrap(), 0x7f);
+            Ok(CapturedRawInfo {
+                geometry: geom,
+                format: PixelFormat::Bgra32,
+                stride_bytes: stride,
+            })
+        }
+    }
+    struct MockDesktopInput {
+        injected_calls: Arc<AtomicUsize>,
+    }
+    impl InputDriver for MockDesktopInput {
+        fn inject(
+            &mut self,
+            _event: &InputEvent,
+            _source_rect: SourceRect,
+            _virtual_rect: PixelRect,
+            _cancelled: &AtomicBool,
+        ) -> Result<(), ViewError> {
+            self.injected_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn release_all(&mut self) -> Result<(), ViewError> {
+            Ok(())
+        }
+    }
+
+    let geom_1 = GeometrySnapshot {
+        rect: PixelRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        },
+        virtual_rect: PixelRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        },
+        dpi: 96,
+        display_token: 1,
+    };
+    let geom_2 = GeometrySnapshot {
+        rect: PixelRect {
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 720,
+        },
+        virtual_rect: PixelRect {
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 720,
+        },
+        dpi: 96,
+        display_token: 2,
+    };
+
+    let current_geom = Arc::new(Mutex::new(geom_1));
+    let injected_calls = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(CaptureGate {
+        new_geometry_captures: AtomicUsize::new(0),
+        parked: AtomicBool::new(false),
+        release: AtomicBool::new(false),
+    });
+    let _release_gate = ReleaseGateOnDrop(Arc::clone(&gate));
+    let desktop_target = Arc::new(DesktopViewTarget::new(DesktopViewTargetConfig {
+        options: LiveViewOptions::new("hermetic-desktop"),
+        initial_geometry: geom_1,
+        capture_factory: {
+            let geom = Arc::clone(&current_geom);
+            let gate = Arc::clone(&gate);
+            Arc::new(move |_| {
+                Ok(Box::new(MockDesktopCapture {
+                    geom: Arc::clone(&geom),
+                    gate: Arc::clone(&gate),
+                }))
+            })
+        },
+        probe: Arc::new(|_| Ok(())),
+        input_factory: Some({
+            let injected_calls = Arc::clone(&injected_calls);
+            Arc::new(move || {
+                Ok(Box::new(MockDesktopInput {
+                    injected_calls: Arc::clone(&injected_calls),
+                }))
+            })
+        }),
+        input_reason: None,
+    }));
+
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(storage::Storage::open(dir.path()).unwrap());
+    let agent = agent_core::AgentLoop::new(
+        storage.clone(),
+        tool_registry::ToolRegistry::new(),
+        agent_core::Providers::single(Arc::new(crate::fake::FakeProvider)),
+        agent_core::LoopConfig::default(),
+    );
+    let state = AppState::new(agent, storage, crate::DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
+    state.live_view().registry.register(desktop_target.clone());
+    let t = Test {
+        state,
+        target: Arc::new(Target::new()),
+        dir: Arc::new(dir),
+        auto_grant: AtomicBool::new(true),
+    };
+
+    let target_id = desktop_target.info().target_id;
+    let (status, val) = t
+        .call(
+            None,
+            Method::POST,
+            "/v1/view/sessions",
+            Some(json!({
+                "target_id": target_id,
+                "profile": "watch",
+                "max_width": 960,
+                "max_height": 600,
+                "codecs": ["jpeg"],
+                "client_id": Uuid::now_v7()
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{val}");
+    let session_id = Uuid::parse_str(val["session_id"].as_str().unwrap()).unwrap();
+
+    let response = t
+        .response(
+            None,
+            Method::GET,
+            &format!("/v1/view/sessions/{session_id}/frames"),
+            None,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    // A background consumer keeps the frame stream alive (the producer gives up on a body nobody
+    // reads for 2s) and every wait below is a bounded poll on state, never a fixed sleep.
+    let mut body = response.into_body();
+    let drainer = tokio::spawn(async move { while body.frame().await.is_some() {} });
+    let _drainer = AbortOnDrop(drainer);
+    let geometry_of = |t: &Test| {
+        t.state
+            .live_view()
+            .sessions
+            .lock()
+            .get(&session_id)
+            .and_then(|s| s.geometry)
+    };
+    wait_for("first frame stored", &|| {
+        geometry_of(&t).is_some_and(|(r, _, _)| r == 1)
+    })
+    .await;
+
+    let (status, v) = t
+        .call(
+            None,
+            Method::POST,
+            "/v1/control/takeover",
+            Some(json!({"session_id": session_id, "request_id": Uuid::now_v7()})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{v}");
+    for _ in 0..100 {
+        if t.state
+            .hub()
+            .takeover()
+            .is_some_and(|tk| tk.info.state == ViewState::Active)
+        {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let takeover = t.state.hub().takeover().unwrap().info;
+    assert_eq!(takeover.state, ViewState::Active);
+
+    // Legacy revision-less `InputSink::inject` must refuse positional clicks by default on desktop targets.
+    assert_eq!(
+        desktop_target
+            .input_sink()
+            .unwrap()
+            .inject(&InputEvent::Pointer {
+                phase: PointerPhase::Down,
+                x: 0.5,
+                y: 0.5,
+                button: Some(Button::Left),
+                buttons: 1,
+                modifiers: vec![],
+            })
+            .await,
+        Err(ViewError::Unavailable)
+    );
+
+    // Advance the display to revision 2 and let the frame task store it, then park the display
+    // worker inside its next capture: from here on no frame can be published, so the frame task
+    // can never refresh the daemon's session geometry again.
+    *current_geom.lock() = geom_2;
+    desktop_target.notify_desktop_action();
+    wait_for("backend at revision 2", &|| {
+        desktop_target.geometry_revision() == 2
+    })
+    .await;
+    wait_for("frame task stored revision 2", &|| {
+        geometry_of(&t).is_some_and(|(r, _, _)| r == 2)
+    })
+    .await;
+    desktop_target.notify_desktop_action();
+    wait_for("display worker parked", &|| {
+        gate.parked.load(Ordering::SeqCst)
+    })
+    .await;
+    // Make the daemon's per-session snapshot the stale revision-1 frame the client still shows.
+    // It is fresh in time (so the daemon's own freshness check passes) but stale in value, which
+    // is exactly the window in which only the backend's revision check can stop the click.
+    {
+        let mut sessions = t.state.live_view().sessions.lock();
+        let session = sessions.get_mut(&session_id).unwrap();
+        session.geometry = Some((1, 1, tokio::time::Instant::now()));
+    }
+    assert_eq!(desktop_target.geometry_revision(), 2);
+
+    let stale_batch = json!({
+        "v": 1,
+        "takeover_id": takeover.id,
+        "control_epoch": takeover.control_epoch,
+        "generation": 1,
+        "geometry_revision": 1,
+        "first_seq": 1,
+        "events": [{
+            "type": "pointer",
+            "phase": "down",
+            "x": 0.5,
+            "y": 0.5,
+            "button": "left",
+            "buttons": 1,
+            "modifiers": []
+        }]
+    });
+    let (status, res) = t
+        .call(
+            None,
+            Method::POST,
+            &format!("/v1/view/sessions/{session_id}/input"),
+            Some(stale_batch),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["applied_through"], 0);
+    assert_eq!(res["state"], "paused");
+    assert_eq!(
+        injected_calls.load(Ordering::SeqCst),
+        0,
+        "stale revision 1 click must not be injected after display changed to revision 2"
+    );
+
+    // Now let the display worker run again so the frame task refreshes the session to revision 2,
+    // and verify a batch computed against revision 2 succeeds through the same daemon path.
+    let before_release = tokio::time::Instant::now();
+    gate.release.store(true, Ordering::SeqCst);
+    desktop_target.notify_desktop_action();
+    wait_for("session refreshed to revision 2", &|| {
+        geometry_of(&t).is_some_and(|(r, _, at)| r == 2 && at >= before_release)
+    })
+    .await;
+    let (status, v) = t
+        .call(
+            None,
+            Method::POST,
+            "/v1/control/takeover",
+            Some(json!({
+                "session_id": session_id,
+                "request_id": Uuid::now_v7(),
+                "reacquire_takeover_id": takeover.id
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{v}");
+    for _ in 0..100 {
+        if t.state
+            .hub()
+            .takeover()
+            .is_some_and(|tk| tk.info.state == ViewState::Active)
+        {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let takeover2 = t.state.hub().takeover().unwrap().info;
+    let fresh_batch = json!({
+        "v": 1,
+        "takeover_id": takeover2.id,
+        "control_epoch": takeover2.control_epoch,
+        "generation": 1,
+        "geometry_revision": 2,
+        "first_seq": 1,
+        "events": [{
+            "type": "pointer",
+            "phase": "down",
+            "x": 0.5,
+            "y": 0.5,
+            "button": "left",
+            "buttons": 1,
+            "modifiers": []
+        }]
+    });
+    let (status, res2) = t
+        .call(
+            None,
+            Method::POST,
+            &format!("/v1/view/sessions/{session_id}/input"),
+            Some(fresh_batch),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res2}");
+    assert_eq!(res2["applied_through"], 1);
+    assert_eq!(res2["state"], "active");
+    assert_eq!(injected_calls.load(Ordering::SeqCst), 1);
+}
+
+fn view_actor(key: &str, admin: bool) -> Actor {
+    Actor {
+        key: format!("peer:{key}"),
+        recovery: true,
+        local: false,
+        admin,
+    }
+}
+
+#[tokio::test]
+async fn the_paired_admin_desktop_needs_no_manual_screen_grant_and_the_owners_off_sticks() {
+    let t = Test::new();
+    let live = Arc::clone(t.state.live_view());
+    let (admin, other) = (view_actor("adm", true), view_actor("adm", false));
+    // Administration is the grant: view AND input, with nothing typed on the server.
+    assert!(live.allowed(&admin, false) && live.allowed(&admin, true));
+    // Any other paired device (a phone, a desktop without administration) has nothing.
+    assert!(!live.allowed(&other, false));
+    // The host's owner can still switch it off (revocable), and a restart keeps that "off".
+    grant(&t, "adm", false, false).await;
+    assert!(!live.allowed(&admin, false));
+    let restarted = t.restarted();
+    restarted.state.load_screen_privileges().await;
+    assert!(!restarted.state.live_view().allowed(&admin, false));
+    // A fresh administrator grant clears the earlier "off".
+    t.state.clear_screen_denial("peer:adm");
+    assert!(live.allowed(&admin, true));
+    // A view-only choice made on the host is honoured as well.
+    grant(&t, "adm", true, false).await;
+    assert!(live.allowed(&admin, false) && !live.allowed(&admin, true));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_host_captures_nothing_without_a_session_and_ends_a_viewer_that_went_idle() {
+    let t = Test::new();
+    let frames = |id: Uuid| format!("/v1/view/sessions/{id}/frames");
+    let status = |t: &Test| {
+        let t = t.state.clone();
+        async move {
+            let req = Request::builder()
+                .uri("/v1/view/status")
+                .header("host", "localhost")
+                .header("authorization", format!("Bearer {TOKEN}"))
+                .body(Body::empty())
+                .unwrap();
+            let r = crate::router(t).oneshot(req).await.unwrap();
+            let bytes = r.into_body().collect().await.unwrap().to_bytes();
+            serde_json::from_slice::<Value>(&bytes).unwrap()["state"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        }
+    };
+    // Reading targets and status never starts a capture.
+    assert_eq!(
+        t.call(None, Method::GET, "/v1/view/targets", None).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(status(&t).await, "idle");
+    assert_eq!(t.target.source.subscribers(), 0);
+    // A live session captures; a heartbeat that says "hidden/unfocused" keeps it alive but is no
+    // sign of life, so the idle limit (3 minutes) ends it and capture stops with it.
+    let id = t.session(None).await;
+    let _body = t
+        .response(None, Method::GET, &frames(id), None)
+        .await
+        .into_body();
+    tokio::task::yield_now().await;
+    assert_eq!(t.target.source.subscribers(), 1);
+    assert_eq!(status(&t).await, "live");
+    for _ in 0..8 {
+        tokio::time::advance(Duration::from_secs(25)).await;
+        tokio::task::yield_now().await;
+        let _ = t
+            .call(
+                None,
+                Method::PUT,
+                &format!("/v1/view/sessions/{id}/heartbeat"),
+                Some(json!({"active": false})),
+            )
+            .await;
+    }
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        t.target.source.subscribers(),
+        0,
+        "idle viewer must stop capture"
+    );
+    assert_eq!(status(&t).await, "paused_idle");
+    // The hard cap ends even an attentive viewer.
+    let id = t.session(None).await;
+    assert_eq!(status(&t).await, "starting");
+    for _ in 0..75 {
+        tokio::time::advance(Duration::from_secs(25)).await;
+        tokio::task::yield_now().await;
+        let _ = t
+            .call(
+                None,
+                Method::PUT,
+                &format!("/v1/view/sessions/{id}/heartbeat"),
+                Some(json!({})),
+            )
+            .await;
+    }
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert!(t.state.live_view().sessions.lock().is_empty());
+    assert_eq!(status(&t).await, "paused_idle");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_thumbnail_is_one_captured_frame_then_served_from_the_cache_without_a_session() {
+    let t = Test::new();
+    let path = format!("/v1/view/targets/{}/thumbnail", t.target.info().target_id);
+    let (first, ()) = tokio::join!(t.response(None, Method::GET, &path, None), async {
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+            if t.target.source.subscribers() > 0 {
+                break;
+            }
+        }
+        t.target.frame(1, 1);
+    });
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(first.headers()["content-type"], "image/jpeg");
+    let bytes = first.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&bytes[..], PIXEL_SECRET);
+    // The capture ended with the request: no session, no subscriber.
+    assert_eq!(t.target.source.subscribers(), 0);
+    assert!(t.state.live_view().sessions.lock().is_empty());
+    // A second look within the interval is the same image, with no new capture.
+    let again = t.response(None, Method::GET, &path, None).await;
+    assert_eq!(again.status(), StatusCode::OK);
+    assert_eq!(t.target.source.subscribers(), 0);
 }

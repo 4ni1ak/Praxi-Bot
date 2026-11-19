@@ -7,11 +7,10 @@ reachable only from the machine itself.
 
 > **Status.** The daemon (`bot serve`) and the Telegram channel work on Linux.
 > The node-agent (`bot-node`) and the iroh peer network are **experimental**:
-> the core side is not connected to the daemon yet, and the Linux desktop
-> backend (`desktop-linux`) has no implementation yet, so `bot-node run`
-> currently refuses to start on Linux. Xvfb and Chromium are installed for the
-> planned desktop and browser automation, not because every tool already uses
-> them.
+> the Linux desktop backend (`desktop-linux`, X11 with AT-SPI2) exists, so
+> `bot-node run` can serve a display on Linux, but the Linux node path has not
+> been verified end to end. Xvfb and Chromium are installed for desktop and
+> browser automation, not because every tool already uses them.
 
 > **Releasing (maintainers).** Pushing a `v*` tag does **not** publish
 > anything. Publishing needs a manual dispatch of **Linux Server Packages** on
@@ -135,12 +134,18 @@ options. Missing, corrupt, or mismatched provenance/root material stops the
 operation before installation.
 
 Other options: `--port`, `--display`, `--screen`, `--bundle`, `--sha256`,
-`--skip-packages`, `--no-start`, `--with-desktop`, `--without-desktop`.
+`--skip-packages`, `--no-start`, `--with-desktop`, `--with-desktop-session`,
+`--with-session-apps`, `--without-session-apps`, `--without-desktop-session`,
+`--desktop-session <none|xfce>`, `--without-desktop`.
 Re-running upgrades the binaries and preserves `/var/lib/praxi`,
 `/etc/praxi/praxi.env`, and `/etc/praxi/praxi-node.env`. A custom `BOT_PORT` stays
-unless `--port` is supplied. An existing Xvfb unit and `DISPLAY` stay unless
-`--without-desktop` is supplied. On an online host, `--with-desktop` installs
-or refreshes Xvfb and Chromium.
+unless `--port` is supplied. Existing `praxi-xvfb` / `praxi-desktop` units,
+`-screen 0` geometry, and `DISPLAY` stay unless `--screen`, `--display`,
+`--without-desktop-session`, or `--without-desktop` is supplied (and a bare-Xvfb
+host keeps bare Xvfb unless `--with-desktop-session` is passed). On an online
+host, `--with-desktop` installs or refreshes Xvfb and Chromium;
+`--with-desktop-session` adds a minimal Xfce desktop session on top of Xvfb
+(`1280x800x24` on a fresh desktop setup, or preserving existing Xvfb geometry).
 
 ### Release administrator setup and dry run
 
@@ -191,19 +196,33 @@ The script:
   display is in use. That file does not contain `BOT_SECRETS_PASSPHRASE`;
 - installs `praxi.service` (`bot serve`, 127.0.0.1 only) and enables it, plus
   `praxi-node.service` (not enabled, see below);
-- with `--with-desktop`, installs `praxi-xvfb.service` (virtual display `:99`)
-  and a non-snap Chromium browser (source selection below). Prepares the root-owned,
-  mode 1777 X11 socket directory inside the shared private `/tmp` before Xvfb starts. A later run keeps that unit until `--without-desktop`;
-- applies systemd hardening: `NoNewPrivileges`, `ProtectSystem=strict` with
-  `ReadWritePaths=/var/lib/praxi`, `ProtectHome`, `PrivateTmp`,
-  `PrivateDevices`, kernel and cgroup protections;
+- with `--with-desktop`, installs `praxi-xvfb.service` (virtual display `:99`,
+  `-nolisten tcp`, private `0600` Xauthority in `/var/lib/praxi/.Xauthority`, no
+  `-fbdir` frame files) and a non-snap Chromium browser (source selection below).
+  Prepares the root-owned, mode 1777 X11 socket directory inside the shared
+  private `/tmp` before Xvfb starts. A later run keeps that unit until `--without-desktop`;
+- with `--with-desktop-session`, also installs minimal Xfce (`xfwm4 --compositor=off`,
+  `xfce4-panel` with Applications menu, `xfdesktop`, private `praxi` D-Bus
+  session bus + AT-SPI2) in `praxi-desktop.service`, initially `1280x800x24` on
+  fresh desktop installs (preserving existing geometry on upgrades), with
+  screen-lock/power/printer autostarts disabled and no unconditional browser
+  autostart (`xfce4-terminal` and `thunar` are hidden and omitted by default
+  unless `--with-session-apps` is explicitly passed);
+- when desktop mode is active, applies `praxi.slice` (`CPUQuota=100%`,
+  `MemoryHigh=3G`, `MemoryMax=4G`) across `praxi.service`,
+  `praxi-node.service`, `praxi-xvfb.service`, `praxi-desktop.service`, browser
+  children, and applications launched from the menu (hosts without desktop mode
+  do not receive `praxi.slice` limits), plus systemd hardening: `NoNewPrivileges`,
+  `ProtectSystem=strict` with `ReadWritePaths=/var/lib/praxi`, `ProtectHome`,
+  `PrivateTmp`, `PrivateDevices`, kernel and cgroup protections;
 - adds wrapper commands `praxi` (the `bot` CLI, using `praxi.env`) and
   `praxi-node` (using `praxi-node.env`) that run as the `praxi` user.
 
 The installer waits for two consecutive active-unit and valid loopback health
 checks, with at most 30 attempts (each HTTP request has a two-second timeout).
-Failure prints the last 50 service journal entries and exits nonzero, after
-attempting to restore a previously active node. `--no-start` installs/enables
+Failure prints the last 50 service journal entries, rolls back binaries, units,
+wrappers, and environment files to the previous working installation, restarts
+any previously active services, and exits nonzero. `--no-start` installs/enables
 files only and explicitly skips startup and readiness.
 
 A fresh daemon stays running with HTTP 200 health `status: "setup_required"`.
@@ -232,13 +251,49 @@ ssh -L 47821:127.0.0.1:47821 user@your-server
 The API token lives in `/var/lib/praxi` (readable only by `praxi`); clients on
 the tunnel authenticate with it like on a local install.
 
+### Using the host from the desktop app
+
+The desktop app can show the host's screen (the Xvfb desktop and the bot's
+browser), take it over and hand it back, and chat with bots that run **on the
+host**. It needs no extra port: the app's own daemon opens an outbound iroh
+channel to the host, and every request is checked by the host's peer guard as a
+paired *Desktop*.
+
+1. The host must run as a host: `bot serve --host` (this also turns peer
+   networking on). An installed `praxi.service` runs `bot serve`; override it
+   with a drop-in (`sudo systemctl edit praxi`):
+
+   ```ini
+   [Service]
+   ExecStart=
+   ExecStart=/opt/praxi/bin/bot serve --host
+   ```
+
+2. On the host, create a one-time pairing ticket for the desktop and copy it:
+   `praxi host invite --role desktop`
+3. In the app, open the computer selector in the header, **Add a host…**, and
+   paste the ticket. The selector then lists the host next to "This computer".
+4. Pairing does not allow screen access by itself. On the host, let the paired
+   desktop watch and take over (kept across restarts, local user only):
+   `praxi host screen --all-desktops` (add `--view-only` for watching only,
+   `--revoke` to remove). `praxi host devices` lists device keys.
+
+On a host, a paired Desktop can operate bots, chats and runs and use the screen
+but cannot change secrets or provider keys, MCP servers, skills, email or web
+search credentials, Telegram pairing, or import/hand over state; do those on the
+host itself. Until the host has a model key of its own, the app says "this host
+has no model key yet": the screen and bot management work, chats cannot be
+answered. Put the key on the host with `praxi setup` (see section 3).
+
 ### Letting another core control this machine (experimental)
 
-This is **not functional on Linux yet**. `bot-node run` exits because there is
-no Linux desktop backend, and enabling `praxi-node.service` would restart it
-every 10 seconds. Leave that unit disabled.
+`bot-node run` needs a reachable X11 display (a physical one or the Xvfb
+display from `--with-desktop`; Wayland is refused) and at least one paired
+core. Without them it exits, and `praxi-node.service` would restart it every
+10 seconds, so the unit is installed but not enabled. Pair first, then enable
+it.
 
-When the backend exists, `bot-node` connects **outward** over iroh (QUIC with
+`bot-node` connects **outward** over iroh (QUIC with
 relay fallback), so no inbound port is needed. On the machine that should be
 controlled:
 
@@ -248,7 +303,7 @@ sudo praxi-node join '<bot-pair:...>'     # one-time ticket from the core
 
 The ticket is single-use; afterwards the devices use stored keys. See ADR-0006
 in the design documents for the model. Enable `praxi-node.service` only after
-`bot-node run` works on Linux.
+`bot-node join` has succeeded and `bot-node run` starts by hand.
 
 ## 4. Firewall notes (Oracle Cloud)
 
@@ -304,7 +359,9 @@ compute their hashes using `sha256sum`, and update `version`,
 `install_cft`.
 
 Fedora/RHEL uses `chromium` from the administrator's enabled RPM repos, without
-weak dependencies; absence is an installation error. No PPA or snap is added.
+weak dependencies. When those repos have no `chromium` (Oracle Linux, for
+example), the installer falls back to the same pinned Chrome for Testing archive
+as on Ubuntu, for either CPU. No PPA or snap is added.
 An xtradeb PPA would add third-party trust and isn't needed with the official
 ARM64 archive. Playwright also supports ARM64, but adds a separate runtime and
 browser lifecycle that this installer doesn't need.
@@ -315,6 +372,25 @@ unsupported and produce a clear diagnostic. With `--skip-packages`, provide a
 working non-snap browser yourself. `BOT_BROWSER_PATH` overrides discovery;
 `PRAXI_BROWSER_PATH` remains a compatible fallback. An invalid override fails
 instead of silently choosing a different browser.
+
+Re-running the installer (`bot host repair`, upgrades) is idempotent for the
+browser: a working `/opt/praxi-browser` at the pinned version is kept and not
+downloaded again, while the shared libraries, AppArmor profile and fonts are
+re-checked. After installing, the installer checks that the browser starts and
+has all its shared libraries, and fails with the missing names if not. If the
+download fails (no route to `storage.googleapis.com`, a proxy, a full disk), the
+installer stops with the reason and these next steps: check the network from the
+server, re-run the same command (it resumes), or install a non-snap Chrome or
+Chromium yourself, set `BOT_BROWSER_PATH`, and re-run with `--skip-packages`.
+`bot host add`/`repair` reports a **Browser for the bot's computer** health
+row (warning when none is installed) next to the virtual-display row.
+
+**Fonts.** With `--with-desktop` the installer also installs
+`fonts-noto-color-emoji` and `fonts-noto-cjk` (Fedora/RHEL:
+`google-noto-emoji-color-fonts`, `google-noto-sans-cjk-ttc-fonts`) next to the
+Noto and Liberation families, so Turkish, Japanese/Chinese/Korean text and emoji
+render in the browser and in screenshots instead of empty boxes. A font package
+that is unavailable or fails to install is a warning, not an install failure.
 
 The browser needs **libcups**, the client library; it does not need a print
 server. Packages use `--no-install-recommends`. The installer disables/stops
@@ -334,33 +410,184 @@ Ubuntu 24.04's AppArmor user-namespace restriction is accommodated by a named
 following Ubuntu's Chrome profile. The Chromium sandbox and systemd hardening
 remain enabled; no `--no-sandbox` or broad unit relaxation is applied.
 
+### Desktop session, application menu, and browser lifecycle
+
+Xvfb alone does **not** supply a usable desktop (no window manager, panel, or
+application launcher). Adding `--with-desktop-session` (or running
+`sudo bash scripts/linux/setup-headless.sh --system`) provisions a minimal Xfce
+session (`praxi-desktop.service`) on Xvfb (`1280x800x24` on fresh desktop
+installs, or preserving the existing `praxi-xvfb.service` geometry unless
+`--screen` is passed), running as the same unprivileged `praxi` user:
+
+- **Application menu usage & security posture:** During live-view takeover, open
+  the **Web Browser** icon on the desktop, or the top-left **Applications** menu on
+  `xfce4-panel`, to launch it (manual launch; it is never autostarted). `xfce4-terminal` and `thunar` are **not** installed or
+  exposed in the menu by default; pass `--with-session-apps` if you explicitly
+  need them, or `--without-session-apps` to hide them again. Note that
+  `--without-session-apps` only writes `Hidden=true` `.desktop` overrides and
+  omits them from `helpers.rc`—it does **not** uninstall `xfce4-terminal` or
+  `thunar` if they were already installed by an earlier run or the base OS (their
+  binaries stay on disk until removed explicitly with `apt-get remove` / `dnf remove`).
+  All launched applications inherit `praxi.slice` containment and run as the `praxi` user
+  with `DISPLAY`, `XAUTHORITY`, and `DBUS_SESSION_BUS_ADDRESS`. Note that while
+  `praxi-desktop.service` does not place `BOT_SECRETS_PASSPHRASE` in the session
+  environment, any application running as `praxi` has filesystem read access to
+  `/etc/praxi/praxi.env` (`0640 root:praxi`, containing `BOT_SECRETS_PASSPHRASE`)
+  and read/write access to `/var/lib/praxi`. Exposing a terminal or file manager
+  with `--with-session-apps` allows a live-view operator—or an unguarded UI
+  click—to read those files and run commands as `praxi` outside the daemon's
+  shell permission engine.
+- **Source & display limitations:** X11/Xvfb only (`XDG_SESSION_TYPE=x11`);
+  Wayland is unsupported. Only one display owner is allowed per display (`:99`
+  is owned by `praxi-xvfb.service`). No VNC, RDP, X11 TCP (`-nolisten tcp`),
+  `xhost +`, `-fbdir` framebuffer dump, or default frame disk storage is enabled,
+  and no new listening ports are opened. Keeping a legacy bare-Xvfb unit without
+  `-auth` omits Xauthority authentication and leaves Xvfb's abstract Unix socket
+  reachable by other local accounts; pass `--with-desktop` or
+  `--with-desktop-session` to upgrade it to private `0600` Xauthority.
+- **Lazy, idle-closed browser policy:** Chromium is never autostarted by Xfce
+  or systemd. Managed `CdpDriver` instances default in the daemon (`bot serve`)
+  to a **120 s** idle shutdown (`[limits] browser_idle_seconds = 120` in
+  `/var/lib/praxi/host.toml`) and a RAM-based concurrency cap (`1` run below
+  8 GiB RAM, `2` runs at 8 GiB+ RAM, or `[limits] max_computer_runs` in
+  `host.toml`). The installer does not pin or overwrite
+  `BOT_MAX_COMPUTER_RUNS` or `BOT_BROWSER_IDLE_SECONDS` in `/etc/praxi/praxi.env`
+  so `host.toml` and daemon defaults remain effective; setting those env vars in
+  `praxi.env` overrides `host.toml`. Watch streams do not launch or pin the
+  browser; an active bot computer run or active takeover pins it. Named browser
+  profiles persist under `/var/lib/praxi/browsers` and are preserved across idle
+  shutdown. Any browser opened manually by a human from the Applications menu is
+  outside `CdpDriver` idle shutdown and still counts toward `praxi.slice` RAM.
+  *(Note: `BrowserSettings::isolated` defaults `headless: true` unless overridden
+  for headed takeover/computer-use targets.)*
+
 ### Small-host resource check
 
 Production hosts run prebuilt release tarballs; don't compile Rust on the
 1-core/6-GB (or 2-core/12-GB) machine. Keep Chromium lazy: this installer never
 starts a persistent browser. The doctor probe closes its browser after checking.
-Configurable idle shutdown/concurrency limits belong to task 054 and are not
-implemented by this packaging fix.
+Plan targets are ≤500 MiB for display + session idle (the ~300 MB Xfce figure is
+a planning estimate, not a guarantee), **<2.5 GB** (`2,500,000,000` bytes /
+~2.33 GiB) peak for the complete Praxi process tree, and ≤5% of one core for
+idle CPU. `praxi.slice` enforces `CPUQuota=100%`, `MemoryHigh=3G`,
+`MemoryMax=4G` as containment, not as a substitute for measuring real RAM.
 
-For a repeatable check, record `MemoryCurrent` and `MemoryPeak` from
-`sudo systemctl show praxi praxi-xvfb -p MemoryCurrent -p MemoryPeak` while idle,
-during a representative chat turn, and with one browser tab open. When running
-`sudo praxi doctor`, sample the corresponding `praxi-doctor-*.service` too
-(`systemctl list-units 'praxi-doctor-*'`). These cgroup counters include browser
-children; `/proc/<pid>/status` `VmRSS`/`VmHWM` can separately record process RSS.
-Target a combined peak below 2.5 GB, leaving room on a 6-GB host. A doctor probe
-is a short launch smoke test, not a representative chat workload measurement.
-
-## Update, logs, uninstall
+Run the repeatable measurement tool on the host (outputs text/JSON metrics only;
+never reads `/proc/<pid>/cmdline`, `/proc/<pid>/environ`, frames, titles, or
+URLs):
 
 ```sh
-sudo ./scripts/install-linux.sh --version v0.1.0 --file ./praxi-linux-aarch64.tar.gz   # update
-# an existing praxi-xvfb unit and DISPLAY are kept
-sudo ./scripts/install-linux.sh --version v0.1.0 --file ./praxi-linux-aarch64.tar.gz --without-desktop
-journalctl -u praxi -n 100
+sudo python3 scripts/linux/measure-budget.py \
+  --label desktop-idle --duration 30 --interval 0.5 \
+  --require-slice-containment --check-budget --format both
+```
+
+You can also inspect cgroup counters directly with
+`sudo systemctl show praxi.slice praxi praxi-desktop praxi-xvfb -p MemoryCurrent -p MemoryPeak -p CPUUsageNSec`.
+Note that summed process `VmRSS` double-counts shared pages across processes;
+when `praxi.slice/memory.peak` is writable (Linux 6.12+ as root),
+`measure-budget.py` resets it at the start of the window and checks the true
+kernel window peak (plus any escaped Praxi processes outside `praxi.slice`); on
+older kernels where `memory.peak` is read-only, a lifetime `memory.peak` above
+the budget fails `--check-budget` as inconclusive. Absent `praxi.slice`, zero
+observed Praxi processes, or any process escaping `praxi.slice` also fails
+`--check-budget`.
+
+### Troubleshooting desktop, Xauthority, D-Bus, and namespaces
+
+- **Stopping all Praxi services cleanly:** On systemd 249+, `praxi-xvfb.service`
+  sets `Upholds=praxi-desktop.service praxi.service`, so `sudo systemctl stop praxi`
+  will immediately be restarted while `praxi-xvfb.service` stays active. Stop
+  everything cleanly with `sudo systemctl stop praxi-xvfb.service` (which stops
+  `praxi-desktop.service` and `praxi.service` via `BindsTo=`). On older hosts
+  with systemd < 249, `Upholds=` is omitted with an installer warning and
+  `praxi-xvfb.service` uses an `ExecStartPost=!` uphold fallback
+  (`praxi-xvfb-uphold.sh`) to start enabled dependents in the new namespace
+  after Xvfb starts or recovers from a crash. `praxi.service`
+  uses `Wants=praxi-desktop.service` so a desktop-session failure does not block
+  the always-on daemon.
+- **Xauthority permission / auth errors (`Invalid MIT-MAGIC-COOKIE-1`):**
+  `/var/lib/praxi/.Xauthority` is created with mode `0600` owned by
+  `praxi:praxi` and reused across `praxi-xvfb.service` restarts when already
+  valid. `praxi-desktop.service` and `praxi.service` bind to `praxi-xvfb.service`
+  (`BindsTo=`/`After=`, with `Upholds=` on `praxi-xvfb.service`) so an
+  unexpected Xvfb exit stops dependents and brings them back cleanly. To force a
+  fresh cookie, remove `/var/lib/praxi/.Xauthority` and run
+  `sudo systemctl restart praxi-xvfb.service`.
+- **X11 socket / `PrivateTmp` namespace mismatch (`Can't open display :99`):**
+  `praxi-xvfb.service`, `praxi-desktop.service`, `praxi.service`, and
+  `praxi-node.service` must share the Xvfb mount namespace via
+  `JoinsNamespaceOf=praxi-xvfb.service` in `/etc/systemd/system/praxi*.service.d/desktop.conf`.
+  Always use `sudo praxi doctor` rather than direct `bot doctor` so the doctor
+  probe joins the same namespace and slice.
+- **D-Bus / AT-SPI2 missing (`org.a11y.Bus` or `xfconf` errors):** Verify
+  `DBUS_SESSION_BUS_ADDRESS=unix:path=/var/lib/praxi/.dbus-session` is present
+  in `/etc/praxi/praxi.env` and the mode `0600` socket
+  `/var/lib/praxi/.dbus-session` exists (`sudo systemctl status praxi-desktop.service`).
+- **XTEST / RANDR missing:** Confirm `praxi-xvfb.service` runs with
+  `+extension RANDR +extension XTEST` and `xdpyinfo -display :99` (inside the
+  service namespace) lists both extensions.
+
+## Update, logs, rollback, and uninstall
+
+```sh
+sudo ./scripts/install-linux.sh --version v0.1.0 --file ./praxi-linux-aarch64.tar.gz   # update (keeps existing desktop mode)
+sudo ./scripts/install-linux.sh --version v0.1.0 --file ./praxi-linux-aarch64.tar.gz --without-desktop-session  # remove Xfce, keep Xvfb
+sudo ./scripts/install-linux.sh --version v0.1.0 --file ./praxi-linux-aarch64.tar.gz --without-desktop          # remove Xfce and Xvfb
+journalctl -u praxi -u praxi-desktop -u praxi-xvfb -n 100
 sudo ./scripts/install-linux.sh --uninstall           # keeps data and user
 sudo ./scripts/install-linux.sh --uninstall --purge   # deletes data too
 ```
 
-If you only need a headless desktop session for development, the older
-user-level script `scripts/linux/setup-headless.sh` is still available.
+### Operating a host: logs, restart, upgrade, rollback
+
+**Logs.** The daemon logs to the journal. Start-up writes one line per step
+(`startup: <step> (+N ms)`), so a slow or stuck start shows where it stopped:
+
+```sh
+journalctl -u praxi -n 200 --no-pager
+journalctl -u praxi -u praxi-desktop -u praxi-xvfb -f
+```
+
+The API starts answering at `startup: listening`. The leadership check against
+paired devices runs afterwards in the background and logs
+`startup: leader components started in background`; scheduled work and channels
+start only once it has finished.
+
+**Restart.** Services restart only when you or the installer do it on purpose:
+
+```sh
+sudo systemctl restart praxi.service
+systemctl is-active praxi.service praxi-xvfb.service praxi-desktop.service
+```
+
+The installers set `NEEDRESTART_MODE=l` and `DEBIAN_FRONTEND=noninteractive`
+for their own `apt` calls, so Ubuntu's `needrestart` hook never restarts Praxi
+behind your back. For your own `apt upgrade` runs on the host, set
+`NEEDRESTART_MODE=l` (or `a` only if you accept automatic restarts) the same way.
+
+**Upgrade.** Re-run the installer with the new `--version` (see above) or use
+`bot host upgrade <user@server>` from the desktop machine. Data in
+`/var/lib/praxi` is kept. The installer stops the services, swaps the files and
+starts them again; check `systemctl is-active praxi.service` afterwards.
+
+**Rollback.** If an upgrade fails after the services were stopped, the installer
+restores the previous files and units itself and says so in its output. To go
+back to an older release after a successful upgrade, install that release tag
+again with `--version <old tag>` (the same signed-archive steps as an upgrade).
+Take a copy of `/var/lib/praxi` first when you need to be able to return to its
+earlier contents, because newer versions may migrate data forward.
+
+**Is host mode active?** The provisioning checks (`bot host add` / `repair` preflight and status) read the effective unit, including a host-mode `ExecStart` that comes from a systemd drop-in. Manually: `systemctl cat praxi.service | grep ExecStart`.
+
+On source-built hosts without a signed release archive, `scripts/linux/setup-headless.sh`
+provisions or rolls back the exact same system units:
+
+```sh
+sudo bash scripts/linux/setup-headless.sh --system --display :99 --screen 1280x800x24
+sudo bash scripts/linux/setup-headless.sh --system --without-desktop-session
+sudo bash scripts/linux/setup-headless.sh --system --without-desktop
+```
+
+For user-level development sessions on a separate display (never colliding with
+`:99`), run `bash scripts/linux/setup-headless.sh --user --display :98`.

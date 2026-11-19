@@ -3,7 +3,7 @@
 //! Implements [`live_view::ViewTarget`], [`live_view::FrameSource`], and
 //! [`live_view::InputSink`] on top of [`Page`] and [`CdpClient`] using ONLY
 //! `Page.startScreencast` / `Page.screencastFrame` / `Page.screencastFrameAck` /
-//! `Page.stopScreencast` (JPEG only) and `Input.dispatchMouseEvent` /
+//! `Page.stopScreencast` and a viewport-only JPEG screenshot fallback and `Input.dispatchMouseEvent` /
 //! `Input.dispatchKeyEvent` / `Input.insertText`.
 //!
 //! # Security and scope limitation
@@ -156,6 +156,9 @@ impl ViewClock {
 /// Optional host callback invoked whenever interactive takeover starts or stops.
 pub type TakeoverPinHook = Arc<dyn Fn(bool) + Send + Sync>;
 
+/// Hook called after a target's lifecycle state changed.
+pub type ChangeHook = Arc<dyn Fn() + Send + Sync>;
+
 /// Optional listener called when a view detaches cleanly or fails.
 type StateNotify = Arc<Notify>;
 
@@ -184,6 +187,10 @@ pub struct BrowserViewConfig {
     pub stop_timeout: Duration,
     /// Optional hook wired to driver takeover pinning (e.g. `CdpDriver::set_takeover_pin`).
     pub takeover_pin: Option<TakeoverPinHook>,
+    /// Called (never under a lock, never with pixels) whenever the slot's state
+    /// changes: attached to a page, back to idle, or closed. Lets the daemon tell
+    /// an open panel to refetch its targets.
+    pub on_change: Option<ChangeHook>,
     /// Clock used for screencast scheduling windows and timestamps (defaults to real time).
     pub clock: ViewClock,
 }
@@ -202,6 +209,7 @@ impl std::fmt::Debug for BrowserViewConfig {
             .field("live_heartbeat_interval", &self.live_heartbeat_interval)
             .field("stop_timeout", &self.stop_timeout)
             .field("has_takeover_pin", &self.takeover_pin.is_some())
+            .field("has_on_change", &self.on_change.is_some())
             .field("clock", &self.clock)
             .finish()
     }
@@ -221,6 +229,7 @@ impl Default for BrowserViewConfig {
             live_heartbeat_interval: Duration::from_millis(1000),
             stop_timeout: Duration::from_millis(500),
             takeover_pin: None,
+            on_change: None,
             clock: ViewClock::System,
         }
     }
@@ -401,6 +410,8 @@ fn reconcile_dead_binding_locked(
         state.refresh_pending = false;
         state.stale = false;
         state.last_error = Some(detail.to_string());
+        // An abrupt loss (crash, tab destroyed) is reported as unavailable. A
+        // deliberate close goes through `detach_if_bound` first and is idle.
         state.lifecycle = LifecycleState::Unavailable {
             reason: Reason::Unavailable,
         };
@@ -572,6 +583,14 @@ impl AdapterCore {
                 notify.notify_one();
             }
             self.set_takeover_pin(false);
+            self.notify_changed();
+        }
+    }
+
+    /// Tell the owner the slot's state changed (outside every lock).
+    fn notify_changed(&self) {
+        if let Some(hook) = &self.config.on_change {
+            hook();
         }
     }
 
@@ -623,6 +642,7 @@ impl AdapterCore {
             notify.notify_one();
         }
         self.set_takeover_pin(false);
+        self.notify_changed();
     }
 
     fn stop_hook(self: &Arc<Self>) -> ViewStopHook {
@@ -653,6 +673,7 @@ impl AdapterCore {
                 notify.notify_one();
             }
             self.set_takeover_pin(false);
+            self.notify_changed();
         }
         binding
     }
@@ -672,6 +693,9 @@ impl AdapterCore {
             state.stale = false;
             state.last_error = None;
             state.lifecycle = LifecycleState::Idle;
+        }
+        if return_to_idle {
+            self.notify_changed();
         }
         Ok(())
     }
@@ -1007,7 +1031,27 @@ impl BrowserViewTarget {
             }
         });
         page.register_live_view_close_hook(&close_hook);
+        self.core.notify_changed();
         Ok(())
+    }
+
+    /// Return the slot to idle only if it is bound to `page`'s session. A
+    /// browser that is being closed calls this so a slot that has meanwhile
+    /// moved to another (newer) browser of the same bot is left alone.
+    ///
+    /// # Errors
+    /// Same as [`Self::detach_to_idle`].
+    pub async fn detach_if_bound(&self, page: &Page) -> Result<(), ViewError> {
+        let bound = {
+            let state = self.core.state.lock().map_err(|_| ViewError::Unavailable)?;
+            matches!(&state.lifecycle,
+                LifecycleState::Attached(b) if b.session_id == page.session_id())
+        };
+        if bound {
+            self.detach_to_idle().await
+        } else {
+            Ok(())
+        }
     }
 
     /// Deliberately retire an idle-capable browser view slot back to [`Reason::BrowserIdle`],
@@ -1078,6 +1122,7 @@ impl BrowserViewTarget {
                 notify.notify_one();
             }
             self.core.set_takeover_pin(false);
+            self.core.notify_changed();
         }
         status
     }
@@ -1158,6 +1203,7 @@ impl ViewTarget for BrowserViewTarget {
                 notify.notify_one();
             }
             self.core.set_takeover_pin(false);
+            self.core.notify_changed();
         }
         info
     }
@@ -1621,7 +1667,11 @@ impl WorkerState {
                 {
                     consider(
                         self.window_opened_at
-                            .saturating_add(self.core.config.watch_idle_grace),
+                            .saturating_add(if self.window_idle_boosted {
+                                self.core.config.new_paint_timeout
+                            } else {
+                                self.core.config.watch_idle_grace
+                            }),
                         TimerReason::WatchIdleGrace,
                     );
                 } else if !self.screencast_running
@@ -1633,13 +1683,16 @@ impl WorkerState {
             }
             Profile::Live => {
                 if self.screencast_running
-                    && !self.window_idle_boosted
                     && self.cached_frame.is_none()
                     && self.pending_refresh.is_none()
                 {
                     consider(
                         self.window_opened_at
-                            .saturating_add(self.core.config.watch_idle_grace),
+                            .saturating_add(if self.window_idle_boosted {
+                                self.core.config.new_paint_timeout
+                            } else {
+                                self.core.config.watch_idle_grace
+                            }),
                         TimerReason::WatchIdleGrace,
                     );
                 } else if self.cached_frame.is_some() && self.pending_refresh.is_none() {
@@ -1725,6 +1778,72 @@ impl WorkerState {
             }
         }
         Ok(())
+    }
+
+    async fn capture_first_frame(&mut self, cause: Cause, action_seq: Option<u64>) {
+        if self.cached_frame.is_some() {
+            return;
+        }
+        let Some(frame) = self.screenshot_frame().await else {
+            if let Ok(mut state) = self.core.state.lock() {
+                state.stale = true;
+            }
+            return;
+        };
+        self.publish_fresh(frame, cause, action_seq);
+    }
+
+    async fn screenshot_frame(&self) -> Option<DecodedScreencastFrame> {
+        // Read the visible viewport only. Keep the capture within the same
+        // dimensions and byte limits as a screencast frame.
+        let client = &self.binding.client;
+        let session = Some(self.binding.session_id.as_str());
+        let timeout = self.core.config.new_paint_timeout;
+        let layout = client
+            .send_with_timeout(session, "Page.getLayoutMetrics", json!({}), timeout)
+            .await
+            .ok()?;
+        let metadata = layout_metadata(&layout)?;
+        let width = metadata.device_width / metadata.page_scale_factor;
+        let height = metadata.device_height / metadata.page_scale_factor;
+        let scale = (f64::from(self.profile.max_width.min(1920)) / width)
+            .min(f64::from(self.profile.max_height.min(1080)) / height)
+            .min(1.0);
+        let screenshot = client
+            .send_with_timeout(
+                session,
+                "Page.captureScreenshot",
+                json!({
+                    "format": "jpeg",
+                    "quality": self.profile.quality,
+                    "captureBeyondViewport": false,
+                    "clip": {
+                        "x": metadata.scroll_offset_x,
+                        "y": metadata.scroll_offset_y,
+                        "width": width,
+                        "height": height,
+                        "scale": scale,
+                    },
+                }),
+                timeout,
+            )
+            .await
+            .ok()?;
+        let data = screenshot.get("data")?.as_str()?;
+        let (jpeg, width, height) = client
+            .decode_view_jpeg(data, self.profile.burst_bytes)
+            .ok()?;
+        if width > self.profile.max_width || height > self.profile.max_height {
+            return None;
+        }
+        Some(DecodedScreencastFrame {
+            jpeg,
+            width,
+            height,
+            // A command response carries no screencast ACK.
+            ack_session_id: 0,
+            metadata,
+        })
     }
 
     fn publish_fresh(
@@ -2147,8 +2266,17 @@ async fn handle_timer(ws: &mut WorkerState, reason: TimerReason) -> Result<(), S
             }
         }
         TimerReason::RefreshDeadline => {
-            ws.pending_refresh = None;
-            ws.publish_repeated_idle(true);
+            let action = ws.pending_refresh.take().map_or(0, |req| req.action_seq);
+            if ws.cached_frame.is_none() {
+                let (cause, seq) = if action == 0 {
+                    (Cause::Refresh, None)
+                } else {
+                    (Cause::Action, Some(action))
+                };
+                ws.capture_first_frame(cause, seq).await;
+            } else {
+                ws.publish_repeated_idle(true);
+            }
             finish_post_frame_capture(ws).await?;
         }
         TimerReason::WatchIdleGrace => {
@@ -2177,24 +2305,16 @@ async fn handle_timer(ws: &mut WorkerState, reason: TimerReason) -> Result<(), S
                             .saturating_add(ws.core.config.watch_window_interval),
                     );
                 }
-            } else if ws.profile.profile == Profile::Watch && ws.window_idle_boosted {
-                // Even `everyNthFrame = 1` yielded no frame within grace; avoid spinning Chrome.
-                if let Ok(mut state) = ws.core.state.lock() {
-                    state.stale = true;
-                }
-                ws.stop_screencast().await?;
-                ws.next_watch_tick = Some(
-                    ws.core
-                        .config
-                        .clock
-                        .now()
-                        .saturating_add(ws.core.config.watch_window_interval),
-                );
-            } else if ws.profile.profile == Profile::Live && !ws.window_idle_boosted {
+            } else if ws.window_idle_boosted {
+                ws.capture_first_frame(Cause::Idle, None).await;
+                // A static live tab keeps its screencast running for the next
+                // paint. Watch mode returns to its usual capture interval.
+                finish_post_frame_capture(ws).await?;
+                ws.window_opened_at = ws.core.config.clock.now();
+            } else {
                 ws.window_idle_boosted = true;
-                if ws.cached_frame.is_none() {
-                    ws.ensure_screencast(REFRESH_EVERY_NTH_FRAME).await?;
-                }
+                ws.ensure_screencast(REFRESH_EVERY_NTH_FRAME).await?;
+                ws.window_opened_at = ws.core.config.clock.now();
             }
         }
         TimerReason::WatchNextWindow => {
@@ -2209,6 +2329,35 @@ async fn handle_timer(ws: &mut WorkerState, reason: TimerReason) -> Result<(), S
         }
     }
     Ok(())
+}
+
+fn layout_metadata(res: &Value) -> Option<ScreencastMetadata> {
+    let vv = res
+        .get("cssVisualViewport")
+        .or_else(|| res.get("visualViewport"))?;
+    let scale = vv
+        .get("scale")
+        .and_then(Value::as_f64)
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(1.0);
+    let client_w = vv
+        .get("clientWidth")
+        .and_then(Value::as_f64)
+        .filter(|v| v.is_finite() && *v > 0.0)?;
+    let client_h = vv
+        .get("clientHeight")
+        .and_then(Value::as_f64)
+        .filter(|v| v.is_finite() && *v > 0.0)?;
+
+    Some(ScreencastMetadata {
+        offset_top: 0.0,
+        page_scale_factor: scale,
+        device_width: client_w * scale,
+        device_height: client_h * scale,
+        scroll_offset_x: vv.get("pageX").and_then(Value::as_f64).unwrap_or(0.0),
+        scroll_offset_y: vv.get("pageY").and_then(Value::as_f64).unwrap_or(0.0),
+        timestamp: None,
+    })
 }
 
 // -- InputSink ---------------------------------------------------------------------------------
@@ -2234,35 +2383,7 @@ impl BrowserInputSink {
         .await
         .map_err(|_| ViewError::Unavailable)?;
 
-        let vv = res
-            .get("cssVisualViewport")
-            .or_else(|| res.get("visualViewport"))
-            .ok_or(ViewError::Unavailable)?;
-        let scale = vv
-            .get("scale")
-            .and_then(Value::as_f64)
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .unwrap_or(1.0);
-        let client_w = vv
-            .get("clientWidth")
-            .and_then(Value::as_f64)
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .ok_or(ViewError::Unavailable)?;
-        let client_h = vv
-            .get("clientHeight")
-            .and_then(Value::as_f64)
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .ok_or(ViewError::Unavailable)?;
-
-        let meta = ScreencastMetadata {
-            offset_top: 0.0,
-            page_scale_factor: scale,
-            device_width: client_w * scale,
-            device_height: client_h * scale,
-            scroll_offset_x: vv.get("pageX").and_then(Value::as_f64).unwrap_or(0.0),
-            scroll_offset_y: vv.get("pageY").and_then(Value::as_f64).unwrap_or(0.0),
-            timestamp: None,
-        };
+        let meta = layout_metadata(&res).ok_or(ViewError::Unavailable)?;
         Ok(self.core.update_geometry(meta))
     }
 

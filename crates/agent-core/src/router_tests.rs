@@ -34,6 +34,7 @@ use crate::{AgentLoop, Delivery, LoopConfig, MessageMode, Providers, StreamItem}
 
 enum Rep {
     Text(&'static str),
+    TextWithUsage(&'static str),
     Calls(Vec<(&'static str, &'static str)>),
     Hang,
 }
@@ -89,6 +90,19 @@ impl ChatProvider for Script {
         match rep {
             Some(Rep::Text(t)) => Ok(futures::stream::iter(vec![
                 Ok(ChatChunk::TextDelta(t.to_owned())),
+                Ok(ChatChunk::Done {
+                    finish_reason: FinishReason::Stop,
+                }),
+            ])
+            .boxed()),
+            Some(Rep::TextWithUsage(t)) => Ok(futures::stream::iter(vec![
+                Ok(ChatChunk::TextDelta(t.to_owned())),
+                Ok(ChatChunk::Usage(provider_catalog::Usage {
+                    prompt_tokens: 7,
+                    completion_tokens: 3,
+                    cached_tokens: Some(1),
+                    cache_write_tokens: None,
+                })),
                 Ok(ChatChunk::Done {
                     finish_reason: FinishReason::Stop,
                 }),
@@ -308,6 +322,74 @@ async fn new_command_starts_a_chat_without_a_model() {
 }
 
 // ---------- workflows ----------
+
+#[tokio::test]
+async fn saved_workflow_is_tainted_before_its_first_egress_step() {
+    let env = setup();
+    let script = Script::new(vec![]);
+    let search = Arc::new(crate::tests::with_class(
+        "web_search",
+        Effect::Read,
+        protocol::PermissionCategory::Browser,
+        tool_registry::ContentClass::untrusted_egress(),
+        "sent",
+    ));
+    let (lp, store) = with_store(&env, make(&env, &script, &[as_tool(&search)], ""));
+    store
+        .save(&wf_tool_step("leak", "web_search", "send saved data"))
+        .unwrap();
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "/workflow leak").unwrap();
+    let event = crate::tests::until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = event else {
+        unreachable!()
+    };
+    assert_eq!(card.tool_name, "web_search");
+    assert_eq!(search.count.load(Ordering::SeqCst), 0);
+    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(search.count.load(Ordering::SeqCst), 1);
+}
+
+/// The replay note in `exec_workflow` taints the run before the first step,
+/// so a routed shell step asks even when the egress waiver is on. Without the
+/// note the step runs in a clean run.
+#[tokio::test]
+async fn a_routed_shell_step_asks_under_the_waiver() {
+    let env = setup();
+    let script = Script::new(vec![]);
+    let shell = Arc::new(crate::tests::with_class(
+        "shell_run",
+        Effect::Destructive,
+        protocol::PermissionCategory::Shell,
+        builtin_tools::classify("shell_run").unwrap(),
+        "ran",
+    ));
+    let (lp, store) = with_store(
+        &env,
+        make(
+            &env,
+            &script,
+            &[as_tool(&shell)],
+            "[permissions]
+allow_egress_after_reads = true
+",
+        ),
+    );
+    store
+        .save(&wf_tool_step("run_it", "shell_run", "run a command"))
+        .unwrap();
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "/workflow run_it").unwrap();
+    let event = crate::tests::until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(card) = event else {
+        unreachable!()
+    };
+    assert_eq!(card.tool_name, "shell_run");
+    assert_eq!(shell.count.load(Ordering::SeqCst), 0);
+    lp.cancel(run).unwrap();
+}
 
 #[tokio::test]
 async fn workflow_command_replays_through_the_gate_without_a_model() {
@@ -725,11 +807,21 @@ async fn skill_hint_lists_the_skill_first() {
         .as_str()
         .unwrap()
         .to_owned();
-    let first_skill_line = sys.lines().find(|l| l.starts_with("- ")).unwrap();
-    assert!(
-        first_skill_line.starts_with("- [suggested] github-basics"),
-        "{first_skill_line}"
-    );
+    // The index in the system prompt is name-ordered and never carries the
+    // per-turn suggestion; that goes into the latest user message as a hint.
+    assert!(sys.contains("- github-basics:"), "{sys}");
+    assert!(!sys.contains("- [suggested]"), "{sys}");
+    let req = &script.requests_for("fake/m")[0];
+    let user = req
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == provider_catalog::MessageRole::User)
+        .unwrap();
+    let user = user.content.as_str().unwrap();
+    assert!(user.starts_with("frobnicate the gizmo"), "{user}");
+    assert!(user.contains("[loop hint, not written by the user: Suggested skills"));
+    assert!(user.contains("github-basics"));
 }
 
 // ---------- budget, switches, embedder ----------
@@ -792,6 +884,14 @@ async fn a_classifier_timeout_is_fail_open_too() {
     let d = decided(&drain(&mut rx));
     assert_eq!(d[0].level, "K4");
     assert!(d[0].reason.contains("timeout"), "{}", d[0].reason);
+    let audit = env.storage.list_audit(env.user).unwrap();
+    let router_calls = audit
+        .iter()
+        .filter(|r| r.action == "usage" && r.detail["purpose"] == "router")
+        .collect::<Vec<_>>();
+    assert_eq!(router_calls.len(), 1);
+    assert_eq!(router_calls[0].detail["calls"], 1);
+    assert!(router_calls[0].detail["tokens"].is_null());
 }
 
 #[tokio::test]
@@ -1030,6 +1130,240 @@ async fn replay_started_through_the_agent_is_refused_during_human_takeover() {
     );
 }
 
+struct SelectedSkillAssignment {
+    bot: String,
+    allowed: &'static str,
+}
+
+impl skills::AssignmentSource for SelectedSkillAssignment {
+    fn assignment(&self, bot_id: &str) -> Result<Option<skills::Assignment>, String> {
+        if bot_id == self.bot {
+            Ok(Some(skills::Assignment {
+                mode: skills::AssignmentMode::Selected,
+                names: std::iter::once(self.allowed.to_owned()).collect(),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    fn generation(&self) -> u64 {
+        1
+    }
+}
+
+fn write_router_skill(dir: &std::path::Path, name: &str, desc: &str, body: &str) {
+    let root = dir.join(name);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: {desc}\n---\n{body}\n"),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn router_candidates_excludes_unassigned_skills_for_selected_bot() {
+    let env = setup();
+    write_router_skill(
+        &env.dir.path().join("skills"),
+        "assigned-skill",
+        "Assigned skill description",
+        "ASSIGNED_BODY",
+    );
+    write_router_skill(
+        &env.dir.path().join("skills"),
+        "unassigned-skill",
+        "Secret hidden description",
+        "UNASSIGNED_BODY",
+    );
+    write_router_skill(
+        &env.dir
+            .path()
+            .join("bots")
+            .join(env.bot.to_string())
+            .join("skills"),
+        "bot-learned",
+        "Bot own learned skill",
+        "OWN_BODY",
+    );
+
+    let index = SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()))
+        .with_assignments(Arc::new(SelectedSkillAssignment {
+            bot: env.bot.to_string(),
+            allowed: "assigned-skill",
+        }));
+
+    let script = Script::new(vec![
+        (
+            "fake/c",
+            vec![Rep::Text(
+                r#"{"route":"skill","name":"assigned-skill","confidence":0.8}"#,
+            )],
+        ),
+        ("fake/m", vec![Rep::Text("ok")]),
+    ]);
+    let lp = make(&env, &script, &[], CLASSIFIER).with_skills(index);
+
+    let cands = lp.sh.router_candidates(&profile(CLASSIFIER), env.bot);
+    let skill_names: Vec<&str> = cands
+        .iter()
+        .filter(|c| c.kind == agent_router::CandidateKind::Skill)
+        .map(|c| c.name.as_str())
+        .collect();
+    assert!(skill_names.contains(&"assigned-skill"), "{skill_names:?}");
+    assert!(skill_names.contains(&"bot-learned"), "{skill_names:?}");
+    assert!(
+        !skill_names.contains(&"unassigned-skill"),
+        "{skill_names:?}"
+    );
+    assert!(
+        !skill_names.contains(&"custom-dropdowns"),
+        "{skill_names:?}"
+    );
+
+    let (_, state) = turn(&lp, env.chat, "frobnicate the gizmo").await;
+    assert_eq!(state, RunState::Succeeded);
+    let classifier_req = &script.requests_for("fake/c")[0];
+    let classifier_payload = serde_json::to_string(&classifier_req.messages).unwrap();
+    assert!(
+        classifier_payload.contains("assigned-skill"),
+        "{classifier_payload}"
+    );
+    assert!(
+        classifier_payload.contains("bot-learned"),
+        "{classifier_payload}"
+    );
+    assert!(
+        !classifier_payload.contains("unassigned-skill"),
+        "{classifier_payload}"
+    );
+    assert!(
+        !classifier_payload.contains("Secret hidden description"),
+        "{classifier_payload}"
+    );
+    assert!(
+        !classifier_payload.contains("skill custom-dropdowns"),
+        "{classifier_payload}"
+    );
+}
+
+#[tokio::test]
+async fn workflow_replay_enforces_selected_bot_skill_assignment() {
+    let env = setup();
+    write_router_skill(
+        &env.dir.path().join("skills"),
+        "assigned-skill",
+        "Assigned skill description",
+        "ASSIGNED_SECRET_BODY",
+    );
+    write_router_skill(
+        &env.dir.path().join("skills"),
+        "unassigned-skill",
+        "Hidden skill description",
+        "UNASSIGNED_SECRET_BODY",
+    );
+
+    let index = SkillIndex::load_roots(skills::SkillRoots::from_data_dir(env.dir.path()))
+        .with_assignments(Arc::new(SelectedSkillAssignment {
+            bot: env.bot.to_string(),
+            allowed: "assigned-skill",
+        }));
+
+    let store = WorkflowStore::new(env.dir.path());
+    let mut denied_wf = Workflow::new("read_unassigned");
+    denied_wf.description = "read an unassigned skill".into();
+    denied_wf.steps = vec![Step::Tool(ToolStep {
+        tool: "skill_read".into(),
+        input: json!({ "name": "unassigned-skill" }),
+    })];
+    store.save(&denied_wf).unwrap();
+
+    let mut allowed_wf = Workflow::new("read_assigned");
+    allowed_wf.description = "read an assigned skill".into();
+    allowed_wf.steps = vec![Step::Tool(ToolStep {
+        tool: "skill_read".into(),
+        input: json!({ "name": "assigned-skill" }),
+    })];
+    store.save(&allowed_wf).unwrap();
+
+    let script = Script::new(vec![("fake/m", vec![Rep::Text("fallback")])]);
+    let lp = make(&env, &script, &[], "")
+        .with_skills(index)
+        .with_workflows(
+            store,
+            Handles {
+                desktop: None,
+                browser: None,
+                tools: ToolRegistry::new(),
+            },
+        );
+
+    let (denied_run, denied_state) = turn(&lp, env.chat, "/workflow read_unassigned").await;
+    assert_eq!(denied_state, RunState::Succeeded);
+    let denied_steps = env.storage.list_steps(denied_run).unwrap();
+    let wf_step = denied_steps
+        .iter()
+        .find(|s| s.name == "workflow")
+        .expect("workflow step");
+    let wf_out = wf_step.output.as_ref().unwrap();
+    assert_eq!(wf_out["completed"], false, "{wf_out}");
+    let summary = wf_out["summary"].as_str().unwrap_or("");
+    assert!(!summary.contains("UNASSIGNED_SECRET_BODY"), "{wf_out}");
+
+    let (allowed_run, allowed_state) = turn(&lp, env.chat, "/workflow read_assigned").await;
+    assert_eq!(allowed_state, RunState::Succeeded);
+    let allowed_steps = env.storage.list_steps(allowed_run).unwrap();
+    let ok_step = allowed_steps
+        .iter()
+        .find(|s| s.name == "workflow")
+        .expect("workflow step");
+    let ok_out = ok_step.output.as_ref().unwrap();
+    assert_eq!(ok_out["completed"], true, "{ok_out}");
+    assert_eq!(ok_out["steps_replayed"], 1, "{ok_out}");
+}
+
+#[tokio::test]
+async fn ledger_classifier_keeps_reported_usage_separate_from_executor() {
+    let env = setup();
+    let t = Arc::new(tool("t_a", Effect::Read, "a"));
+    let script = Script::new(vec![
+        ("fake/c", vec![Rep::TextWithUsage(AGENT_ROUTE)]),
+        ("fake/m", vec![Rep::Text("answered")]),
+    ]);
+    let lp = make(&env, &script, &[as_tool(&t)], CLASSIFIER);
+    let (run, state) = turn(&lp, env.chat, "frobnicate the gizmo").await;
+    assert_eq!(state, RunState::Succeeded);
+    assert_eq!(script.n("fake/c"), 1);
+    let rows = env.storage.list_audit(env.user).unwrap();
+    let usage = rows
+        .iter()
+        .filter(|r| r.action == "usage" && r.detail["purpose"] == "router")
+        .collect::<Vec<_>>();
+    assert_eq!(usage.len(), 1);
+    assert_eq!(usage[0].detail["prompt_tokens"], 7);
+    assert_eq!(usage[0].detail["cached_tokens"], 1);
+    let summary = rows
+        .iter()
+        .find(|r| r.action == "run.usage_summary" && r.run_id == Some(run))
+        .unwrap();
+    assert_eq!(summary.detail["router"]["calls"], 1);
+    assert_eq!(summary.detail["executor"]["calls"], 1);
+}
+
+struct SmallBatchEmbedder(AtomicUsize);
+
+#[async_trait]
+impl Embedder for SmallBatchEmbedder {
+    fn max_batch_size(&self) -> usize {
+        1
+    }
+    async fn embed(&self, texts: &[String], _: EmbedTask) -> Result<Vec<Vec<f32>>, BackendError> {
+        assert_eq!(texts.len(), 1);
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![vec![1.0, 0.0, 0.0]])
+    }
+}
+
 #[tokio::test]
 async fn similar_requests_cannot_route_recorded_recipients_urls_paths_or_commands() {
     for (description, changed) in [
@@ -1096,6 +1430,49 @@ async fn similar_requests_cannot_route_recorded_recipients_urls_paths_or_command
             )
             .await;
         assert!(output.is_err(), "model tool must require human entry");
+    }
+}
+
+#[tokio::test]
+async fn ledger_embeddings_count_transport_batches_and_query_calls() {
+    let env = setup();
+    let tools = (0..3)
+        .map(|i| Arc::new(tool(&format!("t_{i}"), Effect::Read, "value")))
+        .collect::<Vec<_>>();
+    let script = Script::new(vec![("fake/m", vec![Rep::Text("one"), Rep::Text("two")])]);
+    let embedder = Arc::new(SmallBatchEmbedder(AtomicUsize::new(0)));
+    let lp = loop_with(
+        &env,
+        Providers::single(script as Arc<dyn ChatProvider>)
+            .with_embedder(Arc::clone(&embedder) as Arc<dyn Embedder>),
+        &tools.iter().map(as_tool).collect::<Vec<_>>(),
+        "",
+        cfg(Policy::full()),
+    );
+    let (first, state) = turn(&lp, env.chat, "frobnicate the gizmo").await;
+    assert_eq!(state, RunState::Succeeded);
+    lp.flush_background().await;
+    assert_eq!(embedder.0.load(Ordering::SeqCst), 3);
+    let (second, state) = turn(&lp, env.chat, "different uncached request").await;
+    assert_eq!(state, RunState::Succeeded);
+    lp.flush_background().await;
+    assert_eq!(embedder.0.load(Ordering::SeqCst), 4);
+    let audit = env.storage.list_audit(env.user).unwrap();
+    let rows = audit
+        .iter()
+        .filter(|r| r.action == "usage" && r.detail["purpose"] == "embedding")
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 4);
+    assert!(
+        rows.iter()
+            .all(|r| r.detail["tokens"].is_null() && r.detail["latency_ms"].is_u64())
+    );
+    for (run, count) in [(first, 3), (second, 1)] {
+        let summary = audit
+            .iter()
+            .find(|r| r.action == "run.usage_summary" && r.run_id == Some(run))
+            .unwrap();
+        assert_eq!(summary.detail["embedding"]["calls"], count);
     }
 }
 

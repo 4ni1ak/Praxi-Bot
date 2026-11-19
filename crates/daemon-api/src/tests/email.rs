@@ -10,18 +10,19 @@ use tokio::sync::Semaphore;
 
 use super::{T, TOKEN, call, make_chat, send, setup};
 use crate::email::{
-    EmailAccountDto, EmailAccountInput, EmailControl, EmailControlError, EmailProbeStatus,
-    EmailTestReport,
+    EmailAccountDto, EmailAccountInput, EmailControl, EmailControlError, EmailMessageDto,
+    EmailProbeStatus, EmailTestReport,
 };
 
 const SECRET: &str = "hunter2-app-password-XYZ";
 
-struct FakeEmail {
+pub(super) struct FakeEmail {
     accounts: Mutex<Vec<EmailAccountDto>>,
     /// Passwords the "secret store" holds, by account name.
     passwords: Mutex<Vec<(String, String)>>,
     forgotten: Mutex<Vec<String>>,
     fail_forget: bool,
+    pub(super) fail_update: std::sync::atomic::AtomicBool,
     /// When set, `test_draft` waits for it (to hold test slots open).
     hold: Option<Arc<Semaphore>>,
     /// Runs at the start of `add` (a bot deleted "in between").
@@ -37,6 +38,7 @@ impl FakeEmail {
             passwords: Mutex::new(Vec::new()),
             forgotten: Mutex::new(Vec::new()),
             fail_forget: false,
+            fail_update: std::sync::atomic::AtomicBool::new(false),
             hold: None,
             before_add: Mutex::new(None),
             entered: std::sync::atomic::AtomicUsize::new(0),
@@ -92,6 +94,11 @@ impl EmailControl for FakeEmail {
         Ok(dto)
     }
     async fn update(&self, name: &str, patch: Value) -> Result<EmailAccountDto, EmailControlError> {
+        if self.fail_update.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(EmailControlError::Internal(
+                "simulated config write failure".into(),
+            ));
+        }
         let mut all = self.accounts.lock();
         let slot = all
             .iter_mut()
@@ -125,6 +132,31 @@ impl EmailControl for FakeEmail {
         }
         Ok(report(EmailProbeStatus::Ok, EmailProbeStatus::AuthFailed))
     }
+    async fn recent_messages(
+        &self,
+        name: &str,
+        limit: usize,
+    ) -> Result<Vec<EmailMessageDto>, EmailControlError> {
+        if !self.accounts.lock().iter().any(|a| a.name == name) {
+            return Err(EmailControlError::NotFound(format!("email account {name}")));
+        }
+        // The subject carries the limit the route passed on.
+        Ok(vec![EmailMessageDto {
+            id: "7".into(),
+            subject: format!("limit {limit}"),
+            from: "Ann <ann@example.com>".into(),
+            date: None,
+            unread: true,
+        }])
+    }
+    async fn send_test(&self, name: &str) -> Result<String, EmailControlError> {
+        self.accounts
+            .lock()
+            .iter()
+            .find(|a| a.name == name)
+            .map(|a| a.address.clone())
+            .ok_or_else(|| EmailControlError::NotFound(format!("email account {name}")))
+    }
     async fn test_draft(
         &self,
         input: EmailAccountInput,
@@ -157,7 +189,7 @@ fn report(imap: EmailProbeStatus, smtp: EmailProbeStatus) -> EmailTestReport {
     }
 }
 
-fn with_email() -> (T, Arc<FakeEmail>) {
+pub(super) fn with_email() -> (T, Arc<FakeEmail>) {
     let t = setup();
     let fake = FakeEmail::new();
     t.state.set_email(fake.clone());
@@ -403,6 +435,57 @@ async fn connection_tests_report_coarse_status_and_are_rate_limited() {
     let r = call(&t, Method::POST, "/v1/email/test", Some(body("draft"))).await;
     assert_eq!(r.status, StatusCode::OK);
 }
+#[tokio::test]
+async fn messages_and_the_test_mail_are_owner_only_and_bounded() {
+    let (t, _) = with_email();
+    let r = call(&t, Method::POST, "/v1/email/accounts", Some(body("work"))).await;
+    assert_eq!(r.status, StatusCode::CREATED);
+
+    // The limit defaults and is clamped; the row has headers only.
+    let r = call(&t, Method::GET, "/v1/email/accounts/work/messages", None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()[0]["subject"], "limit 20");
+    assert!(r.json()[0].get("body").is_none());
+    let r = call(
+        &t,
+        Method::GET,
+        "/v1/email/accounts/work/messages?limit=9999",
+        None,
+    )
+    .await;
+    assert_eq!(r.json()[0]["subject"], "limit 50");
+    let r = call(&t, Method::GET, "/v1/email/accounts/nope/messages", None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+
+    // The test mail takes no recipient: it answers with the mailbox's own address.
+    let r = call(
+        &t,
+        Method::POST,
+        "/v1/email/accounts/work/send-test",
+        Some(json!({"to": ["x@evil.test"]})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json(), json!({"sent_to": "me@example.com"}));
+
+    // A holder of only the API token (a bot, the CLI) can neither read headers nor send.
+    let auth = format!("Bearer {TOKEN}");
+    for (m, p) in [
+        (Method::GET, "/v1/email/accounts/work/messages"),
+        (Method::POST, "/v1/email/accounts/work/send-test"),
+    ] {
+        let r = send(
+            &t.app,
+            m,
+            p,
+            None,
+            &[("authorization", auth.as_str()), ("x-test-token-only", "1")],
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{p}");
+    }
+}
+
 #[tokio::test]
 async fn a_draft_test_takes_the_password_from_the_body_or_the_stored_account() {
     let (t, _) = with_email();

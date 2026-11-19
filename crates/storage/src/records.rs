@@ -33,6 +33,38 @@ pub struct Bot {
     pub created_at_ms: i64,
 }
 
+/// Outcome of [`crate::Storage::patch_bot`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum BotPatch {
+    /// Written; `version` is the new profile version.
+    Applied {
+        /// The bot as stored now.
+        bot: Bot,
+        /// New profile version.
+        version: i64,
+    },
+    /// The stored version differs from the expected one; nothing was written.
+    Stale {
+        /// The bot as stored now.
+        bot: Bot,
+        /// Its current version.
+        version: i64,
+    },
+    /// No such bot.
+    Missing,
+    /// The change function refused the edit; nothing was written.
+    Rejected(String),
+}
+
+/// Owner-set organisation flags of a chat (separate from [`Chat`] so the record stays stable).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ChatFlags {
+    /// Sorted first in chat lists.
+    pub pinned: bool,
+    /// Hidden from the default chat list.
+    pub archived: bool,
+}
+
 /// A chat thread.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chat {
@@ -65,6 +97,12 @@ pub struct Message {
     pub content: String,
     /// Creation time.
     pub created_at_ms: i64,
+    /// The context that produced this message had untrusted content.
+    pub exposure_untrusted: bool,
+    /// The context that produced this message had private content.
+    pub exposure_private: bool,
+    /// Source labels captured with [`Self::exposure_untrusted`].
+    pub exposure_sources: Vec<String>,
 }
 
 /// A durable run (one bot turn or scheduled job).
@@ -93,6 +131,17 @@ pub struct Run {
     /// Spawn parameters of a subagent run (task, limits, ...); `None` for
     /// top-level runs.
     pub spec: Option<Value>,
+    /// Resolved computer target label (`pc`, `host`, `browser`, `off`), fixed
+    /// at run start.
+    pub computer_target: Option<String>,
+    /// Stable resolved node key (this daemon's identity fingerprint, or a peer key).
+    pub computer_node: Option<String>,
+    /// Display name captured when the run was bound.
+    pub computer_node_name: Option<String>,
+    /// Start of the current pause, independent of row updates.
+    pub paused_at_ms: Option<i64>,
+    /// Why a run is in `paused` state (e.g. `waiting_for_pc`).
+    pub pause_reason: Option<String>,
 }
 
 /// One persisted step of a run.
@@ -178,4 +227,39 @@ pub struct EventIndexRow {
     pub run_id: RunId,
     /// The envelope's run-local `seq`.
     pub seq: u64,
+}
+
+/// How shared and bundled skills are assigned to a bot (`bot_skill_assignment`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillAssignmentMode {
+    /// All shared and bundled skills are visible (default; represented by no row).
+    All,
+    /// Only the explicitly listed shared/bundled skill names are visible.
+    Selected,
+}
+
+impl SkillAssignmentMode {
+    /// Canonical database value (`'all'` or `'selected'`).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Selected => "selected",
+        }
+    }
+}
+
+/// Persisted per-bot skill assignment row (`bot_skill_assignment`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BotSkillAssignment {
+    /// Bot this assignment applies to.
+    pub bot_id: BotId,
+    /// Assignment mode.
+    pub mode: SkillAssignmentMode,
+    /// Assigned shared/bundled skill names when `mode == Selected`.
+    pub names: Vec<String>,
+    /// Last update timestamp.
+    pub updated_at_ms: i64,
+    /// Monotonic version of this row (`0` when no row exists).
+    pub version: u64,
 }

@@ -11,6 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { layerStack } from "../lib/modalStack";
+import { popoverEscapeAction, popoverPressAction } from "../lib/popoverLayers";
 import styles from "./Popover.module.css";
 
 export type PopoverPlacement = "top-start" | "top-end" | "bottom-start" | "bottom-end";
@@ -23,7 +24,7 @@ const EDGE = 8;
 const WANTED = 280;
 
 /**
- * Generic popover (card 198-B): drawn in a portal on <body> so it is never clipped by the rail
+ * Generic popover: drawn in a portal on <body> so it is never clipped by the rail
  * or a glass panel (a `backdrop-filter` ancestor would otherwise trap `position: fixed`).
  * Anchored to `anchor` (follows scrolling, flips when the other side has more room), closes on
  * outside press, Escape and Tab (menus), and hands focus back.  It takes part in the shared
@@ -113,13 +114,12 @@ export function Popover({
       target?.focus();
     }
     const onDown = (e: MouseEvent) => {
-      if (!layerStack.isTop(seq)) return;
       const target = e.target as Node;
-      if (pop.current?.contains(target) || anchor.current?.contains(target)) return;
-      onClose();
+      const inside = !!(pop.current?.contains(target) || anchor.current?.contains(target));
+      if (popoverPressAction(layerStack, seq, inside) === "close") onClose();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || !layerStack.isTop(seq)) return;
+      if (popoverEscapeAction(layerStack, seq, e.key) !== "close") return;
       e.preventDefault();
       e.stopPropagation();
       onClose();

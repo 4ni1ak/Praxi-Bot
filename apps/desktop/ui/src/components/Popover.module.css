@@ -1,5 +1,5 @@
 /*
- * Generic popover surface (card 198-B).  Raised, softly gradient, ringed instead of bordered,
+ * Generic popover surface.  Raised, softly gradient, ringed instead of bordered,
  * with a deep soft shadow; frosted in the glass style, outlined in the line style.
  * Rows inside never carry separator lines.
  */
@@ -29,12 +29,13 @@
   from { opacity: 0; transform: translateY(var(--space-2)) scale(0.985); }
 }
 
-:global(:root[data-style="glass"]) .popover {
-  background-color: color-mix(in srgb, var(--color-surface-elevated-opaque) 72%, transparent);
-  backdrop-filter: blur(var(--blur-glass)) saturate(1.5);
+:global(:root[data-style="glass"]) .popover,
+:global(:root[data-style="tinted"]) .popover {
+  background-color: var(--float-fill);
+  backdrop-filter: var(--float-filter);
   box-shadow:
-    inset 0 var(--size-border) 0 color-mix(in srgb, var(--color-text) 12%, transparent),
-    0 0 0 var(--size-border) color-mix(in srgb, var(--color-text) 14%, transparent),
+    var(--float-highlight),
+    0 0 0 var(--size-border) var(--float-border),
     0 var(--shadow-overlay-y) var(--shadow-overlay-blur) calc(var(--space-4) * -1) var(--color-shadow);
 }
 

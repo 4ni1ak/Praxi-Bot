@@ -7,6 +7,7 @@ import { QuotaBlock } from "../components/QuotaRings";
 import { botView } from "../lib/botProfile";
 import { useDaemon } from "../state/DaemonContext";
 import styles from "./UsageView.module.css";
+import { humanLine } from "../lib/humanError";
 
 type Range = "all" | "day" | "week" | "month";
 const RANGE_MS: Record<Exclude<Range, "all">, number> = {
@@ -44,7 +45,7 @@ export function UsageView({ embedded = false }: { embedded?: boolean }) {
       setUsage(await client.usage(since));
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanLine(e));
     }
   }, [client, range]);
 

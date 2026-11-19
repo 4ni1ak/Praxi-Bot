@@ -162,8 +162,10 @@ pub(super) fn review_steps(s: &AppState, id: RunId) -> Result<ReviewSteps, ApiEr
     let mut skipped = Vec::new();
     let mut secrets = Vec::new();
     let mut provenance = Vec::new();
-    let mut untrusted_content = false;
     let run = s.run_of_user(id)?;
+    // Seeded from storage: the in-memory taint set misses subagents, resumes
+    // and restarts, and prior chat content that already reached this run.
+    let mut untrusted_content = s.agent().workflow_run_carried_exposure(&run);
     let registry = s.agent().workflow_recording_tools(run.bot_id)?;
     for step in steps.iter_mut().filter(|step| step.name == "tools") {
         let results = step.output.as_ref().and_then(|o| o["results"].as_array());

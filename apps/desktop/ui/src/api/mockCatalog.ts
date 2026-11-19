@@ -8,7 +8,7 @@ export const MOCK_MCP_CATALOG: McpCatalogEntry[] = [
   {
     "id": "filesystem",
     "name": "Filesystem",
-    "description": "Read and write files in folders you choose.",
+    "description": "Optional. Praxi already has file access built in; add this only for an extra server limited to one folder you choose.",
     "category": "files",
     "homepage": "https://github.com/modelcontextprotocol/servers",
     "icon": "files",
@@ -17,10 +17,13 @@ export const MOCK_MCP_CATALOG: McpCatalogEntry[] = [
       "command": "npx",
       "args": [
         "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "."
+        "@modelcontextprotocol/server-filesystem@2.2.0"
       ],
-      "required_secrets": []
+      "required_secrets": [],
+      "folder": {
+        "label": "Folder the bot may read and write",
+        "suggestion": "/home/you/Documents"
+      }
     }
   },
   {
@@ -271,21 +274,38 @@ export const MOCK_MCP_CATALOG: McpCatalogEntry[] = [
   {
     "id": "linear",
     "name": "Linear",
-    "description": "Issues, projects and cycles.",
+    "description": "Issues, projects and cycles in Linear. Sign in with your Linear account.",
     "category": "productivity",
     "homepage": "https://linear.app/docs/mcp",
     "icon": "linear",
-    "install": {
-      "transport": "http",
-      "url": "https://mcp.linear.app/mcp",
-      "required_secrets": [
-        {
-          "name": "LINEAR_API_KEY",
-          "label": "Linear API key",
-          "help_url": "https://linear.app/settings/api"
-        }
-      ]
-    }
+    "install": { "transport": "http", "url": "https://mcp.linear.app/mcp", "required_secrets": [] }
+  },
+  {
+    "id": "notion-remote",
+    "name": "Notion",
+    "description": "Search, read and edit Notion pages. Sign in with your Notion account.",
+    "category": "productivity",
+    "homepage": "https://developers.notion.com/docs/mcp",
+    "icon": "notion",
+    "install": { "transport": "http", "url": "https://mcp.notion.com/mcp", "required_secrets": [] }
+  },
+  {
+    "id": "stripe",
+    "name": "Stripe",
+    "description": "Payments, customers and invoices. Sign in with your Stripe account.",
+    "category": "productivity",
+    "homepage": "https://docs.stripe.com/mcp",
+    "icon": "stripe",
+    "install": { "transport": "http", "url": "https://mcp.stripe.com", "required_secrets": [] }
+  },
+  {
+    "id": "atlassian",
+    "name": "Atlassian",
+    "description": "Jira and Confluence. Sign in with your Atlassian account.",
+    "category": "productivity",
+    "homepage": "https://www.atlassian.com/platform/remote-mcp-server",
+    "icon": "atlassian",
+    "install": { "transport": "http", "url": "https://mcp.atlassian.com/v1/mcp", "required_secrets": [] }
   },
   {
     "id": "todoist",

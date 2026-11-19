@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use crate::{
     action::{Action, ActionResult},
     error::DesktopError,
+    guard::{ActGuard, InputTarget, Refusal},
     snapshot::{AppSpec, Image, Pid, Quality, Region, Snapshot, WindowInfo},
 };
 
@@ -53,6 +54,76 @@ pub trait DesktopBackend: Send + Sync {
     /// Launch an application and return the new process ID.
     async fn launch(&self, app: AppSpec) -> Result<Pid, DesktopError>;
 
+    /// The window and program that keyboard input would reach right now, with
+    /// its process identity, elevation and class.
+    ///
+    /// `Ok(None)` (the default) means this backend cannot bind input to one
+    /// program, so a run-scoped control grant is never offered or applied.
+    ///
+    /// # Errors
+    /// The OS query failed; callers treat that as "no identity".
+    async fn input_target(&self) -> Result<Option<InputTarget>, DesktopError> {
+        Ok(None)
+    }
+
+    /// [`Self::act`], but the backend first checks `guard` against the window
+    /// that would receive the input, as close to the OS send as it can, and
+    /// does not send when the check fails. Replay and the desktop tools both
+    /// pass through here.
+    ///
+    /// The default refuses: a backend that cannot check must not claim to.
+    ///
+    /// # Errors
+    /// [`DesktopError::GuardRefused`] when nothing was sent because of the
+    /// guard, otherwise as [`Self::act`].
+    async fn act_guarded(
+        &self,
+        _action: Action,
+        _guard: ActGuard,
+    ) -> Result<ActionResult, DesktopError> {
+        Err(DesktopError::GuardRefused(
+            "not sent: this computer cannot check the target window before sending input".into(),
+        ))
+    }
+
+    /// Whether `keys` open a launcher or switch windows (Win/Super, Ctrl+Esc,
+    /// Alt+Tab, ...), judged with this backend's own key parser. The default
+    /// refuses every chord.
+    fn key_chord_refusal(&self, _keys: &[String]) -> Option<Refusal> {
+        Some(Refusal::Chord)
+    }
+
     /// Report what this backend supports.
     fn capabilities(&self) -> Capabilities;
+
+    /// A VERIFIED identity of the program that owns `window` (for example a
+    /// code-signing publisher plus the executable's hash), as an opaque string
+    /// the owner can allow-list. `None` means this backend cannot verify it
+    /// (the default: a window title or pid is not an identity). Owner-stored
+    /// secrets are only ever typed into a program whose verified identity is on
+    /// the secret's allow-list, so a backend that returns `None` can never
+    /// receive one.
+    async fn program_identity(&self, window: &WindowInfo) -> Option<String> {
+        let _ = window;
+        None
+    }
+
+    /// Return a live-view target adapter for watching and taking over this
+    /// desktop backend's active host session, or return a typed capability /
+    /// availability [`::live_view::Reason`].
+    ///
+    /// Default returns `Err(Reason::Unsupported)` so unsupported platforms,
+    /// remote proxies, and existing test fakes remain source-compatible.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::live_view::Reason::Unsupported`] on unsupported platforms or
+    /// [`::live_view::Reason::Unavailable`] if the active display session cannot
+    /// be accessed.
+    fn live_view_target(
+        &self,
+        _options: &crate::live_view::LiveViewOptions,
+    ) -> Result<std::sync::Arc<dyn ::live_view::ViewTarget>, ::live_view::Reason> {
+        Err(::live_view::Reason::Unsupported)
+    }
 }

@@ -1,0 +1,17 @@
+.hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-0) var(--space-2);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-surface-active);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.hint svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}

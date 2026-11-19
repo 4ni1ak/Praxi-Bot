@@ -1,9 +1,11 @@
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "ui/tokens.css";
 import "@fontsource-variable/geist/wght.css";
 import "@fontsource-variable/geist-mono/wght.css";
+import { ApiClient } from "./api/client";
 import { App } from "./App";
 import "./global.css";
 import "./i18n";
@@ -11,6 +13,13 @@ import { isTauriRuntime } from "./overlay/events";
 import { OverlayWindow } from "./overlay/OverlayWindow";
 import { WidgetWindow } from "./overlay/WidgetWindow";
 import { paintSavedAppearanceEarly } from "./state/useApplyAppearance";
+
+// The owner key of this app's daemon (main window only; the overlay and widget windows get none).
+// Requested once and kept in memory; every call to THIS computer's daemon carries it.
+let ownerKey: Promise<string | null> | null = null;
+if (isTauriRuntime()) {
+  ApiClient.ownerKeyProvider = () => (ownerKey ??= invoke<string>("owner_key").catch(() => null));
+}
 
 type WindowKind = "main" | "overlay" | "widget";
 
@@ -48,6 +57,30 @@ document.documentElement.dataset.windowKind = windowKind;
 
 paintSavedAppearanceEarly(windowKind !== "main");
 
+// Layout probe: same guard as state/useQuotas.ts, so production builds drop it.
+if (
+  (import.meta.env.DEV || import.meta.env.VITE_MOCK === "1") &&
+  ["layout", "search", "content"].includes(new URLSearchParams(window.location.search).get("probe") ?? "")
+) {
+  const stored = new URLSearchParams(window.location.search).get("stored");
+  if (stored) {
+    // A layout saved by an older session, read by App's first render.
+    try {
+      window.localStorage.setItem("praxi.shell.layout.v1", JSON.stringify({ rail: 264, panel: Number(stored) }));
+    } catch {
+      // Storage unavailable: the probe then runs with the defaults.
+    }
+  }
+  void import("./dev/layoutProbe")
+    .then((m) => {
+        const mode = new URLSearchParams(window.location.search).get("probe");
+        return mode === "search" ? m.runSearchProbe() : mode === "content" ? m.runContentProbe() : m.runLayoutProbe();
+      })
+    .catch((e: unknown) => {
+      document.documentElement.dataset.probeError = String(e);
+    });
+}
+
 const container = document.getElementById("root");
 if (!container) {
   throw new Error("Root container #root not found");
@@ -64,3 +97,4 @@ createRoot(container).render(
     )}
   </StrictMode>
 );
+
