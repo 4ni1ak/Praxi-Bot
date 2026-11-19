@@ -289,6 +289,8 @@
     "newChatFailed": "Chat konnte nicht gestartet werden: {{detail}}"
   },
   "chat": {
+    "pendingPinned": "Wartet auf deine Entscheidung. Die Karte steht über dem Nachrichtenfeld.",
+    "pendingElsewhere": "Aus einem anderen Chat dieses Bots: {{chat}}",
     "notFound": "Dieser Chat existiert nicht.",
     "stop": "Stopp",
     "resume": "Fortsetzen",
@@ -2859,7 +2861,10 @@
   "runStatus": {
     "working": "Arbeitet …",
     "stopping": "Wird gestoppt …",
-    "waiting": "Wartet auf deine Genehmigung: {{step}}"
+    "waiting": "Wartet auf deine Genehmigung: {{step}}",
+    "waitAnswer": "Wartet auf deine Antwort: {{question}}",
+    "waitLost": "Wartet auf eine Antwort, die hier nicht verfügbar ist. Stoppe den Lauf, um fortzufahren.",
+    "showCard": "Anzeigen"
   },
   "queued": {
     "label": "In der Warteschlange.",
@@ -3221,8 +3226,8 @@
       "resync_required": "Bildschirmgeometrie oder Reihenfolge aktualisiert; synchronisiert mit dem neuesten Bild."
     },
     "targetLocked": "Beende die Kontrolle (Bitirdim), bevor du das Bildschirmziel wechselst.",
-    "approvalsWaiting": "{{count}} Element(e) warten im Chat auf deine Entscheidung.",
-    "reviewApprovals": "Zurück zum Chat, um zu antworten",
+    "approvalsWaiting": "{{count}} Element(e) warten auf deine Entscheidung. Entscheide unten oder im Chat.",
+    "reviewApprovals": "Zurück zum Chat",
     "errors": {
       "unauthorized": "Ihre Sitzung ist nicht mehr autorisiert. Verbinden Sie sich erneut mit diesem Computer.",
       "too_many_streams": "Auf dieser Verbindung sind zu viele Streams offen. Schließen Sie einen anderen Stream und versuchen Sie es erneut.",

@@ -402,6 +402,13 @@ pub struct ApprovalDto {
     pub tool_name: String,
     /// Human-readable summary.
     pub summary: String,
+    /// The call's input, as the `approval_needed` event carried it (so a client that missed the
+    /// event can still show the full card).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<Value>,
+    /// The tool's card facts from the `approval_needed` event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
     /// `null` while pending, else `approved` / `denied` / `expired`.
     pub decision: Option<String>,
     /// Request time.

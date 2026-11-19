@@ -289,6 +289,8 @@
     "newChatFailed": "Sohbet başlatılamadı: {{detail}}"
   },
   "chat": {
+    "pendingPinned": "Kararınız bekleniyor. Kart mesaj kutusunun üstünde.",
+    "pendingElsewhere": "Bu botun başka bir sohbetinden: {{chat}}",
     "notFound": "Bu sohbet yok.",
     "stop": "Durdur",
     "resume": "Sürdür",
@@ -2859,7 +2861,10 @@
   "runStatus": {
     "working": "Çalışıyor…",
     "stopping": "Durduruluyor…",
-    "waiting": "Onayını bekliyor: {{step}}"
+    "waiting": "Onayını bekliyor: {{step}}",
+    "waitAnswer": "Yanıtını bekliyor: {{question}}",
+    "waitLost": "Burada gösterilemeyen bir yanıt bekleniyor. Devam etmek için çalışmayı durdur.",
+    "showCard": "Göster"
   },
   "queued": {
     "label": "Sırada.",
@@ -3221,8 +3226,8 @@
       "resync_required": "Ekran geometrisi veya sıra güncellendi; son kare ile eşzamanlanıyor."
     },
     "targetLocked": "Ekran hedefini değiştirmeden önce kontrolü geri verin (Bitirdim).",
-    "approvalsWaiting": "Sohbette kararınızı bekleyen {{count}} öğe var.",
-    "reviewApprovals": "Yanıtlamak için sohbete dön",
+    "approvalsWaiting": "Kararınızı bekleyen {{count}} öğe var. Aşağıdan veya sohbette karar verin.",
+    "reviewApprovals": "Sohbete dön",
     "errors": {
       "unauthorized": "Oturumunuzun yetkisi artık geçerli değil. Bu bilgisayara yeniden bağlanın.",
       "too_many_streams": "Bu bağlantıda çok fazla akış açık. Başka bir akışı kapatıp tekrar deneyin.",
