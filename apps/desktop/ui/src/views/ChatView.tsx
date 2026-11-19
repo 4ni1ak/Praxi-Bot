@@ -801,6 +801,9 @@ export function ChatView({
         },
         ensure: ensureHostOnline
       });
+      if (outcome.kind === "cancelled") {
+        return; // client disposed (computer switched): nothing to report, the draft stays
+      }
       if (outcome.kind === "remote_offline") {
         setSendFailure({
           code: "host_offline",

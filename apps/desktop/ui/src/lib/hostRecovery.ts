@@ -23,14 +23,30 @@ export type SendRecovery<T> =
   | { kind: "sent"; value: T; started: boolean }
   | { kind: "remote_offline"; error: unknown }
   | { kind: "start_failed"; error: unknown }
-  | { kind: "failed"; error: unknown };
+  | { kind: "failed"; error: unknown }
+  /** The client was disposed (computer switched) or the caller cancelled: no message at all. */
+  | { kind: "cancelled" };
 
+function netKindOf(err: unknown): unknown {
+  return err !== null && typeof err === "object" ? (err as { netKind?: unknown }).netKind : undefined;
+}
+
+/**
+ * True only when the connection itself failed (refused / unreachable): nothing received the
+ * request. A timeout or an abort never counts, because the service may have got the message.
+ */
 export function isNetworkFailure(err: unknown): boolean {
   return (
     err !== null &&
     typeof err === "object" &&
-    (err as { code?: unknown }).code === "network"
+    (err as { code?: unknown }).code === "network" &&
+    netKindOf(err) === "connect"
   );
+}
+
+/** The request was cancelled on our side (client disposed / caller abort). */
+export function isCancelled(err: unknown): boolean {
+  return netKindOf(err) === "aborted";
 }
 
 export async function sendWithHostRecovery<T>(deps: {
@@ -43,6 +59,9 @@ export async function sendWithHostRecovery<T>(deps: {
   try {
     return { kind: "sent", value: await deps.send(null), started: false };
   } catch (first) {
+    if (isCancelled(first)) {
+      return { kind: "cancelled" };
+    }
     if (!isNetworkFailure(first)) {
       return { kind: "failed", error: first };
     }

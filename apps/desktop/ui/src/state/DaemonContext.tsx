@@ -10,7 +10,7 @@ import {
   useState
 } from "react";
 import { ApiClient } from "../api/client";
-import type { EnsureHost } from "../lib/hostRecovery";
+import { isNetworkFailure, type EnsureHost } from "../lib/hostRecovery";
 import { type Connection, connectDaemon, type StartupDiagnostics, startupDiagnostics } from "../api/connection";
 import { subscribeEvents } from "../api/events";
 import { MOCK_HOST_ID, mockHostScenario } from "../api/mockHostScenario";
@@ -670,7 +670,10 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
       return Promise.resolve({ kind: "remote" });
     }
     // One start at a time: a second message waits for the same one.
-    startingRef.current ??= (async (): Promise<EnsureHost> => {
+    if (startingRef.current) {
+      return startingRef.current;
+    }
+    const p = (async (): Promise<EnsureHost> => {
       try {
         const known = localClientRef.current;
         if (!known) {
@@ -682,8 +685,12 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
             new Promise((_, no) => window.setTimeout(() => no(new Error("health probe timed out")), 5000))
           ]);
           return { kind: "reachable" };
-        } catch {
-          // nothing answered: fall through to the start
+        } catch (probe) {
+          // Only a refused / unreachable connection proves the service is down. A slow probe or
+          // any answer means it may be alive (and busy): never start or re-send then.
+          if (!isNetworkFailure(probe)) {
+            return { kind: "reachable" };
+          }
         }
         setHostStarting(true);
         const c = await connectDaemon();
@@ -693,9 +700,18 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
         return { kind: "started", client: new ApiClient(c) };
       } finally {
         setHostStarting(false);
-        startingRef.current = null;
       }
     })();
+    startingRef.current = p;
+    // Clear on the promise itself so an early-settled promise is never cached.
+    void p.then(
+      () => {
+        startingRef.current = null;
+      },
+      () => {
+        startingRef.current = null;
+      }
+    );
     return startingRef.current;
   }, []);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
