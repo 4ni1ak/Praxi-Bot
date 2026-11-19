@@ -619,6 +619,10 @@ fn run() -> Result<()> {
         return Err("--remote supports daemon client commands (status, bots, chat, approve, answer, grants, schedules, email, channels telegram pair); this command manages the local installation".into());
     }
 
+    if cli.remote.is_none() && matches!(command, Command::Proxy) {
+        return Err("`bot proxy` needs --remote <ENDPOINT>".into());
+    }
+
     if let Command::Host {
         action: host::HostCmd::Join { ticket },
     } = command
@@ -1652,6 +1656,20 @@ mod tests {
                 "--url",
                 "http://127.0.0.1",
                 "status"
+            ])
+            .is_err()
+        );
+        let cli = Cli::try_parse_from(["bot", "--remote", "endpoint", "proxy"]).unwrap();
+        assert_eq!(cli.remote.as_deref(), Some("endpoint"));
+        assert!(matches!(cli.command, Some(Command::Proxy)));
+        assert!(
+            Cli::try_parse_from([
+                "bot",
+                "--remote",
+                "endpoint",
+                "--url",
+                "http://127.0.0.1",
+                "proxy"
             ])
             .is_err()
         );
