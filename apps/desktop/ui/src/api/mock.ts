@@ -1038,10 +1038,34 @@ export class MockApiClient extends ApiClient {
           return ok({ delivery: "started", run_id: crypto.randomUUID() });
         }
         const id = crypto.randomUUID();
-        const created = { id, chat_id: id, bot_id: input.bot_id ?? ATLAS, title: input.title ?? "Yeni sohbet", created_at_ms: Date.now() };
+        const created = { id, chat_id: id, bot_id: input.bot_id ?? ATLAS, title: input.title ?? "Yeni sohbet", created_at_ms: Date.now(), pinned: false, archived: false };
         this.chats.push(created);
         this.messages.set(id, []);
         return ok(created);
+      }
+      case "PATCH /chats": {
+        const chatId = seg[1] ?? "";
+        const existing = this.chats.find((c) => c.id === chatId);
+        if (!existing) throw new ApiError(404, "not_found", `chat ${chatId} not found`);
+        const body = (opts.body ?? {}) as { title?: string | null; pinned?: boolean | null; archived?: boolean | null };
+        if (body.title !== undefined && body.title !== null) {
+          const trimmed = body.title.trim();
+          if (!trimmed || [...trimmed].length > 120) {
+            throw new ApiError(400, "bad_request", "title must be 1 to 120 characters");
+          }
+          existing.title = trimmed;
+        }
+        if (body.pinned !== undefined && body.pinned !== null) existing.pinned = body.pinned;
+        if (body.archived !== undefined && body.archived !== null) existing.archived = body.archived;
+        return ok(structuredClone(existing));
+      }
+      case "DELETE /chats": {
+        const chatId = seg[1] ?? "";
+        const idx = this.chats.findIndex((c) => c.id === chatId);
+        if (idx === -1) throw new ApiError(404, "not_found", `chat ${chatId} not found`);
+        this.chats.splice(idx, 1);
+        this.messages.delete(chatId);
+        return ok(undefined);
       }
       case "GET /schedules":
         return ok(typeof window !== "undefined" && new URLSearchParams(window.location.search).get("screen") === "empty" ? [] : structuredClone(SCHEDULES));
