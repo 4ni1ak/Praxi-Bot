@@ -110,6 +110,15 @@ a check fails, and a switch "Let <bot> use mail". The switch adds or removes
 [Bots and profiles](bots-and-profiles.md)); it touches nothing else, and sending
 still follows the bot's permission mode.
 
+Each mailbox in that block can also **show recent mail** (the newest ten
+headers: subject, sender, date; read-only, nothing is marked read and no body is
+fetched) and **send a test mail**. The test mail is one fixed message from the
+mailbox to its own address; it cannot be addressed to anyone else. Both use
+`GET /v1/email/accounts/{name}/messages` and
+`POST /v1/email/accounts/{name}/send-test`, which need the owner key (the desktop
+app has it; a bare API token does not). On a paired host only a desktop may read the
+headers, and the test mail is sent from the host itself.
+
 ### One mailbox per bot
 
 An account can belong to one bot:
