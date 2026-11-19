@@ -850,7 +850,7 @@ pub const REFINE_JPEG_QUALITY: u8 = 92;
 /// and send no refinement frame.
 const COMPACT_QUALITY_BELOW: u8 = 50;
 /// How long the screen must stay unchanged before one refinement frame is sent.
-pub const SETTLE_AFTER: Duration = Duration::from_millis(400);
+pub const SETTLE_AFTER: Duration = Duration::from_millis(300);
 /// Wait before retrying a refinement frame that the byte budget could not afford yet.
 const REFINE_RETRY: Duration = Duration::from_secs(1);
 
@@ -3503,6 +3503,21 @@ mod tests {
             r
         };
         assert!(psnr_db(&reference, &dec) > 24.0);
+    }
+
+    #[test]
+    fn watch_profile_is_full_hd_with_sharp_motion_and_a_quick_still() {
+        let w = EffectiveProfile::watch();
+        assert_eq!((w.max_width, w.max_height), (1920, 1080));
+        assert!(w.quality >= 80, "text must stay readable while it moves");
+        const { assert!(SETTLE_AFTER.as_millis() <= 300) };
+        const { assert!(REFINE_JPEG_QUALITY >= 85) };
+        assert!(refine_enabled(&w));
+        // A native 1280x800 desktop is never scaled (up or down).
+        assert_eq!(
+            compute_target_dimensions(1280, 800, w.max_width, w.max_height).unwrap(),
+            (1280, 800)
+        );
     }
 
     #[test]
