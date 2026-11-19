@@ -68,6 +68,7 @@ import { StopStatusNotice } from "./components/StopStatusNotice";
 import { LiveViewProvider, useLiveView } from "./state/LiveViewContext";
 import { HumanDrivingBanner } from "./components/HumanDrivingBanner";
 import { LiveViewer } from "./views/LiveViewer";
+import type { LiveChatSlots } from "./views/LiveViewerChat";
 import { appearanceFromQuery } from "./lib/appearance";
 import { createDebounced } from "./lib/debounce";
 import { backdropIsActive, CUSTOM_BACKDROP, NO_BACKDROP } from "./lib/backdropCatalog";
@@ -177,6 +178,8 @@ function AppShell() {
   const { openViewer } = useLiveView();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
+  const [homeChatSlots, setHomeChatSlots] = useState<LiveChatSlots | null>(null);
+  const [localChatSlots, setLocalChatSlots] = useState<LiveChatSlots | null>(null);
   // Every route change goes through this gate: a bot dialog with unsaved data asks first, and one
   // that is saving blocks it (PR #95, finding 4).  Do not call `setRoute` directly elsewhere.
   const leave = useLeaveRegistry();
@@ -730,6 +733,7 @@ function AppShell() {
               onOpenSettings={() => setBotEditOpen(true)}
               onManageSkills={() => setSkillsOpen(true)}
               onAddSkill={() => setAddSkillOpen(true)}
+              onOpenMail={() => setSettingsOpen("mail")}
             />
           ) : null}
         </SidePanel>
@@ -974,6 +978,7 @@ function AppShell() {
             showAgentRoute={settings.showAgentRoute}
             sendWith={settings.sendWith}
             messageTimes={settings.messageTimes}
+            liveChatSlots={localChatSlots ?? homeChatSlots}
           />
         ) : null}
         {route.kind === "needs" ? <NeedsYouView onOpenChat={openChat} /> : null}
@@ -1068,8 +1073,10 @@ function AppShell() {
           handleOpenOnboarding(false);
         }}
       />
-      <LiveViewer />
-      {activeComputerId !== LOCAL_COMPUTER ? <LiveViewer source="local" /> : null}
+      <LiveViewer onChatSlots={route.kind === "chat" && !hostEmpty ? setHomeChatSlots : undefined} />
+      {activeComputerId !== LOCAL_COMPUTER ? (
+        <LiveViewer source="local" onChatSlots={route.kind === "chat" && !hostEmpty ? setLocalChatSlots : undefined} />
+      ) : null}
     </SidebarLayout>
   );
 }

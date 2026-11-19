@@ -2186,6 +2186,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/peer/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return the path for this request's tunnel, or null on local HTTP. */
+        get: operations["link"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/policy": {
         parameters: {
             query?: never;
@@ -5747,6 +5764,12 @@ export interface components {
             /** @description Names of hosts whose bots read this screen in the last few seconds. */
             reading: string[];
             requests: components["schemas"]["PcRequestInfo"][];
+        };
+        /** @description The selected path of the authenticated QUIC connection, without peer addresses. */
+        PeerLink: {
+            relay: boolean;
+            /** Format: int32 */
+            rtt_ms: number;
         };
         /** @enum {string} */
         PointerPhase: "move" | "down" | "up";
@@ -11882,6 +11905,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": null | components["schemas"]["PeerLink"];
                 };
             };
         };

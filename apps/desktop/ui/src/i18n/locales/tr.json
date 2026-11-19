@@ -918,15 +918,15 @@
       },
       "approve-destructive": {
         "name": "Yıkıcı işlemlerde onay",
-        "hint": "Okumalar serbest; değiştiren veya gönderen her şey önce sana sorar."
+        "hint": "Okuma, gezinme, çalışma alanı düzenlemeleri ve botun kendi bilgisayarı serbest; silme, gönderme, para ve kendi bilgisayarın önce sorar."
       },
       "full": {
         "name": "Tam",
-        "hint": "Sormadan çalışır (sıradan dosya silme ve gönderimler dahil); yalnızca Para, zamanlanmış görev etkinleştirme ve yasaklı listedeki yıkıcı komutlarda sorar."
+        "hint": "Sormadan çalışır (silme ve gönderim dahil); yalnızca Para, zamanlanmış görev etkinleştirme ve yasaklı listedeki yıkıcı komutlarda sorar. Güvenilmeyen içerik okuduktan sonra veri göndermeden veya program çalıştırmadan önce yine sorar."
       },
       "read-and-draft": {
         "name": "Oku ve taslak hazırla",
-        "hint": "Okumalar serbest; taslaklar, dosya değişiklikleri, sayfa açma, tıklama, komutlar ve gönderimler önce sorar (Yıkıcı işlemlerde onay ile aynı etkili politika)."
+        "hint": "Okumalar serbest; her değişiklik, gönderim, sayfa açma, tıklama ve komut önce sorar."
       },
       "custom": {
         "name": "Özel",
@@ -2147,7 +2147,8 @@
       "usage": "Kullanım",
       "diagnostics": "Tanılama",
       "updates": "Güncellemeler",
-      "appearance": "Görünüm"
+      "appearance": "Görünüm",
+      "mail": "E-posta"
     },
     "general": {
       "account": {
@@ -2405,6 +2406,15 @@
           "nameHint": "Harf, rakam, nokta, tire veya alt çizgi kullan; harf ya da rakamla başla (en fazla 32).",
           "bot": "Botu seç ya da herhangi bir bot seç."
         }
+      },
+      "next": {
+        "ok": "Bağlandı. E-postaya izni olan bir bot bu posta kutusunu kullanabilir.",
+        "authFailed": "Sunucu girişi reddetti. Gmail, Outlook, Yahoo ve iCloud normal şifreni değil, uygulama şifresini ister. Posta kutusunu düzenleyip yeniden gir.",
+        "apiKey": "AgentMail API anahtarını reddetti. AgentMail konsolunda yeni bir anahtar oluşturup yeniden yapıştır.",
+        "unreachable": "Posta sunucusuna ulaşılamadı. İnternet bağlantını ve sunucu adlarını kontrol edip yeniden dene.",
+        "tls": "Güvenli bağlantı kurulamadı. Sunucu adını, portu ve güvenlik ayarını kontrol et.",
+        "protocol": "Bu sunucu bir posta sunucusu gibi yanıt vermedi. Sunucu adını ve portu kontrol et.",
+        "timeout": "Sunucu zamanında yanıt vermedi. Biraz sonra yeniden dene."
       }
     },
     "webSearch": {
@@ -2742,9 +2752,9 @@
       "auto": "Serbest"
     },
     "autonomyHints": {
-      "ask": "Dosya okuma, ekran görüntüsü ve web aramasını sormadan yapar; taslak hazırlama, gönderme, dosya değiştirme veya silme, sayfa açma, tıklama ve komut çalıştırma dahil diğer tüm işlemlerde sorar (Dengeli ile aynı etkili politika).",
-      "balanced": "Dosya okuma, ekran görüntüsü ve web aramasını serbestçe yapar; her dosya yazma veya silme, taslak, gönderim, sayfa açma, tıklama ve komutta önce sorar (Sorar ile aynı etkili politika).",
-      "auto": "Sormadan çalışır—sıradan dosya silme, kabuk komutu çalıştırma ve ileti gönderme dahil—yalnızca Para işlemleri, zamanlanmış görev etkinleştirme ve yasaklı liste komutlarında (disk biçimlendirme, sistem/ev dizini silme, kimlik bilgisi yolları) onay ister."
+      "ask": "Dosya okuma, ekran görüntüsü ve web aramasını sormadan yapar; her değişiklik, gönderim, sayfa açma, tıklama ve komuttan önce sorar.",
+      "balanced": "Okur, gezinir, çalışma alanındaki dosyaları düzenler ve botun kendi bilgisayarında sormadan çalışır; dosya silmeden, göndermeden, para harcamadan ve senin bilgisayarına dokunmadan önce sorar.",
+      "auto": "Silme, komut ve gönderim dahil sormadan çalışır. Para, zamanlanmış görev etkinleştirme ve yıkıcı komutlarda, ayrıca güvenilmeyen içerik okuduktan sonra veri göndermeden veya program çalıştırmadan önce yine sorar."
     },
     "autonomyCustom": "{{preset}} izin profili kullanılıyor.",
     "advanced": "Gelişmiş ayarlar",
@@ -2790,6 +2800,7 @@
       "localNoSystem": "Bot burada çalışıyor"
     },
     "reason": {
+      "timeout": "Ekran zamanında başlatılamadı",
       "connecting": "{{name}} sunucusuna bağlanılıyor…",
       "offline": "Sunucuya ulaşılamıyor",
       "notPaired": "Sunucu bu bilgisayarı artık kabul etmiyor",
@@ -2921,7 +2932,25 @@
     "needsDesktop": "{{name}} sunucusunda masaüstü oturumu yok, bu yüzden gösterilecek ekran yok. Eklemek için bu bilgisayarda şunu çalıştır:",
     "pausedIdle": "Kaynak tasarrufu için duraklatıldı - devam etmek için tıkla",
     "showScreen": "Ekranı göster",
-    "screenListFailed": "{{name}} ekran listesi yüklenemedi. Birazdan yeniden denenecek."
+    "screenListFailed": "{{name}} ekran listesi yüklenemedi. Birazdan yeniden denenecek.",
+    "mail": {
+      "heading": "E-posta",
+      "loading": "Posta kutuları aranıyor…",
+      "loadError": "Posta kutuları yüklenemedi: {{message}}",
+      "empty": "{{name}} için henüz posta kutusu yok. Kendi posta kutunu bağla ya da bota kendi adresini ver.",
+      "connect": "Posta kutusu bağla",
+      "manage": "Posta kutularını yönet",
+      "shared": "Tüm botlarla paylaşılıyor",
+      "own": "Yalnızca {{name}}",
+      "agentmail": "Kendi adresi",
+      "check": "Bağlantıyı denetle",
+      "checking": "Denetleniyor…",
+      "checked": "{{time}} tarihinde denetlendi",
+      "toolsLabel": "{{name}} e-posta kullanabilsin",
+      "toolsOnHint": "Okumaya izin var. Göndermek her zaman bu botun izin moduna uyar ve varsayılan olarak önce sorar.",
+      "toolsOffHint": "Posta kutusu bağlı ama {{name}} henüz hiçbir e-posta aracını göremiyor. E-postayı okuyup yazabilmesi için bunu aç.",
+      "toolsError": "E-posta erişimi değiştirilemedi: {{message}}"
+    }
   },
   "terminal": {
     "title": "Terminal - {{name}}",
@@ -3041,6 +3070,14 @@
     "confirmQuery": "Arama sorgularına izin ver"
   },
   "liveView": {
+    "chat": {
+      "title": "Botla sohbet",
+      "collapse": "Sohbeti daralt",
+      "replying": "Bot yanıt yazıyor…",
+      "working": "Bot çalışıyor…",
+      "approve": "Onayla",
+      "reject": "Reddet"
+    },
     "title": "Canlı ekran görünümü",
     "expand": "Büyük görünümü aç",
     "close": "Görünümü kapat",
@@ -3145,6 +3182,12 @@
     "approvalsWaiting": "Sohbette kararınızı bekleyen {{count}} öğe var.",
     "reviewApprovals": "Yanıtlamak için sohbete dön",
     "errors": {
+      "unauthorized": "Oturumunuzun yetkisi artık geçerli değil. Bu bilgisayara yeniden bağlanın.",
+      "too_many_streams": "Bu bağlantıda çok fazla akış açık. Başka bir akışı kapatıp tekrar deneyin.",
+      "network": "Ekran bağlantısı kesildi. Ağınızı kontrol edip tekrar deneyin.",
+      "view_quota": "Sunucuda çok fazla ekran oturumu açık. Kullanmadığınız bir ekranı kapatın veya biraz sonra tekrar deneyin.",
+      "server_restarting": "Sunucu yeniden başlatılıyor olabilir. Çevrimiçi olduğunda tekrar deneyin.",
+      "timeout": "Ekran zamanında başlatılamadı.",
       "generic": "İstek başarısız oldu. Bağlantıyı kontrol edip tekrar deneyin.",
       "release_failed": "Kontrol geri verilemedi. Bot duraklatılmış kalır; Bitirdim'i yeniden deneyin.",
       "release_unconfirmed": "Daemon devralmanızı hâlâ etkin gösteriyor. Bitirdim'i yeniden deneyin.",
@@ -3394,6 +3437,10 @@
     "dismiss": "Kapat",
     "stopAllNow": "Hepsini şimdi durdur",
     "letContinue": "Devam etsinler"
+  },
+  "peerLink": {
+    "direct": "Doğrudan · {{rtt}} ms",
+    "relay": "Röle · {{rtt}} ms"
   },
   "computerPicker": {
     "label": "Bilgisayar: {{name}}",

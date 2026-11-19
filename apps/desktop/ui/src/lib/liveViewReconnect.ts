@@ -15,9 +15,11 @@ export interface ReconnectHooks {
   /** A new session exists (first connect, or the old one was gone). */
   onSession(session: SessionInfo): void;
   /** The stream ended or failed: stop input, stop renewing the lease. */
-  onDisconnected(): void;
+  onDisconnected(error?: unknown): void;
   /** Called before every retry (re-read control state). */
   beforeRetry(): void;
+  /** Check a removed session's idle or time limit before creating another one. */
+  shouldReplaceSession?(): Promise<boolean>;
 }
 
 function isGone(err: unknown): boolean {
@@ -52,6 +54,7 @@ export async function runReconnectLoop(
   let attempt = 0;
   while (!opts.signal.aborted) {
     const startedAt = opts.now();
+    let failure: unknown;
     try {
       if (!session) {
         const created = await link.createSession();
@@ -64,6 +67,7 @@ export async function runReconnectLoop(
       }
       await link.openStream(session.session_id, opts.signal);
     } catch (err) {
+      failure = err;
       if (session && isGone(err)) {
         session = null;
       }
@@ -71,15 +75,18 @@ export async function runReconnectLoop(
     if (opts.signal.aborted) {
       break;
     }
-    hooks.onDisconnected();
+    hooks.onDisconnected(failure);
     attempt = opts.now() - startedAt >= minHealthy ? 1 : attempt + 1;
     const delay = reconnectDelayMs(attempt);
     opts.onBackoff?.(delay);
     await opts.sleep(delay);
-    if (opts.signal.aborted) {
+    if (opts.signal.aborted || (isGone(failure) && hooks.shouldReplaceSession &&
+        !(await hooks.shouldReplaceSession()))) {
       break;
     }
-    hooks.beforeRetry();
+    if (!opts.signal.aborted) {
+      hooks.beforeRetry();
+    }
   }
   return { sessionId: session?.session_id ?? null };
 }

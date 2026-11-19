@@ -7643,6 +7643,39 @@
         ]
       }
     },
+    "/v1/peer/link": {
+      "get": {
+        "tags": [
+          "peer"
+        ],
+        "summary": "Return the path for this request's tunnel, or null on local HTTP.",
+        "operationId": "link",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PeerLink"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/policy": {
       "get": {
         "tags": [
@@ -17753,6 +17786,24 @@
             "items": {
               "$ref": "#/components/schemas/PcRequestInfo"
             }
+          }
+        }
+      },
+      "PeerLink": {
+        "type": "object",
+        "description": "The selected path of the authenticated QUIC connection, without peer addresses.",
+        "required": [
+          "relay",
+          "rtt_ms"
+        ],
+        "properties": {
+          "relay": {
+            "type": "boolean"
+          },
+          "rtt_ms": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },

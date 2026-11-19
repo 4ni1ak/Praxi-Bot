@@ -1096,6 +1096,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/health", get(r::health))
         .route("/v1/view/targets", get(v::targets))
         .route("/v1/view/availability", get(v::availability))
+        .route("/v1/peer/link", get(peer::link))
         .route("/v1/view/status", get(v::status))
         .route("/v1/view/targets/{id}/thumbnail", get(v::thumbnail))
         .route("/v1/view/sessions", post(v::create_session))

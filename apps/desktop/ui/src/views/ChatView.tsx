@@ -22,6 +22,8 @@ import {
   useState
 } from "react";
 import { useTranslation } from "react-i18next";
+import { createPortal } from "react-dom";
+import type { LiveChatSlots } from "./LiveViewerChat";
 import { ownerKey } from "../lib/ownerKey";
 import { BotAvatar, Button } from "ui";
 import { isMockMode } from "../api/mockMode";
@@ -173,7 +175,8 @@ export function ChatView({
   onSwitchChat,
   showAgentRoute = false,
   sendWith = "enter",
-  messageTimes = "minutes"
+  messageTimes = "minutes",
+  liveChatSlots
 }: {
   chatId: string;
   /** Present only when there is a page to go back to; without it the header has no arrow. */
@@ -189,6 +192,7 @@ export function ChatView({
   sendWith?: SendWith;
   /** Settings, General: per-message times off / HH:mm / HH:mm:ss. */
   messageTimes?: MessageTimes;
+  liveChatSlots?: LiveChatSlots | null;
 }) {
   const { t, i18n } = useTranslation();
   const toast = useToast();
@@ -286,6 +290,10 @@ export function ChatView({
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
   const [remember, setRemember] = useState<Record<string, RememberState>>({});
+  useLayoutEffect(() => {
+    if (liveChatSlots?.composer) inputRef.current?.focus({ preventScroll: true });
+  }, [liveChatSlots?.composer]);
+
   useEffect(() => {
     const el = inputRef.current;
     if (el && pendingCaret.current !== null) {
@@ -1069,6 +1077,17 @@ export function ChatView({
     );
   }
 
+
+  const liveStatus = awaitingApproval
+    ? t("chat.runBar.waiting")
+    : running
+      ? lastItem?.kind === "item" && lastItem.runId === activeRunId && lastItem.item.kind === "text"
+        ? t("liveView.chat.replying")
+        : barDetail ?? t("liveView.chat.working")
+      : null;
+  const placeComposer = (composer: ReactNode) =>
+    liveChatSlots?.composer ? createPortal(composer, liveChatSlots.composer) : composer;
+
   return (
     <div className={styles.root}>
       {/* v6: no title row (the chat is named in the sidebar); a back button only while a page to go back to exists. */}
@@ -1292,7 +1311,12 @@ export function ChatView({
       ) : null}
       </div>
 
-      <footer className={styles.composer}>
+      {liveChatSlots?.status && liveStatus ? createPortal(
+        <p className={styles.liveReplyStatus} role="status">{liveStatus}</p>,
+        liveChatSlots.status
+      ) : null}
+      {placeComposer(
+      <footer className={styles.composer} data-live-view={liveChatSlots?.composer ? "true" : undefined}>
         {error ? (
           <p className={styles.error} role="alert">
             {error}
@@ -1306,7 +1330,7 @@ export function ChatView({
             onAction={(a) => (a === "restartService" ? void restartDaemon() : void send())}
           />
         ) : null}
-        <div className={styles.dockWrap}>
+        {!liveChatSlots?.composer ? <div className={styles.dockWrap}>
           <RunStatusLine
             model={barModel}
             botName={barBotName}
@@ -1330,7 +1354,7 @@ export function ChatView({
               void next.then(onControl).catch(() => {});
             }}
           />
-        </div>
+        </div> : null}
         <div className={styles.boxWrap}>
           {menuOpen ? (
             <div
@@ -1499,6 +1523,7 @@ export function ChatView({
           </div>
         </div>
       </footer>
+      )}
     </div>
   );
 }

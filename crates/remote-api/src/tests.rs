@@ -122,6 +122,21 @@ async fn daemon_routes_and_two_live_sse_events() {
         .unwrap();
     assert_eq!(health.status(), 200);
     assert_eq!(health.json::<Value>().await.unwrap()["status"], "ok");
+    let link = request(&proxy, reqwest::Method::GET, "/v1/peer/link")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(
+        link["relay"], false,
+        "loopback should use a direct QUIC path"
+    );
+    assert!(link["rtt_ms"].is_u64(), "{link}");
+
     let bots = request(&proxy, reqwest::Method::GET, "/v1/bots")
         .send()
         .await

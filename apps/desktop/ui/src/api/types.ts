@@ -98,6 +98,7 @@ export type CreateSessionInput = S["CreateSession"];
 export type SessionInfo = S["SessionInfo"];
 export type SessionUpdate = S["SessionUpdate"];
 export type ViewHeartbeat = S["Heartbeat"];
+export type PeerLink = S["PeerLink"];
 export type ScreenStatus = S["ScreenStatus"];
 export type ScreenStreamState = S["ScreenStreamState"];
 export type TerminalInfo = S["TerminalInfo"];

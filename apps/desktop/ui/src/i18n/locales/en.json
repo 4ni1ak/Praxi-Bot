@@ -918,15 +918,15 @@
       },
       "approve-destructive": {
         "name": "Approve destructive",
-        "hint": "Reads are free; anything that changes or sends asks you first."
+        "hint": "Reads, browsing, workspace edits and the bot's own computer run freely; deleting, sending, money and your own PC ask first."
       },
       "full": {
         "name": "Full",
-        "hint": "Runs without asking (including ordinary file deletes and sends), except Money, schedule activations, and catastrophic never-list commands."
+        "hint": "Runs without asking (including deletes and sends), except Money, schedule activation and catastrophic never-list commands. After reading untrusted content it still asks before sending data out or running a program."
       },
       "read-and-draft": {
         "name": "Read & draft",
-        "hint": "Reads are free; drafts, file changes, page fetches, clicks, commands, and sends all ask first (same effective policy as Approve destructive)."
+        "hint": "Reads are free; every change, send, page fetch, click and command asks first."
       },
       "custom": {
         "name": "Custom",
@@ -2147,7 +2147,8 @@
       "usage": "Usage",
       "diagnostics": "Diagnostics",
       "updates": "Updates",
-      "appearance": "Appearance"
+      "appearance": "Appearance",
+      "mail": "Mail"
     },
     "general": {
       "account": {
@@ -2405,6 +2406,15 @@
           "nameHint": "Use letters, digits, dots, dashes or underscores, starting with a letter or digit (32 at most).",
           "bot": "Pick the bot, or choose any bot."
         }
+      },
+      "next": {
+        "ok": "Connected. A bot that is allowed to use mail can use this mailbox.",
+        "authFailed": "The server refused the login. Gmail, Outlook, Yahoo and iCloud need an app password, not your normal one. Edit the mailbox and enter it again.",
+        "apiKey": "AgentMail refused the API key. Create a new key in your AgentMail console and paste it again.",
+        "unreachable": "The mail server could not be reached. Check your internet connection and the server names, then try again.",
+        "tls": "The secure connection failed. Check the server name, the port and the security setting.",
+        "protocol": "That server did not answer like a mail server. Check the server name and the port.",
+        "timeout": "The server did not answer in time. Try again in a moment."
       }
     },
     "webSearch": {
@@ -2742,9 +2752,9 @@
       "auto": "Free"
     },
     "autonomyHints": {
-      "ask": "Reads files, checks the screen, and searches the web without asking; asks before drafting, sending, changing or deleting files, fetching pages, clicking, or running commands (same effective policy as Balanced).",
-      "balanced": "Reads files, checks the screen, and searches the web freely; asks before every file write or delete, draft, send, page fetch, click, or command (same effective policy as Ask).",
-      "auto": "Runs without asking—including deleting ordinary files, running shell commands, and sending messages—pausing only for Money, schedule activations, and never-list commands (disk format, system/home wipes, credential paths)."
+      "ask": "Reads files, checks the screen, and searches the web without asking; asks before any change, send, page fetch, click, or command.",
+      "balanced": "Reads, browses, edits workspace files and works on the bot's own computer without asking; asks before deleting files, sending, spending money, or touching your PC.",
+      "auto": "Runs without asking, even for deletes, commands and sends. Still asks for Money, schedule activation and catastrophic commands, and after reading untrusted content, before sending data out or running a program."
     },
     "autonomyCustom": "Using the {{preset}} permission preset.",
     "advanced": "Advanced settings",
@@ -2790,6 +2800,7 @@
       "localNoSystem": "The bot works here"
     },
     "reason": {
+      "timeout": "The screen took too long to start",
       "connecting": "Connecting to {{name}}…",
       "offline": "Cannot reach the server",
       "notPaired": "The server no longer accepts this computer",
@@ -2921,7 +2932,25 @@
     "needsDesktop": "{{name}} has no desktop session, so there is no screen to show. To add one, run this on this computer:",
     "pausedIdle": "Paused to save resources - click to resume",
     "showScreen": "Show screen",
-    "screenListFailed": "{{name}}'s screen list could not be loaded. It will be tried again in a moment."
+    "screenListFailed": "{{name}}'s screen list could not be loaded. It will be tried again in a moment.",
+    "mail": {
+      "heading": "Mail",
+      "loading": "Looking for mailboxes…",
+      "loadError": "Could not load the mailboxes: {{message}}",
+      "empty": "{{name}} has no mailbox yet. Connect your own mailbox, or give the bot its own address.",
+      "connect": "Connect a mailbox",
+      "manage": "Manage mailboxes",
+      "shared": "Shared by every bot",
+      "own": "Only {{name}}",
+      "agentmail": "Own address",
+      "check": "Check connection",
+      "checking": "Checking…",
+      "checked": "Checked at {{time}}",
+      "toolsLabel": "Let {{name}} use mail",
+      "toolsOnHint": "Reading is allowed. Sending always follows the permission mode of this bot, and asks first by default.",
+      "toolsOffHint": "The mailbox is connected, but {{name}} cannot see any mail tools yet. Turn this on to let it read and write mail.",
+      "toolsError": "Could not change the mail access: {{message}}"
+    }
   },
   "terminal": {
     "title": "Terminal - {{name}}",
@@ -3041,6 +3070,14 @@
     "confirmQuery": "Allow retrieval queries"
   },
   "liveView": {
+    "chat": {
+      "title": "Chat with bot",
+      "collapse": "Collapse chat",
+      "replying": "Bot is replying…",
+      "working": "Bot is working…",
+      "approve": "Approve",
+      "reject": "Reject"
+    },
     "title": "Computer live view",
     "expand": "Open large viewer",
     "close": "Close viewer",
@@ -3145,6 +3182,12 @@
     "approvalsWaiting": "{{count}} item(s) are waiting for your decision in chat.",
     "reviewApprovals": "Back to chat to answer",
     "errors": {
+      "unauthorized": "Your session is no longer authorized. Reconnect to this computer.",
+      "too_many_streams": "This connection has too many open streams. Close another stream and try again.",
+      "network": "The connection to the screen was interrupted. Check your network and try again.",
+      "view_quota": "The server has too many screen sessions. Close an unused viewer or try again in a moment.",
+      "server_restarting": "The server may be restarting. Try again when it comes back online.",
+      "timeout": "The screen did not start in time.",
       "generic": "The request failed. Check the connection and try again.",
       "release_failed": "Could not hand control back. The bot stays paused; retry Bitirdim.",
       "release_unconfirmed": "The daemon still reports your takeover as active. Retry Bitirdim.",
@@ -3394,6 +3437,10 @@
     "dismiss": "Dismiss",
     "stopAllNow": "Stop all now",
     "letContinue": "Let them continue"
+  },
+  "peerLink": {
+    "direct": "Direct · {{rtt}} ms",
+    "relay": "Relay · {{rtt}} ms"
   },
   "computerPicker": {
     "label": "Computer: {{name}}",
