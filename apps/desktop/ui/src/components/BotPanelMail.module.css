@@ -164,3 +164,48 @@
   width: var(--size-icon-sm);
   height: var(--size-icon-sm);
 }
+
+/* Recent messages: read-only, plain text (sender-controlled). */
+.messages {
+  display: flex;
+  flex-direction: column;
+  margin: var(--space-0);
+  padding: var(--space-0);
+  list-style: none;
+  border-top: var(--size-border) solid var(--color-border);
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+  min-width: var(--space-0);
+  padding: var(--space-2) var(--space-0);
+  border-bottom: var(--size-border) solid var(--color-border);
+}
+
+.message:last-child {
+  border-bottom: none;
+}
+
+.subject,
+.from {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subject {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.message[data-unread="true"] .subject {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.from {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-faint);
+}
