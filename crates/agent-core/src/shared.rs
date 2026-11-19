@@ -704,6 +704,10 @@ pub(crate) struct RunCtx {
     /// Not part of `resolved_computer`: a run is placed on ONE computer, the
     /// per-request target is a second identity with its own grant scope.
     pub mypc: Option<computer_target::ComputerNode>,
+    /// `pc_*` read families (files, screen, browser) the owner approved in
+    /// THIS run: a read of the user's computer asks once per run and family,
+    /// never once for every run (review blocker 1).
+    pub pc_reads: Mutex<std::collections::BTreeSet<&'static str>>,
     pub run_id: RunId,
     pub chat_id: ChatId,
     pub bot_id: BotId,
@@ -1551,8 +1555,13 @@ impl Shared {
                     .lock()
                     .remove(&run.id)
                     .unwrap_or_else(|| self.resolve_computer_for_run(&raw_profile, Some(run)));
-                let profile =
-                    Arc::new(raw_profile.with_computer_access(rc.desktop_available, rc.browser));
+                let unset_denied =
+                    matches!(self.unset_file_scope(), builtin_tools::FsScope::Folders(_));
+                let profile = Arc::new(
+                    raw_profile
+                        .with_computer_access(rc.desktop_available, rc.browser)
+                        .with_unset_files_denied(unset_denied),
+                );
                 (
                     profile,
                     raw_profile.policy(),
@@ -1615,6 +1624,7 @@ impl Shared {
         let mypc = self.mypc_node();
         let ctx = Arc::new(RunCtx {
             mypc,
+            pc_reads: Mutex::new(std::collections::BTreeSet::new()),
             computer,
             waiting_computer: Arc::new(AtomicBool::new(false)),
             resolved_computer,

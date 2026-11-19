@@ -192,6 +192,23 @@ pub(crate) fn grant_target(detail: &Value) -> Option<GrantTarget> {
         .map(GrantTarget::Category)
 }
 
+/// The per-run read allowance a `pc_*` READ tool needs (`None`: not a read of
+/// the user's computer that asks, e.g. `pc_info`).
+pub(crate) fn pc_read_family(name: &str) -> Option<&'static str> {
+    let inner = name.strip_prefix(builtin_tools::pc::PC_PREFIX)?;
+    if inner.starts_with("fs_") {
+        Some("files")
+    } else if inner.starts_with("browser_") {
+        Some("browser")
+    } else if inner.starts_with("desktop_") {
+        Some("screen")
+    } else if inner.starts_with("shell_") {
+        Some("commands")
+    } else {
+        None
+    }
+}
+
 /// Add the immutable computer identity to both event details and the summary.
 fn computer_approval(
     ctx: &RunCtx,
@@ -293,6 +310,13 @@ impl Shared {
         {
             return (Decision::Deny, None);
         }
+        // The user's own computer only serves runs the owner started by
+        // hand: never a schedule, webhook, channel, routine or external
+        // agent, and never a run whose message came in through Telegram, the
+        // local API or a paired device that is not the owner's admin desktop.
+        if name.starts_with(builtin_tools::pc::PC_PREFIX) && !self.pc_owner_started(ctx) {
+            return (Decision::Deny, None);
+        }
         // Document converters are shell-free writers too. In particular a
         // one-column CSV can be a valid SKILL.md or workflow/config document.
         let output_field = match name {
@@ -388,7 +412,15 @@ impl Shared {
             }
             return (d, None);
         }
+        // A read of the user's computer asks once per run and family, whatever
+        // the mode, unless the owner remembered it for this bot and computer.
+        let pc_read_pending = effect == Effect::Read
+            && pc_read_family(name).is_some_and(|f| !ctx.pc_reads.lock().contains(f))
+            && !self.plain_granted(ctx, name, category, input);
         if !d.is_ask() {
+            if d == Decision::Allow && pc_read_pending {
+                return (Decision::ask(), None);
+            }
             // A clean Allow becomes an ask once the run is tainted and this
             // call can leave the machine. A Deny is unchanged.
             if d == Decision::Allow && must_ask && !self.gate_waived(ctx, name, input) {
@@ -415,7 +447,35 @@ impl Shared {
         if must_ask {
             return (d, None);
         }
-        let granted = control_covered || self.scoped_covers(ctx, name, category, input) || {
+        let granted = control_covered || self.plain_granted(ctx, name, category, input);
+        let read_skip = effect == Effect::Read
+            && if name.starts_with(builtin_tools::pc::PC_PREFIX) {
+                !pc_read_pending
+            } else {
+                self.cfg.read_tools_skip_ask
+            };
+        if granted || read_skip {
+            return (Decision::Allow, None);
+        }
+        // The autonomy mode's lane. It sits after every floor, the taint gate
+        // and the grants, so it can only turn a plain policy-level ask into an
+        // allow, never override one of those.
+        match self.mode_lane(ctx, effect, category, input) {
+            Some(reason) => (Decision::Allow, Some(reason.code())),
+            None => (d, None),
+        }
+    }
+
+    /// A this-chat or remembered grant of this bot covers the call (scoped to
+    /// the computer the tool acts on).
+    fn plain_granted(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        category: PermissionCategory,
+        input: &Value,
+    ) -> bool {
+        self.scoped_covers(ctx, name, category, input) || {
             let g = self.grants.lock();
             g.this_chat.contains(&(
                 ctx.chat_id,
@@ -428,16 +488,38 @@ impl Shared {
                 category,
                 ctx.tool_grant_scope(name, category).as_deref(),
             )
-        };
-        if granted || (self.cfg.read_tools_skip_ask && effect == Effect::Read) {
-            return (Decision::Allow, None);
         }
-        // The autonomy mode's lane. It sits after every floor, the taint gate
-        // and the grants, so it can only turn a plain policy-level ask into an
-        // allow, never override one of those.
-        match self.mode_lane(ctx, effect, category, input) {
-            Some(reason) => (Decision::Allow, Some(reason.code())),
-            None => (d, None),
+    }
+
+    /// The run (or the top-level run of a subagent) was started by the owner
+    /// by hand: a human turn whose every user message was typed in the
+    /// desktop app on this machine (`owner`) or sent from the owner's admin
+    /// desktop paired with this host (`peer_admin`). Fails closed.
+    pub(crate) fn pc_owner_started(&self, ctx: &RunCtx) -> bool {
+        if ctx.initiator != InitiatorKind::Human {
+            return false;
+        }
+        let mut run_id = ctx.run_id;
+        let mut parent = ctx.parent_run_id;
+        for _ in 0..8 {
+            let Some(p) = parent else { break };
+            run_id = p;
+            parent = match self.storage.get_run(p) {
+                Ok(Some(r)) => r.parent_run_id,
+                _ => return false,
+            };
+        }
+        if parent.is_some() {
+            return false;
+        }
+        match self.storage.run_user_message_sources(run_id) {
+            Ok(sources) => {
+                !sources.is_empty()
+                    && sources
+                        .iter()
+                        .all(|s| matches!(s.as_str(), "owner" | "peer_admin"))
+            }
+            Err(_) => false,
         }
     }
 
@@ -1703,6 +1785,13 @@ impl ExecPermit {
             .sh
             .storage
             .decide_approval(self.approval_id, "approved");
+        // An approved read of the user's computer covers that family for the
+        // rest of THIS run only.
+        if self.effect == Effect::Read
+            && let Some(family) = pc_read_family(&self.name)
+        {
+            self.ctx.pc_reads.lock().insert(family);
+        }
         // Approving an always-ask tool confirms this one call only.
         let scope = if self.sh.must_ask(&self.name, &self.input)
             || matches!(
