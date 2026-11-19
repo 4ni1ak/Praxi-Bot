@@ -29,7 +29,8 @@ export const DAEMON_ERROR_CODES = [
   "view_quota", "schedule_moved", "host_unreachable", "login_busy", "login_manual", "not_installed", "login_files_changed", "login_untrusted_location", "login_forbidden", "login_stale",
   "prerequisite_missing", "install_copy_only", "host_admin_forbidden", "host_admin_required", "secrets_unavailable", "secret_store_failed", "owner_key_required",
   "terminal_unsupported", "terminal_start_failed", "terminal_busy", "terminal_gone",
-  "bad_voice_config", "voice_not_configured", "voice_upstream_failed"
+  "bad_voice_config", "voice_not_configured", "voice_upstream_failed",
+  "unsupported_attachment", "attachment_too_large"
 ] as const;
 
 export type ErrorAction = "retry" | "reload" | "restartService" | "settings" | "fixEngine";

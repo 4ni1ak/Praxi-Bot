@@ -18,6 +18,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { PeerLinkBadge } from "../components/PeerLinkBadge";
 import { Button } from "ui";
+import { PendingDecisions } from "../components/PendingDecisions";
 import { TargetPicker } from "../components/TargetPicker";
 import type { HumanAction, TargetInfo } from "../api/types";
 import {
@@ -499,15 +500,19 @@ export function LiveViewer({
           role="status"
           data-testid="live-viewer-approvals"
         >
-          <span>{t("liveView.approvalsWaiting", { count: questionCount })}</span>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void closeViewer()}
-            data-testid="live-viewer-approvals-open"
-          >
-            {t("liveView.reviewApprovals")}
-          </Button>
+          <div className={styles.approvalHead}>
+            <span>{t("liveView.approvalsWaiting", { count: questionCount })}</span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void closeViewer()}
+              data-testid="live-viewer-approvals-open"
+            >
+              {t("liveView.reviewApprovals")}
+            </Button>
+          </div>
+          {/* The chat beside the screen holds the approvals; the questions are answered right here. */}
+          <PendingDecisions entries={needs.filter((item) => item.kind === "question")} />
         </div>
       ) : null}
 

@@ -289,6 +289,8 @@
     "newChatFailed": "Sohbet başlatılamadı: {{detail}}"
   },
   "chat": {
+    "pendingPinned": "Kararınız bekleniyor. Kart mesaj kutusunun üstünde.",
+    "pendingElsewhere": "Bu botun başka bir sohbetinden: {{chat}}",
     "notFound": "Bu sohbet yok.",
     "stop": "Durdur",
     "resume": "Sürdür",
@@ -865,6 +867,18 @@
       "stopUnconfirmed": "Servis durdurmayı 5 saniyedir onaylamadı, çalışma hâlâ sürüyor olabilir. Bitirmek için Zorla durdur'a bas.",
       "stopUnreachable": "Durdurma, bu botun çalıştığı bilgisayara ulaşamadı. Yeniden deniyor; bağlantıyı kontrol et.",
       "forceStop": "Zorla durdur"
+    },
+    "attach": {
+      "add": "Dosya veya görsel ekle",
+      "remove": "{{name}} dosyasını kaldır",
+      "list": "Eklenen dosyalar",
+      "uploading": "Yükleniyor",
+      "failed": "Bu dosya eklenemedi",
+      "tooLarge": "Çok büyük (en fazla 15 MB)",
+      "unsupported": "Bu dosya türü desteklenmiyor. Görsel, PDF, Word, Excel, PowerPoint veya metin dosyası kullan.",
+      "tooMany": "Bir mesajda en fazla 6 dosya olabilir",
+      "pastedName": "Yapıştırılan dosya",
+      "truncated": "Dosyanın yalnızca başı okundu"
     }
   },
   "botForm": {
@@ -1364,6 +1378,14 @@
       "install_copy_only": {
         "title": "Bu CLI sunucuya otomatik kurulamaz",
         "hint": "Gösterilen komutu ya da resmî sayfayı kullan."
+      },
+      "unsupported_attachment": {
+        "title": "Bu dosya eklenemez",
+        "hint": "Görsel, PDF, Word, Excel, PowerPoint veya metin dosyası kullan."
+      },
+      "attachment_too_large": {
+        "title": "Bu dosya çok büyük",
+        "hint": "Daha küçük bir dosya ekle (en fazla 15 MB, görseller 5 MB)."
       }
     },
     "network": {
@@ -2851,7 +2873,10 @@
   "runStatus": {
     "working": "Çalışıyor…",
     "stopping": "Durduruluyor…",
-    "waiting": "Onayını bekliyor: {{step}}"
+    "waiting": "Onayını bekliyor: {{step}}",
+    "waitAnswer": "Yanıtını bekliyor: {{question}}",
+    "waitLost": "Burada gösterilemeyen bir yanıt bekleniyor. Devam etmek için çalışmayı durdur.",
+    "showCard": "Göster"
   },
   "queued": {
     "label": "Sırada.",
@@ -3213,8 +3238,8 @@
       "resync_required": "Ekran geometrisi veya sıra güncellendi; son kare ile eşzamanlanıyor."
     },
     "targetLocked": "Ekran hedefini değiştirmeden önce kontrolü geri verin (Bitirdim).",
-    "approvalsWaiting": "Sohbette kararınızı bekleyen {{count}} öğe var.",
-    "reviewApprovals": "Yanıtlamak için sohbete dön",
+    "approvalsWaiting": "Kararınızı bekleyen {{count}} öğe var. Aşağıdan veya sohbette karar verin.",
+    "reviewApprovals": "Sohbete dön",
     "errors": {
       "unauthorized": "Oturumunuzun yetkisi artık geçerli değil. Bu bilgisayara yeniden bağlanın.",
       "too_many_streams": "Bu bağlantıda çok fazla akış açık. Başka bir akışı kapatıp tekrar deneyin.",

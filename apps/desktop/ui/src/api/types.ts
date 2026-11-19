@@ -26,6 +26,7 @@ export type BotInput = S["BotInput"];
 export type BotPatchInput = S["BotPatchInput"];
 export type Chat = S["ChatDto"];
 export type Message = S["MessageDto"];
+export type Attachment = S["AttachmentDto"];
 export type RunUsage = S["RunUsageDto"];
 /**
  * A run.  `schedule_id` is not in the generated `RunDto` yet (the daemon only

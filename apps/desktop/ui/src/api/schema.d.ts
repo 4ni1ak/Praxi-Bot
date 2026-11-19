@@ -3359,6 +3359,13 @@ export interface components {
             decided_at_ms?: number | null;
             /** @description `null` while pending, else `approved` / `denied` / `expired`. */
             decision?: string | null;
+            /** @description The tool's card facts from the `approval_needed` event. */
+            details?: unknown;
+            /**
+             * @description The call's input, as the `approval_needed` event carried it (so a client that missed the
+             *     event can still show the full card).
+             */
+            input?: unknown;
             /**
              * Format: int64
              * @description Request time.
@@ -4322,6 +4329,8 @@ export interface components {
              *     one tool and are not reflected in `categories`.
              */
             grants: components["schemas"]["GrantDto"][];
+            /** @description The bot's autonomy mode, derived from its preset: `ask`, `balanced` or `full`. */
+            mode: string;
             /** @description The profile's own policy as JSON; `null` = the workspace policy applies. */
             policy?: unknown;
         };
@@ -4693,6 +4702,15 @@ export interface components {
              *     `money`, `system`, `remote` or `script`.
              */
             name: string;
+        } | {
+            /** @enum {string} */
+            kind: "scoped";
+            /** @description The one target the rule covers (see `scope`). */
+            pattern: string;
+            /** @description `origin`, `folder` or `command`. */
+            scope: string;
+            /** @description Tool name. */
+            tool: string;
         };
         /** @description `GET /v1/health`. */
         Health: {
