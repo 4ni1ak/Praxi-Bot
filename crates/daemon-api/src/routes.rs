@@ -307,7 +307,11 @@ pub(crate) fn resolve_bot(input: BotInput) -> Result<(String, Value), ApiError> 
 #[utoipa::path(get, path = "/v1/health", tag = "meta",
     responses((status = 200, body = Health)))]
 pub(crate) async fn health(State(s): State<AppState>) -> Json<Health> {
+    let (startup, startup_reason) = s.leader().startup();
     Json(Health {
+        startup,
+        components_ready: startup == crate::host::StartupPhase::Ready,
+        startup_reason,
         status: if s.agent().providers().setup_required() {
             "setup_required"
         } else {
@@ -2735,7 +2739,8 @@ pub(crate) async fn list_channels(State(s): State<AppState>) -> Json<Vec<crate::
 #[utoipa::path(post, path = "/v1/channels/telegram/pair-code", tag = "channels",
     security(("bearer" = [])),
     responses((status = 200, body = crate::dto::PairCodeDto), (status = 404, body = ErrorBody),
-              (status = 409, body = ErrorBody, description = "the channel is not running")))]
+              (status = 409, body = ErrorBody, description = "the channel is not running"),
+              (status = 503, body = ErrorBody, description = "the daemon is still starting")))]
 pub(crate) async fn telegram_pair_code(
     State(s): State<AppState>,
 ) -> Result<Json<crate::dto::PairCodeDto>, ApiError> {
@@ -2743,7 +2748,16 @@ pub(crate) async fn telegram_pair_code(
         .channels()
         .into_iter()
         .find(|c| c.info().id == "telegram")
-        .ok_or_else(|| ApiError::not_found("channel telegram"))?;
+        .ok_or_else(|| {
+            if s.leader().is_starting() {
+                ApiError::starting()
+            } else {
+                ApiError::not_found("channel telegram")
+            }
+        })?;
+    if s.leader().is_starting() {
+        return Err(ApiError::starting());
+    }
     channel
         .create_pair_code()
         .map(Json)
