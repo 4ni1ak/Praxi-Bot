@@ -1063,6 +1063,10 @@
         "title": "Şu an kurulacak bir şey yok",
         "hint": "Zaten kurulu ya da kuruluyor olabilir veya bu bilgisayarda kurulum aracı yok."
       },
+      "attachment_too_large": {
+        "title": "Bu ek çok büyük",
+        "hint": "Kaldır veya daha küçük bir dosya seçip yeniden dene."
+      },
       "approval_once_only": {
         "title": "Bu onay yalnızca bir kez verilebilir",
         "hint": "Yalnızca bu adım için izin ver ya da reddet."
@@ -1318,6 +1322,10 @@
       "unavailable": {
         "title": "Bu şu an kullanılamıyor",
         "hint": "Biraz sonra yeniden dene."
+      },
+      "unsupported_attachment": {
+        "title": "Bu ek desteklenmiyor",
+        "hint": "Dosyanın boş veya bozuk olmadığından emin ol ya da başka bir dosya dene."
       },
       "unsupported_media_type": {
         "title": "Bu dosya türü desteklenmiyor",

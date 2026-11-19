@@ -3063,6 +3063,161 @@
         ]
       }
     },
+    "/v1/chats/{id}/attachments": {
+      "post": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Upload one file for a chat message. The body is the raw file; its type is sniffed, not\ntaken from the name. Use the returned id in `attachment_ids` of the message.",
+        "operationId": "upload",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Chat id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "File name to show (a path is reduced to its last component).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/chats/{id}/attachments/{att}": {
+      "get": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "The stored original of an attachment (images inline, everything else as a download).",
+        "operationId": "download",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Chat id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "att",
+            "in": "path",
+            "description": "Attachment id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/chats/{id}/messages": {
       "get": {
         "tags": [
@@ -10963,6 +11118,47 @@
           "missing"
         ]
       },
+      "AttachmentDto": {
+        "type": "object",
+        "description": "A file attached to a chat message (`POST /v1/chats/{id}/attachments`).",
+        "required": [
+          "id",
+          "name",
+          "mime_type",
+          "kind",
+          "size",
+          "truncated"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Attachment id."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`image` (sent to the model as a picture), `document` or `text` (sent as text)."
+          },
+          "mime_type": {
+            "type": "string",
+            "description": "Sniffed media type."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Original size in bytes.",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Only the start of the text was given to the model."
+          }
+        }
+      },
       "AvailableSkillDto": {
         "type": "object",
         "description": "Catalog skill entry annotated with whether it is assigned to the bot.",
@@ -17246,6 +17442,13 @@
           "created_at_ms"
         ],
         "properties": {
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttachmentDto"
+            },
+            "description": "Files attached to a user message."
+          },
           "bot_id": {
             "type": [
               "string",
@@ -18832,6 +19035,14 @@
           "text"
         ],
         "properties": {
+          "attachment_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Ids returned by `POST /v1/chats/{id}/attachments` for this chat (at most 6). The text\nmay be empty when files are attached."
+          },
           "mode": {
             "$ref": "#/components/schemas/Mode",
             "description": "Behaviour while a turn is running."
