@@ -13652,6 +13652,7 @@
         "description": "A bot's permission picture (`GET /v1/bots/{id}`).",
         "required": [
           "categories",
+          "mode",
           "grants"
         ],
         "properties": {
@@ -13671,6 +13672,10 @@
               "$ref": "#/components/schemas/GrantDto"
             },
             "description": "The persisted \"always allow\" rules.  Tool-level grants only widen that\none tool and are not reflected in `categories`."
+          },
+          "mode": {
+            "type": "string",
+            "description": "The bot's autonomy mode, derived from its preset: `ask`, `balanced` or `full`."
           },
           "policy": {
             "description": "The profile's own policy as JSON; `null` = the workspace policy applies."
@@ -14646,6 +14651,36 @@
               "name": {
                 "type": "string",
                 "description": "`fs`, `shell`, `desktop`, `browser`, `accounts`, `messaging`,\n`money`, `system`, `remote` or `script`."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "One tool on one target: a site, a folder or a command prefix.",
+            "required": [
+              "tool",
+              "scope",
+              "pattern",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "scoped"
+                ]
+              },
+              "pattern": {
+                "type": "string",
+                "description": "The one target the rule covers (see `scope`)."
+              },
+              "scope": {
+                "type": "string",
+                "description": "`origin`, `folder` or `command`."
+              },
+              "tool": {
+                "type": "string",
+                "description": "Tool name."
               }
             }
           }
