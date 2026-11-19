@@ -2174,6 +2174,10 @@
         "hint": "Entferne große Dateien daraus und versuche es erneut.",
         "title": "Dieser Skill ist zu groß"
       },
+      "starting": {
+        "hint": "Die App startet noch. Versuche es in ein paar Sekunden erneut.",
+        "title": "Startet noch"
+      },
       "terminal_busy": {
         "hint": "Schließe ein anderes Terminal auf dem Server und versuche es dann erneut.",
         "title": "Alle Terminals auf dem Server sind belegt"

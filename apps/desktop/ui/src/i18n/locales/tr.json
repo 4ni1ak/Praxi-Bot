@@ -2174,6 +2174,10 @@
         "hint": "İçinden büyük dosyaları çıkarıp yeniden dene.",
         "title": "Bu beceri çok büyük"
       },
+      "starting": {
+        "hint": "Uygulama hâlâ başlıyor. Birkaç saniye sonra tekrar dene.",
+        "title": "Hâlâ başlatılıyor"
+      },
       "terminal_busy": {
         "hint": "Sunucudaki başka bir terminali kapatıp yeniden dene.",
         "title": "Sunucudaki tüm terminaller kullanımda"

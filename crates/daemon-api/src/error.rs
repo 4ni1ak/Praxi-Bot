@@ -70,6 +70,14 @@ impl ApiError {
     pub(crate) fn unavailable(message: impl Into<String>) -> Self {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, "unavailable", message)
     }
+    /// Background startup (peer check, component start) has not finished yet.
+    pub(crate) fn starting() -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "starting",
+            "the daemon is still starting; retry in a few seconds",
+        )
+    }
     pub(crate) fn internal(message: impl std::fmt::Display) -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,

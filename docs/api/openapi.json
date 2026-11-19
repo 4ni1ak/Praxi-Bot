@@ -3046,6 +3046,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "the daemon is still starting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -15075,9 +15085,24 @@
             "type": "string",
             "description": "HTTP API compatibility version."
           },
+          "components_ready": {
+            "type": "boolean",
+            "description": "`true` once startup finished without a failure (standby runs no components)."
+          },
           "host": {
             "$ref": "#/components/schemas/HostInfo",
             "description": "Capabilities of this host; probes never launch a browser."
+          },
+          "startup": {
+            "$ref": "#/components/schemas/StartupPhase",
+            "description": "Background startup: `starting` while leadership is verified and components\nstart, `ready` once finished, `degraded` when a component failed to start."
+          },
+          "startup_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why startup is `degraded`; fixed text, no secrets or paths."
           },
           "status": {
             "type": "string",
@@ -20420,6 +20445,15 @@
             "description": "SSH user (default `ubuntu`)."
           }
         }
+      },
+      "StartupPhase": {
+        "type": "string",
+        "description": "How far background startup of the automatic components has got.",
+        "enum": [
+          "starting",
+          "ready",
+          "degraded"
+        ]
       },
       "Status": {
         "type": "string",
