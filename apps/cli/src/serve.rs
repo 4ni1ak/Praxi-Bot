@@ -313,6 +313,13 @@ fn build_agent_with_skills(
         std::env::var("BOT_BROWSER_IDLE_SECONDS").ok().as_deref(),
     );
     tools.browser_settings.idle_timeout = idle;
+    let memory = match agent_core::MemoryConfig::open_default(storage.data_dir()) {
+        Ok(cfg) => Some(cfg),
+        Err(e) => {
+            eprintln!("warning: memory store unavailable: {e}");
+            None
+        }
+    };
     // The discovery threshold is `LoopConfig`'s default (40).
     Ok(AgentLoop::new(
         Arc::clone(storage),
@@ -321,7 +328,7 @@ fn build_agent_with_skills(
         LoopConfig {
             redactor: Some(redactor),
             max_computer_runs,
-            memory: agent_core::MemoryConfig::open_default(storage.data_dir()),
+            memory,
             knowledge_decider: Some(Arc::new(agent_core::HeuristicKnowledgeDecider::new(
                 Arc::clone(storage),
             ))),

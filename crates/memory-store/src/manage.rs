@@ -128,4 +128,29 @@ impl MemoryStore {
         new.importance = 0.8;
         self.add(&new, "user correction")
     }
+
+    /// Newest active (not yet undone) journal entry id for `memory_id`, if any.
+    ///
+    /// # Errors
+    /// SQLite failure.
+    pub fn latest_journal_id(&self, user: UserId, memory_id: Uuid) -> Result<Option<i64>> {
+        let conn = self.conn();
+        let id: Option<i64> = conn.query_row(
+            "SELECT MAX(id) FROM memory_journal WHERE user_id = ?1 AND memory_id = ?2 AND undone = 0",
+            params![user.0.to_string(), memory_id.to_string()],
+            |r| r.get(0),
+        )?;
+        Ok(id)
+    }
+
+    /// Undo the newest active journal entry for `memory_id`.
+    ///
+    /// # Errors
+    /// `NotFound` if the memory has no active journal entry; `Invalid` if undo fails.
+    pub fn undo_memory(&self, user: UserId, memory_id: Uuid) -> Result<Memory> {
+        let journal_id = self.latest_journal_id(user, memory_id)?.ok_or_else(|| {
+            MemoryError::NotFound(format!("active journal entry for memory {memory_id}"))
+        })?;
+        self.undo(user, journal_id)
+    }
 }

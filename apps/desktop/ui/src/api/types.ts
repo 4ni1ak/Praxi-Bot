@@ -13,6 +13,13 @@ export type KnowledgeEmailCapture = S["KnowledgeEmailCapture"];
 export type KnowledgeEmbeddingProgress = S["KnowledgeEmbeddingProgress"];
 export type KnowledgeEmbeddingApproval = S["EmbeddingApprovalChallenge"];
 export type KnowledgeEmbeddingGrantTarget = S["EmbeddingGrantTarget"];
+export type MemoryKind = S["MemoryKindDto"];
+export type MemoryTrust = S["MemoryTrustDto"];
+export type MemoryItem = S["MemoryItemDto"];
+export type CreateMemoryInput = S["CreateMemoryInput"];
+export type UpdateMemoryInput = S["UpdateMemoryInput"];
+export type MemoryPreviewHit = S["MemoryPreviewHitDto"];
+export type MemoryPreview = S["MemoryPreviewDto"];
 
 export type Bot = S["BotDto"];
 export type BotInput = S["BotInput"];
