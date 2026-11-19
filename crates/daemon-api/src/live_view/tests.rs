@@ -1556,6 +1556,50 @@ async fn local_recover_clears_a_takeover_latch_without_any_registered_target() {
     );
 }
 #[tokio::test]
+async fn host_admin_desktop_clears_a_pause_but_other_peers_and_phones_stay_refused() {
+    use axum::extract::State;
+    use axum::response::IntoResponse as _;
+    let t = Test::new();
+    let (_id, _owned, _body) = t.active(Some("alice")).await;
+    let recover = |actor: Actor| {
+        let state = t.state.clone();
+        async move {
+            local_recover(State(state), axum::Extension(actor))
+                .await
+                .map(|_| ())
+                .map_err(|e| e.into_response().status())
+        }
+    };
+    // A non-admin peer (also one holding the input grant) and a phone are refused.
+    grant(&t, "bob", true, true).await;
+    assert_eq!(
+        recover(view_actor("bob", false)).await,
+        Err(StatusCode::FORBIDDEN)
+    );
+    let phone = Actor {
+        recovery: false,
+        ..view_actor("phone", false)
+    };
+    assert_eq!(recover(phone).await, Err(StatusCode::FORBIDDEN));
+    // An admin whose screen input was revoked on the host stays refused.
+    t.state.live_view().privileges.lock().insert(
+        "peer:adm".into(),
+        ScreenPrivileges {
+            view: false,
+            input: false,
+        },
+    );
+    assert_eq!(
+        recover(view_actor("adm", true)).await,
+        Err(StatusCode::FORBIDDEN)
+    );
+    assert!(t.state.hub().latched().is_some());
+    // The host's admin desktop clears it.
+    t.state.live_view().privileges.lock().remove("peer:adm");
+    assert_eq!(recover(view_actor("adm", true)).await, Ok(()));
+    assert!(t.state.hub().latched().is_none());
+}
+#[tokio::test]
 async fn reconciling_an_unpaired_owner_acts_once_not_every_tick() {
     let t = Test::new();
     let (_id, _owned, _body) = t.active(Some("alice")).await;

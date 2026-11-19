@@ -1269,6 +1269,21 @@ pub(crate) fn require_local(s: &AppState, actor: &Actor, what: &str) -> Result<(
     Err(ApiError::forbidden("only the local user may do this"))
 }
 
+/// The local user, or the paired ADMIN desktop of this host (never a phone, a
+/// non-admin peer or a bot) that still holds the screen-input policy (an
+/// explicit revoke made on the host wins). For clearing a stuck pause, which
+/// the host's owner must be able to do from their own computer.
+pub(crate) fn require_local_or_host_admin(
+    s: &AppState,
+    actor: &Actor,
+    what: &str,
+) -> Result<(), ApiError> {
+    if actor.admin && !actor.local && s.live_view().allowed(actor, true) {
+        return Ok(());
+    }
+    require_local(s, actor, what)
+}
+
 /// The local user stops any takeover, whoever owns it: input is invalidated
 /// first (without waiting for the input executor), pressed inputs are reset,
 /// the bot stays paused. A pause without takeover is untouched here.
@@ -1432,7 +1447,8 @@ pub(crate) async fn local_recover(
     State(s): State<AppState>,
     Extension(actor): Extension<Actor>,
 ) -> Result<Json<crate::dto::ControlStateDto>, ApiError> {
-    require_local(&s, &actor, "recover")?;
+    require_local_or_host_admin(&s, &actor, "recover")?;
+    let by = if actor.local { "local" } else { "host_admin" };
     // The stop is in force either way; an unconfirmed key reset must not block
     // clearing the latch (the target is reset again best-effort below).
     let _ = override_takeover(&s, &actor, Reason::LocalOverride).await;
@@ -1448,7 +1464,7 @@ pub(crate) async fn local_recover(
                 &s,
                 &actor,
                 "takeover.recovered",
-                serde_json::json!({"by":"local","reason":"unreadable_latch"}),
+                serde_json::json!({"by":by,"reason":"unreadable_latch"}),
             )?;
             s.hub()
                 .clear_unowned_recovery()
@@ -1473,7 +1489,7 @@ pub(crate) async fn local_recover(
         &s,
         &actor,
         "takeover.recovered",
-        serde_json::json!({"by":"local","reason":"local_recovery"}),
+        serde_json::json!({"by":by,"reason":"local_recovery"}),
     )?;
     s.hub()
         .clear_owned_latch()
