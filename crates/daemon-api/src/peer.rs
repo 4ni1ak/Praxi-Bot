@@ -342,6 +342,13 @@ fn encoded_slash_in_mcp_path(raw: &str, decoded: &str) -> bool {
     is_mcp_path(decoded) && raw.to_ascii_lowercase().contains("%2f")
 }
 
+/// `GET /v1/email/accounts/{name}/messages`: the headers of a mailbox.
+fn is_email_messages_path(path: &str) -> bool {
+    path.strip_prefix("/v1/email/accounts/")
+        .and_then(|rest| rest.strip_suffix("/messages"))
+        .is_some_and(|name| !name.is_empty() && !name.contains('/'))
+}
+
 /// `/v1/mcp/servers` or anything below it (decoded and slash-normalized).
 fn is_mcp_servers_path(path: &str) -> bool {
     path.strip_prefix("/v1/mcp/servers")
@@ -426,6 +433,10 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     }
     if is_components_path(&check_path) && peer.role != PeerRole::Desktop {
         return ApiError::forbidden("components are managed by the owner's desktop only")
+            .into_response();
+    }
+    if is_email_messages_path(&check_path) && peer.role != PeerRole::Desktop {
+        return ApiError::forbidden("mailboxes are read from the owner's desktop only")
             .into_response();
     }
     if is_composio_path(&check_path) && peer.role != PeerRole::Desktop {

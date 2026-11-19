@@ -1,7 +1,7 @@
-import { AtSign, Mail, PlugZap, Plus, SlidersHorizontal } from "lucide-react";
+import { AtSign, Inbox, Mail, PlugZap, Plus, Send, SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { EmailAccount, EmailTestReport } from "../api/types";
+import type { EmailAccount, EmailMessage, EmailTestReport } from "../api/types";
 import { accountsForBot, MAIL_CHANGED_EVENT, mailToolsOn, mailToolsPatch } from "../lib/botMail";
 import { humanLine } from "../lib/humanError";
 import { useDaemon } from "../state/DaemonContext";
@@ -18,6 +18,38 @@ function MailboxRow({ account, botName }: { account: EmailAccount; botName: stri
   const [checkedAt, setCheckedAt] = useState<Date | null>(null);
   const [checking, setChecking] = useState(false);
   const agentmail = account.provider === "agentmail";
+  const [messages, setMessages] = useState<EmailMessage[] | null>(null);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [sending, setSending] = useState(false);
+
+  const toggleMessages = async () => {
+    if (messages !== null) {
+      setMessages(null);
+      return;
+    }
+    if (!client) return;
+    setLoadingMessages(true);
+    try {
+      setMessages(await client.listEmailMessages(account.name, 10));
+    } catch (e) {
+      toast.show(t("botPanel.mail.recentError", { message: humanLine(e) }), "danger");
+    } finally {
+      setLoadingMessages(false);
+    }
+  };
+
+  const sendTest = async () => {
+    if (!client) return;
+    setSending(true);
+    try {
+      const sent = await client.sendEmailTest(account.name);
+      toast.show(t("botPanel.mail.testSent", { address: sent.sent_to }), "success");
+    } catch (e) {
+      toast.show(t("botPanel.mail.testError", { message: humanLine(e) }), "danger");
+    } finally {
+      setSending(false);
+    }
+  };
 
   const check = async () => {
     if (!client) return;
@@ -66,6 +98,47 @@ function MailboxRow({ account, botName }: { account: EmailAccount; botName: stri
           </span>
         ) : null}
       </div>
+      <div className={styles.row}>
+        <button
+          type="button"
+          className={styles.textButton}
+          disabled={loadingMessages}
+          aria-expanded={messages !== null}
+          data-testid={`bot-mail-recent-${account.name}`}
+          onClick={() => void toggleMessages()}
+        >
+          <Inbox aria-hidden="true" />
+          {messages !== null ? t("botPanel.mail.hideRecent") : t("botPanel.mail.recent")}
+        </button>
+        <button
+          type="button"
+          className={styles.textButton}
+          disabled={sending}
+          title={t("botPanel.mail.sendTestHint", { address: account.address })}
+          data-testid={`bot-mail-send-test-${account.name}`}
+          onClick={() => void sendTest()}
+        >
+          <Send aria-hidden="true" />
+          {sending ? t("botPanel.mail.sendingTest") : t("botPanel.mail.sendTest")}
+        </button>
+      </div>
+      {messages !== null ? (
+        messages.length === 0 ? (
+          <p className={styles.muted}>{t("botPanel.mail.noMessages")}</p>
+        ) : (
+          <ul className={styles.messages} data-testid={`bot-mail-messages-${account.name}`}>
+            {messages.map((m) => (
+              <li key={m.id} className={styles.message} data-unread={m.unread ? "true" : undefined}>
+                <span className={styles.subject}>{m.subject || t("botPanel.mail.noSubject")}</span>
+                <span className={styles.from}>
+                  {m.from}
+                  {m.date ? ` · ${new Date(m.date).toLocaleDateString(i18n.language)}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )
+      ) : null}
     </li>
   );
 }

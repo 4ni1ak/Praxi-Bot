@@ -45,6 +45,8 @@ import type {
   EmailAccount,
   EmailAccountInput,
   EmailAccountPatch,
+  EmailMessage,
+  EmailSendTestResponse,
   EmailTestReport,
   InputBatch,
   InputResult,
@@ -1022,6 +1024,16 @@ export class ApiClient {
       "POST",
       `/email/accounts/${encodeURIComponent(name)}/test`
     );
+  }
+  /** Newest messages of the inbox, headers only (owner-only; nothing is marked read). */
+  listEmailMessages(name: string, limit = 20): Promise<EmailMessage[]> {
+    return this.request("GET", `/email/accounts/${encodeURIComponent(name)}/messages`, {
+      query: { limit: String(limit) }
+    });
+  }
+  /** One fixed test message from the mailbox to its own address (owner-only). */
+  sendEmailTest(name: string): Promise<EmailSendTestResponse> {
+    return this.request("POST", `/email/accounts/${encodeURIComponent(name)}/send-test`);
   }
   /** The same for an account that is not saved (nothing is stored). */
   testEmailDraft(input: EmailAccountInput): Promise<EmailTestReport> {

@@ -2982,7 +2982,17 @@
       "toolsLabel": "{{name}} darf E-Mail nutzen",
       "toolsOnHint": "Lesen ist erlaubt. Senden richtet sich immer nach dem Berechtigungsmodus dieses Bots und fragt standardmäßig zuerst nach.",
       "toolsOffHint": "Das Postfach ist verbunden, aber {{name}} sieht noch keine E-Mail-Werkzeuge. Schalte dies ein, damit der Bot E-Mails lesen und schreiben kann.",
-      "toolsError": "Der E-Mail-Zugriff konnte nicht geändert werden: {{message}}"
+      "toolsError": "Der E-Mail-Zugriff konnte nicht geändert werden: {{message}}",
+      "recent": "Neueste Mails anzeigen",
+      "hideRecent": "Neueste Mails ausblenden",
+      "recentError": "Der Posteingang konnte nicht gelesen werden: {{message}}",
+      "noMessages": "Der Posteingang ist leer.",
+      "noSubject": "(kein Betreff)",
+      "sendTest": "Test-Mail senden",
+      "sendingTest": "Wird gesendet…",
+      "sendTestHint": "Sendet eine kurze Testnachricht an {{address}} selbst, an niemanden sonst.",
+      "testSent": "Test-Mail an {{address}} gesendet. Sie sollte gleich ankommen.",
+      "testError": "Die Test-Mail konnte nicht gesendet werden: {{message}}"
     }
   },
   "terminal": {

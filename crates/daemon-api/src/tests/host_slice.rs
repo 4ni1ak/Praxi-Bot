@@ -99,6 +99,7 @@ async fn a_desktop_peer_on_a_host_cannot_administer_credentials_tools_or_pairing
         (Method::POST, "/v1/email/accounts".into()),
         (Method::PUT, "/v1/email/accounts/work".into()),
         (Method::DELETE, "/v1/email/accounts/work".into()),
+        (Method::POST, "/v1/email/accounts/work/send-test".into()),
         (Method::PUT, "/v1/web/search".into()),
         (Method::PUT, "/v1/web/search/".into()),
         (Method::POST, "/v1/web/search/test".into()),
@@ -123,6 +124,32 @@ async fn a_desktop_peer_on_a_host_cannot_administer_credentials_tools_or_pairing
         .await;
         assert_eq!(r.status, StatusCode::FORBIDDEN, "desktop {method} {path}");
     }
+}
+
+#[tokio::test]
+async fn only_a_desktop_peer_may_read_mailbox_headers() {
+    let t = host_daemon();
+    for role in [crate::PeerRole::Phone, crate::PeerRole::Node] {
+        let r = peer_call(
+            &t,
+            role,
+            Method::GET,
+            "/v1/email/accounts/work/messages",
+            None,
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{role:?}");
+    }
+    // A desktop passes the guard (no embedder in this fixture, so 503 rather than 403).
+    let r = peer_call(
+        &t,
+        crate::PeerRole::Desktop,
+        Method::GET,
+        "/v1/email/accounts/work/messages",
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]
