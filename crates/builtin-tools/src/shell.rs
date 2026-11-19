@@ -655,6 +655,7 @@ mod tests {
             exposure_untrusted: false,
             expected_origin: None,
             control_guard: None,
+            lane: None,
         };
         let out = t
             .call(

@@ -26,6 +26,9 @@ pub const DEFAULT_DIRECT_TOOL_LIMIT: usize = agent_router::DEFAULT_DISCOVERY_THR
 /// Default [`LoopConfig::schedule_approval_timeout`]: 30 minutes.
 pub const DEFAULT_SCHEDULE_APPROVAL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
+/// Default [`LoopConfig::approval_timeout`]: 10 minutes.
+pub const DEFAULT_APPROVAL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
 /// Per-turn safety limits.
 #[derive(Debug, Clone)]
 pub struct Guards {
@@ -351,6 +354,10 @@ pub struct LoopConfig {
     /// How long a schedule-started run waits for an approval (or a question
     /// answer) before it pauses (default [`DEFAULT_SCHEDULE_APPROVAL_TIMEOUT`]).
     pub schedule_approval_timeout: Duration,
+    /// How long any other run waits for an approval (or a question answer) before the call is
+    /// denied as `expired` and the run carries on (default [`DEFAULT_APPROVAL_TIMEOUT`]; zero =
+    /// wait without limit).
+    pub approval_timeout: Duration,
     /// How long a run configured with `runtime.computer = "pc"` waits for a
     /// paired PC node before failing (default [`DEFAULT_WAIT_FOR_PC_TIMEOUT`]).
     pub wait_for_pc_timeout: Duration,
@@ -382,6 +389,7 @@ impl Default for LoopConfig {
             memory: None,
             knowledge_decider: None,
             schedule_approval_timeout: DEFAULT_SCHEDULE_APPROVAL_TIMEOUT,
+            approval_timeout: DEFAULT_APPROVAL_TIMEOUT,
             wait_for_pc_timeout: DEFAULT_WAIT_FOR_PC_TIMEOUT,
             journal: JournalSlot::default(),
         }
