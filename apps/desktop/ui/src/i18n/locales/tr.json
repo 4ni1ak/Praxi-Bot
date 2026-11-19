@@ -4046,6 +4046,10 @@
     "title": "Sesli cevaplar",
     "unsupported": "Bu sistemde konuşma sesi yok."
   },
+  "whatsNew": {
+    "dismiss": "Anladım",
+    "label": "Yenilikler"
+  },
   "widget": {
     "dismissStop": "Durdurma göstergesini gizle (ana pencere durumu göstermeye devam eder)",
     "dragHandleAria": "Yüzen kontrol penceresini sürükle",
