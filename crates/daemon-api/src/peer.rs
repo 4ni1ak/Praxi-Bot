@@ -331,6 +331,11 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
     {
         return Some("knowledge sources and embedding authority are managed by the local owner");
     }
+    if !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+        && (check_path == "/v1/memory" || check_path.starts_with("/v1/memory/"))
+    {
+        return Some("personal memory is managed by the local owner");
+    }
     if is_bot_engine_path(check_path) && *method != Method::GET {
         return Some("a bot's engine settings can only be changed at this computer");
     }

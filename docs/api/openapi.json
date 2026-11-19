@@ -2761,6 +2761,71 @@
         ]
       }
     },
+    "/v1/bots/{id}/memory/preview": {
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "operationId": "preview_bot_memory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "description": "Query text to preview recall for",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryPreviewDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/bots/{id}/skills": {
       "get": {
         "tags": [
@@ -7618,6 +7683,311 @@
         ]
       }
     },
+    "/v1/memory": {
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "operationId": "list_memories",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "query",
+            "description": "Filter to memories visible to this bot",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "bot_only",
+            "in": "query",
+            "description": "Exclude shared memories when filtering by bot",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Filter by memory category",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MemoryKindDto"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive search text",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_deleted",
+            "in": "query",
+            "description": "Include forgotten (soft-deleted) items",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryItemDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "memory"
+        ],
+        "operationId": "create_memory",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMemoryInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryItemDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/memory/{id}": {
+      "delete": {
+        "tags": [
+          "memory"
+        ],
+        "operationId": "delete_memory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryItemDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "memory"
+        ],
+        "operationId": "update_memory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMemoryInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryItemDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/memory/{id}/undo": {
+      "post": {
+        "tags": [
+          "memory"
+        ],
+        "operationId": "undo_memory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryItemDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/peer/link": {
       "get": {
         "tags": [
@@ -10940,6 +11310,12 @@
             ],
             "description": "`null` while pending, else `approved` / `denied` / `expired`."
           },
+          "details": {
+            "description": "The tool's card facts from the `approval_needed` event."
+          },
+          "input": {
+            "description": "The call's input, as the `approval_needed` event carried it (so a client that missed the\nevent can still show the full card)."
+          },
           "requested_at_ms": {
             "type": "integer",
             "format": "int64",
@@ -13019,6 +13395,31 @@
         },
         "additionalProperties": false
       },
+      "CreateMemoryInput": {
+        "type": "object",
+        "description": "Create a user-authored memory item (`POST /v1/memory`).",
+        "required": [
+          "kind",
+          "content"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`None` creates a shared memory across all bots; `Some(bot)` scopes to that bot."
+          },
+          "content": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MemoryKindDto"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateSession": {
         "type": "object",
         "required": [
@@ -13257,6 +13658,7 @@
         "description": "A bot's permission picture (`GET /v1/bots/{id}`).",
         "required": [
           "categories",
+          "mode",
           "grants"
         ],
         "properties": {
@@ -13276,6 +13678,10 @@
               "$ref": "#/components/schemas/GrantDto"
             },
             "description": "The persisted \"always allow\" rules.  Tool-level grants only widen that\none tool and are not reflected in `categories`."
+          },
+          "mode": {
+            "type": "string",
+            "description": "The bot's autonomy mode, derived from its preset: `ask`, `balanced` or `full`."
           },
           "policy": {
             "description": "The profile's own policy as JSON; `null` = the workspace policy applies."
@@ -14251,6 +14657,36 @@
               "name": {
                 "type": "string",
                 "description": "`fs`, `shell`, `desktop`, `browser`, `accounts`, `messaging`,\n`money`, `system`, `remote` or `script`."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "One tool on one target: a site, a folder or a command prefix.",
+            "required": [
+              "tool",
+              "scope",
+              "pattern",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "scoped"
+                ]
+              },
+              "pattern": {
+                "type": "string",
+                "description": "The one target the rule covers (see `scope`)."
+              },
+              "scope": {
+                "type": "string",
+                "description": "`origin`, `folder` or `command`."
+              },
+              "tool": {
+                "type": "string",
+                "description": "Tool name."
               }
             }
           }
@@ -17347,6 +17783,168 @@
         ],
         "description": "Detailed transport of an MCP server body (the `McpServerConfig` shape)."
       },
+      "MemoryItemDto": {
+        "type": "object",
+        "description": "One stored memory item and its active undo journal state.",
+        "required": [
+          "id",
+          "kind",
+          "content",
+          "trust",
+          "importance",
+          "created_ms",
+          "last_used_ms",
+          "deleted"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`None` means shared across all bots of this owner."
+          },
+          "content": {
+            "type": "string"
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "importance": {
+            "type": "number",
+            "format": "float"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MemoryKindDto"
+          },
+          "last_used_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "source_chat_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "source_message_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "source_quote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trust": {
+            "$ref": "#/components/schemas/MemoryTrustDto"
+          },
+          "undo_journal_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Newest active journal entry id that can undo the last change to this memory."
+          },
+          "valid_until_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "MemoryKindDto": {
+        "type": "string",
+        "description": "Memory category.",
+        "enum": [
+          "profile",
+          "bot",
+          "episodic",
+          "procedural",
+          "lesson"
+        ]
+      },
+      "MemoryPreviewDto": {
+        "type": "object",
+        "description": "Exact recall preview for a bot and query (`GET /v1/bots/{id}/memory/preview`).",
+        "required": [
+          "bot_id",
+          "query",
+          "budget_tokens",
+          "estimated_tokens",
+          "rendered_block",
+          "hits"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "budget_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "estimated_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryPreviewHitDto"
+            }
+          },
+          "query": {
+            "type": "string"
+          },
+          "rendered_block": {
+            "type": "string",
+            "description": "The exact delimited data block `with_recall` prepends to the user message."
+          }
+        }
+      },
+      "MemoryPreviewHitDto": {
+        "type": "object",
+        "description": "One recalled memory and its boosted fusion score in a recall preview.",
+        "required": [
+          "memory",
+          "score"
+        ],
+        "properties": {
+          "memory": {
+            "$ref": "#/components/schemas/MemoryItemDto"
+          },
+          "score": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "MemoryTrustDto": {
+        "type": "string",
+        "description": "Provenance trust of a stored memory.",
+        "enum": [
+          "user",
+          "untrusted"
+        ]
+      },
       "MessageDto": {
         "type": "object",
         "description": "A stored chat message.",
@@ -19975,6 +20573,19 @@
           }
         }
       },
+      "UpdateMemoryInput": {
+        "type": "object",
+        "description": "Edit a memory item's text (`PATCH /v1/memory/{id}`).",
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "UsageSummary": {
         "type": "object",
         "description": "`GET /v1/usage`.",
@@ -20362,6 +20973,9 @@
     },
     {
       "name": "mcp-server"
+    },
+    {
+      "name": "memory"
     }
   ]
 }

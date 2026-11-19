@@ -289,6 +289,8 @@
     "newChatFailed": "Could not start a chat: {{detail}}"
   },
   "chat": {
+    "pendingPinned": "Waiting for your decision. The card is above the message box.",
+    "pendingElsewhere": "From another chat of this bot: {{chat}}",
     "notFound": "This chat does not exist.",
     "stop": "Stop",
     "resume": "Resume",
@@ -851,6 +853,8 @@
       }
     },
     "timelineLabel": "Conversation",
+    "copyMessage": "Copy message",
+    "messageCopied": "Copied",
     "export": { "you": "You", "done": "Chat saved" },
     "jumpToLatest": "Jump to latest",
     "runBar": {
@@ -863,6 +867,18 @@
       "stopUnconfirmed": "The service has not confirmed the stop after 5 seconds, so the run may still be working. Press Force stop to end it.",
       "stopUnreachable": "The Stop could not reach the computer this bot runs on. It keeps retrying; check the connection.",
       "forceStop": "Force stop"
+    },
+    "attach": {
+      "add": "Attach files or images",
+      "remove": "Remove {{name}}",
+      "list": "Attached files",
+      "uploading": "Uploading",
+      "failed": "Could not attach this file",
+      "tooLarge": "Too large (15 MB at most)",
+      "unsupported": "This file type is not supported. Use an image, PDF, Word, Excel, PowerPoint or a text file.",
+      "tooMany": "At most 6 files per message",
+      "pastedName": "Pasted file",
+      "truncated": "Only the start of this file was read"
     }
   },
   "botForm": {
@@ -1350,6 +1366,14 @@
       "install_copy_only": {
         "title": "This CLI cannot be installed on the server automatically",
         "hint": "Use the command shown or the official page."
+      },
+      "unsupported_attachment": {
+        "title": "That file cannot be attached",
+        "hint": "Use an image, PDF, Word, Excel, PowerPoint or a text file."
+      },
+      "attachment_too_large": {
+        "title": "That file is too large",
+        "hint": "Attach a smaller file (15 MB at most, images 5 MB)."
       }
     },
     "network": {
@@ -2837,7 +2861,10 @@
   "runStatus": {
     "working": "Working…",
     "stopping": "Stopping…",
-    "waiting": "Waiting for your approval: {{step}}"
+    "waiting": "Waiting for your approval: {{step}}",
+    "waitAnswer": "Waiting for your answer: {{question}}",
+    "waitLost": "Waiting for an answer that is not available here. Stop the run to continue.",
+    "showCard": "Show"
   },
   "queued": {
     "label": "Queued.",
@@ -3199,8 +3226,8 @@
       "resync_required": "Screen geometry or sequence updated; syncing with latest frame."
     },
     "targetLocked": "Finish control (Bitirdim) before switching the screen target.",
-    "approvalsWaiting": "{{count}} item(s) are waiting for your decision in chat.",
-    "reviewApprovals": "Back to chat to answer",
+    "approvalsWaiting": "{{count}} item(s) are waiting for your decision. Decide below or in the chat.",
+    "reviewApprovals": "Back to the chat",
     "errors": {
       "unauthorized": "Your session is no longer authorized. Reconnect to this computer.",
       "too_many_streams": "This connection has too many open streams. Close another stream and try again.",
@@ -3882,6 +3909,55 @@
       "outdated": "{{cli}} needs an update before Praxi can use it. Update it in Settings, AI.",
       "sign_in": "{{cli}} is signed out. Sign in to it in Settings, AI.",
       "unsupported": "Praxi cannot run {{cli}} on this computer."
+    }
+  },
+  "memory": {
+    "title": "Personal memory",
+    "description": "See what each bot remembers from past conversations, edit or forget any item, undo changes, and preview what enters the next turn.",
+    "bot": "Bot",
+    "noBot": "Create a bot to view or add memories.",
+    "search": "Search memories",
+    "searchPlaceholder": "Filter by text or quote…",
+    "kindFilter": "Category",
+    "allKinds": "All categories",
+    "botOnly": "Only memories specific to this bot",
+    "includeForgotten": "Show forgotten items",
+    "empty": "No memories match this filter.",
+    "scopeShared": "Shared across all bots",
+    "scopeThisBot": "Only {{bot}}",
+    "forgottenBadge": "Forgotten",
+    "edit": "Edit",
+    "editLabel": "Memory text",
+    "saveEdit": "Save memory",
+    "forget": "Forget",
+    "undo": "Undo",
+    "addTitle": "Add a memory",
+    "scope": "Scope",
+    "kind": "Category",
+    "content": "What to remember",
+    "contentPlaceholder": "Write a concise fact or preference…",
+    "add": "Add memory",
+    "addedNotice": "Memory added.",
+    "updatedNotice": "Memory updated.",
+    "forgottenNotice": "Memory forgotten.",
+    "undoneNotice": "Last change undone.",
+    "previewTitle": "What the bot will see (recall preview)",
+    "previewHint": "Enter a sample message to see the exact recalled-memory data block that will be prepended to the turn.",
+    "previewQuery": "Sample user message",
+    "previewPlaceholder": "e.g. When do we draft release notes?",
+    "previewRun": "Preview recall",
+    "previewTokens": "{{count}} memories recalled · ~{{used}} / {{budget}} tokens",
+    "previewEmpty": "No memories would be recalled for this message.",
+    "kinds": {
+      "profile": "User profile",
+      "bot": "Bot knowledge",
+      "episodic": "Past event",
+      "procedural": "Procedure",
+      "lesson": "Lesson from correction"
+    },
+    "trust": {
+      "user": "User-verified",
+      "untrusted": "Untrusted data"
     }
   },
   "voice": {

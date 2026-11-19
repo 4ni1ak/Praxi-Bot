@@ -6076,7 +6076,10 @@ async fn an_always_ask_approval_cannot_be_given_as_always_on_any_channel() {
 async fn a_plain_approval_can_still_be_given_as_always() {
     let env = setup();
     let w = Arc::new(tool("fs_write", Effect::Write, "ok"));
-    let fake = Fake::new(vec![calls(&[("c1", "fs_write", json!({}))]), text("done")]);
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_write", json!({"path": "a.txt"}))]),
+        text("done"),
+    ]);
     let lp = make_loop(
         &env.storage,
         env.bot,
