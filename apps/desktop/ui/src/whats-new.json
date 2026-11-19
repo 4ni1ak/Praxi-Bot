@@ -1,0 +1,31 @@
+{
+  "0.1.0": {
+    "en": {
+      "title": "Welcome to Praxi 0.1",
+      "items": [
+        "Press ? anywhere to see every keyboard shortcut.",
+        "Ctrl/Cmd+K opens the command palette for quick navigation.",
+        "Ctrl/Cmd+F searches inside the open chat.",
+        "Type /export in the composer to save a chat as a Markdown file."
+      ]
+    },
+    "tr": {
+      "title": "Praxi 0.1 sürümüne hoş geldiniz",
+      "items": [
+        "Tüm klavye kısayollarını görmek için herhangi bir yerde ? tuşuna basın.",
+        "Ctrl/Cmd+K hızlı gezinme için komut paletini açar.",
+        "Ctrl/Cmd+F açık sohbetin içinde arama yapar.",
+        "Yazı kutusuna /export yazarak sohbeti Markdown dosyası olarak kaydedin."
+      ]
+    },
+    "de": {
+      "title": "Willkommen bei Praxi 0.1",
+      "items": [
+        "Drücke irgendwo ?, um alle Tastaturkürzel zu sehen.",
+        "Strg/Cmd+K öffnet die Befehlspalette für schnelle Navigation.",
+        "Strg/Cmd+F durchsucht den geöffneten Chat.",
+        "Tippe /export ins Eingabefeld, um einen Chat als Markdown-Datei zu speichern."
+      ]
+    }
+  }
+}
