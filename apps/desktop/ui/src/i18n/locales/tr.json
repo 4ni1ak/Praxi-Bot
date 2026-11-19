@@ -79,7 +79,8 @@
       "title": "Dil",
       "description": "Arayüz görüntüleme dilini seçin.",
       "en": "English",
-      "tr": "Türkçe"
+      "tr": "Türkçe",
+      "de": "Deutsch"
     },
     "hotkey": {
       "title": "Tümünü Durdur Kısayolu",
@@ -303,7 +304,7 @@
     },
     "placeholder": "Mesaj yaz…  / komutlar · @ botlar",
     "addCommand": "Komut veya bot ekle",
-    "placeholderBusy": "Bot çalışıyor — sıraya al veya yönlendir…",
+    "placeholderBusy": "Bot çalışıyor. Yazarsan mesaj sıraya girer…",
     "send": "Gönder",
     "subagent": {
       "title": "Alt ajan",
@@ -560,6 +561,11 @@
     "slash": {
       "new": "Yeni bir sohbet başlat",
       "stop": "Çalışan işi durdur",
+      "help": "Yardımı ve kısayolları aç",
+      "settings": "Ayarları aç",
+      "models": "Yapay zekâ modeli ayarlarını aç",
+      "apps": "Uygulamaları aç",
+      "schedules": "Zamanlamaları aç",
       "menu": "Komutlar",
       "mentionMenu": "Botlar",
       "noMatch": "Eşleşme yok"
@@ -727,6 +733,31 @@
         "done": "Beceriye bakıldı",
         "failed": "Beceriye bakılamadı"
       },
+      "memory_search": {
+        "running": "Hafızada aranıyor",
+        "done": "Hafızada arandı",
+        "failed": "Hafızada aranamadı"
+      },
+      "session_search": {
+        "running": "Geçmiş sohbetlerde aranıyor",
+        "done": "Geçmiş sohbetlerde arandı",
+        "failed": "Geçmiş sohbetlerde aranamadı"
+      },
+      "memory_save": {
+        "running": "Hafızaya kaydediliyor",
+        "done": "Hafızaya kaydedildi",
+        "failed": "Hafızaya kaydedilmedi"
+      },
+      "memory_forget": {
+        "running": "Hafıza kaydı siliniyor",
+        "done": "Hafıza kaydı silindi",
+        "failed": "Hafıza kaydı silinmedi"
+      },
+      "knowledge_search": {
+        "running": "Bilgi kaynaklarında aranıyor",
+        "done": "Bilgi kaynaklarında arandı",
+        "failed": "Bilgi kaynaklarında aranamadı"
+      },
       "workflow": {
         "running": "İş akışı çalıştırılıyor",
         "done": "İş akışı çalıştırıldı",
@@ -887,15 +918,15 @@
       },
       "approve-destructive": {
         "name": "Yıkıcı işlemlerde onay",
-        "hint": "Okumalar serbest; değiştiren veya gönderen her şey önce sana sorar."
+        "hint": "Okuma, gezinme, çalışma alanı düzenlemeleri ve botun kendi bilgisayarı serbest; silme, gönderme, para ve kendi bilgisayarın önce sorar."
       },
       "full": {
         "name": "Tam",
-        "hint": "Sormadan çalışır (sıradan dosya silme ve gönderimler dahil); yalnızca Para, zamanlanmış görev etkinleştirme ve yasaklı listedeki yıkıcı komutlarda sorar."
+        "hint": "Sormadan çalışır (silme ve gönderim dahil); yalnızca Para, zamanlanmış görev etkinleştirme ve yasaklı listedeki yıkıcı komutlarda sorar. Güvenilmeyen içerik okuduktan sonra veri göndermeden veya program çalıştırmadan önce yine sorar."
       },
       "read-and-draft": {
         "name": "Oku ve taslak hazırla",
-        "hint": "Okumalar serbest; taslaklar, dosya değişiklikleri, sayfa açma, tıklama, komutlar ve gönderimler önce sorar (Yıkıcı işlemlerde onay ile aynı etkili politika)."
+        "hint": "Okumalar serbest; her değişiklik, gönderim, sayfa açma, tıklama ve komut önce sorar."
       },
       "custom": {
         "name": "Özel",
@@ -981,6 +1012,22 @@
       "host_admin_forbidden": {
         "title": "Bu bilgisayar o sunucuyu yönetemez",
         "hint": "Sunucunun kurulumunu yalnızca sahibinin eşleşmiş masaüstü uygulaması değiştirebilir."
+      },
+      "terminal_unsupported": {
+        "title": "Terminal için Linux sunucu gerekir",
+        "hint": "Burada yalnızca Linux sunucuda terminal açılabilir."
+      },
+      "terminal_start_failed": {
+        "title": "Terminal başlatılamadı",
+        "hint": "Sunucu bir kabuk başlatamadı. Birazdan yeniden dene."
+      },
+      "terminal_busy": {
+        "title": "Sunucudaki tüm terminaller kullanımda",
+        "hint": "Sunucudaki başka bir terminali kapatıp yeniden dene."
+      },
+      "terminal_gone": {
+        "title": "Terminal oturumu bitti",
+        "hint": "Terminali yeniden aç."
       },
       "provider_endpoint": {
         "title": "Sağlayıcının API adresi bulunamadı",
@@ -1222,6 +1269,10 @@
         "title": "Önce Praxi'ye bir beyin gerekiyor",
         "hint": "Ayarlardan bir model bağlayıp yeniden dene."
       },
+      "skill_changed": {
+        "title": "Depo önizlemeden sonra değişti",
+        "hint": "Beceriyi eklemeden önce yeniden incele."
+      },
       "skill_conflict": {
         "title": "Bu adda bir beceri zaten var",
         "hint": "Başka bir ad seç ya da eskisini değiştir."
@@ -1233,6 +1284,10 @@
       "skill_not_found": {
         "title": "Bu beceri artık yok",
         "hint": "Listeyi yenile."
+      },
+      "skill_source_unreachable": {
+        "title": "Depoya ulaşılamadı",
+        "hint": "Adresi ve bağlantını kontrol edip yeniden dene."
       },
       "skill_storage": {
         "title": "Beceri kaydedilemedi",
@@ -1482,6 +1537,7 @@
       "makeHome": "{{name}} botlarımın evi olsun",
       "sync": "Kurulumumu {{name}} ile eşitle",
       "viewScreen": "Ekranını gör",
+      "terminal": "Sunucuda terminal",
       "workHere": "Şimdilik bu bilgisayarda çalış",
       "backHome": "{{name}} bilgisayarına dön",
       "pcOn": "Açık · her işlem burada sana sorar",
@@ -1686,6 +1742,7 @@
     "nextRun": "Sonraki çalışma",
     "lastRun": "Son çalışma",
     "never": "Hiç",
+    "missed": "Kapalıyken kaçırılan",
     "payload": {
       "workflow": "{{name}} iş akışını çalıştırır",
       "tool": "{{name}} aracını çağırır",
@@ -1800,6 +1857,7 @@
       "quarantined": "Karantinada"
     },
     "auth": {
+      "expiredToast": "{{name}} girişi {{minutes}} dakika içinde bitirilmedi ve iptal edildi.",
       "pasteLabel": "Tarayıcıdaki yönlendirme adresi",
       "pasteSubmit": "Oturum açmayı bitir",
       "pasteHint": "Tarayıcı başka bir bilgisayarda çalışıyorsa ve oturum açtıktan sonra hata sayfası gösteriyorsa, o sayfanın tam adresini kopyalıp buraya yapıştırın.",
@@ -1896,6 +1954,21 @@
       "tokenHint": "Bunlar kendi oluşturduğun kişisel bir anahtar ister. Çoğu hizmet ana ekrandaki Composio ile anahtarsız bağlanır.",
       "localTitle": "Yerel geliştirici sunucuları"
     },
+    "sheet": {
+      "title": "{{name}} uygulamasını bağla",
+      "progress": "{{total}} adımın {{current}}.",
+      "login": "Giriş sayfası tarayıcında açıldı. Orada bitir; {{name}} sayfası ardından kendiliğinden açılır.",
+      "app": "{{name}} sayfası açılıyor…",
+      "opened": "{{name}} sayfası tarayıcında açık. Orada izin ver; burada Bağlı olarak görünür.",
+      "timedOut": "Giriş zamanında bitirilmedi. Yeniden başlamak için Bağlan'a bas.",
+      "cancelled": "Vazgeçildi.",
+      "failed": {
+        "login_open": "Giriş sayfası açılamadı.",
+        "login_failed": "Giriş tamamlanmadı. Yeniden dene.",
+        "app_link": "{{name}} sayfası hazırlanamadı. Yeniden dene.",
+        "app_open": "{{name}} sayfası açılamadı."
+      }
+    },
     "composio": {
       "title": "Composio",
       "getKey": "Composio anahtar sayfasını aç",
@@ -1980,12 +2053,21 @@
         "timeout": "Kurulum çok uzun sürdü ve durduruldu.",
         "unavailable": "Kurulum başlatılamadı."
       }
+    },
+    "tools": {
+      "label": "Botların kullanabileceği araçlar",
+      "restricted": "Bazı araçlar özel bir izin listesiyle sınırlı; sunucu ayarlarından düzenleyin.",
+      "effect": {
+        "write": "veri değiştirir",
+        "destructive": "silebilir veya gönderebilir"
+      }
     }
   },
   "help": {
     "title": "Klavye kısayolları",
     "intro": "Uygulama açıkken kullanışlı kısayollar.",
     "palette": "Komut paleti",
+    "recall": "Bu sohbetin önceki mesajları (boş kutuda ya da ilk satırda; Esc taslağını geri getirir)",
     "send": "Mesaj gönder",
     "stop": "Tüm bot çalışmalarını durdur",
     "settings": "Ayarları aç",
@@ -2065,7 +2147,8 @@
       "usage": "Kullanım",
       "diagnostics": "Tanılama",
       "updates": "Güncellemeler",
-      "appearance": "Görünüm"
+      "appearance": "Görünüm",
+      "mail": "E-posta"
     },
     "general": {
       "account": {
@@ -2323,6 +2406,15 @@
           "nameHint": "Harf, rakam, nokta, tire veya alt çizgi kullan; harf ya da rakamla başla (en fazla 32).",
           "bot": "Botu seç ya da herhangi bir bot seç."
         }
+      },
+      "next": {
+        "ok": "Bağlandı. E-postaya izni olan bir bot bu posta kutusunu kullanabilir.",
+        "authFailed": "Sunucu girişi reddetti. Gmail, Outlook, Yahoo ve iCloud normal şifreni değil, uygulama şifresini ister. Posta kutusunu düzenleyip yeniden gir.",
+        "apiKey": "AgentMail API anahtarını reddetti. AgentMail konsolunda yeni bir anahtar oluşturup yeniden yapıştır.",
+        "unreachable": "Posta sunucusuna ulaşılamadı. İnternet bağlantını ve sunucu adlarını kontrol edip yeniden dene.",
+        "tls": "Güvenli bağlantı kurulamadı. Sunucu adını, portu ve güvenlik ayarını kontrol et.",
+        "protocol": "Bu sunucu bir posta sunucusu gibi yanıt vermedi. Sunucu adını ve portu kontrol et.",
+        "timeout": "Sunucu zamanında yanıt vermedi. Biraz sonra yeniden dene."
       }
     },
     "webSearch": {
@@ -2660,9 +2752,9 @@
       "auto": "Serbest"
     },
     "autonomyHints": {
-      "ask": "Dosya okuma, ekran görüntüsü ve web aramasını sormadan yapar; taslak hazırlama, gönderme, dosya değiştirme veya silme, sayfa açma, tıklama ve komut çalıştırma dahil diğer tüm işlemlerde sorar (Dengeli ile aynı etkili politika).",
-      "balanced": "Dosya okuma, ekran görüntüsü ve web aramasını serbestçe yapar; her dosya yazma veya silme, taslak, gönderim, sayfa açma, tıklama ve komutta önce sorar (Sorar ile aynı etkili politika).",
-      "auto": "Sormadan çalışır—sıradan dosya silme, kabuk komutu çalıştırma ve ileti gönderme dahil—yalnızca Para işlemleri, zamanlanmış görev etkinleştirme ve yasaklı liste komutlarında (disk biçimlendirme, sistem/ev dizini silme, kimlik bilgisi yolları) onay ister."
+      "ask": "Dosya okuma, ekran görüntüsü ve web aramasını sormadan yapar; her değişiklik, gönderim, sayfa açma, tıklama ve komuttan önce sorar.",
+      "balanced": "Okur, gezinir, çalışma alanındaki dosyaları düzenler ve botun kendi bilgisayarında sormadan çalışır; dosya silmeden, göndermeden, para harcamadan ve senin bilgisayarına dokunmadan önce sorar.",
+      "auto": "Silme, komut ve gönderim dahil sormadan çalışır. Para, zamanlanmış görev etkinleştirme ve yıkıcı komutlarda, ayrıca güvenilmeyen içerik okuduktan sonra veri göndermeden veya program çalıştırmadan önce yine sorar."
     },
     "autonomyCustom": "{{preset}} izin profili kullanılıyor.",
     "advanced": "Gelişmiş ayarlar",
@@ -2677,7 +2769,110 @@
     "railGrip": "Kenar şeridini boyutlandır (ok tuşları)",
     "panelGrip": "Bot panelini boyutlandır (ok tuşları)"
   },
+  "computerCard": {
+    "title": "Bilgisayarı",
+    "thisComputer": "Bu bilgisayar",
+    "sideBot": "Botun",
+    "sideMine": "Benim",
+    "live": "CANLI",
+    "big": "Büyüt",
+    "take": "Kontrolü al",
+    "close": "Kapat",
+    "show": "Ekranı göster",
+    "resume": "Devam et",
+    "retry": "Yeniden dene",
+    "connecting": "Bağlanıyor",
+    "frameAlt": "{{name}} canlı ekranı",
+    "terminal": "Terminal",
+    "terminalSoon": "Yakında",
+    "browser": "Tarayıcı",
+    "fps": "{{fps}} kare/sn",
+    "pausedNote": "duraklatıldı",
+    "hint": {
+      "idle": "Görüntü yalnızca sen bakarken üretilir",
+      "starting": "Ekran başlatılıyor…",
+      "paused": "3 dakikadır bakılmadığı için duraklatıldı"
+    },
+    "status": {
+      "serverOnline": "Sunucu · çevrimiçi",
+      "serverOffline": "yanıt vermiyor · yeniden deneniyor",
+      "local": "{{system}} · bot burada çalışıyor",
+      "localNoSystem": "Bot burada çalışıyor"
+    },
+    "reason": {
+      "timeout": "Ekran zamanında başlatılamadı",
+      "connecting": "{{name}} sunucusuna bağlanılıyor…",
+      "offline": "Sunucuya ulaşılamıyor",
+      "notPaired": "Sunucu bu bilgisayarı artık kabul etmiyor",
+      "version": "Uygulama ile sunucunun sürümleri farklı",
+      "permission": "Bu bilgisayar sunucunun ekranını henüz izleyemiyor",
+      "failed": "Ekran alınamadı",
+      "noScreen": "Ekran yok: {{detail}}"
+    }
+  },
+  "homeMenu": {
+    "lives": {
+      "local": "Botların burada yaşıyor",
+      "online": "Botların burada yaşıyor · çevrimiçi",
+      "connecting": "Botların burada yaşıyor · bağlanıyor",
+      "offline": "Botların burada yaşıyor · çevrimdışı",
+      "temporary": "Şimdilik botların bu bilgisayarda çalışıyor"
+    },
+    "sync": "Kurulumumu eşitle",
+    "lastSync": "Son eşitleme: {{when}}",
+    "today": "bugün {{time}}",
+    "pcOn": "Her işlem burada sana sorulur",
+    "pcOff": "Botların bu bilgisayarı kullanamaz"
+  },
+  "runStatus": {
+    "working": "Çalışıyor…",
+    "stopping": "Durduruluyor…",
+    "waiting": "Onayını bekliyor: {{step}}"
+  },
+  "queued": {
+    "label": "Sırada.",
+    "sendNow": "Şimdi gönder",
+    "remove": "Sıradaki mesajı kaldır"
+  },
+  "messageInfo": {
+    "label": "Mesaj bilgisi",
+    "title": "Mesaj ayrıntıları",
+    "steps": "{{count}} araç",
+    "steps_one": "{{count}} araç",
+    "steps_other": "{{count}} araç",
+    "unit": {
+      "s": "sn",
+      "m": "dk"
+    },
+    "rows": {
+      "model": "Model",
+      "source": "Kaynak",
+      "duration": "Süre",
+      "started": "Başladı",
+      "finished": "Bitti",
+      "steps": "Adım",
+      "where": "Nerede",
+      "tokens": "Jeton",
+      "sent": "Gönderildi"
+    },
+    "sources": {
+      "app": "bu uygulama",
+      "telegram": "Telegram",
+      "peer": "başka bir bilgisayar",
+      "api": "yerel API",
+      "unknown": "bilinmiyor"
+    }
+  },
   "botPanel": {
+    "now": {
+      "waiting": "Onayını bekliyor",
+      "thinking": "Düşünüyor…",
+      "subagents": "{{count}} alt ajan",
+      "subagents_one": "{{count}} alt ajan",
+      "subagents_other": "{{count}} alt ajan",
+      "open": "Ayrıntıyı aç",
+      "detailTitle": "Şu anki çalışma"
+    },
     "toggle": "Bot paneli",
     "close": "Paneli kapat",
     "profile": "Bot profili",
@@ -2735,7 +2930,43 @@
       "version": "Bu uygulama ile {{name}} farklı sürümlerde. İkisini aynı sürüme güncelle."
     },
     "needsDesktop": "{{name}} sunucusunda masaüstü oturumu yok, bu yüzden gösterilecek ekran yok. Eklemek için bu bilgisayarda şunu çalıştır:",
-    "needsPermission": "{{name}} bu bilgisayarın ekranını izlemesine izin vermedi. Sunucuda şunu çalıştır:"
+    "pausedIdle": "Kaynak tasarrufu için duraklatıldı - devam etmek için tıkla",
+    "showScreen": "Ekranı göster",
+    "screenListFailed": "{{name}} ekran listesi yüklenemedi. Birazdan yeniden denenecek.",
+    "mail": {
+      "heading": "E-posta",
+      "loading": "Posta kutuları aranıyor…",
+      "loadError": "Posta kutuları yüklenemedi: {{message}}",
+      "empty": "{{name}} için henüz posta kutusu yok. Kendi posta kutunu bağla ya da bota kendi adresini ver.",
+      "connect": "Posta kutusu bağla",
+      "manage": "Posta kutularını yönet",
+      "shared": "Tüm botlarla paylaşılıyor",
+      "own": "Yalnızca {{name}}",
+      "agentmail": "Kendi adresi",
+      "check": "Bağlantıyı denetle",
+      "checking": "Denetleniyor…",
+      "checked": "{{time}} tarihinde denetlendi",
+      "toolsLabel": "{{name}} e-posta kullanabilsin",
+      "toolsOnHint": "Okumaya izin var. Göndermek her zaman bu botun izin moduna uyar ve varsayılan olarak önce sorar.",
+      "toolsOffHint": "Posta kutusu bağlı ama {{name}} henüz hiçbir e-posta aracını göremiyor. E-postayı okuyup yazabilmesi için bunu aç.",
+      "toolsError": "E-posta erişimi değiştirilemedi: {{message}}"
+    }
+  },
+  "terminal": {
+    "title": "Terminal - {{name}}",
+    "close": "Terminali kapat",
+    "note": "Bu, uygulamanın zaten kurduğu bağlantı üzerinden sunucudaki bir kabuktur. Sunucunun hizmet kullanıcısı olarak çalışır ve sunucunun anahtarlarını okuyabilir. Bu paneli kapatınca biter.",
+    "failed": "Terminal açılamadı.",
+    "ended": "Kabuk sona erdi.",
+    "again": "Yeniden aç",
+    "runForMe": "Benim için çalıştır",
+    "runForMeHint": "Terminali açar ve komutu yazar; Enter'a sen basarsın.",
+    "state": {
+      "starting": "Başlıyor",
+      "live": "Bağlı",
+      "ended": "Bitti",
+      "failed": "Bağlı değil"
+    }
   },
   "knowledge": {
     "title": "Bilgi kaynakları ve ortak beyin",
@@ -2839,6 +3070,14 @@
     "confirmQuery": "Arama sorgularına izin ver"
   },
   "liveView": {
+    "chat": {
+      "title": "Botla sohbet",
+      "collapse": "Sohbeti daralt",
+      "replying": "Bot yanıt yazıyor…",
+      "working": "Bot çalışıyor…",
+      "approve": "Onayla",
+      "reject": "Reddet"
+    },
     "title": "Canlı ekran görünümü",
     "expand": "Büyük görünümü aç",
     "close": "Görünümü kapat",
@@ -2943,6 +3182,12 @@
     "approvalsWaiting": "Sohbette kararınızı bekleyen {{count}} öğe var.",
     "reviewApprovals": "Yanıtlamak için sohbete dön",
     "errors": {
+      "unauthorized": "Oturumunuzun yetkisi artık geçerli değil. Bu bilgisayara yeniden bağlanın.",
+      "too_many_streams": "Bu bağlantıda çok fazla akış açık. Başka bir akışı kapatıp tekrar deneyin.",
+      "network": "Ekran bağlantısı kesildi. Ağınızı kontrol edip tekrar deneyin.",
+      "view_quota": "Sunucuda çok fazla ekran oturumu açık. Kullanmadığınız bir ekranı kapatın veya biraz sonra tekrar deneyin.",
+      "server_restarting": "Sunucu yeniden başlatılıyor olabilir. Çevrimiçi olduğunda tekrar deneyin.",
+      "timeout": "Ekran zamanında başlatılamadı.",
       "generic": "İstek başarısız oldu. Bağlantıyı kontrol edip tekrar deneyin.",
       "release_failed": "Kontrol geri verilemedi. Bot duraklatılmış kalır; Bitirdim'i yeniden deneyin.",
       "release_unconfirmed": "Daemon devralmanızı hâlâ etkin gösteriyor. Bitirdim'i yeniden deneyin.",
@@ -3216,6 +3461,10 @@
     "dismiss": "Kapat",
     "stopAllNow": "Hepsini şimdi durdur",
     "letContinue": "Devam etsinler"
+  },
+  "peerLink": {
+    "direct": "Doğrudan · {{rtt}} ms",
+    "relay": "Röle · {{rtt}} ms"
   },
   "computerPicker": {
     "label": "Bilgisayar: {{name}}",
@@ -3638,5 +3887,17 @@
       "sign_in": "{{cli}} oturumu kapalı. Ayarlar, Yapay zeka'dan oturum aç.",
       "unsupported": "Praxi bu bilgisayarda {{cli}} çalıştıramıyor."
     }
+  },
+  "voice": {
+    "speak": "Sesli oku",
+    "stop": "Okumayı durdur",
+    "codeOmitted": "(kod atlandı)",
+    "tableOmitted": "(tablo atlandı)",
+    "title": "Sesli cevaplar",
+    "description": "Sesli oku düğmesinin sesi ve hızı. Sistemin konuşma motorunu kullanır.",
+    "auto": "Otomatik (uygulama diline göre)",
+    "online": "çevrimiçi",
+    "speed": "Hız",
+    "unsupported": "Bu sistemde konuşma sesi yok."
   }
 }

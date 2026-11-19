@@ -14,6 +14,7 @@ import { MESSAGE_TIMES_VALUES } from "../../lib/messageTime";
 import { SEND_WITH_VALUES } from "../../lib/settingsPrefs";
 import { NotificationSettings } from "../NotificationSettings";
 import styles from "../SettingsModal.module.css";
+import { VoiceSettings } from "./VoiceSettings";
 import type { CardDef, SettingsBridge } from "./types";
 
 /** Cards of the "General" section. */
@@ -68,7 +69,8 @@ export function generalCards(b: SettingsBridge, t: TFunction): CardDef[] {
           onChange={b.onLanguage}
           options={[
             { value: "en", label: t("settings.language.en") },
-            { value: "tr", label: t("settings.language.tr") }
+            { value: "tr", label: t("settings.language.tr") },
+            { value: "de", label: t("settings.language.de") }
           ]}
         />
       </SettingRow>,
@@ -113,6 +115,13 @@ export function generalCards(b: SettingsBridge, t: TFunction): CardDef[] {
         />
       </SettingRow>,
       { keywords: "saat zaman time clock seconds saniye mesaj" }
+    ),
+    card(
+      "voice",
+      t("voice.title"),
+      t("voice.description"),
+      <VoiceSettings settings={settings} update={update} />,
+      { keywords: "ses voice speech tts sesli oku vorlesen stimme" }
     ),
     card(
       "autostart",

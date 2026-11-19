@@ -83,6 +83,7 @@ import type {
   ScheduleInput,
   Scope,
   ScreenPrivilegesInput,
+  RunUsage,
   SendMode,
   SendResponse,
   SessionInfo,
@@ -91,6 +92,10 @@ import type {
   TakeoverRequest,
   TargetInfo,
   TargetUnavailable,
+  PeerLink,
+  ScreenStatus,
+  TerminalInfo,
+  TerminalOutput,
   UsageSummary,
   ViewHeartbeat,
   WebSearchConfig,
@@ -226,6 +231,12 @@ export class ApiClient {
       return undefined as T;
     }
     return (await res.json()) as T;
+  }
+
+  /** Like `request`, for routes that answer with binary data (an image). */
+  protected async requestBlob(method: string, path: string): Promise<Blob> {
+    const res = await this.send(method, path);
+    return res.blob();
   }
 
   /** Like `request`, for routes that answer with text (Markdown). */
@@ -567,6 +578,10 @@ export class ApiClient {
   stopRuns(body: StopRunsInput, signal?: AbortSignal): Promise<StopRunsResponse> {
     return this.request("POST", "/runs/stop", { body, signal });
   }
+  /** Model and token usage of one run (read-only; the message info popover). */
+  getRunUsage(runId: string): Promise<RunUsage> {
+    return this.request("GET", `/runs/${encodeURIComponent(runId)}/usage`);
+  }
   resumeRun(runId: string): Promise<Run> {
     return this.request("POST", `/runs/${runId}/resume`);
   }
@@ -704,8 +719,52 @@ export class ApiClient {
   listViewAvailability(): Promise<TargetUnavailable[]> {
     return this.request("GET", "/view/availability");
   }
-  createViewSession(input: CreateSessionInput): Promise<SessionInfo> {
-    return this.request("POST", "/view/sessions", { body: input });
+  /** Idle / starting / live / paused-idle / unavailable, and the host's idle limit. */
+  peerLink(signal?: AbortSignal): Promise<PeerLink | null> {
+    return this.request("GET", "/peer/link", { signal });
+  }
+
+  viewStatus(): Promise<ScreenStatus> {
+    return this.request("GET", "/view/status");
+  }
+  /** One still image of a screen (the host captures a single frame, then stops capturing). */
+  async viewThumbnail(targetId: string, signal?: AbortSignal): Promise<Blob> {
+    const res = await this.send("GET", `/view/targets/${encodeURIComponent(targetId)}/thumbnail`, { signal });
+    return res.blob();
+  }
+  // ---- Server terminal (this computer's daemon forwards to the host; owner key is added by `send`)
+  terminalOpen(hostId: string, cols: number, rows: number): Promise<TerminalInfo> {
+    return this.request("POST", `/hosts/${encodeURIComponent(hostId)}/terminal`, { body: { cols, rows } });
+  }
+  terminalOutput(hostId: string, id: string, after: number, waitMs: number, signal?: AbortSignal): Promise<TerminalOutput> {
+    return this.request("GET", `/hosts/${encodeURIComponent(hostId)}/terminal/${encodeURIComponent(id)}/output`, {
+      query: { after, wait_ms: waitMs },
+      signal
+    });
+  }
+  terminalInput(hostId: string, id: string, data: string): Promise<void> {
+    return this.request("POST", `/hosts/${encodeURIComponent(hostId)}/terminal/${encodeURIComponent(id)}/input`, { body: { data } });
+  }
+  terminalResize(hostId: string, id: string, cols: number, rows: number): Promise<void> {
+    return this.request("POST", `/hosts/${encodeURIComponent(hostId)}/terminal/${encodeURIComponent(id)}/resize`, { body: { cols, rows } });
+  }
+  terminalClose(hostId: string, id: string): Promise<void> {
+    return this.request("DELETE", `/hosts/${encodeURIComponent(hostId)}/terminal/${encodeURIComponent(id)}`);
+  }
+  private readonly staleViewSessions = new Set<string>();
+
+  async createViewSession(input: CreateSessionInput): Promise<SessionInfo> {
+    const create = () => this.request<SessionInfo>("POST", "/view/sessions", { body: input });
+    try {
+      return await create();
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.code !== "view_quota" || this.staleViewSessions.size === 0) {
+        throw err;
+      }
+      // Retry only DELETEs for sessions this client has already abandoned.
+      await Promise.allSettled([...this.staleViewSessions].map((id) => this.deleteViewSession(id)));
+      return create();
+    }
   }
   updateViewSession(
     id: string,
@@ -722,8 +781,23 @@ export class ApiClient {
       { body: input }
     );
   }
-  deleteViewSession(id: string): Promise<void> {
-    return this.request("DELETE", `/view/sessions/${encodeURIComponent(id)}`);
+  async deleteViewSession(id: string): Promise<void> {
+    this.staleViewSessions.add(id);
+    // The daemon reaps dormant sessions after their lease. Bound local tracking as well.
+    if (this.staleViewSessions.size > 8) {
+      const oldest = this.staleViewSessions.values().next().value;
+      if (oldest) this.staleViewSessions.delete(oldest);
+    }
+    try {
+      await this.request("DELETE", `/view/sessions/${encodeURIComponent(id)}`);
+      this.staleViewSessions.delete(id);
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
+        this.staleViewSessions.delete(id);
+        return;
+      }
+      throw err;
+    }
   }
   sendViewInput(id: string, batch: InputBatch): Promise<InputResult> {
     return this.request(
@@ -914,6 +988,10 @@ export class ApiClient {
   }
   composioApps(): Promise<ComposioApp[]> {
     return this.request("GET", "/composio/apps");
+  }
+  /** The app's logo as the daemon fetched, validated and cached it (404 when none is known). */
+  composioLogo(slug: string): Promise<Blob> {
+    return this.requestBlob("GET", `/composio/logos/${encodeURIComponent(slug)}`);
   }
   composioApp(slug: string): Promise<ComposioApp> {
     return this.request("GET", `/composio/apps/${encodeURIComponent(slug)}`);

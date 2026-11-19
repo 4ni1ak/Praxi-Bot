@@ -922,6 +922,295 @@
         ]
       }
     },
+    "/v1/admin/terminal": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /v1/admin/terminal`: open a shell on this host for the calling admin desktop.",
+        "operationId": "admin_terminal_open",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenTerminalInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalInfo"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/terminal/{id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`DELETE /v1/admin/terminal/{id}`: end the session.",
+        "operationId": "admin_terminal_close",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/terminal/{id}/input": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /v1/admin/terminal/{id}/input`.",
+        "operationId": "admin_terminal_input",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TerminalInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/terminal/{id}/output": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`GET /v1/admin/terminal/{id}/output?after=&wait_ms=`: the output since byte `after`\n(waits up to 3 s for some).",
+        "operationId": "admin_terminal_output",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "wait_ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalOutput"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/terminal/{id}/resize": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`POST /v1/admin/terminal/{id}/resize`.",
+        "operationId": "admin_terminal_resize",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TerminalResize"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/approvals": {
       "get": {
         "tags": [
@@ -5813,6 +6102,297 @@
         ]
       }
     },
+    "/v1/hosts/{id}/terminal": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "`POST /v1/hosts/{id}/terminal`: open a terminal on the host (owner key).",
+        "operationId": "hosts_terminal_open",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenTerminalInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalInfo"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/{id}/terminal/{tid}": {
+      "delete": {
+        "tags": [
+          "host"
+        ],
+        "summary": "`DELETE /v1/hosts/{id}/terminal/{tid}`.",
+        "operationId": "hosts_terminal_close",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/{id}/terminal/{tid}/input": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "`POST /v1/hosts/{id}/terminal/{tid}/input`.",
+        "operationId": "hosts_terminal_input",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TerminalInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/{id}/terminal/{tid}/output": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "summary": "`GET /v1/hosts/{id}/terminal/{tid}/output?after=&wait_ms=`.",
+        "operationId": "hosts_terminal_output",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "wait_ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalOutput"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/{id}/terminal/{tid}/resize": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "summary": "`POST /v1/hosts/{id}/terminal/{tid}/resize`.",
+        "operationId": "hosts_terminal_resize",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TerminalResize"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/mcp-server/call": {
       "post": {
         "tags": [
@@ -6681,6 +7261,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/peer/link": {
+      "get": {
+        "tags": [
+          "peer"
+        ],
+        "summary": "Return the path for this request's tunnel, or null on local HTTP.",
+        "operationId": "link",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PeerLink"
+                    }
+                  ]
                 }
               }
             }
@@ -7725,6 +8338,54 @@
         ]
       }
     },
+    "/v1/runs/{id}/usage": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Model and token usage of one run (read-only; feeds the chat's message info).",
+        "operationId": "run_usage",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunUsageDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/runs/{id}/workflow-proposal": {
       "post": {
         "tags": [
@@ -8332,6 +8993,148 @@
             }
           },
           "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/skills/hub/install": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Install the previewed content when it is still exactly what the owner accepted.",
+        "operationId": "hub_install",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HubInstallInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedSkillDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/skills/hub/preview": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Fetch a repository into a private staging folder and scan it; nothing is installed.",
+        "operationId": "hub_preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HubSourceInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubPreviewDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
             "description": "",
             "content": {
               "application/json": {
@@ -9061,6 +9864,32 @@
         ]
       }
     },
+    "/v1/view/status": {
+      "get": {
+        "tags": [
+          "view"
+        ],
+        "summary": "Where this viewer stands with the screen stream: idle (nothing runs), starting, live,\npaused by the idle limit, or unavailable (with a fixed reason code). Same access rule\nas `GET /v1/view/targets`; reading it never starts capture.",
+        "operationId": "view_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScreenStatus"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/view/targets": {
       "get": {
         "tags": [
@@ -9077,6 +9906,68 @@
                   "items": {
                     "$ref": "#/components/schemas/TargetInfo"
                   }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/view/targets/{id}/thumbnail": {
+      "get": {
+        "tags": [
+          "view"
+        ],
+        "summary": "One still image of a screen, for the small preview in the panel. It is NOT a session:\nthe host captures a single frame (then stops capturing) and serves that frame again for\n30 s, so a visible panel costs at most one frame per refresh. Same access rule as\n`GET /v1/view/targets`.",
+        "operationId": "view_thumbnail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -13921,6 +14812,153 @@
           }
         }
       },
+      "HubFindingDto": {
+        "type": "object",
+        "description": "One scan finding. The text never contains a matched secret.",
+        "required": [
+          "severity",
+          "kind",
+          "file",
+          "message"
+        ],
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`script`, `network`, `credential`, `obfuscation`, `injection` or `oversized`."
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "description": "`info`, `warn` or `high`."
+          }
+        }
+      },
+      "HubInstallInput": {
+        "type": "object",
+        "description": "Install request: the source plus the fingerprint of the previewed content.",
+        "required": [
+          "url",
+          "accept"
+        ],
+        "properties": {
+          "accept": {
+            "type": "string",
+            "description": "`fingerprint` from the preview the owner accepted."
+          },
+          "rev": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Branch, tag or full commit; the default branch when absent."
+          },
+          "subdir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Folder of the skill inside the repository; the repository root when absent."
+          },
+          "url": {
+            "type": "string",
+            "description": "`https://` clone URL of a public repository."
+          }
+        },
+        "additionalProperties": false
+      },
+      "HubPreviewDto": {
+        "type": "object",
+        "description": "What the scan found, shown before anything is installed.",
+        "required": [
+          "name",
+          "description",
+          "version",
+          "risk",
+          "active",
+          "files",
+          "total_bytes",
+          "fingerprint",
+          "findings"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "True when the folder holds scripts or other active files (stored, never run)."
+          },
+          "description": {
+            "type": "string"
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HubFindingDto"
+            }
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "Pass this back as `accept` to install exactly this content."
+          },
+          "name": {
+            "type": "string"
+          },
+          "risk": {
+            "type": "string",
+            "description": "`low`, `medium` or `high`."
+          },
+          "total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "HubSourceInput": {
+        "type": "object",
+        "description": "Where the skill lives.",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "rev": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Branch, tag or full commit; the default branch when absent."
+          },
+          "subdir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Folder of the skill inside the repository; the repository root when absent."
+          },
+          "url": {
+            "type": "string",
+            "description": "`https://` clone URL of a public repository."
+          }
+        },
+        "additionalProperties": false
+      },
       "HumanAction": {
         "type": "string",
         "enum": [
@@ -16246,6 +17284,13 @@
             ],
             "format": "uuid",
             "description": "Run that produced / carried it."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where a user message came from (`owner` = this app, `telegram`, `peer`,\n`local_api`); absent for older messages and for replies."
           }
         }
       },
@@ -16309,6 +17354,26 @@
           "meta",
           "shift"
         ]
+      },
+      "OpenTerminalInput": {
+        "type": "object",
+        "required": [
+          "cols",
+          "rows"
+        ],
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "Outcome": {
         "type": "string",
@@ -16502,6 +17567,24 @@
             "items": {
               "$ref": "#/components/schemas/PcRequestInfo"
             }
+          }
+        }
+      },
+      "PeerLink": {
+        "type": "object",
+        "description": "The selected path of the authenticated QUIC connection, without peer addresses.",
+        "required": [
+          "relay",
+          "rtt_ms"
+        ],
+        "properties": {
+          "relay": {
+            "type": "boolean"
+          },
+          "rtt_ms": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -17324,6 +18407,42 @@
           }
         }
       },
+      "RunUsageDto": {
+        "type": "object",
+        "description": "What a run cost, read from the usage ledger (`GET /v1/runs/{id}/usage`).",
+        "required": [
+          "prompt_tokens",
+          "completion_tokens",
+          "model_calls"
+        ],
+        "properties": {
+          "completion_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Completion tokens of the run's own model calls.",
+            "minimum": 0
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`provider/model` the run's turn used (the last executor call); absent\nwhen no model call was recorded."
+          },
+          "model_calls": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of model calls of the run.",
+            "minimum": 0
+          },
+          "prompt_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Prompt tokens of the run's own model calls (reported by the provider).",
+            "minimum": 0
+          }
+        }
+      },
       "RunWorkflow": {
         "type": "object",
         "required": [
@@ -17501,6 +18620,12 @@
             "type": "string",
             "description": "`skip`, `run_once` or `run_all`: what happens to occurrences missed\nwhile the daemon was down."
           },
+          "missed_occurrences": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Occurrences that never ran because the daemon stopped (for example the\ncomputer was off or asleep). They are not replayed; shown as \"missed\".",
+            "minimum": 0
+          },
           "moved_to": {
             "type": [
               "string",
@@ -17651,6 +18776,54 @@
           }
         },
         "additionalProperties": false
+      },
+      "ScreenStatus": {
+        "type": "object",
+        "description": "`GET /v1/view/status`.",
+        "required": [
+          "state",
+          "idle_timeout_secs",
+          "hard_cap_secs"
+        ],
+        "properties": {
+          "hard_cap_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Longest a single live session may run, in seconds.",
+            "minimum": 0
+          },
+          "idle_timeout_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds without a sign of life after which the host stops the stream.",
+            "minimum": 0
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UnavailableCode",
+                "description": "Fixed code when `unavailable` (the same codes as `GET /v1/view/availability`)."
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ScreenStreamState"
+          }
+        }
+      },
+      "ScreenStreamState": {
+        "type": "string",
+        "description": "What a viewer needs to know before it asks for the live screen.",
+        "enum": [
+          "idle",
+          "starting",
+          "live",
+          "paused_idle",
+          "unavailable"
+        ]
       },
       "SendMessage": {
         "type": "object",
@@ -18589,6 +19762,109 @@
             "$ref": "#/components/schemas/Reason"
           }
         }
+      },
+      "TerminalInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "cols",
+          "rows",
+          "disconnect_after_secs",
+          "idle_after_secs"
+        ],
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "disconnect_after_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds without any request after which the host ends the session.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idle_after_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds without input after which the host ends the session.",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "TerminalInput": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "string",
+            "description": "Base64 of the bytes to type (at most 16 KiB)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "TerminalOutput": {
+        "type": "object",
+        "required": [
+          "data",
+          "next",
+          "dropped"
+        ],
+        "properties": {
+          "data": {
+            "type": "string",
+            "description": "Base64 of the next output bytes (terminal output is bytes, not text)."
+          },
+          "dropped": {
+            "type": "boolean",
+            "description": "Output older than the buffer was dropped before it was read."
+          },
+          "exited": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The shell has ended (exit code, -1 when it was killed) and all output was read."
+          },
+          "next": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Offset to pass as `after` next time.",
+            "minimum": 0
+          }
+        }
+      },
+      "TerminalResize": {
+        "type": "object",
+        "required": [
+          "cols",
+          "rows"
+        ],
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "TrustFolderInput": {
         "type": "object",

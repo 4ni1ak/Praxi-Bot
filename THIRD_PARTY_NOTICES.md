@@ -21,7 +21,11 @@ Bemis (MIT). The complete ISC/MIT notices ship in
 GitLab, Notion, Google Drive, PostgreSQL, SQLite, Brave, Puppeteer, Sentry,
 Linear, Todoist, Obsidian and Home Assistant. Additional paths include Gmail, Google Calendar, Discord, Figma, Anthropic,
 Google Gemini, Ollama and Claude. Unknown integrations receive a deterministic
-colored monogram; Filesystem uses a Lucide folder. Logos are used to identify their services; brand trademarks
+colored monogram; Filesystem uses a Lucide folder. The Apps grid adds the simple-icons marks (monochrome, tinted
+with each brand's official colour) of about sixty popular apps (Stripe, Atlassian, Jira, Trello, Asana, HubSpot,
+Shopify, Dropbox, Zoom, X, Telegram, WhatsApp, Spotify, Airtable, Zendesk, Docker, Vercel, Supabase, Google
+Sheets/Docs/Meet/Maps and others); apps without a bundled mark show the logo Composio publishes (fetched,
+validated and cached by the daemon) or a neutral glyph. Logos are used to identify their services; brand trademarks
 remain with their respective owners. Full CC0 dedication ships in
 `apps/desktop/ui/public/licenses/simple-icons.txt`.
 
@@ -46,6 +50,15 @@ Adapted files carry the header `// Adapted from vercel-labs/agent-browser (Apach
 
 The "click at the box-model center" interaction approach in `crates/browser-cdp/src/actions.rs`
 follows the technique used by browser-harness (MIT License).
+
+## clap_complete and clap_mangen (MIT OR Apache-2.0)
+
+Praxi-Bot uses `clap_complete` to generate shell completion scripts and
+`clap_mangen` to generate manual pages. Both are dual-licensed under the MIT
+License or the Apache License, Version 2.0. The upstream source directories
+contain both license texts.
+[clap_complete](https://github.com/clap-rs/clap/tree/master/clap_complete),
+[clap_mangen](https://github.com/clap-rs/clap/tree/master/clap_mangen)
 
 ## Integration identification artwork (v4)
 

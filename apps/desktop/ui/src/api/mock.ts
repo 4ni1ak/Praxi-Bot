@@ -49,6 +49,9 @@ const ATLAS = "11111111-1111-4111-8111-111111111111";
 const NOVA = "22222222-2222-4222-8222-222222222222";
 
 function bot(id: string, name: string, color: string, shape: string, model: string): Bot {
+  // Design review (mock mode only): `?botcolor=%23f4f4f5` recolours the first bot (the gradient is built from it).
+  const forced = typeof window !== "undefined" && id === ATLAS ? new URLSearchParams(window.location.search).get("botcolor") : null;
+  if (forced && /^#[0-9a-f]{6}$/i.test(forced)) color = forced;
   return {
     id,
     name,
@@ -627,6 +630,16 @@ export class MockApiClient extends ApiClient {
     ];
   }
 
+  /** Review-state stand-in for the daemon's logo cache: a small neutral mark. */
+  protected override async requestBlob(_method: string, path: string): Promise<Blob> {
+    if (!path.startsWith("/composio/logos/")) {
+      throw new ApiError(404, "not_found", `mock: no blob route ${path}`);
+    }
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="6" cy="12" r="3.4" fill="#F6314D"/><circle cx="12" cy="12" r="3.4" fill="#FFCC00"/><circle cx="18" cy="12" r="3.4" fill="#00CA72"/></svg>';
+    return new Blob([svg], { type: "image/svg+xml" });
+  }
+
   protected override async requestText(method: string, path: string): Promise<string> {
     await Promise.resolve();
     if (method === "GET" && path === "/doctor/report") {
@@ -833,7 +846,7 @@ export class MockApiClient extends ApiClient {
         return ok({
           local_version: "0.1.0-mock",
           local_api_version: "1",
-          hosts: mockHostScenario() ? [{ id: MOCK_HOST_ID, name: "Praxi host", state: mockHostScenario() === "offline" || mockHostScenario() === "dropped" ? "offline" : "connected", detail: null }] : []
+          hosts: mockHostScenario() ? [{ id: MOCK_HOST_ID, name: "Praxi host", state: mockHostScenario() === "offline" || mockHostScenario() === "dropped" ? "offline" : "connected", detail: null, computer_access: true }] : []
         });
       case "GET /skills":
         return ok(structuredClone(MOCK_SKILLS_CATALOG));
@@ -854,7 +867,7 @@ export class MockApiClient extends ApiClient {
             "Can you prepare this week's work summary? I'd like to see what shipped and what's next.",
             "## A good week of progress.\n\nI reviewed the latest changes in GitHub and your workspace. Here is your weekly summary:\n\n| Workstream | Delivered | Status |\n| --- | --- | --- |\n| Desktop experience | Settings, chat and model selection | Ready |\n| Integrations | 5 connected apps | Ready |\n| Quality checks | Types and interface tests | Complete |\n\n### Next up\n\nAfter reviewing open tasks, we can run the release checks.\n\n```sh\npnpm typecheck\npnpm --dir apps/desktop/ui test\n```\n\nI can turn this into a report to share with your team.",
           ];
-          const seeded = content.map((text, index): Message => ({ id: `mock-message-${index}`, chat_id: CHAT_ID, content: text, role: index % 2 === 0 ? "user" : "assistant", created_at_ms: NOW + index * 1000 }));
+          const seeded = content.map((text, index): Message => ({ id: `mock-message-${index}`, chat_id: CHAT_ID, content: text, role: index % 2 === 0 ? "user" : "assistant", created_at_ms: NOW + index * 1000, ...(index % 2 === 0 ? { source: "owner" } : { run_id: "mock-info-run" }) }));
           if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("screen") === "mention") {
             // Review screen: an @mention and the mentioned bot's own reply.
             seeded.push(
@@ -888,6 +901,9 @@ export class MockApiClient extends ApiClient {
           ? [{ call_id: "mock-sch", run_id: "mock-live", requested_at_ms: Date.now() - 3000, decision: null, tool_name: "schedule_create", summary: "Create a schedule" }]
           : []);
       case "GET /runs":
+        if (seg[2] === "usage") {
+          return ok({ model: "gemini/gemini-3.5-flash-lite", prompt_tokens: 4210, completion_tokens: 388, model_calls: 3 });
+        }
         if (seg[2] === "changes") {
           const runId = seg[1] ?? "";
           if (seg[4] === "preview") {
@@ -920,10 +936,14 @@ export class MockApiClient extends ApiClient {
         }
         {
           const live = mockLiveRunId();
-          return ok(live ? [{
+          const past = {
+            id: "mock-info-run", bot_id: "11111111-1111-4111-8111-111111111111", chat_id: CHAT_ID, kind: "turn",
+            state: "succeeded", error: null, created_at_ms: NOW - 11400, updated_at_ms: NOW + 1000, computer_node_name: "Praxi host", parent_run_id: null
+          };
+          return ok(live ? [past, {
             id: live, bot_id: "11111111-1111-4111-8111-111111111111", chat_id: CHAT_ID,
             state: "running", created_at_ms: Date.now() - 6000, parent_run_id: null
-          }] : []);
+          }] : [past]);
         }
       case "GET /usage":
         return ok(USAGE);
@@ -1469,9 +1489,18 @@ export class MockApiClient extends ApiClient {
     throw new ApiError(404, "not_found", "mock web");
   }
 
-  private mockComposioMode: "none" | "login" = "none";
+  // Review states: `?composio=connected` (linked, two apps connected) or `?composio=waiting`
+  // (linked, one app waiting in the browser). Default: not linked, nothing connected.
+  private mockComposioMode: "none" | "login" =
+    typeof window !== "undefined" && ["connected", "waiting"].includes(new URLSearchParams(window.location.search).get("composio") ?? "") ? "login" : "none";
   private mockLoginPolls = 0;
-  private mockComposioApps: ComposioApp[] = [];
+  private mockComposioApps: ComposioApp[] = typeof window === "undefined" ? [] : (() => {
+    const mode = new URLSearchParams(window.location.search).get("composio");
+    const app = (slug: string, name: string, state: ComposioApp["state"], tools: number): ComposioApp => ({ slug, name, state, enabled: true, native_first: false, bots: null, tools });
+    if (mode === "connected") return [app("gmail", "Gmail", "active", 12), app("github", "GitHub", "active", 31)];
+    if (mode === "waiting") return [app("gmail", "Gmail", "active", 12), app("asana", "Asana", "pending", 0)];
+    return [];
+  })();
   private mockUvState: "idle" | "installing" | "done" = "idle";
   private mockUvPolls = 0;
 
@@ -1543,7 +1572,10 @@ export class MockApiClient extends ApiClient {
         kit("spotify", "Spotify", "Playlists, playback and library.", "social"),
         kit("googledrive", "Google Drive", "Find and manage files and folders.", "productivity"),
         kit("hubspot", "HubSpot", "Contacts, deals and marketing.", "business"),
-        kit("quickbooks", "QuickBooks", "Invoices, expenses and accounting.", "finance")
+        kit("quickbooks", "QuickBooks", "Invoices, expenses and accounting.", "finance"),
+        kit("monday", "Monday", "Boards, items and updates.", "business"),
+        kit("stripe", "Stripe", "Payments, customers and invoices.", "finance"),
+        kit("asana", "Asana", "Tasks, projects and teams.", "productivity")
       ];
       const q = new URLSearchParams(seg.slice(2).join("")).get("x");
       void q;

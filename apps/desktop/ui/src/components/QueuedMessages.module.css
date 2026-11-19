@@ -1,0 +1,101 @@
+.stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: calc(var(--space-1) * 0.75);
+  max-width: 100%;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+}
+
+.bubble {
+  max-width: min(calc(var(--size-content-max) * 0.7), 100%);
+  padding: var(--space-3) var(--space-5);
+  border: var(--size-border) dashed color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  border-radius: calc(var(--radius-modal) * 1.5);
+  background-color: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface-elevated));
+  color: var(--color-text);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+  opacity: 0.86;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.remove {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: calc(var(--space-1) * 5);
+  height: calc(var(--space-1) * 5);
+  padding: var(--space-0);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.row:hover .remove,
+.remove:focus-visible {
+  opacity: 1;
+}
+
+.remove:hover {
+  background-color: var(--color-surface-active);
+  color: var(--color-text);
+}
+
+.remove:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.remove > svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
+.sendNow {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.25);
+  padding: var(--size-border) var(--space-1);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-faint);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.sendNow b {
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+}
+
+.sendNow:hover,
+.sendNow:focus-visible {
+  background-color: var(--color-surface-active);
+  color: var(--color-text);
+  outline: none;
+}
+
+.sendNow:focus-visible {
+  box-shadow: var(--shadow-focus);
+}

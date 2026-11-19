@@ -54,7 +54,7 @@ export function summarizeTarget(target: TargetInfo): TargetMetadataSummary {
  */
 export function pickDefaultTarget(
   targets: readonly TargetInfo[],
-  opts: { preferredTargetId?: string | null; botId?: string | null } = {}
+  opts: { preferredTargetId?: string | null; botId?: string | null; preferDesktop?: boolean } = {}
 ): TargetInfo | null {
   if (targets.length === 0) {
     return null;
@@ -70,7 +70,9 @@ export function pickDefaultTarget(
     : [];
   const shared = targets.filter((t) => !t.bot_id);
   const available = (t: TargetInfo) => summarizeTarget(t).available;
+  const desktop = opts.preferDesktop ? shared.find((t) => t.kind === "desktop" && available(t)) : null;
   return (
+    desktop ??
     own.find(available) ??
     own[0] ??
     shared.find(available) ??
@@ -894,13 +896,15 @@ export function reconnectDelayMs(attempt: number): number {
   return Math.min(15_000, 1000 * 2 ** (n - 1));
 }
 
-/** Whether a capture session (network, decode, heartbeat) is wanted right now. */
+/**
+ * Whether the open viewer or an explicit request from the visible card needs a capture session.
+ */
 export function computeWantSession(a: {
   hasClient: boolean;
   documentHidden: boolean;
   target: TargetInfo | null;
   viewerOpen: boolean;
-  panelActive: boolean;
+  cardRequested?: boolean;
 }): boolean {
   return (
     a.hasClient &&
@@ -908,7 +912,7 @@ export function computeWantSession(a: {
     a.target !== null &&
     summarizeTarget(a.target).canView &&
     !a.target.unavailable_reason &&
-    (a.viewerOpen || a.panelActive)
+    (a.viewerOpen || a.cardRequested === true)
   );
 }
 

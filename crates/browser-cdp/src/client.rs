@@ -321,6 +321,15 @@ impl CdpClient {
         Self::connect_with_config(url, CdpClientConfig::default()).await
     }
 
+    pub(crate) fn decode_view_jpeg(
+        &self,
+        data: &str,
+        burst_bytes: u32,
+    ) -> std::result::Result<(Arc<[u8]>, u32, u32), ScreencastFault> {
+        let budget = (burst_bytes as usize).saturating_sub(live_view::MAX_HEADER);
+        decode_screencast_jpeg(data, self.limits.max_screencast_image_bytes.min(budget))
+    }
+
     /// Connect with explicit finite transport/message limits and deadlines.
     pub async fn connect_with_config(url: &str, limits: CdpClientConfig) -> Result<Arc<Self>> {
         let event_capacity = limits.event_capacity()?;

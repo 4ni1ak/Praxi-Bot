@@ -71,6 +71,7 @@ export function UpcomingBlock({
     <section className={styles.block} aria-labelledby="bot-panel-upcoming" data-testid="bot-panel-upcoming">
       <h3 className={styles.label} id="bot-panel-upcoming">
         {t("botPanel.upcoming.title")}
+        <span className={styles.count}>{rows.length}</span>
       </h3>
       <ul className={styles.card}>
         {rows.map((row) => {

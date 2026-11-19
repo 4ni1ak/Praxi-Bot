@@ -1,3 +1,4 @@
+import { writeLastSync } from "../lib/lastSync";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -17,6 +18,7 @@ import { setHostComputerAccess } from "./ComputerAccess";
 import { useDaemon } from "../state/DaemonContext";
 import styles from "./CopySetupModal.module.css";
 import { Modal } from "./Modal";
+import { RunOnServer } from "./RunOnServer";
 
 /**
  * "Make this server the home of my bots": one confirmation that lists what
@@ -81,6 +83,7 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
     try {
       const ownerKey = client?.baseUrl === MOCK_BASE_URL ? "mock" : await invoke<string>("owner_key");
       setReport(await localApi.copySetup(hostId, toRequest(items, checked, choices), ownerKey));
+      writeLastSync(hostId, Date.now());
       // The home is recorded on both sides: the app follows it right away (no picking).
       void refreshHome();
       const link = hostList?.hosts.find((h) => h.id === hostId);
@@ -111,6 +114,7 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
         <div role="alert" className={styles.notice}>
           <p>{t(`copySetup.host.${plan.host_code}`)}</p>
           {plan.host_command ? <code className={styles.code}>{plan.host_command}</code> : null}
+          {plan.host_command ? <RunOnServer command={plan.host_command} beforeOpen={onClose} /> : null}
         </div>
       ) : null}
       {report ? (

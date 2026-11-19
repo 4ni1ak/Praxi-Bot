@@ -3,7 +3,7 @@
 //! Implements [`live_view::ViewTarget`], [`live_view::FrameSource`], and
 //! [`live_view::InputSink`] on top of [`Page`] and [`CdpClient`] using ONLY
 //! `Page.startScreencast` / `Page.screencastFrame` / `Page.screencastFrameAck` /
-//! `Page.stopScreencast` (JPEG only) and `Input.dispatchMouseEvent` /
+//! `Page.stopScreencast` and a viewport-only JPEG screenshot fallback and `Input.dispatchMouseEvent` /
 //! `Input.dispatchKeyEvent` / `Input.insertText`.
 //!
 //! # Security and scope limitation
@@ -1667,7 +1667,11 @@ impl WorkerState {
                 {
                     consider(
                         self.window_opened_at
-                            .saturating_add(self.core.config.watch_idle_grace),
+                            .saturating_add(if self.window_idle_boosted {
+                                self.core.config.new_paint_timeout
+                            } else {
+                                self.core.config.watch_idle_grace
+                            }),
                         TimerReason::WatchIdleGrace,
                     );
                 } else if !self.screencast_running
@@ -1679,13 +1683,16 @@ impl WorkerState {
             }
             Profile::Live => {
                 if self.screencast_running
-                    && !self.window_idle_boosted
                     && self.cached_frame.is_none()
                     && self.pending_refresh.is_none()
                 {
                     consider(
                         self.window_opened_at
-                            .saturating_add(self.core.config.watch_idle_grace),
+                            .saturating_add(if self.window_idle_boosted {
+                                self.core.config.new_paint_timeout
+                            } else {
+                                self.core.config.watch_idle_grace
+                            }),
                         TimerReason::WatchIdleGrace,
                     );
                 } else if self.cached_frame.is_some() && self.pending_refresh.is_none() {
@@ -1771,6 +1778,72 @@ impl WorkerState {
             }
         }
         Ok(())
+    }
+
+    async fn capture_first_frame(&mut self, cause: Cause, action_seq: Option<u64>) {
+        if self.cached_frame.is_some() {
+            return;
+        }
+        let Some(frame) = self.screenshot_frame().await else {
+            if let Ok(mut state) = self.core.state.lock() {
+                state.stale = true;
+            }
+            return;
+        };
+        self.publish_fresh(frame, cause, action_seq);
+    }
+
+    async fn screenshot_frame(&self) -> Option<DecodedScreencastFrame> {
+        // Read the visible viewport only. Keep the capture within the same
+        // dimensions and byte limits as a screencast frame.
+        let client = &self.binding.client;
+        let session = Some(self.binding.session_id.as_str());
+        let timeout = self.core.config.new_paint_timeout;
+        let layout = client
+            .send_with_timeout(session, "Page.getLayoutMetrics", json!({}), timeout)
+            .await
+            .ok()?;
+        let metadata = layout_metadata(&layout)?;
+        let width = metadata.device_width / metadata.page_scale_factor;
+        let height = metadata.device_height / metadata.page_scale_factor;
+        let scale = (f64::from(self.profile.max_width.min(1920)) / width)
+            .min(f64::from(self.profile.max_height.min(1080)) / height)
+            .min(1.0);
+        let screenshot = client
+            .send_with_timeout(
+                session,
+                "Page.captureScreenshot",
+                json!({
+                    "format": "jpeg",
+                    "quality": self.profile.quality,
+                    "captureBeyondViewport": false,
+                    "clip": {
+                        "x": metadata.scroll_offset_x,
+                        "y": metadata.scroll_offset_y,
+                        "width": width,
+                        "height": height,
+                        "scale": scale,
+                    },
+                }),
+                timeout,
+            )
+            .await
+            .ok()?;
+        let data = screenshot.get("data")?.as_str()?;
+        let (jpeg, width, height) = client
+            .decode_view_jpeg(data, self.profile.burst_bytes)
+            .ok()?;
+        if width > self.profile.max_width || height > self.profile.max_height {
+            return None;
+        }
+        Some(DecodedScreencastFrame {
+            jpeg,
+            width,
+            height,
+            // A command response carries no screencast ACK.
+            ack_session_id: 0,
+            metadata,
+        })
     }
 
     fn publish_fresh(
@@ -2193,8 +2266,17 @@ async fn handle_timer(ws: &mut WorkerState, reason: TimerReason) -> Result<(), S
             }
         }
         TimerReason::RefreshDeadline => {
-            ws.pending_refresh = None;
-            ws.publish_repeated_idle(true);
+            let action = ws.pending_refresh.take().map_or(0, |req| req.action_seq);
+            if ws.cached_frame.is_none() {
+                let (cause, seq) = if action == 0 {
+                    (Cause::Refresh, None)
+                } else {
+                    (Cause::Action, Some(action))
+                };
+                ws.capture_first_frame(cause, seq).await;
+            } else {
+                ws.publish_repeated_idle(true);
+            }
             finish_post_frame_capture(ws).await?;
         }
         TimerReason::WatchIdleGrace => {
@@ -2223,24 +2305,16 @@ async fn handle_timer(ws: &mut WorkerState, reason: TimerReason) -> Result<(), S
                             .saturating_add(ws.core.config.watch_window_interval),
                     );
                 }
-            } else if ws.profile.profile == Profile::Watch && ws.window_idle_boosted {
-                // Even `everyNthFrame = 1` yielded no frame within grace; avoid spinning Chrome.
-                if let Ok(mut state) = ws.core.state.lock() {
-                    state.stale = true;
-                }
-                ws.stop_screencast().await?;
-                ws.next_watch_tick = Some(
-                    ws.core
-                        .config
-                        .clock
-                        .now()
-                        .saturating_add(ws.core.config.watch_window_interval),
-                );
-            } else if ws.profile.profile == Profile::Live && !ws.window_idle_boosted {
+            } else if ws.window_idle_boosted {
+                ws.capture_first_frame(Cause::Idle, None).await;
+                // A static live tab keeps its screencast running for the next
+                // paint. Watch mode returns to its usual capture interval.
+                finish_post_frame_capture(ws).await?;
+                ws.window_opened_at = ws.core.config.clock.now();
+            } else {
                 ws.window_idle_boosted = true;
-                if ws.cached_frame.is_none() {
-                    ws.ensure_screencast(REFRESH_EVERY_NTH_FRAME).await?;
-                }
+                ws.ensure_screencast(REFRESH_EVERY_NTH_FRAME).await?;
+                ws.window_opened_at = ws.core.config.clock.now();
             }
         }
         TimerReason::WatchNextWindow => {
@@ -2255,6 +2329,35 @@ async fn handle_timer(ws: &mut WorkerState, reason: TimerReason) -> Result<(), S
         }
     }
     Ok(())
+}
+
+fn layout_metadata(res: &Value) -> Option<ScreencastMetadata> {
+    let vv = res
+        .get("cssVisualViewport")
+        .or_else(|| res.get("visualViewport"))?;
+    let scale = vv
+        .get("scale")
+        .and_then(Value::as_f64)
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(1.0);
+    let client_w = vv
+        .get("clientWidth")
+        .and_then(Value::as_f64)
+        .filter(|v| v.is_finite() && *v > 0.0)?;
+    let client_h = vv
+        .get("clientHeight")
+        .and_then(Value::as_f64)
+        .filter(|v| v.is_finite() && *v > 0.0)?;
+
+    Some(ScreencastMetadata {
+        offset_top: 0.0,
+        page_scale_factor: scale,
+        device_width: client_w * scale,
+        device_height: client_h * scale,
+        scroll_offset_x: vv.get("pageX").and_then(Value::as_f64).unwrap_or(0.0),
+        scroll_offset_y: vv.get("pageY").and_then(Value::as_f64).unwrap_or(0.0),
+        timestamp: None,
+    })
 }
 
 // -- InputSink ---------------------------------------------------------------------------------
@@ -2280,35 +2383,7 @@ impl BrowserInputSink {
         .await
         .map_err(|_| ViewError::Unavailable)?;
 
-        let vv = res
-            .get("cssVisualViewport")
-            .or_else(|| res.get("visualViewport"))
-            .ok_or(ViewError::Unavailable)?;
-        let scale = vv
-            .get("scale")
-            .and_then(Value::as_f64)
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .unwrap_or(1.0);
-        let client_w = vv
-            .get("clientWidth")
-            .and_then(Value::as_f64)
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .ok_or(ViewError::Unavailable)?;
-        let client_h = vv
-            .get("clientHeight")
-            .and_then(Value::as_f64)
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .ok_or(ViewError::Unavailable)?;
-
-        let meta = ScreencastMetadata {
-            offset_top: 0.0,
-            page_scale_factor: scale,
-            device_width: client_w * scale,
-            device_height: client_h * scale,
-            scroll_offset_x: vv.get("pageX").and_then(Value::as_f64).unwrap_or(0.0),
-            scroll_offset_y: vv.get("pageY").and_then(Value::as_f64).unwrap_or(0.0),
-            timestamp: None,
-        };
+        let meta = layout_metadata(&res).ok_or(ViewError::Unavailable)?;
         Ok(self.core.update_geometry(meta))
     }
 

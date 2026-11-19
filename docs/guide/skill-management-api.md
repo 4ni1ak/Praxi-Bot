@@ -68,3 +68,15 @@ return fixed messages without reflecting supplied content.
 
 The existing picker redesign can use these routes directly. No new Tauri
 command, UI dialog, CSS or localized string is added here.
+
+## Install from a git repository (preview, then install)
+
+`POST /v1/skills/hub/preview` with `{ "url": "https://host/owner/repo.git", "rev": null, "subdir": null }`
+fetches the repository into a private staging folder, scans it and returns the skill's name, a risk level
+(`low`, `medium`, `high`), the findings (scripts, network access, credential patterns, obfuscation,
+instruction injection) and a `fingerprint`. Nothing is installed.
+
+`POST /v1/skills/hub/install` takes the same body plus `"accept": "<fingerprint>"`. It fetches again and
+installs only when the fresh fingerprint equals the accepted one (otherwise `409 skill_changed`). The
+install uses the same owner path as `/v1/skills/import`: links and executable files are refused, secrets
+are refused, nothing is executed. Local owner only; only `https://` repositories on a named host.

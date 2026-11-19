@@ -39,6 +39,12 @@ pub(super) fn spawn_reaper(s: &AppState, id: Uuid, actor: Actor) {
                 let _ = end_session(&s, &actor, id, Reason::Expired).await;
                 return;
             }
+            // The host stops producing images for a viewer that went quiet, even
+            // when its client keeps heartbeating (or has vanished with a live TTL).
+            if let Some(reason) = live.limit_reached(id) {
+                let _ = end_session(&s, &actor, id, reason).await;
+                return;
+            }
             let _executor = live.executor.lock().await;
             if let Some(t) = s.hub().takeover().filter(|t| {
                 t.info.session_id == id
@@ -91,8 +97,18 @@ pub(crate) async fn frames(
         session.stream = Some(cancel.clone());
     }
     let source = target_impl.frame_source();
-    // Bounded like every backend call made under the executor.
-    let subscription = match super::bounded(source.subscribe(profile)).await {
+    // A cold browser can need longer to start capture than the other backend calls.
+    let subscribe = tokio::time::timeout(Duration::from_secs(6), source.subscribe(profile))
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::GATEWAY_TIMEOUT,
+                "unavailable",
+                "the screen backend did not start capture in time",
+            )
+        })
+        .and_then(|result| result.map_err(super::backend));
+    let subscription = match subscribe {
         Ok(sub) => sub,
         Err(e) => {
             if let Some(session) = live.sessions.lock().get_mut(&id) {

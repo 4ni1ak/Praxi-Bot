@@ -1848,11 +1848,24 @@ impl Shared {
     }
 
     /// This daemon is an always-on host (the bots' own computer).
-    fn is_host_homed(&self) -> bool {
+    pub(crate) fn is_host_homed(&self) -> bool {
         self.computer_provider
             .read()
             .as_ref()
             .is_some_and(|p| p.is_host())
+    }
+
+    /// The display of this computer's own desktop, only when its backend
+    /// really runs (the run resolved to the host with a desktop) and the
+    /// daemon's environment names one.
+    fn real_display(&self, rc: &RunComputer) -> Option<String> {
+        if rc.label != ComputerLabel::Host || rc.desktop.is_none() {
+            return None;
+        }
+        let guard = self.computer_provider.read();
+        let provider: &Arc<dyn ComputerProvider> = guard.as_ref()?;
+        let name = provider.display_name()?;
+        crate::discovery_prompt::clean_display(&name)
     }
 
     /// The per-run "where you run" block, only for a host-homed daemon: which
@@ -1864,11 +1877,13 @@ impl Shared {
         }
         let rc = &ctx.resolved_computer;
         let platform = rc.desktop.as_ref().map(|d| d.capabilities().platform);
+        let display = self.real_display(rc);
         crate::discovery_prompt::place_block(&crate::discovery_prompt::Place {
             label: rc.label,
             node_name: rc.node.as_ref().map(|n| n.name.as_str()),
             desktop_platform: platform.as_deref(),
             browser: rc.browser,
+            display: display.as_deref(),
         })
     }
 

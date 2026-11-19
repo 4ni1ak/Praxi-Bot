@@ -3058,9 +3058,62 @@ async fn desktop_window_list_is_callable_on_the_first_turn_and_prompt_says_to_lo
         .filter_map(|t| t["function"]["name"].as_str())
         .collect();
     assert!(names.contains(&"find_tool") && names.contains(&"desktop_list_apps"));
-    assert!(!names.contains(&"browser_open"), "{names:?}");
+    // `browser_open` is pinned too: the one-step path for "open a browser".
+    assert!(names.contains(&"browser_open"), "{names:?}");
+    assert!(!names.contains(&"fs_read"), "{names:?}");
     let prompt = system_text(&req);
     assert!(prompt.contains("separate managed browser") && prompt.contains("desktop_list_apps"));
+}
+
+#[tokio::test]
+async fn host_homed_run_with_a_display_offers_browser_open_first_and_says_the_screen_exists() {
+    // The owner's real test: a bot on the server probed the shell for a browser
+    // and said "no GUI". With more tools than the direct limit, `browser_open`
+    // must still be in the first request, and the environment block must state
+    // that the desktop and the browser exist.
+    let env = setup();
+    let mut desktop = tool("desktop_list_apps", Effect::Read, "ok");
+    desktop.spec.category = PermissionCategory::Desktop;
+    let mut browser = tool("browser_open", Effect::Read, "ok");
+    browser.spec.category = PermissionCategory::Browser;
+    let (desktop, browser) = (Arc::new(desktop), Arc::new(browser));
+    let files = Arc::new(tool("fs_read", Effect::Read, "ok"));
+    let fake = Fake::new(vec![text("done")]);
+    let mut config = cfg(Policy::full());
+    config.discovery_threshold = 0;
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[&desktop, &browser, &files],
+        profile(""),
+        config,
+    );
+    lp.set_computer_provider(Arc::new(MockComputerProvider {
+        local: parking_lot::RwLock::new(Some(NamedDesktop::new("host"))),
+        pc: parking_lot::RwLock::new(None),
+        is_host: true,
+        browser_available: true,
+        has_display: true,
+    }));
+    let run = lp
+        .run_turn(env.chat, "kendi bilgisayarında tarayıcı aç")
+        .unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let req = fake.request(0);
+    let names: Vec<&str> = req
+        .tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str())
+        .collect();
+    assert!(names.contains(&"find_tool"), "{names:?}");
+    assert!(names.contains(&"browser_open"), "{names:?}");
+    let prompt = system_text(&req);
+    assert!(
+        prompt.contains("graphical desktop (display :99) and the browser are available"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("call browser_open"), "{prompt}");
 }
 
 #[tokio::test]
@@ -6363,6 +6416,10 @@ impl computer_target::ComputerProvider for MockComputerProvider {
         self.has_display
     }
 
+    fn display_name(&self) -> Option<String> {
+        self.has_display.then(|| ":99".to_owned())
+    }
+
     fn node(&self, _id: &str) -> Option<Arc<dyn desktop_api::DesktopBackend>> {
         None
     }
@@ -8717,4 +8774,101 @@ async fn an_imported_reply_of_a_bot_that_did_not_move_stays_foreign_quoted_data(
             .any(|m| m.role == MessageRole::Assistant && format!("{m:?}").contains("IGNORE ALL")),
         "an imported foreign reply must not be an Assistant message"
     );
+}
+
+#[tokio::test]
+async fn with_memory_tools_registers_only_when_enabled_and_survives_indexing_failures() {
+    let env = setup();
+    let fake_off = Fake::new(vec![]);
+    let lp_off = AgentLoop::new(
+        Arc::clone(&env.storage),
+        ToolRegistry::new(),
+        Providers::single(fake_off),
+        LoopConfig::default(),
+    )
+    .with_memory_tools();
+    for name in memory_store::MEMORY_TOOL_NAMES {
+        assert!(
+            !lp_off.tool_names().contains(&name.to_owned()),
+            "{name} should not register when LoopConfig.memory is None"
+        );
+    }
+
+    let mem_dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(
+        memory_store::MemoryStore::open(
+            mem_dir.path(),
+            Arc::new(memory_store::HashEmbedder::new(64)),
+        )
+        .unwrap(),
+    );
+    let mut c = cfg(Policy::full());
+    c.memory = Some(crate::MemoryConfig::new(Arc::clone(&store)));
+    let fake = Fake::new(vec![
+        calls(&[(
+            "c1",
+            "memory_save",
+            json!({
+                "content": "Birthday is March 3",
+                "kind": "profile",
+                "quote": "my birthday is March 3"
+            }),
+        )]),
+        text("Saved your birthday."),
+        text("[]"),
+        text("Still works when session indexing fails."),
+        text("[]"),
+        text("[]"),
+    ]);
+    let lp = make_loop(&env.storage, env.bot, &fake, &[], profile(""), c).with_memory_tools();
+
+    for name in memory_store::MEMORY_TOOL_NAMES {
+        assert!(
+            lp.tool_names().contains(&name.to_owned()),
+            "{name} should be registered when memory is enabled"
+        );
+    }
+    lp.audit_egress_card_schemas().unwrap();
+
+    // 1. Turn 1: model calls memory_save with a verbatim quote from the user's message, and both
+    //    the user and assistant messages are indexed into session_msgs.
+    lp.send_user_message(
+        env.chat,
+        "Remember that my birthday is March 3.",
+        MessageMode::Queue,
+    )
+    .unwrap();
+    settle(&lp, &env, 1).await;
+
+    let recalled = store
+        .recall(env.user, env.bot, "birthday March", 800)
+        .unwrap();
+    assert_eq!(recalled.len(), 1);
+    assert_eq!(recalled[0].content, "Birthday is March 3");
+
+    let hits = store.search_sessions(env.user, "birthday", 5).unwrap();
+    assert!(
+        !hits.is_empty(),
+        "turn messages must be indexed into session_fts"
+    );
+
+    // 2. Inject an FTS indexing failure in memory.db and verify the next turn still succeeds.
+    {
+        let conn = rusqlite::Connection::open(mem_dir.path().join("memory.db")).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_session_index BEFORE INSERT ON session_msgs \
+             BEGIN SELECT RAISE(ABORT, 'injected session indexing error'); END;",
+        )
+        .unwrap();
+    }
+    lp.send_user_message(
+        env.chat,
+        "Does a broken session index break the turn?",
+        MessageMode::Queue,
+    )
+    .unwrap();
+    settle(&lp, &env, 2).await;
+    let runs = env.storage.list_runs(env.user).unwrap();
+    assert_eq!(runs.len(), 2);
+    assert!(runs.iter().all(|r| r.state == RunState::Succeeded.as_str()));
 }

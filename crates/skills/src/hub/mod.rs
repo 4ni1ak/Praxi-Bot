@@ -170,6 +170,14 @@ pub struct Preview {
     root: PathBuf,
 }
 
+impl Preview {
+    /// The staged skill folder (valid while the preview is alive).
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+}
+
 /// A hub-installed skill with its status.
 #[derive(Debug, Clone)]
 pub struct InstalledSkill {

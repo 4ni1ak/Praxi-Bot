@@ -2,7 +2,7 @@
 //! HTTP headers can never grant a role.
 use crate::{ApiError, AppState};
 use axum::{
-    Router,
+    Extension, Json, Router,
     extract::{Request, State},
     http::Method,
     middleware::Next,
@@ -23,6 +23,19 @@ pub enum PeerRole {
 pub struct PeerIdentity {
     pub key: String,
     pub role: PeerRole,
+}
+
+/// The selected path of the authenticated QUIC connection, without peer addresses.
+#[derive(Clone, Copy, Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct PeerLink {
+    pub relay: bool,
+    pub rtt_ms: u32,
+}
+
+/// Return the path for this request's tunnel, or null on local HTTP.
+#[utoipa::path(get, path = "/v1/peer/link", tag = "peer", security(("bearer" = [])), responses((status = 200, body = Option<PeerLink>)))]
+pub(crate) async fn link(path: Option<Extension<PeerLink>>) -> Json<Option<PeerLink>> {
+    Json(path.map(|Extension(info)| info))
 }
 
 /// Generic JSON/TOML profile editors retain ordinary bot editing, but cannot
@@ -466,7 +479,7 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         return ApiError::bad_request("URL credentials are forbidden").into_response();
     }
     req.extensions_mut()
-        .insert(crate::live_view::Actor::peer(&peer));
+        .insert(crate::live_view::Actor::peer_for(&state, &peer));
     // New schedule source/read capabilities remain local-owner only even on
     // encoded or slash-normalized aliases. Existing plain timer requests keep
     // their earlier peer policy; handlers also guard already-configured rows.
@@ -503,7 +516,7 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         // denial is coalesced there): it must not write a decision row per try.
         let granted = state
             .live_view()
-            .allowed(&crate::live_view::Actor::peer(&peer), true);
+            .allowed(&crate::live_view::Actor::peer_for(&state, &peer), true);
         let changed = granted && (input.release || state.hub().reported_mode() != Some(input.mode));
         (
             Request::from_parts(parts, axum::body::Body::from(bytes)),
@@ -524,7 +537,7 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
             | "/v1/control/recover"
     ) && !state
         .live_view()
-        .allowed(&crate::live_view::Actor::peer(&peer), true);
+        .allowed(&crate::live_view::Actor::peer_for(&state, &peer), true);
     if (req.method() == Method::POST
         && !refused_control
         && (path.starts_with("/v1/approvals/")

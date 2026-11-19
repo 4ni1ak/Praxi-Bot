@@ -441,11 +441,12 @@ test("panel and viewer closed (or window hidden) stop the capture session", () =
     hasClient: true,
     documentHidden: false,
     target,
-    viewerOpen: false,
-    panelActive: false
+    viewerOpen: false
   };
+  // The card alone never holds a live session: the host stays idle until someone clicks.
   assert.equal(computeWantSession(base), false);
-  assert.equal(computeWantSession({ ...base, panelActive: true }), true);
+  assert.equal(computeWantSession({ ...base, cardRequested: true }), true);
+  assert.equal(computeWantSession({ ...base, cardRequested: true, documentHidden: true }), false);
   assert.equal(computeWantSession({ ...base, viewerOpen: true }), true);
   assert.equal(
     computeWantSession({ ...base, viewerOpen: true, documentHidden: true }),

@@ -79,7 +79,8 @@
       "title": "Language",
       "description": "Select the display language for the interface.",
       "en": "English",
-      "tr": "Türkçe"
+      "tr": "Türkçe",
+      "de": "Deutsch"
     },
     "hotkey": {
       "title": "Stop All Shortcut",
@@ -303,7 +304,7 @@
     },
     "placeholder": "Message…  / commands · @ bots",
     "addCommand": "Add a command or bot",
-    "placeholderBusy": "The bot is working — queue or steer…",
+    "placeholderBusy": "The bot is working. Type to queue a message…",
     "send": "Send",
     "subagent": {
       "title": "Subagent",
@@ -560,6 +561,11 @@
     "slash": {
       "new": "Start a new chat",
       "stop": "Stop the current run",
+      "help": "Open help and shortcuts",
+      "settings": "Open settings",
+      "models": "Open the AI models settings",
+      "apps": "Open apps",
+      "schedules": "Open schedules",
       "menu": "Commands",
       "mentionMenu": "Bots",
       "noMatch": "No match"
@@ -727,6 +733,31 @@
         "done": "Looked up a skill",
         "failed": "Couldn't look up a skill"
       },
+      "memory_search": {
+        "running": "Searching memory",
+        "done": "Searched memory",
+        "failed": "Couldn't search memory"
+      },
+      "session_search": {
+        "running": "Searching past conversations",
+        "done": "Searched past conversations",
+        "failed": "Couldn't search past conversations"
+      },
+      "memory_save": {
+        "running": "Saving to memory",
+        "done": "Saved to memory",
+        "failed": "Didn't save to memory"
+      },
+      "memory_forget": {
+        "running": "Forgetting a memory",
+        "done": "Forgot a memory",
+        "failed": "Didn't forget a memory"
+      },
+      "knowledge_search": {
+        "running": "Searching knowledge sources",
+        "done": "Searched knowledge sources",
+        "failed": "Couldn't search knowledge sources"
+      },
       "workflow": {
         "running": "Running a workflow",
         "done": "Ran a workflow",
@@ -887,15 +918,15 @@
       },
       "approve-destructive": {
         "name": "Approve destructive",
-        "hint": "Reads are free; anything that changes or sends asks you first."
+        "hint": "Reads, browsing, workspace edits and the bot's own computer run freely; deleting, sending, money and your own PC ask first."
       },
       "full": {
         "name": "Full",
-        "hint": "Runs without asking (including ordinary file deletes and sends), except Money, schedule activations, and catastrophic never-list commands."
+        "hint": "Runs without asking (including deletes and sends), except Money, schedule activation and catastrophic never-list commands. After reading untrusted content it still asks before sending data out or running a program."
       },
       "read-and-draft": {
         "name": "Read & draft",
-        "hint": "Reads are free; drafts, file changes, page fetches, clicks, commands, and sends all ask first (same effective policy as Approve destructive)."
+        "hint": "Reads are free; every change, send, page fetch, click and command asks first."
       },
       "custom": {
         "name": "Custom",
@@ -981,6 +1012,22 @@
       "host_admin_forbidden": {
         "title": "This computer may not manage that server",
         "hint": "Only the owner's paired desktop can change the server's setup."
+      },
+      "terminal_unsupported": {
+        "title": "The terminal needs a Linux server",
+        "hint": "Only a Linux server can open a terminal here."
+      },
+      "terminal_start_failed": {
+        "title": "The terminal could not start",
+        "hint": "The server could not start a shell. Try again in a moment."
+      },
+      "terminal_busy": {
+        "title": "All terminals on the server are in use",
+        "hint": "Close another terminal on the server, then try again."
+      },
+      "terminal_gone": {
+        "title": "The terminal session ended",
+        "hint": "Open the terminal again."
       },
       "provider_endpoint": {
         "title": "The provider endpoint could not be found",
@@ -1222,6 +1269,10 @@
         "title": "Praxi needs a brain first",
         "hint": "Connect a model in Settings, then try again."
       },
+      "skill_changed": {
+        "title": "The repository changed since the preview",
+        "hint": "Review it again before you add the skill."
+      },
       "skill_conflict": {
         "title": "A skill with that name already exists",
         "hint": "Pick another name or replace the old one."
@@ -1233,6 +1284,10 @@
       "skill_not_found": {
         "title": "That skill no longer exists",
         "hint": "Reload the list."
+      },
+      "skill_source_unreachable": {
+        "title": "The repository could not be reached",
+        "hint": "Check the address and your connection, then try again."
       },
       "skill_storage": {
         "title": "The skill could not be saved",
@@ -1482,6 +1537,7 @@
       "makeHome": "Make {{name}} my bots' home",
       "sync": "Sync my setup to {{name}}",
       "viewScreen": "View its screen",
+      "terminal": "Terminal on the server",
       "workHere": "Work on this computer for now",
       "backHome": "Back to {{name}}",
       "pcOn": "On · every action asks you here",
@@ -1686,6 +1742,7 @@
     "nextRun": "Next run",
     "lastRun": "Last run",
     "never": "Never",
+    "missed": "Missed while off",
     "payload": {
       "workflow": "Runs workflow {{name}}",
       "tool": "Calls tool {{name}}",
@@ -1800,6 +1857,7 @@
       "quarantined": "Quarantined"
     },
     "auth": {
+      "expiredToast": "The {{name}} sign-in was not finished within {{minutes}} minutes and was cancelled.",
       "pasteLabel": "Redirect address from the browser",
       "pasteSubmit": "Finish sign-in",
       "pasteHint": "If the browser runs on another computer and shows an error page after you sign in, copy that page's full address and paste it here.",
@@ -1896,6 +1954,21 @@
       "tokenHint": "These ask for a personal token you create yourself. Most services connect without one through Composio on the main screen.",
       "localTitle": "Local developer servers"
     },
+    "sheet": {
+      "title": "Connect {{name}}",
+      "progress": "Step {{current}} of {{total}}",
+      "login": "The sign-in page opened in your browser. Finish it there and {{name}} opens next by itself.",
+      "app": "Opening {{name}}'s own page…",
+      "opened": "{{name}}'s page is open in your browser. Allow access there; it shows up as Connected here.",
+      "timedOut": "The sign-in was not finished in time. Press Connect to start again.",
+      "cancelled": "Cancelled.",
+      "failed": {
+        "login_open": "The sign-in page could not be opened.",
+        "login_failed": "The sign-in did not finish. Try again.",
+        "app_link": "The page for {{name}} could not be prepared. Try again.",
+        "app_open": "The page for {{name}} could not be opened."
+      }
+    },
     "composio": {
       "title": "Composio",
       "getKey": "Open the Composio key page",
@@ -1980,6 +2053,14 @@
         "timeout": "The installer took too long and was stopped.",
         "unavailable": "The installer could not be started."
       }
+    },
+    "tools": {
+      "label": "Tools bots may use",
+      "restricted": "Some tools are limited by a custom allow-list; edit it in the server settings.",
+      "effect": {
+        "write": "changes data",
+        "destructive": "can delete or send"
+      }
     }
   },
   "help": {
@@ -1987,6 +2068,7 @@
     "intro": "Handy shortcuts while the app is open.",
     "palette": "Command palette",
     "send": "Send message",
+    "recall": "Earlier messages of this chat (empty box or first line; Esc brings your draft back)",
     "stop": "Stop all bot runs",
     "settings": "Open settings",
     "closePanel": "Close the side panel",
@@ -2065,7 +2147,8 @@
       "usage": "Usage",
       "diagnostics": "Diagnostics",
       "updates": "Updates",
-      "appearance": "Appearance"
+      "appearance": "Appearance",
+      "mail": "Mail"
     },
     "general": {
       "account": {
@@ -2323,6 +2406,15 @@
           "nameHint": "Use letters, digits, dots, dashes or underscores, starting with a letter or digit (32 at most).",
           "bot": "Pick the bot, or choose any bot."
         }
+      },
+      "next": {
+        "ok": "Connected. A bot that is allowed to use mail can use this mailbox.",
+        "authFailed": "The server refused the login. Gmail, Outlook, Yahoo and iCloud need an app password, not your normal one. Edit the mailbox and enter it again.",
+        "apiKey": "AgentMail refused the API key. Create a new key in your AgentMail console and paste it again.",
+        "unreachable": "The mail server could not be reached. Check your internet connection and the server names, then try again.",
+        "tls": "The secure connection failed. Check the server name, the port and the security setting.",
+        "protocol": "That server did not answer like a mail server. Check the server name and the port.",
+        "timeout": "The server did not answer in time. Try again in a moment."
       }
     },
     "webSearch": {
@@ -2660,9 +2752,9 @@
       "auto": "Free"
     },
     "autonomyHints": {
-      "ask": "Reads files, checks the screen, and searches the web without asking; asks before drafting, sending, changing or deleting files, fetching pages, clicking, or running commands (same effective policy as Balanced).",
-      "balanced": "Reads files, checks the screen, and searches the web freely; asks before every file write or delete, draft, send, page fetch, click, or command (same effective policy as Ask).",
-      "auto": "Runs without asking—including deleting ordinary files, running shell commands, and sending messages—pausing only for Money, schedule activations, and never-list commands (disk format, system/home wipes, credential paths)."
+      "ask": "Reads files, checks the screen, and searches the web without asking; asks before any change, send, page fetch, click, or command.",
+      "balanced": "Reads, browses, edits workspace files and works on the bot's own computer without asking; asks before deleting files, sending, spending money, or touching your PC.",
+      "auto": "Runs without asking, even for deletes, commands and sends. Still asks for Money, schedule activation and catastrophic commands, and after reading untrusted content, before sending data out or running a program."
     },
     "autonomyCustom": "Using the {{preset}} permission preset.",
     "advanced": "Advanced settings",
@@ -2677,7 +2769,110 @@
     "railGrip": "Resize sidebar (arrow keys)",
     "panelGrip": "Resize bot panel (arrow keys)"
   },
+  "computerCard": {
+    "title": "Computer",
+    "thisComputer": "This computer",
+    "sideBot": "Bot's",
+    "sideMine": "Mine",
+    "live": "LIVE",
+    "big": "Enlarge",
+    "take": "Take control",
+    "close": "Close",
+    "show": "Show screen",
+    "resume": "Resume",
+    "retry": "Try again",
+    "connecting": "Connecting",
+    "frameAlt": "Live screen of {{name}}",
+    "terminal": "Terminal",
+    "terminalSoon": "Coming soon",
+    "browser": "Browser",
+    "fps": "{{fps}} fps",
+    "pausedNote": "paused",
+    "hint": {
+      "idle": "The picture is only made while you look",
+      "starting": "Starting the screen…",
+      "paused": "Paused because nobody looked for 3 minutes"
+    },
+    "status": {
+      "serverOnline": "Server · online",
+      "serverOffline": "not answering · reconnecting",
+      "local": "{{system}} · the bot works here",
+      "localNoSystem": "The bot works here"
+    },
+    "reason": {
+      "timeout": "The screen took too long to start",
+      "connecting": "Connecting to {{name}}…",
+      "offline": "Cannot reach the server",
+      "notPaired": "The server no longer accepts this computer",
+      "version": "The app and the server are on different versions",
+      "permission": "This computer may not watch the server's screen yet",
+      "failed": "Could not get the screen",
+      "noScreen": "No screen: {{detail}}"
+    }
+  },
+  "homeMenu": {
+    "lives": {
+      "local": "Your bots live here",
+      "online": "Your bots live here · online",
+      "connecting": "Your bots live here · connecting",
+      "offline": "Your bots live here · offline",
+      "temporary": "For now your bots work on this computer"
+    },
+    "sync": "Sync my setup",
+    "lastSync": "Last sync: {{when}}",
+    "today": "today {{time}}",
+    "pcOn": "Every action asks you here",
+    "pcOff": "Your bots cannot use this computer"
+  },
+  "runStatus": {
+    "working": "Working…",
+    "stopping": "Stopping…",
+    "waiting": "Waiting for your approval: {{step}}"
+  },
+  "queued": {
+    "label": "Queued.",
+    "sendNow": "Send now",
+    "remove": "Remove this queued message"
+  },
+  "messageInfo": {
+    "label": "Message info",
+    "title": "Message details",
+    "steps": "{{count}} tools",
+    "steps_one": "{{count}} tool",
+    "steps_other": "{{count}} tools",
+    "unit": {
+      "s": "s",
+      "m": "min"
+    },
+    "rows": {
+      "model": "Model",
+      "source": "Source",
+      "duration": "Duration",
+      "started": "Started",
+      "finished": "Finished",
+      "steps": "Steps",
+      "where": "Where",
+      "tokens": "Tokens",
+      "sent": "Sent"
+    },
+    "sources": {
+      "app": "this app",
+      "telegram": "Telegram",
+      "peer": "another computer",
+      "api": "local API",
+      "unknown": "unknown"
+    }
+  },
   "botPanel": {
+    "now": {
+      "waiting": "Waiting for your approval",
+      "thinking": "Thinking…",
+      "subagents": "{{count}} sub-agents",
+      "subagents_one": "{{count}} sub-agent",
+      "subagents_other": "{{count}} sub-agents",
+      "open": "Open details",
+      "detailTitle": "Current run"
+    },
     "toggle": "Bot panel",
     "close": "Close panel",
     "profile": "Bot profile",
@@ -2735,7 +2930,43 @@
       "version": "This app and {{name}} are on different versions. Update both to the same version."
     },
     "needsDesktop": "{{name}} has no desktop session, so there is no screen to show. To add one, run this on this computer:",
-    "needsPermission": "{{name}} has not allowed this computer to watch its screen. On the server, run:"
+    "pausedIdle": "Paused to save resources - click to resume",
+    "showScreen": "Show screen",
+    "screenListFailed": "{{name}}'s screen list could not be loaded. It will be tried again in a moment.",
+    "mail": {
+      "heading": "Mail",
+      "loading": "Looking for mailboxes…",
+      "loadError": "Could not load the mailboxes: {{message}}",
+      "empty": "{{name}} has no mailbox yet. Connect your own mailbox, or give the bot its own address.",
+      "connect": "Connect a mailbox",
+      "manage": "Manage mailboxes",
+      "shared": "Shared by every bot",
+      "own": "Only {{name}}",
+      "agentmail": "Own address",
+      "check": "Check connection",
+      "checking": "Checking…",
+      "checked": "Checked at {{time}}",
+      "toolsLabel": "Let {{name}} use mail",
+      "toolsOnHint": "Reading is allowed. Sending always follows the permission mode of this bot, and asks first by default.",
+      "toolsOffHint": "The mailbox is connected, but {{name}} cannot see any mail tools yet. Turn this on to let it read and write mail.",
+      "toolsError": "Could not change the mail access: {{message}}"
+    }
+  },
+  "terminal": {
+    "title": "Terminal - {{name}}",
+    "close": "Close the terminal",
+    "note": "This is a shell on the server, through the connection your app already has. It runs as the server's service user and can read the server's keys. It ends when you close this panel.",
+    "failed": "The terminal could not be opened.",
+    "ended": "The shell ended.",
+    "again": "Open again",
+    "runForMe": "Run it for me",
+    "runForMeHint": "Opens the terminal and types the command; you press Enter.",
+    "state": {
+      "starting": "Starting",
+      "live": "Connected",
+      "ended": "Ended",
+      "failed": "Not connected"
+    }
   },
   "knowledge": {
     "title": "Knowledge and shared brain",
@@ -2839,6 +3070,14 @@
     "confirmQuery": "Allow retrieval queries"
   },
   "liveView": {
+    "chat": {
+      "title": "Chat with bot",
+      "collapse": "Collapse chat",
+      "replying": "Bot is replying…",
+      "working": "Bot is working…",
+      "approve": "Approve",
+      "reject": "Reject"
+    },
     "title": "Computer live view",
     "expand": "Open large viewer",
     "close": "Close viewer",
@@ -2943,6 +3182,12 @@
     "approvalsWaiting": "{{count}} item(s) are waiting for your decision in chat.",
     "reviewApprovals": "Back to chat to answer",
     "errors": {
+      "unauthorized": "Your session is no longer authorized. Reconnect to this computer.",
+      "too_many_streams": "This connection has too many open streams. Close another stream and try again.",
+      "network": "The connection to the screen was interrupted. Check your network and try again.",
+      "view_quota": "The server has too many screen sessions. Close an unused viewer or try again in a moment.",
+      "server_restarting": "The server may be restarting. Try again when it comes back online.",
+      "timeout": "The screen did not start in time.",
       "generic": "The request failed. Check the connection and try again.",
       "release_failed": "Could not hand control back. The bot stays paused; retry Bitirdim.",
       "release_unconfirmed": "The daemon still reports your takeover as active. Retry Bitirdim.",
@@ -3216,6 +3461,10 @@
     "dismiss": "Dismiss",
     "stopAllNow": "Stop all now",
     "letContinue": "Let them continue"
+  },
+  "peerLink": {
+    "direct": "Direct · {{rtt}} ms",
+    "relay": "Relay · {{rtt}} ms"
   },
   "computerPicker": {
     "label": "Computer: {{name}}",
@@ -3638,5 +3887,17 @@
       "sign_in": "{{cli}} is signed out. Sign in to it in Settings, AI.",
       "unsupported": "Praxi cannot run {{cli}} on this computer."
     }
+  },
+  "voice": {
+    "speak": "Read aloud",
+    "stop": "Stop reading",
+    "codeOmitted": "(code omitted)",
+    "tableOmitted": "(table omitted)",
+    "title": "Spoken replies",
+    "description": "Reply voice and speed for the read-aloud button. Uses your system's speech engine.",
+    "auto": "Automatic (matches the app language)",
+    "online": "online",
+    "speed": "Speed",
+    "unsupported": "This system offers no speech voices."
   }
 }
