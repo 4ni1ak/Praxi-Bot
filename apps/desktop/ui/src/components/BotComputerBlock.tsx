@@ -99,7 +99,7 @@ export function BotComputerBlock({
   const panelActions = visibleActions(live.state, live.controlState, live.isLocalClient).panel;
   const releasePending = live.state.pendingRequest?.kind === "release";
   const showRelease = isActivelyOwningTakeover(live.state) || releasePending;
-  const showPause = panelActions.includes("clear_pause") && !showRelease;
+  const showPause = panelActions.includes("clear_pause") && !showRelease && !live.pauseClearing;
 
   const hint =
     view.kind === "idle"
