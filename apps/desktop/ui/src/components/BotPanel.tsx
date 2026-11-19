@@ -16,6 +16,7 @@ import { BotAvatar, type BotAvatarState, type BotIdentity } from "ui";
 import { activitySections, librarySections, subagentRows } from "../lib/activityPanel";
 import { type PermissionTone, permissionTone } from "../lib/botEditor";
 import { chatActivity, chatDateLabel } from "../lib/botLanding";
+import { CHAT_SEARCH_MIN_CHATS, filterChats } from "../lib/chatSearch";
 import { chatTitleLabel } from "../lib/chatTitle";
 import type { PresetChoice } from "../lib/botProfile";
 import { modelLine } from "../lib/modelName";
@@ -139,6 +140,8 @@ export function BotPanel({
   const { events, refreshRuns } = useDaemon();
   const [tab, setTab] = useState<"activity" | "library">("activity");
   const [openSub, setOpenSub] = useState<string | null>(null);
+  const [chatQuery, setChatQuery] = useState("");
+  const visibleChats = filterChats(chats, chatQuery, t("botPanel.untitled"));
   const subs = subagentRows(events, activeChatId);
   const upcoming = useUpcoming(bot.id);
   const quotas = useQuotas();
@@ -295,8 +298,21 @@ export function BotPanel({
         <h3 className={styles.label} id="bot-panel-chats">
           {t("botPanel.chats")}
         </h3>
+        {chats.length >= CHAT_SEARCH_MIN_CHATS ? (
+          <input
+            type="search"
+            className={styles.chatSearch}
+            value={chatQuery}
+            placeholder={t("botPanel.searchChats")}
+            aria-label={t("botPanel.searchChats")}
+            onChange={(e) => setChatQuery(e.target.value)}
+          />
+        ) : null}
+        {visibleChats.length === 0 && chatQuery.trim() ? (
+          <p className={styles.chatSearchEmpty} role="status">{t("botPanel.noChatMatches")}</p>
+        ) : null}
         <ul className={styles.list}>
-            {chats.map((c) => {
+            {visibleChats.map((c) => {
               const chatState = chatActivity(c.id, needs, runs);
               return (
                 <li key={c.id}>

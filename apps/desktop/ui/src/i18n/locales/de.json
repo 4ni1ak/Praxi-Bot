@@ -839,6 +839,7 @@
     },
     "myComputer": "Mein Computer",
     "needsDesktop": "{{name}} hat keine Desktop-Sitzung, daher gibt es keinen Bildschirm zum Anzeigen. Um eine hinzuzufügen, führe auf diesem Computer aus:",
+    "noChatMatches": "Keine passenden Chats",
     "now": {
       "detailTitle": "Aktueller Lauf",
       "open": "Details öffnen",
@@ -853,6 +854,7 @@
     "runsOnHost": "Läuft auf {{name}} (Host)",
     "runsOnLocal": "Läuft auf diesem Computer",
     "screenListFailed": "Die Bildschirmliste von {{name}} konnte nicht geladen werden. Es wird gleich noch einmal versucht.",
+    "searchChats": "Chats durchsuchen…",
     "serverIssue": {
       "connecting": "Verbindung zu {{name}} wird hergestellt … sein Bildschirm erscheint, sobald er antwortet.",
       "notPaired": "{{name}} akzeptiert diesen Computer nicht mehr. Koppele ihn erneut mit einem neuen Ticket.",
