@@ -45,6 +45,7 @@ pub mod live_view;
 pub mod mcp;
 mod mcp_routes;
 pub mod mcp_server;
+pub mod memory;
 pub mod openapi;
 pub mod owner;
 pub mod pc_access;
@@ -235,6 +236,8 @@ struct Inner {
     fill_secrets: OnceLock<Arc<secret_store::FillSecrets>>,
     /// `schedules.db`, opened on first use.
     schedules: parking_lot::Mutex<Option<Arc<ScheduleStore>>>,
+    /// `memory.db`, opened on first use when the loop was not given a store.
+    memory: parking_lot::Mutex<Option<Arc<memory_store::MemoryStore>>>,
     /// Serialises `PUT /v1/policy` (read-modify-write of memory + `policy.json`).
     policy_lock: parking_lot::Mutex<()>,
     /// Target sets of `POST /v1/runs/stop` (see `stop`).
@@ -410,6 +413,7 @@ impl AppState {
             owner_key: OnceLock::new(),
             fill_secrets: OnceLock::new(),
             schedules: parking_lot::Mutex::new(None),
+            memory: parking_lot::Mutex::new(None),
             policy_lock: parking_lot::Mutex::new(()),
             stops: parking_lot::Mutex::new(stop::StopBook::default()),
             #[cfg(test)]
@@ -698,6 +702,27 @@ impl AppState {
             return Ok(Arc::clone(s));
         }
         let store = Arc::new(ScheduleStore::from_storage(self.storage())?);
+        *g = Some(Arc::clone(&store));
+        Ok(store)
+    }
+
+    /// The personal memory store (`<data dir>/memory.db`), shared with the agent
+    /// loop when configured or opened with the local hash embedder on first use.
+    pub(crate) fn memory_store(&self) -> Result<Arc<memory_store::MemoryStore>, ApiError> {
+        if let Some(store) = self.0.agent.memory_store() {
+            return Ok(store);
+        }
+        let mut g = self.0.memory.lock();
+        if let Some(s) = g.as_ref() {
+            return Ok(Arc::clone(s));
+        }
+        let store = Arc::new(
+            memory_store::MemoryStore::open(
+                self.data_dir(),
+                Arc::new(memory_store::HashEmbedder::new(384)),
+            )
+            .map_err(|_| ApiError::internal("memory store unavailable"))?,
+        );
         *g = Some(Arc::clone(&store));
         Ok(store)
     }
@@ -1143,6 +1168,19 @@ fn api_routes() -> Router<AppState> {
             post(knowledge_settings::reset_embedding_cooldown),
         )
         .route(
+            "/v1/memory",
+            get(memory::list_memories).post(memory::create_memory),
+        )
+        .route(
+            "/v1/memory/{id}",
+            axum::routing::patch(memory::update_memory).delete(memory::delete_memory),
+        )
+        .route("/v1/memory/{id}/undo", post(memory::undo_memory))
+        .route(
+            "/v1/bots/{id}/memory/preview",
+            get(memory::preview_bot_memory),
+        )
+        .route(
             "/v1/bots/{id}/grants",
             get(r::list_grants).delete(r::revoke_grant),
         )
@@ -1333,6 +1371,14 @@ fn api_routes() -> Router<AppState> {
         .route(
             "/v1/email/accounts/{name}/test",
             post(e::test_email_account),
+        )
+        .route(
+            "/v1/email/accounts/{name}/messages",
+            get(e::list_email_messages),
+        )
+        .route(
+            "/v1/email/accounts/{name}/send-test",
+            post(e::send_email_test),
         )
         .route("/v1/email/test", post(e::test_email_draft))
         .route(
