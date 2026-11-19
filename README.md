@@ -72,7 +72,7 @@ The daemon (`bot serve`) listens on `127.0.0.1` only. Node-agents (experimental)
 
 ### Make it yours: themes and backdrops
 
-Four themes (Obsidian, Cobalt, Raven, Clay) and 19 built-in backdrops in three families (Dotted, Grainy, and Glass and lines), plus your own image, with a calm/lively slider. Pick them in **Settings, Appearance**.
+Four featured themes (Obsidian, Cobalt, Raven, Clay) with more to choose from, and 19 built-in backdrops in three families (Dotted, Grainy, and Glass and lines), plus your own image, with a calm/lively slider. Pick them in **Settings, Appearance**.
 
 <p align="center">
   <img src="docs/assets/readme/screens/theme-gallery.webp" alt="The same chat screen in four themes: Obsidian, Cobalt, Raven and Clay" width="100%">
@@ -95,7 +95,7 @@ Four themes (Obsidian, Cobalt, Raven, Clay) and 19 built-in backdrops in three f
 <details>
 <summary>Animations: switching themes and backdrops</summary>
 
-![Animation of the Appearance settings switching between Obsidian, Cobalt, Raven, Clay and Moss](docs/assets/readme/screens/themes-switch.gif)
+![Animation of the Appearance settings switching between themes](docs/assets/readme/screens/themes-switch.gif)
 
 ![Animation of the chat screen cycling through the Aurora, Sunset, Ocean, Meadow, Reeded rose and Dawn backdrops](docs/assets/readme/screens/backdrops-switch.gif)
 
