@@ -218,6 +218,20 @@ pub struct EffectiveProfile {
     pub codec: Codec,
 }
 
+/// Largest long edge of a frame on the wire: 1920 px, in either orientation (landscape
+/// 1920x1080 or portrait 1080x1920).
+#[must_use]
+pub const fn wire_size_ok(width: u32, height: u32) -> bool {
+    (width <= 1920 && height <= 1080) || (width <= 1080 && height <= 1920)
+}
+
+/// Whether a frame fits a profile's size box; a portrait frame may use the box turned on its side.
+#[must_use]
+pub const fn fits_box(width: u32, height: u32, max_width: u32, max_height: u32) -> bool {
+    (width <= max_width && height <= max_height)
+        || (height > width && width <= max_height && height <= max_width)
+}
+
 impl EffectiveProfile {
     #[must_use]
     pub fn watch() -> Self {
@@ -238,7 +252,7 @@ impl EffectiveProfile {
             profile: Profile::Live,
             max_width: 1920,
             max_height: 1080,
-            quality: 70,
+            quality: 75,
             max_fps: 10,
             bytes_per_second: 1536 * 1024,
             burst_bytes: 2 * 1024 * 1024,
