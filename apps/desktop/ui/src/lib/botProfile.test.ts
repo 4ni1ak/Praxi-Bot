@@ -312,3 +312,31 @@ test("botView preserves stored shape when it differs from fallbackBotShape(id)",
   assert.equal(view.shape, "heart");
   assert.equal(botShape(view.id, view.shape).id, "heart");
 });
+
+test("the Can create bots switch round-trips through tools.manage_bots and keeps tool filters", () => {
+  const bot = policyBot();
+  (bot.config as Record<string, unknown>).tools = { allow: ["fs_read"], exclude: ["shell_run"] };
+  (bot.config as Record<string, Record<string, unknown>>).bot.created_by = "maker-id";
+  const d = draftFromBot(bot);
+  assert.equal(d.canManageBots, false);
+  d.canManageBots = true;
+  const on = configFromDraft(d, bot);
+  assert.deepEqual(on.tools, { allow: ["fs_read"], exclude: ["shell_run"], manage_bots: true });
+  // The editor never rewrites who made the bot.
+  assert.equal((on.bot as Record<string, unknown>).created_by, "maker-id");
+  const again = draftFromBot({ ...bot, config: on });
+  assert.equal(again.canManageBots, true);
+  again.canManageBots = false;
+  assert.deepEqual(configFromDraft(again, { ...bot, config: on }).tools, {
+    allow: ["fs_read"],
+    exclude: ["shell_run"]
+  });
+});
+
+test("a bot that never had tools gets no tools section until the switch is on", () => {
+  const bot = policyBot();
+  const d = draftFromBot(bot);
+  assert.equal("tools" in configFromDraft(d, bot), false);
+  d.canManageBots = true;
+  assert.deepEqual(configFromDraft(d, bot).tools, { manage_bots: true });
+});

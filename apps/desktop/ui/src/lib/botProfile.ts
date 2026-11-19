@@ -47,6 +47,8 @@ export interface BotDraft {
   categories: Record<PermissionCategoryName, PermissionLevel>;
   /** Per-bot waiver of the egress gate. Default off. */
   allowEgressAfterReads: boolean;
+  /** "Can create bots": exposes the `bot_*` tools (each change still asks you). */
+  canManageBots: boolean;
   computer: "local";
   browser: "local";
   /** File access: "This computer" (default) or "Folder only". */
@@ -194,7 +196,8 @@ export function draftFromBot(bot?: Bot): BotDraft {
     allowEgressAfterReads: perms.allow_egress_after_reads === true,
     computer: "local",
     browser: "local",
-    files: filesFromConfig(obj(cfg.files))
+    files: filesFromConfig(obj(cfg.files)),
+    canManageBots: obj(cfg.tools).manage_bots === true
   };
 }
 
@@ -314,10 +317,21 @@ export function configFromDraft(draft: BotDraft, existing?: Bot): Json {
     ? old.runtime
     : { ...obj(old.runtime), computer: draft.computer, browser: draft.browser };
 
+  // `tools.manage_bots` is the only key the form owns inside `tools`; the allow /
+  // exclude filters stay as they were.
+  const tools: Json = { ...obj(old.tools) };
+  if (draft.canManageBots) {
+    tools.manage_bots = true;
+  } else {
+    delete tools.manage_bots;
+  }
+  const hasTools = Object.keys(tools).length > 0 || old.tools !== undefined;
+
   return {
     ...old,
     bot: botSection,
     models,
+    ...(hasTools ? { tools } : {}),
     ...(permissionsOut === undefined ? {} : { permissions: permissionsOut }),
     ...(files === undefined ? {} : { files }),
     ...(runtime === undefined ? {} : { runtime })

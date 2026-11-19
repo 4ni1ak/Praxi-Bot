@@ -519,6 +519,15 @@ fn register_schedule_tools(data_dir: &Path, state: &AppState) {
     }
 }
 
+/// Give bots that have the "Can create bots" switch the `bot_*` tools. They
+/// are hidden from every other bot and always ask the user.
+fn register_bot_tools(state: &AppState) {
+    let n = state.enable_bot_tools();
+    if n != builtin_tools::BOT_TOOL_NAMES.len() {
+        eprintln!("warning: only {n} bot tool(s) registered (name clash)");
+    }
+}
+
 /// Filename of the optional web tools configuration in `<data_dir>`.
 pub const WEB_FILE: &str = "web.toml";
 
@@ -1072,6 +1081,7 @@ pub fn serve(
         .set_skills(skill_index)
         .map_err(|e| format!("skills wiring: {e}"))?;
     register_schedule_tools(data_dir, &state);
+    register_bot_tools(&state);
     step("schedule tools registered");
     if let Some(f) = &fill_secrets {
         state.set_fill_secrets(Arc::clone(f));
@@ -1580,6 +1590,20 @@ paths:
                 .unwrap()
                 .always_ask()
         );
+    }
+
+    #[test]
+    fn serve_wiring_registers_the_bot_tools_and_every_changing_one_always_asks() {
+        let dir = tempfile::tempdir().unwrap();
+        let (agent, state) = schedule_state(dir.path());
+        register_bot_tools(&state);
+        let names = agent.tool_names();
+        for n in builtin_tools::BOT_TOOL_NAMES {
+            assert!(names.iter().any(|x| x == n), "{n} missing: {names:?}");
+        }
+        for n in ["bot_create", "bot_update", "bot_delete"] {
+            assert!(agent.tool_registry().get(n).unwrap().always_ask(), "{n}");
+        }
     }
 
     #[test]

@@ -383,6 +383,7 @@ pub(crate) fn egress_payload(name: &str, input: &Value) -> (String, String, &'st
             ("this bot's scheduler".to_owned(), "body")
         }
         "memory_save" | "memory_forget" => ("this bot's memory".to_owned(), "body"),
+        "bot_create" | "bot_update" | "bot_delete" => ("the user's bots".to_owned(), "body"),
         other if other.starts_with("desktop_") => ("the desktop".to_owned(), "body"),
         _ => {
             if input.get("url").and_then(Value::as_str).is_some() {

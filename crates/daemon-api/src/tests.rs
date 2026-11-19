@@ -24,6 +24,7 @@ use crate::{AppState, DaemonConfig, router};
 
 mod attachments;
 mod bot_patch;
+mod bot_tools;
 mod cli_engines;
 mod composio;
 mod doctor;
