@@ -2683,7 +2683,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["propose"];
+        post: operations["propose_workflow"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3227,9 +3227,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list"];
+        get: operations["list_workflows"];
         put?: never;
-        post: operations["save"];
+        post: operations["save_workflow"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3243,10 +3243,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["show"];
+        get: operations["show_workflow"];
         put?: never;
         post?: never;
-        delete: operations["delete"];
+        delete: operations["delete_workflow"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3261,7 +3261,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["run"];
+        post: operations["run_workflow"];
         delete?: never;
         options?: never;
         head?: never;
@@ -13178,7 +13178,7 @@ export interface operations {
             };
         };
     };
-    propose: {
+    propose_workflow: {
         parameters: {
             query?: never;
             header?: never;
@@ -14601,7 +14601,7 @@ export interface operations {
             };
         };
     };
-    list: {
+    list_workflows: {
         parameters: {
             query: {
                 bot_id: string;
@@ -14622,7 +14622,7 @@ export interface operations {
             };
         };
     };
-    save: {
+    save_workflow: {
         parameters: {
             query?: never;
             header?: never;
@@ -14661,7 +14661,7 @@ export interface operations {
             };
         };
     };
-    show: {
+    show_workflow: {
         parameters: {
             query: {
                 bot_id: string;
@@ -14692,7 +14692,7 @@ export interface operations {
             };
         };
     };
-    delete: {
+    delete_workflow: {
         parameters: {
             query: {
                 bot_id: string;
@@ -14721,7 +14721,7 @@ export interface operations {
             };
         };
     };
-    run: {
+    run_workflow: {
         parameters: {
             query?: never;
             header?: never;

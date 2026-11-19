@@ -9106,7 +9106,7 @@
         "tags": [
           "workflows"
         ],
-        "operationId": "propose",
+        "operationId": "propose_workflow",
         "parameters": [
           {
             "name": "id",
@@ -11147,7 +11147,7 @@
         "tags": [
           "workflows"
         ],
-        "operationId": "list",
+        "operationId": "list_workflows",
         "parameters": [
           {
             "name": "bot_id",
@@ -11184,7 +11184,7 @@
         "tags": [
           "workflows"
         ],
-        "operationId": "save",
+        "operationId": "save_workflow",
         "requestBody": {
           "content": {
             "application/json": {
@@ -11239,7 +11239,7 @@
         "tags": [
           "workflows"
         ],
-        "operationId": "show",
+        "operationId": "show_workflow",
         "parameters": [
           {
             "name": "name",
@@ -11291,7 +11291,7 @@
         "tags": [
           "workflows"
         ],
-        "operationId": "delete",
+        "operationId": "delete_workflow",
         "parameters": [
           {
             "name": "name",
@@ -11338,7 +11338,7 @@
         "tags": [
           "workflows"
         ],
-        "operationId": "run",
+        "operationId": "run_workflow",
         "parameters": [
           {
             "name": "name",

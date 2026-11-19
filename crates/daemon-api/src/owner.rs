@@ -88,6 +88,11 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/v1/view/privileges/{}"),
     // policy, bot authority
     ("PUT", "/v1/policy"),
+    // saved automation replays tool calls without a model; saving, deleting and
+    // starting one (the human entry for runtime values) are the owner's
+    ("POST", "/v1/workflows"),
+    ("DELETE", "/v1/workflows/{}"),
+    ("POST", "/v1/workflows/{}/run"),
     ("POST", "/v1/trusted-folders"),
     ("DELETE", "/v1/trusted-folders"),
     ("PUT", "/v1/bots/{}/files"),
@@ -209,6 +214,8 @@ pub const TOKEN_OK_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/runs/{}/cancel"),
     ("POST", "/v1/runs/{}/resume"),
     ("POST", "/v1/runs/{}/remember"),
+    // read-only review of what a run did; nothing is saved
+    ("POST", "/v1/runs/{}/workflow-proposal"),
     ("POST", "/v1/runs/{}/changes/{}/restore"),
     ("PUT", "/v1/control/state"),
     ("POST", "/v1/schedules/parse"),
