@@ -27,6 +27,7 @@ import type {
 import {
   applyChatDelete,
   applyChatPatch,
+  mergeChatRefresh,
   rollbackChatDelete,
   rollbackChatPatch
 } from "../lib/chatManage";
@@ -270,10 +271,15 @@ function useDaemonData(conn: Connection | null): DaemonData {
       setBots(await c.listBots());
     }
   }, []);
+  // Chat ids whose delete is in flight or done, and ids with a patch in flight: a list
+  // refresh must not resurrect the first or undo the optimistic copy of the second.
+  const deletedChatIds = useRef(new Set<string>());
+  const patchingChatIds = useRef(new Set<string>());
   const refreshChats = useCallback(async () => {
     const c = clientRef.current;
     if (c) {
-      setChats(await c.listChats());
+      const fresh = await c.listChats();
+      setChats((prev) => mergeChatRefresh(fresh, prev, deletedChatIds.current, patchingChatIds.current));
     }
   }, []);
   const refreshRuns = useCallback(async () => {
@@ -301,14 +307,16 @@ function useDaemonData(conn: Connection | null): DaemonData {
       const { previous } = applyChatPatch(chatsRef.current, chatId, patch);
       setChats((prev) => applyChatPatch(prev, chatId, patch).next);
       setChatPending(chatId, true);
+      patchingChatIds.current.add(chatId);
       try {
         const saved = await c.updateChat(chatId, patch);
         setChats((prev) => prev.map((x) => (x.id === saved.id ? saved : x)));
         return saved;
       } catch (err) {
-        setChats((prev) => rollbackChatPatch(prev, previous));
+        setChats((prev) => rollbackChatPatch(prev, previous, patch));
         throw err;
       } finally {
+        patchingChatIds.current.delete(chatId);
         setChatPending(chatId, false);
       }
     },
@@ -324,9 +332,13 @@ function useDaemonData(conn: Connection | null): DaemonData {
       const { removed, index } = applyChatDelete(chatsRef.current, chatId);
       setChats((prev) => applyChatDelete(prev, chatId).next);
       setChatPending(chatId, true);
+      deletedChatIds.current.add(chatId);
       try {
         await c.deleteChat(chatId);
+        // A refresh that landed mid-flight may have re-added the row.
+        setChats((prev) => applyChatDelete(prev, chatId).next);
       } catch (err) {
+        deletedChatIds.current.delete(chatId);
         setChats((prev) => rollbackChatDelete(prev, removed, index));
         throw err;
       } finally {
