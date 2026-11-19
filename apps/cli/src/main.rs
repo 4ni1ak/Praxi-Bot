@@ -1016,6 +1016,20 @@ async fn proxy_hold(
     let Some(proxy) = proxy else {
         return Err("`bot proxy` needs --remote <ENDPOINT>".into());
     };
+    let mut state = proxy.state.clone();
+    let up = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        state.wait_for(|s| matches!(s, remote_api::ProxyState::Connected)),
+    )
+    .await
+    .is_ok_and(|r| r.is_ok());
+    if !up {
+        let now = state.borrow().clone();
+        return Err(format!(
+            "the tunnel did not connect within 20 s (state: {now:?}); check the endpoint and that the host is online"
+        )
+        .into());
+    }
     writeln!(out, "url: {}", proxy.base_url)?;
     writeln!(out, "token: {}", proxy.token)?;
     writeln!(out, "tunnel open; press Ctrl-C to close it")?;
