@@ -15,7 +15,7 @@ use axum::{
     http::StatusCode,
 };
 use live_view::{
-    Codec, CreateSession, EffectiveProfile, Heartbeat, HumanAction, Profile, Reason,
+    Codec, CreateSession, EffectiveProfile, FrameAck, Heartbeat, HumanAction, Profile, Reason,
     ReleaseRequest, SessionInfo, SessionUpdate, TakeoverAccepted, TakeoverRequest, TargetInfo,
     TargetKind, TargetRegistry, TargetUnavailable, ViewError, ViewState, ViewTarget,
 };
@@ -121,6 +121,10 @@ struct Session {
     stream: Option<CancellationToken>,
     geometry: Option<(u64, u64, Instant)>, // revision, frame seq, last live frame
     rendered: Option<u64>,
+    /// The newest frame the viewer reported on screen through `/ack`, and when.
+    acked: Option<(u64, Instant)>,
+    /// Wakes the frame stream when an ack arrives.
+    ack_notify: Arc<tokio::sync::Notify>,
     healthy_since: Option<Instant>,
     next_seq: u64,
     duplicates: VecDeque<input::Duplicate>,
@@ -627,6 +631,7 @@ fn deny_foreign_bot_target(
     Ok(())
 }
 #[utoipa::path(post,path="/v1/view/sessions",tag="view",security(("bearer"=[])),request_body=CreateSession,responses((status=201,body=SessionInfo)))]
+#[allow(clippy::too_many_lines)] // One session row is built in one place.
 pub(crate) async fn create_session(
     State(s): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -711,6 +716,8 @@ pub(crate) async fn create_session(
                 stream: None,
                 geometry: None,
                 rendered: None,
+                acked: None,
+                ack_notify: Arc::default(),
                 healthy_since: None,
                 next_seq: 1,
                 duplicates: VecDeque::new(),
@@ -796,6 +803,28 @@ pub(crate) async fn update_session(
     live.source_profile(target).await?;
     bounded(t.frame_source().request_refresh(0)).await?;
     Ok(Json(p))
+}
+#[utoipa::path(post,path="/v1/view/sessions/{id}/ack",tag="view",security(("bearer"=[])),params(("id"=Uuid,Path)),request_body=FrameAck,responses((status=204)))]
+pub(crate) async fn ack_frame(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<Uuid>,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    let i: FrameAck = parse(&body)?;
+    let live = s.live_view();
+    // Deliberately no executor lock and no refresh: this is sent after every frame.
+    live.session(&actor, id)?;
+    if let Some(session) = live.sessions.lock().get_mut(&id) {
+        if session
+            .acked
+            .is_none_or(|(seq, _)| i.last_rendered_frame_seq >= seq)
+        {
+            session.acked = Some((i.last_rendered_frame_seq, Instant::now()));
+        }
+        session.ack_notify.notify_one();
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 #[utoipa::path(put,path="/v1/view/sessions/{id}/heartbeat",tag="view",security(("bearer"=[])),params(("id"=Uuid,Path)),request_body=Heartbeat,responses((status=204)))]
 pub(crate) async fn heartbeat(

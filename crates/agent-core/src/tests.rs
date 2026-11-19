@@ -7532,6 +7532,8 @@ async fn pre_058_paused_run_with_unknown_origin_fails_closed_after_migration() {
             DROP TABLE bot_skill_assignment_state;
             DROP TABLE IF EXISTS file_provenance;
             DROP TABLE trusted_folders;
+            ALTER TABLE chats DROP COLUMN pinned;
+            ALTER TABLE chats DROP COLUMN archived;
             ALTER TABLE runs DROP COLUMN computer_node;
             ALTER TABLE runs DROP COLUMN computer_node_name;
             ALTER TABLE runs DROP COLUMN paused_at_ms;

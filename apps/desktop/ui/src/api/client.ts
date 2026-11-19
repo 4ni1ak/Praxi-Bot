@@ -828,6 +828,14 @@ export class ApiClient {
       body: patch
     });
   }
+  /** The newest frame on screen; the host paces its frames by it. Cheap: no refresh. */
+  ackViewFrame(id: string, lastRenderedFrameSeq: number): Promise<void> {
+    return this.request(
+      "POST",
+      `/view/sessions/${encodeURIComponent(id)}/ack`,
+      { body: { last_rendered_frame_seq: lastRenderedFrameSeq } }
+    );
+  }
   heartbeatViewSession(id: string, input: ViewHeartbeat): Promise<void> {
     return this.request(
       "PUT",
