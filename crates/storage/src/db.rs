@@ -1509,6 +1509,26 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Audit rows of one action written at or after `since_ms` (avoids loading
+    /// the whole log for per-call accounting).
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn list_audit_action_since(
+        &self,
+        user_id: UserId,
+        action: &str,
+        since_ms: i64,
+    ) -> Result<Vec<AuditEntry>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
+            "SELECT id, user_id, run_id, actor, action, detail_json, ts_ms FROM audit_log WHERE user_id = ?1 AND action = ?2 AND ts_ms >= ?3 ORDER BY id",
+        )?;
+        Ok(st
+            .query_map(params![user_id.to_string(), action, since_ms], audit_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Whether one run has an audit fact, without loading other runs' details.
     ///
     /// # Errors

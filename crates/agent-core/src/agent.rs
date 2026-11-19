@@ -109,6 +109,7 @@ impl AgentLoop {
                 providers: RwLock::new(providers),
                 global_policy: RwLock::new(cfg.global_policy.clone()),
                 policy_locked: std::sync::atomic::AtomicBool::new(false),
+                spend: crate::spend::SpendState::default(),
                 control: RwLock::new(None),
                 computer_provider: RwLock::new(None),
                 static_desktop: RwLock::new(None),
@@ -514,6 +515,31 @@ impl AgentLoop {
     #[must_use]
     pub fn price_for(&self, model: &str) -> Option<ModelPrice> {
         self.sh.price_for(model)
+    }
+
+    /// The monthly spending limit in USD (`None` = off).
+    #[must_use]
+    pub fn spend_limit(&self) -> Option<f64> {
+        *self.sh.spend.limit.read()
+    }
+
+    /// Set or clear the monthly spending limit. Effective for the next model
+    /// call of every run; the caller validates the value and persists it.
+    pub fn set_spend_limit(&self, limit_usd: Option<f64>) {
+        *self.sh.spend.limit.write() = limit_usd;
+        // A new limit starts a fresh 80% warning cycle.
+        *self.sh.spend.warned_month.lock() = None;
+    }
+
+    /// Month-to-date spend of `user` (local calendar month).
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn spend_status(
+        &self,
+        user: protocol::UserId,
+    ) -> storage::Result<crate::spend::SpendStatus> {
+        crate::spend::spend_status(&self.sh.storage, user, storage::now_ms())
     }
 
     /// Owner kill switch: end every running native-tools engine process of

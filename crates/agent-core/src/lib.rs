@@ -30,6 +30,7 @@ mod router;
 mod schedule_precheck;
 mod scoped_grant;
 mod shared;
+pub mod spend;
 mod subagent;
 mod taint;
 mod tiering;
@@ -50,6 +51,8 @@ mod pc_scope_tests;
 mod router_tests;
 #[cfg(test)]
 mod scoped_tests;
+#[cfg(test)]
+mod spend_tests;
 #[cfg(test)]
 mod subagent_tests;
 #[cfg(test)]
