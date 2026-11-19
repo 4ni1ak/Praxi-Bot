@@ -1242,6 +1242,11 @@ pub fn serve(
             state.set_email(email as Arc<dyn daemon_api::EmailControl>);
         }
         state.set_web(Arc::new(web_host) as Arc<dyn daemon_api::WebControl>);
+        state.set_voice(Arc::new(crate::voice_host::VoiceHost::new(
+            data_dir,
+            port,
+            telegram_store.clone(),
+        )) as Arc<dyn daemon_api::VoiceControl>);
         if let Some(store) = telegram_store.clone() {
             state.set_secret_store(store);
         }

@@ -1047,6 +1047,18 @@
         "title": "Terminal oturumu bitti",
         "hint": "Terminali yeniden aç."
       },
+      "bad_voice_config": {
+        "title": "Dikte ayarları kabul edilmedi",
+        "hint": "Ayarlar bölümünde yazıya dökme hizmetinin adresini, modelini ve anahtarını kontrol edip tekrar dene."
+      },
+      "voice_not_configured": {
+        "title": "Dikte kurulu değil",
+        "hint": "Mesajları sesle yazmak için Ayarlar bölümünden bir yazıya dökme hizmeti ekle."
+      },
+      "voice_upstream_failed": {
+        "title": "Yazıya dökme hizmeti yanıt vermedi",
+        "hint": "Kaydın yazıya çevrilemedi. Ayarlar bölümünde hizmeti ve anahtarını kontrol edip tekrar dene."
+      },
       "provider_endpoint": {
         "title": "Sağlayıcının API adresi bulunamadı",
         "hint": "Ayarlar → Yapay Zekâ bölümünde temel adresi ve API yolunu kontrol edin."
