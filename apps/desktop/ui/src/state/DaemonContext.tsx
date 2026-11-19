@@ -10,6 +10,7 @@ import {
   useState
 } from "react";
 import { ApiClient } from "../api/client";
+import { isNetworkFailure, type EnsureHost } from "../lib/hostRecovery";
 import { type Connection, connectDaemon, type StartupDiagnostics, startupDiagnostics } from "../api/connection";
 import { subscribeEvents } from "../api/events";
 import { MOCK_HOST_ID, mockHostScenario } from "../api/mockHostScenario";
@@ -130,6 +131,15 @@ export interface DaemonContextValue {
   recordAnswer: (runId: string, callId: string, answer: string) => void;
   retry: () => void;
   restartDaemon: () => Promise<void>;
+  /**
+   * A send failed because nothing answered. This computer's own service is probed and, if it is
+   * down, started the way the app does at launch (`hostStarting` is true meanwhile); a paired
+   * server cannot be started by the app (`remote`). Never touches the view's phase, so the
+   * composer and its draft stay mounted.
+   */
+  ensureHostOnline: () => Promise<EnsureHost>;
+  /** The app is starting this computer's service because the user sent a message. */
+  hostStarting: boolean;
   /** Why the local service is not answering (null while it is); the UI words it, see `humanService`. */
   serviceProblem: ServiceProblem | null;
   /** What the shell knows about a start that is slow or failed; null while connected or outside the app. */
@@ -728,6 +738,57 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     [hostList]
   );
 
+  const [hostStarting, setHostStarting] = useState(false);
+  const startingRef = useRef<Promise<EnsureHost> | null>(null);
+  const ensureHostOnline = useCallback((): Promise<EnsureHost> => {
+    if (activeIdRef.current !== LOCAL_COMPUTER) {
+      return Promise.resolve({ kind: "remote" });
+    }
+    // One start at a time: a second message waits for the same one.
+    if (startingRef.current) {
+      return startingRef.current;
+    }
+    const p = (async (): Promise<EnsureHost> => {
+      try {
+        const known = localClientRef.current;
+        if (!known) {
+          return { kind: "reachable" }; // mock / no connection yet: nothing to start
+        }
+        try {
+          await Promise.race([
+            known.health(),
+            new Promise((_, no) => window.setTimeout(() => no(new Error("health probe timed out")), 5000))
+          ]);
+          return { kind: "reachable" };
+        } catch (probe) {
+          // Only a refused / unreachable connection proves the service is down. A slow probe or
+          // any answer means it may be alive (and busy): never start or re-send then.
+          if (!isNetworkFailure(probe)) {
+            return { kind: "reachable" };
+          }
+        }
+        setHostStarting(true);
+        const c = await connectDaemon();
+        setLocalConn((prev) => (prev && prev.base_url === c.base_url && prev.token === c.token ? prev : c));
+        setPhase("ready");
+        setError(null);
+        return { kind: "started", client: new ApiClient(c) };
+      } finally {
+        setHostStarting(false);
+      }
+    })();
+    startingRef.current = p;
+    // Clear on the promise itself so an early-settled promise is never cached.
+    void p.then(
+      () => {
+        startingRef.current = null;
+      },
+      () => {
+        startingRef.current = null;
+      }
+    );
+    return startingRef.current;
+  }, []);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   const restartDaemon = useCallback(async () => {
     setPhase("connecting");
@@ -749,6 +810,8 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
     conn: localConn,
     retry,
     restartDaemon,
+    ensureHostOnline,
+    hostStarting,
     serviceProblem:
       phase !== "error"
         ? null
@@ -850,6 +913,8 @@ export function HostSession({ children }: { children: ReactNode }) {
     ...data,
     ...(stale ? lastLists.current : {}),
     homeStale: stale,
+    ensureHostOnline: async () => ({ kind: "remote" }),
+    hostStarting: false,
     phase: "ready",
     error: null,
     conn: hostConn,

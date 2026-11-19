@@ -2694,6 +2694,13 @@
     },
     "viewScreen": "View screen"
   },
+  "hostRecovery": {
+    "remoteOffline": {
+      "hint": "Praxi cannot start a server from here. Switch the server on (or start Praxi on it), then press Retry. Your message is kept in the box.",
+      "title": "The server is offline"
+    },
+    "starting": "Starting this computer's Praxi service… your message will be sent as soon as it is up."
+  },
   "hostState": {
     "connecting": "Connecting to {{name}}…",
     "noModelKey": "{{name}} has no model key yet. You can watch its screen and manage its bots, but chats cannot be answered until a key is added on the host.",
