@@ -219,7 +219,7 @@ async fn a_bot_without_the_opt_in_cannot_use_pc_shell_run() {
         0,
         "the command never ran"
     );
-    assert!(env.storage.list_approvals(run).unwrap().is_empty());
+    assert_eq!(env.storage.list_approvals(run).unwrap().len(), 0);
 }
 
 /// Review blocker 1: only a run the owner started by hand reaches the user's
@@ -252,7 +252,7 @@ async fn a_scheduled_or_telegram_run_cannot_read_the_users_files() {
             0,
             "{how}: nothing was read"
         );
-        assert!(env.storage.list_approvals(run).unwrap().is_empty(), "{how}");
+        assert_eq!(env.storage.list_approvals(run).unwrap().len(), 0, "{how}");
     }
 }
 

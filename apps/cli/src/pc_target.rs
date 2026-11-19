@@ -463,6 +463,9 @@ pub type AuditFn = Arc<dyn Fn(&str, Value) -> Result<(), String> + Send + Sync>;
 /// and profile: tabs, page state and cookies are never shared).
 pub type BrowserFactory = Arc<dyn Fn() -> Arc<dyn BrowserDriver> + Send + Sync>;
 
+/// `(server, bot)` a managed browser belongs to.
+type BrowserKey = (String, String);
+
 /// At most this many bots' browsers are open at once; the oldest is closed.
 const MAX_BROWSERS: usize = 3;
 
@@ -608,7 +611,7 @@ pub struct HostDesktopHandler {
     deps: PcTargetDeps,
     ask_timeout: Duration,
     /// One browser per `(server, bot)`, oldest first.
-    browsers: Mutex<Vec<((String, String), Arc<dyn BrowserDriver>)>>,
+    browsers: Mutex<Vec<(BrowserKey, Arc<dyn BrowserDriver>)>>,
 }
 
 impl HostDesktopHandler {
@@ -1460,10 +1463,13 @@ fn audit_payload(masked: &str) -> String {
 
 fn sha256_hex(text: &str) -> String {
     use sha2::Digest as _;
+    use std::fmt::Write as _;
     sha2::Sha256::digest(text.as_bytes())
         .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+        .fold(String::with_capacity(64), |mut out, b| {
+            let _ = write!(out, "{b:02x}");
+            out
+        })
 }
 
 /// Page-supplied text on a card: one line, nothing invisible or

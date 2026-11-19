@@ -8,11 +8,13 @@ const off: ComputerSwitches = { screen: false, alwaysRead: false, browser: false
 test("two quick toggles never resend a stale switch set", async () => {
   const sent: ComputerSwitches[] = [];
   let release: () => void = () => {};
+  let calls = 0;
   const q = new SwitchQueue(
     (_id, next) => {
       sent.push(next);
+      calls += 1;
       // The first request is still on its way when the second toggle happens.
-      return sent.length === 1 ? new Promise<void>((r) => (release = r)) : Promise.resolve();
+      return calls === 1 ? new Promise<void>((r) => (release = r)) : Promise.resolve();
     },
     () => {}
   );
@@ -20,6 +22,8 @@ test("two quick toggles never resend a stale switch set", async () => {
   const first = q.change("h", off, { browser: true });
   assert.equal(q.view("h", off).browser, true, "the switch shows what was sent");
   const second = q.change("h", off, { commands: true });
+  while (sent.length === 0) await new Promise((r) => setTimeout(r, 0));
+  assert.equal(sent.length, 1, "the second change waits for the first");
   release();
   await Promise.all([first, second]);
   assert.deepEqual(sent, [

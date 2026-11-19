@@ -3,7 +3,7 @@
 //! A browser another computer drives must not become a way into this
 //! machine's own network. Checking a URL inside the browser is not enough:
 //! the browser resolves the name again afterwards (DNS rebinding), and pages
-//! can open popups, workers and WebSockets that a per-page hook never sees.
+//! can open popups, workers and `WebSocket`s that a per-page hook never sees.
 //!
 //! So EVERY request of a served browser goes through [`FilterProxy`], a small
 //! HTTP proxy on loopback that:
@@ -460,7 +460,7 @@ mod tests {
             let out = send(proxy.addr(), target).await;
             assert!(out.starts_with("HTTP/1.1 4"), "{target}: {out}");
         }
-        assert!(connected.all().is_empty());
+        assert_eq!(connected.all(), Vec::<SocketAddr>::new());
         assert_eq!(asked.load(Ordering::SeqCst), 0);
         let ok = send(proxy.addr(), "CONNECT nas.home:443 HTTP/1.1\r\n\r\n").await;
         assert!(

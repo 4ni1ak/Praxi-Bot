@@ -18598,6 +18598,13 @@
             "type": "string",
             "description": "`click`, `type`, `key`, `scroll`, `launch`, ..."
           },
+          "bot_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of the server's bot that is asking (untrusted text, from the\nserver). Absent for a run placed on this computer that names no bot."
+          },
           "created_ms": {
             "type": "integer",
             "format": "int64"

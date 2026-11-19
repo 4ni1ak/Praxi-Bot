@@ -44,18 +44,15 @@ impl Browser {
     pub async fn launch(mut opts: LaunchOptions) -> Result<Self> {
         // A served session: every request goes through our filtering proxy,
         // started before the browser so nothing ever leaves without it.
-        let proxy = match &opts.served {
-            Some(net) => {
-                let p = crate::proxy::FilterProxy::start(net.private_host.clone())
-                    .await
-                    .map_err(|e| Error::Launch(format!("network guard: {e}")))?;
-                opts.served_proxy = Some(p.addr());
-                Some(p)
-            }
-            None => {
-                opts.served_proxy = None;
-                None
-            }
+        let proxy = if let Some(net) = &opts.served {
+            let p = crate::proxy::FilterProxy::start(net.private_host.clone())
+                .await
+                .map_err(|e| Error::Launch(format!("network guard: {e}")))?;
+            opts.served_proxy = Some(p.addr());
+            Some(p)
+        } else {
+            opts.served_proxy = None;
+            None
         };
         let exe = match &opts.executable {
             Some(p) => p.clone(),

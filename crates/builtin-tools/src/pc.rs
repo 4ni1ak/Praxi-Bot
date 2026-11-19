@@ -590,6 +590,9 @@ fn remote_tool(
     })
 }
 
+/// One bot's desktop and browser tools of the user's computer, by name.
+type ToolSet = HashMap<String, Arc<dyn Tool>>;
+
 /// The desktop and browser tools of the user's computer, one set PER BOT:
 /// element generations, `ref`s, the open tab and the browser at the computer
 /// (its own cookie jar there) are never shared between two bots. Built on a
@@ -598,7 +601,7 @@ struct PerBot {
     link: Arc<dyn PcLink>,
     data_dir: PathBuf,
     names: BotNames,
-    sets: parking_lot::Mutex<HashMap<String, Arc<HashMap<String, Arc<dyn Tool>>>>>,
+    sets: parking_lot::Mutex<HashMap<String, Arc<ToolSet>>>,
 }
 
 impl PerBot {

@@ -5991,6 +5991,11 @@ export interface components {
         PcRequestInfo: {
             /** @description `click`, `type`, `key`, `scroll`, `launch`, ... */
             action: string;
+            /**
+             * @description Name of the server's bot that is asking (untrusted text, from the
+             *     server). Absent for a run placed on this computer that names no bot.
+             */
+            bot_name?: string | null;
             /** Format: int64 */
             created_ms: number;
             /** @description Paired host the request comes from (public key). */

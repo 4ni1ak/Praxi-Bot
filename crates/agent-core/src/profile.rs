@@ -370,11 +370,13 @@ impl BotProfile {
             Some(FileAccessMode::Folder) => false,
             None => !self.unset_files_denied,
         };
+        let excluded = self.exclude.is_match(name) || self.exclude.is_match(inner);
+        let files_denied = inner.starts_with("fs_") && !files_ok;
+        let folder_denied = folder_only && shell_like;
         opted_in
-            && !(folder_only && shell_like)
-            && (!inner.starts_with("fs_") || files_ok)
-            && !self.exclude.is_match(name)
-            && !self.exclude.is_match(inner)
+            && !folder_denied
+            && !files_denied
+            && !excluded
             // A narrowed (subagent) surface must name the `pc_` tool itself.
             && self.restrict.iter().all(|g| g.is_match(name))
     }

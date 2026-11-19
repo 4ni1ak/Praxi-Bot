@@ -1088,6 +1088,14 @@ impl Shared {
             .or_else(|| self.providers.read().price_for(model))
     }
 
+    /// The profile a top-level run uses: narrowed to the computer it resolved
+    /// to, and told whether an unset file mode is denied here.
+    fn run_profile(&self, raw: &BotProfile, rc: &RunComputer) -> BotProfile {
+        let unset_denied = matches!(self.unset_file_scope(), builtin_tools::FsScope::Folders(_));
+        raw.with_computer_access(rc.desktop_available, rc.browser)
+            .with_unset_files_denied(unset_denied)
+    }
+
     /// Scope of a bot that never chose a file access mode.
     pub fn unset_file_scope(&self) -> builtin_tools::FsScope {
         let denied = self.fs_unset_denied.read().as_ref().is_some_and(|f| f());
@@ -1555,13 +1563,7 @@ impl Shared {
                     .lock()
                     .remove(&run.id)
                     .unwrap_or_else(|| self.resolve_computer_for_run(&raw_profile, Some(run)));
-                let unset_denied =
-                    matches!(self.unset_file_scope(), builtin_tools::FsScope::Folders(_));
-                let profile = Arc::new(
-                    raw_profile
-                        .with_computer_access(rc.desktop_available, rc.browser)
-                        .with_unset_files_denied(unset_denied),
-                );
+                let profile = Arc::new(self.run_profile(&raw_profile, &rc));
                 (
                     profile,
                     raw_profile.policy(),

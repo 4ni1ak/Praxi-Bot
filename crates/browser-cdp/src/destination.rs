@@ -7,7 +7,7 @@
 //! - at the network: every request of a served browser goes through
 //!   [`crate::FilterProxy`], which resolves the name itself and connects to
 //!   exactly the address it judged (so DNS rebinding cannot split the check
-//!   from the connection), and covers popups, workers and WebSockets;
+//!   from the connection), and covers popups, workers and `WebSocket`s;
 //! - inside the browser (CDP `Fetch` interception, see
 //!   [`crate::CdpClient::set_destination_check`]), with every new target
 //!   paused until the check is on it.

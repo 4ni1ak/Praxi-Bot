@@ -1641,7 +1641,8 @@ mod tests {
     #[tokio::test]
     async fn a_popup_stays_paused_until_the_request_check_is_on() {
         for fetch_fails in [false, true] {
-            let seen: Arc<StdMutex<Vec<(String, Option<String>)>>> = Arc::default();
+            type Log = StdMutex<Vec<(String, Option<String>)>>;
+            let seen: Arc<Log> = Arc::default();
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let url = format!("ws://{}", listener.local_addr().unwrap());
             let log = Arc::clone(&seen);
