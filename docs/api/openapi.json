@@ -21345,82 +21345,82 @@
   },
   "tags": [
     {
-      "name": "view"
-    },
-    {
-      "name": "meta"
-    },
-    {
-      "name": "bots"
-    },
-    {
-      "name": "chats"
+      "name": "admin"
     },
     {
       "name": "approvals"
     },
     {
-      "name": "runs"
-    },
-    {
-      "name": "usage"
-    },
-    {
-      "name": "events"
-    },
-    {
-      "name": "control"
-    },
-    {
-      "name": "policy"
-    },
-    {
-      "name": "decider"
-    },
-    {
-      "name": "providers"
-    },
-    {
-      "name": "schedules"
+      "name": "bots"
     },
     {
       "name": "channels"
     },
     {
-      "name": "host"
-    },
-    {
-      "name": "admin"
-    },
-    {
-      "name": "mcp"
-    },
-    {
-      "name": "secrets"
-    },
-    {
-      "name": "email"
+      "name": "chats"
     },
     {
       "name": "composio"
     },
     {
-      "name": "web"
-    },
-    {
-      "name": "voice"
-    },
-    {
-      "name": "skills"
+      "name": "control"
     },
     {
       "name": "doctor"
+    },
+    {
+      "name": "email"
+    },
+    {
+      "name": "events"
+    },
+    {
+      "name": "host"
+    },
+    {
+      "name": "mcp"
     },
     {
       "name": "mcp-server"
     },
     {
       "name": "memory"
+    },
+    {
+      "name": "meta"
+    },
+    {
+      "name": "decider"
+    },
+    {
+      "name": "policy"
+    },
+    {
+      "name": "providers"
+    },
+    {
+      "name": "runs"
+    },
+    {
+      "name": "schedules"
+    },
+    {
+      "name": "secrets"
+    },
+    {
+      "name": "skills"
+    },
+    {
+      "name": "usage"
+    },
+    {
+      "name": "view"
+    },
+    {
+      "name": "voice"
+    },
+    {
+      "name": "web"
     }
   ]
 }

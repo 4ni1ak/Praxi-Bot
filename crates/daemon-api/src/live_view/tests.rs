@@ -2629,7 +2629,7 @@ async fn a_queued_batch_is_validated_again_after_the_lock() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_stop_between_the_validation_and_the_first_event_injects_nothing() {
     let t = Test::new();
     let (id, owned, _body) = t.active(Some("alice")).await;
@@ -4004,7 +4004,7 @@ async fn a_peers_own_pause_stays_clearable_by_a_granted_peer_and_the_bit_is_pers
 }
 
 // ---- audit2 F3: owed work never touches an active takeover
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn owed_reset_and_audit_work_never_touches_an_active_takeover() {
     let t = Test::new();
     let (_id, _owned, _body) = t.active(Some("alice")).await;
@@ -4030,7 +4030,7 @@ async fn owed_reset_and_audit_work_never_touches_an_active_takeover() {
 }
 
 // ---- R7-7: a failed reset after a partial injection is retried
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_reset_that_failed_after_a_partial_injection_is_retried_by_the_heartbeat() {
     let t = Test::new();
     let (id, owned, _body) = t.active(Some("alice")).await;

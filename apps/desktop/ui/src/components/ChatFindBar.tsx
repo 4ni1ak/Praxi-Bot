@@ -1,0 +1,102 @@
+import { ChevronDown, ChevronUp, X } from "lucide-react";
+import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import {
+  clearHighlights,
+  collectTextNodes,
+  findMatches,
+  matchRanges,
+  paintHighlights,
+  stepMatch
+} from "../lib/findInChat";
+import styles from "./ChatFindBar.module.css";
+
+/**
+ * Ctrl/Cmd+F bar for the open chat: highlights every match inside `rootRef`, steps with
+ * Enter / Shift+Enter, closes with Esc. `contentKey` changes whenever the timeline re-renders so
+ * matches follow new messages.
+ */
+export function ChatFindBar({
+  rootRef,
+  contentKey,
+  onClose
+}: {
+  rootRef: RefObject<HTMLElement | null>;
+  contentKey: unknown;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [query, setQuery] = useState("");
+  const [current, setCurrent] = useState(-1);
+  const [total, setTotal] = useState(0);
+  const rangesRef = useRef<Range[]>([]);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+    return clearHighlights;
+  }, []);
+
+  // re-scan on a new query or new timeline content
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) {
+      return;
+    }
+    const nodes = collectTextNodes(root);
+    const matches = findMatches(
+      nodes.map((n) => n.nodeValue ?? ""),
+      query
+    );
+    rangesRef.current = matchRanges(nodes, matches);
+    setTotal(rangesRef.current.length);
+    setCurrent((c) => (rangesRef.current.length === 0 ? -1 : c >= 0 && c < rangesRef.current.length ? c : 0));
+  }, [query, contentKey, rootRef]);
+
+  // paint + keep the current match in view
+  useEffect(() => {
+    paintHighlights(rangesRef.current, current);
+    const r = rangesRef.current[current];
+    const el = r?.startContainer.parentElement;
+    el?.scrollIntoView?.({ block: "center" });
+  }, [current, total, query]);
+
+  const step = (dir: 1 | -1) => setCurrent((c) => stepMatch(c, rangesRef.current.length, dir));
+
+  return (
+    <div className={styles.bar} role="search" data-find-skip data-testid="chat-find">
+      <input
+        ref={inputRef}
+        className={styles.input}
+        type="text"
+        value={query}
+        placeholder={t("chat.find.placeholder")}
+        aria-label={t("chat.find.label")}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            onClose();
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            step(e.shiftKey ? -1 : 1);
+          }
+        }}
+      />
+      <span className={styles.count} role="status" aria-live="polite">
+        {query.trim() ? (total === 0 ? t("chat.find.none") : t("chat.find.count", { current: current + 1, total })) : ""}
+      </span>
+      <button type="button" className={styles.btn} aria-label={t("chat.find.prev")} title={t("chat.find.prev")} disabled={total === 0} onClick={() => step(-1)}>
+        <ChevronUp aria-hidden="true" />
+      </button>
+      <button type="button" className={styles.btn} aria-label={t("chat.find.next")} title={t("chat.find.next")} disabled={total === 0} onClick={() => step(1)}>
+        <ChevronDown aria-hidden="true" />
+      </button>
+      <button type="button" className={styles.btn} aria-label={t("common.close")} title={t("common.close")} onClick={onClose}>
+        <X aria-hidden="true" />
+      </button>
+    </div>
+  );
+}

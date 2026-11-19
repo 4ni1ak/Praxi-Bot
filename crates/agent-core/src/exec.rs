@@ -639,6 +639,16 @@ impl TurnExecutor {
             (Some(p), None) => Some(p),
             (None, s) => s,
         };
+        // Which tool family fits which job; claims need the call behind them.
+        let skills = match (self.sh.tool_guidance_block(&ctx, &specs), skills) {
+            (Some(g), Some(s)) => Some(format!(
+                "{g}
+
+{s}"
+            )),
+            (Some(g), None) => Some(g),
+            (None, s) => s,
+        };
         let lookup = |n: &str| self.sh.tools.get(n).map(|t| t.spec().clone());
         let spill_dir = self
             .sh

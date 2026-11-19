@@ -37,9 +37,11 @@ import {
   TodoCard,
   ToolCard
 } from "../components/ChatCards";
+import { ApprovalBatchCard } from "../components/ApprovalBatchCard";
 import { PendingDecisions, useDecisionActions } from "../components/PendingDecisions";
 import { chatTitleLabel } from "../lib/chatTitle";
 import { pendingForChat } from "../lib/pendingDecisions";
+import { ChatFindBar } from "../components/ChatFindBar";
 import { Markdown } from "../components/Markdown";
 import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
@@ -77,6 +79,7 @@ import { sendButtonDisabled, sendButtonMode } from "../lib/composerRun";
 import { type PendingFile, MAX_ATTACHMENT_BYTES, filesOf, room, uploadErrorKey } from "../lib/attachments";
 import { ComposerFiles, MessageFiles } from "../components/Attachments";
 import { enqueue, putBack, removeQueued, takeForNow, takeForRunEnd } from "../lib/messageQueue";
+import { groupPending, isBatchable, shouldBatch } from "../lib/approvalBatch";
 import { toolSentence } from "../lib/runSentence";
 import { useChatQueue } from "../state/useChatQueue";
 import {
@@ -302,6 +305,17 @@ export function ChatView({
       : null
   );
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setFindOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const stickToBottom = useRef(true);
   const [remember, setRemember] = useState<Record<string, RememberState>>({});
   useLayoutEffect(() => {
@@ -1114,7 +1128,7 @@ export function ChatView({
               <Markdown text={item.text} />
             </div>
             <CopyButton text={item.text} />
-            <SpeakButton id={`${runId}:${item.ts}`} text={item.text} />
+            <SpeakButton id={`${runId}:${item.ts}`} text={item.text} botId={chat?.bot_id} />
             <MessageInfo side="bot" ts={item.ts} runId={runId} run={run} runDto={runs.find((r) => r.id === runId)} />
             <MessageTime
               ts={item.ts}
@@ -1140,6 +1154,29 @@ export function ChatView({
         if (item.status === "awaiting_approval" && nested) {
           // A subagent's card is pinned above the composer (never inside a folded card).
           return <p className={ccStyles.nestedText}>{t("chat.pendingPinned")}</p>;
+        }
+        // Several plain approvals of one top-level run share one card; the other pending calls of
+        // the batch render nothing, so each pending call is drawn exactly once. Cards the user
+        // must read (payloads, secrets) stay separate.
+        if (run && isBatchable(item)) {
+          const rows = groupPending(
+            run.items.filter((i): i is Extract<TimelineItem, { kind: "tool" }> => i.kind === "tool")
+          );
+          if (shouldBatch(rows)) {
+            if (rows[0]?.items[0]?.callId !== item.callId) {
+              return null;
+            }
+            return (
+              <ApprovalBatchCard
+                rows={rows}
+                onDecide={async (callIds, decision) => {
+                  for (const callId of callIds) {
+                    await decisions.decide(callId)(decision, decision === "approve" ? "once" : undefined);
+                  }
+                }}
+              />
+            );
+          }
         }
         return item.status === "awaiting_approval" ? (
           <ApprovalCard
@@ -1205,6 +1242,9 @@ export function ChatView({
       ) : null}
 
       <div className={styles.scrollWrap}>
+      {findOpen ? (
+        <ChatFindBar rootRef={timelineRef} contentKey={entries} onClose={() => setFindOpen(false)} />
+      ) : null}
       <div
         className={styles.scroller}
         ref={scrollerRef}
@@ -1291,7 +1331,7 @@ export function ChatView({
                       <Markdown text={e.text} />
                     </div>
                     <CopyButton text={e.text} />
-                    <SpeakButton id={e.key} text={e.text} />
+                    <SpeakButton id={e.key} text={e.text} botId={e.botId ?? chat?.bot_id} />
                     <MessageInfo side="bot" ts={e.ts} runId={e.runId} run={e.runId ? events.runs[e.runId] : undefined} runDto={runs.find((r) => r.id === e.runId)} />
                     <MessageTime ts={e.ts} mode={messageTimes} />
                   </div>
