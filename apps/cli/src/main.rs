@@ -160,6 +160,9 @@ enum Command {
     SelfUpdate(update::UpdateArgs),
     /// Show daemon status (also verifies the API token).
     Status,
+    /// With `--remote`: open the tunnel to a paired daemon, print its loopback address and
+    /// token, and keep it open until Ctrl-C (for `scripts/tools/measure-live-link.mjs`).
+    Proxy,
     /// Send a message to a bot and stream the answer.
     Chat {
         /// Bot id (see `bot bots list`).
@@ -598,6 +601,7 @@ fn run() -> Result<()> {
                     | host::HostCmd::Standby
                     | host::HostCmd::Activate { .. }
             } | Command::Status
+                | Command::Proxy
                 | Command::Chat { .. }
                 | Command::Bots { .. }
                 | Command::Approve { .. }
@@ -651,6 +655,7 @@ fn run() -> Result<()> {
         Command::SelfUpdate(args) => return update::run(args),
         Command::Host { .. }
         | Command::Status
+        | Command::Proxy
         | Command::Chat { .. }
         | Command::Bots { .. }
         | Command::Approve { .. }
@@ -724,6 +729,7 @@ fn run() -> Result<()> {
         | Command::Backup(_)
         | Command::Serve { .. }
         | Command::Status
+        | Command::Proxy
         | Command::Chat { .. }
         | Command::Bots { .. }
         | Command::Approve { .. }
@@ -1008,6 +1014,17 @@ fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Resul
         match command {
             Command::Host { action } => host::run(&c, action, json, &mut out, data_dir).await,
             Command::Status => remote::status(&c, json, &mut out).await,
+            Command::Proxy => match &remote {
+                Some((_, proxy)) => {
+                    writeln!(out, "url: {}
+token: {}", proxy.base_url, proxy.token)?;
+                    writeln!(out, "tunnel open; press Ctrl-C to close it")?;
+                    out.flush()?;
+                    tokio::signal::ctrl_c().await?;
+                    Ok(())
+                }
+                None => Err("`bot proxy` needs --remote <ENDPOINT>".into()),
+            },
             Command::Bots {
                 action: BotsCmd::List,
             } => remote::bots_list(&c, json, &mut out).await,
