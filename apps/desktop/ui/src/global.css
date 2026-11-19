@@ -67,3 +67,14 @@ input::placeholder, textarea::placeholder { color: var(--color-text-muted); opac
 /* Column resize in progress (rail / bot panel grips): no text selection, no transitions. */
 :root[data-resizing] { user-select: none; cursor: col-resize; }
 :root[data-resizing] * { transition: none !important; }
+
+/* Find in chat: ranges painted by the CSS Custom Highlight API (lib/findInChat.ts). */
+::highlight(praxi-find) {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent-text);
+}
+
+::highlight(praxi-find-current) {
+  background-color: var(--color-accent);
+  color: var(--color-accent-contrast);
+}

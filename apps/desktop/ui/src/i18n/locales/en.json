@@ -1185,6 +1185,14 @@
       "done": "Chat saved",
       "you": "You"
     },
+    "find": {
+      "count": "{{current}} of {{total}}",
+      "label": "Find in this chat",
+      "next": "Next match",
+      "none": "No matches",
+      "placeholder": "Find in chat…",
+      "prev": "Previous match"
+    },
     "jumpToLatest": "Jump to latest",
     "md": {
       "code": "code",
@@ -2438,6 +2446,8 @@
     "dialogClose": "Close the dialog",
     "dialogFocus": "Move focus inside the dialog",
     "exitLiveFocus": "Leave keyboard control of the live view",
+    "findInChat": "Find in this chat",
+    "findNav": "Next / previous match in the find bar, close it",
     "group": {
       "composer": "Chat composer",
       "dialogs": "Dialogs",

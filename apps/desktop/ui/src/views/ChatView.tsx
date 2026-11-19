@@ -41,6 +41,7 @@ import { ApprovalBatchCard } from "../components/ApprovalBatchCard";
 import { PendingDecisions, useDecisionActions } from "../components/PendingDecisions";
 import { chatTitleLabel } from "../lib/chatTitle";
 import { pendingForChat } from "../lib/pendingDecisions";
+import { ChatFindBar } from "../components/ChatFindBar";
 import { Markdown } from "../components/Markdown";
 import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
@@ -304,6 +305,17 @@ export function ChatView({
       : null
   );
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setFindOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const stickToBottom = useRef(true);
   const [remember, setRemember] = useState<Record<string, RememberState>>({});
   useLayoutEffect(() => {
@@ -1230,6 +1242,9 @@ export function ChatView({
       ) : null}
 
       <div className={styles.scrollWrap}>
+      {findOpen ? (
+        <ChatFindBar rootRef={timelineRef} contentKey={entries} onClose={() => setFindOpen(false)} />
+      ) : null}
       <div
         className={styles.scroller}
         ref={scrollerRef}

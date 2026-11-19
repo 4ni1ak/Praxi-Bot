@@ -1185,6 +1185,14 @@
       "done": "Sohbet kaydedildi",
       "you": "Sen"
     },
+    "find": {
+      "count": "{{current}} / {{total}}",
+      "label": "Bu sohbette ara",
+      "next": "Sonraki eşleşme",
+      "none": "Eşleşme yok",
+      "placeholder": "Sohbette ara…",
+      "prev": "Önceki eşleşme"
+    },
     "jumpToLatest": "En sona git",
     "md": {
       "code": "kod",
@@ -2438,6 +2446,8 @@
     "dialogClose": "Pencereyi kapat",
     "dialogFocus": "Pencere içinde odağı taşı",
     "exitLiveFocus": "Canlı görünümde klavye denetiminden çık",
+    "findInChat": "Bu sohbette ara",
+    "findNav": "Arama çubuğunda sonraki / önceki eşleşme, kapat",
     "group": {
       "composer": "Sohbet yazma kutusu",
       "dialogs": "Pencereler",
