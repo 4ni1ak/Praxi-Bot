@@ -126,6 +126,38 @@ async fn a_desktop_peer_on_a_host_cannot_administer_credentials_tools_or_pairing
     }
 }
 
+/// The dictation service address and key are host credentials: a desktop peer may
+/// not repoint dictation audio at another service, but may still dictate.
+#[tokio::test]
+async fn a_desktop_peer_on_a_host_cannot_change_dictation_but_can_dictate() {
+    let t = host_daemon();
+    for path in ["/v1/voice", "/v1/voice/", "//v1//voice"] {
+        let r = peer_call(
+            &t,
+            crate::PeerRole::Desktop,
+            Method::PUT,
+            path,
+            Some(json!({"stt_url": "https://example.invalid/v1"})),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "desktop PUT {path}");
+    }
+    let r = peer_call(
+        &t,
+        crate::PeerRole::Desktop,
+        Method::POST,
+        "/v1/voice/transcribe",
+        Some(json!({"audio_base64": "AAAA", "mime": "audio/webm"})),
+    )
+    .await;
+    assert_ne!(
+        r.status,
+        StatusCode::FORBIDDEN,
+        "dictation stays allowed: {:?}",
+        r.json()
+    );
+}
+
 #[tokio::test]
 async fn only_a_desktop_peer_may_read_mailbox_headers() {
     let t = host_daemon();
