@@ -12,6 +12,7 @@
 //! exception is `GET /v1/events`, which also accepts `?token=<token>` for
 //! browser `EventSource` clients (Host / Origin still apply).
 
+mod attachment_routes;
 pub mod auth;
 mod bot_engine;
 mod bot_tools;
@@ -45,6 +46,7 @@ pub mod live_view;
 pub mod mcp;
 mod mcp_routes;
 pub mod mcp_server;
+pub mod memory;
 pub mod openapi;
 pub mod owner;
 pub mod pc_access;
@@ -62,6 +64,8 @@ pub mod skills;
 mod sse;
 mod stop;
 pub mod terminal;
+pub mod voice;
+mod voice_routes;
 pub mod web;
 mod web_routes;
 
@@ -104,6 +108,7 @@ pub use openapi::openapi_json;
 pub use policy::{PolicyLoadError, load_policy, validate_policy};
 pub use schedule_tools::{ScheduleLimits, load_schedule_limits};
 pub use skills::SkillAssignments;
+pub use voice::{VoiceControl, VoiceControlError};
 pub use web::{WebControl, WebControlError};
 
 /// Default TCP port of `bot serve`.
@@ -222,6 +227,8 @@ struct Inner {
     email_tests: Arc<tokio::sync::Semaphore>,
     /// Web search settings management (see [`AppState::set_web`]).
     web: OnceLock<Arc<dyn WebControl>>,
+    /// Dictation (speech-to-text) management (see [`AppState::set_voice`]).
+    voice: OnceLock<Arc<dyn VoiceControl>>,
     /// Skill catalog index (see [`AppState::set_skills`]).
     skills: OnceLock<::skills::SkillIndex>,
     /// Serialises owner catalog mutations with per-bot assignment writes.
@@ -235,6 +242,8 @@ struct Inner {
     fill_secrets: OnceLock<Arc<secret_store::FillSecrets>>,
     /// `schedules.db`, opened on first use.
     schedules: parking_lot::Mutex<Option<Arc<ScheduleStore>>>,
+    /// `memory.db`, opened on first use when the loop was not given a store.
+    memory: parking_lot::Mutex<Option<Arc<memory_store::MemoryStore>>>,
     /// Serialises `PUT /v1/policy` (read-modify-write of memory + `policy.json`).
     policy_lock: parking_lot::Mutex<()>,
     /// Target sets of `POST /v1/runs/stop` (see `stop`).
@@ -403,6 +412,7 @@ impl AppState {
             email: OnceLock::new(),
             email_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             web: OnceLock::new(),
+            voice: OnceLock::new(),
             skills: OnceLock::new(),
             skill_mutations: parking_lot::Mutex::new(()),
             web_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
@@ -410,6 +420,7 @@ impl AppState {
             owner_key: OnceLock::new(),
             fill_secrets: OnceLock::new(),
             schedules: parking_lot::Mutex::new(None),
+            memory: parking_lot::Mutex::new(None),
             policy_lock: parking_lot::Mutex::new(()),
             stops: parking_lot::Mutex::new(stop::StopBook::default()),
             #[cfg(test)]
@@ -588,6 +599,15 @@ impl AppState {
         self.0.email.get().cloned()
     }
 
+    /// Enable `/v1/voice*` with the embedder dictation manager (call once, before [`serve`]).
+    pub fn set_voice(&self, voice: Arc<dyn VoiceControl>) {
+        let _ = self.0.voice.set(voice);
+    }
+
+    pub(crate) fn voice(&self) -> Option<Arc<dyn VoiceControl>> {
+        self.0.voice.get().cloned()
+    }
+
     pub(crate) fn web(&self) -> Option<Arc<dyn WebControl>> {
         self.0.web.get().cloned()
     }
@@ -698,6 +718,27 @@ impl AppState {
             return Ok(Arc::clone(s));
         }
         let store = Arc::new(ScheduleStore::from_storage(self.storage())?);
+        *g = Some(Arc::clone(&store));
+        Ok(store)
+    }
+
+    /// The personal memory store (`<data dir>/memory.db`), shared with the agent
+    /// loop when configured or opened with the local hash embedder on first use.
+    pub(crate) fn memory_store(&self) -> Result<Arc<memory_store::MemoryStore>, ApiError> {
+        if let Some(store) = self.0.agent.memory_store() {
+            return Ok(store);
+        }
+        let mut g = self.0.memory.lock();
+        if let Some(s) = g.as_ref() {
+            return Ok(Arc::clone(s));
+        }
+        let store = Arc::new(
+            memory_store::MemoryStore::open(
+                self.data_dir(),
+                Arc::new(memory_store::HashEmbedder::new(384)),
+            )
+            .map_err(|_| ApiError::internal("memory store unavailable"))?,
+        );
         *g = Some(Arc::clone(&store));
         Ok(store)
     }
@@ -1013,6 +1054,7 @@ fn api_routes() -> Router<AppState> {
     use live_view as v;
     use mcp_routes as m;
     use routes as r;
+    use voice_routes as vo;
     use web_routes as w;
     Router::new()
         .route("/v1/mcp-server/tokens", post(mcp_server::create_token))
@@ -1158,6 +1200,19 @@ fn api_routes() -> Router<AppState> {
             post(knowledge_settings::reset_embedding_cooldown),
         )
         .route(
+            "/v1/memory",
+            get(memory::list_memories).post(memory::create_memory),
+        )
+        .route(
+            "/v1/memory/{id}",
+            axum::routing::patch(memory::update_memory).delete(memory::delete_memory),
+        )
+        .route("/v1/memory/{id}/undo", post(memory::undo_memory))
+        .route(
+            "/v1/bots/{id}/memory/preview",
+            get(memory::preview_bot_memory),
+        )
+        .route(
             "/v1/bots/{id}/grants",
             get(r::list_grants).delete(r::revoke_grant),
         )
@@ -1193,6 +1248,16 @@ fn api_routes() -> Router<AppState> {
         .route(
             "/v1/chats/{id}/messages",
             get(r::list_messages).post(r::send_message),
+        )
+        .route(
+            "/v1/chats/{id}/attachments",
+            post(attachment_routes::upload).layer(axum::extract::DefaultBodyLimit::max(
+                attachment_routes::MAX_BODY,
+            )),
+        )
+        .route(
+            "/v1/chats/{id}/attachments/{att}",
+            get(attachment_routes::download),
         )
         .route("/v1/approvals", get(r::list_approvals))
         .route("/v1/approvals/{call_id}", post(r::decide_approval))
@@ -1339,12 +1404,25 @@ fn api_routes() -> Router<AppState> {
             "/v1/email/accounts/{name}/test",
             post(e::test_email_account),
         )
+        .route(
+            "/v1/email/accounts/{name}/messages",
+            get(e::list_email_messages),
+        )
+        .route(
+            "/v1/email/accounts/{name}/send-test",
+            post(e::send_email_test),
+        )
         .route("/v1/email/test", post(e::test_email_draft))
         .route(
             "/v1/web/search",
             get(w::get_web_search).put(w::update_web_search),
         )
         .route("/v1/web/search/test", post(w::test_web_search))
+        .route("/v1/voice", get(vo::get_voice).put(vo::update_voice))
+        .route(
+            "/v1/voice/transcribe",
+            post(vo::transcribe).layer(axum::extract::DefaultBodyLimit::max(vo::MAX_BODY_BYTES)),
+        )
         .route("/v1/secrets/{*name}", post(m::set_secret))
         .route(
             "/v1/fill-secrets",

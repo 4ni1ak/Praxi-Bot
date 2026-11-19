@@ -104,9 +104,7 @@
 
 .approvalBar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-5);
   border-bottom: var(--size-border) solid var(--color-warning);
@@ -114,6 +112,14 @@
   font-size: var(--font-size-sm);
   color: var(--color-text);
   flex-shrink: 0;
+}
+
+.approvalHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
 }
 
 .errorInline {
@@ -183,6 +189,9 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
+  /* Drawn as is: the host sends the screen at its native size (up to 1920x1080)
+     and the browser reduces it once, at the display's pixel density. */
+  image-rendering: auto;
   display: block;
   user-select: none;
 }

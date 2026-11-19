@@ -339,3 +339,28 @@ export function botDetails(details: unknown): BotApprovalDetails | null {
     profileJson: JSON.stringify(profile, null, 2)
   };
 }
+
+/** What "this chat" / "always for this bot" would remember for a card (`details.memory`). */
+export interface MemoryOffer {
+  kind: "origin" | "folder" | "command";
+  /** The one target the rule would cover: a site, a folder or a command prefix. */
+  pattern: string;
+}
+
+/** The daemon-derived memory target of an approval card, or `null` when none is offered. */
+export function memoryOffer(details: unknown): MemoryOffer | null {
+  if (!isObject(details) || !isObject(details.memory)) return null;
+  const { kind, pattern } = details.memory;
+  if (
+    (kind !== "origin" && kind !== "folder" && kind !== "command") ||
+    typeof pattern !== "string" ||
+    pattern.length === 0 ||
+    pattern.length > 400
+  ) {
+    return null;
+  }
+  // Text the daemon derived from model output: shown as plain text, with control and
+  // direction characters removed so a target cannot disguise itself.
+  const plain = pattern.replace(/[\p{Cc}\p{Cf}]/gu, "");
+  return plain === pattern ? { kind, pattern } : null;
+}

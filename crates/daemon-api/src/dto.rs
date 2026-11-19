@@ -92,6 +92,8 @@ pub struct EffectivePolicyDto {
     /// What a human-initiated call of each category resolves to, grants
     /// included (`meta` is always allowed and omitted).
     pub categories: BTreeMap<String, CategoryDecisionDto>,
+    /// The bot's autonomy mode, derived from its preset: `ask`, `balanced` or `full`.
+    pub mode: String,
     /// The persisted "always allow" rules.  Tool-level grants only widen that
     /// one tool and are not reflected in `categories`.
     pub grants: Vec<GrantDto>,
@@ -124,6 +126,15 @@ pub enum GrantTargetDto {
         /// `fs`, `shell`, `desktop`, `browser`, `accounts`, `messaging`,
         /// `money`, `system`, `remote` or `script`.
         name: String,
+    },
+    /// One tool on one target: a site, a folder or a command prefix.
+    Scoped {
+        /// Tool name.
+        tool: String,
+        /// `origin`, `folder` or `command`.
+        scope: String,
+        /// The one target the rule covers (see `scope`).
+        pattern: String,
     },
 }
 
@@ -286,6 +297,26 @@ pub struct MessageDto {
     /// `local_api`); absent for older messages and for replies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// Files attached to a user message.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentDto>,
+}
+
+/// A file attached to a chat message (`POST /v1/chats/{id}/attachments`).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AttachmentDto {
+    /// Attachment id.
+    pub id: Uuid,
+    /// Display name.
+    pub name: String,
+    /// Sniffed media type.
+    pub mime_type: String,
+    /// `image` (sent to the model as a picture), `document` or `text` (sent as text).
+    pub kind: String,
+    /// Original size in bytes.
+    pub size: u64,
+    /// Only the start of the text was given to the model.
+    pub truncated: bool,
 }
 
 /// What a run cost, read from the usage ledger (`GET /v1/runs/{id}/usage`).
@@ -322,6 +353,10 @@ pub struct SendMessage {
     /// Behaviour while a turn is running.
     #[serde(default)]
     pub mode: Mode,
+    /// Ids returned by `POST /v1/chats/{id}/attachments` for this chat (at most 6). The text
+    /// may be empty when files are attached.
+    #[serde(default)]
+    pub attachment_ids: Vec<Uuid>,
 }
 
 /// How a sent message was delivered.
@@ -367,6 +402,13 @@ pub struct ApprovalDto {
     pub tool_name: String,
     /// Human-readable summary.
     pub summary: String,
+    /// The call's input, as the `approval_needed` event carried it (so a client that missed the
+    /// event can still show the full card).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<Value>,
+    /// The tool's card facts from the `approval_needed` event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
     /// `null` while pending, else `approved` / `denied` / `expired`.
     pub decision: Option<String>,
     /// Request time.

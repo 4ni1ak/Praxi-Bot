@@ -4094,6 +4094,7 @@ mod tests {
             exposure_untrusted: false,
             expected_origin: None,
             control_guard: None,
+            lane: None,
         }
     }
 
@@ -6248,6 +6249,7 @@ mod tests {
                 exposure_untrusted: false,
                 expected_origin: None,
                 control_guard: None,
+                lane: None,
             };
             async move { reader.call(&c, json!({"path": p})).await }
         };

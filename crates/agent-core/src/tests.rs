@@ -370,6 +370,17 @@ pub(crate) async fn until(
     }
 }
 
+/// The request without the loop's own action-ledger message (a trailing
+/// user-role note), for tests that look at the conversation's shape.
+pub(crate) fn without_ledger(mut req: ChatRequest) -> ChatRequest {
+    req.messages.retain(|m| {
+        !m.content
+            .as_str()
+            .is_some_and(|t| t.starts_with("[action ledger"))
+    });
+    req
+}
+
 pub(crate) fn tool_messages(req: &ChatRequest) -> Vec<String> {
     req.messages
         .iter()
@@ -1057,6 +1068,80 @@ async fn tool_timeout_becomes_an_error_result() {
     assert!(tool_messages(&fake.request(1))[0].contains("timed out"));
 }
 
+/// The model's next request carries the loop's own record of what the calls
+/// did, so a timed-out step cannot be reported as a success (claim check).
+#[tokio::test(start_paused = true)]
+async fn timed_out_call_reaches_the_model_with_a_next_step_and_a_ledger() {
+    let env = setup();
+    let mut slow = tool("t.slow", Effect::Read, "late");
+    slow.delay = Duration::from_secs(30);
+    let slow = Arc::new(slow);
+    let fine = Arc::new(tool("t.fine", Effect::Read, "all good"));
+    let fake = Fake::new(vec![
+        calls(&[
+            ("c1", "t.fine", json!({"path": "a.txt"})),
+            ("c2", "t.slow", json!({})),
+        ]),
+        text("done"),
+    ]);
+    let mut config = cfg(Policy::full());
+    config.guards.tool_timeout = Duration::from_millis(100);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&slow), t(&fine)],
+        profile(""),
+        config,
+    );
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let req = fake.request(1);
+    let results = tool_messages(&req);
+    assert!(results[1].contains("timed out"), "{results:?}");
+    assert!(results[1].contains("Next:"), "{results:?}");
+    let last = req.messages.last().unwrap();
+    assert_eq!(last.role, MessageRole::User);
+    let ledger = last.content.as_str().unwrap();
+    assert!(ledger.starts_with("[action ledger"), "{ledger}");
+    assert!(ledger.contains("2 calls: 1 ok, 1 timed out"), "{ledger}");
+    assert!(ledger.contains("t.slow -> TIMED OUT"), "{ledger}");
+    assert!(ledger.contains("do not present them as done"), "{ledger}");
+    // The first model call (no tool yet) has no ledger.
+    assert!(!fake.request(0).messages.iter().any(|m| {
+        m.content
+            .as_str()
+            .is_some_and(|c| c.contains("[action ledger"))
+    }));
+}
+
+/// The system prompt tells the model which tool family fits which job: look
+/// things up with the web tools before opening a browser, and never claim a
+/// job done without the result behind it.
+#[tokio::test]
+async fn system_prompt_carries_the_tool_choice_guidance() {
+    let env = setup();
+    let web = Arc::new(tool("web_extract", Effect::Read, "page text"));
+    let browser = Arc::new(tool("browser_open", Effect::Write, "# T (https://a.test/)"));
+    let fake = Fake::new(vec![text("hi")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&web), t(&browser)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let run = lp.run_turn(env.chat, "look something up").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let req = fake.request(0);
+    let system = req.messages[0].content.as_str().unwrap();
+    assert!(system.contains("Choosing tools:"), "{system}");
+    assert!(system.contains("BEFORE opening a browser"), "{system}");
+    assert!(system.contains("[view: ...]"), "{system}");
+    assert!(system.contains("is NOT done"), "{system}");
+}
+
 #[tokio::test]
 async fn large_output_is_spilled_with_preview_and_path() {
     let env = setup();
@@ -1302,7 +1387,7 @@ async fn steer_is_injected_before_next_model_call() {
     assert_eq!(d, Delivery::Steered(run));
     assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
 
-    let req = fake.request(1);
+    let req = without_ledger(fake.request(1));
     let roles: Vec<&MessageRole> = req.messages.iter().map(|m| &m.role).collect();
     // system, user, assistant(tool call), tool, user(steer)
     assert_eq!(
@@ -1966,7 +2051,7 @@ fn crash_with_pending_steering(during_model: bool, already_consumed: bool) {
         lp.resume(run).unwrap();
         assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
         assert_eq!(fake.n_requests(), 1);
-        let request = fake.request(0);
+        let request = without_ledger(fake.request(0));
         let users: Vec<_> = request
             .messages
             .iter()
@@ -2051,7 +2136,7 @@ async fn pending_steering_continues_a_scheduled_tool_run() {
         1,
         "accepted steering must reach the model"
     );
-    let request = fake.request(0);
+    let request = without_ledger(fake.request(0));
     let roles: Vec<_> = request
         .messages
         .iter()
@@ -6018,7 +6103,10 @@ async fn an_always_ask_approval_cannot_be_given_as_always_on_any_channel() {
 async fn a_plain_approval_can_still_be_given_as_always() {
     let env = setup();
     let w = Arc::new(tool("fs_write", Effect::Write, "ok"));
-    let fake = Fake::new(vec![calls(&[("c1", "fs_write", json!({}))]), text("done")]);
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_write", json!({"path": "a.txt"}))]),
+        text("done"),
+    ]);
     let lp = make_loop(
         &env.storage,
         env.bot,
@@ -8084,7 +8172,10 @@ async fn multi_step_browser_turn_compacts_what_the_model_sees_not_what_is_stored
     }
 
     // Same stride (n = 7 and n = 8 both have horizon 6): byte-identical prefix.
-    let (a, b) = (fake.request(7), fake.request(8));
+    let (a, b) = (
+        without_ledger(fake.request(7)),
+        without_ledger(fake.request(8)),
+    );
     for (x, y) in a.messages.iter().zip(&b.messages) {
         assert_eq!(
             serde_json::to_string(x).unwrap(),

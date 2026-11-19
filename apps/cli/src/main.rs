@@ -1,5 +1,6 @@
 //! Command-line interface entry point for the Praxi-Bot agent (`bot`).
 
+mod backup_cmd;
 mod calendar_host;
 mod channels;
 #[cfg(test)]
@@ -13,6 +14,7 @@ mod computer;
 mod doctor;
 mod email_cmd;
 mod email_host;
+mod homeassistant_host;
 mod host;
 mod host_links;
 mod host_provision;
@@ -30,6 +32,7 @@ mod serve;
 mod skills_cmd;
 mod update;
 mod view_targets;
+mod voice_host;
 mod web_host;
 mod wizard;
 
@@ -109,6 +112,10 @@ enum Command {
         #[command(subcommand)]
         action: host::HostCmd,
     },
+    /// Write one file with your bots, chats, memory, skills and settings (no API keys).
+    Backup(backup_cmd::BackupCmd),
+    /// Restore a file written by `backup` (close the app first).
+    Restore(backup_cmd::RestoreCmd),
     /// Interactive first-run setup (or scripted with --provider).
     Setup(SetupCmd),
     /// Check the installation (data dir, config, providers, daemon, browser, ...).
@@ -640,6 +647,7 @@ fn run() -> Result<()> {
         }
         Command::Serve { .. } => return run_serve(&cli, command, &data_dir),
         Command::Doctor(c) => return run_doctor(&cli, c, &data_dir),
+        Command::Backup(c) => return backup_cmd::backup(&data_dir, c, &mut std::io::stdout()),
         Command::SelfUpdate(args) => return update::run(args),
         Command::Host { .. }
         | Command::Status
@@ -691,6 +699,9 @@ fn run() -> Result<()> {
 
     match command {
         Command::Setup(c) => run_setup(c, &env),
+        Command::Restore(c) => {
+            backup_cmd::restore(&data_dir, cli.port, store, c, &mut std::io::stdout())
+        }
         Command::Channels {
             action: ChannelsCmd::Telegram { action },
         } => run_telegram(&cli, &data_dir, store, action, &mut say),
@@ -710,6 +721,7 @@ fn run() -> Result<()> {
         | Command::Host { .. }
         | Command::SelfUpdate(_)
         | Command::Doctor(_)
+        | Command::Backup(_)
         | Command::Serve { .. }
         | Command::Status
         | Command::Chat { .. }

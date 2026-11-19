@@ -125,6 +125,11 @@ export function itemTs(i: TimelineItem): number {
   return i.kind === "tool" || i.kind === "question" ? i.requestedMs : i.ts;
 }
 
+/** What the daemon says when it closes a card nobody answered (`tool_call_denied.reason`). */
+export function isExpiredReason(reason: string | null | undefined): boolean {
+  return typeof reason === "string" && reason.startsWith("expired");
+}
+
 /** Tool names that spawn another agent (rendered as a subagent card). */
 export function isSubagentTool(name: string): boolean {
   return /^(subagent|spawn_agent|spawn_subagent|delegate)/.test(name);
@@ -341,14 +346,27 @@ function reduce(
         }))
       );
     case "tool_call_denied":
-      return withRun(state, e.run_id, ts, (r) =>
-        updateTool(r, e.call_id, (t) => ({
+      return withRun(state, e.run_id, ts, (r) => {
+        const expired = isExpiredReason(e.reason);
+        const denied = updateTool(r, e.call_id, (t) => ({
           ...t,
-          status: "denied",
+          // A card nobody answered in time (or whose wait ended) is "expired", not a refusal.
+          status: expired ? "expired" : "denied",
           denyReason: e.reason ?? undefined,
           completedMs: ts
-        }))
-      );
+        }));
+        return {
+          ...denied,
+          items: denied.items.map((i) =>
+            expired &&
+            i.kind === "question" &&
+            i.callId === e.call_id &&
+            i.answer === undefined
+              ? { ...i, closed: true }
+              : i
+          )
+        };
+      });
     case "tool_call_completed":
       return withRun(state, e.run_id, ts, (r) => {
         const done = updateTool(r, e.call_id, (t) =>
@@ -667,25 +685,62 @@ export interface NeedsYouEntry {
   callId: string;
   title: string;
   sinceMs: number;
+  /** The card to render, for an approval. */
+  tool?: ToolItem;
+  /** The card to render, for a question. */
+  question?: QuestionItem;
 }
 
-/** Everything waiting for a human decision, oldest first. */
-export function needsYou(state: EventsState): NeedsYouEntry[] {
+/** What the daemon's run list says about a run (enough to place a run the events never introduced). */
+export interface RunFact {
+  id: string;
+  chat_id?: string | null;
+  bot_id: string;
+  parent_run_id?: string | null;
+  state: string;
+  created_at_ms: number;
+}
+
+/** A pending approval of the daemon's list (`GET /v1/approvals`). */
+export interface PendingApprovalFact {
+  call_id: string;
+  run_id: string;
+  tool_name: string;
+  summary: string;
+  input?: unknown;
+  details?: unknown;
+  decision?: string | null;
+  requested_at_ms: number;
+}
+
+/**
+ * Everything waiting for a human decision, oldest first. `runs` (the daemon's run list) places a
+ * run whose `run_started` the events never carried: without it such an entry has no chat and no
+ * card could ever show it.
+ */
+export function needsYou(
+  state: EventsState,
+  runs: readonly RunFact[] = []
+): NeedsYouEntry[] {
   const out: NeedsYouEntry[] = [];
   for (const run of Object.values(state.runs)) {
     if (run.finishedMs !== undefined) {
       continue;
     }
+    const fact = runs.find((r) => r.id === run.id);
+    const chatId = run.chatId || fact?.chat_id || "";
+    const botId = run.botId || fact?.bot_id || "";
     for (const i of run.items) {
       if (i.kind === "tool" && i.status === "awaiting_approval") {
         out.push({
           kind: "approval",
           runId: run.id,
-          chatId: run.chatId,
-          botId: run.botId,
+          chatId,
+          botId,
           callId: i.callId,
           title: i.summary ?? i.name,
-          sinceMs: i.requestedMs
+          sinceMs: i.requestedMs,
+          tool: i
         });
       } else if (
         i.kind === "question" &&
@@ -695,16 +750,89 @@ export function needsYou(state: EventsState): NeedsYouEntry[] {
         out.push({
           kind: "question",
           runId: run.id,
-          chatId: run.chatId,
-          botId: run.botId,
+          chatId,
+          botId,
           callId: i.callId,
           title: i.question,
-          sinceMs: i.requestedMs
+          sinceMs: i.requestedMs,
+          question: i
         });
       }
     }
   }
   return out.sort((a, b) => a.sinceMs - b.sinceMs);
+}
+
+/**
+ * Bring back the cards the daemon still holds but the events did not leave on screen (the stream
+ * missed the `approval_needed`, or a later event closed the card while the daemon still waits).
+ * The daemon's pending list wins over the local picture, for runs that are not finished.
+ * Only cards older than `asOfMs` are touched (guards against racing a fresh event).
+ */
+export function restorePending(
+  state: EventsState,
+  pending: readonly PendingApprovalFact[],
+  runs: readonly RunFact[],
+  asOfMs: number
+): EventsState {
+  let next = state;
+  for (const a of pending) {
+    if (a.decision != null || a.requested_at_ms >= asOfMs) {
+      continue;
+    }
+    const known = next.runs[a.run_id];
+    if (known?.finishedMs !== undefined) {
+      continue;
+    }
+    const fact = runs.find((r) => r.id === a.run_id);
+    if (!known && !fact) {
+      continue;
+    }
+    const existing = known?.items.find(
+      (i): i is ToolItem => i.kind === "tool" && i.callId === a.call_id
+    );
+    if (
+      existing &&
+      ((existing.status !== "requested" && existing.status !== "expired") ||
+        // closed by an event newer than the list: the list is the stale one
+        (existing.completedMs ?? 0) >= asOfMs)
+    ) {
+      continue; // already shown, or really decided / finished
+    }
+    const revive = (t: ToolItem): ToolItem => ({
+      ...t,
+      status: "awaiting_approval",
+      summary: t.summary ?? a.summary,
+      details: t.details ?? a.details,
+      input: t.input ?? a.input ?? null,
+      gated: true,
+      completedMs: undefined
+    });
+    next = withRun(next, a.run_id, a.requested_at_ms, (r) => {
+      const base: RunState = {
+        ...r,
+        chatId: r.chatId || fact?.chat_id || "",
+        botId: r.botId || fact?.bot_id || "",
+        parentRunId: r.parentRunId ?? fact?.parent_run_id ?? undefined,
+        startedMs: r.items.length === 0 && fact ? fact.created_at_ms : r.startedMs
+      };
+      if (existing) {
+        return updateTool(base, a.call_id, revive);
+      }
+      const item: ToolItem = revive({
+        kind: "tool",
+        key: `tool-${a.call_id}`,
+        callId: a.call_id,
+        name: a.tool_name,
+        input: null,
+        status: "requested",
+        requestedMs: a.requested_at_ms,
+        gated: true
+      });
+      return { ...base, items: [...base.items, item] };
+    });
+  }
+  return next;
 }
 
 /** Whether `name` looks like an outbound send ("Send on your behalf?"). */

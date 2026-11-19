@@ -33,6 +33,7 @@ import {
   DialogHeader,
   dialogStyles
 } from "../components/DialogParts";
+import { BotVoiceField } from "../components/BotVoiceField";
 import { BotEngineBlock } from "../components/BotEngineBlock";
 import { Modal } from "../components/Modal";
 import { useEngineConsent } from "../state/EngineConsent";
@@ -439,6 +440,7 @@ function BotEditDialog({
           {section === "identity" ? (
             <IdentityFields botId={bot.id} draft={draft} patch={patch} nameMissing={nameMissing} />
           ) : null}
+          {section === "identity" ? <BotVoiceField botId={bot.id} /> : null}
           {section === "models" ? (
             <ModelFields
               draft={draft}

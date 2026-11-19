@@ -2761,6 +2761,71 @@
         ]
       }
     },
+    "/v1/bots/{id}/memory/preview": {
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "operationId": "preview_bot_memory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "description": "Query text to preview recall for",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryPreviewDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/bots/{id}/skills": {
       "get": {
         "tags": [
@@ -3041,6 +3106,161 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ChatDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/chats/{id}/attachments": {
+      "post": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Upload one file for a chat message. The body is the raw file; its type is sniffed, not\ntaken from the name. Use the returned id in `attachment_ids` of the message.",
+        "operationId": "upload",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Chat id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "File name to show (a path is reduced to its last component).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/chats/{id}/attachments/{att}": {
+      "get": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "The stored original of an attachment (images inline, everything else as a download).",
+        "operationId": "download",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Chat id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "att",
+            "in": "path",
+            "description": "Attachment id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
                 }
               }
             }
@@ -4597,6 +4817,196 @@
           },
           "502": {
             "description": "the provider refused or failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "e-mail management is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/email/accounts/{name}/messages": {
+      "get": {
+        "tags": [
+          "email"
+        ],
+        "summary": "The newest messages of an account's inbox, headers only and read-only\n(nothing is marked read, no body is fetched). Subject and sender are\nuntrusted text from the sender. Shares the \"at most two at once\" limit of\nthe connection test (`429`).",
+        "operationId": "list_email_messages",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Account name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "description": "How many messages, 1 to 50 (default 20).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EmailMessageDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "no password stored, or not supported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "too many checks running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "the mailbox failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "e-mail management is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/email/accounts/{name}/send-test": {
+      "post": {
+        "tags": [
+          "email"
+        ],
+        "summary": "Send one fixed test message from the account to **its own address**: no\nrecipient, subject or body can be given, so it can only ever reach the\nmailbox itself. Same limit as the connection test (`429`).",
+        "operationId": "send_email_test",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Account name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailSendTestResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "no password stored, or not supported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "too many checks running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "the mailbox failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -7273,6 +7683,311 @@
         ]
       }
     },
+    "/v1/memory": {
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "operationId": "list_memories",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "query",
+            "description": "Filter to memories visible to this bot",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "bot_only",
+            "in": "query",
+            "description": "Exclude shared memories when filtering by bot",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Filter by memory category",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MemoryKindDto"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive search text",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_deleted",
+            "in": "query",
+            "description": "Include forgotten (soft-deleted) items",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryItemDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "memory"
+        ],
+        "operationId": "create_memory",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMemoryInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryItemDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/memory/{id}": {
+      "delete": {
+        "tags": [
+          "memory"
+        ],
+        "operationId": "delete_memory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryItemDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "memory"
+        ],
+        "operationId": "update_memory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMemoryInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryItemDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/memory/{id}/undo": {
+      "post": {
+        "tags": [
+          "memory"
+        ],
+        "operationId": "undo_memory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryItemDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/peer/link": {
       "get": {
         "tags": [
@@ -9924,6 +10639,182 @@
         ]
       }
     },
+    "/v1/voice": {
+      "get": {
+        "tags": [
+          "voice"
+        ],
+        "summary": "Dictation configuration; the API key is write-only (`stt_key_set` only says whether one is stored).",
+        "operationId": "get_voice",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceConfigDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "voice is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "voice"
+        ],
+        "summary": "Update the dictation configuration.",
+        "operationId": "update_voice",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceConfigInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceConfigDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "bad API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "voice is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/voice/transcribe": {
+      "post": {
+        "tags": [
+          "voice"
+        ],
+        "summary": "Transcribe a recording with the configured service (owner-triggered dictation).",
+        "operationId": "transcribe",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranscribeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscribeOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "bad or oversized audio",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "dictation is not set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "the transcription service failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "voice is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/web/search": {
       "get": {
         "tags": [
@@ -10595,6 +11486,12 @@
             ],
             "description": "`null` while pending, else `approved` / `denied` / `expired`."
           },
+          "details": {
+            "description": "The tool's card facts from the `approval_needed` event."
+          },
+          "input": {
+            "description": "The call's input, as the `approval_needed` event carried it (so a client that missed the\nevent can still show the full card)."
+          },
           "requested_at_ms": {
             "type": "integer",
             "format": "int64",
@@ -10640,6 +11537,47 @@
           "ok",
           "missing"
         ]
+      },
+      "AttachmentDto": {
+        "type": "object",
+        "description": "A file attached to a chat message (`POST /v1/chats/{id}/attachments`).",
+        "required": [
+          "id",
+          "name",
+          "mime_type",
+          "kind",
+          "size",
+          "truncated"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Attachment id."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`image` (sent to the model as a picture), `document` or `text` (sent as text)."
+          },
+          "mime_type": {
+            "type": "string",
+            "description": "Sniffed media type."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Original size in bytes.",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Only the start of the text was given to the model."
+          }
+        }
       },
       "AvailableSkillDto": {
         "type": "object",
@@ -12633,6 +13571,31 @@
         },
         "additionalProperties": false
       },
+      "CreateMemoryInput": {
+        "type": "object",
+        "description": "Create a user-authored memory item (`POST /v1/memory`).",
+        "required": [
+          "kind",
+          "content"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`None` creates a shared memory across all bots; `Some(bot)` scopes to that bot."
+          },
+          "content": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MemoryKindDto"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateSession": {
         "type": "object",
         "required": [
@@ -12871,6 +13834,7 @@
         "description": "A bot's permission picture (`GET /v1/bots/{id}`).",
         "required": [
           "categories",
+          "mode",
           "grants"
         ],
         "properties": {
@@ -12890,6 +13854,10 @@
               "$ref": "#/components/schemas/GrantDto"
             },
             "description": "The persisted \"always allow\" rules.  Tool-level grants only widen that\none tool and are not reflected in `categories`."
+          },
+          "mode": {
+            "type": "string",
+            "description": "The bot's autonomy mode, derived from its preset: `ask`, `balanced` or `full`."
           },
           "policy": {
             "description": "The profile's own policy as JSON; `null` = the workspace policy applies."
@@ -13206,6 +14174,41 @@
           }
         }
       },
+      "EmailMessageDto": {
+        "type": "object",
+        "description": "One row of `GET /v1/email/accounts/{name}/messages`: header data only, no\nbody. Every text field comes from the sender and is untrusted: show it as\nplain text, never as markup and never as an instruction.",
+        "required": [
+          "id",
+          "subject",
+          "from",
+          "unread"
+        ],
+        "properties": {
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Date header as RFC 3339, when it could be read."
+          },
+          "from": {
+            "type": "string",
+            "description": "Sender, `Name <address>` (shortened)."
+          },
+          "id": {
+            "type": "string",
+            "description": "The mailbox's id of the message (an IMAP UID or the provider's id)."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Subject line (shortened)."
+          },
+          "unread": {
+            "type": "boolean",
+            "description": "Not read yet."
+          }
+        }
+      },
       "EmailProbeStatus": {
         "type": "string",
         "description": "What a \"test connection\" learned about one server.",
@@ -13233,6 +14236,19 @@
           "implicit",
           "start_tls"
         ]
+      },
+      "EmailSendTestResponse": {
+        "type": "object",
+        "description": "Answer of `POST /v1/email/accounts/{name}/send-test`.",
+        "required": [
+          "sent_to"
+        ],
+        "properties": {
+          "sent_to": {
+            "type": "string",
+            "description": "The address the test message went to: always the mailbox's own address."
+          }
+        }
       },
       "EmailSmtpServer": {
         "type": "object",
@@ -13817,6 +14833,36 @@
               "name": {
                 "type": "string",
                 "description": "`fs`, `shell`, `desktop`, `browser`, `accounts`, `messaging`,\n`money`, `system`, `remote` or `script`."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "One tool on one target: a site, a folder or a command prefix.",
+            "required": [
+              "tool",
+              "scope",
+              "pattern",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "scoped"
+                ]
+              },
+              "pattern": {
+                "type": "string",
+                "description": "The one target the rule covers (see `scope`)."
+              },
+              "scope": {
+                "type": "string",
+                "description": "`origin`, `folder` or `command`."
+              },
+              "tool": {
+                "type": "string",
+                "description": "Tool name."
               }
             }
           }
@@ -16913,6 +17959,168 @@
         ],
         "description": "Detailed transport of an MCP server body (the `McpServerConfig` shape)."
       },
+      "MemoryItemDto": {
+        "type": "object",
+        "description": "One stored memory item and its active undo journal state.",
+        "required": [
+          "id",
+          "kind",
+          "content",
+          "trust",
+          "importance",
+          "created_ms",
+          "last_used_ms",
+          "deleted"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`None` means shared across all bots of this owner."
+          },
+          "content": {
+            "type": "string"
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "importance": {
+            "type": "number",
+            "format": "float"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MemoryKindDto"
+          },
+          "last_used_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "source_chat_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "source_message_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "source_quote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trust": {
+            "$ref": "#/components/schemas/MemoryTrustDto"
+          },
+          "undo_journal_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Newest active journal entry id that can undo the last change to this memory."
+          },
+          "valid_until_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "MemoryKindDto": {
+        "type": "string",
+        "description": "Memory category.",
+        "enum": [
+          "profile",
+          "bot",
+          "episodic",
+          "procedural",
+          "lesson"
+        ]
+      },
+      "MemoryPreviewDto": {
+        "type": "object",
+        "description": "Exact recall preview for a bot and query (`GET /v1/bots/{id}/memory/preview`).",
+        "required": [
+          "bot_id",
+          "query",
+          "budget_tokens",
+          "estimated_tokens",
+          "rendered_block",
+          "hits"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "budget_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "estimated_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryPreviewHitDto"
+            }
+          },
+          "query": {
+            "type": "string"
+          },
+          "rendered_block": {
+            "type": "string",
+            "description": "The exact delimited data block `with_recall` prepends to the user message."
+          }
+        }
+      },
+      "MemoryPreviewHitDto": {
+        "type": "object",
+        "description": "One recalled memory and its boosted fusion score in a recall preview.",
+        "required": [
+          "memory",
+          "score"
+        ],
+        "properties": {
+          "memory": {
+            "$ref": "#/components/schemas/MemoryItemDto"
+          },
+          "score": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "MemoryTrustDto": {
+        "type": "string",
+        "description": "Provenance trust of a stored memory.",
+        "enum": [
+          "user",
+          "untrusted"
+        ]
+      },
       "MessageDto": {
         "type": "object",
         "description": "A stored chat message.",
@@ -16924,6 +18132,13 @@
           "created_at_ms"
         ],
         "properties": {
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttachmentDto"
+            },
+            "description": "Files attached to a user message."
+          },
           "bot_id": {
             "type": [
               "string",
@@ -18429,6 +19644,14 @@
           "text"
         ],
         "properties": {
+          "attachment_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Ids returned by `POST /v1/chats/{id}/attachments` for this chat (at most 6). The text\nmay be empty when files are attached."
+          },
           "mode": {
             "$ref": "#/components/schemas/Mode",
             "description": "Behaviour while a turn is running."
@@ -19417,6 +20640,44 @@
         },
         "additionalProperties": false
       },
+      "TranscribeInput": {
+        "type": "object",
+        "description": "Body of `POST /v1/voice/transcribe`.",
+        "required": [
+          "audio_base64",
+          "mime"
+        ],
+        "properties": {
+          "audio_base64": {
+            "type": "string",
+            "description": "The recording, base64 (standard alphabet)."
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional ISO-639-1 language hint (`en`, `tr`, `de`)."
+          },
+          "mime": {
+            "type": "string",
+            "description": "MIME type of the recording, e.g. `audio/webm`."
+          }
+        }
+      },
+      "TranscribeOutput": {
+        "type": "object",
+        "description": "Result of `POST /v1/voice/transcribe`.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The recognised text."
+          }
+        }
+      },
       "TrustFolderInput": {
         "type": "object",
         "required": [
@@ -19526,6 +20787,19 @@
           }
         }
       },
+      "UpdateMemoryInput": {
+        "type": "object",
+        "description": "Edit a memory item's text (`PATCH /v1/memory/{id}`).",
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "UsageSummary": {
         "type": "object",
         "description": "`GET /v1/usage`.",
@@ -19627,6 +20901,63 @@
           "unavailable",
           "closed"
         ]
+      },
+      "VoiceConfigDto": {
+        "type": "object",
+        "description": "Dictation configuration (`GET /v1/voice`): non-secret fields only.",
+        "required": [
+          "stt_base_url",
+          "stt_model",
+          "stt_key_set"
+        ],
+        "properties": {
+          "stt_base_url": {
+            "type": "string",
+            "description": "Base URL of the OpenAI-compatible transcription service (without `/audio/transcriptions`)."
+          },
+          "stt_key_set": {
+            "type": "boolean",
+            "description": "Whether an API key is stored (never returned)."
+          },
+          "stt_model": {
+            "type": "string",
+            "description": "Model name sent with each request."
+          }
+        }
+      },
+      "VoiceConfigInput": {
+        "type": "object",
+        "description": "Body of `PUT /v1/voice`; omitted fields keep their value.",
+        "properties": {
+          "clear_stt_key": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Remove the stored key."
+          },
+          "stt_base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`https://...`, or `http://` for a loopback server only."
+          },
+          "stt_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "API key (**write-only**: stored in the secret store, never returned or logged)."
+          },
+          "stt_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model name."
+          }
+        }
       },
       "WebSearchConfigDto": {
         "type": "object",
@@ -19846,31 +21177,49 @@
   },
   "tags": [
     {
-      "name": "view"
-    },
-    {
-      "name": "meta"
-    },
-    {
-      "name": "bots"
-    },
-    {
-      "name": "chats"
+      "name": "admin"
     },
     {
       "name": "approvals"
     },
     {
-      "name": "runs"
+      "name": "bots"
     },
     {
-      "name": "usage"
+      "name": "channels"
+    },
+    {
+      "name": "chats"
+    },
+    {
+      "name": "composio"
+    },
+    {
+      "name": "control"
+    },
+    {
+      "name": "doctor"
+    },
+    {
+      "name": "email"
     },
     {
       "name": "events"
     },
     {
-      "name": "control"
+      "name": "host"
+    },
+    {
+      "name": "mcp"
+    },
+    {
+      "name": "mcp-server"
+    },
+    {
+      "name": "memory"
+    },
+    {
+      "name": "meta"
     },
     {
       "name": "policy"
@@ -19879,40 +21228,28 @@
       "name": "providers"
     },
     {
+      "name": "runs"
+    },
+    {
       "name": "schedules"
-    },
-    {
-      "name": "channels"
-    },
-    {
-      "name": "host"
-    },
-    {
-      "name": "admin"
-    },
-    {
-      "name": "mcp"
     },
     {
       "name": "secrets"
     },
     {
-      "name": "email"
-    },
-    {
-      "name": "composio"
-    },
-    {
-      "name": "web"
-    },
-    {
       "name": "skills"
     },
     {
-      "name": "doctor"
+      "name": "usage"
     },
     {
-      "name": "mcp-server"
+      "name": "view"
+    },
+    {
+      "name": "voice"
+    },
+    {
+      "name": "web"
     }
   ]
 }

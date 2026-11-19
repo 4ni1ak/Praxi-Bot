@@ -29,6 +29,7 @@ const FAMILIES: &[(&[&str], &str)] = &[
     (&["script_"], "scripts"),
     (&["web_"], "web search and page fetch"),
     (&["email_"], "e-mail"),
+    (&["ha_"], "Home Assistant (smart home)"),
     (&["calendar_"], "calendar (events)"),
     (&["docx_", "xlsx_", "pdf_"], "documents (Word, Excel, PDF)"),
     (&["knowledge_"], "knowledge search"),

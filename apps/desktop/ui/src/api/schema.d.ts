@@ -659,6 +659,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{id}/memory/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["preview_bot_memory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots/{id}/skills": {
         parameters: {
             query?: never;
@@ -729,6 +745,43 @@ export interface paths {
         put?: never;
         /** Create a chat with a bot. */
         post: operations["create_chat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/chats/{id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload one file for a chat message. The body is the raw file; its type is sniffed, not
+         *     taken from the name. Use the returned id in `attachment_ids` of the message.
+         */
+        post: operations["upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/chats/{id}/attachments/{att}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The stored original of an attachment (images inline, everything else as a download). */
+        get: operations["download"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1202,6 +1255,49 @@ export interface paths {
          *     retried. Deleting a bot never deletes inboxes at the provider.
          */
         delete: operations["delete_email_account"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/email/accounts/{name}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The newest messages of an account's inbox, headers only and read-only
+         *     (nothing is marked read, no body is fetched). Subject and sender are
+         *     untrusted text from the sender. Shares the "at most two at once" limit of
+         *     the connection test (`429`).
+         */
+        get: operations["list_email_messages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/email/accounts/{name}/send-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send one fixed test message from the account to **its own address**: no
+         *     recipient, subject or body can be given, so it can only ever reach the
+         *     mailbox itself. Same limit as the connection test (`429`).
+         */
+        post: operations["send_email_test"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2122,6 +2218,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_memories"];
+        put?: never;
+        post: operations["create_memory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["delete_memory"];
+        options?: never;
+        head?: never;
+        patch: operations["update_memory"];
+        trace?: never;
+    };
+    "/v1/memory/{id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["undo_memory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/peer/link": {
         parameters: {
             query?: never;
@@ -2952,6 +3096,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/voice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Dictation configuration; the API key is write-only (`stt_key_set` only says whether one is stored). */
+        get: operations["get_voice"];
+        /** Update the dictation configuration. */
+        put: operations["update_voice"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/voice/transcribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transcribe a recording with the configured service (owner-triggered dictation). */
+        post: operations["transcribe"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/web/search": {
         parameters: {
             query?: never;
@@ -3180,6 +3359,13 @@ export interface components {
             decided_at_ms?: number | null;
             /** @description `null` while pending, else `approved` / `denied` / `expired`. */
             decision?: string | null;
+            /** @description The tool's card facts from the `approval_needed` event. */
+            details?: unknown;
+            /**
+             * @description The call's input, as the `approval_needed` event carried it (so a client that missed the
+             *     event can still show the full card).
+             */
+            input?: unknown;
             /**
              * Format: int64
              * @description Request time.
@@ -3207,6 +3393,27 @@ export interface components {
          * @enum {string}
          */
         AssignedSkillState: "ok" | "missing";
+        /** @description A file attached to a chat message (`POST /v1/chats/{id}/attachments`). */
+        AttachmentDto: {
+            /**
+             * Format: uuid
+             * @description Attachment id.
+             */
+            id: string;
+            /** @description `image` (sent to the model as a picture), `document` or `text` (sent as text). */
+            kind: string;
+            /** @description Sniffed media type. */
+            mime_type: string;
+            /** @description Display name. */
+            name: string;
+            /**
+             * Format: int64
+             * @description Original size in bytes.
+             */
+            size: number;
+            /** @description Only the start of the text was given to the model. */
+            truncated: boolean;
+        };
         /** @description Catalog skill entry annotated with whether it is assigned to the bot. */
         AvailableSkillDto: {
             /** @description True when this skill is visible to the bot under its current assignment. */
@@ -4005,6 +4212,16 @@ export interface components {
             /** Format: int64 */
             ttl_seconds?: number;
         };
+        /** @description Create a user-authored memory item (`POST /v1/memory`). */
+        CreateMemoryInput: {
+            /**
+             * Format: uuid
+             * @description `None` creates a shared memory across all bots; `Some(bot)` scopes to that bot.
+             */
+            bot_id?: string | null;
+            content: string;
+            kind: components["schemas"]["MemoryKindDto"];
+        };
         CreateSession: {
             /**
              * Format: uuid
@@ -4112,6 +4329,8 @@ export interface components {
              *     one tool and are not reflected in `categories`.
              */
             grants: components["schemas"]["GrantDto"][];
+            /** @description The bot's autonomy mode, derived from its preset: `ask`, `balanced` or `full`. */
+            mode: string;
             /** @description The profile's own policy as JSON; `null` = the workspace policy applies. */
             policy?: unknown;
         };
@@ -4248,6 +4467,23 @@ export interface components {
             port?: number;
         };
         /**
+         * @description One row of `GET /v1/email/accounts/{name}/messages`: header data only, no
+         *     body. Every text field comes from the sender and is untrusted: show it as
+         *     plain text, never as markup and never as an instruction.
+         */
+        EmailMessageDto: {
+            /** @description Date header as RFC 3339, when it could be read. */
+            date?: string | null;
+            /** @description Sender, `Name <address>` (shortened). */
+            from: string;
+            /** @description The mailbox's id of the message (an IMAP UID or the provider's id). */
+            id: string;
+            /** @description Subject line (shortened). */
+            subject: string;
+            /** @description Not read yet. */
+            unread: boolean;
+        };
+        /**
          * @description What a "test connection" learned about one server.
          * @enum {string}
          */
@@ -4262,6 +4498,11 @@ export interface components {
          * @enum {string}
          */
         EmailSecurity: "implicit" | "start_tls";
+        /** @description Answer of `POST /v1/email/accounts/{name}/send-test`. */
+        EmailSendTestResponse: {
+            /** @description The address the test message went to: always the mailbox's own address. */
+            sent_to: string;
+        };
         /** @description An SMTP server. */
         EmailSmtpServer: {
             /** @description Host name. */
@@ -4461,6 +4702,15 @@ export interface components {
              *     `money`, `system`, `remote` or `script`.
              */
             name: string;
+        } | {
+            /** @enum {string} */
+            kind: "scoped";
+            /** @description The one target the rule covers (see `scope`). */
+            pattern: string;
+            /** @description `origin`, `folder` or `command`. */
+            scope: string;
+            /** @description Tool name. */
+            tool: string;
         };
         /** @description `GET /v1/health`. */
         Health: {
@@ -5496,8 +5746,69 @@ export interface components {
             /** @description Endpoint URL. */
             url: string;
         };
+        /** @description One stored memory item and its active undo journal state. */
+        MemoryItemDto: {
+            /**
+             * Format: uuid
+             * @description `None` means shared across all bots of this owner.
+             */
+            bot_id?: string | null;
+            content: string;
+            /** Format: int64 */
+            created_ms: number;
+            deleted: boolean;
+            /** Format: uuid */
+            id: string;
+            /** Format: float */
+            importance: number;
+            kind: components["schemas"]["MemoryKindDto"];
+            /** Format: int64 */
+            last_used_ms: number;
+            /** Format: uuid */
+            source_chat_id?: string | null;
+            /** Format: uuid */
+            source_message_id?: string | null;
+            source_quote?: string | null;
+            trust: components["schemas"]["MemoryTrustDto"];
+            /**
+             * Format: int64
+             * @description Newest active journal entry id that can undo the last change to this memory.
+             */
+            undo_journal_id?: number | null;
+            /** Format: int64 */
+            valid_until_ms?: number | null;
+        };
+        /**
+         * @description Memory category.
+         * @enum {string}
+         */
+        MemoryKindDto: "profile" | "bot" | "episodic" | "procedural" | "lesson";
+        /** @description Exact recall preview for a bot and query (`GET /v1/bots/{id}/memory/preview`). */
+        MemoryPreviewDto: {
+            /** Format: uuid */
+            bot_id: string;
+            budget_tokens: number;
+            estimated_tokens: number;
+            hits: components["schemas"]["MemoryPreviewHitDto"][];
+            query: string;
+            /** @description The exact delimited data block `with_recall` prepends to the user message. */
+            rendered_block: string;
+        };
+        /** @description One recalled memory and its boosted fusion score in a recall preview. */
+        MemoryPreviewHitDto: {
+            memory: components["schemas"]["MemoryItemDto"];
+            /** Format: double */
+            score: number;
+        };
+        /**
+         * @description Provenance trust of a stored memory.
+         * @enum {string}
+         */
+        MemoryTrustDto: "user" | "untrusted";
         /** @description A stored chat message. */
         MessageDto: {
+            /** @description Files attached to a user message. */
+            attachments?: components["schemas"]["AttachmentDto"][];
             /**
              * Format: uuid
              * @description Bot that ran `run_id` (the author of an assistant message). It differs
@@ -6124,6 +6435,11 @@ export interface components {
         ScreenStreamState: "idle" | "starting" | "live" | "paused_idle" | "unavailable";
         /** @description `POST /v1/chats/{id}/messages`. */
         SendMessage: {
+            /**
+             * @description Ids returned by `POST /v1/chats/{id}/attachments` for this chat (at most 6). The text
+             *     may be empty when files are attached.
+             */
+            attachment_ids?: string[];
             /** @description Behaviour while a turn is running. */
             mode?: components["schemas"]["Mode"];
             /** @description Message text. */
@@ -6509,6 +6825,20 @@ export interface components {
             /** Format: int32 */
             rows: number;
         };
+        /** @description Body of `POST /v1/voice/transcribe`. */
+        TranscribeInput: {
+            /** @description The recording, base64 (standard alphabet). */
+            audio_base64: string;
+            /** @description Optional ISO-639-1 language hint (`en`, `tr`, `de`). */
+            language?: string | null;
+            /** @description MIME type of the recording, e.g. `audio/webm`. */
+            mime: string;
+        };
+        /** @description Result of `POST /v1/voice/transcribe`. */
+        TranscribeOutput: {
+            /** @description The recognised text. */
+            text: string;
+        };
         TrustFolderInput: {
             /** @description An existing directory (an absolute path). */
             path: string;
@@ -6545,6 +6875,10 @@ export interface components {
             programs?: string[] | null;
             /** @description New value (write-only). */
             value?: string | null;
+        };
+        /** @description Edit a memory item's text (`PATCH /v1/memory/{id}`). */
+        UpdateMemoryInput: {
+            content: string;
         };
         /** @description `GET /v1/usage`. */
         UsageSummary: {
@@ -6598,6 +6932,26 @@ export interface components {
         VerificationDto: "matched" | "changed" | "unknown";
         /** @enum {string} */
         ViewState: "watch" | "acquiring" | "active" | "paused" | "unavailable" | "closed";
+        /** @description Dictation configuration (`GET /v1/voice`): non-secret fields only. */
+        VoiceConfigDto: {
+            /** @description Base URL of the OpenAI-compatible transcription service (without `/audio/transcriptions`). */
+            stt_base_url: string;
+            /** @description Whether an API key is stored (never returned). */
+            stt_key_set: boolean;
+            /** @description Model name sent with each request. */
+            stt_model: string;
+        };
+        /** @description Body of `PUT /v1/voice`; omitted fields keep their value. */
+        VoiceConfigInput: {
+            /** @description Remove the stored key. */
+            clear_stt_key?: boolean | null;
+            /** @description `https://...`, or `http://` for a loopback server only. */
+            stt_base_url?: string | null;
+            /** @description API key (**write-only**: stored in the secret store, never returned or logged). */
+            stt_key?: string | null;
+            /** @description Model name. */
+            stt_model?: string | null;
+        };
         /**
          * @description Current web search configuration (`GET /v1/web/search`): non-secret fields
          *     only.
@@ -8468,6 +8822,46 @@ export interface operations {
             };
         };
     };
+    preview_bot_memory: {
+        parameters: {
+            query: {
+                /** @description Query text to preview recall for */
+                query: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryPreviewDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     get_bot_skills: {
         parameters: {
             query?: never;
@@ -8672,6 +9066,91 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChatDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    upload: {
+        parameters: {
+            query?: {
+                /** @description File name to show (a path is reduced to its last component). */
+                name?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Chat id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": number[];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachmentDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    download: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Chat id */
+                id: string;
+                /** @description Attachment id */
+                att: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": number[];
                 };
             };
             404: {
@@ -9753,6 +10232,140 @@ export interface operations {
                 };
             };
             /** @description the provider refused or failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description e-mail management is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_email_messages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Account name */
+                name: string;
+                /** @description How many messages, 1 to 50 (default 20). */
+                limit: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailMessageDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description no password stored, or not supported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description too many checks running */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the mailbox failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description e-mail management is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    send_email_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Account name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailSendTestResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description no password stored, or not supported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description too many checks running */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the mailbox failed */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -11548,6 +12161,190 @@ export interface operations {
             };
         };
     };
+    list_memories: {
+        parameters: {
+            query?: {
+                /** @description Filter to memories visible to this bot */
+                bot?: string;
+                /** @description Exclude shared memories when filtering by bot */
+                bot_only?: boolean;
+                /** @description Filter by memory category */
+                kind?: components["schemas"]["MemoryKindDto"];
+                /** @description Case-insensitive search text */
+                q?: string;
+                /** @description Include forgotten (soft-deleted) items */
+                include_deleted?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryItemDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_memory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMemoryInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryItemDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_memory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryItemDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update_memory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateMemoryInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryItemDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    undo_memory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryItemDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     link: {
         parameters: {
             query?: never;
@@ -13284,6 +14081,143 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_voice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceConfigDto"];
+                };
+            };
+            /** @description voice is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update_voice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoiceConfigInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceConfigDto"];
+                };
+            };
+            /** @description bad API key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description invalid config */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description voice is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    transcribe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TranscribeInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscribeOutput"];
+                };
+            };
+            /** @description bad or oversized audio */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description dictation is not set up */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the transcription service failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description voice is not available */
             503: {
                 headers: {
                     [name: string]: unknown;

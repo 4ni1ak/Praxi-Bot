@@ -313,6 +313,18 @@ fn build_agent_with_skills(
         std::env::var("BOT_BROWSER_IDLE_SECONDS").ok().as_deref(),
     );
     tools.browser_settings.idle_timeout = idle;
+    let approval_timeout = approval_timeout(
+        std::env::var("BOT_APPROVAL_TIMEOUT_SECONDS")
+            .ok()
+            .as_deref(),
+    );
+    let memory = match agent_core::MemoryConfig::open_default(storage.data_dir()) {
+        Ok(cfg) => Some(cfg),
+        Err(e) => {
+            eprintln!("warning: memory store unavailable: {e}");
+            None
+        }
+    };
     // The discovery threshold is `LoopConfig`'s default (40).
     Ok(AgentLoop::new(
         Arc::clone(storage),
@@ -321,7 +333,8 @@ fn build_agent_with_skills(
         LoopConfig {
             redactor: Some(redactor),
             max_computer_runs,
-            memory: agent_core::MemoryConfig::open_default(storage.data_dir()),
+            approval_timeout,
+            memory,
             knowledge_decider: Some(Arc::new(agent_core::HeuristicKnowledgeDecider::new(
                 Arc::clone(storage),
             ))),
@@ -352,6 +365,13 @@ struct ComputerLimits {
     max_computer_runs: Option<usize>,
     browser_idle_seconds: Option<u64>,
 }
+/// How long an unanswered approval or question waits before it expires
+/// (`BOT_APPROVAL_TIMEOUT_SECONDS`; `0` = no limit, unset or invalid = the default).
+fn approval_timeout(env: Option<&str>) -> Duration {
+    env.and_then(|n| n.trim().parse::<u64>().ok())
+        .map_or(agent_core::DEFAULT_APPROVAL_TIMEOUT, Duration::from_secs)
+}
+
 fn computer_limits(
     host: &str,
     env_runs: Option<&str>,
@@ -1005,6 +1025,7 @@ pub fn serve(
     let composio_tools = mcp_tools.clone();
     let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
         .map(|(host, _)| host);
+    crate::homeassistant_host::start_homeassistant(data_dir, &mcp_tools, telegram_store.as_ref());
     crate::calendar_host::start_calendar(data_dir, &mcp_tools, telegram_store.as_ref());
     register_web(data_dir, port, &mcp_tools, telegram_store.as_ref());
     step("web tools registered");
@@ -1231,6 +1252,11 @@ pub fn serve(
             state.set_email(email as Arc<dyn daemon_api::EmailControl>);
         }
         state.set_web(Arc::new(web_host) as Arc<dyn daemon_api::WebControl>);
+        state.set_voice(Arc::new(crate::voice_host::VoiceHost::new(
+            data_dir,
+            port,
+            telegram_store.clone(),
+        )) as Arc<dyn daemon_api::VoiceControl>);
         if let Some(store) = telegram_store.clone() {
             state.set_secret_store(store);
         }
@@ -1259,18 +1285,32 @@ pub fn serve(
             state.add_channel(t.clone());
             t
         });
+        // The leadership check waits (up to its deadline) for paired peers'
+        // heartbeats; the API must not wait for it. Until it finishes the
+        // components stay closed (`verifying`), so serving first is safe.
         if state.leader().config().runs_components() {
-            state.leader().start().await?;
-        }
-        if let Some(t) = &telegram {
-            use daemon_api::ChannelControl;
-            let i = t.info();
-            if i.running {
-                eprintln!(
-                    "telegram channel: running ({} paired user(s))",
-                    i.paired_users
-                );
-            }
+            let leader = state.leader().clone();
+            let telegram = telegram.clone();
+            tokio::spawn(async move {
+                let began = std::time::Instant::now();
+                match leader.start().await {
+                    Ok(()) => eprintln!(
+                        "startup: leader components started in background (+{} ms)",
+                        began.elapsed().as_millis()
+                    ),
+                    Err(e) => eprintln!("warning: leader components did not start: {e}"),
+                }
+                if let Some(t) = &telegram {
+                    use daemon_api::ChannelControl;
+                    let i = t.info();
+                    if i.running {
+                        eprintln!(
+                            "telegram channel: running ({} paired user(s))",
+                            i.paired_users
+                        );
+                    }
+                }
+            });
         }
         step("listening");
         if json {
@@ -1434,6 +1474,17 @@ paths:
         for tool in imported {
             registry.register(tool);
         }
+    }
+
+    #[test]
+    fn approval_timeout_reads_the_environment() {
+        assert_eq!(approval_timeout(None), agent_core::DEFAULT_APPROVAL_TIMEOUT);
+        assert_eq!(
+            approval_timeout(Some("bad")),
+            agent_core::DEFAULT_APPROVAL_TIMEOUT
+        );
+        assert_eq!(approval_timeout(Some("90")), Duration::from_secs(90));
+        assert_eq!(approval_timeout(Some("0")), Duration::ZERO);
     }
 
     #[test]

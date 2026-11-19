@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use agent_core::{
     ApprovalScope, BotProfile, Delivery, EffectivePolicy, Grant, GrantTarget, MessageMode,
-    PolicyDecision,
+    PolicyDecision, Scope as RuleScope, ScopeKind,
 };
 use axum::extract::{FromRequest, Path, Query, Request, State};
 use axum::http::StatusCode;
@@ -90,6 +90,11 @@ fn grant_dto(g: &Grant) -> GrantDto {
             GrantTarget::Category(c) => GrantTargetDto::Category {
                 name: category_name(*c),
             },
+            GrantTarget::Scoped { tool, scope } => GrantTargetDto::Scoped {
+                tool: tool.clone(),
+                scope: scope.kind.as_str().to_owned(),
+                pattern: scope.pattern.clone(),
+            },
         },
         granted_at_ms: g.granted_at_ms,
         inert: g.inert,
@@ -100,6 +105,19 @@ fn grant_target(t: GrantTargetDto) -> Result<GrantTarget, ApiError> {
     match t {
         GrantTargetDto::Tool { name } if !name.trim().is_empty() => Ok(GrantTarget::Tool(name)),
         GrantTargetDto::Tool { .. } => Err(ApiError::bad_request("tool name must not be empty")),
+        GrantTargetDto::Scoped {
+            tool,
+            scope,
+            pattern,
+        } => match ScopeKind::parse(&scope) {
+            Some(kind) if !tool.trim().is_empty() && !pattern.is_empty() => {
+                Ok(GrantTarget::Scoped {
+                    tool,
+                    scope: RuleScope { kind, pattern },
+                })
+            }
+            _ => Err(ApiError::bad_request("invalid scoped rule")),
+        },
         GrantTargetDto::Category { name } => {
             match serde_json::from_value::<PermissionCategory>(Value::String(name.clone())) {
                 // `meta` is always allowed; a grant on it would mean nothing.
@@ -134,6 +152,7 @@ fn effective_policy_dto(e: EffectivePolicy) -> EffectivePolicyDto {
                 )
             })
             .collect(),
+        mode: e.mode.as_str().to_owned(),
         grants: e.grants.iter().map(grant_dto).collect(),
     }
 }
@@ -192,6 +211,8 @@ fn run_approvals(s: &AppState, run: &storage::Run) -> Result<Vec<ApprovalDto>, A
                 run_id: run.id.0,
                 tool_name: n.tool_name,
                 summary: n.summary,
+                input: Some(n.input),
+                details: n.details,
                 decision: (!waiting).then(|| "expired".to_owned()),
                 requested_at_ms: ms(env.ts_ms),
                 decided_at_ms: None,
@@ -201,11 +222,12 @@ fn run_approvals(s: &AppState, run: &storage::Run) -> Result<Vec<ApprovalDto>, A
             _ => {}
         }
     }
-    // Only the newest approval of a waiting run can still be pending.
+    // A card is pending only while its wait is parked in the loop. One that is not (its tool timed
+    // out, the wait was dropped, the daemon restarted) has expired, whatever the run's state says;
+    // several cards of one run (parallel permission requests) can be pending at once.
     if waiting {
-        let n = out.len();
-        for (i, a) in out.iter_mut().enumerate() {
-            if a.decision.is_none() && i + 1 != n {
+        for a in &mut out {
+            if a.decision.is_none() && !s.agent().is_pending(ToolCallId(a.call_id)) {
                 a.decision = Some("expired".to_owned());
             }
         }
@@ -954,6 +976,19 @@ pub(crate) async fn list_messages(
             .then(|| s.storage().message_source(m.id).ok())
             .flatten()
             .filter(|v| !v.is_empty());
+        let (content, attachments) = if m.role == "user" {
+            let (text, ids) = agent_core::attachments::split_marker(&m.content);
+            let dtos = ids
+                .into_iter()
+                .filter_map(|a| {
+                    agent_core::attachments::meta(s.storage().data_dir(), chat.id, a).ok()
+                })
+                .map(|a| crate::dto::AttachmentDto::from(&a))
+                .collect::<Vec<_>>();
+            (text.to_owned(), dtos)
+        } else {
+            (m.content, Vec::new())
+        };
         out.push(MessageDto {
             id: m.id,
             chat_id: m.chat_id.0,
@@ -962,7 +997,8 @@ pub(crate) async fn list_messages(
             role: m.role,
             created_at_ms: m.created_at_ms,
             source,
-            content: m.content,
+            content,
+            attachments,
         });
     }
     Ok(Json(out))
@@ -984,9 +1020,19 @@ pub(crate) async fn send_message(
     ApiJson(input): ApiJson<SendMessage>,
 ) -> Result<(StatusCode, Json<SendResponse>), ApiError> {
     let chat = s.chat_of_user(ChatId(id(&cid)?))?;
-    if input.text.trim().is_empty() {
+    if input.text.trim().is_empty() && input.attachment_ids.is_empty() {
         return Err(ApiError::bad_request("text must not be empty"));
     }
+    if input.attachment_ids.len() > agent_core::attachments::MAX_PER_MESSAGE {
+        return Err(ApiError::bad_request(format!(
+            "at most {} attachments per message",
+            agent_core::attachments::MAX_PER_MESSAGE
+        )));
+    }
+    for att in &input.attachment_ids {
+        agent_core::attachments::meta(s.storage().data_dir(), chat.id, *att)?;
+    }
+    let text = agent_core::attachments::with_marker(&input.text, &input.attachment_ids);
     let mode = match input.mode {
         Mode::Steer => MessageMode::Steer,
         Mode::Queue => MessageMode::Queue,
@@ -1004,16 +1050,15 @@ pub(crate) async fn send_message(
     } else {
         "local_api"
     };
-    let (delivery, run_id) =
-        match s
-            .agent()
-            .send_user_message_from(chat.id, &input.text, mode, source)?
-        {
-            Delivery::NewTurn(r) => (DeliveryKind::NewTurn, Some(r.0)),
-            Delivery::Steered(r) => (DeliveryKind::Steered, Some(r.0)),
-            Delivery::Queued => (DeliveryKind::Queued, None),
-            Delivery::Stopped(r) => (DeliveryKind::Stopped, Some(r.0)),
-        };
+    let (delivery, run_id) = match s
+        .agent()
+        .send_user_message_from(chat.id, &text, mode, source)?
+    {
+        Delivery::NewTurn(r) => (DeliveryKind::NewTurn, Some(r.0)),
+        Delivery::Steered(r) => (DeliveryKind::Steered, Some(r.0)),
+        Delivery::Queued => (DeliveryKind::Queued, None),
+        Delivery::Stopped(r) => (DeliveryKind::Stopped, Some(r.0)),
+    };
     Ok((
         StatusCode::ACCEPTED,
         Json(SendResponse { delivery, run_id }),
