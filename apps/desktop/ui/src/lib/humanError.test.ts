@@ -183,6 +183,15 @@ test("takeover and pause failures name their real reason, never the generic sent
   await i18n.changeLanguage("en");
 });
 
+test("concrete refusal reasons apply only to host refusals or conflict/unavailable answers", async () => {
+  await i18n.changeLanguage("en");
+  // The same words in a plain tool error or an unrelated code must not be rewritten.
+  assert.notEqual(layer.humanError({ message: "the executor is busy; try again" }).code, "hostBusy");
+  assert.notEqual(layer.humanError({ status: 500, code: "internal", message: "no input backend" }).code, "noInputBackend");
+  assert.equal(layer.humanError({ status: 409, code: "conflict", message: "no input backend" }).code, "noInputBackend");
+  assert.equal(layer.humanError({ status: 403, code: "forbidden", host: "h", message: "no input backend" }).code, "host_refusal");
+});
+
 test("the live-view error line falls back to the humanized message, not the generic text", async () => {
   const mod = (await server.ssrLoadModule("/src/lib/liveViewError.ts")) as typeof import("./liveViewError.ts");
   await i18n.changeLanguage("en");

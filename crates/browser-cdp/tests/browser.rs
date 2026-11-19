@@ -321,7 +321,7 @@ async fn field_that_turns_into_a_password_after_the_check_is_refused() {
     let b = Browser::launch(LaunchOptions::default()).await.unwrap();
     let p = open(
         &b,
-        r#"<html><body><label>Note <input id=n type=text></label></body></html>"#,
+        r"<html><body><label>Note <input id=n type=text></label></body></html>",
     )
     .await;
     let snap = p.snapshot(&SnapshotOptions::default()).await.unwrap();

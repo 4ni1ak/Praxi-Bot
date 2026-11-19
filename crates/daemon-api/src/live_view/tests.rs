@@ -1600,25 +1600,6 @@ async fn host_admin_desktop_clears_a_pause_but_other_peers_and_phones_stay_refus
     assert!(t.state.hub().latched().is_none());
 }
 #[tokio::test]
-async fn host_admin_recovering_its_own_takeover_keeps_its_input_grant() {
-    use axum::extract::State;
-    let t = Test::new();
-    let (_id, _owned, _body) = t.active(Some("adm")).await;
-    // A real admin desktop has no explicit entry: the admin default applies.
-    let live = Arc::clone(t.state.live_view());
-    live.privileges.lock().remove("peer:adm");
-    let admin = view_actor("adm", true);
-    assert!(live.allowed(&admin, true));
-    local_recover(State(t.state.clone()), axum::Extension(admin.clone()))
-        .await
-        .unwrap();
-    assert!(t.state.hub().latched().is_none());
-    assert!(
-        live.allowed(&admin, true),
-        "recovering its own takeover must not revoke the admin's input"
-    );
-}
-#[tokio::test]
 async fn reconciling_an_unpaired_owner_acts_once_not_every_tick() {
     let t = Test::new();
     let (_id, _owned, _body) = t.active(Some("alice")).await;
@@ -4870,4 +4851,39 @@ async fn the_admin_desktop_keeps_its_screen_input_after_it_clears_its_own_pause(
     assert!(t.state.live_view().allowed(&admin, true));
     let rows = audit_count(&t, "takeover.recovered");
     assert_eq!(rows, 1);
+}
+
+#[tokio::test]
+async fn host_admin_recover_audits_the_cleared_reason_and_owner_and_revokes_another_peers_input() {
+    use axum::extract::State;
+    let t = Test::new();
+    let (_id, _owned, _body) = t.active(Some("alice")).await;
+    grant(&t, "alice", true, true).await;
+    let alice = view_actor("alice", false);
+    assert!(t.state.live_view().allowed(&alice, true));
+    // The admin desktop clears ANOTHER peer's takeover: that peer loses input.
+    let _ = local_recover(
+        State(t.state.clone()),
+        axum::Extension(view_actor("adm", true)),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("recover refused"));
+    assert!(
+        !t.state.live_view().allowed(&alice, true),
+        "clearing someone else's takeover must still revoke that peer's input"
+    );
+    // The row tells an admin clearing a peer's stop apart from clearing its own pause.
+    let rows: Vec<_> = t
+        .state
+        .storage()
+        .list_audit(t.state.user_id())
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.action == "takeover.recovered")
+        .collect();
+    assert_eq!(rows.len(), 1);
+    let d = &rows[0].detail;
+    assert_eq!(d["by"], json!("host_admin"));
+    assert_eq!(d["previous_owner"], json!("peer:alice"));
+    assert!(d.get("cleared_reason").is_some(), "{d:?}");
 }

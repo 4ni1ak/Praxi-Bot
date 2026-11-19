@@ -4198,7 +4198,7 @@
         "tags": [
           "control"
         ],
-        "summary": "`POST /v1/control/recover`: the local user, or the paired admin desktop of this host that\nstill holds screen input (never a phone or a non-admin peer), clears a takeover latch (also\none restored after a restart) without a registered target or view session. The bot resumes\nwith a fresh observation. A host admin that clears its own takeover keeps its input grant;\na different owner loses theirs, as with any local override.",
+        "summary": "`POST /v1/control/recover`: the local user, or the paired admin desktop of this host\n(never a phone or a non-admin peer), clears a takeover latch (also one restored after a\nrestart) without a registered target or view session. The bot resumes with a fresh\nobservation. The audit row names who cleared it, the latch's reason and the previous owner.",
         "operationId": "local_recover",
         "responses": {
           "200": {
