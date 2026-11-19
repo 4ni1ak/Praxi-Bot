@@ -958,18 +958,16 @@ impl Shared {
             if limit.is_zero() {
                 return Waited::Verdict(rx.await);
             }
-            return match tokio::time::timeout(limit, rx).await {
-                Ok(v) => Waited::Verdict(v),
-                Err(_) => {
-                    self.audit(
-                        ctx,
-                        "system",
-                        "approval.expired",
-                        &json!({ "timeout_secs": limit.as_secs() }),
-                    );
-                    Waited::Expired
-                }
-            };
+            if let Ok(v) = tokio::time::timeout(limit, rx).await {
+                return Waited::Verdict(v);
+            }
+            self.audit(
+                ctx,
+                "system",
+                "approval.expired",
+                &json!({ "timeout_secs": limit.as_secs() }),
+            );
+            return Waited::Expired;
         }
         let limit = self.cfg.schedule_approval_timeout;
         if let Ok(v) = tokio::time::timeout(limit, rx).await {

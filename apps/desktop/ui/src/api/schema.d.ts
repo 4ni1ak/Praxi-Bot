@@ -3163,6 +3163,13 @@ export interface components {
             decided_at_ms?: number | null;
             /** @description `null` while pending, else `approved` / `denied` / `expired`. */
             decision?: string | null;
+            /** @description The tool's card facts from the `approval_needed` event. */
+            details?: unknown;
+            /**
+             * @description The call's input, as the `approval_needed` event carried it (so a client that missed the
+             *     event can still show the full card).
+             */
+            input?: unknown;
             /**
              * Format: int64
              * @description Request time.
