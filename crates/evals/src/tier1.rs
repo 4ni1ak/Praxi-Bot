@@ -143,14 +143,24 @@ fn request_failures(e: &RequestExpect, requests: &[ChatRequest], out: &mut Vec<S
         ));
         return;
     };
+    // The loop's own action-ledger note (a trailing loop-labelled user message) is not
+    // part of the conversation a scenario scripts, so expectations do not see it.
+    let messages: Vec<&provider_catalog::Message> = req
+        .messages
+        .iter()
+        .filter(|m| {
+            !m.content
+                .as_str()
+                .is_some_and(|t| t.starts_with("[action ledger"))
+        })
+        .collect();
     if let Some(roles) = &e.roles {
-        let got: Vec<&str> = req.messages.iter().map(|m| role_name(&m.role)).collect();
+        let got: Vec<&str> = messages.iter().map(|m| role_name(&m.role)).collect();
         if got != *roles {
             out.push(format!("request {at}: roles {got:?}, expected {roles:?}"));
         }
     }
-    let tool_msgs: Vec<String> = req
-        .messages
+    let tool_msgs: Vec<String> = messages
         .iter()
         .filter(|m| m.role == MessageRole::Tool)
         .map(|m| m.content.as_str().unwrap_or_default().to_owned())
@@ -174,8 +184,7 @@ fn request_failures(e: &RequestExpect, requests: &[ChatRequest], out: &mut Vec<S
         ));
     }
     if let Some(c) = &e.last_user_contains {
-        let last = req
-            .messages
+        let last = messages
             .iter()
             .rev()
             .find(|m| m.role == MessageRole::User)

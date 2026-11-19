@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { browserSteps, computerDetails, controlGrantDetails, egressDetails, payloadReviewComplete, formatFiring, scheduleDetails } from "./approvalDetails.ts";
+import { browserSteps, computerDetails, controlGrantDetails, egressDetails, formatFiring, memoryOffer, payloadReviewComplete, scheduleDetails } from "./approvalDetails.ts";
 
 test("a control grant block is parsed and its text is made plain", () => {
   const d = controlGrantDetails({
@@ -213,4 +213,15 @@ test("an egress card carries the immutable computer target as its own line", () 
   assert.equal(c.name, "Work PC: x");
   assert.ok(egressDetails(details));
   assert.equal(computerDetails({ kind: "egress" }), null);
+});
+
+test("a memory target is parsed, and a disguised or oversized one is not offered", () => {
+  assert.deepEqual(memoryOffer({ memory: { kind: "origin", pattern: "https://docs.rs:443" } }), {
+    kind: "origin",
+    pattern: "https://docs.rs:443"
+  });
+  assert.equal(memoryOffer({ memory: { kind: "folder", pattern: "src\u202e/x" } }), null);
+  assert.equal(memoryOffer({ memory: { kind: "tool", pattern: "x" } }), null);
+  assert.equal(memoryOffer({ memory: { kind: "command", pattern: "x".repeat(401) } }), null);
+  assert.equal(memoryOffer({ why: "policy" }), null);
 });

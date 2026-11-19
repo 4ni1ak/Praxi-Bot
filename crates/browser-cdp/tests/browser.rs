@@ -325,7 +325,7 @@ const BLOCKED: &str = r#"<html><body>
 <label><input id=cb type=checkbox onchange="window.c=(window.c||0)+1"> Agree</label>
 <label><input id=veto type=checkbox onchange="window.v=(window.v||0)+1; this.checked=false"> Veto</label>
 <label><input id=r1 type=radio name=g> One</label>
-<input id=short maxlength=3 aria-label="Short">
+<input id=short maxlength=3 oninput="this.value=this.value.slice(0,3)" aria-label="Short">
 </body></html>"#;
 
 async fn counter(p: &Page, expr: &str) -> i64 {
@@ -439,7 +439,9 @@ async fn fill_reads_the_value_back_without_echoing_it() {
     let r = p.fill(&short, "tooLongSecret").await.unwrap();
     assert!(!r.ok);
     let err = r.error.unwrap();
-    assert!(err.contains("characters instead of the"), "{err}");
+    // The value is set through the field itself; a page that rewrites it is reported
+    // without echoing what was typed.
+    assert!(err.contains("did not accept the value"), "{err}");
     assert!(
         !err.contains("tooLongSecret") && !err.contains("too"),
         "{err}"

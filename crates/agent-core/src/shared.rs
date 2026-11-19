@@ -2089,6 +2089,10 @@ pub(crate) struct ResultRec {
     /// before the field existed; those rows are not classified from their text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fact: Option<crate::taint::ExecFact>,
+    /// How the call ended (ok, error, timed out, denied, ...). Absent on rows
+    /// written before the field existed; the ledger classifies those itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<crate::ledger::Outcome>,
 }
 
 pub(crate) const STEP_USER: &str = "user_message";

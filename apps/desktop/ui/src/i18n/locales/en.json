@@ -136,6 +136,13 @@
       "grantTool": "Always allow {{name}}",
       "inertGrant": "Inactive: this rule is not tied to a computer and no longer applies.",
       "scopedAllow": "Allowed on {{scopes}}",
+      "grantScoped": "Always allow {{tool}} on {{target}}",
+      "mode": "Mode: {{mode}}",
+      "modes": {
+        "ask": "Ask",
+        "balanced": "Balanced",
+        "full": "Full"
+      },
       "revoke": "Revoke",
       "workspace": {
         "title": "Workspace default",
@@ -353,6 +360,22 @@
       "always": "Always",
       "deny": "Deny",
       "reasonPlaceholder": "Reason for denying (optional)",
+      "memory": {
+        "thisChat": "Allow {{target}} for this chat",
+        "always": "Always allow {{target}} for this bot",
+        "target": {
+          "origin": "the site {{value}}",
+          "folder": "files in {{value}}",
+          "command": "“{{value}}” commands"
+        }
+      },
+      "batch": {
+        "title": "{{count}} approvals needed",
+        "allowSelected": "Allow selected ({{count}})",
+        "denyAll": "Deny all",
+        "repeated": "×{{count}}",
+        "select": "Allow: {{name}}"
+      },
       "control": {
         "button": "This task: {{program}}",
         "offered": "Allow typing into {{program}} for this task only?",
@@ -1050,6 +1073,18 @@
       "terminal_gone": {
         "title": "The terminal session ended",
         "hint": "Open the terminal again."
+      },
+      "bad_voice_config": {
+        "title": "Dictation settings were not accepted",
+        "hint": "Check the transcription service address, model and key in Settings, then try again."
+      },
+      "voice_not_configured": {
+        "title": "Dictation is not set up",
+        "hint": "Add a transcription service in Settings to dictate messages."
+      },
+      "voice_upstream_failed": {
+        "title": "The transcription service did not answer",
+        "hint": "Your recording was not turned into text. Check the service and your key in Settings, then try again."
       },
       "provider_endpoint": {
         "title": "The provider endpoint could not be found",
@@ -3965,6 +4000,12 @@
     }
   },
   "voice": {
+    "bot": {
+      "title": "Voice for this bot",
+      "useGlobal": "Same as in Settings",
+      "preview": "Hello, this is my voice.",
+      "hint": "Applies to the read-aloud button for this bot, on this device."
+    },
     "speak": "Read aloud",
     "stop": "Stop reading",
     "codeOmitted": "(code omitted)",
@@ -3975,6 +4016,22 @@
     "online": "online",
     "speed": "Speed",
     "unsupported": "This system offers no speech voices.",
+    "dictate": "Dictate",
+    "dictateStop": "Stop and transcribe",
+    "micDenied": "The microphone is not available. Allow microphone access and try again.",
+    "notConfigured": "Dictation is not set up yet. Add a transcription service in Settings > General.",
+    "stt": {
+      "title": "Dictation service",
+      "description": "Where your recordings are transcribed: an OpenAI-compatible service (a cloud provider or a local whisper server).",
+      "url": "Service address",
+      "model": "Model",
+      "key": "API key",
+      "keyStored": "Key stored (type to replace)",
+      "save": "Save",
+      "saved": "Dictation settings saved",
+      "clearKey": "Remove key",
+      "privacy": "A recording is sent only when you press the microphone, and only to this address. The key stays in the secret store."
+    },
     "speakAuto": {
       "title": "Speak replies",
       "description": "Read each finished reply aloud automatically."

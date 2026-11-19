@@ -136,6 +136,13 @@
       "grantTool": "{{name}} immer erlauben",
       "inertGrant": "Inaktiv: Diese Regel ist an keinen Computer gebunden und gilt nicht mehr.",
       "scopedAllow": "Erlaubt auf {{scopes}}",
+      "grantScoped": "{{tool}} für {{target}} immer erlauben",
+      "mode": "Modus: {{mode}}",
+      "modes": {
+        "ask": "Fragen",
+        "balanced": "Ausgewogen",
+        "full": "Voll"
+      },
       "revoke": "Widerrufen",
       "workspace": {
         "title": "Arbeitsbereich-Standard",
@@ -349,6 +356,22 @@
       "always": "Immer",
       "deny": "Ablehnen",
       "reasonPlaceholder": "Grund für die Ablehnung (optional)",
+      "memory": {
+        "thisChat": "{{target}} für diesen Chat erlauben",
+        "always": "{{target}} für diesen Bot immer erlauben",
+        "target": {
+          "origin": "die Website {{value}}",
+          "folder": "Dateien in {{value}}",
+          "command": "„{{value}}“-Befehle"
+        }
+      },
+      "batch": {
+        "title": "{{count}} Genehmigungen nötig",
+        "allowSelected": "Auswahl erlauben ({{count}})",
+        "denyAll": "Alle ablehnen",
+        "repeated": "×{{count}}",
+        "select": "Erlauben: {{name}}"
+      },
       "control": {
         "button": "Diese Aufgabe: {{program}}",
         "offered": "Eingabe in {{program}} nur für diese Aufgabe erlauben?",
@@ -1053,6 +1076,18 @@
       "terminal_gone": {
         "title": "Die Terminal-Sitzung wurde beendet",
         "hint": "Öffne das Terminal erneut."
+      },
+      "bad_voice_config": {
+        "title": "Die Diktier-Einstellungen wurden nicht akzeptiert",
+        "hint": "Prüfe in den Einstellungen Adresse, Modell und Schlüssel des Transkriptionsdienstes und versuche es erneut."
+      },
+      "voice_not_configured": {
+        "title": "Diktieren ist nicht eingerichtet",
+        "hint": "Füge in den Einstellungen einen Transkriptionsdienst hinzu, um Nachrichten zu diktieren."
+      },
+      "voice_upstream_failed": {
+        "title": "Der Transkriptionsdienst hat nicht geantwortet",
+        "hint": "Deine Aufnahme wurde nicht in Text umgewandelt. Prüfe den Dienst und deinen Schlüssel in den Einstellungen und versuche es erneut."
       },
       "provider_endpoint": {
         "title": "Der Anbieter-Endpunkt wurde nicht gefunden",
@@ -3960,6 +3995,12 @@
     }
   },
   "voice": {
+    "bot": {
+      "title": "Stimme für diesen Bot",
+      "useGlobal": "Wie in den Einstellungen",
+      "preview": "Hallo, das ist meine Stimme.",
+      "hint": "Gilt für die Vorlesen-Schaltfläche dieses Bots, nur auf diesem Gerät."
+    },
     "speak": "Vorlesen",
     "stop": "Vorlesen beenden",
     "codeOmitted": "(Code ausgelassen)",
@@ -3970,6 +4011,22 @@
     "online": "online",
     "speed": "Tempo",
     "unsupported": "Dieses System bietet keine Sprachausgabe-Stimmen.",
+    "dictate": "Diktieren",
+    "dictateStop": "Stoppen und umschreiben",
+    "micDenied": "Das Mikrofon ist nicht verfügbar. Erlaube den Mikrofonzugriff und versuche es erneut.",
+    "notConfigured": "Diktieren ist noch nicht eingerichtet. Füge unter Einstellungen > Allgemein einen Transkriptionsdienst hinzu.",
+    "stt": {
+      "title": "Diktierdienst",
+      "description": "Wo deine Aufnahmen umgeschrieben werden: ein OpenAI-kompatibler Dienst (Cloud-Anbieter oder lokaler Whisper-Server).",
+      "url": "Dienstadresse",
+      "model": "Modell",
+      "key": "API-Schlüssel",
+      "keyStored": "Schlüssel gespeichert (zum Ersetzen eintippen)",
+      "save": "Speichern",
+      "saved": "Diktiereinstellungen gespeichert",
+      "clearKey": "Schlüssel entfernen",
+      "privacy": "Eine Aufnahme wird nur gesendet, wenn du das Mikrofon drückst, und nur an diese Adresse. Der Schlüssel bleibt im Geheimnisspeicher."
+    },
     "speakAuto": {
       "title": "Antworten vorlesen",
       "description": "Jede fertige Antwort automatisch vorlesen."
