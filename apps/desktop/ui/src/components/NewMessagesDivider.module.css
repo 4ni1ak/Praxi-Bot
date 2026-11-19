@@ -1,0 +1,29 @@
+.divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) var(--space-0);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: var(--size-border);
+  background-color: var(--color-accent-text);
+  opacity: 0.4;
+}
+
+.label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.label svg {
+  width: var(--space-3);
+  height: var(--space-3);
+}

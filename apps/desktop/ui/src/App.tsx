@@ -1,4 +1,6 @@
 import { BellDot, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2, Minus, Square, X } from "lucide-react";
+import { unreadBotIds } from "./lib/unread";
+import { useReadState } from "./store/readStateStore";
 import { ApiError } from "./api/client";
 import type { UpdateChatInput } from "./api/types";
 import { isMockMode } from "./api/mockMode";
@@ -188,6 +190,8 @@ function AppShell() {
     activeComputerId
   } = useDaemon();
   const { openViewer } = useLiveView();
+  const readState = useReadState(client?.baseUrl ?? "");
+  const unreadBots = useMemo(() => unreadBotIds(chats, runs, needs, readState), [chats, runs, needs, readState]);
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
   const [homeChatSlots, setHomeChatSlots] = useState<LiveChatSlots | null>(null);
@@ -859,6 +863,7 @@ function AppShell() {
                 <SidebarItem className={styles.railItem} active={routeBotId === bot.id} title={view.name} aria-label={mini ? view.name : undefined} onClick={() => goToBot(bot.id)}>
                   <BotAvatar bot={view} size="md" state={avatarState} decorative />
                   <div className={`${styles.botMeta} ${styles.railText}`}><span className={styles.botName}>{view.name}{index === 0 && botIds.length > 1 ? <span className={styles.mainMark} title={t("sidebar.mainBotHint")}><Star aria-hidden="true" />{t("sidebar.mainBot")}</span> : null}</span><span className={styles.botRole}>{(isMockMode() ? config.bot?.preview : undefined) ?? chatTitleLabel(latest?.title, t("bots.newChat"))}</span></div>
+                  {unreadBots.has(bot.id) ? <span className={styles.unreadDot} role="img" aria-label={t("sidebar.unreadBot")} data-testid="bot-unread" /> : null}
                 </SidebarItem>
                 {canReorder && !mini && botIds.length > 1 ? <button type="button" className={styles.grip} aria-label={t("sidebar.reorderBot", { name: view.name })} title={t("sidebar.reorderHint")} {...reorder.gripProps(bot.id)}><GripVertical aria-hidden="true" /></button> : null}
               </div>;
