@@ -448,6 +448,26 @@
           "skill": "nicht vertrauenswürdiger Skill"
         },
         "details": "Details"
+      },
+      "bot": {
+        "title": {
+          "create": "Neuen Bot erstellen?",
+          "update": "Diesen Bot ändern?",
+          "delete": "Diesen Bot löschen?"
+        },
+        "persona": "Persona ({{count}} Zeichen, vollständig angezeigt):",
+        "model": "Modell",
+        "planner": "Planer",
+        "classifier": "Klassifikator",
+        "permissions": "Berechtigungen",
+        "tools": "Werkzeuge",
+        "allToolsOfCaller": "alle Werkzeuge, die dieser Bot nutzen kann",
+        "except": "außer {{list}}",
+        "changes": "Was sich ändert",
+        "empty": "(nicht gesetzt)",
+        "profile": "Vollständiges Profil",
+        "ceiling": "Ein Bot kann einem anderen Bot nie mehr geben, als er selbst hat. Diese Freigabe gilt nur für diese Änderung; sie wird jedes Mal erfragt.",
+        "deleteNote": "Dieser Bot und seine Einstellungen werden entfernt. Ein Bot mit Chats kann nicht gelöscht werden."
       }
     },
     "question": {
@@ -877,6 +897,8 @@
     },
     "executorRequired": "Das Executor-Modell ist erforderlich.",
     "permissions": "Berechtigungen",
+    "manageBots": "Kann Bots erstellen",
+    "manageBotsHint": "Erlaubt diesem Bot, andere Bots zu erstellen und zu verwalten. Er kann ihnen nie mehr geben, als er selbst hat, und Sie geben jede Änderung vollständig frei.",
     "allowEgressAfterReads": {
       "title": "Senden von Daten erlauben, nachdem dieser Bot etwas gelesen hat",
       "hint": "Standardmäßig aus. Eine Werkzeugfreigabe schaltet dies nicht ein. Solange es aus ist, muss ein Lauf, der eine Datei, ein Postfach, eine Seite oder andere private oder nicht vertrauenswürdige Inhalte gelesen hat, nachfragen, bevor ein Werkzeug Daten von diesem Gerät sendet."
