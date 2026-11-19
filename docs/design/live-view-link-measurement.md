@@ -21,12 +21,17 @@ slow direct one) on the network the viewer really uses.
    ```sh
    bot --remote <ENDPOINT> proxy
    ```
-   It prints `url:` and `token:` of a loopback endpoint that forwards to the host through the tunnel. The token only
-   works for that local endpoint; close it with Ctrl-C when done.
-2. In a second terminal run the probe (20 seconds by default):
+   It waits until the tunnel is connected, then prints `url:` and `token:` of a loopback endpoint that forwards to
+   the host through the tunnel. **Security:** that token grants desktop-role access to the paired host on every route
+   (including `/v1/secrets`), not just the measurement calls. While the proxy runs, anyone on this machine who holds the token
+   has full desktop-level access to the host. Do not share or log it, and close the proxy with Ctrl-C as soon as you are done.
+2. In a second terminal run the probe (20 seconds by default). Give the token through the `BOT_API_TOKEN` environment
+   variable, not `--token <token>`: a command-line argument is visible in `ps` and stays in your shell history. The
+   script only accepts a loopback `--url` and refuses anything else.
    ```sh
-   node scripts/tools/measure-live-link.mjs --url <url> --token <token> --seconds 30
+   BOT_API_TOKEN=<token> node scripts/tools/measure-live-link.mjs --url <url> --seconds 30
    ```
+   (In PowerShell: `$env:BOT_API_TOKEN = "<token>"` first; clear it afterwards.)
 3. Repeat in each network situation you care about: same LAN, phone hotspot, office/guest Wi-Fi, home behind CGNAT.
    Note which one you ran in. The desktop viewer shows the same direct/relay badge, so you can cross-check.
 
