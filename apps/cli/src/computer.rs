@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agent_core::{AgentLoop, ComputerProvider};
+use builtin_tools::pc::{PcError, PcLink};
 use computer_target::{ComputerDesktop, ComputerNode};
 use desktop_api::DesktopBackend;
 use parking_lot::RwLock;
@@ -81,6 +82,9 @@ struct CachedRemote {
     pairing_generation: String,
     capabilities: Vec<String>,
     backend: Arc<dyn DesktopBackend>,
+    /// The same connection, for the `pc.*` families (card 272). `None` in tests
+    /// that only exercise desktop placement.
+    remote: Option<Arc<RemoteDesktop>>,
 }
 
 /// Runtime computer availability exposed to [`AgentLoop`] by the daemon.
@@ -199,7 +203,8 @@ impl CliComputerProvider {
                     }) {
                         continue;
                     }
-                    let backend: Arc<dyn DesktopBackend> = Arc::new(remote);
+                    let remote = Arc::new(remote);
+                    let backend: Arc<dyn DesktopBackend> = remote.clone();
                     self.remotes.write().insert(
                         device.id.clone(),
                         CachedRemote {
@@ -209,6 +214,7 @@ impl CliComputerProvider {
                             pairing_generation: device.pairing_generation.clone(),
                             capabilities: device.capabilities.clone(),
                             backend,
+                            remote: Some(remote),
                         },
                     );
                 }
@@ -272,6 +278,21 @@ impl CliComputerProvider {
         })
     }
 
+    /// The user's computer for a `pc_*` tool call: the connected paired desktop.
+    fn mypc_remote(&self) -> Result<Arc<RemoteDesktop>, PcError> {
+        let active = self.active_pc_id.read().clone();
+        if let Some(id) = active.filter(|id| self.cached_target(id).is_some())
+            && let Some(remote) = self.remotes.read().get(&id).and_then(|c| c.remote.clone())
+        {
+            return Ok(remote);
+        }
+        if self.mypc_node().is_some() {
+            Err(PcError::Offline)
+        } else {
+            Err(PcError::NotPaired)
+        }
+    }
+
     fn invalidate(&self, id: &str) {
         self.dial_backoff.lock().clear(id);
         self.remotes.write().remove(id);
@@ -314,6 +335,25 @@ impl ComputerProvider for CliComputerProvider {
         let active = self.active_pc_id.read().clone()?;
         let target = self.cached_target(&active)?;
         (self.remotes.read().get(&active)?.role == Role::Desktop).then_some(target)
+    }
+
+    fn mypc_node(&self) -> Option<ComputerNode> {
+        let net = self.net.as_ref()?;
+        let mut pcs: Vec<Device> = net
+            .devices()
+            .into_iter()
+            .filter(|d| d.role == Role::Desktop && is_remote_desktop_candidate(d))
+            .collect();
+        pcs.sort_by(|a, b| a.id.cmp(&b.id));
+        let active = self.active_pc_id.read().clone();
+        let chosen = pcs
+            .iter()
+            .find(|d| active.as_deref() == Some(d.id.as_str()))
+            .or_else(|| pcs.first())?;
+        Some(ComputerNode {
+            id: chosen.id.clone(),
+            name: chosen.name.clone(),
+        })
     }
 
     fn pc_network_enabled(&self) -> bool {
@@ -362,6 +402,49 @@ impl ComputerProvider for CliComputerProvider {
         Box::pin(async move {
             self.prune_cached_remotes();
         })
+    }
+}
+
+/// The `pc_*` tools' link to the user's computer: every call resolves the
+/// connected paired desktop when it runs, so a computer that went off or was
+/// unpaired between two calls is "off", never a stale session.
+pub struct CliPcLink {
+    provider: Arc<CliComputerProvider>,
+}
+
+impl CliPcLink {
+    #[must_use]
+    pub fn new(provider: Arc<CliComputerProvider>) -> Self {
+        Self { provider }
+    }
+}
+
+#[async_trait::async_trait]
+impl PcLink for CliPcLink {
+    async fn call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, PcError> {
+        let remote = self.provider.mypc_remote()?;
+        match remote.call_raw(method, params, timeout).await {
+            Ok(v) => Ok(v),
+            Err(peer_network::PeerError::Rpc { message, .. }) => Err(PcError::Refused(message)),
+            Err(peer_network::PeerError::Timeout) => Err(PcError::Failed(
+                "no answer in time (nobody approved it at the computer, or it is busy)".into(),
+            )),
+            Err(peer_network::PeerError::Connection(_) | peer_network::PeerError::NotPaired(_)) => {
+                Err(PcError::Offline)
+            }
+            Err(other) => Err(PcError::Failed(other.to_string())),
+        }
+    }
+
+    fn desktop(&self) -> Result<Arc<dyn DesktopBackend>, PcError> {
+        self.provider
+            .mypc_remote()
+            .map(|r| r as Arc<dyn DesktopBackend>)
     }
 }
 
@@ -738,6 +821,7 @@ mod tests {
             pairing_generation: "pair-1".into(),
             capabilities: vec!["desktop".into()],
             backend: FakePcDesktop::new("cached"),
+            remote: None,
         }
     }
 
