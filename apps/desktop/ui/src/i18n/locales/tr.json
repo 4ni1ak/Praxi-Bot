@@ -1021,6 +1021,13 @@
           "browser": "{{where}} üzerindeki tarayıcıda şu sayfayı aç: {{url}}",
           "generic": "{{where}} üzerinde bir işlem yap",
           "launch": "{{where}} üzerinde {{name}} programını aç",
+          "pcBrowser": "SİZİN bilgisayarınızdaki tarayıcıyı kullan",
+          "pcBrowserOpen": "Bu sayfayı SİZİN bilgisayarınızdaki tarayıcıda aç: {{url}}",
+          "pcLaunch": "{{name}} programını SİZİN bilgisayarınızda aç",
+          "pcRead": "SİZİN bilgisayarınızdaki dosyaları oku: {{path}}",
+          "pcScreen": "SİZİN bilgisayarınızın ekranını kullan",
+          "pcShell": "SİZİN bilgisayarınızda komut çalıştır: {{command}}",
+          "pcWrite": "SİZİN bilgisayarınızda dosya yaz: {{path}}",
           "screen": "{{where}} ekranını kullan",
           "shell": "{{where}} üzerinde komut çalıştır: {{command}}"
         },
@@ -1592,6 +1599,18 @@
     "description": "Eşleştirdiğin sunucular, yalnızca sen izin verirsen bu bilgisayarın ekranına bakıp işlem yapmak isteyebilir.",
     "details": "Tam olarak",
     "explain": "Varsayılan olarak kapalı. Açıkken sunucudaki botlar bu bilgisayarın ekranına bakabilir. Tıklayan, yazan veya bir şey açan her işlem yine önce sana sorar; Durdur her zaman önceliklidir.",
+    "family": {
+      "browser": "{{name}} üzerindeki botlar bu bilgisayarın tarayıcısını kullanabilsin",
+      "commands": "{{name}} üzerindeki botlar bu bilgisayarda komut çalıştırabilsin",
+      "files": "{{name}} üzerindeki botlar bu bilgisayardaki dosyaları okuyabilsin",
+      "screen": "{{name}} üzerindeki botlar bu bilgisayarın ekranını ve girişini kullanabilsin"
+    },
+    "familyNote": {
+      "browser": "Sizinkinden ayrı, kendi profili olan bir tarayıcı penceresi. Sayfa açmak veya içine yazmak önce size sorar.",
+      "commands": "Her komut önce size sorulur ve size tam olarak gösterilir.",
+      "files": "Okuma oturum başına bir kez sorar; dosya yazmak her seferinde sorar. Parolalar, diğer programların ayarları ve Praxi'nin kendi verisi erişilemez kalır.",
+      "screen": "Ekrana bakar, tıklar, yazar ve program başlatır. Bir şeyi değiştiren her işlem önce size sorar."
+    },
     "fromServer": "Bu ad sunucudan gelir, bu bilgisayardan değil.",
     "fromServerName": "(sunucunun kendini adlandırdığı ad: {{name}})",
     "looking": "{{name}} üzerindeki bir bot bu ekrana bakıyor",

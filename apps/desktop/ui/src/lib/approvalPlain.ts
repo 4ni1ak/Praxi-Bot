@@ -62,6 +62,21 @@ function clip(value: unknown, max: number): string {
 export function actionText(tool: string, input: unknown, w: WhereInput, t: T): string | null {
   const rec = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const where = whereText(tool, w, t);
+  // The `pc_*` family always acts on the USER'S computer, whatever the bot runs on.
+  if (tool.startsWith("pc_")) {
+    if (tool === "pc_shell_run") return t("chat.approval.plain.action.pcShell", { command: clip(rec.command, 120) });
+    if (tool === "pc_fs_write") return t("chat.approval.plain.action.pcWrite", { path: clip(rec.path, 120) });
+    if (tool === "pc_fs_read" || tool === "pc_fs_list") {
+      return t("chat.approval.plain.action.pcRead", { path: clip(rec.path, 120) });
+    }
+    if (tool === "pc_browser_open") return t("chat.approval.plain.action.pcBrowserOpen", { url: clip(rec.url, 120) });
+    if (tool.startsWith("pc_browser_")) return t("chat.approval.plain.action.pcBrowser");
+    if (tool === "pc_desktop_launch") {
+      return t("chat.approval.plain.action.pcLaunch", { name: clip(rec.executable, 80) });
+    }
+    if (tool.startsWith("pc_desktop_")) return t("chat.approval.plain.action.pcScreen");
+    return null;
+  }
   if (tool === "shell_run") {
     return t("chat.approval.plain.action.shell", { where, command: clip(rec.command, 120) });
   }
