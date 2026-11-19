@@ -23,6 +23,7 @@ mod discovery_prompt;
 mod exec;
 mod history;
 mod knowledge;
+mod ledger;
 mod memory;
 mod mention;
 mod profile;
