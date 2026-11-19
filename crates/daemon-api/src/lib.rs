@@ -1138,6 +1138,7 @@ fn api_routes() -> Router<AppState> {
             axum::routing::patch(v::update_session).delete(v::delete_session),
         )
         .route("/v1/view/sessions/{id}/heartbeat", put(v::heartbeat))
+        .route("/v1/view/sessions/{id}/ack", post(v::ack_frame))
         .route("/v1/view/sessions/{id}/frames", get(v::stream::frames))
         .route(
             "/v1/view/sessions/{id}/input",
@@ -1245,6 +1246,10 @@ fn api_routes() -> Router<AppState> {
                 .delete(r::delete_bot),
         )
         .route("/v1/chats", get(r::list_chats).post(r::create_chat))
+        .route(
+            "/v1/chats/{id}",
+            axum::routing::patch(r::update_chat).delete(r::delete_chat),
+        )
         .route(
             "/v1/chats/{id}/messages",
             get(r::list_messages).post(r::send_message),

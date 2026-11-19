@@ -258,8 +258,12 @@ impl TurnExecutor {
         if let Some(spec) = work.and_then(|w| self.scheduled_first_step(&ctx, &raw, w)) {
             return Ok(Some(spec));
         }
-        let Some(decision) = self.route_first(&ctx, &raw).await else {
-            return Ok(Some(user_step(&self.with_recall(&ctx, &raw))));
+        let Some((decision, tier)) = self.route_first(&ctx, &raw).await else {
+            let mut spec = user_step(&self.with_recall(&ctx, &raw));
+            if let Some(tier) = self.initial_tier(&ctx, &raw, None) {
+                spec.input["tier"] = json!(tier);
+            }
+            return Ok(Some(spec));
         };
         if let agent_router::ladder::Route::Command(c) = &decision.route
             && c.name == "stop"
@@ -267,10 +271,11 @@ impl TurnExecutor {
             // `/stop`: the run that carries it is cancelled before it starts.
             self.stop_run(run);
         }
-        Ok(Some(routed_user_step(
-            &self.with_recall(&ctx, &raw),
-            &decision,
-        )))
+        let mut spec = routed_user_step(&self.with_recall(&ctx, &raw), &decision);
+        if let Some(tier) = tier {
+            spec.input["tier"] = json!(tier);
+        }
+        Ok(Some(spec))
     }
 
     fn first_user_text(&self, ctx: &RunCtx, run: &Run) -> Result<String, ExecError> {
@@ -358,6 +363,7 @@ impl TurnExecutor {
         let finished = history.last().is_some_and(|s| {
             s.name == STEP_MODEL
                 && status_of(s) == Some(StepStatus::Succeeded)
+                && !crate::tiering::discarded(history, history.len() - 1)
                 && step_output::<ModelOut>(s).is_some_and(|m| m.tool_calls.is_empty())
         });
         {
@@ -400,6 +406,15 @@ impl TurnExecutor {
             .chain(&ctx.profile.models.fallback)
             .any(|m| m.starts_with("cli:"));
         let mut input = json!({ "model": ctx.profile.models.executor, "n": model_steps });
+        if let Some(plan) = self.tier_plan(&ctx, history) {
+            input["tier"] = json!(plan.tier);
+            if plan.tier == crate::tiering::LIGHT {
+                input["model"] = json!(self.light_model(&ctx));
+            }
+            if let Some(reason) = plan.upgrade {
+                input["tier_upgrade_reason"] = json!(reason);
+            }
+        }
         if history.iter().any(|s| s.name == STEP_NUDGE) {
             input["nudged"] = json!(true);
         }
@@ -508,6 +523,9 @@ impl TurnExecutor {
         }) else {
             return Ok(None);
         };
+        if crate::tiering::discarded(history, mi) {
+            return Ok(None);
+        }
         let Some(mo) = step_output::<ModelOut>(&history[mi]) else {
             return Ok(None);
         };
@@ -563,9 +581,14 @@ impl TurnExecutor {
                 repeat,
             });
         }
+        let mut input = json!({ "calls": calls });
+        if let Some(model) = crate::tiering::light_reply_model(&history[mi]) {
+            input["tier"] = json!(crate::tiering::LIGHT);
+            input["tier_model"] = json!(model);
+        }
         Ok(Some(StepSpec {
             name: STEP_TOOLS.to_owned(),
-            input: json!({ "calls": calls }),
+            input,
             idempotent: group_all_reads,
             retry: None,
         }))
@@ -654,11 +677,49 @@ impl TurnExecutor {
         .map_err(xe)?;
         // What the turn's tool calls really did, so the answer cannot claim
         // more than happened. Placed before the closing note of a guard stop.
-        if let Some(digest) = crate::ledger::digest(&crate::ledger::collect(&steps)) {
+        // A discarded light reply (and its never-executed calls) is not part of what happened.
+        let kept: Vec<RunStep> = steps
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !crate::tiering::discarded(&steps, *i))
+            .map(|(_, s)| s.clone())
+            .collect();
+        if let Some(digest) = crate::ledger::digest(&crate::ledger::collect(&kept)) {
             let at = messages.len() - usize::from(note.is_some());
             messages.insert(at, Message::text(MessageRole::User, digest));
         }
-        let mut primary = ctx.profile.models.executor.clone();
+        let origin = crate::tiering::light_origin(&steps);
+        // Planning fails conservatively to standard when this read fails, but
+        // dispatch must still verify the durable transition before continuing.
+        let upgraded = origin.is_some() && self.tier_was_upgraded(&ctx)?;
+        let tier_active =
+            origin.is_some() || step.input["tier"].is_string() || self.light_model(&ctx).is_some();
+        let tier_light = step.input["tier"] == crate::tiering::LIGHT
+            && self
+                .light_model(&ctx)
+                .is_some_and(|model| Some(model) == origin)
+            && guard_reason.is_none()
+            && !upgraded;
+        let mut primary = if tier_light {
+            self.light_model(&ctx)
+                .unwrap_or(&ctx.profile.models.executor)
+                .to_owned()
+        } else {
+            ctx.profile.models.executor.clone()
+        };
+        if let Some(from) = origin {
+            if let Some(reason) = step.input["tier_upgrade_reason"].as_str() {
+                self.emit_tier_upgrade(&ctx, from, reason)?;
+            } else if self.light_model(&ctx) != Some(from) {
+                self.emit_tier_upgrade(&ctx, from, "profile_changed")?;
+            } else if guard_reason.is_some()
+                && self
+                    .tier_plan(&ctx, &steps[..steps.len().saturating_sub(1)])
+                    .is_some_and(|p| p.tier == crate::tiering::LIGHT || p.upgrade.is_some())
+            {
+                self.emit_tier_upgrade(&ctx, from, "guard_close")?;
+            }
+        }
         if !primary.contains('/') && !primary.starts_with("cli:") {
             let default_id = self.sh.providers.read().default_id().to_owned();
             if default_id.starts_with("cli:") {
@@ -678,16 +739,24 @@ impl TurnExecutor {
         if primary.starts_with("cli:") {
             let mut call =
                 crate::usage::CallGuard::start(&self.sh, &ctx, &primary, purpose).map_err(xe)?;
+            call.tier(tier_active.then_some(crate::tiering::STANDARD));
             let mut out = self.exec_cli(run, &req, &specs, cancel).await?;
             out.metadata = metadata;
             if let Some(usage) = &out.usage {
                 call.usage(usage);
             }
-            return serde_json::to_value(out).map_err(xe);
+            let mut output = serde_json::to_value(out).map_err(xe)?;
+            if tier_active {
+                output["tier"] = json!(crate::tiering::STANDARD);
+            }
+            return Ok(output);
         }
 
         let models: Vec<&String> = std::iter::once(&primary)
-            .chain(ctx.profile.models.fallback.iter())
+            .chain(tier_light.then_some(&ctx.profile.models.executor))
+            .chain(ctx.profile.models.fallback.iter().filter(|m| {
+                self.light_model(&ctx) != Some(m.as_str()) && origin != Some(m.as_str())
+            }))
             .collect();
         let mut last_err: Option<ProviderError> = None;
         let mut result: Option<ModelOut> = None;
@@ -696,6 +765,14 @@ impl TurnExecutor {
         let mut other_failure = false;
         for (i, name) in models.iter().enumerate() {
             if let Some(prev) = &last_err {
+                if tier_light && i == 1 {
+                    let reason = match prev {
+                        ProviderError::Unsupported { .. } => "unsupported",
+                        ProviderError::MalformedToolCall(_) => "invalid_tool_calls",
+                        _ => "provider_failure",
+                    };
+                    self.record_tier_upgrade(&ctx, &primary, reason)?;
+                }
                 self.sh.emit(
                     &ctx,
                     Event::ModelFallback(ModelFallback {
@@ -710,7 +787,18 @@ impl TurnExecutor {
             let timeout = self.sh.cfg.guards.model_timeout;
             let attempt = tokio::time::timeout(
                 timeout,
-                self.call_with_retries(&ctx, run, &req, &specs, purpose),
+                self.call_with_retries(
+                    &ctx,
+                    run,
+                    &req,
+                    &specs,
+                    purpose,
+                    tier_active.then_some(if tier_light && name.as_str() == primary {
+                        crate::tiering::LIGHT
+                    } else {
+                        crate::tiering::STANDARD
+                    }),
+                ),
             )
             .await
             .unwrap_or(Err(ProviderError::Timeout));
@@ -775,7 +863,36 @@ impl TurnExecutor {
             );
             out.guard_reason = Some(reason);
         }
-        serde_json::to_value(out).map_err(xe)
+        let actual_tier = tier_active.then_some(if tier_light && out.model == primary {
+            crate::tiering::LIGHT
+        } else {
+            crate::tiering::STANDARD
+        });
+        let blocker = (tier_light && out.model == primary)
+            .then(|| {
+                self.light_call_blocker(
+                    &ctx,
+                    &hints.tools,
+                    out.tool_calls
+                        .iter()
+                        .map(|c| (c.name.as_str(), c.arguments.as_str())),
+                )
+            })
+            .flatten();
+        if blocker.is_some() {
+            // Persist usage, but discard the whole decision. The executor must
+            // receive exactly the messages that preceded the unsafe light reply.
+            out.text.clear();
+            out.tool_calls.clear();
+        }
+        let mut output = serde_json::to_value(out).map_err(xe)?;
+        if let Some(tier) = actual_tier {
+            output["tier"] = json!(tier);
+        }
+        if let Some(reason) = blocker {
+            output["tier_discarded"] = json!(reason);
+        }
+        Ok(output)
     }
 
     /// The skills index block for the system prompt (name-ordered, so it does
@@ -872,6 +989,7 @@ impl TurnExecutor {
         req: &ChatRequest,
         specs: &[ToolSpec],
         purpose: crate::CallPurpose,
+        tier: Option<&'static str>,
     ) -> Result<ModelOut, ProviderError> {
         let policy = self.sh.cfg.model_retry;
         let attempts = policy.max_attempts.max(1);
@@ -879,15 +997,21 @@ impl TurnExecutor {
         let mut slept = Duration::ZERO;
         let mut attempt = 1;
         let mut malformed_retried = false;
+        let light = self.light_model(ctx) == Some(req.model.0.as_str());
         loop {
             match self
-                .stream_once(ctx, run, req.clone(), specs, purpose)
+                .stream_once(ctx, run, req.clone(), specs, purpose, tier)
                 .await
             {
                 Ok(out) => return Ok(out),
                 // A garbled tool call is retried once, not `attempts` times.
                 Err(e @ ProviderError::MalformedToolCall(_)) if malformed_retried => {
                     return Err(e);
+                }
+                Err(ProviderError::MalformedToolCall(_)) if light => {
+                    // A malformed provider response gets exactly one repair
+                    // attempt in light mode, then the executor takes over.
+                    malformed_retried = true;
                 }
                 Err(e @ ProviderError::MalformedToolCall(_)) if attempt < attempts => {
                     let delay = policy.backoff(attempt);
@@ -926,11 +1050,13 @@ impl TurnExecutor {
         req: ChatRequest,
         specs: &[ToolSpec],
         purpose: crate::CallPurpose,
+        tier: Option<&'static str>,
     ) -> Result<ModelOut, ProviderError> {
         // A CLI selected by the HTTP fallback chain is also a whole session.
         if req.model.0.starts_with("cli:") {
             let mut call = crate::usage::CallGuard::start(&self.sh, ctx, &req.model.0, purpose)
                 .map_err(|e| ProviderError::InvalidRequest(e.into()))?;
+            call.tier(tier);
             let out = self
                 .exec_cli(run, &req, specs, &CancellationToken::new())
                 .await
@@ -944,6 +1070,7 @@ impl TurnExecutor {
         let provider = self.sh.providers.read().pick(&model)?;
         let mut call = crate::usage::CallGuard::start(&self.sh, ctx, &model.0, purpose)
             .map_err(|e| ProviderError::InvalidRequest(e.into()))?;
+        call.tier(tier);
         let mut stream = provider.stream(req).await?;
         let mut out = ModelOut {
             model: model.0,
@@ -998,9 +1125,29 @@ impl TurnExecutor {
         let calls: Vec<CallRec> =
             serde_json::from_value(step.input["calls"].clone()).map_err(xe)?;
         let hints = route_hints(&self.sh.storage.list_steps(run.id).map_err(xe)?).tools;
+        let light = step.input["tier"] == crate::tiering::LIGHT;
+        if light
+            && step.input["tier_model"]
+                .as_str()
+                .is_some_and(|model| self.light_model(&ctx) != Some(model))
+        {
+            return Ok(crate::tiering::discarded_tools("profile_changed"));
+        }
+        if light
+            && let Some(reason) = self.light_call_blocker(
+                &ctx,
+                &hints,
+                calls
+                    .iter()
+                    .map(|c| (c.name.as_str(), c.arguments.as_str())),
+            )
+        {
+            return Ok(crate::tiering::discarded_tools(reason));
+        }
 
         let mut slots = Vec::with_capacity(calls.len());
         let mut uuids = Vec::with_capacity(calls.len());
+        let mut invalid_calls = std::collections::HashSet::new();
         let mut knowledge_requests = std::collections::HashMap::new();
         for call in &calls {
             let call_uuid = ToolCallId::new();
@@ -1027,6 +1174,7 @@ impl TurnExecutor {
             let input = match parsed {
                 Ok(v) => v,
                 Err(m) => {
+                    invalid_calls.insert(call_uuid);
                     slots.push(err(m));
                     continue;
                 }
@@ -1035,6 +1183,7 @@ impl TurnExecutor {
                 self.sh
                     .resolve_call(&ctx.profile, ctx.bot_id, &call.name, &input, &hints)
             else {
+                invalid_calls.insert(call_uuid);
                 slots.push(err(format!("unknown tool {:?}", call.name)));
                 continue;
             };
@@ -1042,6 +1191,9 @@ impl TurnExecutor {
                 .spec
                 .as_ref()
                 .is_some_and(|s| s.category == PermissionCategory::Meta);
+            if resolved.spec.is_none() {
+                invalid_calls.insert(call_uuid);
+            }
             // Which program would a desktop input call reach? Resolved here,
             // before the synchronous decision, and only once the run has read
             // something (before that nothing asks, so nothing needs a target).
@@ -1099,6 +1251,20 @@ impl TurnExecutor {
                 // Malformed `use_tool`: executes nothing, only reports the error.
                 None => Decision::Allow,
             };
+            // Recheck immediately before the approval branch too: policy can
+            // change after preflight. No prepared slot has executed yet.
+            if light {
+                if resolved
+                    .spec
+                    .as_ref()
+                    .is_some_and(|s| s.effect != tool_registry::Effect::Read)
+                {
+                    return Ok(crate::tiering::discarded_tools("non_read_tool"));
+                }
+                if matches!(decision, Decision::Ask { .. }) {
+                    return Ok(crate::tiering::discarded_tools("approval_required"));
+                }
+            }
             // A CLI card covers one matching invocation, and only when it
             // honors the limits this decision still carries. The permit is
             // committed immediately before the tool, under the exec gate, so
@@ -1393,6 +1559,8 @@ impl TurnExecutor {
                 text,
                 spill_path,
                 fact: Some(fact),
+                tier_executed: light.then_some(duration_ms.is_some()),
+                tier_invalid: light.then(|| invalid_calls.contains(&call_uuid)),
                 outcome: Some(outcome),
             });
         }

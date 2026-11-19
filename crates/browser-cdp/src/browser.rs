@@ -35,11 +35,25 @@ pub struct Browser {
     own_process_group: bool,
     /// Temporary profile directory we created and must delete.
     owned_profile: Option<PathBuf>,
+    /// The filtering proxy of a served session (stops with the browser).
+    _proxy: Option<crate::proxy::FilterProxy>,
 }
 
 impl Browser {
     /// Launch Chrome/Edge with a fresh isolated profile (unless `user_data_dir` is given).
-    pub async fn launch(opts: LaunchOptions) -> Result<Self> {
+    pub async fn launch(mut opts: LaunchOptions) -> Result<Self> {
+        // A served session: every request goes through our filtering proxy,
+        // started before the browser so nothing ever leaves without it.
+        let proxy = if let Some(net) = &opts.served {
+            let p = crate::proxy::FilterProxy::start(net.private_host.clone())
+                .await
+                .map_err(|e| Error::Launch(format!("network guard: {e}")))?;
+            opts.served_proxy = Some(p.addr());
+            Some(p)
+        } else {
+            opts.served_proxy = None;
+            None
+        };
         let exe = match &opts.executable {
             Some(p) => p.clone(),
             None => launch::find_browser()?,
@@ -84,13 +98,19 @@ impl Browser {
         }
         .await;
         match connected {
-            Ok((client, endpoint)) => Ok(Self {
-                client,
-                endpoint,
-                child: Some(child),
-                own_process_group,
-                owned_profile: owned,
-            }),
+            Ok((client, endpoint)) => {
+                if let Some(net) = &opts.served {
+                    client.set_destination_check(net.check.clone());
+                }
+                Ok(Self {
+                    client,
+                    endpoint,
+                    child: Some(child),
+                    own_process_group,
+                    owned_profile: owned,
+                    _proxy: proxy,
+                })
+            }
             Err(e) => {
                 let pid = child.id();
                 terminate_and_reap_process_tree(&mut child, pid, own_process_group).await;
@@ -112,6 +132,7 @@ impl Browser {
             child: None,
             own_process_group: false,
             owned_profile: None,
+            _proxy: None,
         })
     }
 
@@ -128,6 +149,7 @@ impl Browser {
             child: Some(child),
             own_process_group,
             owned_profile: None,
+            _proxy: None,
         })
     }
 

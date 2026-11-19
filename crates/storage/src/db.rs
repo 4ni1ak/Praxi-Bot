@@ -13,8 +13,8 @@ use uuid::Uuid;
 use crate::error::{Result, StorageError};
 use crate::migrate;
 use crate::records::{
-    Approval, AuditEntry, Bot, BotPatch, BotSkillAssignment, Chat, EventIndexRow, Message, Run,
-    RunStep, SkillAssignmentMode, User,
+    Approval, AuditEntry, Bot, BotPatch, BotSkillAssignment, Chat, ChatFlags, EventIndexRow,
+    Message, Run, RunStep, SkillAssignmentMode, User,
 };
 
 /// How many pre-upgrade database copies are kept under `<data_dir>/backups`.
@@ -708,6 +708,94 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Pinned/archived flags of every chat of a user, keyed by chat id.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn list_chat_flags(
+        &self,
+        user_id: UserId,
+    ) -> Result<std::collections::HashMap<ChatId, ChatFlags>> {
+        let conn = self.conn();
+        let mut st = conn.prepare("SELECT id, pinned, archived FROM chats WHERE user_id = ?1")?;
+        let rows = st.query_map([user_id.to_string()], |r| {
+            Ok((
+                ChatId(uuid_at(r, 0)?),
+                ChatFlags {
+                    pinned: r.get::<_, i64>(1)? != 0,
+                    archived: r.get::<_, i64>(2)? != 0,
+                },
+            ))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Flags of one chat (all false for an unknown chat).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn chat_flags(&self, id: ChatId) -> Result<ChatFlags> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT pinned, archived FROM chats WHERE id = ?1",
+                [id.to_string()],
+                |r| {
+                    Ok(ChatFlags {
+                        pinned: r.get::<_, i64>(0)? != 0,
+                        archived: r.get::<_, i64>(1)? != 0,
+                    })
+                },
+            )
+            .optional()?
+            .unwrap_or_default())
+    }
+
+    /// Rename and/or flag a chat; `None` leaves a field unchanged.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors or when the chat does not exist.
+    pub fn update_chat(
+        &self,
+        id: ChatId,
+        title: Option<&str>,
+        pinned: Option<bool>,
+        archived: Option<bool>,
+    ) -> Result<()> {
+        let n = self.conn().execute(
+            "UPDATE chats SET title = COALESCE(?2, title), pinned = COALESCE(?3, pinned), archived = COALESCE(?4, archived) WHERE id = ?1",
+            params![id.to_string(), title, pinned.map(i64::from), archived.map(i64::from)],
+        )?;
+        if n == 0 {
+            return Err(StorageError::NotFound(format!("chat {id}")));
+        }
+        Ok(())
+    }
+
+    /// Delete a chat and its messages. Its finished runs stay (audit trail) but lose the chat
+    /// link. Refused with [`StorageError::Conflict`] while a run of the chat is still active.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors or the conflict above.
+    pub fn delete_chat(&self, id: ChatId) -> Result<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let cid = id.to_string();
+        let active: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM runs WHERE chat_id = ?1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+            [&cid],
+            |r| r.get(0),
+        )?;
+        if active > 0 {
+            return Err(StorageError::Conflict("chat has an active run".into()));
+        }
+        tx.execute("DELETE FROM messages WHERE chat_id = ?1", [&cid])?;
+        tx.execute("UPDATE runs SET chat_id = NULL WHERE chat_id = ?1", [&cid])?;
+        let n = tx.execute("DELETE FROM chats WHERE id = ?1", [&cid])?;
+        tx.commit()?;
+        Ok(n > 0)
+    }
+
     // ---- messages ----
 
     /// Insert a message.
@@ -1255,6 +1343,20 @@ impl Storage {
             .unwrap_or_default())
     }
 
+    /// Recorded origins of every user message delivered into `run` (the one
+    /// that started it and any steered in later).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn run_user_message_sources(&self, run: RunId) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT source FROM messages WHERE run_id = ?1 AND role = 'user' ORDER BY created_at_ms",
+        )?;
+        let rows = stmt.query_map(params![run.to_string()], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     /// Texts of the user messages of `chat` that the owner typed in the desktop app.
     ///
     /// # Errors
@@ -1405,6 +1507,23 @@ impl Storage {
         Ok(st
             .query_map([user_id.to_string()], audit_row)?
             .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Whether one run has an audit fact, without loading other runs' details.
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn has_run_audit_action(
+        &self,
+        user_id: UserId,
+        run_id: RunId,
+        action: &str,
+    ) -> Result<bool> {
+        Ok(self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM audit_log WHERE user_id = ?1 AND run_id = ?2 AND action = ?3)",
+            params![user_id.to_string(), run_id.to_string(), action],
+            |row| row.get(0),
+        )?)
     }
 
     /// The audit rows of one run, oldest first.
@@ -1984,6 +2103,31 @@ mod tests {
             f.st.list_messages_bounded(f.chat.id, None, 10, 0).unwrap(),
             (vec![], true)
         );
+    }
+
+    #[test]
+    fn deleting_a_chat_keeps_its_finished_runs_and_refuses_active_ones() {
+        let f = fx();
+        let run_id = run(&f).id;
+        f.st.update_chat(f.chat.id, Some("Renamed"), Some(true), None)
+            .unwrap();
+        assert_eq!(f.st.get_chat(f.chat.id).unwrap().unwrap().title, "Renamed");
+        assert_eq!(
+            f.st.chat_flags(f.chat.id).unwrap(),
+            ChatFlags {
+                pinned: true,
+                archived: false
+            }
+        );
+        // the fixture run is queued: active, so the delete is refused
+        assert!(matches!(
+            f.st.delete_chat(f.chat.id),
+            Err(StorageError::Conflict(_))
+        ));
+        f.st.update_run_state(run_id, "succeeded", None).unwrap();
+        assert!(f.st.delete_chat(f.chat.id).unwrap());
+        assert!(f.st.get_chat(f.chat.id).unwrap().is_none());
+        assert!(f.st.get_run(run_id).unwrap().unwrap().chat_id.is_none());
     }
 
     #[test]

@@ -751,6 +751,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/chats/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a chat and its messages (its runs stay for the audit trail). Refused while a run of
+         *     the chat is active.
+         */
+        delete: operations["delete_chat"];
+        options?: never;
+        head?: never;
+        /** Rename, pin or archive a chat. */
+        patch: operations["update_chat"];
+        trace?: never;
+    };
     "/v1/chats/{id}/attachments": {
         parameters: {
             query?: never;
@@ -2989,6 +3010,22 @@ export interface paths {
         patch: operations["update_session"];
         trace?: never;
     };
+    "/v1/view/sessions/{id}/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ack_frame"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/view/sessions/{id}/frames": {
         parameters: {
             query?: never;
@@ -3642,6 +3679,8 @@ export interface components {
         };
         /** @description A chat thread. */
         ChatDto: {
+            /** @description Archived chats are hidden from the default list. */
+            archived?: boolean;
             /**
              * Format: uuid
              * @description Bot the chat talks to.
@@ -3663,6 +3702,8 @@ export interface components {
              * @description Chat id.
              */
             id: string;
+            /** @description Pinned chats sort first. */
+            pinned?: boolean;
             /** @description Title. */
             title: string;
         };
@@ -3944,12 +3985,24 @@ export interface components {
              */
             tools_count?: number | null;
         };
-        /** @description Switches for one host. */
+        /**
+         * @description Switches for one host. Each family is its own switch; all are off until
+         *     the person at this computer turns them on.
+         */
         ComputerAccessInput: {
             /** @description Do not ask before the first look at the screen each session. */
             always_read?: boolean;
-            /** @description Let this host's bots use this computer. */
+            /** @description Let them use this computer's managed browser. */
+            browser?: boolean;
+            /** @description Let them run shell commands here (each one asks). */
+            commands?: boolean;
+            /**
+             * @description Screen and input: let this host's bots look at the screen, click, type
+             *     and start programs on this computer.
+             */
             enabled: boolean;
+            /** @description Let them read files here (writing asks every time). */
+            files?: boolean;
         };
         /** @description A configured provider (never carries a key). */
         ConfiguredProviderDto: {
@@ -4638,6 +4691,15 @@ export interface components {
              */
             updated_at_ms: number;
         };
+        /**
+         * @description `POST /v1/view/sessions/{id}/ack`: the newest frame this viewer has put on screen. Unlike
+         *     `SessionUpdate` it changes nothing else and never forces a refresh, so a viewer can send
+         *     it after every frame; the host paces its frames by it.
+         */
+        FrameAck: {
+            /** Format: int64 */
+            last_rendered_frame_seq: number;
+        };
         FrameMetadata: {
             /** Format: int64 */
             action_seq?: number | null;
@@ -4848,6 +4910,12 @@ export interface components {
             computer_access?: boolean;
             /** @description ... and may look at the screen without asking first each session. */
             computer_access_always?: boolean;
+            /** @description The owner lets this host's bots use this computer's browser. */
+            computer_browser?: boolean;
+            /** @description ... run commands on it. */
+            computer_commands?: boolean;
+            /** @description ... read its files. */
+            computer_files?: boolean;
             /** @description One short, path-free sentence for `offline` / `unreachable`. */
             detail?: string | null;
             /** @description Paired device key (public, not a secret). */
@@ -5923,6 +5991,11 @@ export interface components {
         PcRequestInfo: {
             /** @description `click`, `type`, `key`, `scroll`, `launch`, ... */
             action: string;
+            /**
+             * @description Name of the server's bot that is asking (untrusted text, from the
+             *     server). Absent for a run placed on this computer that names no bot.
+             */
+            bot_name?: string | null;
             /** Format: int64 */
             created_ms: number;
             /** @description Paired host the request comes from (public key). */
@@ -6864,6 +6937,15 @@ export interface components {
         };
         /** @enum {string} */
         Units: "physical_px" | "css_px";
+        /** @description `PATCH /v1/chats/{id}`: every field is optional, absent ones stay unchanged. */
+        UpdateChat: {
+            /** @description Archive or restore. */
+            archived?: boolean | null;
+            /** @description Pin or unpin. */
+            pinned?: boolean | null;
+            /** @description New title (1 to 120 characters after trimming). */
+            title?: string | null;
+        };
         /**
          * @description Body of `PUT /v1/fill-secrets/{name}`. Every field is optional; a value,
          *     when given, replaces the stored one.
@@ -9066,6 +9148,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChatDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_chat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Chat id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update_chat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Chat id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateChat"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
             404: {
@@ -13926,6 +14086,29 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EffectiveProfile"];
                 };
+            };
+        };
+    };
+    ack_frame: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FrameAck"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -882,6 +882,7 @@ name = "builtin-tools"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "browser-cdp",
  "connector-email",
  "desktop-api",
@@ -903,6 +904,7 @@ dependencies = [
  "storage",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tool-registry",
  "tracing",
  "url",
@@ -1320,6 +1322,7 @@ dependencies = [
  "agent-core",
  "agent-router",
  "async-trait",
+ "base64 0.22.1",
  "browser-cdp",
  "builtin-tools",
  "channel-telegram",
@@ -7519,6 +7522,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

@@ -7,6 +7,7 @@ mod composio_approvals;
 mod external_agent;
 mod fill_secret;
 mod planning_pause;
+mod tiering;
 mod usage;
 
 use std::collections::VecDeque;
@@ -6554,6 +6555,9 @@ impl computer_target::ComputerProvider for BoundMachine {
     fn local_identity_bound(&self) -> bool {
         !self.unbound
     }
+    fn mypc_node(&self) -> Option<computer_target::ComputerNode> {
+        self.inner.pc_target().map(|d| d.node)
+    }
 }
 
 pub(crate) fn machine_provider(
@@ -7531,6 +7535,8 @@ async fn pre_058_paused_run_with_unknown_origin_fails_closed_after_migration() {
             DROP TABLE bot_skill_assignment_state;
             DROP TABLE IF EXISTS file_provenance;
             DROP TABLE trusted_folders;
+            ALTER TABLE chats DROP COLUMN pinned;
+            ALTER TABLE chats DROP COLUMN archived;
             ALTER TABLE runs DROP COLUMN computer_node;
             ALTER TABLE runs DROP COLUMN computer_node_name;
             ALTER TABLE runs DROP COLUMN paused_at_ms;

@@ -27,6 +27,7 @@ mod fill_secret_tests;
 pub mod knowledge;
 pub mod knowledge_brain;
 pub mod meta;
+pub mod pc;
 pub mod provenance;
 pub mod schedule;
 pub mod script;

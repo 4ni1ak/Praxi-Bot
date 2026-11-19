@@ -3128,6 +3128,123 @@
         ]
       }
     },
+    "/v1/chats/{id}": {
+      "delete": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Delete a chat and its messages (its runs stay for the audit trail). Refused while a run of\nthe chat is active.",
+        "operationId": "delete_chat",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Chat id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Rename, pin or archive a chat.",
+        "operationId": "update_chat",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Chat id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateChat"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/chats/{id}/attachments": {
       "post": {
         "tags": [
@@ -10393,6 +10510,45 @@
         ]
       }
     },
+    "/v1/view/sessions/{id}/ack": {
+      "post": {
+        "tags": [
+          "view"
+        ],
+        "operationId": "ack_frame",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FrameAck"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/view/sessions/{id}/frames": {
       "get": {
         "tags": [
@@ -12150,6 +12306,10 @@
           "created_at_ms"
         ],
         "properties": {
+          "archived": {
+            "type": "boolean",
+            "description": "Archived chats are hidden from the default list."
+          },
           "bot_id": {
             "type": "string",
             "format": "uuid",
@@ -12169,6 +12329,10 @@
             "type": "string",
             "format": "uuid",
             "description": "Chat id."
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "Pinned chats sort first."
           },
           "title": {
             "type": "string",
@@ -12934,7 +13098,7 @@
       },
       "ComputerAccessInput": {
         "type": "object",
-        "description": "Switches for one host.",
+        "description": "Switches for one host. Each family is its own switch; all are off until\nthe person at this computer turns them on.",
         "required": [
           "enabled"
         ],
@@ -12943,9 +13107,21 @@
             "type": "boolean",
             "description": "Do not ask before the first look at the screen each session."
           },
+          "browser": {
+            "type": "boolean",
+            "description": "Let them use this computer's managed browser."
+          },
+          "commands": {
+            "type": "boolean",
+            "description": "Let them run shell commands here (each one asks)."
+          },
           "enabled": {
             "type": "boolean",
-            "description": "Let this host's bots use this computer."
+            "description": "Screen and input: let this host's bots look at the screen, click, type\nand start programs on this computer."
+          },
+          "files": {
+            "type": "boolean",
+            "description": "Let them read files here (writing asks every time)."
           }
         }
       },
@@ -14657,6 +14833,21 @@
           }
         }
       },
+      "FrameAck": {
+        "type": "object",
+        "description": "`POST /v1/view/sessions/{id}/ack`: the newest frame this viewer has put on screen. Unlike\n`SessionUpdate` it changes nothing else and never forces a refresh, so a viewer can send\nit after every frame; the host paces its frames by it.",
+        "required": [
+          "last_rendered_frame_seq"
+        ],
+        "properties": {
+          "last_rendered_frame_seq": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "FrameMetadata": {
         "type": "object",
         "required": [
@@ -15230,6 +15421,18 @@
           "computer_access_always": {
             "type": "boolean",
             "description": "... and may look at the screen without asking first each session."
+          },
+          "computer_browser": {
+            "type": "boolean",
+            "description": "The owner lets this host's bots use this computer's browser."
+          },
+          "computer_commands": {
+            "type": "boolean",
+            "description": "... run commands on it."
+          },
+          "computer_files": {
+            "type": "boolean",
+            "description": "... read its files."
           },
           "detail": {
             "type": [
@@ -18395,6 +18598,13 @@
             "type": "string",
             "description": "`click`, `type`, `key`, `scroll`, `launch`, ..."
           },
+          "bot_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of the server's bot that is asking (untrusted text, from the\nserver). Absent for a run placed on this computer that names no bot."
+          },
           "created_ms": {
             "type": "integer",
             "format": "int64"
@@ -20753,6 +20963,33 @@
           "physical_px",
           "css_px"
         ]
+      },
+      "UpdateChat": {
+        "type": "object",
+        "description": "`PATCH /v1/chats/{id}`: every field is optional, absent ones stay unchanged.",
+        "properties": {
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Archive or restore."
+          },
+          "pinned": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Pin or unpin."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New title (1 to 120 characters after trimming)."
+          }
+        }
       },
       "UpdateFillSecret": {
         "type": "object",

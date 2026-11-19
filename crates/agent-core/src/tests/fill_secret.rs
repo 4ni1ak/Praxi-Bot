@@ -31,6 +31,7 @@ fn target(frame: &str) -> FieldTarget {
         role: "textbox".into(),
         frame_origin: Some(frame.into()),
         top_origin: Some(frame.into()),
+        sensitive: false,
     }
 }
 

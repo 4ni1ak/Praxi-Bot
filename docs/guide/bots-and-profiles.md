@@ -32,7 +32,8 @@ language = "en"                   # optional preferred language code
 executor   = "gemini/gemini-2.5-flash-lite"   # required: the model that runs the loop
 planner    = "gemini/gemini-3.1-pro-preview"  # optional, informational for now
 classifier = "gemini/gemini-2.5-flash-lite"   # optional: fast routing model (K3)
-fallback   = ["ollama/llama3.2"]              # optional, informational for now
+fallback   = ["ollama/llama3.2"]              # optional: alternate models on failure
+# light    = "provider/your-light-model"     # optional: opt-in model tiering
 
 [permissions]
 preset = "approve-destructive"    # read-only | read-and-draft | approve-destructive | full
@@ -61,9 +62,11 @@ A model is written `provider/model`, where the provider is the id you configured
 (see [Providers and models](providers-and-models.md)), for example
 `gemini/gemini-2.5-flash-lite` or `anthropic/<model-id>`.
 
-The `planner` and `fallback` fields are parsed and stored but are
-informational in the current version: the loop runs on `executor`. The
-`classifier` is used by the decision ladder when `[router]` allows it.
+The `planner` field is informational. The `classifier` is used by the decision
+ladder when `[router]` allows it. The loop starts with `executor` and tries
+`fallback` models after retryable errors or missing capabilities. An optional
+`light` model enables [model tiering](model-tiering.md) for simple first turns;
+all setup presets leave it unset.
 
 ### Permissions in a profile
 
