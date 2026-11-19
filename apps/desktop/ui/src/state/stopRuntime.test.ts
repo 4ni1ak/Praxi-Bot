@@ -594,7 +594,7 @@ test("LiveViewContext retires on Clear pause / release and pumps only after the 
     assert.ok(from >= 0, name);
     return src.slice(from, src.indexOf(next, from));
   };
-  assert.match(body("const clearPause = useCallback", "const recoverTakeover"), /takeoverStopRef\.current\?\.retire\(\)/);
+  assert.match(body("const clearPauseInner = useCallback", "const clearPause = useCallback"), /takeoverStopRef\.current\?\.retire\(\)/);
   assert.match(body("const performRelease = useCallback", "const releaseTakeover"), /takeoverStopRef\.current\?\.retire\(\)/);
   const ingest = body("const ingestControlSnapshot = useCallback", "const issueSnapshotTicket");
   assert.ok(ingest.indexOf("updateState(") < ingest.indexOf("pump()"), "ingest: state before pump");

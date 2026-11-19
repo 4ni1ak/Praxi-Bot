@@ -254,7 +254,7 @@ fn engine_in_profile() -> ApiError {
 }
 
 /// Validate a bot definition; returns `(name, config json)`.
-fn resolve_bot(input: BotInput) -> Result<(String, Value), ApiError> {
+pub(crate) fn resolve_bot(input: BotInput) -> Result<(String, Value), ApiError> {
     let mut config = match (input.config, input.profile_toml) {
         (Some(c), None) => c,
         (None, Some(t)) => toml::from_str::<Value>(&t)
@@ -849,20 +849,35 @@ fn profile_write_response(
     }
 }
 
-/// Delete a bot that has no chats or runs.
-#[utoipa::path(delete, path = "/v1/bots/{id}", tag = "bots", security(("bearer" = [])),
-    params(("id" = Uuid, Path, description = "Bot id")),
-    responses((status = 204), (status = 404, body = ErrorBody), (status = 409, body = ErrorBody)))]
-pub(crate) async fn delete_bot(
-    State(s): State<AppState>,
-    Path(bid): Path<String>,
-) -> Result<StatusCode, ApiError> {
-    let bot = s.bot_of_user(BotId(id(&bid)?))?;
+/// Drop what other stores keep about a deleted bot: its id in MCP servers'
+/// `bots` lists and its bound e-mail accounts.
+pub(crate) async fn forget_bot_links(s: &AppState, bot: &Bot) {
+    // The bot's id must not linger in any MCP server's `bots` list.  Ids are
+    // never reused, so a failure here cannot widen access; it is retried by
+    // the next edit of the list.
+    if let Some(mcp) = s.mcp() {
+        let _ = mcp.forget_bot(&bot.id.to_string()).await;
+    }
+    // Accounts bound to the bot are removed, never unbound: an unbound account
+    // is usable by every bot, so unbinding would silently widen access.  Ids
+    // are never reused, so an account that survives a failure here stays inert
+    // (bound to a bot that no longer exists).
+    if let Some(email) = s.email()
+        && let Err(e) = email.forget_bot(&bot.id.to_string()).await
+    {
+        eprintln!("daemon-api: warning: could not remove e-mail accounts of deleted bot: {e:?}");
+    }
+}
+
+/// Delete a bot that has no chats or runs, together with everything that hangs
+/// off it (knowledge index and grants, browser slot, MCP and e-mail links).
+/// Shared by the HTTP route and the bot-management tool.
+pub(crate) async fn remove_bot(s: &AppState, bot: &Bot) -> Result<(), ApiError> {
     let permit = crate::knowledge::worker_permit(s.data_dir())?;
-    let authority = crate::knowledge::authority_lock(&s, bot.id)
+    let authority = crate::knowledge::authority_lock(s, bot.id)
         .lock_owned()
         .await;
-    crate::knowledge_runtime::quiesce_bot(&s, bot.id).await?;
+    crate::knowledge_runtime::quiesce_bot(s, bot.id).await?;
     let state = s.clone();
     let removed = bot.clone();
     crate::knowledge::blocking_with_permit(permit, move || {
@@ -889,21 +904,20 @@ pub(crate) async fn delete_bot(
     // The bot's browser slot, driver and screen target go with it; nothing
     // selectable or resident stays behind for a bot that no longer exists.
     s.live_view().registry.retire_bot(bot.id.0);
-    // The bot's id must not linger in any MCP server's `bots` list.  Ids are
-    // never reused, so a failure here cannot widen access; it is retried by
-    // the next edit of the list.
-    if let Some(mcp) = s.mcp() {
-        let _ = mcp.forget_bot(&bot.id.to_string()).await;
-    }
-    // Accounts bound to the bot are removed, never unbound: an unbound account
-    // is usable by every bot, so unbinding would silently widen access.  Ids
-    // are never reused, so an account that survives a failure here stays inert
-    // (bound to a bot that no longer exists).
-    if let Some(email) = s.email()
-        && let Err(e) = email.forget_bot(&bot.id.to_string()).await
-    {
-        eprintln!("daemon-api: warning: could not remove e-mail accounts of deleted bot: {e:?}");
-    }
+    forget_bot_links(s, bot).await;
+    Ok(())
+}
+
+/// Delete a bot that has no chats or runs.
+#[utoipa::path(delete, path = "/v1/bots/{id}", tag = "bots", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Bot id")),
+    responses((status = 204), (status = 404, body = ErrorBody), (status = 409, body = ErrorBody)))]
+pub(crate) async fn delete_bot(
+    State(s): State<AppState>,
+    Path(bid): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let bot = s.bot_of_user(BotId(id(&bid)?))?;
+    remove_bot(&s, &bot).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

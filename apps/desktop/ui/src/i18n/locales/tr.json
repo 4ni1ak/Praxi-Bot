@@ -766,6 +766,8 @@
       "deny": "Reddet"
     },
     "local": "Yerel (bu makine)",
+    "manageBots": "Bot oluşturabilir",
+    "manageBotsHint": "Bu botun başka botlar oluşturmasına ve yönetmesine izin verir. Onlara kendisinde olandan fazlasını veremez ve her değişikliği tamamen görüp siz onaylarsınız.",
     "models": "Modeller",
     "name": "Ad",
     "nameRequired": "Ad gerekli.",
@@ -967,6 +969,26 @@
         "repeated": "×{{count}}",
         "select": "İzin ver: {{name}}",
         "title": "{{count}} onay gerekiyor"
+      },
+      "bot": {
+        "allToolsOfCaller": "bu botun kullanabildiği tüm araçlar",
+        "ceiling": "Bir bot, başka bir bota kendisinde olandan fazlasını veremez. Bu onay yalnızca bu değişikliği kapsar; her seferinde sorulur.",
+        "changes": "Neler değişiyor",
+        "classifier": "Sınıflandırıcı",
+        "deleteNote": "Bu bot ve ayarları silinir. Sohbeti olan bir bot silinemez.",
+        "empty": "(ayarlı değil)",
+        "except": "şunlar hariç: {{list}}",
+        "model": "Model",
+        "permissions": "İzinler",
+        "persona": "Kişilik ({{count}} karakter, tamamı gösteriliyor):",
+        "planner": "Planlayıcı",
+        "profile": "Profilin tamamı",
+        "title": {
+          "create": "Yeni bot oluşturulsun mu?",
+          "delete": "Bu bot silinsin mi?",
+          "update": "Bu bot değiştirilsin mi?"
+        },
+        "tools": "Araçlar"
       },
       "computer": "Bu işlem {{kind}} \"{{name}}\" üzerinde çalışır (kimlik {{id}}).",
       "control": {
@@ -1222,6 +1244,7 @@
       "navigate": "gezin",
       "select": "seç"
     },
+    "messageActions": "Mesaj eylemleri",
     "messageCopied": "Kopyalandı",
     "mode": {
       "queue": "Sıraya al",
@@ -1314,6 +1337,26 @@
         "done": "Sana soruldu",
         "failed": "Sana sorulamadı",
         "running": "Sana soruluyor"
+      },
+      "bot_create": {
+        "done": "Bot oluşturuldu",
+        "failed": "Bot oluşturulmadı",
+        "running": "Bot oluşturuluyor"
+      },
+      "bot_delete": {
+        "done": "Bot silindi",
+        "failed": "Bot silinmedi",
+        "running": "Bot siliniyor"
+      },
+      "bot_list": {
+        "done": "Botlarınız kontrol edildi",
+        "failed": "Botlarınız kontrol edilemedi",
+        "running": "Botlarınız kontrol ediliyor"
+      },
+      "bot_update": {
+        "done": "Bot değiştirildi",
+        "failed": "Bot değiştirilmedi",
+        "running": "Bot değiştiriliyor"
       },
       "browser_click": {
         "done": "Sayfada tıklandı",

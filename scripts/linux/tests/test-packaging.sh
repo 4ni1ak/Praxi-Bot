@@ -243,6 +243,10 @@ if [[ "${1:-}" == "--version" ]]; then
   echo "systemd ${FAKE_SYSTEMD_VERSION:-255} (255.4-1ubuntu8.18)"
   exit 0
 fi
+if [[ "$*" == "show --property=ExecStart --value praxi.service" ]]; then
+  printf '%s\n' "${FAKE_PRAXI_EXEC_START:-}"
+  exit 0
+fi
 verb=""
 has_now=0
 units=()
@@ -339,6 +343,10 @@ case "${verb}" in
 esac
 EOF
 write_fake_shim apt-get <<'EOF'
+if [[ "${DEBIAN_FRONTEND:-}" != noninteractive || "${NEEDRESTART_MODE:-}" != l || "${NEEDRESTART_SUSPEND:-}" != 1 ]]; then
+  echo "apt-get must suspend needrestart and run noninteractively" >&2
+  exit 1
+fi
 printf '%s\n' "$*" >> "${SANDBOX_STATE}/apt.log"
 if [[ "${FAKE_FAIL_APT:-0}" -eq 1 && "${1:-}" == "install" ]]; then
   echo "E: Unable to fetch some archives (simulated package failure)" >&2
@@ -655,6 +663,7 @@ if FAKE_STATEFUL_SYSTEMCTL=1 FAKE_FAIL_APT=1 \
   fail "expected package install failure to exit non-zero"
 fi
 assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "stop praxi"
+assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "restart praxi"
 assert_prev_install_restored_and_running "5c-1 package failure"
 
 # 5c-2. Disk-full (ENOSPC) failure during binary install after stopping services
@@ -686,6 +695,7 @@ if FAKE_STATEFUL_SYSTEMCTL=1 FAKE_FAIL_START_UNIT="praxi.service" FAKE_FAIL_ONCE
   fail "expected failed startup during upgrade to exit non-zero and trigger rollback"
 fi
 assert_file_contains "${TMP_ROOT}/rollback-start.log" "rolling back to previous working installation"
+assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "restart praxi"
 assert_prev_install_restored_and_running "5c-4 failed start"
 
 # 5c-5. Readiness check failure AFTER new install started & enabled praxi-xvfb, praxi-desktop, praxi
@@ -1135,5 +1145,16 @@ if command -v systemd-analyze >/dev/null 2>&1; then
 else
   echo "SKIP: systemd-analyze not available on this platform (run on Linux target VM)"
 fi
+
+# 12. The systemd manager reports the replacement command from the loaded drop-in.
+SB_PROVISION="${TMP_ROOT}/provision.sh"
+make_sandboxed_script "${REPO_ROOT}/crates/host-provision/scripts/provision.sh" "${SB_PROVISION}"
+FAKE_PRAXI_EXEC_START='{ path=/opt/praxi/bin/bot ; argv[]=/opt/praxi/bin/bot serve --peer --host ; ignore_errors=no ; pid=123 }' \
+  run_ok "${TMP_ROOT}/provision-host-mode.log" bash "${SB_PROVISION}" status
+assert_file_contains "${TMP_ROOT}/provision-host-mode.log" "unit_hostmode=1"
+FAKE_PRAXI_EXEC_START='{ path=/opt/praxi/bin/bot ; argv[]=/opt/praxi/bin/bot serve --peer ; ignore_errors=no ; pid=123 }' \
+  run_ok "${TMP_ROOT}/provision-standalone-mode.log" bash "${SB_PROVISION}" status
+assert_file_contains "${TMP_ROOT}/provision-standalone-mode.log" "unit_hostmode=0"
+pass "provisioning detects host mode from the effective systemd command"
 
 echo "ALL PACKAGING HERMETIC TESTS PASSED"

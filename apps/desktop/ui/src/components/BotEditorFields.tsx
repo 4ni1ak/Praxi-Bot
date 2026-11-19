@@ -352,6 +352,13 @@ export function PermissionFields({ draft, patch }: { draft: BotDraft; patch: Pat
             onChange={(allowEgressAfterReads) => patch({ allowEgressAfterReads })}
           />
         </SettingRow>
+        <SettingRow title={t("botForm.manageBots")} description={t("botForm.manageBotsHint")}>
+          <Switch
+            checked={draft.canManageBots}
+            label={t("botForm.manageBots")}
+            onChange={(canManageBots) => patch({ canManageBots })}
+          />
+        </SettingRow>
       </SettingGroup>
       <section className={dialogStyles.block}>
         <div className={dialogStyles.blockHead}>

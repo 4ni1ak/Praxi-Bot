@@ -8,6 +8,8 @@ import {
   useRef,
   useState
 } from "react";
+import { useTranslation } from "react-i18next";
+import { useToast } from "../components/Toast";
 import type {
   ControlStateDto,
   HumanAction,
@@ -117,6 +119,8 @@ interface LiveViewContextValue {
   recoverTakeover: () => Promise<void>;
   /** `POST /v1/control/recover`: clear a paused latch (no view session needed). */
   clearPause: (kind?: "own" | "foreign" | "latch") => Promise<void>;
+  /** A clear-pause request is in flight: the banner and buttons hide at once (optimistic). */
+  pauseClearing: boolean;
   /** This client is the local user (loopback daemon), not a paired peer. */
   isLocalClient: boolean;
   /** Local user, or the admin desktop of the host this client is connected to. */
@@ -224,6 +228,10 @@ export function LiveViewProvider({
   // until delivered through the current client.
   const takeoverStopRef = useRef<TakeoverStop<ApiClient> | null>(null);
   const applyOverrideRef = useRef<(dto: ControlStateDto) => void>(() => {});
+  const [pauseClearing, setPauseClearing] = useState(false);
+  const pauseClearingRef = useRef(false);
+  const toast = useToast();
+  const { t } = useTranslation();
   const [viewerOpen, setViewerOpen] = useState<boolean>(initialMockViewerOpen);
   const [cardDemand, setCardDemandState] = useState<{
     active: boolean;
@@ -1051,8 +1059,8 @@ export function LiveViewProvider({
   // (local user only, labelled with the owner) or a plain owner-less latch.
   // `POST /v1/control/recover` needs no view session, so it works with the
   // viewer and the panel closed.
-  const clearPause = useCallback(
-    async (kind: ClearTarget["kind"] = "own") => {
+  const clearPauseInner = useCallback(
+    async (kind: ClearTarget["kind"]) => {
       if (!client) {
         return;
       }
@@ -1099,13 +1107,33 @@ export function LiveViewProvider({
             "the control state changed; not cleared"
           )
         );
+        toast.show(t("liveView.errors.pause_changed"), "danger");
         return;
       }
       updateState((prev) =>
         applyTakeoverFailed(prev, outcome.code, outcome.message)
       );
+      // Never silent: the refusal (owner key, local-only, busy executor, ...) in plain words.
+      toast.show(outcome.message || t("liveView.errors.recover_failed"), "danger");
     },
-    [client, ingestControlSnapshot, refreshTargets, registry, setControlState, updateState]
+    [client, ingestControlSnapshot, refreshTargets, registry, setControlState, t, toast, updateState]
+  );
+
+  const clearPause = useCallback(
+    async (kind: ClearTarget["kind"] = "own") => {
+      if (!client || pauseClearingRef.current) {
+        return;
+      }
+      pauseClearingRef.current = true;
+      setPauseClearing(true);
+      try {
+        await clearPauseInner(kind);
+      } finally {
+        pauseClearingRef.current = false;
+        setPauseClearing(false);
+      }
+    },
+    [client, clearPauseInner]
   );
 
   // Reacquire a takeover the stream drop paused. Every other paused case
@@ -1267,6 +1295,7 @@ export function LiveViewProvider({
       retryRelease,
       recoverTakeover,
       clearPause,
+      pauseClearing,
       isLocalClient,
       canClearForeignPause,
       overrideStop,
@@ -1306,6 +1335,7 @@ export function LiveViewProvider({
       retryRelease,
       recoverTakeover,
       clearPause,
+      pauseClearing,
       isLocalClient,
       canClearForeignPause,
       overrideStop,

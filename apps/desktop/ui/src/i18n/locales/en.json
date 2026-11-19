@@ -766,6 +766,8 @@
       "deny": "Deny"
     },
     "local": "Local (this machine)",
+    "manageBots": "Can create bots",
+    "manageBotsHint": "Lets this bot create and manage other bots. It can never give them more than it has itself, and you approve every change in full.",
     "models": "Models",
     "name": "Name",
     "nameRequired": "A name is required.",
@@ -967,6 +969,26 @@
         "repeated": "×{{count}}",
         "select": "Allow: {{name}}",
         "title": "{{count}} approvals needed"
+      },
+      "bot": {
+        "allToolsOfCaller": "all tools this bot can use",
+        "ceiling": "A bot can never give another bot more than it has itself. This approval covers only this change; it is asked every time.",
+        "changes": "What changes",
+        "classifier": "Classifier",
+        "deleteNote": "This bot and its settings are removed. It cannot be deleted while it has chats.",
+        "empty": "(not set)",
+        "except": "except {{list}}",
+        "model": "Model",
+        "permissions": "Permissions",
+        "persona": "Persona ({{count}} characters, shown in full):",
+        "planner": "Planner",
+        "profile": "Complete profile",
+        "title": {
+          "create": "Create a new bot?",
+          "delete": "Delete this bot?",
+          "update": "Change this bot?"
+        },
+        "tools": "Tools"
       },
       "computer": "This action runs on {{kind}} \"{{name}}\" (id {{id}}).",
       "control": {
@@ -1222,6 +1244,7 @@
       "navigate": "navigate",
       "select": "select"
     },
+    "messageActions": "Message actions",
     "messageCopied": "Copied",
     "mode": {
       "queue": "Queue",
@@ -1314,6 +1337,26 @@
         "done": "Asked you",
         "failed": "Couldn't ask you",
         "running": "Asking you"
+      },
+      "bot_create": {
+        "done": "Created a bot",
+        "failed": "Didn't create a bot",
+        "running": "Creating a bot"
+      },
+      "bot_delete": {
+        "done": "Deleted a bot",
+        "failed": "Didn't delete a bot",
+        "running": "Deleting a bot"
+      },
+      "bot_list": {
+        "done": "Checked your bots",
+        "failed": "Couldn't check your bots",
+        "running": "Checking your bots"
+      },
+      "bot_update": {
+        "done": "Changed a bot",
+        "failed": "Didn't change a bot",
+        "running": "Changing a bot"
       },
       "browser_click": {
         "done": "Clicked on a page",

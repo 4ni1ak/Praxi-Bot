@@ -766,6 +766,8 @@
       "deny": "Verweigern"
     },
     "local": "Lokal (dieses Gerät)",
+    "manageBots": "Kann Bots erstellen",
+    "manageBotsHint": "Erlaubt diesem Bot, andere Bots zu erstellen und zu verwalten. Er kann ihnen nie mehr geben, als er selbst hat, und Sie geben jede Änderung vollständig frei.",
     "models": "Modelle",
     "name": "Name",
     "nameRequired": "Ein Name ist erforderlich.",
@@ -967,6 +969,26 @@
         "repeated": "×{{count}}",
         "select": "Erlauben: {{name}}",
         "title": "{{count}} Genehmigungen nötig"
+      },
+      "bot": {
+        "allToolsOfCaller": "alle Werkzeuge, die dieser Bot nutzen kann",
+        "ceiling": "Ein Bot kann einem anderen Bot nie mehr geben, als er selbst hat. Diese Freigabe gilt nur für diese Änderung; sie wird jedes Mal erfragt.",
+        "changes": "Was sich ändert",
+        "classifier": "Klassifikator",
+        "deleteNote": "Dieser Bot und seine Einstellungen werden entfernt. Ein Bot mit Chats kann nicht gelöscht werden.",
+        "empty": "(nicht gesetzt)",
+        "except": "außer {{list}}",
+        "model": "Modell",
+        "permissions": "Berechtigungen",
+        "persona": "Persona ({{count}} Zeichen, vollständig angezeigt):",
+        "planner": "Planer",
+        "profile": "Vollständiges Profil",
+        "title": {
+          "create": "Neuen Bot erstellen?",
+          "delete": "Diesen Bot löschen?",
+          "update": "Diesen Bot ändern?"
+        },
+        "tools": "Werkzeuge"
       },
       "computer": "Diese Aktion läuft auf {{kind}} „{{name}}“ (ID {{id}}).",
       "control": {
@@ -1222,6 +1244,7 @@
       "navigate": "navigieren",
       "select": "auswählen"
     },
+    "messageActions": "Nachrichtenaktionen",
     "messageCopied": "Kopiert",
     "mode": {
       "queue": "Einreihen",
@@ -1314,6 +1337,26 @@
         "done": "Dich gefragt",
         "failed": "Du konntest nicht gefragt werden",
         "running": "Fragt dich"
+      },
+      "bot_create": {
+        "done": "Bot erstellt",
+        "failed": "Bot nicht erstellt",
+        "running": "Bot wird erstellt"
+      },
+      "bot_delete": {
+        "done": "Bot gelöscht",
+        "failed": "Bot nicht gelöscht",
+        "running": "Bot wird gelöscht"
+      },
+      "bot_list": {
+        "done": "Ihre Bots geprüft",
+        "failed": "Ihre Bots konnten nicht geprüft werden",
+        "running": "Ihre Bots werden geprüft"
+      },
+      "bot_update": {
+        "done": "Bot geändert",
+        "failed": "Bot nicht geändert",
+        "running": "Bot wird geändert"
       },
       "browser_click": {
         "done": "Auf einer Seite geklickt",
