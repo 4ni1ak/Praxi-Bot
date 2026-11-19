@@ -559,6 +559,7 @@
       "code": "Code"
     },
     "slash": {
+      "export": "Diesen Chat als Markdown-Datei speichern",
       "new": "Neuen Chat starten",
       "stop": "Aktuellen Lauf stoppen",
       "help": "Hilfe und Tastenkürzel öffnen",
@@ -850,6 +851,9 @@
       }
     },
     "timelineLabel": "Unterhaltung",
+    "copyMessage": "Nachricht kopieren",
+    "messageCopied": "Kopiert",
+    "export": { "you": "Du", "done": "Chat gespeichert" },
     "jumpToLatest": "Zum Neuesten springen",
     "runBar": {
       "label": "Lauf-Steuerung",
@@ -918,15 +922,15 @@
       },
       "approve-destructive": {
         "name": "Zerstörerisches genehmigen",
-        "hint": "Lesen ist frei; alles, was etwas ändert oder sendet, fragt dich zuerst."
+        "hint": "Lesen, Surfen, Änderungen im Arbeitsbereich und der eigene Computer des Bots laufen frei; Löschen, Senden, Geld und dein eigener PC fragen zuerst."
       },
       "full": {
         "name": "Voll",
-        "hint": "Läuft ohne Nachfrage (einschließlich normalem Löschen von Dateien und Senden), außer Geld, Aktivierung von Zeitplänen und katastrophalen Befehlen auf der Verbotsliste."
+        "hint": "Läuft ohne Nachfrage (auch Löschen und Senden), außer bei Geld, Aktivierung von Zeitplänen und katastrophalen Befehlen auf der Verbotsliste. Nach dem Lesen nicht vertrauenswürdiger Inhalte fragt es weiterhin vor dem Senden von Daten oder dem Start eines Programms."
       },
       "read-and-draft": {
         "name": "Lesen & entwerfen",
-        "hint": "Lesen ist frei; Entwürfe, Dateiänderungen, Seitenabrufe, Klicks, Befehle und Sendungen fragen alle zuerst (gleiche wirksame Richtlinie wie „Zerstörerisches genehmigen“)."
+        "hint": "Lesen ist frei; jede Änderung, jedes Senden, jeder Seitenabruf, Klick und Befehl fragt zuerst."
       },
       "custom": {
         "name": "Benutzerdefiniert",
@@ -973,7 +977,7 @@
     "runs": "Läufe",
     "modelCalls": "Modellaufrufe",
     "tokens": "Tokens",
-    "empty": "Noch keine Nutzung.",
+    "empty": "Noch keine Nutzung. Sobald du einem Bot schreibst, erscheint der Token-Verbrauch hier.",
     "bot": "Bot",
     "calls": "Aufrufe",
     "prompt": "Prompt",
@@ -987,7 +991,7 @@
   "needs": {
     "title": "Braucht dich",
     "subtitle": "Genehmigungen und Fragen, die in allen Chats warten.",
-    "empty": "Nichts wartet auf dich.",
+    "empty": "Nichts wartet auf dich. Wenn ein Bot eine Freigabe braucht oder eine Frage hat, erscheint sie hier.",
     "kind": {
       "approval": "Genehmigung",
       "question": "Frage"
@@ -1072,6 +1076,10 @@
       "component_conflict": {
         "title": "Gerade nichts zu installieren",
         "hint": "Es ist bereits installiert oder wird gerade installiert, oder auf diesem Computer ist kein Installationsprogramm verfügbar."
+      },
+      "attachment_too_large": {
+        "title": "Dieser Anhang ist zu groß",
+        "hint": "Entferne ihn oder wähle eine kleinere Datei und versuche es dann erneut."
       },
       "approval_once_only": {
         "title": "Diese Genehmigung kann nur einmal erteilt werden",
@@ -1328,6 +1336,10 @@
       "unavailable": {
         "title": "Das ist gerade nicht verfügbar",
         "hint": "Versuche es gleich noch einmal."
+      },
+      "unsupported_attachment": {
+        "title": "Dieser Anhang wird nicht unterstützt",
+        "hint": "Prüfe, ob die Datei nicht leer oder beschädigt ist, oder versuche eine andere Datei."
       },
       "unsupported_media_type": {
         "title": "Dieser Dateityp wird nicht unterstützt",
@@ -2159,7 +2171,8 @@
       "usage": "Nutzung",
       "diagnostics": "Diagnose",
       "updates": "Updates",
-      "appearance": "Darstellung"
+      "appearance": "Darstellung",
+      "mail": "E-Mail"
     },
     "general": {
       "account": {
@@ -2417,6 +2430,15 @@
           "nameHint": "Verwende Buchstaben, Ziffern, Punkte, Bindestriche oder Unterstriche, beginnend mit einem Buchstaben oder einer Ziffer (höchstens 32).",
           "bot": "Wähle den Bot oder wähle einen beliebigen Bot."
         }
+      },
+      "next": {
+        "ok": "Verbunden. Ein Bot, der E-Mail nutzen darf, kann dieses Postfach verwenden.",
+        "authFailed": "Der Server hat die Anmeldung abgelehnt. Gmail, Outlook, Yahoo und iCloud verlangen ein App-Passwort, nicht dein normales Passwort. Bearbeite das Postfach und gib es erneut ein.",
+        "apiKey": "AgentMail hat den API-Schlüssel abgelehnt. Erstelle in deiner AgentMail-Konsole einen neuen Schlüssel und füge ihn erneut ein.",
+        "unreachable": "Der Mailserver ist nicht erreichbar. Prüfe deine Internetverbindung und die Servernamen und versuche es erneut.",
+        "tls": "Die sichere Verbindung ist fehlgeschlagen. Prüfe Servernamen, Port und Sicherheitseinstellung.",
+        "protocol": "Dieser Server antwortet nicht wie ein Mailserver. Prüfe Servernamen und Port.",
+        "timeout": "Der Server hat nicht rechtzeitig geantwortet. Versuche es gleich noch einmal."
       }
     },
     "webSearch": {
@@ -2754,9 +2776,9 @@
       "auto": "Frei"
     },
     "autonomyHints": {
-      "ask": "Liest Dateien, prüft den Bildschirm und durchsucht das Web ohne Nachfrage; fragt vor dem Entwerfen, Senden, Ändern oder Löschen von Dateien, dem Abrufen von Seiten, Klicken oder Ausführen von Befehlen (gleiche wirksame Richtlinie wie „Ausgewogen“).",
-      "balanced": "Liest Dateien, prüft den Bildschirm und durchsucht das Web frei; fragt vor jedem Schreiben oder Löschen von Dateien, Entwurf, Senden, Seitenabruf, Klick oder Befehl (gleiche wirksame Richtlinie wie „Fragen“).",
-      "auto": "Läuft ohne Nachfrage – einschließlich Löschen gewöhnlicher Dateien, Ausführen von Shell-Befehlen und Senden von Nachrichten – und hält nur bei Geld, Aktivierung von Zeitplänen und Befehlen auf der Verbotsliste an (Datenträger formatieren, System-/Home-Löschungen, Zugangsdatenpfade)."
+      "ask": "Liest Dateien, prüft den Bildschirm und durchsucht das Web ohne Nachfrage; fragt vor jeder Änderung, jedem Senden, Seitenabruf, Klick oder Befehl.",
+      "balanced": "Liest, surft, bearbeitet Dateien im Arbeitsbereich und arbeitet auf dem eigenen Computer des Bots ohne Nachfrage; fragt vor dem Löschen von Dateien, dem Senden, Geldausgaben oder Eingriffen in deinen PC.",
+      "auto": "Läuft ohne Nachfrage, auch bei Löschen, Befehlen und Senden. Fragt weiterhin bei Geld, Aktivierung von Zeitplänen und katastrophalen Befehlen sowie nach dem Lesen nicht vertrauenswürdiger Inhalte vor dem Senden von Daten oder dem Start eines Programms."
     },
     "autonomyCustom": "Verwendet die Berechtigungsvorlage {{preset}}.",
     "advanced": "Erweiterte Einstellungen",
@@ -2802,6 +2824,7 @@
       "localNoSystem": "Der Bot arbeitet hier"
     },
     "reason": {
+      "timeout": "Der Bildschirm konnte nicht rechtzeitig gestartet werden",
       "connecting": "Verbindung zu {{name}} wird hergestellt …",
       "offline": "Server nicht erreichbar",
       "notPaired": "Der Server akzeptiert diesen Computer nicht mehr",
@@ -2933,7 +2956,35 @@
     "needsDesktop": "{{name}} hat keine Desktop-Sitzung, daher gibt es keinen Bildschirm zum Anzeigen. Um eine hinzuzufügen, führe auf diesem Computer aus:",
     "pausedIdle": "Zum Ressourcensparen pausiert - zum Fortsetzen klicken",
     "showScreen": "Bildschirm anzeigen",
-    "screenListFailed": "Die Bildschirmliste von {{name}} konnte nicht geladen werden. Es wird gleich noch einmal versucht."
+    "screenListFailed": "Die Bildschirmliste von {{name}} konnte nicht geladen werden. Es wird gleich noch einmal versucht.",
+    "mail": {
+      "heading": "E-Mail",
+      "loading": "Postfächer werden gesucht…",
+      "loadError": "Die Postfächer konnten nicht geladen werden: {{message}}",
+      "empty": "{{name}} hat noch kein Postfach. Verbinde dein eigenes Postfach oder gib dem Bot eine eigene Adresse.",
+      "connect": "Postfach verbinden",
+      "manage": "Postfächer verwalten",
+      "shared": "Für alle Bots freigegeben",
+      "own": "Nur {{name}}",
+      "agentmail": "Eigene Adresse",
+      "check": "Verbindung prüfen",
+      "checking": "Wird geprüft…",
+      "checked": "Geprüft um {{time}}",
+      "toolsLabel": "{{name}} darf E-Mail nutzen",
+      "toolsOnHint": "Lesen ist erlaubt. Senden richtet sich immer nach dem Berechtigungsmodus dieses Bots und fragt standardmäßig zuerst nach.",
+      "toolsOffHint": "Das Postfach ist verbunden, aber {{name}} sieht noch keine E-Mail-Werkzeuge. Schalte dies ein, damit der Bot E-Mails lesen und schreiben kann.",
+      "toolsError": "Der E-Mail-Zugriff konnte nicht geändert werden: {{message}}",
+      "recent": "Neueste Mails anzeigen",
+      "hideRecent": "Neueste Mails ausblenden",
+      "recentError": "Der Posteingang konnte nicht gelesen werden: {{message}}",
+      "noMessages": "Der Posteingang ist leer.",
+      "noSubject": "(kein Betreff)",
+      "sendTest": "Test-Mail senden",
+      "sendingTest": "Wird gesendet…",
+      "sendTestHint": "Sendet eine kurze Testnachricht an {{address}} selbst, an niemanden sonst.",
+      "testSent": "Test-Mail an {{address}} gesendet. Sie sollte gleich ankommen.",
+      "testError": "Die Test-Mail konnte nicht gesendet werden: {{message}}"
+    }
   },
   "terminal": {
     "title": "Terminal - {{name}}",
@@ -3053,6 +3104,14 @@
     "confirmQuery": "Abrufanfragen erlauben"
   },
   "liveView": {
+    "chat": {
+      "title": "Mit dem Bot chatten",
+      "collapse": "Chat einklappen",
+      "replying": "Bot antwortet…",
+      "working": "Bot arbeitet…",
+      "approve": "Genehmigen",
+      "reject": "Ablehnen"
+    },
     "title": "Live-Ansicht des Computers",
     "expand": "Große Ansicht öffnen",
     "close": "Ansicht schließen",
@@ -3157,6 +3216,12 @@
     "approvalsWaiting": "{{count}} Element(e) warten im Chat auf deine Entscheidung.",
     "reviewApprovals": "Zurück zum Chat, um zu antworten",
     "errors": {
+      "unauthorized": "Ihre Sitzung ist nicht mehr autorisiert. Verbinden Sie sich erneut mit diesem Computer.",
+      "too_many_streams": "Auf dieser Verbindung sind zu viele Streams offen. Schließen Sie einen anderen Stream und versuchen Sie es erneut.",
+      "network": "Die Bildschirmverbindung wurde unterbrochen. Prüfen Sie Ihr Netzwerk und versuchen Sie es erneut.",
+      "view_quota": "Auf dem Server sind zu viele Bildschirm-Sitzungen offen. Schließen Sie eine unbenutzte Ansicht oder versuchen Sie es gleich erneut.",
+      "server_restarting": "Der Server wird möglicherweise neu gestartet. Versuchen Sie es erneut, sobald er wieder online ist.",
+      "timeout": "Der Bildschirm konnte nicht rechtzeitig gestartet werden.",
       "generic": "Die Anfrage ist fehlgeschlagen. Prüfe die Verbindung und versuche es erneut.",
       "release_failed": "Die Kontrolle konnte nicht zurückgegeben werden. Der Bot bleibt pausiert; versuche Bitirdim erneut.",
       "release_unconfirmed": "Der Daemon meldet deine Übernahme weiterhin als aktiv. Versuche Bitirdim erneut.",
@@ -3406,6 +3471,10 @@
     "dismiss": "Verwerfen",
     "stopAllNow": "Jetzt alles stoppen",
     "letContinue": "Weiterlaufen lassen"
+  },
+  "peerLink": {
+    "direct": "Direkt · {{rtt}} ms",
+    "relay": "Relay · {{rtt}} ms"
   },
   "computerPicker": {
     "label": "Computer: {{name}}",
@@ -3861,6 +3930,10 @@
       "saved": "Diktiereinstellungen gespeichert",
       "clearKey": "Schlüssel entfernen",
       "privacy": "Eine Aufnahme wird nur gesendet, wenn du das Mikrofon drückst, und nur an diese Adresse. Der Schlüssel bleibt im Geheimnisspeicher."
+    },
+    "speakAuto": {
+      "title": "Antworten vorlesen",
+      "description": "Jede fertige Antwort automatisch vorlesen."
     }
   }
 }

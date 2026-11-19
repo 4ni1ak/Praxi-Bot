@@ -12,6 +12,7 @@
 
 mod agent;
 mod approval;
+pub mod attachments;
 mod cli;
 mod compaction;
 mod config;
@@ -35,6 +36,8 @@ pub mod usage;
 mod control_grant_tests;
 #[cfg(test)]
 mod egress_tests;
+#[cfg(test)]
+mod mode_tests;
 #[cfg(test)]
 mod router_tests;
 #[cfg(test)]
