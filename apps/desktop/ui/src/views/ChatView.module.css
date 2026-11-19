@@ -754,3 +754,16 @@
   border-color: var(--color-accent);
   box-shadow: var(--shadow-card), 0 0 0 var(--size-border-thick) color-mix(in srgb, var(--color-accent) 35%, transparent);
 }
+
+.composer[data-live-view="true"] {
+  padding: var(--space-0);
+}
+
+.liveReplyStatus {
+  overflow: hidden;
+  margin: var(--space-0);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

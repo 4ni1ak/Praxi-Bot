@@ -53,6 +53,15 @@ pub struct PermissionsConfig {
     pub allow_egress_after_reads: bool,
 }
 
+impl PermissionsConfig {
+    /// The bot's autonomy mode, derived from the preset (see
+    /// [`permission_engine::AutonomyMode::from_preset`]).
+    #[must_use]
+    pub fn mode(&self) -> permission_engine::AutonomyMode {
+        permission_engine::AutonomyMode::from_preset(self.preset.as_deref())
+    }
+}
+
 /// `[tools]` table: allow / exclude globs over tool names.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ToolFilter {

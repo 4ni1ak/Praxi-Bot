@@ -72,7 +72,7 @@ impl Transport for Fake {
             RemoteCmd::Probe => "praxi-ok\n".to_owned(),
             RemoteCmd::Provision(Sub::Preflight) => self.preflight.borrow().clone(),
             RemoteCmd::Provision(Sub::Status) => {
-                "version=0.1.0\nunit_active=active\nunit_hostmode=1\nxvfb=active\ndesktop=active\n"
+                "version=0.1.0\nunit_active=active\nunit_hostmode=1\nxvfb=active\ndesktop=active\nbrowser=1\n"
                     .into()
             }
             RemoteCmd::Provision(Sub::Devices) => {
@@ -239,6 +239,7 @@ fn happy_path_installs_pairs_and_checks_health() {
         "connect",
         "install.run",
         "pair",
+        "health.browser",
         "health.version",
         "health.live_view",
     ] {

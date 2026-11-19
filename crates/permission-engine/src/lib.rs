@@ -5,6 +5,7 @@
 
 pub mod egress;
 pub mod error;
+pub mod modes;
 pub mod never_list;
 pub mod policy;
 pub mod resolver;
@@ -14,6 +15,7 @@ pub use protocol::{InitiatorKind, PermissionCategory};
 
 pub use egress::{ContentExposure, egress_must_ask, executes_must_ask};
 pub use error::PolicyError;
+pub use modes::{AllowReason, AutonomyMode, CallFacts, Impact, balanced_lane};
 pub use never_list::{CliStores, NeverList, set_data_dir};
 pub use policy::{Level, Limits, Policy, Rule};
 pub use resolver::{ActionRequest, Decision, PermissionResolver};

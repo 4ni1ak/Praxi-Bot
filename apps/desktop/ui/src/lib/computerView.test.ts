@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { deriveView, formatLive, IDLE_PAUSE_MS, measureFps, type ViewInputs } from "./computerView.ts";
+import { deriveView, formatLive, IDLE_PAUSE_MS, measureFps, SCREEN_START_TIMEOUT_MS, type ViewInputs } from "./computerView.ts";
 import { gradientBase, gradientVars, hexToOklch, NEUTRAL_CHROMA } from "./botGradient.ts";
 
 const base: ViewInputs = {
@@ -9,9 +9,10 @@ const base: ViewInputs = {
   issue: null,
   targetsStatus: "unknown",
   hasTarget: false,
-  targetUnavailable: false,
+  targetUnavailable: null,
+  startFailure: null,
   noScreen: null,
-  permissionRefused: false,
+  targetsError: null,
   hasFrame: false
 };
 
@@ -28,12 +29,30 @@ test("the computer card never starts a view by itself: idle until asked, then st
   assert.equal(IDLE_PAUSE_MS, 180_000);
 });
 
+test("a card start resolves to a frame, an unavailable reason, or a retryable timeout", () => {
+  assert.equal(SCREEN_START_TIMEOUT_MS, 6_000);
+  const starting: ViewInputs = { ...base, wanted: true, hasTarget: true, targetsStatus: "ok" };
+  assert.equal(deriveView(starting).kind, "starting");
+  assert.equal(deriveView({ ...starting, hasFrame: true }).kind, "live");
+  assert.deepEqual(deriveView({ ...starting, startFailure: "permission" }), {
+    kind: "unavailable", unavailable: "permission", paused: null
+  });
+  assert.deepEqual(deriveView({ ...starting, startFailure: "timeout" }), {
+    kind: "timeout", unavailable: "timeout", paused: null
+  });
+  assert.equal(deriveView({ ...starting, startFailure: null }).kind, "starting");
+});
+
 test("an unreachable server or a refused screen is 'unavailable' with a reason, not a spinner", () => {
   assert.deepEqual(deriveView({ ...base, issue: "offline" }), { kind: "unavailable", unavailable: "offline", paused: null });
   assert.equal(deriveView({ ...base, issue: "connecting" }).kind, "idle");
   assert.equal(deriveView({ ...base, issue: "connecting", wanted: true }).unavailable, "connecting");
-  assert.equal(deriveView({ ...base, wanted: true, permissionRefused: true, targetsStatus: "failed" }).unavailable, "permission");
+  assert.equal(deriveView({ ...base, wanted: true, targetsError: "forbidden", targetsStatus: "failed" }).unavailable, "permission");
   assert.deepEqual(deriveView({ ...base, wanted: true, targetsStatus: "ok", noScreen: "no_display" }).unavailable, { noScreen: "no_display" });
+  assert.deepEqual(
+    deriveView({ ...base, wanted: true, targetsError: "network", targetsStatus: "failed" }).unavailable,
+    { streamError: "network" }
+  );
   assert.equal(formatLive(42_000), "0:42");
   assert.equal(measureFps([0, 500, 1000, 1500, 2000, 2500], 2500), 2);
   assert.equal(measureFps([2400], 2500), null);

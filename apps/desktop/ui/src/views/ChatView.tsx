@@ -23,6 +23,8 @@ import {
   useState
 } from "react";
 import { useTranslation } from "react-i18next";
+import { createPortal } from "react-dom";
+import type { LiveChatSlots } from "./LiveViewerChat";
 import { ownerKey } from "../lib/ownerKey";
 import { BotAvatar, Button } from "ui";
 import { isMockMode } from "../api/mockMode";
@@ -40,6 +42,7 @@ import { Markdown } from "../components/Markdown";
 import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
 import { MessageInfo } from "../components/MessageInfo";
+import { SpeakButton } from "../components/SpeakButton";
 import { QueuedMessages } from "../components/QueuedMessages";
 import { RunStatusLine } from "../components/RunStatusLine";
 import { RunChangesGate } from "../components/RunChangesGate";
@@ -175,7 +178,8 @@ export function ChatView({
   onSwitchChat,
   showAgentRoute = false,
   sendWith = "enter",
-  messageTimes = "minutes"
+  messageTimes = "minutes",
+  liveChatSlots
 }: {
   chatId: string;
   /** Present only when there is a page to go back to; without it the header has no arrow. */
@@ -191,6 +195,7 @@ export function ChatView({
   sendWith?: SendWith;
   /** Settings, General: per-message times off / HH:mm / HH:mm:ss. */
   messageTimes?: MessageTimes;
+  liveChatSlots?: LiveChatSlots | null;
 }) {
   const { t, i18n } = useTranslation();
   const toast = useToast();
@@ -291,6 +296,10 @@ export function ChatView({
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
   const [remember, setRemember] = useState<Record<string, RememberState>>({});
+  useLayoutEffect(() => {
+    if (liveChatSlots?.composer) inputRef.current?.focus({ preventScroll: true });
+  }, [liveChatSlots?.composer]);
+
   useEffect(() => {
     const el = inputRef.current;
     if (el && pendingCaret.current !== null) {
@@ -1060,6 +1069,7 @@ export function ChatView({
               {guestName(runGuest(runId))}
               <Markdown text={item.text} />
             </div>
+            <SpeakButton id={`${runId}:${item.ts}`} text={item.text} />
             <MessageInfo side="bot" ts={item.ts} runId={runId} run={run} runDto={runs.find((r) => r.id === runId)} />
             <MessageTime
               ts={item.ts}
@@ -1146,6 +1156,17 @@ export function ChatView({
       </div>
     );
   }
+
+
+  const liveStatus = awaitingApproval
+    ? t("chat.runBar.waiting")
+    : running
+      ? lastItem?.kind === "item" && lastItem.runId === activeRunId && lastItem.item.kind === "text"
+        ? t("liveView.chat.replying")
+        : barDetail ?? t("liveView.chat.working")
+      : null;
+  const placeComposer = (composer: ReactNode) =>
+    liveChatSlots?.composer ? createPortal(composer, liveChatSlots.composer) : composer;
 
   return (
     <div className={styles.root}>
@@ -1243,6 +1264,7 @@ export function ChatView({
                       {lead ? guestName(guestBot(e.botId)) : null}
                       <Markdown text={e.text} />
                     </div>
+                    <SpeakButton id={e.key} text={e.text} />
                     <MessageInfo side="bot" ts={e.ts} runId={e.runId} run={e.runId ? events.runs[e.runId] : undefined} runDto={runs.find((r) => r.id === e.runId)} />
                     <MessageTime ts={e.ts} mode={messageTimes} />
                   </div>
@@ -1370,8 +1392,14 @@ export function ChatView({
       ) : null}
       </div>
 
+      {liveChatSlots?.status && liveStatus ? createPortal(
+        <p className={styles.liveReplyStatus} role="status">{liveStatus}</p>,
+        liveChatSlots.status
+      ) : null}
+      {placeComposer(
       <footer
         className={styles.composer}
+        data-live-view={liveChatSlots?.composer ? "true" : undefined}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes("Files")) {
             e.preventDefault();
@@ -1406,7 +1434,7 @@ export function ChatView({
             onAction={(a) => (a === "restartService" ? void restartDaemon() : void send())}
           />
         ) : null}
-        <div className={styles.dockWrap}>
+        {!liveChatSlots?.composer ? <div className={styles.dockWrap}>
           <RunStatusLine
             model={barModel}
             botName={barBotName}
@@ -1430,7 +1458,7 @@ export function ChatView({
               void next.then(onControl).catch(() => {});
             }}
           />
-        </div>
+        </div> : null}
         <div className={styles.boxWrap}>
           {menuOpen ? (
             <div
@@ -1629,6 +1657,7 @@ export function ChatView({
           </div>
         </div>
       </footer>
+      )}
     </div>
   );
 }
