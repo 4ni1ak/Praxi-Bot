@@ -105,9 +105,10 @@ test("only live runs are listed for stop", () => {
       { id: "a", state: "running" },
       { id: "b", state: "completed" },
       { id: "c", state: "waiting_approval" },
-      { id: "d", state: "paused" }
+      { id: "d", state: "paused" },
+      { id: "e", state: "queued" }
     ]),
-    ["a", "c"]
+    ["a", "c", "e"]
   );
 });
 

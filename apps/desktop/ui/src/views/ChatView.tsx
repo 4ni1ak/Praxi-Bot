@@ -97,6 +97,7 @@ import { describeTool, stepPhase } from "../lib/toolLabels";
 import { brandIcon } from "../lib/brandIcons";
 import { type Chain, chainOrderTs, groupRunItems } from "../lib/thinkingChain";
 import { type SendWith, shouldSend } from "../lib/settingsPrefs";
+import { isProcessingRunState } from "../lib/runState";
 import { rank } from "../lib/fuzzy";
 import {
   applyCompletion,
@@ -134,8 +135,6 @@ import type { ApiClient } from "../api/client";
 import { sendWithHostRecovery } from "../lib/hostRecovery";
 import { ComputerTargetChip } from "../components/ComputerTargetChip";
 import { ErrorNotice } from "../components/ErrorNotice";
-
-const LIVE_STATES = new Set(["pending", "running", "waiting_approval"]);
 
 /** Empty-chat prompt starters (plain text for the composer, not commands). */
 const STARTERS = [
@@ -404,7 +403,7 @@ export function ChatView({
   const serverRuns = runs.filter(
     (r) => r.chat_id === chatId && !r.parent_run_id
   );
-  const serverLive = [...serverRuns].reverse().find((r) => LIVE_STATES.has(r.state));
+  const serverLive = [...serverRuns].reverse().find((r) => isProcessingRunState(r.state));
   const serverPaused = [...serverRuns].reverse().find((r) => r.state === "paused");
   const eventLive: RunState | undefined = [...chatRuns]
     .reverse()
@@ -414,7 +413,7 @@ export function ChatView({
     );
   const ackedLive =
     ackedRunId !== null &&
-    !serverRuns.some((r) => r.id === ackedRunId && !LIVE_STATES.has(r.state)) &&
+    !serverRuns.some((r) => r.id === ackedRunId && !isProcessingRunState(r.state)) &&
     !chatRuns.some((r) => r.id === ackedRunId && r.finishedMs !== undefined)
       ? ackedRunId
       : null;

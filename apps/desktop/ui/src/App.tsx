@@ -69,6 +69,7 @@ import {
 import { nextRouteAfterChatDelete } from "./lib/chatManage";
 import { nativeEngineName } from "./lib/botEngine";
 import { getAutostart, setAutostart } from "./lib/providers";
+import { isProcessingRunState } from "./lib/runState";
 import { PausedControlBanner } from "./components/PausedControlBanner";
 import { RunBar } from "./components/RunBar";
 import { runBarModel } from "./lib/runBar";
@@ -865,7 +866,7 @@ function AppShell() {
               const view = botView(bot);
               const latest = botChats(chats, bot.id).find((c) => !c.archived);
               const config = bot.config as { bot?: { preview?: string; state?: string; unread?: boolean } };
-              const live = runs.find(r => r.bot_id === bot.id && ["running", "pending", "waiting_approval"].includes(r.state));
+              const live = runs.find(r => r.bot_id === bot.id && isProcessingRunState(r.state));
               const state = needs.some(n => n.botId === bot.id) || live?.state === "waiting_approval" ? "waiting-approval" : live ? "working" : isMockMode() ? config.bot?.state : "idle";
               const avatarState = state === "thinking" || state === "working" || state === "waiting-approval" || state === "error" ? state : "idle";
               const index = botIds.indexOf(bot.id);
