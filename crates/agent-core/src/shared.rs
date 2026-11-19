@@ -713,6 +713,12 @@ pub(crate) fn control_kind_of(name: &str) -> Option<tool_registry::ControlKind> 
 }
 
 impl RunCtx {
+    /// Own per-run state key for tools that keep any (the browser tab): a subagent
+    /// run is its own lane, a top-level run shares the bot's default.
+    pub(crate) fn lane(&self) -> Option<String> {
+        self.parent_run_id.map(|_| self.run_id.to_string())
+    }
+
     /// A run-scoped control grant covers this call: same computer, same
     /// running program (path, pid and start time), a covered kind, and a target
     /// the deny rules did not refuse.

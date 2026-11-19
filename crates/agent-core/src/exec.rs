@@ -1037,6 +1037,7 @@ impl TurnExecutor {
                     let tctx = ToolContext {
                         run_id: ctx.run_id.to_string(),
                         bot_id: Some(ctx.bot_id.to_string()),
+                        lane: ctx.lane(),
                         ..ToolContext::default()
                     };
                     tool.control_target(&tctx, &resolved.input).await
@@ -1048,6 +1049,7 @@ impl TurnExecutor {
                 let tctx = ToolContext {
                     run_id: ctx.run_id.to_string(),
                     bot_id: Some(ctx.bot_id.to_string()),
+                    lane: ctx.lane(),
                     ..ToolContext::default()
                 };
                 let origin = resolved.tool.current_origin(&tctx, &resolved.input).await;
@@ -1446,6 +1448,7 @@ impl TurnExecutor {
                     exposure_untrusted: exposure.untrusted,
                     expected_origin,
                     control_guard,
+                    lane: ctx.lane(),
                 };
                 tool.call(&tctx, input).await
             },
