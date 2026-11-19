@@ -6,8 +6,12 @@ use std::sync::{Arc, OnceLock, Weak};
 
 use async_trait::async_trait;
 use builtin_tools::{GateRequest, ToolGate, cwd_for, raw_command_for};
+use computer_target::ComputerLabel;
 use parking_lot::Mutex;
-use permission_engine::{ActionRequest, Decision, Policy, egress_must_ask, executes_must_ask};
+use permission_engine::{
+    ActionRequest, AllowReason, AutonomyMode, CallFacts, Decision, Impact, Policy, balanced_lane,
+    egress_must_ask, executes_must_ask,
+};
 use protocol::event::{ApprovalNeeded, QuestionAsked, ToolCallApproved, ToolCallDenied};
 use protocol::{BotId, Event, InitiatorKind, PermissionCategory, RunId, ToolCallId};
 use serde_json::{Value, json};
@@ -232,7 +236,6 @@ impl Shared {
     /// a this-chat grant satisfies a plain ask, and nothing more: a deny,
     /// `always_ask`, unsupported limits and the absolute floors are all decided
     /// before the grant is looked at, in the same order as without it.
-    #[allow(clippy::too_many_lines)] // One decision pipeline: deny floors, policy, gate, grants.
     pub(crate) fn decide_with_target(
         &self,
         ctx: &RunCtx,
@@ -242,11 +245,28 @@ impl Shared {
         input: &Value,
         target: Option<&ControlTarget>,
     ) -> Decision {
+        self.decide_with_reason(ctx, name, effect, category, input, target)
+            .0
+    }
+
+    /// [`Self::decide_with_target`] plus the audit reason code when the
+    /// autonomy mode (not the policy, a grant or the read shortcut) is what
+    /// turned a plain ask into an allow.
+    #[allow(clippy::too_many_lines)] // One decision pipeline: deny floors, policy, gate, grants.
+    pub(crate) fn decide_with_reason(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        effect: Effect,
+        category: PermissionCategory,
+        input: &Value,
+        target: Option<&ControlTarget>,
+    ) -> (Decision, Option<&'static str>) {
         // Scoped admission allows only two active runs per credential. Until
         // child admission shares that counter, external agents cannot fan out.
         if ctx.initiator == InitiatorKind::ExternalAgent && name == crate::subagent::SPAWN_SUBAGENT
         {
-            return Decision::Deny;
+            return (Decision::Deny, None);
         }
         // Document converters are shell-free writers too. In particular a
         // one-column CSV can be a valid SKILL.md or workflow/config document.
@@ -260,7 +280,7 @@ impl Shared {
             .and_then(Value::as_str)
             && builtin_tools::files::check_daemon_write(self.storage.data_dir(), path).is_err()
         {
-            return Decision::Deny;
+            return (Decision::Deny, None);
         }
         let mut raw_command = raw_command_for(name, input);
         if raw_command.is_empty() {
@@ -284,7 +304,7 @@ impl Shared {
         };
         let r = &self.resolver;
         if self.locked_deny(category) {
-            return Decision::Deny;
+            return (Decision::Deny, None);
         }
         let mut d = r.resolve(
             &self.global_policy.read(),
@@ -336,15 +356,15 @@ impl Shared {
             if d == Decision::Allow {
                 d = Decision::ask();
             }
-            return d;
+            return (d, None);
         }
         if !d.is_ask() {
             // A clean Allow becomes an ask once the run is tainted and this
             // call can leave the machine. A Deny is unchanged.
             if d == Decision::Allow && must_ask && !self.gate_waived(ctx, name, input) {
-                return Decision::ask();
+                return (Decision::ask(), None);
             }
-            return d;
+            return (d, None);
         }
         // An `Ask` forced by an absolute floor survives even a full policy.
         // Unevaluated `AllowWithLimits` is one of those floors: the constraints
@@ -352,18 +372,18 @@ impl Shared {
         // Money and the never-list are the others (they stay `Ask` under
         // [`Policy::full`]). Only a plain policy-level `Ask` can be waived.
         if d.unsupported_limits().is_some() {
-            return d;
+            return (d, None);
         }
         let floor = r.resolve(&Policy::full(), None, None, &req) != Decision::Allow;
         if floor {
-            return d;
+            return (d, None);
         }
         // The egress gate and the executor rule are not grants and not the read
         // shortcut. The only way past the egress gate is the bot's explicit
         // `allow_egress_after_reads` flag, which already made that term false;
         // it does not make the executor term false.
         if must_ask {
-            return d;
+            return (d, None);
         }
         let granted = control_covered || {
             let g = self.grants.lock();
@@ -380,10 +400,69 @@ impl Shared {
             )
         };
         if granted || (self.cfg.read_tools_skip_ask && effect == Effect::Read) {
-            Decision::Allow
-        } else {
-            d
+            return (Decision::Allow, None);
         }
+        // The autonomy mode's lane. It sits after every floor, the taint gate
+        // and the grants, so it can only turn a plain policy-level ask into an
+        // allow, never override one of those.
+        match self.mode_lane(ctx, effect, category, input) {
+            Some(reason) => (Decision::Allow, Some(reason.code())),
+            None => (d, None),
+        }
+    }
+
+    /// Record that the autonomy mode, not an approval, let this call run: the
+    /// reason code and the mode, so "why did it not ask?" has an answer.
+    pub(crate) fn audit_auto_allow(&self, ctx: &RunCtx, tool: &str, reason: &str) {
+        self.audit(
+            ctx,
+            "system",
+            "approval.auto_allowed",
+            &json!({
+                "tool": tool,
+                "reason": reason,
+                "mode": ctx.profile.permissions.mode().as_str(),
+            }),
+        );
+    }
+
+    /// The Balanced lane for this call, `None` in every other mode.
+    ///
+    /// Only the user's own runs (typed or scheduled) get a lane: a peer, an
+    /// external agent or a routine keep asking. A call counts as "own computer"
+    /// only when the run resolved to the bot's host, never the user's PC.
+    fn mode_lane(
+        &self,
+        ctx: &RunCtx,
+        effect: Effect,
+        category: PermissionCategory,
+        input: &Value,
+    ) -> Option<AllowReason> {
+        if ctx.profile.permissions.mode() != AutonomyMode::Balanced
+            || !matches!(
+                ctx.initiator,
+                InitiatorKind::Human | InitiatorKind::Schedule
+            )
+        {
+            return None;
+        }
+        balanced_lane(&CallFacts {
+            category,
+            impact: match effect {
+                Effect::Read => Impact::Read,
+                Effect::Write => Impact::Write,
+                Effect::Destructive => Impact::Destructive,
+            },
+            own_computer: self.is_host_homed()
+                && matches!(
+                    ctx.resolved_computer.label,
+                    ComputerLabel::Host | ComputerLabel::Browser
+                ),
+            named_browser_profile: input
+                .get("profile")
+                .and_then(Value::as_str)
+                .is_some_and(|p| !p.is_empty() && p != "isolated"),
+        })
     }
 
     /// The site of a URL as a grant boundary: `scheme://host:port`, lower case, no trailing dot,

@@ -21,7 +21,11 @@ function thisSystem(): string {
 
 function reasonKey(reason: UnavailableReason | null): { key: string; detail?: string } {
   if (reason && typeof reason === "object") {
-    return { key: "computerCard.reason.noScreen", detail: noScreenDetailKey(reason.noScreen) };
+    return "noScreen" in reason
+      ? { key: "computerCard.reason.noScreen", detail: noScreenDetailKey(reason.noScreen) }
+      : "streamError" in reason
+        ? { key: `liveView.errors.${reason.streamError}` }
+        : { key: `liveView.reasons.${reason.targetReason}` };
   }
   return { key: `computerCard.reason.${reason ?? "failed"}` };
 }
@@ -81,6 +85,11 @@ export function BotComputerBlock({
       ? t("computerCard.status.local", { system })
       : t("computerCard.status.localNoSystem");
   const { key: rk, detail } = reasonKey(view.unavailable);
+  const reason = t(rk, {
+    name: serverName || t("computerPicker.host"),
+    detail: detail ? t(detail) : "",
+    defaultValue: t("computerCard.reason.failed")
+  });
 
   // Control can outlive the view (a paused latch, a failed hand-back): never leave the bot paused
   // with nothing to press, so these recovery actions stay on the card whatever the view says.
@@ -99,9 +108,9 @@ export function BotComputerBlock({
         ? t("computerCard.hint.starting")
         : view.kind === "paused"
           ? t("computerCard.hint.paused")
-          : view.kind === "unavailable"
-            ? t(rk, { name: serverName || t("computerPicker.host"), detail: detail ? t(detail) : "" })
-            : "";
+          : view.kind === "timeout"
+            ? view.unavailable === "timeout" ? reason : `${t("computerCard.reason.timeout")}. ${reason}`
+            : view.kind === "unavailable" ? reason : "";
 
   let body: ReactNode = null;
   if (view.kind === "idle") {
@@ -120,7 +129,7 @@ export function BotComputerBlock({
         {t("computerCard.resume")}
       </button>
     );
-  } else if (view.kind === "unavailable") {
+  } else if (view.kind === "unavailable" || view.kind === "timeout") {
     body = (
       <button type="button" className={styles.cta} data-testid="bot-computer-retry" onClick={view.start}>
         {t("computerCard.retry")}
@@ -171,7 +180,7 @@ export function BotComputerBlock({
         <div className={styles.view} data-kind={view.kind} data-testid="bot-computer-view">
           {view.kind === "live" && view.frameUrl ? (
             <>
-              <img className={styles.frame} src={view.frameUrl} alt={t("computerCard.frameAlt", { name })} draggable={false} />
+              <img className={styles.frame} src={view.frameUrl} alt={t("computerCard.frameAlt", { name })} title={t("liveView.privacyNotice")} draggable={false} />
               <LiveClock since={view.liveSinceMs} />
               <div className={styles.over}>
                 <button type="button" data-testid="bot-computer-big" onClick={view.bigView}>
@@ -188,7 +197,11 @@ export function BotComputerBlock({
             </>
           ) : (
             <>
-              <BotGradient color={botColor} still={view.kind === "paused" || view.kind === "unavailable"} />
+              {view.previewUrl ? (
+                <img className={styles.frame} src={view.previewUrl} alt="" draggable={false} />
+              ) : (
+                <BotGradient color={botColor} still={view.kind === "paused" || view.kind === "unavailable" || view.kind === "timeout"} />
+              )}
               {body}
               {hint ? <div className={styles.hint}>{hint}</div> : null}
             </>

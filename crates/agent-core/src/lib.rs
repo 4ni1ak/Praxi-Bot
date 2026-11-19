@@ -38,6 +38,8 @@ mod control_grant_tests;
 #[cfg(test)]
 mod egress_tests;
 #[cfg(test)]
+mod mode_tests;
+#[cfg(test)]
 mod router_tests;
 #[cfg(test)]
 mod subagent_tests;

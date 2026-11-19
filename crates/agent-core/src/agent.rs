@@ -190,6 +190,30 @@ impl AgentLoop {
         self
     }
 
+    /// Register the model-callable memory and session tools (`memory_search`,
+    /// `session_search`, `memory_save`, `memory_forget`) when
+    /// [`LoopConfig::memory`] is configured and enabled. When memory is `None`
+    /// or disabled, no memory tools are registered.
+    #[must_use]
+    pub fn with_memory_tools(self) -> Self {
+        if let Some(m) = self.sh.cfg.memory.as_ref().filter(|m| m.enabled) {
+            let redactor = self.sh.cfg.redactor.clone();
+            let secret_checker: Option<memory_store::tools::SecretChecker> = redactor.map(|r| {
+                Arc::new(move |text: &str| r.contains_secret(text))
+                    as memory_store::tools::SecretChecker
+            });
+            for tool in memory_store::tools::tools(
+                &m.store,
+                &self.sh.storage,
+                m.recall_budget_tokens,
+                secret_checker.as_ref(),
+            ) {
+                let _ = self.sh.tools.register(tool);
+            }
+        }
+        self
+    }
+
     /// Tell the loop what is in the foreground (browser page host, application)
     /// so skills that match it are listed as suggested; without a source the
     /// turn's text is matched against skill keywords instead.
@@ -1827,7 +1851,7 @@ impl AgentLoop {
         source: &str,
     ) -> Result<String> {
         let id = id.unwrap_or_else(Uuid::now_v7);
-        self.sh.storage.insert_message(&DbMessage {
+        let msg = DbMessage {
             id,
             user_id,
             chat_id,
@@ -1848,8 +1872,12 @@ impl AgentLoop {
             exposure_untrusted: false,
             exposure_private: false,
             exposure_sources: Vec::new(),
-        })?;
+        };
+        self.sh.storage.insert_message(&msg)?;
         self.sh.storage.set_message_source(id, source)?;
+        if let Some(m) = self.sh.cfg.memory.as_ref().filter(|m| m.enabled) {
+            let _ = m.store.index_message(&msg);
+        }
         Ok(content)
     }
 
@@ -2192,7 +2220,7 @@ impl AgentLoop {
             // streamed deltas is only whole here).
             let text = self.sh.redact(text);
             let exposure = ctx.as_ref().map(|c| c.taint.lock().clone());
-            let _ = self.sh.storage.insert_message(&DbMessage {
+            let msg = DbMessage {
                 id: Uuid::now_v7(),
                 user_id: run.user_id,
                 chat_id,
@@ -2203,7 +2231,11 @@ impl AgentLoop {
                 exposure_untrusted: exposure.as_ref().is_some_and(|t| t.exposure.untrusted),
                 exposure_private: exposure.as_ref().is_some_and(|t| t.exposure.private),
                 exposure_sources: exposure.map(|t| t.sources().to_vec()).unwrap_or_default(),
-            });
+            };
+            let _ = self.sh.storage.insert_message(&msg);
+            if let Some(m) = self.sh.cfg.memory.as_ref().filter(|m| m.enabled) {
+                let _ = m.store.index_message(&msg);
+            }
             self.enqueue_memory(run, &text);
         }
         if let Some(ctx) = &ctx {

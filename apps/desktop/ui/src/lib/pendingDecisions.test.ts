@@ -64,8 +64,9 @@ const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.met
 
 test("the live view banner counts the very entries it renders as cards", () => {
   const viewer = read("../views/LiveViewer.tsx");
-  assert.match(viewer, /count: needs\.length/);
-  assert.match(viewer, /<PendingDecisions entries=\{needs\} \/>/);
+  assert.match(viewer, /count: questionCount/);
+  assert.match(viewer, /<PendingDecisions entries=\{needs\.filter\(\(item\) => item\.kind === "question"\)\} \/>/);
+  assert.match(viewer, /const questionCount = needs\.filter\(\(item\) => item\.kind === "question"\)\.length/);
 });
 
 test("the chat pins the cards its timeline cannot draw and names what it waits for", () => {

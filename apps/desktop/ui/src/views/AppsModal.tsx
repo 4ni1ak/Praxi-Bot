@@ -6,6 +6,7 @@ import { BotAvatar, Button } from "ui";
 import { BrandIcon } from "../components/BrandIcon";
 import { brandIcon } from "../lib/brandIcons";
 import { botView } from "../lib/botProfile";
+import { McpToolList } from "./McpToolList.tsx";
 import type { McpAuthState, McpCatalogEntry, McpServer } from "../api/types";
 import formStyles from "../components/Form.module.css";
 import { BotAccessPicker } from "../components/BotAccessPicker";
@@ -153,6 +154,7 @@ function ConnectedCell({
   onSignOut,
   onDisconnect,
   onSaveBots,
+  onSaveTools,
   onChooseFolder
 }: {
   server: McpServer;
@@ -169,6 +171,7 @@ function ConnectedCell({
   onSignOut: () => void;
   onDisconnect: () => void;
   onSaveBots: (from: BotScope, to: BotScope) => void;
+  onSaveTools: (exclude: string[]) => void;
 }) {
   const { t } = useTranslation();
   const { bots, client } = useDaemon();
@@ -271,6 +274,7 @@ function ConnectedCell({
         <div className={styles.panel} id={panelId}>
           <span className={styles.panelLabel}>{t("apps.access.label")}</span>
           <BotAccessPicker scope={scope} bots={bots} onChange={setScope} />
+          <McpToolList server={server} client={client} busy={busy} onChange={onSaveTools} />
           <div className={styles.actions}>
             <Button
               size="sm"
@@ -920,6 +924,12 @@ export function AppsModal({
       onReconnect={() =>
         void run(s.name, async () => {
           await client?.reconnectMcpServer(s.name);
+          await reload();
+        })
+      }
+      onSaveTools={(exclude) =>
+        void run(s.name, async () => {
+          await client?.updateMcpServer(s.name, { tool_exclude: exclude });
           await reload();
         })
       }
