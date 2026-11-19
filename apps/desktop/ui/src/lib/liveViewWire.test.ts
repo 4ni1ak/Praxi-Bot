@@ -10,7 +10,8 @@ import {
   MAX_PAYLOAD_BYTES,
   type FrameHeader,
   type HeartbeatHeader,
-  type StatusHeader
+  type StatusHeader,
+  frameSizeAllowed
 } from "./liveViewWire.ts";
 
 const SAMPLE_SESSION = "00000000-0000-4000-8000-000000000010";
@@ -141,6 +142,10 @@ test("rejects invalid version, codec, dimensions, and non-empty status payloads"
     () => new LiveViewDecoder().push(wire),
     (e: unknown) => e instanceof LiveViewWireError && e.code === "unsupported_version"
   );
+
+  // A portrait frame (1080x1920) is within the wire cap; 1081x1920 is not.
+  assert.equal(frameSizeAllowed(1080, 1920), true);
+  assert.equal(frameSizeAllowed(1081, 1920), false);
 
   // Invalid dimensions (1921 > 1920)
   const badDim = new TextEncoder().encode(
