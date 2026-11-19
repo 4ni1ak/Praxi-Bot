@@ -38,6 +38,8 @@ pub enum HostLinkState {
 }
 
 /// A paired host.
+// One flag per thing the owner switches separately (wire shape).
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct HostLinkInfo {
     /// Paired device key (public, not a secret).
@@ -53,6 +55,15 @@ pub struct HostLinkInfo {
     /// ... and may look at the screen without asking first each session.
     #[serde(default)]
     pub computer_access_always: bool,
+    /// The owner lets this host's bots use this computer's browser.
+    #[serde(default)]
+    pub computer_browser: bool,
+    /// ... run commands on it.
+    #[serde(default)]
+    pub computer_commands: bool,
+    /// ... read its files.
+    #[serde(default)]
+    pub computer_files: bool,
 }
 
 /// `GET /v1/hosts`.
@@ -133,8 +144,7 @@ pub trait HostLinks: Send + Sync {
     async fn set_computer_access(
         &self,
         _id: &str,
-        _enabled: bool,
-        _always_read: bool,
+        _access: &crate::pc_access::ComputerAccessInput,
     ) -> Result<(), HostLinkError> {
         Err(HostLinkError::NotFound)
     }
@@ -350,10 +360,8 @@ pub(crate) async fn set_computer_access(
     audit(
         &s,
         "host_link.computer_access",
-        &serde_json::json!({"host":id,"enabled":input.enabled,"always_read":input.always_read}),
+        &serde_json::json!({"host":id,"enabled":input.enabled,"always_read":input.always_read,"browser":input.browser,"commands":input.commands,"files":input.files}),
     )?;
-    links
-        .set_computer_access(&id, input.enabled, input.always_read)
-        .await?;
+    links.set_computer_access(&id, &input).await?;
     Ok(StatusCode::NO_CONTENT)
 }
