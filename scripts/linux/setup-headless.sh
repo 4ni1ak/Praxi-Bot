@@ -32,6 +32,11 @@
 
 set -euo pipefail
 
+# Never let apt's needrestart hook restart services (including praxi.service)
+# behind our back: list-only mode, no interactive prompts. Restarts happen only
+# where this script restarts them on purpose.
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1
+
 MODE="user"
 SESSION_MODE="xfce"
 WITHOUT_DESKTOP=0
@@ -261,7 +266,7 @@ install_desktop_packages() {
     fi
 
     log "updating apt package index..."
-    ${SUDO} apt-get update -y
+    ${SUDO} env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 apt-get update -y
 
     local pkg missing_pkgs=()
     for pkg in "${pkgs_apt[@]}"; do
@@ -295,7 +300,7 @@ install_desktop_packages() {
     fi
 
     log "installing packages: ${pkgs_apt[*]}"
-    DEBIAN_FRONTEND=noninteractive ${SUDO} apt-get install -y --no-install-recommends "${pkgs_apt[@]}"
+    ${SUDO} env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 apt-get install -y --no-install-recommends "${pkgs_apt[@]}"
   elif command -v dnf >/dev/null 2>&1 && [[ "${MODE}" == "system" ]]; then
     local pkgs_dnf=(xorg-x11-server-Xvfb xauth dbus-daemon dbus-x11 at-spi2-core xdpyinfo xset xdg-utils liberation-fonts)
     if [[ "${need_xfce}" -eq 1 ]]; then
