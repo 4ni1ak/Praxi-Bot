@@ -31,6 +31,7 @@ mod schedule_precheck;
 mod shared;
 mod subagent;
 mod taint;
+mod tool_guidance;
 pub mod usage;
 
 #[cfg(test)]
