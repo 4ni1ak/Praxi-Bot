@@ -879,6 +879,7 @@
     "copyMessage": "Nachricht kopieren",
     "messageCopied": "Kopiert",
     "export": { "you": "Du", "done": "Chat gespeichert" },
+    "find": { "label": "In diesem Chat suchen", "placeholder": "Im Chat suchen…", "none": "Keine Treffer", "count": "{{current}} von {{total}}", "prev": "Vorheriger Treffer", "next": "Nächster Treffer" },
     "jumpToLatest": "Zum Neuesten springen",
     "runBar": {
       "label": "Lauf-Steuerung",
@@ -2135,6 +2136,8 @@
   "help": {
     "title": "Tastenkürzel",
     "intro": "Praktische Kürzel, solange die App geöffnet ist.",
+    "findInChat": "Im Chat suchen",
+    "findNav": "Nächster / vorheriger Treffer in der Suchleiste, schließen",
     "palette": "Befehlspalette",
     "recall": "Frühere Nachrichten dieses Chats (leeres Feld oder erste Zeile; Esc bringt deinen Entwurf zurück)",
     "send": "Nachricht senden",

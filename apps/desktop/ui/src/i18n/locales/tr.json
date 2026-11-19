@@ -879,6 +879,7 @@
     "copyMessage": "Mesajı kopyala",
     "messageCopied": "Kopyalandı",
     "export": { "you": "Sen", "done": "Sohbet kaydedildi" },
+    "find": { "label": "Bu sohbette ara", "placeholder": "Sohbette ara…", "none": "Eşleşme yok", "count": "{{current}} / {{total}}", "prev": "Önceki eşleşme", "next": "Sonraki eşleşme" },
     "jumpToLatest": "En sona git",
     "runBar": {
       "label": "Çalışma kontrolleri",
@@ -2135,6 +2136,8 @@
   "help": {
     "title": "Klavye kısayolları",
     "intro": "Uygulama açıkken kullanışlı kısayollar.",
+    "findInChat": "Bu sohbette ara",
+    "findNav": "Arama çubuğunda sonraki / önceki eşleşme, kapat",
     "palette": "Komut paleti",
     "recall": "Bu sohbetin önceki mesajları (boş kutuda ya da ilk satırda; Esc taslağını geri getirir)",
     "send": "Mesaj gönder",

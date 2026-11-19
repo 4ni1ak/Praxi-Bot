@@ -879,6 +879,7 @@
     "copyMessage": "Copy message",
     "messageCopied": "Copied",
     "export": { "you": "You", "done": "Chat saved" },
+    "find": { "label": "Find in this chat", "placeholder": "Find in chat…", "none": "No matches", "count": "{{current}} of {{total}}", "prev": "Previous match", "next": "Next match" },
     "jumpToLatest": "Jump to latest",
     "runBar": {
       "label": "Run controls",
@@ -2135,6 +2136,8 @@
   "help": {
     "title": "Keyboard shortcuts",
     "intro": "Handy shortcuts while the app is open.",
+    "findInChat": "Find in this chat",
+    "findNav": "Next / previous match in the find bar, close it",
     "palette": "Command palette",
     "send": "Send message",
     "recall": "Earlier messages of this chat (empty box or first line; Esc brings your draft back)",
