@@ -680,8 +680,67 @@
 }
 
 /* The bots' computer is not answering: the last known list stays, greyed out. */
-.botList[data-stale="true"] {
+.botList[data-stale="true"],
+.railChats[data-stale="true"] {
   opacity: 0.55;
   filter: grayscale(0.6);
   pointer-events: none;
+}
+
+.railChats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: var(--size-border) solid var(--color-border);
+}
+
+.railChatsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-0) var(--space-1) var(--space-0) var(--space-2);
+}
+
+.railChatsTitle {
+  margin: var(--space-0);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-wide);
+}
+
+.railChatsAdd {
+  display: inline-grid;
+  place-items: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  padding: var(--space-0);
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.railChatsAdd > svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
+.railChatsAdd:hover:not(:disabled) {
+  background-color: var(--color-surface-elevated);
+  color: var(--color-text);
+}
+
+.railChatsAdd:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.railChatsAdd:disabled {
+  opacity: 0.5;
+  cursor: default;
 }

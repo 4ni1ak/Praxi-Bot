@@ -188,6 +188,7 @@ export function ConfirmDialog({
   cancelLabel,
   tone = "default",
   busy = false,
+  confirmDisabled = false,
   error,
   onConfirm,
   onCancel
@@ -199,6 +200,7 @@ export function ConfirmDialog({
   cancelLabel?: string;
   tone?: "default" | "danger";
   busy?: boolean;
+  confirmDisabled?: boolean;
   error?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
@@ -222,7 +224,7 @@ export function ConfirmDialog({
           </Button>
           <Button
             variant={tone === "danger" ? "danger" : "primary"}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
             data-testid="confirm-dialog-accept"
             onClick={onConfirm}
           >

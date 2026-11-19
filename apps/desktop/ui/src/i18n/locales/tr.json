@@ -1591,6 +1591,28 @@
     "working": "Çalışıyor…",
     "yesterdayLabel": "Dün"
   },
+  "chatManage": {
+    "allArchived": "Tüm sohbetler arşivlendi.",
+    "archive": "Arşivle",
+    "archivedToggle": "Arşivlenenler ({{count}})",
+    "delete": "Sil",
+    "deleteActiveRun": "Bu sohbette şu anda etkin bir görev çalışıyor. Silmeden önce durdurun.",
+    "deleteBody": "\"{{title}}\" ve tüm mesajları kalıcı olarak silinecek. Bu işlem geri alınamaz.",
+    "deleteConfirm": "Sohbeti sil",
+    "deleteTitle": "Bu sohbet silinsin mi?",
+    "empty": "Henüz sohbet yok.",
+    "loading": "Sohbetler yükleniyor…",
+    "menuLabel": "{{title}} için sohbet seçenekleri",
+    "menuTooltip": "Sohbet seçenekleri",
+    "pin": "Sabitle",
+    "pinnedBadge": "Sabitlendi",
+    "rename": "Yeniden adlandır",
+    "renameEmpty": "Bir başlık yazın.",
+    "renameInputLabel": "Sohbet başlığı",
+    "renameTooLong": "Başlık en fazla {{max}} karakter olabilir.",
+    "unarchive": "Arşivden çıkar",
+    "unpin": "Sabitlemeyi kaldır"
+  },
   "common": {
     "back": "Geri",
     "cancel": "Vazgeç",

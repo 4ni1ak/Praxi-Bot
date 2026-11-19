@@ -1591,6 +1591,28 @@
     "working": "Working…",
     "yesterdayLabel": "Yesterday"
   },
+  "chatManage": {
+    "allArchived": "All chats are archived.",
+    "archive": "Archive",
+    "archivedToggle": "Archived ({{count}})",
+    "delete": "Delete",
+    "deleteActiveRun": "A run is currently active in this chat. Stop it first before deleting.",
+    "deleteBody": "\"{{title}}\" and its messages will be permanently deleted. This cannot be undone.",
+    "deleteConfirm": "Delete chat",
+    "deleteTitle": "Delete this chat?",
+    "empty": "No chats yet.",
+    "loading": "Loading chats…",
+    "menuLabel": "Chat options for {{title}}",
+    "menuTooltip": "Chat options",
+    "pin": "Pin",
+    "pinnedBadge": "Pinned",
+    "rename": "Rename",
+    "renameEmpty": "Enter a title.",
+    "renameInputLabel": "Chat title",
+    "renameTooLong": "Keep the title under {{max}} characters.",
+    "unarchive": "Unarchive",
+    "unpin": "Unpin"
+  },
   "common": {
     "back": "Back",
     "cancel": "Cancel",
