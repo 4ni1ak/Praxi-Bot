@@ -37,6 +37,13 @@ pub struct RestoreCmd {
 /// databases are copied with the online backup API), but only a stopped daemon
 /// gives a snapshot that is consistent across files.
 pub fn backup(data_dir: &Path, cmd: &BackupCmd, out: &mut dyn Write) -> crate::Result<()> {
+    if !data_dir.join("bot.db").is_file() {
+        return Err(format!(
+            "nothing to back up: no Praxi data found in {} (use --data-dir if it lives elsewhere)",
+            data_dir.display()
+        )
+        .into());
+    }
     // Written next to the target and renamed when complete, so a failed backup
     // never leaves something that looks valid.
     let partial = partial_path(&cmd.file);
@@ -216,6 +223,21 @@ mod tests {
         let bots = restored.list_bots(user).unwrap();
         assert_eq!(bots.len(), 1);
         assert_eq!(bots[0].name, "Atlas");
+    }
+
+    #[test]
+    fn backup_of_an_empty_directory_says_so_and_creates_no_file() {
+        let empty = tempfile::tempdir().unwrap();
+        let file = empty.path().join("out.tar");
+        let err = backup(
+            empty.path(),
+            &BackupCmd { file: file.clone() },
+            &mut Vec::new(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("nothing to back up"), "{err}");
+        assert!(!file.exists());
     }
 
     #[test]
