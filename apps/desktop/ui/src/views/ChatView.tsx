@@ -47,6 +47,7 @@ import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
 import { DictateButton } from "../components/DictateButton";
 import { MessageInfo } from "../components/MessageInfo";
+import { MessageActions } from "../components/MessageActions";
 import { CopyButton } from "../components/CopyButton";
 import { useAutoSpeak } from "../components/useAutoSpeak";
 import { SpeakButton } from "../components/SpeakButton";
@@ -1121,19 +1122,25 @@ export function ChatView({
           return <p className={ccStyles.nestedText}>{item.text}</p>;
         }
         return (
-          <div className={styles.assistantRow}>
+          <div className={styles.assistantRow} data-message-row="assistant">
             <div className={styles.assistantBubble}>
               {guestName(runGuest(runId))}
               <Markdown text={item.text} />
             </div>
-            <CopyButton text={item.text} />
-            <SpeakButton id={`${runId}:${item.ts}`} text={item.text} botId={chat?.bot_id} />
-            <MessageInfo side="bot" ts={item.ts} runId={runId} run={run} runDto={runs.find((r) => r.id === runId)} />
-            <MessageTime
-              ts={item.ts}
-              mode={messageTimes}
-              finishedTs={run?.finishedMs}
-            />
+            <MessageActions
+              side="bot"
+              meta={
+                <MessageTime
+                  ts={item.ts}
+                  mode={messageTimes}
+                  finishedTs={run?.finishedMs}
+                />
+              }
+            >
+              <CopyButton text={item.text} />
+              <SpeakButton id={`${runId}:${item.ts}`} text={item.text} botId={chat?.bot_id} />
+              <MessageInfo side="bot" ts={item.ts} runId={runId} run={run} runDto={runs.find((r) => r.id === runId)} />
+            </MessageActions>
           </div>
         );
       case "tool": {
@@ -1306,10 +1313,7 @@ export function ChatView({
                 );
               case "user":
                 return (
-                  <div key={e.key} className={styles.userRow}>
-                    <MessageTime ts={e.ts} mode={messageTimes} />
-                    <CopyButton text={e.text} />
-                    <MessageInfo side="me" ts={e.ts} source={e.source} />
+                  <div key={e.key} className={styles.userRow} data-message-row="user">
                     <div className={styles.userBubble}>
                       <MessageFiles client={client} chatId={chatId} attachments={e.attachments ?? []} />
                       {splitMentions(e.text, mentionBots).map((part, i) =>
@@ -1320,19 +1324,30 @@ export function ChatView({
                         )
                       )}
                     </div>
+                    <MessageActions
+                      side="me"
+                      meta={<MessageTime ts={e.ts} mode={messageTimes} />}
+                    >
+                      <CopyButton text={e.text} />
+                      <MessageInfo side="me" ts={e.ts} source={e.source} />
+                    </MessageActions>
                   </div>
                 );
               case "assistant":
                 return (
-                  <div key={e.key} className={styles.assistantRow}>
+                  <div key={e.key} className={styles.assistantRow} data-message-row="assistant">
                     <div className={styles.assistantBubble}>
                       {lead ? guestName(guestBot(e.botId)) : null}
                       <Markdown text={e.text} />
                     </div>
-                    <CopyButton text={e.text} />
-                    <SpeakButton id={e.key} text={e.text} botId={e.botId ?? chat?.bot_id} />
-                    <MessageInfo side="bot" ts={e.ts} runId={e.runId} run={e.runId ? events.runs[e.runId] : undefined} runDto={runs.find((r) => r.id === e.runId)} />
-                    <MessageTime ts={e.ts} mode={messageTimes} />
+                    <MessageActions
+                      side="bot"
+                      meta={<MessageTime ts={e.ts} mode={messageTimes} />}
+                    >
+                      <CopyButton text={e.text} />
+                      <SpeakButton id={e.key} text={e.text} botId={e.botId ?? chat?.bot_id} />
+                      <MessageInfo side="bot" ts={e.ts} runId={e.runId} run={e.runId ? events.runs[e.runId] : undefined} runDto={runs.find((r) => r.id === e.runId)} />
+                    </MessageActions>
                   </div>
                 );
               case "runStopped":
