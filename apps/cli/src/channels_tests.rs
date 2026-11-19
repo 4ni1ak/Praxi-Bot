@@ -180,18 +180,33 @@ async fn the_daemon_runs_the_channel_and_stops_it_on_shutdown() {
         .unwrap();
     let addr = listener.local_addr().unwrap();
     let server = telegram_mock().await;
-    let t = start_telegram(
-        dir.path(),
-        store_with_token(),
-        &format!("http://{addr}"),
-        API_TOKEN,
-        Some(&server.uri()),
-    );
-    state.add_channel(t.clone());
+    let prepare = {
+        let state = state.clone();
+        let dir = dir.path().to_path_buf();
+        let telegram_url = server.uri();
+        async move {
+            let channel = telegram_runtime(
+                &dir,
+                store_with_token(),
+                &format!("http://{addr}"),
+                API_TOKEN,
+                None,
+                Some(&telegram_url),
+                Some(state.leader().clone()),
+            );
+            state.add_channel(channel);
+        }
+    };
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-    let daemon = tokio::spawn(crate::serve::run_daemon(listener, state, Some(t), async {
-        let _ = stopped.await;
-    }));
+    let daemon = tokio::spawn(daemon_api::serve_with_startup(
+        listener,
+        state,
+        prepare,
+        async {
+            let _ = stopped.await;
+        },
+    ));
+    wait_for_first_poll(&server).await;
 
     let http = reqwest::Client::new();
     let url = |p: &str| format!("http://{addr}{p}");

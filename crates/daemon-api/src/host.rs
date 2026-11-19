@@ -486,7 +486,15 @@ impl LeaderControl {
             .upgrade()
             .ok_or_else(|| ApiError::unavailable("daemon stopped"))?;
         self.0.verifying.store(false, Ordering::SeqCst);
-        state.start_leader_components()
+        // Opening the scheduler store and reading channel credentials can block.
+        // Hand off the HTTP work even if a CPU quota leaves Tokio one worker.
+        if tokio::runtime::Handle::current().runtime_flavor()
+            == tokio::runtime::RuntimeFlavor::MultiThread
+        {
+            tokio::task::block_in_place(|| state.start_leader_components())
+        } else {
+            state.start_leader_components()
+        }
     }
 
     /// Commit an explicitly authorized handover state after its transfer protocol completes.

@@ -686,7 +686,8 @@ impl AppState {
         }
     }
 
-    /// Register a messaging channel for `/v1/channels` (call before [`serve`]).
+    /// Register a messaging channel for `/v1/channels` before automatic
+    /// components start.
     pub fn add_channel(&self, channel: Arc<dyn ChannelControl>) {
         self.0.channels.lock().push(channel);
     }
@@ -1447,17 +1448,52 @@ fn api_routes() -> Router<AppState> {
 /// The caller must bind `listener` to a loopback address.
 ///
 /// # Errors
-/// I/O errors of the server, or the schedule store cannot be opened.
+/// I/O errors of the server.
 pub async fn serve(
     listener: TcpListener,
     state: AppState,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<Vec<RunId>> {
-    state
-        .leader()
-        .start()
-        .await
-        .map_err(std::io::Error::other)?;
+    serve_with_startup(listener, state, std::future::ready(()), shutdown).await
+}
+
+/// Serve the API while `prepare` registers any remaining channels and the
+/// leader checks paired peers before opening automatic components.
+/// The caller must bind `listener` to a loopback address.
+///
+/// # Errors
+/// I/O errors of the server. Background startup failures are logged.
+pub async fn serve_with_startup(
+    listener: TcpListener,
+    state: AppState,
+    prepare: impl Future<Output = ()> + Send + 'static,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> std::io::Result<Vec<RunId>> {
+    let _cancel_on_drop = state.shutdown_token().drop_guard();
+    let startup = {
+        let leader = state.leader().clone();
+        let cancel = state.shutdown_token();
+        tokio::spawn(async move {
+            let began = std::time::Instant::now();
+            eprintln!("startup: leader components starting in background");
+            tokio::select! {
+                () = cancel.cancelled() => {}
+                result = async {
+                    prepare.await;
+                    leader.start().await
+                } => {
+                    let elapsed = began.elapsed().as_millis();
+                    match result {
+                        Ok(()) if leader.components_allowed() => {
+                            eprintln!("startup: leader components started in background (+{elapsed} ms)");
+                        }
+                        Ok(()) => eprintln!("startup: leader components idle ({elapsed} ms)"),
+                        Err(e) => eprintln!("warning: leader components failed to start ({elapsed} ms): {e}"),
+                    }
+                }
+            }
+        })
+    };
     // Fake-provider/test embedders have no host provider configuration and
     // must never probe the real machine's credentialed CLIs as a side effect.
     if state.provider_host().is_some() {
@@ -1470,15 +1506,17 @@ pub async fn serve(
             }
         });
     }
-    let cancel = state.shutdown_token();
+    let stopping = state.clone();
     let served = axum::serve(listener, router(state.clone()))
         .with_graceful_shutdown(async move {
             shutdown.await;
-            cancel.cancel();
+            stopping.shutdown_token().cancel();
+            if let Err(e) = startup.await {
+                eprintln!("warning: leader startup task failed: {e}");
+            }
+            stopping.stop_components().await;
         })
         .await;
-    // The scheduler first: nothing may start a run while the loop shuts down.
-    state.stop_scheduler().await;
     served?;
     Ok(state.checkpoint_runs().await)
 }

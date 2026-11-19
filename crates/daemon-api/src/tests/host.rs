@@ -1059,6 +1059,57 @@ async fn offline_desktop_peer_starts_after_boot_check_deadline() {
     net.shutdown().await;
 }
 
+#[tokio::test]
+async fn health_is_served_while_leadership_waits_for_a_peer() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    let t = setup();
+    let other = setup();
+    let net = attach_network(&t).await;
+    let other_net = attach_network(&other).await;
+    let invite = net.create_invite(peer_network::Role::Desktop).await;
+    other_net
+        .pair(&peer_network::PairTicket::parse(&invite.ticket).unwrap())
+        .await
+        .unwrap();
+    other_net.shutdown().await;
+    t.state.leader().set_network(net.clone());
+    let channel = Arc::new(ChannelCounter(std::sync::atomic::AtomicBool::new(false)));
+    t.state.add_channel(channel.clone());
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (stop, stopping) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(crate::serve(listener, t.state.clone(), async move {
+        let _ = stopping.await;
+    }));
+    let response = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(b"GET /v1/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        response
+    })
+    .await
+    .expect("HTTP must respond before the peer check deadline");
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(t.state.leader().with_active(|| ()).is_err());
+    assert!(!channel.0.load(std::sync::atomic::Ordering::SeqCst));
+
+    stop.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(3), server)
+        .await
+        .expect("shutdown must cancel the peer check")
+        .unwrap()
+        .unwrap();
+    t.state.leader().detach_network();
+    net.shutdown().await;
+}
+
 async fn paired_higher_owner(t: &T) -> (PeerNetwork, PeerNetwork) {
     let other = setup();
     let net = attach_network(t).await;
