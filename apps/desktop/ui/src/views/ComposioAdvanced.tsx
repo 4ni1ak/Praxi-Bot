@@ -4,12 +4,9 @@ import { Button } from "ui";
 import type { ComposioStatus } from "../api/types";
 import formStyles from "../components/Form.module.css";
 import { openComposioLink } from "../lib/externalLink";
+import { humanLine } from "../lib/humanError";
 import { useDaemon } from "../state/DaemonContext";
 import styles from "./AppsModal.module.css";
-
-function errorText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
 
 /**
  * Advanced: how Praxi is linked to Composio.  The normal link is the browser
@@ -41,7 +38,7 @@ export function ComposioAdvanced({
         setOwn(false);
         await onChanged();
       })
-      .catch((e: unknown) => setError(errorText(e)))
+      .catch((e: unknown) => setError(humanLine(e)))
       .finally(() => setBusy(false));
   };
   return (

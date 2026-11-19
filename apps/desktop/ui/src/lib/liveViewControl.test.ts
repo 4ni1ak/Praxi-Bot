@@ -347,7 +347,7 @@ test("heartbeat stops carrying takeover_id once the stream is dead or frozen", (
 test("reconnect backoff is bounded and a new session never auto-resumes input", () => {
   assert.deepEqual(
     [1, 2, 3, 4, 5, 6, 10].map(reconnectDelayMs),
-    [1000, 2000, 4000, 8000, 15000, 15000, 15000]
+    [500, 1000, 2000, 4000, 4000, 4000, 4000]
   );
   let st = applyStreamDisconnected(owning());
   assert.equal(st.disconnected, true);
