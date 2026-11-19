@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use agent_core::{
     ApprovalScope, BotProfile, Delivery, EffectivePolicy, Grant, GrantTarget, MessageMode,
-    PolicyDecision,
+    PolicyDecision, Scope as RuleScope, ScopeKind,
 };
 use axum::extract::{FromRequest, Path, Query, Request, State};
 use axum::http::StatusCode;
@@ -90,6 +90,11 @@ fn grant_dto(g: &Grant) -> GrantDto {
             GrantTarget::Category(c) => GrantTargetDto::Category {
                 name: category_name(*c),
             },
+            GrantTarget::Scoped { tool, scope } => GrantTargetDto::Scoped {
+                tool: tool.clone(),
+                scope: scope.kind.as_str().to_owned(),
+                pattern: scope.pattern.clone(),
+            },
         },
         granted_at_ms: g.granted_at_ms,
         inert: g.inert,
@@ -100,6 +105,19 @@ fn grant_target(t: GrantTargetDto) -> Result<GrantTarget, ApiError> {
     match t {
         GrantTargetDto::Tool { name } if !name.trim().is_empty() => Ok(GrantTarget::Tool(name)),
         GrantTargetDto::Tool { .. } => Err(ApiError::bad_request("tool name must not be empty")),
+        GrantTargetDto::Scoped {
+            tool,
+            scope,
+            pattern,
+        } => match ScopeKind::parse(&scope) {
+            Some(kind) if !tool.trim().is_empty() && !pattern.is_empty() => {
+                Ok(GrantTarget::Scoped {
+                    tool,
+                    scope: RuleScope { kind, pattern },
+                })
+            }
+            _ => Err(ApiError::bad_request("invalid scoped rule")),
+        },
         GrantTargetDto::Category { name } => {
             match serde_json::from_value::<PermissionCategory>(Value::String(name.clone())) {
                 // `meta` is always allowed; a grant on it would mean nothing.
@@ -134,6 +152,7 @@ fn effective_policy_dto(e: EffectivePolicy) -> EffectivePolicyDto {
                 )
             })
             .collect(),
+        mode: e.mode.as_str().to_owned(),
         grants: e.grants.iter().map(grant_dto).collect(),
     }
 }

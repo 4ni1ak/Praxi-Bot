@@ -27,6 +27,7 @@ mod mention;
 mod profile;
 mod router;
 mod schedule_precheck;
+mod scoped_grant;
 mod shared;
 mod subagent;
 mod taint;
@@ -40,6 +41,8 @@ mod egress_tests;
 mod mode_tests;
 #[cfg(test)]
 mod router_tests;
+#[cfg(test)]
+mod scoped_tests;
 #[cfg(test)]
 mod subagent_tests;
 #[cfg(test)]
@@ -64,6 +67,7 @@ pub use profile::{
     BotProfile, EngineConsent, EngineSettings, FileAccessMode, FilesConfig, ModelsConfig,
     PermissionsConfig, ProfileError, RouterSettings, ToolFilter,
 };
+pub use scoped_grant::{Scope, ScopeKind};
 pub use shared::{
     ApprovalScope, CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, LoopError,
     MessageMode, Providers, ScheduleWork, SkillHintFn, SkillHints, StreamItem, build_providers,

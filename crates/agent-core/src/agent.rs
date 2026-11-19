@@ -1794,6 +1794,7 @@ impl AgentLoop {
         })
         .collect();
         Ok(EffectivePolicy {
+            mode: profile.permissions.mode(),
             policy,
             categories,
             grants: self.list_grants(bot_id),
@@ -2482,7 +2483,9 @@ fn legacy_unscoped_computer(g: &Grant) -> bool {
             category,
             PermissionCategory::Desktop | PermissionCategory::Browser
         ),
-        GrantTarget::Tool(name) => name.starts_with("desktop_") || name.starts_with("browser_"),
+        GrantTarget::Tool(name) | GrantTarget::Scoped { tool: name, .. } => {
+            name.starts_with("desktop_") || name.starts_with("browser_")
+        }
     }
 }
 
