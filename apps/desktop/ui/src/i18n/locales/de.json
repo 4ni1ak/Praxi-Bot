@@ -3983,6 +3983,22 @@
     "online": "online",
     "speed": "Tempo",
     "unsupported": "Dieses System bietet keine Sprachausgabe-Stimmen.",
+    "dictate": "Diktieren",
+    "dictateStop": "Stoppen und umschreiben",
+    "micDenied": "Das Mikrofon ist nicht verfügbar. Erlaube den Mikrofonzugriff und versuche es erneut.",
+    "notConfigured": "Diktieren ist noch nicht eingerichtet. Füge unter Einstellungen > Allgemein einen Transkriptionsdienst hinzu.",
+    "stt": {
+      "title": "Diktierdienst",
+      "description": "Wo deine Aufnahmen umgeschrieben werden: ein OpenAI-kompatibler Dienst (Cloud-Anbieter oder lokaler Whisper-Server).",
+      "url": "Dienstadresse",
+      "model": "Modell",
+      "key": "API-Schlüssel",
+      "keyStored": "Schlüssel gespeichert (zum Ersetzen eintippen)",
+      "save": "Speichern",
+      "saved": "Diktiereinstellungen gespeichert",
+      "clearKey": "Schlüssel entfernen",
+      "privacy": "Eine Aufnahme wird nur gesendet, wenn du das Mikrofon drückst, und nur an diese Adresse. Der Schlüssel bleibt im Geheimnisspeicher."
+    },
     "speakAuto": {
       "title": "Antworten vorlesen",
       "description": "Jede fertige Antwort automatisch vorlesen."

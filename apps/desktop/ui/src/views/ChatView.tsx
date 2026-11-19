@@ -43,6 +43,7 @@ import { pendingForChat } from "../lib/pendingDecisions";
 import { Markdown } from "../components/Markdown";
 import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
+import { DictateButton } from "../components/DictateButton";
 import { MessageInfo } from "../components/MessageInfo";
 import { CopyButton } from "../components/CopyButton";
 import { useAutoSpeak } from "../components/useAutoSpeak";
@@ -101,6 +102,7 @@ import {
   isExportCommand,
   appCommandFor
 } from "../lib/slash";
+import { appendDictation } from "../lib/dictation";
 import { FRESH, type HistoryNav, afterEdit, historyKey, userMessageTexts } from "../lib/composerHistory";
 import {
   newChatIdFromText,
@@ -1665,6 +1667,13 @@ export function ChatView({
             >
               <Paperclip />
             </Button>
+            <DictateButton
+              className={styles.plus}
+              onText={(dictated) => {
+                setText((cur) => appendDictation(cur, dictated));
+                inputRef.current?.focus();
+              }}
+            />
             {bot ? (
               <div>
                 <ModelPicker

@@ -111,6 +111,10 @@ import type {
   TerminalOutput,
   UsageSummary,
   ViewHeartbeat,
+  TranscribeInput,
+  TranscribeOutput,
+  VoiceConfig,
+  VoiceConfigInput,
   WebSearchConfig,
   WebSearchConfigInput,
   WebSearchTestInput,
@@ -1131,6 +1135,19 @@ export class ApiClient {
   /** Redacted Markdown support report. */
   doctorReport(): Promise<string> {
     return this.requestText("GET", "/doctor/report");
+  }
+
+  getVoice(): Promise<VoiceConfig> {
+    return this.request("GET", "/voice");
+  }
+
+  updateVoice(input: VoiceConfigInput): Promise<VoiceConfig> {
+    return this.request("PUT", "/voice", { body: input });
+  }
+
+  /** Dictation: the recording goes to the service the owner configured. */
+  transcribe(input: TranscribeInput): Promise<TranscribeOutput> {
+    return this.request("POST", "/voice/transcribe", { body: input });
   }
 
   getWebSearch(): Promise<WebSearchConfig> {
