@@ -35,6 +35,7 @@ sha2 = "0.10"
 similar.workspace = true
 storage.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 tool-registry = { path = "../tool-registry", version = "0.1.0" }
 tracing = "0.1"
 uuid.workspace = true

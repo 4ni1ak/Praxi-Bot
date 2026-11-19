@@ -903,6 +903,7 @@ dependencies = [
  "storage",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tool-registry",
  "tracing",
  "url",
@@ -7519,6 +7520,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
