@@ -3876,6 +3876,10 @@
     "auto": "Automatic (matches the app language)",
     "online": "online",
     "speed": "Speed",
-    "unsupported": "This system offers no speech voices."
+    "unsupported": "This system offers no speech voices.",
+    "speakAuto": {
+      "title": "Speak replies",
+      "description": "Read each finished reply aloud automatically."
+    }
   }
 }

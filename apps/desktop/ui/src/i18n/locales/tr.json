@@ -3876,6 +3876,10 @@
     "auto": "Otomatik (uygulama diline göre)",
     "online": "çevrimiçi",
     "speed": "Hız",
-    "unsupported": "Bu sistemde konuşma sesi yok."
+    "unsupported": "Bu sistemde konuşma sesi yok.",
+    "speakAuto": {
+      "title": "Cevapları sesli oku",
+      "description": "Biten her cevabı otomatik olarak sesli oku."
+    }
   }
 }
