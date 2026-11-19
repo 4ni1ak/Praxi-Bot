@@ -178,6 +178,10 @@ export function LiveViewProvider({
   const inputQueueRef = useRef<LiveInputQueue>(new LiveInputQueue());
   const activeUrlsRef = useRef<Set<string>>(new Set());
   const lastFeedbackAtRef = useRef<number>(0);
+  const ackRef = useRef<{ busy: boolean; pending: number | null }>({
+    busy: false,
+    pending: null
+  });
   const lastGeometrySentRef = useRef<number | null>(null);
   const flushingInputRef = useRef<boolean>(false);
   const flushAgainRef = useRef<boolean>(false);
@@ -642,6 +646,25 @@ export function LiveViewProvider({
           const nowMs = Date.now();
           updateState((prev) => applyFrameRendered(prev, frame.header, nowMs));
 
+          // Ack every frame at once (one request in flight, the newest wins): the host
+          // sends the next frame only after this and measures the link from it.
+          if (!signal.aborted) {
+            const ack = ackRef.current;
+            ack.pending = frame.header.frame_seq;
+            if (!ack.busy) {
+              ack.busy = true;
+              const drain = async (): Promise<void> => {
+                while (ack.pending !== null && !signal.aborted) {
+                  const seq = ack.pending;
+                  ack.pending = null;
+                  await client.ackViewFrame(sessionId, seq).catch(() => undefined);
+                }
+                ack.busy = false;
+              };
+              void drain();
+            }
+          }
+
           const geometryChanged =
             lastGeometrySentRef.current !== frame.header.geometry_revision;
           const due =
@@ -689,6 +712,7 @@ export function LiveViewProvider({
           activeSessionRef.current = session;
           lastFeedbackAtRef.current = 0;
           lastGeometrySentRef.current = null;
+          ackRef.current = { busy: false, pending: null };
           updateState((prev) => applySessionCreated(prev, selectedTarget, session));
         },
         onDisconnected: (err) => {

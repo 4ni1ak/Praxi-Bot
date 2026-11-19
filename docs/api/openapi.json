@@ -10393,6 +10393,45 @@
         ]
       }
     },
+    "/v1/view/sessions/{id}/ack": {
+      "post": {
+        "tags": [
+          "view"
+        ],
+        "operationId": "ack_frame",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FrameAck"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/view/sessions/{id}/frames": {
       "get": {
         "tags": [
@@ -14668,6 +14707,21 @@
             "minimum": 0
           }
         }
+      },
+      "FrameAck": {
+        "type": "object",
+        "description": "`POST /v1/view/sessions/{id}/ack`: the newest frame this viewer has put on screen. Unlike\n`SessionUpdate` it changes nothing else and never forces a refresh, so a viewer can send\nit after every frame; the host paces its frames by it.",
+        "required": [
+          "last_rendered_frame_seq"
+        ],
+        "properties": {
+          "last_rendered_frame_seq": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "FrameMetadata": {
         "type": "object",

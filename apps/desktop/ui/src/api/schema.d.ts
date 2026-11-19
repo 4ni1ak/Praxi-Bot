@@ -2989,6 +2989,22 @@ export interface paths {
         patch: operations["update_session"];
         trace?: never;
     };
+    "/v1/view/sessions/{id}/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ack_frame"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/view/sessions/{id}/frames": {
         parameters: {
             query?: never;
@@ -4649,6 +4665,15 @@ export interface components {
              * @description Last change, milliseconds since the epoch.
              */
             updated_at_ms: number;
+        };
+        /**
+         * @description `POST /v1/view/sessions/{id}/ack`: the newest frame this viewer has put on screen. Unlike
+         *     `SessionUpdate` it changes nothing else and never forces a refresh, so a viewer can send
+         *     it after every frame; the host paces its frames by it.
+         */
+        FrameAck: {
+            /** Format: int64 */
+            last_rendered_frame_seq: number;
         };
         FrameMetadata: {
             /** Format: int64 */
@@ -13944,6 +13969,29 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EffectiveProfile"];
                 };
+            };
+        };
+    };
+    ack_frame: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FrameAck"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

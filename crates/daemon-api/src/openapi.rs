@@ -179,6 +179,7 @@ impl Modify for Security {
         knowledge_settings::request_embedding_approval,
         knowledge_settings::reset_embedding_cooldown,
         knowledge_settings::revoke_embedding_grant,
+        live_view::ack_frame,
         live_view::availability,
         live_view::create_session,
         live_view::delete_session,
