@@ -13,7 +13,7 @@ use std::sync::{
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use jpeg_encoder::{ColorType as JpegColorType, Encoder as JpegEncoder};
+use jpeg_encoder::{ColorType as JpegColorType, Encoder as JpegEncoder, SamplingFactor};
 use live_view::{
     Capabilities as LiveCapabilities, Cause, Codec, EffectiveProfile, Frame, FrameMetadata,
     FrameSource, FrameSubscription, InputEvent, InputSink, MAX_HEADER, MAX_PAYLOAD, Profile,
@@ -646,18 +646,125 @@ pub fn bgra_fingerprint(bgra: &[u8]) -> u64 {
     h
 }
 
-/// Resize tightly packed top-down `BGRA` pixels into `dst` using fixed-point
-/// bilinear interpolation.
+/// Resampling kernel used when a frame has to be reduced to fit the output cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeFilter {
+    /// Cheaper 4-lobe cubic, used while the screen is moving.
+    CatmullRom,
+    /// Sharper 6-lobe sinc window that keeps small text legible; used for settled frames.
+    Lanczos3,
+}
+
+impl ResizeFilter {
+    /// Kernel half-width in source-pixel units at scale 1.
+    const fn radius(self) -> f64 {
+        match self {
+            Self::CatmullRom => 2.0,
+            Self::Lanczos3 => 3.0,
+        }
+    }
+
+    fn weight(self, x: f64) -> f64 {
+        let x = x.abs();
+        match self {
+            Self::CatmullRom => {
+                if x < 1.0 {
+                    1.5 * x * x * x - 2.5 * x * x + 1.0
+                } else if x < 2.0 {
+                    -0.5 * x * x * x + 2.5 * x * x - 4.0 * x + 2.0
+                } else {
+                    0.0
+                }
+            }
+            Self::Lanczos3 => {
+                if x < 1e-9 {
+                    1.0
+                } else if x < 3.0 {
+                    let px = std::f64::consts::PI * x;
+                    3.0 * px.sin() * (px / 3.0).sin() / (px * px)
+                } else {
+                    0.0
+                }
+            }
+        }
+    }
+}
+
+/// Fixed-point (14-bit) filter taps for one axis: `taps` source indices and weights per output.
+struct AxisTaps {
+    taps: usize,
+    index: Vec<usize>,
+    weight: Vec<i32>,
+}
+
+const TAP_SHIFT: u32 = 14;
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap
+)]
+fn axis_taps(src: usize, dst: usize, filter: ResizeFilter) -> AxisTaps {
+    let scale = src as f64 / dst as f64;
+    let filter_scale = scale.max(1.0);
+    let radius = filter.radius() * filter_scale;
+    let taps = (radius * 2.0).ceil() as usize + 1;
+    let one = 1_i32 << TAP_SHIFT;
+    let mut index = Vec::with_capacity(dst * taps);
+    let mut weight = Vec::with_capacity(dst * taps);
+    for d in 0..dst {
+        let center = (d as f64 + 0.5) * scale;
+        let left = (center - radius).floor() as isize;
+        let raw: Vec<f64> = (0..taps)
+            .map(|t| {
+                let x = (left + t as isize) as f64 + 0.5;
+                filter.weight((x - center) / filter_scale)
+            })
+            .collect();
+        let sum: f64 = raw.iter().sum();
+        let mut fixed: Vec<i32> = raw
+            .iter()
+            .map(|w| (w / sum * f64::from(one)).round() as i32)
+            .collect();
+        // Make the taps sum to exactly 1.0 so flat areas stay exactly flat.
+        let drift = one - fixed.iter().sum::<i32>();
+        if let Some(peak) = (0..taps).max_by_key(|&t| fixed[t]) {
+            fixed[peak] += drift;
+        }
+        for (t, w) in fixed.into_iter().enumerate() {
+            let x = left + t as isize;
+            index.push(x.clamp(0, src as isize - 1) as usize);
+            weight.push(w);
+        }
+    }
+    AxisTaps {
+        taps,
+        index,
+        weight,
+    }
+}
+
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+fn clamp_fixed(acc: i32) -> u8 {
+    let v = (acc + (1 << (TAP_SHIFT - 1))) >> TAP_SHIFT;
+    v.clamp(0, 255) as u8
+}
+
+/// Resize tightly packed top-down `BGRA` pixels into `dst` with a separable
+/// two-pass filter (area-aware: the kernel widens with the reduction factor so
+/// every source pixel contributes, which keeps thin text strokes intact).
 ///
 /// # Panics
 ///
 /// Panics only if caller supplies `src` shorter than `src_w * src_h * 4` or zero dimensions.
-pub fn downscale_bgra_bilinear_into(
+pub fn resize_bgra_into(
     src: &[u8],
     src_w: u32,
     src_h: u32,
     dst_w: u16,
     dst_h: u16,
+    filter: ResizeFilter,
     dst: &mut Vec<u8>,
 ) {
     let dw = usize::from(dst_w);
@@ -667,62 +774,132 @@ pub fn downscale_bgra_bilinear_into(
     let needed_src = sw * sh * 4;
     assert!(src.len() >= needed_src && sw > 0 && sh > 0 && dw > 0 && dh > 0);
 
-    let out_len = dw * dh * 4;
     dst.clear();
     if sw == dw && sh == dh {
         dst.extend_from_slice(&src[..needed_src]);
         return;
     }
-    dst.resize(out_len, 0);
 
-    // Precompute X lookup indices + 8-bit fractional weights outside row loops.
-    let x_lut: Vec<(usize, usize, u32)> = (0..dw)
-        .map(|dx| {
-            let fx = (dx as u64) * ((sw as u64 - 1) << 8) / (dw as u64 - 1).max(1);
-            let x0 = usize::try_from(fx >> 8).unwrap_or(0).min(sw - 1);
-            let x1 = (x0 + 1).min(sw - 1);
-            let w = u32::try_from(fx & 0xFF).unwrap_or(0);
-            (x0 * 4, x1 * 4, w)
-        })
-        .collect();
-
-    let row_stride = sw * 4;
-    for dy in 0..dh {
-        let fy_q = (dy as u64) * ((sh as u64 - 1) << 8) / (dh as u64 - 1).max(1);
-        let y0 = usize::try_from(fy_q >> 8).unwrap_or(0).min(sh - 1);
-        let y1 = (y0 + 1).min(sh - 1);
-        let wy = u32::try_from(fy_q & 0xFF).unwrap_or(0);
-        let comp_y = 256 - wy;
-
-        let r0 = &src[y0 * row_stride..(y0 + 1) * row_stride];
-        let r1 = &src[y1 * row_stride..(y1 + 1) * row_stride];
-        let dst_row = &mut dst[dy * dw * 4..(dy + 1) * dw * 4];
-
-        for (dx, &(ox0, ox1, wx)) in x_lut.iter().enumerate() {
-            let comp_x = 256 - wx;
-            let w00 = comp_x * comp_y;
-            let w01 = wx * comp_y;
-            let w10 = comp_x * wy;
-            let w11 = wx * wy;
-            let out_px = &mut dst_row[dx * 4..dx * 4 + 4];
-            for c in 0..3 {
-                let p = u32::from(r0[ox0 + c]) * w00
-                    + u32::from(r0[ox1 + c]) * w01
-                    + u32::from(r1[ox0 + c]) * w10
-                    + u32::from(r1[ox1 + c]) * w11;
-                // Maximum sum is 255 * 65536, shifted down to 0..=255.
-                #[allow(clippy::cast_possible_truncation)]
-                {
-                    out_px[c] = (p >> 16) as u8;
-                }
+    // Horizontal pass: `sh` rows of `dw` pixels.
+    let hx = axis_taps(sw, dw, filter);
+    let mut mid = vec![0u8; sh * dw * 4];
+    for y in 0..sh {
+        let row = &src[y * sw * 4..(y + 1) * sw * 4];
+        let out = &mut mid[y * dw * 4..(y + 1) * dw * 4];
+        for dx in 0..dw {
+            let idx = &hx.index[dx * hx.taps..(dx + 1) * hx.taps];
+            let wts = &hx.weight[dx * hx.taps..(dx + 1) * hx.taps];
+            let mut acc = [0i32; 3];
+            for (&sx, &w) in idx.iter().zip(wts) {
+                let p = &row[sx * 4..sx * 4 + 3];
+                acc[0] += i32::from(p[0]) * w;
+                acc[1] += i32::from(p[1]) * w;
+                acc[2] += i32::from(p[2]) * w;
             }
-            out_px[3] = 255;
+            let o = &mut out[dx * 4..dx * 4 + 4];
+            o[0] = clamp_fixed(acc[0]);
+            o[1] = clamp_fixed(acc[1]);
+            o[2] = clamp_fixed(acc[2]);
+            o[3] = 255;
+        }
+    }
+
+    // Vertical pass: `dh` rows of `dw` pixels.
+    let vy = axis_taps(sh, dh, filter);
+    dst.resize(dw * dh * 4, 0);
+    let stride = dw * 4;
+    for dy in 0..dh {
+        let idx = &vy.index[dy * vy.taps..(dy + 1) * vy.taps];
+        let wts = &vy.weight[dy * vy.taps..(dy + 1) * vy.taps];
+        let out = &mut dst[dy * stride..(dy + 1) * stride];
+        for x in 0..dw {
+            let mut acc = [0i32; 3];
+            for (&sy, &w) in idx.iter().zip(wts) {
+                let p = &mid[sy * stride + x * 4..sy * stride + x * 4 + 3];
+                acc[0] += i32::from(p[0]) * w;
+                acc[1] += i32::from(p[1]) * w;
+                acc[2] += i32::from(p[2]) * w;
+            }
+            let o = &mut out[x * 4..x * 4 + 4];
+            o[0] = clamp_fixed(acc[0]);
+            o[1] = clamp_fixed(acc[1]);
+            o[2] = clamp_fixed(acc[2]);
+            o[3] = 255;
         }
     }
 }
 
+/// The encoder never goes below this quality to fit a byte budget (it drops chroma
+/// resolution first and, as a last resort for pathological content, the size); a slow link
+/// lowers the frame rate instead.
+pub const QUALITY_FLOOR: u8 = 55;
+/// JPEG quality of the static refinement frame when it is not lossless WebP.
+pub const REFINE_JPEG_QUALITY: u8 = 92;
+/// Below this requested quality the client asked for a cheap stream (slow viewer): keep 4:2:0
+/// and send no refinement frame.
+const COMPACT_QUALITY_BELOW: u8 = 50;
+/// How long the screen must stay unchanged before one refinement frame is sent.
+pub const SETTLE_AFTER: Duration = Duration::from_millis(400);
+/// Wait before retrying a refinement frame that the byte budget could not afford yet.
+const REFINE_RETRY: Duration = Duration::from_secs(1);
+
+/// JPEG parameters chosen for one frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EncodeSettings {
+    /// JPEG quality, 10..=95.
+    pub quality: u8,
+    /// Full-resolution chroma (4:4:4) instead of 4:2:0; keeps coloured text edges sharp.
+    pub chroma_444: bool,
+    /// Resampling kernel when the frame has to be reduced.
+    pub filter: ResizeFilter,
+}
+
+/// Encoder settings for a frame that is being sent while the screen changes (pure): the
+/// requested quality with full-resolution chroma. A client that asked for a compact stream
+/// (quality below 50) gets exactly that, in 4:2:0.
+#[must_use]
+pub fn select_encode_settings(profile: &EffectiveProfile) -> EncodeSettings {
+    let base = profile.quality.clamp(10, 95);
+    EncodeSettings {
+        quality: base,
+        chroma_444: base >= COMPACT_QUALITY_BELOW,
+        filter: if profile.profile == Profile::Watch {
+            ResizeFilter::Lanczos3
+        } else {
+            ResizeFilter::CatmullRom
+        },
+    }
+}
+
+/// Whether a still screen gets one refinement frame (lossless WebP, or JPEG q92 4:4:4 when the
+/// lossless image is too big for the burst) (pure).
+#[must_use]
+pub fn refine_enabled(profile: &EffectiveProfile) -> bool {
+    profile.quality >= COMPACT_QUALITY_BELOW
+}
+
+fn encode_jpeg_once(
+    pixels: &[u8],
+    w: u16,
+    h: u16,
+    quality: u8,
+    chroma_444: bool,
+    out: &mut Vec<u8>,
+) -> Result<(), ViewError> {
+    out.clear();
+    let mut enc = JpegEncoder::new(&mut *out, quality);
+    enc.set_sampling_factor(if chroma_444 {
+        SamplingFactor::F_1_1
+    } else {
+        SamplingFactor::F_2_2
+    });
+    enc.set_optimized_huffman_tables(chroma_444);
+    enc.encode(pixels, w, h, JpegColorType::Bgra)
+        .map_err(|_| ViewError::InvalidRecord)
+}
+
 /// Resize (if needed) and JPEG-encode tightly packed `BGRA` pixels completely in RAM,
-/// stepping quality and dimensions down if necessary so the payload + [`MAX_HEADER`]
+/// stepping chroma, quality and dimensions down if necessary so the payload + [`MAX_HEADER`]
 /// never exceeds `profile.burst_bytes` or [`MAX_PAYLOAD`].
 ///
 /// # Errors
@@ -734,6 +911,7 @@ pub fn encode_jpeg_within_budget(
     src_w: u32,
     src_h: u32,
     profile: &EffectiveProfile,
+    settings: EncodeSettings,
     scratch_scaled: &mut Vec<u8>,
     out_jpeg: &mut Vec<u8>,
 ) -> Result<(u32, u32), ViewError> {
@@ -750,30 +928,44 @@ pub fn encode_jpeg_within_budget(
 
     let (mut cur_w, mut cur_h) =
         compute_target_dimensions(src_w, src_h, profile.max_width, profile.max_height)?;
-    let mut quality = profile.quality.clamp(10, 95);
+    let mut quality = settings.quality.clamp(10, 95);
+    let floor = QUALITY_FLOOR.min(quality);
+    let mut chroma_444 = settings.chroma_444;
+    let mut scaled_for: Option<(u16, u16)> = None;
 
     loop {
-        let pixel_slice: &[u8] = if src_w == u32::from(cur_w) && src_h == u32::from(cur_h) {
+        let pixel_slice: &[u8] = if scaled_for == Some((cur_w, cur_h)) {
+            // The resampled image does not depend on quality: reuse it across retries.
+            scratch_scaled.as_slice()
+        } else if src_w == u32::from(cur_w) && src_h == u32::from(cur_h) {
             &bgra[..needed]
         } else {
-            downscale_bgra_bilinear_into(bgra, src_w, src_h, cur_w, cur_h, scratch_scaled);
+            resize_bgra_into(
+                bgra,
+                src_w,
+                src_h,
+                cur_w,
+                cur_h,
+                settings.filter,
+                scratch_scaled,
+            );
+            scaled_for = Some((cur_w, cur_h));
             scratch_scaled.as_slice()
         };
-        out_jpeg.clear();
-        JpegEncoder::new(&mut *out_jpeg, quality)
-            .encode(pixel_slice, cur_w, cur_h, JpegColorType::Bgra)
-            .map_err(|_| ViewError::InvalidRecord)?;
+        encode_jpeg_once(pixel_slice, cur_w, cur_h, quality, chroma_444, out_jpeg)?;
 
         if !out_jpeg.is_empty() && out_jpeg.len() <= max_payload {
             return Ok((u32::from(cur_w), u32::from(cur_h)));
         }
 
-        if quality > 15 {
-            quality = (quality * 3 / 4).max(15);
+        // Over budget: drop chroma resolution first (cheapest loss), then quality down to the
+        // floor, and only then (pathological content, tiny burst) the size.
+        if chroma_444 {
+            chroma_444 = false;
             continue;
         }
-        if quality > 10 {
-            quality = 10;
+        if quality > floor {
+            quality = (quality / 5 * 4).max(floor);
             continue;
         }
 
@@ -791,10 +983,88 @@ pub fn encode_jpeg_within_budget(
         if nw == cur_w && nh == cur_h {
             return Err(ViewError::LimitExceeded);
         }
+        // Shrink from the picture already at hand (cheap), not from the full-size source.
+        let mut next = Vec::new();
+        {
+            let (src_px, sw, sh): (&[u8], u32, u32) = if scaled_for == Some((cur_w, cur_h)) {
+                (
+                    scratch_scaled.as_slice(),
+                    u32::from(cur_w),
+                    u32::from(cur_h),
+                )
+            } else {
+                (&bgra[..needed], src_w, src_h)
+            };
+            resize_bgra_into(src_px, sw, sh, nw, nh, settings.filter, &mut next);
+        }
+        *scratch_scaled = next;
+        scaled_for = Some((nw, nh));
         cur_w = nw;
         cur_h = nh;
-        quality = 35;
+        quality = floor;
     }
+}
+
+/// Encode the settled screen losslessly (WebP, in RAM) at the output size; when that is
+/// bigger than the burst allows, fall back to JPEG q92 4:4:4.
+///
+/// # Errors
+///
+/// Same as [`encode_jpeg_within_budget`].
+pub fn encode_refined(
+    bgra: &[u8],
+    src_w: u32,
+    src_h: u32,
+    profile: &EffectiveProfile,
+    scratch_scaled: &mut Vec<u8>,
+    scratch_rgb: &mut Vec<u8>,
+    out: &mut Vec<u8>,
+) -> Result<(Codec, u32, u32), ViewError> {
+    validate_raw_dimensions(src_w, src_h)?;
+    let needed = (src_w as usize) * (src_h as usize) * 4;
+    if bgra.len() < needed {
+        return Err(ViewError::InvalidRecord);
+    }
+    let burst_cap = usize::try_from(profile.burst_bytes).unwrap_or(usize::MAX);
+    let max_payload = burst_cap.saturating_sub(MAX_HEADER).min(MAX_PAYLOAD);
+    let (w, h) = compute_target_dimensions(src_w, src_h, profile.max_width, profile.max_height)?;
+    let pixels: &[u8] = if src_w == u32::from(w) && src_h == u32::from(h) {
+        &bgra[..needed]
+    } else {
+        resize_bgra_into(
+            bgra,
+            src_w,
+            src_h,
+            w,
+            h,
+            ResizeFilter::Lanczos3,
+            scratch_scaled,
+        );
+        scratch_scaled.as_slice()
+    };
+    scratch_rgb.clear();
+    scratch_rgb.reserve(usize::from(w) * usize::from(h) * 3);
+    for px in pixels.as_chunks::<4>().0 {
+        scratch_rgb.extend_from_slice(&[px[2], px[1], px[0]]);
+    }
+    out.clear();
+    let lossless = image_webp::WebPEncoder::new(&mut *out).encode(
+        scratch_rgb,
+        u32::from(w),
+        u32::from(h),
+        image_webp::ColorType::Rgb8,
+    );
+    if lossless.is_ok() && !out.is_empty() && out.len() <= max_payload {
+        return Ok((Codec::Webp, u32::from(w), u32::from(h)));
+    }
+    let settings = EncodeSettings {
+        quality: REFINE_JPEG_QUALITY,
+        chroma_444: true,
+        filter: ResizeFilter::Lanczos3,
+    };
+    let (jw, jh) =
+        encode_jpeg_within_budget(bgra, src_w, src_h, profile, settings, scratch_scaled, out)?;
+    Ok((Codec::Jpeg, jw, jh))
 }
 
 // ── Content-free stats ────────────────────────────────────────────────────────
@@ -1610,7 +1880,7 @@ impl ViewTarget for DesktopViewTarget {
                 capabilities: LiveCapabilities {
                     view: available,
                     input: st.input_available && available,
-                    codecs: vec![Codec::Jpeg],
+                    codecs: vec![Codec::Jpeg, Codec::Webp],
                     reason: st
                         .unavailable_reason
                         .clone()
@@ -1884,6 +2154,14 @@ struct CaptureSessionCache {
     cached_payload: Option<Arc<[u8]>>,
     cached_dims: (u32, u32),
     cached_captured_at_ms: u64,
+    /// The cached payload is the refinement frame of the current still screen.
+    cached_refined: bool,
+    /// Codec of the cached payload.
+    cached_codec: Codec,
+    /// Since when the screen has been unchanged.
+    static_since: Option<Instant>,
+    /// No refinement attempt before this instant (budget could not afford it yet).
+    refine_retry_at: Option<Instant>,
     last_geom: Option<GeometrySnapshot>,
     frame_seq: u64,
     last_capture: Instant,
@@ -1900,6 +2178,10 @@ impl CaptureSessionCache {
             cached_payload: None,
             cached_dims: (0, 0),
             cached_captured_at_ms: 0,
+            cached_refined: false,
+            cached_codec: Codec::Jpeg,
+            static_since: None,
+            refine_retry_at: None,
             last_geom: None,
             frame_seq: 0,
             last_capture: now.checked_sub(Duration::from_secs(60)).unwrap_or(now),
@@ -1923,6 +2205,10 @@ impl CaptureSessionCache {
         self.cached_payload = None;
         self.cached_dims = (0, 0);
         self.cached_captured_at_ms = 0;
+        self.cached_refined = false;
+        self.cached_codec = Codec::Jpeg;
+        self.static_since = None;
+        self.refine_retry_at = None;
     }
 }
 
@@ -1963,12 +2249,9 @@ fn try_finish_capture_worker(core: &Arc<TargetCore>, allow_restart: bool) -> boo
 }
 
 fn periodic_interval(profile: &EffectiveProfile) -> Duration {
-    if profile.profile == Profile::Watch {
-        WATCH_IDLE_INTERVAL
-    } else {
-        let fps = profile.max_fps.clamp(1, LIVE_MAX_FPS_CAP);
-        Duration::from_secs_f64(1.0 / f64::from(fps))
-    }
+    // Capture is change-driven: an unchanged screen costs one hash, not an encode.
+    let fps = profile.max_fps.clamp(1, LIVE_MAX_FPS_CAP);
+    Duration::from_secs_f64(1.0 / f64::from(fps))
 }
 
 fn send_init(
@@ -2021,6 +2304,7 @@ struct WorkerBuffers {
     raw: Vec<u8>,
     bgra: Vec<u8>,
     scaled: Vec<u8>,
+    rgb: Vec<u8>,
     jpeg: Vec<u8>,
 }
 
@@ -2127,7 +2411,7 @@ fn publish_reused_frame(
             captured_at_ms,
             cause,
             action_seq: refresh_seq.filter(|&s| s > 0),
-            codec: Codec::Jpeg,
+            codec: cache.cached_codec.clone(),
             width: cache.cached_dims.0,
             height: cache.cached_dims.1,
             source_rect: geom.rect.to_source_rect(),
@@ -2155,6 +2439,7 @@ fn encode_and_publish_frame(
     profile: &EffectiveProfile,
     geom: &GeometrySnapshot,
     hash: u64,
+    refine: bool,
     refresh_seq: Option<u64>,
     generation: u64,
     geometry_revision: u64,
@@ -2166,14 +2451,29 @@ fn encode_and_publish_frame(
         None => Cause::Idle,
     };
     cache.refill_tokens(profile);
-    let Ok((out_w, out_h)) = encode_jpeg_within_budget(
-        &bufs.bgra,
-        geom.rect.width,
-        geom.rect.height,
-        profile,
-        &mut bufs.scaled,
-        &mut bufs.jpeg,
-    ) else {
+    let encoded = if refine {
+        encode_refined(
+            &bufs.bgra,
+            geom.rect.width,
+            geom.rect.height,
+            profile,
+            &mut bufs.scaled,
+            &mut bufs.rgb,
+            &mut bufs.jpeg,
+        )
+    } else {
+        encode_jpeg_within_budget(
+            &bufs.bgra,
+            geom.rect.width,
+            geom.rect.height,
+            profile,
+            select_encode_settings(profile),
+            &mut bufs.scaled,
+            &mut bufs.jpeg,
+        )
+        .map(|(w, h)| (Codec::Jpeg, w, h))
+    };
+    let Ok((codec, out_w, out_h)) = encoded else {
         core.stats
             .frames_skipped_budget
             .fetch_add(1, Ordering::Relaxed);
@@ -2191,6 +2491,9 @@ fn encode_and_publish_frame(
         // Record the fingerprint of the skipped screen so subsequent periodic ticks on
         // the same static screen do not re-encode the identical BGRA buffer.
         cache.last_hash = Some(hash);
+        if refine {
+            cache.refine_retry_at = Some(Instant::now() + REFINE_RETRY);
+        }
         core.stats
             .frames_skipped_budget
             .fetch_add(1, Ordering::Relaxed);
@@ -2208,7 +2511,7 @@ fn encode_and_publish_frame(
             captured_at_ms,
             cause,
             action_seq: refresh_seq.filter(|&s| s > 0),
-            codec: Codec::Jpeg,
+            codec: codec.clone(),
             width: out_w,
             height: out_h,
             source_rect: geom.rect.to_source_rect(),
@@ -2225,6 +2528,8 @@ fn encode_and_publish_frame(
         cache.cached_payload = Some(payload);
         cache.cached_dims = (out_w, out_h);
         cache.cached_captured_at_ms = captured_at_ms;
+        cache.cached_refined = refine;
+        cache.cached_codec = codec;
         cache.last_publish = Instant::now();
         core.stats.frames_encoded.fetch_add(1, Ordering::Relaxed);
         Ok(())
@@ -2291,7 +2596,24 @@ fn execute_capture_step(
     }
 
     let hash = bgra_fingerprint(&bufs.bgra);
+    if !geom_changed && cache.last_hash == Some(hash) {
+        cache.static_since.get_or_insert_with(Instant::now);
+    } else {
+        cache.static_since = None;
+    }
+    // A screen that stayed still for `SETTLE_AFTER` gets ONE refinement frame (lossless WebP at
+    // the output size, JPEG q92 4:4:4 if that is too big) on top of the frames sent while it
+    // moved.
+    let refine_due = !profile_dirty
+        && refine_enabled(profile)
+        && !cache.cached_refined
+        && cache.cached_payload.is_some()
+        && cache
+            .static_since
+            .is_some_and(|t| t.elapsed() >= SETTLE_AFTER)
+        && cache.refine_retry_at.is_none_or(|t| Instant::now() >= t);
     let can_reuse = !profile_dirty
+        && !refine_due
         && !geom_changed
         && cache.last_hash == Some(hash)
         && cache.cached_payload.is_some()
@@ -2318,6 +2640,7 @@ fn execute_capture_step(
         profile,
         &raw_info.geometry,
         hash,
+        refine_due,
         refresh_seq,
         generation,
         geometry_revision,
@@ -2357,6 +2680,7 @@ fn run_capture_worker(
         raw: Vec::new(),
         bgra: Vec::new(),
         scaled: Vec::new(),
+        rgb: Vec::new(),
         jpeg: Vec::new(),
     };
     let mut saw_error = false;
@@ -2951,9 +3275,16 @@ mod tests {
 
         let mut scratch = Vec::new();
         let mut out = Vec::new();
-        let (ow, oh) =
-            encode_jpeg_within_budget(&bgra, width, height, &profile, &mut scratch, &mut out)
-                .unwrap();
+        let (ow, oh) = encode_jpeg_within_budget(
+            &bgra,
+            width,
+            height,
+            &profile,
+            select_encode_settings(&profile),
+            &mut scratch,
+            &mut out,
+        )
+        .unwrap();
         assert!(ow <= 160 && oh <= 120);
         assert_ne!(out.len(), 0);
         assert!(out.len() + MAX_HEADER <= profile.burst_bytes as usize);
@@ -2961,8 +3292,292 @@ mod tests {
 
         profile.burst_bytes = u32::try_from(MAX_HEADER).unwrap();
         assert_eq!(
-            encode_jpeg_within_budget(&bgra, width, height, &profile, &mut scratch, &mut out),
+            encode_jpeg_within_budget(
+                &bgra,
+                width,
+                height,
+                &profile,
+                select_encode_settings(&profile),
+                &mut scratch,
+                &mut out
+            ),
             Err(ViewError::LimitExceeded)
+        );
+    }
+
+    #[test]
+    fn encode_settings_keep_full_colour_and_compact_streams_stay_compact() {
+        let watch = select_encode_settings(&EffectiveProfile::watch());
+        assert_eq!(watch.quality, EffectiveProfile::watch().quality);
+        assert!(watch.chroma_444);
+        assert_eq!(watch.filter, ResizeFilter::Lanczos3);
+        assert!(refine_enabled(&EffectiveProfile::watch()));
+
+        let live = EffectiveProfile::live();
+        let moving = select_encode_settings(&live);
+        assert_eq!(moving.quality, live.quality);
+        assert!(
+            moving.chroma_444,
+            "coloured text must not smear while moving"
+        );
+        assert_eq!(moving.filter, ResizeFilter::CatmullRom);
+
+        // A slow viewer asked for a compact stream: 4:2:0 and no refinement frame.
+        let mut slow = EffectiveProfile::live();
+        slow.quality = 35;
+        let slow_settings = select_encode_settings(&slow);
+        assert_eq!(slow_settings.quality, 35);
+        assert!(!slow_settings.chroma_444);
+        assert!(!refine_enabled(&slow));
+
+        // The output cap is the native size up to 1920x1080, never an upscale.
+        assert_eq!(
+            compute_target_dimensions(1280, 800, 1920, 1080).unwrap(),
+            (1280, 800)
+        );
+        assert_eq!(
+            compute_target_dimensions(3840, 2160, 1920, 1080).unwrap(),
+            (1920, 1080)
+        );
+        assert!(EffectiveProfile::watch().max_width >= 1920);
+        assert!(EffectiveProfile::live().max_width >= 1920);
+    }
+
+    #[test]
+    fn resize_keeps_flat_colour_exact_and_dimensions_right() {
+        let (sw, sh) = (97u32, 61u32);
+        let src: Vec<u8> = std::iter::repeat_n([10u8, 130, 250, 255], (sw * sh) as usize)
+            .flatten()
+            .collect();
+        for filter in [ResizeFilter::CatmullRom, ResizeFilter::Lanczos3] {
+            let mut dst = Vec::new();
+            resize_bgra_into(&src, sw, sh, 40, 25, filter, &mut dst);
+            assert_eq!(dst.len(), 40 * 25 * 4);
+            assert!(dst.chunks(4).all(|p| p == [10, 130, 250, 255]));
+        }
+    }
+
+    /// Deterministic text-like page: stems and bars in 7x14 cells, softened with a [1 2 1]
+    /// kernel like anti-aliased text, dark and orange on white, with word gaps.
+    #[allow(clippy::cast_possible_truncation)]
+    fn synthetic_text_page(w: u32, h: u32) -> Vec<u8> {
+        let (wu, hu) = (w as usize, h as usize);
+        let mut mask = vec![0u8; wu * hu];
+        let (cell_w, cell_h) = (7u32, 14u32);
+        for row in 0..h / cell_h {
+            for col in 0..(w / cell_w).saturating_sub(2) {
+                let glyph = row
+                    .wrapping_mul(2_654_435_761)
+                    .wrapping_add(col.wrapping_mul(40_503))
+                    .rotate_left(row % 13);
+                if glyph % 4 == 0 {
+                    continue; // a space
+                }
+                for gy in 0..9u32 {
+                    for gx in 0..5u32 {
+                        let stem = (gx == 0 && glyph & 1 != 0)
+                            || (gx == 4 && glyph & 2 != 0)
+                            || (gx == 2 && glyph & 4 != 0 && gy > 1);
+                        let bar = (gy == 0 && glyph & 8 != 0)
+                            || (gy == 4 && glyph & 16 != 0)
+                            || (gy == 8 && glyph & 32 != 0);
+                        if stem || bar {
+                            let x = (col * cell_w + 1 + gx) as usize;
+                            let y = (row * cell_h + 2 + gy) as usize;
+                            mask[y * wu + x] = 255;
+                        }
+                    }
+                }
+            }
+        }
+        let mut px = vec![255u8; wu * hu * 4];
+        for y in 0..hu {
+            for x in 1..wu - 1 {
+                let c = (u32::from(mask[y * wu + x - 1])
+                    + 2 * u32::from(mask[y * wu + x])
+                    + u32::from(mask[y * wu + x + 1]))
+                    / 4;
+                if c == 0 {
+                    continue;
+                }
+                let ink: [u32; 3] = if (y as u32 / cell_h) % 5 == 2 {
+                    [200, 90, 20]
+                } else {
+                    [30, 30, 30]
+                };
+                let o = (y * wu + x) * 4;
+                for k in 0..3 {
+                    px[o + k] = (255 - c * (255 - ink[k]) / 255) as u8;
+                }
+            }
+        }
+        px
+    }
+
+    fn psnr_db(a: &[u8], b: &[u8]) -> f64 {
+        assert_eq!(a.len(), b.len());
+        let mut se = 0f64;
+        let mut n = 0f64;
+        for (pa, pb) in a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0) {
+            for c in 0..3 {
+                let d = f64::from(pa[c]) - f64::from(pb[c]);
+                se += d * d;
+                n += 1.0;
+            }
+        }
+        10.0 * (255.0f64 * 255.0 / (se / n).max(1e-9)).log10()
+    }
+
+    /// Decode a JPEG to BGRA at the encoded size.
+    fn decode_to_bgra(jpeg: &[u8]) -> (Vec<u8>, u32, u32) {
+        let img = image::load_from_memory_with_format(jpeg, image::ImageFormat::Jpeg)
+            .unwrap()
+            .to_rgb8();
+        let (w, h) = img.dimensions();
+        let mut bgra = Vec::with_capacity((w * h * 4) as usize);
+        for p in img.pixels() {
+            bgra.extend_from_slice(&[p[2], p[1], p[0], 255]);
+        }
+        (bgra, w, h)
+    }
+
+    #[test]
+    fn budget_fit_never_drops_below_the_quality_floor_before_shrinking() {
+        let (w, h) = (1280u32, 720u32);
+        let page = synthetic_text_page(w, h);
+        let mut profile = EffectiveProfile::watch();
+        profile.burst_bytes = u32::try_from(MAX_HEADER + 150 * 1024).unwrap();
+        let (mut scratch, mut out) = (Vec::new(), Vec::new());
+        let (ow, oh) = encode_jpeg_within_budget(
+            &page,
+            w,
+            h,
+            &profile,
+            select_encode_settings(&profile),
+            &mut scratch,
+            &mut out,
+        )
+        .unwrap();
+        assert!(out.len() + MAX_HEADER <= profile.burst_bytes as usize);
+        // Whatever it took, the picture was never encoded below the floor: decoding it and
+        // comparing with the (possibly reduced) source stays well above a q10 result.
+        let (dec, dw, dh) = decode_to_bgra(&out);
+        assert_eq!((dw, dh), (ow, oh));
+        let reference = if (ow, oh) == (w, h) {
+            page.clone()
+        } else {
+            let mut r = Vec::new();
+            resize_bgra_into(
+                &page,
+                w,
+                h,
+                u16::try_from(ow).unwrap(),
+                u16::try_from(oh).unwrap(),
+                ResizeFilter::Lanczos3,
+                &mut r,
+            );
+            r
+        };
+        assert!(psnr_db(&reference, &dec) > 24.0);
+    }
+
+    #[test]
+    fn still_screen_refinement_is_lossless_webp_or_a_q92_jpeg() {
+        let (w, h) = (1280u32, 720u32);
+        let page = synthetic_text_page(w, h);
+        let (mut scratch, mut rgb, mut out) = (Vec::new(), Vec::new(), Vec::new());
+        let profile = EffectiveProfile::watch();
+        let (codec, rw, rh) =
+            encode_refined(&page, w, h, &profile, &mut scratch, &mut rgb, &mut out).unwrap();
+        assert_eq!((rw, rh), (w, h));
+        assert_eq!(codec, Codec::Webp);
+        let webp_bytes = out.len();
+        let mut dec = image_webp::WebPDecoder::new(std::io::Cursor::new(out.clone())).unwrap();
+        let mut rgb_back = vec![0u8; dec.output_buffer_size().unwrap()];
+        dec.read_image(&mut rgb_back).unwrap();
+        let exact = page
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(rgb_back.as_chunks::<3>().0)
+            .all(|(p, r)| p[2] == r[0] && p[1] == r[1] && p[0] == r[2]);
+        assert!(exact, "lossless refinement must reproduce every pixel");
+        println!("refinement 1280x720 text page: lossless WebP = {webp_bytes} B");
+
+        // A burst too small for the lossless image falls back to a JPEG.
+        let mut tight = EffectiveProfile::watch();
+        tight.burst_bytes = u32::try_from(MAX_HEADER + 64 * 1024).unwrap();
+        let (codec, _, _) =
+            encode_refined(&page, w, h, &tight, &mut scratch, &mut rgb, &mut out).unwrap();
+        assert_eq!(codec, Codec::Jpeg);
+        assert!(out.len() + MAX_HEADER <= tight.burst_bytes as usize);
+    }
+
+    #[test]
+    fn new_defaults_reproduce_small_text_far_better_than_the_old_960_q45_stream() {
+        let (w, h) = (1920u32, 1080u32);
+        let page = synthetic_text_page(w, h);
+        let mut scratch = Vec::new();
+        let mut out = Vec::new();
+
+        // New default: native 1920x1080, watch profile, 4:4:4, quality 70.
+        let watch = EffectiveProfile::watch();
+        let (nw, nh) = encode_jpeg_within_budget(
+            &page,
+            w,
+            h,
+            &watch,
+            select_encode_settings(&watch),
+            &mut scratch,
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!((nw, nh), (1920, 1080), "native resolution is kept");
+        let new_bytes = out.len();
+        let (dec, dw, dh) = decode_to_bgra(&out);
+        assert_eq!((dw, dh), (1920, 1080));
+        let new_psnr = psnr_db(&page, &dec);
+
+        // Old default: capped to 960x600, quality 45, 4:2:0, shown stretched back up.
+        let mut old = EffectiveProfile::watch();
+        old.max_width = 960;
+        old.max_height = 600;
+        old.quality = 45;
+        let old_settings = EncodeSettings {
+            quality: 45,
+            chroma_444: false,
+            filter: ResizeFilter::CatmullRom,
+        };
+        let (ow, oh) =
+            encode_jpeg_within_budget(&page, w, h, &old, old_settings, &mut scratch, &mut out)
+                .unwrap();
+        assert_eq!((ow, oh), (960, 540));
+        let old_bytes = out.len();
+        let (small, sw, sh) = decode_to_bgra(&out);
+        let mut upscaled = Vec::new();
+        resize_bgra_into(
+            &small,
+            sw,
+            sh,
+            1920,
+            1080,
+            ResizeFilter::CatmullRom,
+            &mut upscaled,
+        );
+        let old_psnr = psnr_db(&page, &upscaled);
+
+        println!(
+            "text page 1920x1080: old 960x540 q45 4:2:0 = {old_bytes} B, {old_psnr:.2} dB; \
+             new 1920x1080 q70 4:4:4 = {new_bytes} B, {new_psnr:.2} dB"
+        );
+        assert!(
+            new_psnr > old_psnr + 6.0,
+            "new {new_psnr:.2} dB vs old {old_psnr:.2} dB"
+        );
+        assert!(new_psnr > 30.0, "new stream too lossy: {new_psnr:.2} dB");
+        assert!(
+            new_bytes + MAX_HEADER <= watch.burst_bytes as usize,
+            "a full-resolution frame must fit the watch burst: {new_bytes} B"
         );
     }
 
@@ -3870,7 +4485,8 @@ mod tests {
         tight.burst_bytes = u32::try_from(MAX_HEADER + 32).unwrap();
         let err = src.subscribe(tight).await.err();
         assert_eq!(err, Some(ViewError::LimitExceeded));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        // One capture; a slow debug build may just reach the 500 ms retry, never a tight loop.
+        assert!(calls.load(Ordering::SeqCst) <= 2);
         assert_eq!(
             target.stats().last_unavailable_reason,
             Some(Reason::FrameBudgetExceeded)
@@ -3887,6 +4503,7 @@ mod tests {
             raw: Vec::new(),
             bgra: Vec::new(),
             scaled: Vec::new(),
+            rgb: Vec::new(),
             jpeg: Vec::new(),
         };
         let mut drv: Option<Box<dyn CaptureDriver>> = Some(Box::new(NoisyCapture {
@@ -3986,18 +4603,23 @@ mod tests {
         assert_eq!(first.metadata.frame_seq, 1);
         assert!(!first.metadata.repeated);
 
-        // Wait for Live keepalive heartbeat on static desktop (>800 ms).
+        // Wait for Live keepalive heartbeat on static desktop (>800 ms). A static live screen
+        // first gets one sharper refinement frame (a new, non-repeated frame); the keepalive
+        // then repeats that latest frame.
+        let mut latest_real = first;
         let repeated = loop {
             sub.frames.changed().await.unwrap();
             let f = sub.frames.borrow_and_update().clone().unwrap();
             if f.metadata.repeated {
                 break f;
             }
+            latest_real = f;
         };
-        assert_eq!(repeated.metadata.frame_seq, first.metadata.frame_seq);
+        assert!(latest_real.metadata.frame_seq <= 2);
+        assert_eq!(repeated.metadata.frame_seq, latest_real.metadata.frame_seq);
         assert_eq!(
             repeated.metadata.captured_at_ms,
-            first.metadata.captured_at_ms
+            latest_real.metadata.captured_at_ms
         );
         assert_eq!(repeated.metadata.cause, Cause::Idle);
         src.stop().await.unwrap();
