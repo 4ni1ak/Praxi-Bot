@@ -851,6 +851,8 @@
       }
     },
     "timelineLabel": "Sohbet",
+    "copyMessage": "Mesajı kopyala",
+    "messageCopied": "Kopyalandı",
     "export": { "you": "Sen", "done": "Sohbet kaydedildi" },
     "jumpToLatest": "En sona git",
     "runBar": {
