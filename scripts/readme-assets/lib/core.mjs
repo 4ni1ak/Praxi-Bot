@@ -1,7 +1,7 @@
 // Shared building blocks for the README artwork: SVG helpers, themes, the
 // grainy mesh background and icon drawing. No dependencies.
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, URL } from 'node:url';
 import { lucide, brands } from './icons-data.mjs';
 
 const here = fileURLToPath(new URL('../', import.meta.url));

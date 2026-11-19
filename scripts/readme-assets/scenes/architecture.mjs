@@ -86,9 +86,7 @@ function daemonCard(x, y, w, h, T, defs, mobile) {
     out.push(lucideIcon('lock', cx + 12, y + 35, 14, T.accent, 2));
     out.push(text(cx + 32, y + 46.5, chipLabel, 12.5, T, { fill: T.accent, 'font-weight': 650 }));
   }
-  const sub = (l) => (mobile ? l.join(' ') : null);
   const bx = ix, bw = iw;
-  const ly = y + 96;
   const inner = [];
   inner.push(box({ x: bx, y: y + rows.agent, w: bw, h: 76, icon: { lucide: 'bot' }, title: 'Agent loop', T, defs,
     sub: mobile ? ['Runs, subagents, workflows', 'and schedules'] : ['Runs, subagents, workflows and schedules'], tsize: mobile ? 19 : 17.5, ssize: mobile ? 15 : 14 }));
