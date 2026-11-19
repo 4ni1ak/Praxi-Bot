@@ -45,6 +45,7 @@ import { AccountMenu, type AccountAction } from "./components/AccountMenu";
 import { Popover } from "./components/Popover";
 import { HealthIndicator } from "./components/HealthIndicator";
 import { HelpModal } from "./components/HelpModal";
+import { isHelpKey } from "./lib/shortcuts";
 import { chatTitleLabel } from "./lib/chatTitle";
 import { APP_COMMAND_EVENT, type AppCommandTarget } from "./lib/slash";
 import { editorSection } from "./lib/botEditor";
@@ -552,6 +553,18 @@ function AppShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // A bare `?` (no text field focused) opens the shortcuts dialog.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isHelpKey(e)) {
+        e.preventDefault();
+        setHelpOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const handlePaletteScreen = (screen: PaletteScreen) => {
     if (screen === "settings" || screen === "usage") {
       setSettingsOpen(screen === "usage" ? "usage" : "general");
@@ -991,6 +1004,7 @@ function AppShell() {
         onScreen={handlePaletteScreen}
         onBot={goToBot}
         onChat={(chatId, botId) => go({ kind: "chat", chatId, botId })}
+        onHelp={() => setHelpOpen(true)}
       />
       <SettingsModal
         open={settingsOpen !== null}

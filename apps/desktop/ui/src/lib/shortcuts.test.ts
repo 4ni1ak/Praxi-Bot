@@ -48,15 +48,15 @@ test("every shortcut entry points at an existing source file and has en + tr tex
     ids.add(s.id);
     assert.ok(SHORTCUT_GROUPS.includes(s.group), s.id);
     assert.ok(existsSync(join(srcDir, s.source)), `${s.id}: missing ${s.source}`);
-    for (const name of ["en", "tr"]) {
+    for (const name of ["en", "tr", "de"]) {
       assert.equal(typeof lookup(locale(name), s.labelKey), "string", `${name}: ${s.labelKey}`);
     }
   }
   for (const g of SHORTCUT_GROUPS) {
-    for (const name of ["en", "tr"]) {
+    for (const name of ["en", "tr", "de"]) {
       assert.equal(typeof lookup(locale(name), `help.group.${g}`), "string", `${name}: group ${g}`);
     }
-    assert.ok(SHORTCUTS.some((s) => s.group === g), `empty group ${g}`);
+    assert.ok(g === "slash" || SHORTCUTS.some((s) => s.group === g), `empty group ${g}`);
   }
 });
 
@@ -77,4 +77,18 @@ test("send and newline follow the send setting", () => {
   assert.equal(resolveKeys("@send", ctx("ctrl-enter")), "Ctrl/Cmd+Enter");
   assert.equal(resolveKeys("@newline", ctx("ctrl-enter")), "Enter");
   assert.equal(resolveKeys("@stop", ctx("enter")), "F8");
+});
+
+test("slash group is read from the composer command lists, and ? only fires outside text fields", async () => {
+  const { slashShortcuts, isHelpKey } = await import("./shortcuts.ts");
+  const { APP_COMMANDS, LOCAL_COMMANDS, SLASH_COMMANDS } = await import("./slash.ts");
+  assert.equal(slashShortcuts().length, APP_COMMANDS.length + LOCAL_COMMANDS.length + SLASH_COMMANDS.length);
+  for (const s of slashShortcuts()) {
+    for (const name of ["en", "tr", "de"]) assert.equal(typeof lookup(locale(name), s.labelKey), "string", `${name}: ${s.labelKey}`);
+  }
+  const ev = (key: string, tag: string, extra = {}) => ({ key, ctrlKey: false, metaKey: false, altKey: false, target: { tagName: tag, isContentEditable: false }, ...extra }) as never;
+  assert.equal(isHelpKey(ev("?", "DIV")), true);
+  assert.equal(isHelpKey(ev("?", "TEXTAREA")), false);
+  assert.equal(isHelpKey(ev("?", "DIV", { ctrlKey: true })), false);
+  assert.equal(isHelpKey(ev("a", "DIV")), false);
 });
