@@ -25,8 +25,7 @@ impl Frame {
             || self.payload.len() > MAX_PAYLOAD
             || m.width == 0
             || m.height == 0
-            || m.width > 1920
-            || m.height > 1080
+            || !crate::wire_size_ok(m.width, m.height)
             || m.source_rect.width == 0
             || m.source_rect.height == 0
             || u64::from(m.source_rect.width) * u64::from(m.source_rect.height) > 16_000_000
