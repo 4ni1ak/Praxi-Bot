@@ -46,10 +46,95 @@ A message carries at most 6 files. Files are stored in the data directory under
 
 ### Slash commands
 
-When the router is enabled, a few messages never reach the model at all:
-`/stop` (stop the current run), `/new` and `/workflow <name> key=value ...` (run
-a saved workflow directly, see [Workflows](workflows.md)). In Telegram there are
-extra commands, see [Telegram](telegram.md).
+When the router is enabled, `/stop` (stop the current run), `/new` (start a new
+chat), and `/workflow <name> key=value ...` (run a saved workflow directly, see
+[Workflows](workflows.md)) are handled directly without reaching the model.
+
+In the desktop composer, typing `/` at the start of a message opens a command
+menu that also includes local commands handled by the app itself (never sent to
+the bot): `/export` (download the open chat as Markdown) and app shortcuts
+`/help`, `/settings`, `/models`, `/apps`, and `/schedules`. In Telegram there
+are extra commands, see [Telegram](telegram.md).
+
+### Managing chats (desktop app)
+
+In the desktop app, the **left rail lists bots only** (not individual chats).
+Clicking a bot opens its most recent non-archived chat, or its empty state if
+it has none yet.
+
+Each bot's chats live in the right-hand **bot panel**: click the bot chip in
+the title bar to open the panel, then switch to the **Library** tab under
+**Chats**. Once a bot has 6 or more chats, a **Search chats** box appears above
+the list.
+
+Each chat row has an overflow (`...`) menu backed by `PATCH /v1/chats/{id}` and
+`DELETE /v1/chats/{id}`:
+
+- **Rename**: edits the chat title inline (1–120 characters; `Enter` saves,
+  `Esc` cancels).
+- **Pin / Unpin**: pinned chats float to the top of the list with a pin icon.
+- **Archive / Unarchive**: archived chats move into a collapsible
+  **Archived (N)** group at the bottom of the list (expanded automatically while
+  searching if archived chats match).
+- **Delete**: asks for confirmation and permanently deletes the chat and its
+  messages. Deletion is blocked while a run is active in that chat—stop the run
+  first.
+
+### Copying messages and Markdown export
+
+- **Copy a message**: hovering or focusing any user or assistant message reveals
+  an action row under the bubble with a **Copy message** button (showing a brief
+  **Copied** confirmation). It copies only the user-visible text (plain text or
+  Markdown), stripping internal attachment markers and never copying raw
+  internal tool JSON. Individual code blocks in assistant replies also have
+  their own copy button.
+- **Export a chat as Markdown**: type `/export` in the desktop composer to
+  download the open chat as a `.md` file named after the chat title (or the bot
+  name when untitled). The file includes user and assistant messages with UTC
+  timestamps; nothing is sent to the bot.
+
+### Unread markers
+
+The daemon does not store read state; the desktop app keeps per-server,
+per-chat read timestamps locally (with a baseline recorded the first time the
+app sees a server, so existing chats do not all start unread):
+
+- **Left-rail unread dot**: a bot shows an unread dot when any of its chats has
+  a finished run or pending decision newer than its last read timestamp.
+- **"New messages" divider**: opening a chat with unseen assistant replies
+  places a **New messages** divider above the first unseen entry. Scrolling past
+  the divider dismisses it, and the chat is marked read while the window is
+  visible and focused.
+
+### Keyboard shortcuts and "What's new"
+
+- **Keyboard shortcuts dialog**: press **`?`** anywhere when no text field has
+  focus (or open it from the command palette with `Ctrl/Cmd+K` → **Keyboard
+  shortcuts**, from the account menu, or by typing `/help` in the composer). The
+  dialog lists global shortcuts (`Ctrl/Cmd+K` command palette, `?` shortcuts,
+  `Ctrl/Cmd+,` settings, `Ctrl/Cmd+F` find in chat, `Esc` close side panel,
+  `Shift+Esc` exit live-view keyboard focus, and your configured stop hotkey),
+  composer shortcuts (your configured send and newline keys, `Up`/`Down` message
+  history recall, slash/mention menu navigation), composer slash commands, and
+  dialog navigation keys.
+- **"What's new" card**: after an app update, the desktop app shows a **What's
+  new** modal once per installed version. The notes are bundled inside the app
+  (English, Turkish, and German)—nothing is fetched over the network. A fresh
+  install that has not completed onboarding records the version silently instead
+  of showing the card.
+
+### Sending while the host is offline
+
+- **This computer (local daemon)**: if sending a message fails because the
+  connection to the local daemon is refused or unreachable, the desktop app
+  probes `/v1/health` to confirm the service is actually down (a slow answer or
+  timeout never triggers a retry, so a live daemon never gets a duplicate
+  message), shows *"Starting this computer's Praxi service…"*, starts the local
+  daemon automatically, and sends the message once it is ready.
+- **Paired remote host**: the desktop app cannot power on or start a remote
+  server. Your text stays in the composer as a draft, and the app displays
+  **"The server is offline"** with a **Retry** button once the server is back
+  online.
 
 ### Questions
 
@@ -180,12 +265,21 @@ never-list actions are never auto-approved in scheduled runs.
 
 ## Controlling the desktop
 
-Desktop tools (Windows only today) act on your real screen. The desktop app
-shows an on-screen overlay while a bot is driving and lets you take over:
+Desktop tools (Windows, and Linux under X11/Xvfb) act on the real screen. The
+desktop app shows an on-screen overlay while a bot is driving and lets you take
+over:
 
 - If you take control (`human_driving`) or pause the bot, desktop actions are
   refused immediately and the bot is told not to retry.
 - The global stop hotkey (default `Ctrl+Alt+Esc`) stops the bot at any time.
+  **Stop** also aborts runs that are parked waiting behind a pause or takeover.
+- While a screen takeover leaves bots paused, a **"Bot paused, waiting for
+  you"** banner stays visible on the main screen with **Clear pause**,
+  **Open screen**, and **Stop**. On a paired remote host, the host's **admin
+  desktop** (while it still holds screen-input permission) can clear a paused
+  takeover from this banner via `POST /v1/control/recover` without losing its
+  own screen-input grant; see
+  [Live screen privacy and human control](security.md#live-screen-privacy-and-human-control).
 
 The browser tools use a separate, isolated browser profile by default, so they
 do not touch your normal browsing sessions.
