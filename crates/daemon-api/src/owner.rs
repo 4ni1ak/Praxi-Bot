@@ -203,6 +203,8 @@ pub const TOKEN_OK_ROUTES: &[(&str, &str)] = &[
     ("PATCH", "/v1/bots/{}"),
     ("DELETE", "/v1/bots/{}"),
     ("POST", "/v1/chats"),
+    ("PATCH", "/v1/chats/{}"),
+    ("DELETE", "/v1/chats/{}"),
     ("POST", "/v1/chats/{}/messages"),
     ("POST", "/v1/chats/{}/attachments"),
     ("POST", "/v1/runs/stop"),

@@ -262,6 +262,23 @@ pub struct ChatDto {
     pub title: String,
     /// Creation time.
     pub created_at_ms: i64,
+    /// Pinned chats sort first.
+    #[serde(default)]
+    pub pinned: bool,
+    /// Archived chats are hidden from the default list.
+    #[serde(default)]
+    pub archived: bool,
+}
+
+/// `PATCH /v1/chats/{id}`: every field is optional, absent ones stay unchanged.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct UpdateChat {
+    /// New title (1 to 120 characters after trimming).
+    pub title: Option<String>,
+    /// Pin or unpin.
+    pub pinned: Option<bool>,
+    /// Archive or restore.
+    pub archived: Option<bool>,
 }
 
 /// `POST /v1/chats`.

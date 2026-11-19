@@ -82,6 +82,11 @@ fn dir(data_dir: &Path, chat: ChatId) -> PathBuf {
     data_dir.join("attachments").join(chat.0.to_string())
 }
 
+/// Remove every stored attachment of a deleted chat (best effort: the chat is already gone).
+pub fn remove_chat(data_dir: &Path, chat: ChatId) {
+    let _ = std::fs::remove_dir_all(dir(data_dir, chat));
+}
+
 /// Display name: last path component, no control characters, at most 120 chars.
 #[must_use]
 pub fn clean_name(raw: &str) -> String {
