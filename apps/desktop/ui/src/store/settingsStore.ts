@@ -53,6 +53,8 @@ export interface AppSettings extends AppearanceSettings {
   voiceName: string;
   /** Speaking speed of read-aloud replies (0.5 - 2). */
   voiceRate: number;
+  /** Read each finished bot reply aloud automatically. */
+  speakReplies: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -79,7 +81,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   computerTarget: "this-pc",
   botOrder: [],
   voiceName: "",
-  voiceRate: DEFAULT_VOICE_RATE
+  voiceRate: DEFAULT_VOICE_RATE,
+  speakReplies: false
 };
 
 export function shouldOpenOnboardingOnStart(
@@ -129,7 +132,8 @@ export function loadSettingsSync(): AppSettings | null {
       messageTimes: parseMessageTimes(parsed.messageTimes),
       botOrder: parseBotOrder(parsed.botOrder),
       voiceName: parseVoiceName(parsed.voiceName),
-      voiceRate: parseVoiceRate(parsed.voiceRate)
+      voiceRate: parseVoiceRate(parsed.voiceRate),
+      speakReplies: parsed.speakReplies === true
     };
   } catch {
     return null;
@@ -205,6 +209,7 @@ export async function loadSettings(): Promise<AppSettings> {
       const botOrder = parseBotOrder(await store.get<unknown>("botOrder"));
       const voiceName = parseVoiceName(await store.get<string>("voiceName"));
       const voiceRate = parseVoiceRate(await store.get<number>("voiceRate"));
+      const speakReplies = (await store.get<boolean>("speakReplies")) === true;
 
       return {
         ...appearance,
@@ -230,7 +235,8 @@ export async function loadSettings(): Promise<AppSettings> {
         computerTarget,
         botOrder,
         voiceName,
-        voiceRate
+        voiceRate,
+        speakReplies
       };
     } catch {
       // Fall back to localStorage below if reading from plugin-store fails
@@ -276,6 +282,7 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
       await store.set("botOrder", settings.botOrder);
       await store.set("voiceName", settings.voiceName);
       await store.set("voiceRate", settings.voiceRate);
+      await store.set("speakReplies", settings.speakReplies);
       await store.save();
     } catch {
       // Ignore store write errors in non-Tauri environments

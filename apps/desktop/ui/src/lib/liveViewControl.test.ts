@@ -23,8 +23,6 @@ import {
   buildSessionHeartbeat,
   canSendLiveInput,
   computeWantSession,
-  THUMBNAIL_REFRESH_MS,
-  thumbnailDue,
   controlSnapshotKey,
   createInitialLiveViewState,
   isControlBusy,
@@ -349,7 +347,7 @@ test("heartbeat stops carrying takeover_id once the stream is dead or frozen", (
 test("reconnect backoff is bounded and a new session never auto-resumes input", () => {
   assert.deepEqual(
     [1, 2, 3, 4, 5, 6, 10].map(reconnectDelayMs),
-    [1000, 2000, 4000, 8000, 15000, 15000, 15000]
+    [500, 1000, 2000, 4000, 4000, 4000, 4000]
   );
   let st = applyStreamDisconnected(owning());
   assert.equal(st.disconnected, true);
@@ -447,6 +445,8 @@ test("panel and viewer closed (or window hidden) stop the capture session", () =
   };
   // The card alone never holds a live session: the host stays idle until someone clicks.
   assert.equal(computeWantSession(base), false);
+  assert.equal(computeWantSession({ ...base, cardRequested: true }), true);
+  assert.equal(computeWantSession({ ...base, cardRequested: true, documentHidden: true }), false);
   assert.equal(computeWantSession({ ...base, viewerOpen: true }), true);
   assert.equal(
     computeWantSession({ ...base, viewerOpen: true, documentHidden: true }),
@@ -461,16 +461,6 @@ test("panel and viewer closed (or window hidden) stop the capture session", () =
     false,
     "merely opening never launches a browser"
   );
-});
-
-test("the card's still image is due at most once a minute, only while seen and focused", () => {
-  const seen = { panelVisible: true, viewerOpen: false, windowActive: true, lastFetchMs: null, nowMs: 1_000 };
-  assert.equal(thumbnailDue(seen), true, "first one when the panel opens");
-  assert.equal(thumbnailDue({ ...seen, lastFetchMs: 1_000, nowMs: 30_000 }), false);
-  assert.equal(thumbnailDue({ ...seen, lastFetchMs: 1_000, nowMs: 1_000 + THUMBNAIL_REFRESH_MS }), true);
-  assert.equal(thumbnailDue({ ...seen, windowActive: false }), false, "unfocused window");
-  assert.equal(thumbnailDue({ ...seen, panelVisible: false }), false, "panel closed");
-  assert.equal(thumbnailDue({ ...seen, viewerOpen: true }), false, "the live viewer has its own stream");
 });
 
 // ---- finding 5: Stop stays independent ------------------------------------
