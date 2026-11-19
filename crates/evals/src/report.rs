@@ -293,6 +293,8 @@ mod tests {
             perception: Perception::default(),
             tool_time: std::collections::BTreeMap::new(),
             model_time: crate::metrics::ToolTime::default(),
+            unsafe_actions: 0,
+            expected_fail: false,
         }
     }
 

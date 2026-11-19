@@ -17,7 +17,21 @@ use tool_registry::{
     Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError, ToolOutput, ToolSpec,
 };
 
-use crate::scenario::{CategorySpec, EffectSpec, FakeToolSpec, ScriptStep};
+use crate::scenario::{CategorySpec, ContentSpec, EffectSpec, FakeToolSpec, ScriptStep};
+
+fn content_class(s: &FakeToolSpec) -> tool_registry::ContentClass {
+    use tool_registry::ContentClass as C;
+    let class = match s.content {
+        ContentSpec::None => C::none(),
+        ContentSpec::PrivateRead => C::private_read(),
+        ContentSpec::Untrusted => C::untrusted(),
+        ContentSpec::UntrustedPrivate => C::untrusted_private(),
+        ContentSpec::Egress => C::egress(),
+        ContentSpec::UntrustedEgress => C::untrusted_egress(),
+        ContentSpec::All => C::all(),
+    };
+    if s.executes { class.executes() } else { class }
+}
 
 /// A provider that replays scripted replies and records every request.
 pub struct ScriptedProvider {
@@ -186,7 +200,7 @@ impl FakeTool {
                 },
                 platforms: vec![Platform::All],
 
-                content: tool_registry::ContentClass::none(),
+                content: content_class(s),
             },
             runs: Arc::clone(&runs),
             output,
