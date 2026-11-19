@@ -223,12 +223,12 @@ impl EffectiveProfile {
     pub fn watch() -> Self {
         Self {
             profile: Profile::Watch,
-            max_width: 960,
-            max_height: 600,
-            quality: 45,
-            max_fps: 1,
-            bytes_per_second: 128 * 1024,
-            burst_bytes: 256 * 1024,
+            max_width: 1920,
+            max_height: 1080,
+            quality: 70,
+            max_fps: 5,
+            bytes_per_second: 1024 * 1024,
+            burst_bytes: 1024 * 1024,
             codec: Codec::Jpeg,
         }
     }
@@ -236,12 +236,12 @@ impl EffectiveProfile {
     pub fn live() -> Self {
         Self {
             profile: Profile::Live,
-            max_width: 1280,
-            max_height: 800,
-            quality: 60,
+            max_width: 1920,
+            max_height: 1080,
+            quality: 70,
             max_fps: 10,
-            bytes_per_second: 768 * 1024,
-            burst_bytes: 1024 * 1024,
+            bytes_per_second: 1536 * 1024,
+            burst_bytes: 2 * 1024 * 1024,
             codec: Codec::Jpeg,
         }
     }

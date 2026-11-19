@@ -41,6 +41,7 @@ import { Markdown } from "../components/Markdown";
 import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
 import { MessageInfo } from "../components/MessageInfo";
+import { useAutoSpeak } from "../components/useAutoSpeak";
 import { SpeakButton } from "../components/SpeakButton";
 import { QueuedMessages } from "../components/QueuedMessages";
 import { RunStatusLine } from "../components/RunStatusLine";
@@ -63,6 +64,7 @@ import {
 } from "../lib/chatLogic";
 import { botWriteMessage, writeBotProfile } from "../lib/botWrite";
 import { splitMentions } from "../lib/mentionText";
+import { transcriptFileName, transcriptMarkdown } from "../lib/transcript";
 import { dayHeader, type MessageTimes } from "../lib/messageTime";
 import { modelGroups } from "../lib/modelPicker";
 import { type ChatRunPhase, runBarModel, runStopUi, STOP_CONFIRM_MS } from "../lib/runBar";
@@ -89,6 +91,8 @@ import {
   SLASH_COMMANDS,
   APP_COMMAND_EVENT,
   APP_COMMANDS,
+  LOCAL_COMMANDS,
+  isExportCommand,
   appCommandFor
 } from "../lib/slash";
 import { FRESH, type HistoryNav, afterEdit, historyKey, userMessageTexts } from "../lib/composerHistory";
@@ -315,6 +319,7 @@ export function ChatView({
     () => topLevelRuns(events, chatId),
     [events, chatId]
   );
+  useAutoSpeak(chatId, chatRuns);
   const finishedCount = chatRuns.filter(
     (r) => r.finishedMs !== undefined
   ).length;
@@ -569,7 +574,7 @@ export function ChatView({
       return [];
     }
     if (triggerKind === "slash") {
-      return rank([...SLASH_COMMANDS, ...APP_COMMANDS], triggerQuery, (c) => ({
+      return rank([...SLASH_COMMANDS, ...LOCAL_COMMANDS, ...APP_COMMANDS], triggerQuery, (c) => ({
         text: c.name,
         keywords: [t(c.i18nKey)]
       })).map((r) => ({
@@ -647,9 +652,27 @@ export function ChatView({
     });
   };
 
+  /** `/export`: the open chat as a Markdown file (user and bot messages only). */
+  const exportChat = () => {
+    const title = chat?.title && chat.title !== "New chat" ? chat.title : "";
+    const md = transcriptMarkdown(messages, { title: title || view?.name || "Chat", user: t("chat.export.you"), bot: view?.name ?? "Bot" });
+    const url = URL.createObjectURL(new Blob([md], { type: "text/markdown;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = transcriptFileName(title || view?.name || "chat");
+    a.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast.show(t("chat.export.done"), "success");
+  };
+
   const send = async () => {
     const body = text.trim();
     if (!client || !body || sending) {
+      return;
+    }
+    if (isExportCommand(body)) {
+      setText("");
+      exportChat();
       return;
     }
     // "/help", "/settings" ...: the app opens the place itself; nothing is sent to the bot.
