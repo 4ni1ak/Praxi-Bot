@@ -96,6 +96,24 @@ Never prompts. Exit 1 when any check fails.
 
 `--json` prints the checks as JSON.
 
+### `bot backup <FILE>` and `bot restore <FILE>`
+
+`backup` writes one file with your bots, chats, memory, skills, workflows,
+schedules and provider settings. It never overwrites an existing file and
+never contains API keys or tokens: enter those again after a restore. It is
+safe while the app runs, but a backup taken with the app closed is consistent
+across all files.
+
+`restore` unpacks such a file into this installation. Close the app first (it
+refuses while a daemon answers on `--port`). An installation that already has
+bots or chats is refused unless you pass `--replace`; the state it replaces is
+kept in a `backup-*` folder inside the data directory.
+
+| Option (`restore`) | Meaning |
+| --- | --- |
+| `--replace` | Swap the existing bots and chats for the backup |
+| `--allow-policy-relaxation` | Accept a backup whose permission policy is more permissive than the current one |
+
 ### `bot status`
 
 Daemon health and version, uptime, and the number of pending approvals. Also

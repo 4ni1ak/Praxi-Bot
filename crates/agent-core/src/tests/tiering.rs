@@ -283,6 +283,9 @@ async fn every_executed_read_forces_standard_before_its_output_reaches_a_model()
             .messages
             .iter()
             .filter(|m| m.role != MessageRole::Tool)
+            // The action ledger quotes tool output as marked data, in a note
+            // the loop wrote (see `ledger`); nothing else may carry it.
+            .filter(|m| !m.content.to_string().contains(crate::ledger::LEDGER_OPEN))
             .all(|m| !m.content.to_string().contains(injection))
     );
     assert_upgrade(&events(&mut rx), "tool_output");

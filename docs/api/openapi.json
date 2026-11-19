@@ -10639,6 +10639,182 @@
         ]
       }
     },
+    "/v1/voice": {
+      "get": {
+        "tags": [
+          "voice"
+        ],
+        "summary": "Dictation configuration; the API key is write-only (`stt_key_set` only says whether one is stored).",
+        "operationId": "get_voice",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceConfigDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "voice is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "voice"
+        ],
+        "summary": "Update the dictation configuration.",
+        "operationId": "update_voice",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceConfigInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceConfigDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "bad API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "voice is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/voice/transcribe": {
+      "post": {
+        "tags": [
+          "voice"
+        ],
+        "summary": "Transcribe a recording with the configured service (owner-triggered dictation).",
+        "operationId": "transcribe",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranscribeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscribeOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "bad or oversized audio",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "dictation is not set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "the transcription service failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "voice is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/web/search": {
       "get": {
         "tags": [
@@ -11309,6 +11485,12 @@
               "null"
             ],
             "description": "`null` while pending, else `approved` / `denied` / `expired`."
+          },
+          "details": {
+            "description": "The tool's card facts from the `approval_needed` event."
+          },
+          "input": {
+            "description": "The call's input, as the `approval_needed` event carried it (so a client that missed the\nevent can still show the full card)."
           },
           "requested_at_ms": {
             "type": "integer",
@@ -13652,6 +13834,7 @@
         "description": "A bot's permission picture (`GET /v1/bots/{id}`).",
         "required": [
           "categories",
+          "mode",
           "grants"
         ],
         "properties": {
@@ -13671,6 +13854,10 @@
               "$ref": "#/components/schemas/GrantDto"
             },
             "description": "The persisted \"always allow\" rules.  Tool-level grants only widen that\none tool and are not reflected in `categories`."
+          },
+          "mode": {
+            "type": "string",
+            "description": "The bot's autonomy mode, derived from its preset: `ask`, `balanced` or `full`."
           },
           "policy": {
             "description": "The profile's own policy as JSON; `null` = the workspace policy applies."
@@ -14646,6 +14833,36 @@
               "name": {
                 "type": "string",
                 "description": "`fs`, `shell`, `desktop`, `browser`, `accounts`, `messaging`,\n`money`, `system`, `remote` or `script`."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "One tool on one target: a site, a folder or a command prefix.",
+            "required": [
+              "tool",
+              "scope",
+              "pattern",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "scoped"
+                ]
+              },
+              "pattern": {
+                "type": "string",
+                "description": "The one target the rule covers (see `scope`)."
+              },
+              "scope": {
+                "type": "string",
+                "description": "`origin`, `folder` or `command`."
+              },
+              "tool": {
+                "type": "string",
+                "description": "Tool name."
               }
             }
           }
@@ -20423,6 +20640,44 @@
         },
         "additionalProperties": false
       },
+      "TranscribeInput": {
+        "type": "object",
+        "description": "Body of `POST /v1/voice/transcribe`.",
+        "required": [
+          "audio_base64",
+          "mime"
+        ],
+        "properties": {
+          "audio_base64": {
+            "type": "string",
+            "description": "The recording, base64 (standard alphabet)."
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional ISO-639-1 language hint (`en`, `tr`, `de`)."
+          },
+          "mime": {
+            "type": "string",
+            "description": "MIME type of the recording, e.g. `audio/webm`."
+          }
+        }
+      },
+      "TranscribeOutput": {
+        "type": "object",
+        "description": "Result of `POST /v1/voice/transcribe`.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The recognised text."
+          }
+        }
+      },
       "TrustFolderInput": {
         "type": "object",
         "required": [
@@ -20647,6 +20902,63 @@
           "closed"
         ]
       },
+      "VoiceConfigDto": {
+        "type": "object",
+        "description": "Dictation configuration (`GET /v1/voice`): non-secret fields only.",
+        "required": [
+          "stt_base_url",
+          "stt_model",
+          "stt_key_set"
+        ],
+        "properties": {
+          "stt_base_url": {
+            "type": "string",
+            "description": "Base URL of the OpenAI-compatible transcription service (without `/audio/transcriptions`)."
+          },
+          "stt_key_set": {
+            "type": "boolean",
+            "description": "Whether an API key is stored (never returned)."
+          },
+          "stt_model": {
+            "type": "string",
+            "description": "Model name sent with each request."
+          }
+        }
+      },
+      "VoiceConfigInput": {
+        "type": "object",
+        "description": "Body of `PUT /v1/voice`; omitted fields keep their value.",
+        "properties": {
+          "clear_stt_key": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Remove the stored key."
+          },
+          "stt_base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`https://...`, or `http://` for a loopback server only."
+          },
+          "stt_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "API key (**write-only**: stored in the secret store, never returned or logged)."
+          },
+          "stt_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model name."
+          }
+        }
+      },
       "WebSearchConfigDto": {
         "type": "object",
         "description": "Current web search configuration (`GET /v1/web/search`): non-secret fields\nonly.",
@@ -20865,31 +21177,49 @@
   },
   "tags": [
     {
-      "name": "view"
-    },
-    {
-      "name": "meta"
-    },
-    {
-      "name": "bots"
-    },
-    {
-      "name": "chats"
+      "name": "admin"
     },
     {
       "name": "approvals"
     },
     {
-      "name": "runs"
+      "name": "bots"
     },
     {
-      "name": "usage"
+      "name": "channels"
+    },
+    {
+      "name": "chats"
+    },
+    {
+      "name": "composio"
+    },
+    {
+      "name": "control"
+    },
+    {
+      "name": "doctor"
+    },
+    {
+      "name": "email"
     },
     {
       "name": "events"
     },
     {
-      "name": "control"
+      "name": "host"
+    },
+    {
+      "name": "mcp"
+    },
+    {
+      "name": "mcp-server"
+    },
+    {
+      "name": "memory"
+    },
+    {
+      "name": "meta"
     },
     {
       "name": "policy"
@@ -20898,43 +21228,28 @@
       "name": "providers"
     },
     {
+      "name": "runs"
+    },
+    {
       "name": "schedules"
-    },
-    {
-      "name": "channels"
-    },
-    {
-      "name": "host"
-    },
-    {
-      "name": "admin"
-    },
-    {
-      "name": "mcp"
     },
     {
       "name": "secrets"
     },
     {
-      "name": "email"
-    },
-    {
-      "name": "composio"
-    },
-    {
-      "name": "web"
-    },
-    {
       "name": "skills"
     },
     {
-      "name": "doctor"
+      "name": "usage"
     },
     {
-      "name": "mcp-server"
+      "name": "view"
     },
     {
-      "name": "memory"
+      "name": "voice"
+    },
+    {
+      "name": "web"
     }
   ]
 }

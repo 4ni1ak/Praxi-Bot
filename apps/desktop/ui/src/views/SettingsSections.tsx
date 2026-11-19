@@ -321,7 +321,7 @@ export function ProvidersSection() {
 // ---------------------------------------------------------------- permissions
 
 function grantLabel(g: GrantTarget): string {
-  return `${g.kind}:${g.name}`;
+  return g.kind === "scoped" ? `scoped:${g.tool}:${g.scope}:${g.pattern}` : `${g.kind}:${g.name}`;
 }
 
 function BotPermissions({ bot }: { bot: Bot }) {
@@ -369,6 +369,9 @@ function BotPermissions({ bot }: { bot: Bot }) {
       {error ? <p className={formStyles.error}>{error}</p> : null}
       {eff ? (
         <>
+          <p className={formStyles.hint}>
+            {t("settings.permissions.mode", { mode: t(`settings.permissions.modes.${eff.mode}`, eff.mode) })}
+          </p>
           <ul className={styles.chips}>
             {Object.entries(eff.categories).map(([cat, d]) => (
               <li
@@ -407,9 +410,16 @@ function BotPermissions({ bot }: { bot: Bot }) {
                         ? t("settings.permissions.grantCategory", {
                             name: t(`botForm.category.${g.target.name}`, g.target.name)
                           })
-                        : t("settings.permissions.grantTool", {
-                            name: g.target.name
-                          })}
+                        : g.target.kind === "scoped"
+                          ? t("settings.permissions.grantScoped", {
+                              tool: g.target.tool,
+                              target: t(`chat.approval.memory.target.${g.target.scope}`, {
+                                value: g.target.pattern
+                              })
+                            })
+                          : t("settings.permissions.grantTool", {
+                              name: g.target.name
+                            })}
                     </span>
                     {g.computer ? (
                       <span className={styles.rowMeta}>{g.computer}</span>

@@ -96,6 +96,7 @@ impl Budget {
 
     /// No clone of this budget exists besides the caller's (no connection or
     /// stream refers to it).
+    #[cfg(feature = "server")]
     pub(crate) fn unshared(&self) -> bool {
         Arc::strong_count(&self.total) == 1
     }

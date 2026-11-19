@@ -12,6 +12,11 @@
 #   uninstall|purge                install-linux.sh --uninstall [--purge]
 set -euo pipefail
 
+# Never let apt's needrestart hook restart services (including praxi.service)
+# behind our back: list-only mode, no interactive prompts. Restarts happen only
+# where this script restarts them on purpose.
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1
+
 STAGE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX=/opt/praxi
 DATA=/var/lib/praxi
@@ -51,6 +56,18 @@ env_port() {
   printf '%s' "${p}"
 }
 
+# True when the EFFECTIVE start command of praxi.service runs `bot serve --host`.
+# Host mode may come from a systemd drop-in (praxi.service.d/*.conf), so read the
+# merged unit (`systemctl cat`) and use its last ExecStart.
+unit_hostmode() {
+  local text last
+  text="$(systemctl cat praxi.service 2>/dev/null || cat "${UNIT}" "${UNIT}.d"/*.conf 2>/dev/null || true)"
+  last="$(printf '%s
+' "${text}" | grep -E '^ExecStart=.+' | tail -n1 || true)"
+  printf '%s
+' "${last}" | grep -Eq '^ExecStart=.*/bot serve --host([[:space:]]|$)'
+}
+
 cmd_preflight() {
   kv uid "$(id -u)"
   ( . /etc/os-release 2>/dev/null || true
@@ -69,7 +86,7 @@ cmd_preflight() {
   kv gh_version "$(gh_version || true)"
   kv praxi_version "$("${PREFIX}/bin/bot" --version 2>/dev/null | awk '{print $2}' || true)"
   if [[ -f "${UNIT}" ]]; then kv unit_present 1; else kv unit_present 0; fi
-  if grep -Eq '^ExecStart=.*/bot serve --host([[:space:]]|$)' "${UNIT}" 2>/dev/null; then kv unit_hostmode 1; else kv unit_hostmode 0; fi
+  if unit_hostmode; then kv unit_hostmode 1; else kv unit_hostmode 0; fi
   kv unit_active "$(systemctl is-active praxi.service 2>/dev/null || true)"
   if [[ -d "${DATA}" ]]; then kv data_dir 1; else kv data_dir 0; fi
   local port=47821
@@ -95,7 +112,7 @@ browser_present() {
 cmd_status() {
   kv version "$("${PREFIX}/bin/bot" --version 2>/dev/null | awk '{print $2}' || true)"
   kv unit_active "$(systemctl is-active praxi.service 2>/dev/null || true)"
-  if grep -Eq '^ExecStart=.*/bot serve --host([[:space:]]|$)' "${UNIT}" 2>/dev/null; then kv unit_hostmode 1; else kv unit_hostmode 0; fi
+  if unit_hostmode; then kv unit_hostmode 1; else kv unit_hostmode 0; fi
   kv xvfb "$(systemctl is-active praxi-xvfb.service 2>/dev/null || true)"
   kv desktop "$(systemctl is-active praxi-desktop.service 2>/dev/null || true)"
   if browser_present; then kv browser 1; else kv browser 0; fi
