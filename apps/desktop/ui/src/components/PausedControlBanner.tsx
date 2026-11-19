@@ -16,9 +16,9 @@ import styles from "./PausedControlBanner.module.css";
  */
 export function PausedControlBanner() {
   const { t } = useTranslation();
-  const { state, controlState, clearPause, openViewer, isLocalClient } =
+  const { state, controlState, clearPause, openViewer, canClearForeignPause } =
     useLiveView();
-  const actions = visibleActions(state, controlState, isLocalClient).banner;
+  const actions = visibleActions(state, controlState, canClearForeignPause).banner;
   if (actions.length === 0) {
     return null;
   }

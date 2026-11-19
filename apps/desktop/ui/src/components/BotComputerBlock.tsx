@@ -96,7 +96,7 @@ export function BotComputerBlock({
   const homeLive = useLiveView();
   const localLive = useLocalLiveView();
   const live = showingMine ? localLive : homeLive;
-  const panelActions = visibleActions(live.state, live.controlState, live.isLocalClient).panel;
+  const panelActions = visibleActions(live.state, live.controlState, live.canClearForeignPause).panel;
   const releasePending = live.state.pendingRequest?.kind === "release";
   const showRelease = isActivelyOwningTakeover(live.state) || releasePending;
   const showPause = panelActions.includes("clear_pause") && !showRelease;

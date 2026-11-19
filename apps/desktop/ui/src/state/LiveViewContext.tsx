@@ -119,6 +119,8 @@ interface LiveViewContextValue {
   clearPause: (kind?: "own" | "foreign" | "latch") => Promise<void>;
   /** This client is the local user (loopback daemon), not a paired peer. */
   isLocalClient: boolean;
+  /** Local user, or the admin desktop of the host this client is connected to. */
+  canClearForeignPause: boolean;
   /**
    * Emergency stop through `POST /v1/control/override`. With `onlyIfControlled`
    * (the global Stop) it does nothing unless a screen takeover is held, so a plain
@@ -1213,6 +1215,24 @@ export function LiveViewProvider({
   );
 
   const isLocalClient = client ? isLocalBaseUrl(client.baseUrl) : false;
+  // The host's admin desktop may clear a pause on the host (the daemon decides);
+  // anything else stays hidden. Failure or no admin grant keeps it false.
+  const [hostAdmin, setHostAdmin] = useState(false);
+  useEffect(() => {
+    setHostAdmin(false);
+    if (!client || isLocalClient) {
+      return undefined;
+    }
+    let live = true;
+    client.adminState().then(
+      (s) => live && setHostAdmin(s.granted === true),
+      () => live && setHostAdmin(false)
+    );
+    return () => {
+      live = false;
+    };
+  }, [client, isLocalClient]);
+  const canClearForeignPause = isLocalClient || hostAdmin;
 
   const recoveryPrompt = useMemo(
     () => describeRecoveryPrompt(state, controlState),
@@ -1248,6 +1268,7 @@ export function LiveViewProvider({
       recoverTakeover,
       clearPause,
       isLocalClient,
+      canClearForeignPause,
       overrideStop,
       currentTargets,
       enqueueInput,
@@ -1286,6 +1307,7 @@ export function LiveViewProvider({
       recoverTakeover,
       clearPause,
       isLocalClient,
+      canClearForeignPause,
       overrideStop,
       currentTargets,
       enqueueInput,
