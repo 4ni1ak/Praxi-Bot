@@ -22,7 +22,6 @@ import {
 import styles from "./App.module.css";
 import { AppsPill } from "./components/AppsPill";
 import { BotPanel } from "./components/BotPanel";
-import { ChatList } from "./components/ChatList";
 import { ResizeGrip } from "./components/ResizeGrip";
 import { PRODUCT_CONFIG } from "./config/product";
 import {
@@ -63,8 +62,7 @@ import {
   backFromChatOpensPanel,
   botChats,
   botDialogFromScreen,
-  botLanding,
-  chatActivity
+  botLanding
 } from "./lib/botLanding";
 import { nextRouteAfterChatDelete } from "./lib/chatManage";
 import { nativeEngineName } from "./lib/botEngine";
@@ -713,11 +711,6 @@ function AppShell() {
         archived: c.archived
       }))
     : [];
-  const railChats = panelChats.map((c) => ({
-    ...c,
-    activity: chatActivity(c.id, needs, runs)
-  }));
-
   const handlePatchChat = async (chatId: string, patch: UpdateChatInput) => {
     try {
       await updateChat(chatId, patch);
@@ -883,42 +876,6 @@ function AppShell() {
               </div>;
             })}
             </div>
-            {!mini && selectedBot && !hostEmpty ? (
-              <section
-                className={styles.railChats}
-                aria-labelledby="rail-chats-heading"
-                data-stale={homeStale ? "true" : undefined}
-                data-testid="rail-chats-section"
-              >
-                <div className={styles.railChatsHead}>
-                  <h3 className={styles.railChatsTitle} id="rail-chats-heading">
-                    {t("botPanel.chats")}
-                  </h3>
-                  <button
-                    type="button"
-                    className={styles.railChatsAdd}
-                    disabled={newChatBusy}
-                    title={t("bots.newChat")}
-                    aria-label={t("bots.newChat")}
-                    data-testid="rail-new-chat"
-                    onClick={() => void startChat(selectedBot.id)}
-                  >
-                    <Plus aria-hidden="true" />
-                  </button>
-                </div>
-                <ChatList
-                  chats={railChats}
-                  activeChatId={route.kind === "chat" ? route.chatId : undefined}
-                  runs={runs}
-                  pendingIds={pendingChatIds}
-                  variant="rail"
-                  loading={phase === "connecting"}
-                  onOpenChat={openChat}
-                  onPatchChat={handlePatchChat}
-                  onDeleteChat={handleDeleteChat}
-                />
-              </section>
-            ) : null}
           </SidebarSection>
 
           <SidebarFooter className={styles.railFoot}>

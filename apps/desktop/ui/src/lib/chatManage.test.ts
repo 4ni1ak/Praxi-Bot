@@ -148,11 +148,12 @@ test("MockApiClient serves PATCH and DELETE /chats with validation", async () =>
   assert.equal(all.some((c) => c.id === created.id), false);
 });
 
-test("left rail and bot panel both mount ChatList, and deletion is gated behind ConfirmDialog", () => {
+test("only the bot panel mounts ChatList (the left rail lists bots only), and deletion is gated behind ConfirmDialog", () => {
   const app = read("../App.tsx");
   const panel = read("../components/BotPanel.tsx");
   const list = read("../components/ChatList.tsx");
-  assert.match(app, /<ChatList[\s\S]*variant="rail"/);
+  assert.doesNotMatch(app, /<ChatList/);
+  assert.doesNotMatch(app, /rail-chats|railChats/);
   assert.match(panel, /<ChatList[\s\S]*variant="panel"/);
   assert.match(list, /<ConfirmDialog[\s\S]*confirmDisabled=\{deleteActiveRun\}/);
   assert.match(list, /chatHasActiveRun\(/);
