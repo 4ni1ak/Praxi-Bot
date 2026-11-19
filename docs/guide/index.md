@@ -32,6 +32,7 @@ Three ideas run through the whole product:
 | --- | --- |
 | Install Praxi and run it the first time | [Install and first run](install.md) |
 | Windows installer details, upgrade, uninstall | [Installing on Windows](install-windows.md) |
+| Run the always-on Linux host: logs, restart, upgrade, backup | [Host operations](host-operations.md) |
 | Create a bot and understand its profile file | [Bots and profiles](bots-and-profiles.md) |
 | Talk to a bot, approve or deny actions | [Chatting and approvals](chatting-and-approvals.md) |
 | Run something every morning | [Scheduled tasks](scheduled-tasks.md) |
