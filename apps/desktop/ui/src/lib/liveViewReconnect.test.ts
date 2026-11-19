@@ -115,7 +115,7 @@ test("backoff grows while a stream accepts and drops, and only resets after a he
     now: c.now,
     onBackoff: (ms) => delays.push(ms)
   });
-  assert.deepEqual(delays, [1000, 2000, 4000, 8000, 15000, 15000, 1000]);
+  assert.deepEqual(delays, [500, 1000, 2000, 4000, 4000, 4000, 500]);
 });
 
 test("a dropped stream is reopened on the same session; a vanished session is recreated", async () => {

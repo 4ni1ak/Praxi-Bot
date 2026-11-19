@@ -45,6 +45,8 @@ import type {
   EmailAccount,
   EmailAccountInput,
   EmailAccountPatch,
+  EmailMessage,
+  EmailSendTestResponse,
   EmailTestReport,
   InputBatch,
   InputResult,
@@ -87,6 +89,7 @@ import type {
   TakeoverRequest,
   TargetInfo,
   TargetUnavailable,
+  PeerLink,
   ScreenStatus,
   TerminalInfo,
   TerminalOutput,
@@ -696,6 +699,10 @@ export class ApiClient {
     return this.request("GET", "/view/availability");
   }
   /** Idle / starting / live / paused-idle / unavailable, and the host's idle limit. */
+  peerLink(signal?: AbortSignal): Promise<PeerLink | null> {
+    return this.request("GET", "/peer/link", { signal });
+  }
+
   viewStatus(): Promise<ScreenStatus> {
     return this.request("GET", "/view/status");
   }
@@ -723,8 +730,20 @@ export class ApiClient {
   terminalClose(hostId: string, id: string): Promise<void> {
     return this.request("DELETE", `/hosts/${encodeURIComponent(hostId)}/terminal/${encodeURIComponent(id)}`);
   }
-  createViewSession(input: CreateSessionInput): Promise<SessionInfo> {
-    return this.request("POST", "/view/sessions", { body: input });
+  private readonly staleViewSessions = new Set<string>();
+
+  async createViewSession(input: CreateSessionInput): Promise<SessionInfo> {
+    const create = () => this.request<SessionInfo>("POST", "/view/sessions", { body: input });
+    try {
+      return await create();
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.code !== "view_quota" || this.staleViewSessions.size === 0) {
+        throw err;
+      }
+      // Retry only DELETEs for sessions this client has already abandoned.
+      await Promise.allSettled([...this.staleViewSessions].map((id) => this.deleteViewSession(id)));
+      return create();
+    }
   }
   updateViewSession(
     id: string,
@@ -741,8 +760,23 @@ export class ApiClient {
       { body: input }
     );
   }
-  deleteViewSession(id: string): Promise<void> {
-    return this.request("DELETE", `/view/sessions/${encodeURIComponent(id)}`);
+  async deleteViewSession(id: string): Promise<void> {
+    this.staleViewSessions.add(id);
+    // The daemon reaps dormant sessions after their lease. Bound local tracking as well.
+    if (this.staleViewSessions.size > 8) {
+      const oldest = this.staleViewSessions.values().next().value;
+      if (oldest) this.staleViewSessions.delete(oldest);
+    }
+    try {
+      await this.request("DELETE", `/view/sessions/${encodeURIComponent(id)}`);
+      this.staleViewSessions.delete(id);
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
+        this.staleViewSessions.delete(id);
+        return;
+      }
+      throw err;
+    }
   }
   sendViewInput(id: string, batch: InputBatch): Promise<InputResult> {
     return this.request(
@@ -990,6 +1024,16 @@ export class ApiClient {
       "POST",
       `/email/accounts/${encodeURIComponent(name)}/test`
     );
+  }
+  /** Newest messages of the inbox, headers only (owner-only; nothing is marked read). */
+  listEmailMessages(name: string, limit = 20): Promise<EmailMessage[]> {
+    return this.request("GET", `/email/accounts/${encodeURIComponent(name)}/messages`, {
+      query: { limit: String(limit) }
+    });
+  }
+  /** One fixed test message from the mailbox to its own address (owner-only). */
+  sendEmailTest(name: string): Promise<EmailSendTestResponse> {
+    return this.request("POST", `/email/accounts/${encodeURIComponent(name)}/send-test`);
   }
   /** The same for an account that is not saved (nothing is stored). */
   testEmailDraft(input: EmailAccountInput): Promise<EmailTestReport> {

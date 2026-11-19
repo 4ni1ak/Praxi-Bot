@@ -261,56 +261,35 @@ test("autonomy hints in both locales accurately describe the stored permission p
   const en = loadLocale("en");
   const tr = loadLocale("tr");
 
-  // Finding 1 regression checks:
-  // - `ask` (`read-and-draft`) and `balanced` (`approve-destructive`) resolve to
-  //   the same all-Ask policy (`Effect::Read` skips ask; drafts, writes, deletes,
-  //   page fetches, clicks, commands, and sends all ask).
-  assert.doesNotMatch(en.newBot.autonomyHints.ask, /prepares drafts, and asks/i);
-  assert.doesNotMatch(en.newBot.autonomyHints.ask, /before changing files, browsing, or sending/i);
-  assert.match(en.newBot.autonomyHints.ask, /draft/i);
-  assert.match(en.newBot.autonomyHints.ask, /Balanced/i);
+  // Ask (`read-and-draft`) asks before every change; Balanced (`approve-destructive`)
+  // runs workspace edits, browsing and the bot's own computer freely and asks for
+  // deletes, sends, money and the user's PC. They are no longer "the same policy".
+  assert.doesNotMatch(en.newBot.autonomyHints.ask, /same effective policy/i);
+  assert.match(en.newBot.autonomyHints.ask, /change/i);
+  assert.match(en.newBot.autonomyHints.ask, /send/i);
+  assert.doesNotMatch(tr.newBot.autonomyHints.ask, /aynı etkili politika/i);
+  assert.match(tr.newBot.autonomyHints.ask, /değişiklik/i);
+  assert.match(tr.newBot.autonomyHints.ask, /gönderim/i);
 
-  assert.doesNotMatch(tr.newBot.autonomyHints.ask, /taslak hazırlar;/i);
-  assert.doesNotMatch(tr.newBot.autonomyHints.ask, /taramadan ve göndermeden önce sorar/i);
-  assert.match(tr.newBot.autonomyHints.ask, /taslak/i);
-  assert.match(tr.newBot.autonomyHints.ask, /Dengeli/i);
+  assert.doesNotMatch(en.newBot.autonomyHints.balanced, /same effective policy/i);
+  assert.match(en.newBot.autonomyHints.balanced, /workspace/i);
+  assert.match(en.newBot.autonomyHints.balanced, /own computer/i);
+  assert.match(en.newBot.autonomyHints.balanced, /delet/i);
+  assert.doesNotMatch(tr.newBot.autonomyHints.balanced, /aynı etkili politika/i);
+  assert.match(tr.newBot.autonomyHints.balanced, /çalışma alanı/i);
+  assert.match(tr.newBot.autonomyHints.balanced, /kendi bilgisayarında/i);
+  assert.match(tr.newBot.autonomyHints.balanced, /silme/i);
 
-  assert.doesNotMatch(
-    en.newBot.autonomyHints.balanced,
-    /asks before sending messages or deleting\.?$/i
-  );
-  assert.match(en.newBot.autonomyHints.balanced, /draft/i);
-  assert.match(en.newBot.autonomyHints.balanced, /command/i);
-  assert.match(en.newBot.autonomyHints.balanced, /\bAsk\b/);
-
-  assert.doesNotMatch(
-    tr.newBot.autonomyHints.balanced,
-    /göndermeden ve silmeden önce sorar\.?$/i
-  );
-  assert.match(tr.newBot.autonomyHints.balanced, /taslak/i);
-  assert.match(tr.newBot.autonomyHints.balanced, /komut/i);
-  assert.match(tr.newBot.autonomyHints.balanced, /Sorar/);
-
-  // - `auto` (`full`) runs ordinary file deletes, shell commands, and message
-  //   sends without asking, pausing only for Money, schedule activations, and
-  //   catastrophic never-list commands.
-  assert.doesNotMatch(
-    en.newBot.autonomyHints.auto,
-    /pausing only for money or high-risk commands/i
-  );
+  // `auto` (`full`) runs deletes, commands and sends without asking, but still asks for
+  // Money, schedule activation, catastrophic commands and, after untrusted content, egress.
   assert.match(en.newBot.autonomyHints.auto, /delet/i);
   assert.match(en.newBot.autonomyHints.auto, /send/i);
   assert.match(en.newBot.autonomyHints.auto, /Money/);
-  assert.match(en.newBot.autonomyHints.auto, /never-list/i);
-
-  assert.doesNotMatch(
-    tr.newBot.autonomyHints.auto,
-    /yalnızca para ve yüksek riskli komutlarda durur/i
-  );
+  assert.match(en.newBot.autonomyHints.auto, /untrusted/i);
   assert.match(tr.newBot.autonomyHints.auto, /silme/i);
-  assert.match(tr.newBot.autonomyHints.auto, /gönder/i);
+  assert.match(tr.newBot.autonomyHints.auto, /gönderim/i);
   assert.match(tr.newBot.autonomyHints.auto, /Para/);
-  assert.match(tr.newBot.autonomyHints.auto, /yasaklı/i);
+  assert.match(tr.newBot.autonomyHints.auto, /güvenilmeyen/i);
 
   // `botForm.preset.read-and-draft` must not claim drafts run free or changes are denied.
   assert.doesNotMatch(en.botForm.preset["read-and-draft"].hint, /never sends or changes/i);

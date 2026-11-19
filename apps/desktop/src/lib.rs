@@ -1073,7 +1073,15 @@ pub fn run() {
     let daemon_for_exit = Arc::clone(&daemon_handle);
     let daemon_for_setup = Arc::clone(&daemon_handle);
 
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // A second launch (Start menu, autostart plus a manual start, deep link)
+    // must not start another daemon and tray: it focuses the running window
+    // instead. This plugin has to be registered before every other one.
+    #[cfg(windows)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        shell::focus_main(app);
+    }));
+    let app = builder
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
         .manage(shell::TrayState::default())

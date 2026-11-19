@@ -9,8 +9,8 @@ use axum::http::StatusCode;
 
 use crate::AppState;
 use crate::email::{
-    EmailAccountDto, EmailAccountInput, EmailControl, EmailControlError, EmailProviderKind,
-    EmailTestReport,
+    EmailAccountDto, EmailAccountInput, EmailControl, EmailControlError, EmailMessageDto,
+    EmailProviderKind, EmailSendTestResponse, EmailTestReport,
 };
 use crate::error::{ApiError, ErrorBody};
 use crate::mcp_routes::MAX_BOT_ID_LEN;
@@ -303,4 +303,61 @@ pub(crate) async fn test_email_draft(
     }
     let _permit = s.email_test_permit()?;
     Ok(Json(control.test_draft(input).await?))
+}
+
+/// Most messages `GET .../messages` returns.
+const MAX_MESSAGES: usize = 50;
+/// Default page of `GET .../messages`.
+const DEFAULT_MESSAGES: usize = 20;
+
+/// Query of `GET /v1/email/accounts/{name}/messages`.
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+pub(crate) struct MessagesQuery {
+    /// How many messages, 1 to 50 (default 20).
+    limit: Option<usize>,
+}
+
+/// The newest messages of an account's inbox, headers only and read-only
+/// (nothing is marked read, no body is fetched). Subject and sender are
+/// untrusted text from the sender. Shares the "at most two at once" limit of
+/// the connection test (`429`).
+#[utoipa::path(get, path = "/v1/email/accounts/{name}/messages", tag = "email",
+    security(("bearer" = [])),
+    params(("name" = String, Path, description = "Account name"), MessagesQuery),
+    responses((status = 200, body = Vec<EmailMessageDto>), (status = 404, body = ErrorBody),
+              (status = 422, body = ErrorBody, description = "no password stored, or not supported"),
+              (status = 429, body = ErrorBody, description = "too many checks running"),
+              (status = 502, body = ErrorBody, description = "the mailbox failed"),
+              (status = 503, body = ErrorBody, description = "e-mail management is not available")))]
+pub(crate) async fn list_email_messages(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+    Query(q): Query<MessagesQuery>,
+) -> Result<Json<Vec<EmailMessageDto>>, ApiError> {
+    let control = email(&s)?;
+    let _permit = s.email_test_permit()?;
+    let limit = q.limit.unwrap_or(DEFAULT_MESSAGES).clamp(1, MAX_MESSAGES);
+    Ok(Json(control.recent_messages(&name, limit).await?))
+}
+
+/// Send one fixed test message from the account to **its own address**: no
+/// recipient, subject or body can be given, so it can only ever reach the
+/// mailbox itself. Same limit as the connection test (`429`).
+#[utoipa::path(post, path = "/v1/email/accounts/{name}/send-test", tag = "email",
+    security(("bearer" = [])),
+    params(("name" = String, Path, description = "Account name")),
+    responses((status = 200, body = EmailSendTestResponse), (status = 404, body = ErrorBody),
+              (status = 422, body = ErrorBody, description = "no password stored, or not supported"),
+              (status = 429, body = ErrorBody, description = "too many checks running"),
+              (status = 502, body = ErrorBody, description = "the mailbox failed"),
+              (status = 503, body = ErrorBody, description = "e-mail management is not available")))]
+pub(crate) async fn send_email_test(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<EmailSendTestResponse>, ApiError> {
+    let control = email(&s)?;
+    let _permit = s.email_test_permit()?;
+    Ok(Json(EmailSendTestResponse {
+        sent_to: control.send_test(&name).await?,
+    }))
 }

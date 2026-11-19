@@ -183,7 +183,14 @@ fn append_chat_history(
     let mut authors: HashMap<RunId, Option<BotId>> = HashMap::new();
     for m in history {
         match m.role.as_str() {
-            "user" => out.push(Message::text(MessageRole::User, m.content)),
+            "user" => {
+                let content =
+                    crate::attachments::model_content(storage.data_dir(), chat, &m.content);
+                out.push(Message {
+                    content,
+                    ..Message::text(MessageRole::User, "")
+                });
+            }
             "assistant" => {
                 let foreign = m.run_id.and_then(|rid| {
                     let author = *authors

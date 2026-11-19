@@ -559,6 +559,7 @@
       "code": "code"
     },
     "slash": {
+      "export": "Save this chat as a Markdown file",
       "new": "Start a new chat",
       "stop": "Stop the current run",
       "help": "Open help and shortcuts",
@@ -733,6 +734,31 @@
         "done": "Looked up a skill",
         "failed": "Couldn't look up a skill"
       },
+      "memory_search": {
+        "running": "Searching memory",
+        "done": "Searched memory",
+        "failed": "Couldn't search memory"
+      },
+      "session_search": {
+        "running": "Searching past conversations",
+        "done": "Searched past conversations",
+        "failed": "Couldn't search past conversations"
+      },
+      "memory_save": {
+        "running": "Saving to memory",
+        "done": "Saved to memory",
+        "failed": "Didn't save to memory"
+      },
+      "memory_forget": {
+        "running": "Forgetting a memory",
+        "done": "Forgot a memory",
+        "failed": "Didn't forget a memory"
+      },
+      "knowledge_search": {
+        "running": "Searching knowledge sources",
+        "done": "Searched knowledge sources",
+        "failed": "Couldn't search knowledge sources"
+      },
       "workflow": {
         "running": "Running a workflow",
         "done": "Ran a workflow",
@@ -825,6 +851,7 @@
       }
     },
     "timelineLabel": "Conversation",
+    "export": { "you": "You", "done": "Chat saved" },
     "jumpToLatest": "Jump to latest",
     "runBar": {
       "label": "Run controls",
@@ -893,15 +920,15 @@
       },
       "approve-destructive": {
         "name": "Approve destructive",
-        "hint": "Reads are free; anything that changes or sends asks you first."
+        "hint": "Reads, browsing, workspace edits and the bot's own computer run freely; deleting, sending, money and your own PC ask first."
       },
       "full": {
         "name": "Full",
-        "hint": "Runs without asking (including ordinary file deletes and sends), except Money, schedule activations, and catastrophic never-list commands."
+        "hint": "Runs without asking (including deletes and sends), except Money, schedule activation and catastrophic never-list commands. After reading untrusted content it still asks before sending data out or running a program."
       },
       "read-and-draft": {
         "name": "Read & draft",
-        "hint": "Reads are free; drafts, file changes, page fetches, clicks, commands, and sends all ask first (same effective policy as Approve destructive)."
+        "hint": "Reads are free; every change, send, page fetch, click and command asks first."
       },
       "custom": {
         "name": "Custom",
@@ -948,7 +975,7 @@
     "runs": "Runs",
     "modelCalls": "Model calls",
     "tokens": "Tokens",
-    "empty": "No usage yet.",
+    "empty": "No usage yet. Send a message to a bot and its token use shows up here.",
     "bot": "Bot",
     "calls": "Calls",
     "prompt": "Prompt",
@@ -962,7 +989,7 @@
   "needs": {
     "title": "Needs you",
     "subtitle": "Approvals and questions waiting across all chats.",
-    "empty": "Nothing is waiting for you.",
+    "empty": "Nothing is waiting for you. When a bot needs an approval or has a question, it appears here.",
     "kind": {
       "approval": "Approval",
       "question": "Question"
@@ -1035,6 +1062,10 @@
       "component_conflict": {
         "title": "Nothing to install right now",
         "hint": "It is already installed or being installed, or no installer is available on this computer."
+      },
+      "attachment_too_large": {
+        "title": "That attachment is too large",
+        "hint": "Remove it or pick a smaller file, then try again."
       },
       "approval_once_only": {
         "title": "This approval can only be given once",
@@ -1291,6 +1322,10 @@
       "unavailable": {
         "title": "That is not available right now",
         "hint": "Try again in a moment."
+      },
+      "unsupported_attachment": {
+        "title": "That attachment is not supported",
+        "hint": "Make sure the file is not empty or damaged, or try another file."
       },
       "unsupported_media_type": {
         "title": "That file type is not supported",
@@ -2028,6 +2063,14 @@
         "timeout": "The installer took too long and was stopped.",
         "unavailable": "The installer could not be started."
       }
+    },
+    "tools": {
+      "label": "Tools bots may use",
+      "restricted": "Some tools are limited by a custom allow-list; edit it in the server settings.",
+      "effect": {
+        "write": "changes data",
+        "destructive": "can delete or send"
+      }
     }
   },
   "help": {
@@ -2114,7 +2157,8 @@
       "usage": "Usage",
       "diagnostics": "Diagnostics",
       "updates": "Updates",
-      "appearance": "Appearance"
+      "appearance": "Appearance",
+      "mail": "Mail"
     },
     "general": {
       "account": {
@@ -2372,6 +2416,15 @@
           "nameHint": "Use letters, digits, dots, dashes or underscores, starting with a letter or digit (32 at most).",
           "bot": "Pick the bot, or choose any bot."
         }
+      },
+      "next": {
+        "ok": "Connected. A bot that is allowed to use mail can use this mailbox.",
+        "authFailed": "The server refused the login. Gmail, Outlook, Yahoo and iCloud need an app password, not your normal one. Edit the mailbox and enter it again.",
+        "apiKey": "AgentMail refused the API key. Create a new key in your AgentMail console and paste it again.",
+        "unreachable": "The mail server could not be reached. Check your internet connection and the server names, then try again.",
+        "tls": "The secure connection failed. Check the server name, the port and the security setting.",
+        "protocol": "That server did not answer like a mail server. Check the server name and the port.",
+        "timeout": "The server did not answer in time. Try again in a moment."
       }
     },
     "webSearch": {
@@ -2709,9 +2762,9 @@
       "auto": "Free"
     },
     "autonomyHints": {
-      "ask": "Reads files, checks the screen, and searches the web without asking; asks before drafting, sending, changing or deleting files, fetching pages, clicking, or running commands (same effective policy as Balanced).",
-      "balanced": "Reads files, checks the screen, and searches the web freely; asks before every file write or delete, draft, send, page fetch, click, or command (same effective policy as Ask).",
-      "auto": "Runs without asking—including deleting ordinary files, running shell commands, and sending messages—pausing only for Money, schedule activations, and never-list commands (disk format, system/home wipes, credential paths)."
+      "ask": "Reads files, checks the screen, and searches the web without asking; asks before any change, send, page fetch, click, or command.",
+      "balanced": "Reads, browses, edits workspace files and works on the bot's own computer without asking; asks before deleting files, sending, spending money, or touching your PC.",
+      "auto": "Runs without asking, even for deletes, commands and sends. Still asks for Money, schedule activation and catastrophic commands, and after reading untrusted content, before sending data out or running a program."
     },
     "autonomyCustom": "Using the {{preset}} permission preset.",
     "advanced": "Advanced settings",
@@ -2757,6 +2810,7 @@
       "localNoSystem": "The bot works here"
     },
     "reason": {
+      "timeout": "The screen took too long to start",
       "connecting": "Connecting to {{name}}…",
       "offline": "Cannot reach the server",
       "notPaired": "The server no longer accepts this computer",
@@ -2888,7 +2942,35 @@
     "needsDesktop": "{{name}} has no desktop session, so there is no screen to show. To add one, run this on this computer:",
     "pausedIdle": "Paused to save resources - click to resume",
     "showScreen": "Show screen",
-    "screenListFailed": "{{name}}'s screen list could not be loaded. It will be tried again in a moment."
+    "screenListFailed": "{{name}}'s screen list could not be loaded. It will be tried again in a moment.",
+    "mail": {
+      "heading": "Mail",
+      "loading": "Looking for mailboxes…",
+      "loadError": "Could not load the mailboxes: {{message}}",
+      "empty": "{{name}} has no mailbox yet. Connect your own mailbox, or give the bot its own address.",
+      "connect": "Connect a mailbox",
+      "manage": "Manage mailboxes",
+      "shared": "Shared by every bot",
+      "own": "Only {{name}}",
+      "agentmail": "Own address",
+      "check": "Check connection",
+      "checking": "Checking…",
+      "checked": "Checked at {{time}}",
+      "toolsLabel": "Let {{name}} use mail",
+      "toolsOnHint": "Reading is allowed. Sending always follows the permission mode of this bot, and asks first by default.",
+      "toolsOffHint": "The mailbox is connected, but {{name}} cannot see any mail tools yet. Turn this on to let it read and write mail.",
+      "toolsError": "Could not change the mail access: {{message}}",
+      "recent": "Show recent mail",
+      "hideRecent": "Hide recent mail",
+      "recentError": "Could not read the inbox: {{message}}",
+      "noMessages": "The inbox is empty.",
+      "noSubject": "(no subject)",
+      "sendTest": "Send test mail",
+      "sendingTest": "Sending…",
+      "sendTestHint": "Sends one short test message to {{address}} itself, to nobody else.",
+      "testSent": "Test mail sent to {{address}}. It should arrive in a moment.",
+      "testError": "The test mail could not be sent: {{message}}"
+    }
   },
   "terminal": {
     "title": "Terminal - {{name}}",
@@ -3008,6 +3090,14 @@
     "confirmQuery": "Allow retrieval queries"
   },
   "liveView": {
+    "chat": {
+      "title": "Chat with bot",
+      "collapse": "Collapse chat",
+      "replying": "Bot is replying…",
+      "working": "Bot is working…",
+      "approve": "Approve",
+      "reject": "Reject"
+    },
     "title": "Computer live view",
     "expand": "Open large viewer",
     "close": "Close viewer",
@@ -3112,6 +3202,12 @@
     "approvalsWaiting": "{{count}} item(s) are waiting for your decision in chat.",
     "reviewApprovals": "Back to chat to answer",
     "errors": {
+      "unauthorized": "Your session is no longer authorized. Reconnect to this computer.",
+      "too_many_streams": "This connection has too many open streams. Close another stream and try again.",
+      "network": "The connection to the screen was interrupted. Check your network and try again.",
+      "view_quota": "The server has too many screen sessions. Close an unused viewer or try again in a moment.",
+      "server_restarting": "The server may be restarting. Try again when it comes back online.",
+      "timeout": "The screen did not start in time.",
       "generic": "The request failed. Check the connection and try again.",
       "release_failed": "Could not hand control back. The bot stays paused; retry Bitirdim.",
       "release_unconfirmed": "The daemon still reports your takeover as active. Retry Bitirdim.",
@@ -3361,6 +3457,10 @@
     "dismiss": "Dismiss",
     "stopAllNow": "Stop all now",
     "letContinue": "Let them continue"
+  },
+  "peerLink": {
+    "direct": "Direct · {{rtt}} ms",
+    "relay": "Relay · {{rtt}} ms"
   },
   "computerPicker": {
     "label": "Computer: {{name}}",
@@ -3782,6 +3882,22 @@
       "outdated": "{{cli}} needs an update before Praxi can use it. Update it in Settings, AI.",
       "sign_in": "{{cli}} is signed out. Sign in to it in Settings, AI.",
       "unsupported": "Praxi cannot run {{cli}} on this computer."
+    }
+  },
+  "voice": {
+    "speak": "Read aloud",
+    "stop": "Stop reading",
+    "codeOmitted": "(code omitted)",
+    "tableOmitted": "(table omitted)",
+    "title": "Spoken replies",
+    "description": "Reply voice and speed for the read-aloud button. Uses your system's speech engine.",
+    "auto": "Automatic (matches the app language)",
+    "online": "online",
+    "speed": "Speed",
+    "unsupported": "This system offers no speech voices.",
+    "speakAuto": {
+      "title": "Speak replies",
+      "description": "Read each finished reply aloud automatically."
     }
   }
 }

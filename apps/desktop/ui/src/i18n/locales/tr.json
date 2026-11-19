@@ -559,6 +559,7 @@
       "code": "kod"
     },
     "slash": {
+      "export": "Bu sohbeti Markdown dosyası olarak kaydet",
       "new": "Yeni bir sohbet başlat",
       "stop": "Çalışan işi durdur",
       "help": "Yardımı ve kısayolları aç",
@@ -733,6 +734,31 @@
         "done": "Beceriye bakıldı",
         "failed": "Beceriye bakılamadı"
       },
+      "memory_search": {
+        "running": "Hafızada aranıyor",
+        "done": "Hafızada arandı",
+        "failed": "Hafızada aranamadı"
+      },
+      "session_search": {
+        "running": "Geçmiş sohbetlerde aranıyor",
+        "done": "Geçmiş sohbetlerde arandı",
+        "failed": "Geçmiş sohbetlerde aranamadı"
+      },
+      "memory_save": {
+        "running": "Hafızaya kaydediliyor",
+        "done": "Hafızaya kaydedildi",
+        "failed": "Hafızaya kaydedilmedi"
+      },
+      "memory_forget": {
+        "running": "Hafıza kaydı siliniyor",
+        "done": "Hafıza kaydı silindi",
+        "failed": "Hafıza kaydı silinmedi"
+      },
+      "knowledge_search": {
+        "running": "Bilgi kaynaklarında aranıyor",
+        "done": "Bilgi kaynaklarında arandı",
+        "failed": "Bilgi kaynaklarında aranamadı"
+      },
       "workflow": {
         "running": "İş akışı çalıştırılıyor",
         "done": "İş akışı çalıştırıldı",
@@ -825,6 +851,7 @@
       }
     },
     "timelineLabel": "Sohbet",
+    "export": { "you": "Sen", "done": "Sohbet kaydedildi" },
     "jumpToLatest": "En sona git",
     "runBar": {
       "label": "Çalışma kontrolleri",
@@ -893,15 +920,15 @@
       },
       "approve-destructive": {
         "name": "Yıkıcı işlemlerde onay",
-        "hint": "Okumalar serbest; değiştiren veya gönderen her şey önce sana sorar."
+        "hint": "Okuma, gezinme, çalışma alanı düzenlemeleri ve botun kendi bilgisayarı serbest; silme, gönderme, para ve kendi bilgisayarın önce sorar."
       },
       "full": {
         "name": "Tam",
-        "hint": "Sormadan çalışır (sıradan dosya silme ve gönderimler dahil); yalnızca Para, zamanlanmış görev etkinleştirme ve yasaklı listedeki yıkıcı komutlarda sorar."
+        "hint": "Sormadan çalışır (silme ve gönderim dahil); yalnızca Para, zamanlanmış görev etkinleştirme ve yasaklı listedeki yıkıcı komutlarda sorar. Güvenilmeyen içerik okuduktan sonra veri göndermeden veya program çalıştırmadan önce yine sorar."
       },
       "read-and-draft": {
         "name": "Oku ve taslak hazırla",
-        "hint": "Okumalar serbest; taslaklar, dosya değişiklikleri, sayfa açma, tıklama, komutlar ve gönderimler önce sorar (Yıkıcı işlemlerde onay ile aynı etkili politika)."
+        "hint": "Okumalar serbest; her değişiklik, gönderim, sayfa açma, tıklama ve komut önce sorar."
       },
       "custom": {
         "name": "Özel",
@@ -948,7 +975,7 @@
     "runs": "Çalışmalar",
     "modelCalls": "Model çağrıları",
     "tokens": "Token",
-    "empty": "Henüz kullanım yok.",
+    "empty": "Henüz kullanım yok. Bir bota mesaj gönderdiğinde token kullanımı burada görünür.",
     "bot": "Bot",
     "calls": "Çağrı",
     "prompt": "İstem",
@@ -962,7 +989,7 @@
   "needs": {
     "title": "Senden bekleyenler",
     "subtitle": "Tüm sohbetlerde bekleyen onaylar ve sorular.",
-    "empty": "Senden bekleyen bir şey yok.",
+    "empty": "Senden bekleyen bir şey yok. Bir bot onay istediğinde ya da soru sorduğunda burada görünür.",
     "kind": {
       "approval": "Onay",
       "question": "Soru"
@@ -1035,6 +1062,10 @@
       "component_conflict": {
         "title": "Şu an kurulacak bir şey yok",
         "hint": "Zaten kurulu ya da kuruluyor olabilir veya bu bilgisayarda kurulum aracı yok."
+      },
+      "attachment_too_large": {
+        "title": "Bu ek çok büyük",
+        "hint": "Kaldır veya daha küçük bir dosya seçip yeniden dene."
       },
       "approval_once_only": {
         "title": "Bu onay yalnızca bir kez verilebilir",
@@ -1291,6 +1322,10 @@
       "unavailable": {
         "title": "Bu şu an kullanılamıyor",
         "hint": "Biraz sonra yeniden dene."
+      },
+      "unsupported_attachment": {
+        "title": "Bu ek desteklenmiyor",
+        "hint": "Dosyanın boş veya bozuk olmadığından emin ol ya da başka bir dosya dene."
       },
       "unsupported_media_type": {
         "title": "Bu dosya türü desteklenmiyor",
@@ -2028,6 +2063,14 @@
         "timeout": "Kurulum çok uzun sürdü ve durduruldu.",
         "unavailable": "Kurulum başlatılamadı."
       }
+    },
+    "tools": {
+      "label": "Botların kullanabileceği araçlar",
+      "restricted": "Bazı araçlar özel bir izin listesiyle sınırlı; sunucu ayarlarından düzenleyin.",
+      "effect": {
+        "write": "veri değiştirir",
+        "destructive": "silebilir veya gönderebilir"
+      }
     }
   },
   "help": {
@@ -2114,7 +2157,8 @@
       "usage": "Kullanım",
       "diagnostics": "Tanılama",
       "updates": "Güncellemeler",
-      "appearance": "Görünüm"
+      "appearance": "Görünüm",
+      "mail": "E-posta"
     },
     "general": {
       "account": {
@@ -2372,6 +2416,15 @@
           "nameHint": "Harf, rakam, nokta, tire veya alt çizgi kullan; harf ya da rakamla başla (en fazla 32).",
           "bot": "Botu seç ya da herhangi bir bot seç."
         }
+      },
+      "next": {
+        "ok": "Bağlandı. E-postaya izni olan bir bot bu posta kutusunu kullanabilir.",
+        "authFailed": "Sunucu girişi reddetti. Gmail, Outlook, Yahoo ve iCloud normal şifreni değil, uygulama şifresini ister. Posta kutusunu düzenleyip yeniden gir.",
+        "apiKey": "AgentMail API anahtarını reddetti. AgentMail konsolunda yeni bir anahtar oluşturup yeniden yapıştır.",
+        "unreachable": "Posta sunucusuna ulaşılamadı. İnternet bağlantını ve sunucu adlarını kontrol edip yeniden dene.",
+        "tls": "Güvenli bağlantı kurulamadı. Sunucu adını, portu ve güvenlik ayarını kontrol et.",
+        "protocol": "Bu sunucu bir posta sunucusu gibi yanıt vermedi. Sunucu adını ve portu kontrol et.",
+        "timeout": "Sunucu zamanında yanıt vermedi. Biraz sonra yeniden dene."
       }
     },
     "webSearch": {
@@ -2709,9 +2762,9 @@
       "auto": "Serbest"
     },
     "autonomyHints": {
-      "ask": "Dosya okuma, ekran görüntüsü ve web aramasını sormadan yapar; taslak hazırlama, gönderme, dosya değiştirme veya silme, sayfa açma, tıklama ve komut çalıştırma dahil diğer tüm işlemlerde sorar (Dengeli ile aynı etkili politika).",
-      "balanced": "Dosya okuma, ekran görüntüsü ve web aramasını serbestçe yapar; her dosya yazma veya silme, taslak, gönderim, sayfa açma, tıklama ve komutta önce sorar (Sorar ile aynı etkili politika).",
-      "auto": "Sormadan çalışır—sıradan dosya silme, kabuk komutu çalıştırma ve ileti gönderme dahil—yalnızca Para işlemleri, zamanlanmış görev etkinleştirme ve yasaklı liste komutlarında (disk biçimlendirme, sistem/ev dizini silme, kimlik bilgisi yolları) onay ister."
+      "ask": "Dosya okuma, ekran görüntüsü ve web aramasını sormadan yapar; her değişiklik, gönderim, sayfa açma, tıklama ve komuttan önce sorar.",
+      "balanced": "Okur, gezinir, çalışma alanındaki dosyaları düzenler ve botun kendi bilgisayarında sormadan çalışır; dosya silmeden, göndermeden, para harcamadan ve senin bilgisayarına dokunmadan önce sorar.",
+      "auto": "Silme, komut ve gönderim dahil sormadan çalışır. Para, zamanlanmış görev etkinleştirme ve yıkıcı komutlarda, ayrıca güvenilmeyen içerik okuduktan sonra veri göndermeden veya program çalıştırmadan önce yine sorar."
     },
     "autonomyCustom": "{{preset}} izin profili kullanılıyor.",
     "advanced": "Gelişmiş ayarlar",
@@ -2757,6 +2810,7 @@
       "localNoSystem": "Bot burada çalışıyor"
     },
     "reason": {
+      "timeout": "Ekran zamanında başlatılamadı",
       "connecting": "{{name}} sunucusuna bağlanılıyor…",
       "offline": "Sunucuya ulaşılamıyor",
       "notPaired": "Sunucu bu bilgisayarı artık kabul etmiyor",
@@ -2888,7 +2942,35 @@
     "needsDesktop": "{{name}} sunucusunda masaüstü oturumu yok, bu yüzden gösterilecek ekran yok. Eklemek için bu bilgisayarda şunu çalıştır:",
     "pausedIdle": "Kaynak tasarrufu için duraklatıldı - devam etmek için tıkla",
     "showScreen": "Ekranı göster",
-    "screenListFailed": "{{name}} ekran listesi yüklenemedi. Birazdan yeniden denenecek."
+    "screenListFailed": "{{name}} ekran listesi yüklenemedi. Birazdan yeniden denenecek.",
+    "mail": {
+      "heading": "E-posta",
+      "loading": "Posta kutuları aranıyor…",
+      "loadError": "Posta kutuları yüklenemedi: {{message}}",
+      "empty": "{{name}} için henüz posta kutusu yok. Kendi posta kutunu bağla ya da bota kendi adresini ver.",
+      "connect": "Posta kutusu bağla",
+      "manage": "Posta kutularını yönet",
+      "shared": "Tüm botlarla paylaşılıyor",
+      "own": "Yalnızca {{name}}",
+      "agentmail": "Kendi adresi",
+      "check": "Bağlantıyı denetle",
+      "checking": "Denetleniyor…",
+      "checked": "{{time}} tarihinde denetlendi",
+      "toolsLabel": "{{name}} e-posta kullanabilsin",
+      "toolsOnHint": "Okumaya izin var. Göndermek her zaman bu botun izin moduna uyar ve varsayılan olarak önce sorar.",
+      "toolsOffHint": "Posta kutusu bağlı ama {{name}} henüz hiçbir e-posta aracını göremiyor. E-postayı okuyup yazabilmesi için bunu aç.",
+      "toolsError": "E-posta erişimi değiştirilemedi: {{message}}",
+      "recent": "Son postaları göster",
+      "hideRecent": "Son postaları gizle",
+      "recentError": "Gelen kutusu okunamadı: {{message}}",
+      "noMessages": "Gelen kutusu boş.",
+      "noSubject": "(konu yok)",
+      "sendTest": "Deneme postası gönder",
+      "sendingTest": "Gönderiliyor…",
+      "sendTestHint": "{{address}} adresine, yalnızca kendisine kısa bir deneme iletisi gönderir.",
+      "testSent": "Deneme postası {{address}} adresine gönderildi. Birazdan ulaşmalı.",
+      "testError": "Deneme postası gönderilemedi: {{message}}"
+    }
   },
   "terminal": {
     "title": "Terminal - {{name}}",
@@ -3008,6 +3090,14 @@
     "confirmQuery": "Arama sorgularına izin ver"
   },
   "liveView": {
+    "chat": {
+      "title": "Botla sohbet",
+      "collapse": "Sohbeti daralt",
+      "replying": "Bot yanıt yazıyor…",
+      "working": "Bot çalışıyor…",
+      "approve": "Onayla",
+      "reject": "Reddet"
+    },
     "title": "Canlı ekran görünümü",
     "expand": "Büyük görünümü aç",
     "close": "Görünümü kapat",
@@ -3112,6 +3202,12 @@
     "approvalsWaiting": "Sohbette kararınızı bekleyen {{count}} öğe var.",
     "reviewApprovals": "Yanıtlamak için sohbete dön",
     "errors": {
+      "unauthorized": "Oturumunuzun yetkisi artık geçerli değil. Bu bilgisayara yeniden bağlanın.",
+      "too_many_streams": "Bu bağlantıda çok fazla akış açık. Başka bir akışı kapatıp tekrar deneyin.",
+      "network": "Ekran bağlantısı kesildi. Ağınızı kontrol edip tekrar deneyin.",
+      "view_quota": "Sunucuda çok fazla ekran oturumu açık. Kullanmadığınız bir ekranı kapatın veya biraz sonra tekrar deneyin.",
+      "server_restarting": "Sunucu yeniden başlatılıyor olabilir. Çevrimiçi olduğunda tekrar deneyin.",
+      "timeout": "Ekran zamanında başlatılamadı.",
       "generic": "İstek başarısız oldu. Bağlantıyı kontrol edip tekrar deneyin.",
       "release_failed": "Kontrol geri verilemedi. Bot duraklatılmış kalır; Bitirdim'i yeniden deneyin.",
       "release_unconfirmed": "Daemon devralmanızı hâlâ etkin gösteriyor. Bitirdim'i yeniden deneyin.",
@@ -3361,6 +3457,10 @@
     "dismiss": "Kapat",
     "stopAllNow": "Hepsini şimdi durdur",
     "letContinue": "Devam etsinler"
+  },
+  "peerLink": {
+    "direct": "Doğrudan · {{rtt}} ms",
+    "relay": "Röle · {{rtt}} ms"
   },
   "computerPicker": {
     "label": "Bilgisayar: {{name}}",
@@ -3782,6 +3882,22 @@
       "outdated": "Praxi'nin kullanabilmesi için {{cli}} güncellenmeli. Ayarlar, Yapay zeka'dan güncelle.",
       "sign_in": "{{cli}} oturumu kapalı. Ayarlar, Yapay zeka'dan oturum aç.",
       "unsupported": "Praxi bu bilgisayarda {{cli}} çalıştıramıyor."
+    }
+  },
+  "voice": {
+    "speak": "Sesli oku",
+    "stop": "Okumayı durdur",
+    "codeOmitted": "(kod atlandı)",
+    "tableOmitted": "(tablo atlandı)",
+    "title": "Sesli cevaplar",
+    "description": "Sesli oku düğmesinin sesi ve hızı. Sistemin konuşma motorunu kullanır.",
+    "auto": "Otomatik (uygulama diline göre)",
+    "online": "çevrimiçi",
+    "speed": "Hız",
+    "unsupported": "Bu sistemde konuşma sesi yok.",
+    "speakAuto": {
+      "title": "Cevapları sesli oku",
+      "description": "Biten her cevabı otomatik olarak sesli oku."
     }
   }
 }

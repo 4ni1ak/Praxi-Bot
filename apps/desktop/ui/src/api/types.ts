@@ -91,6 +91,7 @@ export type CreateSessionInput = S["CreateSession"];
 export type SessionInfo = S["SessionInfo"];
 export type SessionUpdate = S["SessionUpdate"];
 export type ViewHeartbeat = S["Heartbeat"];
+export type PeerLink = S["PeerLink"];
 export type ScreenStatus = S["ScreenStatus"];
 export type ScreenStreamState = S["ScreenStreamState"];
 export type TerminalInfo = S["TerminalInfo"];
@@ -371,6 +372,9 @@ export type EmailSecurity = S["EmailSecurity"];
 export type EmailProviderKind = S["EmailProviderKind"];
 export type EmailProbeStatus = S["EmailProbeStatus"];
 export type EmailTestReport = S["EmailTestReport"];
+/** One inbox row: headers only; every text field is untrusted, show it as plain text. */
+export type EmailMessage = S["EmailMessageDto"];
+export type EmailSendTestResponse = S["EmailSendTestResponse"];
 
 export type WebSearchConfig = S["WebSearchConfigDto"];
 export type WebSearchConfigInput = S["WebSearchConfigInput"];

@@ -34,7 +34,7 @@ pub const SERVER_STREAMS: usize = 256;
 pub const SERVER_CONTROL_RESERVE: usize = 64;
 /// A live-view body whose next chunk is not requested this long after the
 /// previous one was handed to the transport is cancelled (the consumer stalled).
-pub const VIEW_STALL: Duration = Duration::from_secs(10);
+pub const VIEW_STALL: Duration = Duration::from_secs(20);
 /// Request-body bytes one API connection may have in flight.
 ///
 /// [`STREAMS`] requests, each up to [`MAX_REQUEST_BYTES`].

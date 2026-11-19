@@ -12,6 +12,7 @@
 //! exception is `GET /v1/events`, which also accepts `?token=<token>` for
 //! browser `EventSource` clients (Host / Origin still apply).
 
+mod attachment_routes;
 pub mod auth;
 mod bot_engine;
 pub mod changes;
@@ -1071,6 +1072,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/health", get(r::health))
         .route("/v1/view/targets", get(v::targets))
         .route("/v1/view/availability", get(v::availability))
+        .route("/v1/peer/link", get(peer::link))
         .route("/v1/view/status", get(v::status))
         .route("/v1/view/targets/{id}/thumbnail", get(v::thumbnail))
         .route("/v1/view/sessions", post(v::create_session))
@@ -1176,6 +1178,16 @@ fn api_routes() -> Router<AppState> {
         .route(
             "/v1/chats/{id}/messages",
             get(r::list_messages).post(r::send_message),
+        )
+        .route(
+            "/v1/chats/{id}/attachments",
+            post(attachment_routes::upload).layer(axum::extract::DefaultBodyLimit::max(
+                attachment_routes::MAX_BODY,
+            )),
+        )
+        .route(
+            "/v1/chats/{id}/attachments/{att}",
+            get(attachment_routes::download),
         )
         .route("/v1/approvals", get(r::list_approvals))
         .route("/v1/approvals/{call_id}", post(r::decide_approval))
@@ -1321,6 +1333,14 @@ fn api_routes() -> Router<AppState> {
         .route(
             "/v1/email/accounts/{name}/test",
             post(e::test_email_account),
+        )
+        .route(
+            "/v1/email/accounts/{name}/messages",
+            get(e::list_email_messages),
+        )
+        .route(
+            "/v1/email/accounts/{name}/send-test",
+            post(e::send_email_test),
         )
         .route("/v1/email/test", post(e::test_email_draft))
         .route(
