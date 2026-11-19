@@ -1103,14 +1103,20 @@ impl HostDesktopHandler {
                 ))
             }
             "click" => Some((
-                "click in the open page".into(),
+                format!(
+                    "click in the open page: {}",
+                    describe_element(&driver, &arg("ref")).await
+                ),
                 format!("click element {}", arg("ref")),
             )),
             "fill" => {
                 let t = arg("text");
                 complete_text(&t).map_err(|why| self.refuse(peer, method, &why))?;
                 Some((
-                    "type into the open page".into(),
+                    format!(
+                        "type into the open page: {}",
+                        describe_element(&driver, &arg("ref")).await
+                    ),
                     format!(
                         "type into element {}:\n{}",
                         arg("ref"),
@@ -1119,19 +1125,31 @@ impl HostDesktopHandler {
                 ))
             }
             "select" => Some((
-                "choose an option in the open page".into(),
+                format!(
+                    "choose an option in the open page: {}",
+                    describe_element(&driver, &arg("ref")).await
+                ),
                 format!("choose \"{}\" in element {}", arg("value"), arg("ref")),
             )),
             "press" => {
                 let k = arg("key");
                 complete_text(&k).map_err(|why| self.refuse(peer, method, &why))?;
-                Some(("press a key in the open page".into(), format!("press {k}")))
+                Some((
+                    format!("press a key in the open page: {}", page_of(&driver).await),
+                    format!("press {k}"),
+                ))
             }
-            "back" => Some(("go back in the open page".into(), "go back".into())),
-            "tabs" if params.get("switch_to").is_some_and(|v| !v.is_null()) => Some((
-                "switch the browser tab".into(),
-                format!("switch to tab {}", params["switch_to"]),
+            "back" => Some((
+                format!("go back in the open page: {}", page_of(&driver).await),
+                "go back".into(),
             )),
+            "tabs" if params.get("switch_to").is_some_and(|v| !v.is_null()) => {
+                let n = params["switch_to"].as_u64().unwrap_or(0);
+                Some((
+                    format!("switch the browser tab to: {}", tab_line(&driver, n).await),
+                    format!("switch to tab {n}"),
+                ))
+            }
             "snapshot" | "screenshot" | "tabs" | "wait" | "scroll" | "current_url" => None,
             _ => return Err(self.refuse(peer, method, "that browser operation is not served")),
         };
@@ -1221,6 +1239,10 @@ impl HostDesktopHandler {
             .collect::<Vec<_>>()
             .join(" ");
         complete_text(&command).map_err(|why| self.refuse(peer, "desktop.launch", &why))?;
+        // The same hard refusals as a command: the never-list and Praxi's own
+        // data folder, whichever switch the program is started under.
+        self.command_refusal(&command, None)
+            .map_err(|why| self.refuse(peer, "desktop.launch", &why))?;
         if let Some(why) = self.base_refusal(peer, "desktop.launch") {
             return Err(self.refuse(peer, "desktop.launch", &why));
         }
@@ -1283,7 +1305,16 @@ impl HostDesktopHandler {
         }
         self.audit(
             "pc_target.act",
-            serde_json::json!({"host": peer.id, "bot": bot_key(caller), "method": method, "action": preview.action, "target": preview.target}),
+            serde_json::json!({
+                "host": peer.id,
+                "bot": bot_key(caller),
+                "method": method,
+                "action": preview.action,
+                "target": preview.target,
+                "payload": audit_payload(&preview.payload),
+                "payload_chars": preview.payload.chars().count(),
+                "payload_sha256": sha256_hex(&preview.payload),
+            }),
         )
         .map_err(|e| {
             RpcError::new(
@@ -1412,6 +1443,84 @@ fn absolute_point(a: &Action) -> Option<(f64, f64)> {
         Action::Drag { from, to, .. } => at(from).or_else(|| at(to)),
         _ => None,
     }
+}
+
+/// How much of an action's (already masked) payload the audit row keeps.
+const AUDIT_PAYLOAD_CHARS: usize = 400;
+
+/// The masked payload of an approved action as the audit row keeps it: the
+/// first part of it (the full text is identified by its digest).
+fn audit_payload(masked: &str) -> String {
+    let mut out: String = masked.chars().take(AUDIT_PAYLOAD_CHARS).collect();
+    if masked.chars().count() > AUDIT_PAYLOAD_CHARS {
+        out.push('…');
+    }
+    out
+}
+
+fn sha256_hex(text: &str) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Page-supplied text on a card: one line, nothing invisible or
+/// direction-changing, bounded.
+fn plain_line(text: &str, max: usize) -> String {
+    let clean: String = text
+        .chars()
+        .filter(|c| {
+            !c.is_control()
+                && !matches!(
+                    *c,
+                    '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}'
+                )
+        })
+        .collect();
+    if clean.chars().count() > max {
+        let mut cut: String = clean.chars().take(max).collect();
+        cut.push('…');
+        cut
+    } else {
+        clean
+    }
+}
+
+/// The page the browser is on, for a card.
+async fn page_of(driver: &Arc<dyn BrowserDriver>) -> String {
+    driver
+        .current_url()
+        .await
+        .map_or_else(|| "an unknown page".to_owned(), |u| plain_line(&u, 300))
+}
+
+/// The element `r` and its page, for a card: the role and the page's own
+/// name for it (page text, marked as such).
+async fn describe_element(driver: &Arc<dyn BrowserDriver>, r: &str) -> String {
+    let page = page_of(driver).await;
+    match driver.field_target(r).await {
+        Ok(t) => format!(
+            "element {} ({} the page calls \"{}\") on {page}",
+            plain_line(r, 16),
+            plain_line(&t.role, 40),
+            plain_line(&t.name, 120)
+        ),
+        Err(_) => format!("element {} on {page}", plain_line(r, 16)),
+    }
+}
+
+/// Tab `n` as the browser lists it (title and address), for a card.
+async fn tab_line(driver: &Arc<dyn BrowserDriver>, n: u64) -> String {
+    let listed = driver.tabs(None).await.unwrap_or_default();
+    listed
+        .lines()
+        .find(|l| {
+            l.strip_prefix(&n.to_string())
+                .is_some_and(|rest| rest.starts_with(' ') || rest.starts_with('*'))
+        })
+        .map_or_else(|| format!("tab {n} (not listed)"), |l| plain_line(l, 400))
 }
 
 /// Text a card can show in full: not too long, nothing invisible.
@@ -2638,6 +2747,76 @@ mod tests {
         sw.browser = false;
         r.access.set_switches("host1", sw).unwrap();
         assert!(check.check("http://10.0.0.5/admin".into()).await.is_err());
+    }
+
+    /// Review note 2: the audit row of an approved action records what ran
+    /// (masked, bounded) and a digest of the whole card text.
+    #[tokio::test]
+    async fn the_audit_row_records_the_masked_command() {
+        let rows: Arc<Mutex<Vec<(String, Value)>>> = Arc::default();
+        let r = rig(false, true);
+        let log = rows.clone();
+        let h = HostDesktopHandler::new(PcTargetDeps {
+            raw: r.fake.clone(),
+            data: r.dir.path().to_path_buf(),
+            access: r.access.clone(),
+            requests: r.requests.clone(),
+            gate: Arc::new(Gate {
+                epoch: Arc::new(AtomicU64::new(0)),
+                refused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }),
+            owner_ui_live: Arc::new(|| true),
+            audit: Arc::new(move |a, d| {
+                log.lock().push((a.to_owned(), d));
+                Ok(())
+            }),
+            redact: Arc::new(|t| t.replace("hunter2", "••••")),
+            own_pid: OWN_PID,
+            tools: vec![r.shell.clone() as Arc<dyn Tool>],
+            browser: None,
+        })
+        .with_ask_timeout(Duration::from_secs(5));
+        r.access.set_switches("host1", all_families()).unwrap();
+        let host = device(Role::Host);
+        let call = h.handle(
+            &host,
+            RPC_TOOL,
+            tool_params(
+                "shell_run",
+                serde_json::json!({"command": "echo hunter2\nRemove-Item C:/work/old -Recurse"}),
+            ),
+        );
+        let (res, _) = tokio::join!(call, answer(&r.requests, true));
+        assert!(res.is_ok(), "{res:?}");
+        let rows = rows.lock();
+        let act = rows
+            .iter()
+            .find(|(a, _)| a == "pc_target.act")
+            .map(|(_, d)| d.clone())
+            .expect("an act row");
+        let payload = act["payload"].as_str().unwrap();
+        assert!(payload.contains("Remove-Item C:/work/old"), "{act}");
+        assert!(!act.to_string().contains("hunter2"), "{act}");
+        assert_eq!(act["bot"], "bot-a");
+        assert_eq!(act["payload_sha256"].as_str().unwrap().len(), 64);
+    }
+
+    /// Review note 5: launching a program is refused for what a command is
+    /// refused for (the never-list, Praxi's data folder), with no card.
+    #[tokio::test]
+    async fn a_launch_honours_the_command_refusals() {
+        let r = rig(false, true);
+        let host = device(Role::Host);
+        let data = r.dir.path().display().to_string();
+        for (exe, args) in [
+            ("cmd.exe", vec!["/c".to_owned(), "rm -rf /".to_owned()]),
+            ("notepad.exe", vec![format!("{data}/peer/identity.key")]),
+        ] {
+            let params = serde_json::json!({"app": {"executable": exe, "args": args}});
+            let res = r.h.handle(&host, "desktop.launch", params).await;
+            assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN, "{exe}");
+        }
+        assert!(r.requests.list().is_empty());
     }
 
     /// Switching one family off ends its session allowance only.
