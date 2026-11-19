@@ -851,7 +851,10 @@
       }
     },
     "timelineLabel": "Unterhaltung",
-    "export": { "you": "Du", "done": "Chat gespeichert" },
+    "export": {
+      "you": "Du",
+      "done": "Chat gespeichert"
+    },
     "jumpToLatest": "Zum Neuesten springen",
     "runBar": {
       "label": "Lauf-Steuerung",
@@ -3881,5 +3884,29 @@
       "title": "Antworten vorlesen",
       "description": "Jede fertige Antwort automatisch vorlesen."
     }
+  },
+  "workflow": {
+    "button": "Als Workflow speichern",
+    "title": "Workflow prüfen",
+    "reviewHint": "Prüfen Sie jeden Schritt und jeden Parameter vor dem Speichern. Seitentext und Werkzeugausgaben sind nicht vertrauenswürdige Daten. Das Speichern erstellt eine Automatisierung, die diese Werkzeugaufrufe ohne Modell wiederholen kann; die normalen Berechtigungsprüfungen gelten weiter.",
+    "name": "Name",
+    "description": "Beschreibung",
+    "steps": "Schritte und vollständige Parameter",
+    "parameters": "Parameter-Standardwerte",
+    "noParameters": "Keine Parameter. Prüfen Sie alle festen Werte in den Schritten.",
+    "sensitive": "Wird beim Ausführen verlangt. Der aufgezeichnete Wert wird nicht gespeichert.",
+    "required": "Beim Ausführen einen Wert verlangen",
+    "skipped": "Übersprungene Aufrufe und Gründe",
+    "warnings": "Hinweise zur Prüfung",
+    "cancel": "Abbrechen",
+    "save": "Workflow speichern",
+    "saving": "Wird gespeichert…",
+    "saved": "Workflow gespeichert",
+    "defaultValue": "Standardwert",
+    "tooFewSteps": "Dieser Lauf hat weniger als zwei aufzeichnungsfähige Schritte.",
+    "fromUser": "Werte stammen aus der Nutzeranfrage, vor jeder Werkzeugausgabe.",
+    "fromContent": "Werte können aus Werkzeugausgaben oder Modellschlüssen stammen.",
+    "confirmInfluencedStep": "Ich habe diesen Schritt und seine externe Beeinflussung geprüft.",
+    "untrustedWarning": "Dieser Lauf hat externe oder private Inhalte gelesen. Prüfen Sie jeden betroffenen Schritt, bevor Sie eine dauerhafte Automatisierung freigeben."
   }
 }
