@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import { switchesOf, type ApiClient, type ComputerSwitches } from "../api/client";
 import type { PcRequestInfo } from "../api/types";
+import { SwitchQueue } from "../lib/computerSwitchQueue";
 import { humanLine } from "../lib/humanError";
 import { useDaemon } from "../state/DaemonContext";
 import { Modal } from "./Modal";
@@ -41,22 +42,34 @@ export function ComputerAccessCard() {
   const { t } = useTranslation();
   const { hostList, localApi, refreshHosts } = useDaemon();
   const [error, setError] = useState<string | null>(null);
+  const [, redraw] = useState(0);
+  // Changes go out one after the other, each built from the last state sent, so two quick
+  // toggles never resend a stale switch set (the latest props lag behind).
+  const io = useRef({ localApi, refreshHosts });
+  io.current = { localApi, refreshHosts };
+  const queue = useRef<SwitchQueue | null>(null);
+  queue.current ??= new SwitchQueue(
+    async (id, next) => {
+      const key = await ownerKey();
+      await io.current.localApi?.setComputerAccess(id, next, key);
+      await io.current.refreshHosts();
+    },
+    (e: unknown) => setError(humanLine(e)),
+    () => redraw((n) => n + 1)
+  );
   const hosts = hostList?.hosts ?? [];
   if (hosts.length === 0) {
     return <p className={styles.hint}>{t("computerAccess.noServer")}</p>;
   }
-  const change = (id: string, next: ComputerSwitches) => {
+  const change = (h: (typeof hosts)[number], patch: Partial<ComputerSwitches>) => {
     setError(null);
-    void ownerKey()
-      .then((key) => localApi?.setComputerAccess(id, next, key))
-      .then(() => refreshHosts())
-      .catch((e: unknown) => setError(humanLine(e)));
+    void queue.current?.change(h.id, switchesOf(h), patch);
   };
   return (
     <div className={styles.stack}>
       <p className={styles.hint}>{t("computerAccess.explain")}</p>
       {hosts.map((h) => {
-        const now = switchesOf(h);
+        const now = queue.current?.view(h.id, switchesOf(h)) ?? switchesOf(h);
         return FAMILIES.map((family) => (
           <SettingRow
             key={`${h.id}-${family}`}
@@ -67,7 +80,7 @@ export function ComputerAccessCard() {
               checked={now[family]}
               label={t(`computerAccess.family.${family}`, { name: h.name })}
               onChange={(on) =>
-                change(h.id, { ...now, [family]: on, alwaysRead: family === "screen" ? on && now.alwaysRead : now.alwaysRead })
+                change(h, family === "screen" ? { screen: on, ...(on ? {} : { alwaysRead: false }) } : { [family]: on })
               }
             />
           </SettingRow>
@@ -82,9 +95,9 @@ export function ComputerAccessCard() {
             description={t("computerAccess.alwaysReadNote")}
           >
             <Switch
-              checked={h.computer_access_always === true}
+              checked={(queue.current?.view(h.id, switchesOf(h)) ?? switchesOf(h)).alwaysRead}
               label={t("computerAccess.alwaysRead", { name: h.name })}
-              onChange={(always) => change(h.id, { ...switchesOf(h), alwaysRead: always })}
+              onChange={(always) => change(h, { alwaysRead: always })}
             />
           </SettingRow>
         ))}

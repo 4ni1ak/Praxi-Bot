@@ -95,3 +95,19 @@ test("every pc_* tool reads as a sentence about YOUR computer, in both languages
   const t = ((k: string, v?: Record<string, unknown>) => i18n.t(k, v)) as import("./approvalPlain.ts").T;
   assert.equal(plain.actionText("pc_shell_run", { command: "dir" }, w, t), "Run a command on YOUR computer: dir");
 });
+
+test("a multi-line command is shown whole and pc_* page and screen actions are specific", async () => {
+  await i18n.changeLanguage("en");
+  const t = ((k: string, v?: Record<string, unknown>) => i18n.t(k, v)) as import("./approvalPlain.ts").T;
+  const w = { computer: null, serverName: "Praxi host" };
+  const shell = plain.actionText("pc_shell_run", { command: "dir\nRemove-Item C:/work -Recurse" }, w, t)!;
+  assert.match(shell, /dir ⏎ Remove-Item C:\/work -Recurse/);
+  const long = plain.actionText("pc_shell_run", { command: "x".repeat(500) }, w, t)!;
+  assert.ok(long.endsWith("…"), long);
+  assert.match(plain.actionText("pc_browser_click", { ref: "e12" }, w, t)!, /Click element e12/);
+  assert.match(plain.actionText("pc_browser_fill", { ref: "e3", text: "hello" }, w, t)!, /e3.*hello/);
+  assert.match(plain.actionText("pc_browser_tabs", { switch_to: 2 }, w, t)!, /tab 2/);
+  assert.match(plain.actionText("pc_desktop_type", { text: "secret plan" }, w, t)!, /secret plan/);
+  assert.match(plain.actionText("pc_desktop_key", { keys: ["ctrl", "s"] }, w, t)!, /ctrl\+s/);
+  assert.match(plain.actionText("pc_desktop_launch", { executable: "cmd.exe", args: ["/c", "del x"] }, w, t)!, /cmd\.exe \/c del x/);
+});
