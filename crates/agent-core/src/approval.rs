@@ -460,7 +460,7 @@ impl Shared {
         // The autonomy mode's lane. It sits after every floor, the taint gate
         // and the grants, so it can only turn a plain policy-level ask into an
         // allow, never override one of those.
-        match self.mode_lane(ctx, effect, category, input) {
+        match self.mode_lane(ctx, name, effect, category, input) {
             Some(reason) => (Decision::Allow, Some(reason.code())),
             None => (d, None),
         }
@@ -590,15 +590,18 @@ impl Shared {
     ///
     /// Only the user's own runs (typed or scheduled) get a lane: a peer, an
     /// external agent or a routine keep asking. A call counts as "own computer"
-    /// only when the run resolved to the bot's host, never the user's PC.
+    /// only when the run resolved to the bot's host, never the user's PC; the
+    /// `pc_*` family (the user's own computer) never gets a lane at all.
     fn mode_lane(
         &self,
         ctx: &RunCtx,
+        name: &str,
         effect: Effect,
         category: PermissionCategory,
         input: &Value,
     ) -> Option<AllowReason> {
-        if ctx.profile.permissions.mode() != AutonomyMode::Balanced
+        if name.starts_with(builtin_tools::pc::PC_PREFIX)
+            || ctx.profile.permissions.mode() != AutonomyMode::Balanced
             || !matches!(
                 ctx.initiator,
                 InitiatorKind::Human | InitiatorKind::Schedule

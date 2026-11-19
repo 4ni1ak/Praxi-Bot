@@ -295,3 +295,31 @@ async fn a_read_of_the_users_computer_asks_once_per_run() {
         "asked again"
     );
 }
+
+/// Review note 1: the Balanced mode's lane (file edits run freely on the
+/// bot's own computer) never covers the user's computer: the server asks.
+#[tokio::test]
+async fn balanced_mode_never_skips_the_ask_for_the_users_computer() {
+    let env = setup();
+    let (own, theirs) = (writer("fs_write"), writer("pc_fs_write"));
+    let (lp, _fake) = loop_with_policy(
+        &env,
+        vec![
+            calls(&[("c1", "fs_write", json!({"path": "a"}))]),
+            calls(&[("c2", "pc_fs_write", json!({"path": "b"}))]),
+            text("done"),
+        ],
+        &[&own, &theirs],
+        Policy::approve_destructive(),
+        &format!("[permissions]\npreset = \"approve-destructive\"\n{PC_ON}"),
+    );
+    let mut rx = lp.subscribe();
+    let run = start_from(&lp, &env, "owner");
+    let card = answer(&lp, &env, &mut rx, ApprovalScope::Once).await;
+    assert_eq!(
+        card.tool_name, "pc_fs_write",
+        "the own-computer edit ran freely"
+    );
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Succeeded);
+    assert_eq!(env.storage.list_approvals(run).unwrap().len(), 1);
+}
