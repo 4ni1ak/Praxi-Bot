@@ -21,6 +21,23 @@ pub struct Health {
     pub host: HostInfo,
     /// Seconds since the daemon started.
     pub uptime_secs: u64,
+    /// Background startup: `starting` while leadership is verified and components
+    /// start, `ready` once finished, `degraded` when a component failed to start.
+    #[serde(default = "default_ready")]
+    pub startup: crate::host::StartupPhase,
+    /// `true` once startup finished without a failure (standby runs no components).
+    #[serde(default = "default_true")]
+    pub components_ready: bool,
+    /// Why startup is `degraded`; fixed text, no secrets or paths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_reason: Option<String>,
+}
+
+fn default_ready() -> crate::host::StartupPhase {
+    crate::host::StartupPhase::Ready
+}
+fn default_true() -> bool {
+    true
 }
 
 /// Host capabilities, independent of provider readiness.

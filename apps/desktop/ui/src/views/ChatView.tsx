@@ -25,6 +25,9 @@ import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import type { LiveChatSlots } from "./LiveViewerChat";
 import { ownerKey } from "../lib/ownerKey";
+import { chatActivityMs } from "../lib/unread";
+import { useChatRead } from "../state/useChatRead";
+import { NewMessagesDivider } from "../components/NewMessagesDivider";
 import { BotAvatar, Button } from "ui";
 import { isMockMode } from "../api/mockMode";
 import { ApiError } from "../api/client";
@@ -95,6 +98,7 @@ import { describeTool, stepPhase } from "../lib/toolLabels";
 import { brandIcon } from "../lib/brandIcons";
 import { type Chain, chainOrderTs, groupRunItems } from "../lib/thinkingChain";
 import { type SendWith, shouldSend } from "../lib/settingsPrefs";
+import { isProcessingRunState } from "../lib/runState";
 import { rank } from "../lib/fuzzy";
 import {
   applyCompletion,
@@ -133,8 +137,6 @@ import { sendWithHostRecovery } from "../lib/hostRecovery";
 import { ComputerTargetChip } from "../components/ComputerTargetChip";
 import { ErrorNotice } from "../components/ErrorNotice";
 
-const LIVE_STATES = new Set(["pending", "running", "waiting_approval"]);
-
 /** Empty-chat prompt starters (plain text for the composer, not commands). */
 const STARTERS = [
   "research",
@@ -157,6 +159,7 @@ interface MenuBot {
 
 type Entry =
   | { kind: "day"; key: string; ts: number }
+  | { kind: "unread"; key: string; ts: number }
   | { kind: "user"; key: string; ts: number; text: string; source?: string | null; attachments?: Message["attachments"] }
   | { kind: "assistant"; key: string; ts: number; text: string; live: boolean; botId?: string | null; runId?: string | null }
   | { kind: "item"; key: string; ts: number; item: TimelineItem; runId: string }
@@ -402,7 +405,7 @@ export function ChatView({
   const serverRuns = runs.filter(
     (r) => r.chat_id === chatId && !r.parent_run_id
   );
-  const serverLive = [...serverRuns].reverse().find((r) => LIVE_STATES.has(r.state));
+  const serverLive = [...serverRuns].reverse().find((r) => isProcessingRunState(r.state));
   const serverPaused = [...serverRuns].reverse().find((r) => r.state === "paused");
   const eventLive: RunState | undefined = [...chatRuns]
     .reverse()
@@ -412,7 +415,7 @@ export function ChatView({
     );
   const ackedLive =
     ackedRunId !== null &&
-    !serverRuns.some((r) => r.id === ackedRunId && !LIVE_STATES.has(r.state)) &&
+    !serverRuns.some((r) => r.id === ackedRunId && !isProcessingRunState(r.state)) &&
     !chatRuns.some((r) => r.id === ackedRunId && r.finishedMs !== undefined)
       ? ackedRunId
       : null;
@@ -422,6 +425,13 @@ export function ChatView({
   const active = activeRunId !== null;
   /** The run bar (with its Stop) is up from the moment a message is sent, before any event. */
   const running = active || sending;
+
+  const { seenUntilMs, dismiss: dismissUnread } = useChatRead(
+    client?.baseUrl ?? "",
+    chatId,
+    chatActivityMs(runs, needs, chatId),
+    messages
+  );
 
   const entries = useMemo(() => {
     const out: Entry[] = [];
@@ -531,9 +541,13 @@ export function ChatView({
     }
     // Array.prototype.sort is stable: equal timestamps keep insertion order.
     const sorted = out.sort((a, b) => a.ts - b.ts);
-    return sorted.flatMap((entry, index): Entry[] => index === 0 || new Date(entry.ts).toDateString() !== new Date(sorted[index - 1].ts).toDateString()
-      ? [{ kind: "day", key: `day-${entry.key}`, ts: entry.ts }, entry] : [entry]);
-  }, [messages, chatRuns, showAgentRoute, remember, serverRuns]);
+    const unreadAt = seenUntilMs === null ? undefined : sorted.find((e) => e.kind !== "user" && e.ts > seenUntilMs)?.key;
+    return sorted.flatMap((entry, index): Entry[] => {
+      const marker: Entry[] = entry.key === unreadAt ? [{ kind: "unread", key: "unread", ts: entry.ts }] : [];
+      return index === 0 || new Date(entry.ts).toDateString() !== new Date(sorted[index - 1].ts).toDateString()
+        ? [{ kind: "day", key: `day-${entry.key}`, ts: entry.ts }, ...marker, entry] : [...marker, entry];
+    });
+  }, [messages, chatRuns, showAgentRoute, remember, seenUntilMs, serverRuns]);
 
   const lastItem = entries[entries.length - 1];
   // The button is the stop button from the moment a message is sent (before any run event) while the box is empty.
@@ -1325,8 +1339,10 @@ export function ChatView({
             // The bot's avatar leads a block of bot output; later rows of the block line up under it.
             const prev = entries[index - 1];
             const lead =
-              !prev || prev.kind === "user" || prev.kind === "day";
+              !prev || prev.kind === "user" || prev.kind === "day" || prev.kind === "unread";
             switch (e.kind) {
+              case "unread":
+                return <NewMessagesDivider key={e.key} onPassed={dismissUnread} />;
               case "day":
                 return (
                   <div key={e.key} className={styles.conversationLabel}>

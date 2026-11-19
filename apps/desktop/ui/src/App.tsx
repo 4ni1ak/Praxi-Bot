@@ -1,4 +1,6 @@
 import { BellDot, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2, Minus, Square, X } from "lucide-react";
+import { unreadBotIds } from "./lib/unread";
+import { useReadState } from "./store/readStateStore";
 import { ApiError } from "./api/client";
 import type { UpdateChatInput } from "./api/types";
 import { isMockMode } from "./api/mockMode";
@@ -52,6 +54,7 @@ import { WhatsNewModal } from "./components/WhatsNewModal";
 import { notesFor, whatsNewAction, type WhatsNewFile } from "./lib/whatsNew";
 import whatsNewFile from "./whats-new.json";
 import { getVersion } from "@tauri-apps/api/app";
+import { isHelpKey } from "./lib/shortcuts";
 import { chatTitleLabel } from "./lib/chatTitle";
 import { APP_COMMAND_EVENT, type AppCommandTarget } from "./lib/slash";
 import { editorSection } from "./lib/botEditor";
@@ -66,6 +69,7 @@ import {
 import { nextRouteAfterChatDelete } from "./lib/chatManage";
 import { nativeEngineName } from "./lib/botEngine";
 import { getAutostart, setAutostart } from "./lib/providers";
+import { isProcessingRunState } from "./lib/runState";
 import { PausedControlBanner } from "./components/PausedControlBanner";
 import { RunBar } from "./components/RunBar";
 import { runBarModel } from "./lib/runBar";
@@ -188,6 +192,8 @@ function AppShell() {
     activeComputerId
   } = useDaemon();
   const { openViewer } = useLiveView();
+  const readState = useReadState(client?.baseUrl ?? "");
+  const unreadBots = useMemo(() => unreadBotIds(chats, runs, needs, readState), [chats, runs, needs, readState]);
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
   const [homeChatSlots, setHomeChatSlots] = useState<LiveChatSlots | null>(null);
@@ -568,6 +574,18 @@ function AppShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // A bare `?` (no text field focused) opens the shortcuts dialog.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isHelpKey(e)) {
+        e.preventDefault();
+        setHelpOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const handlePaletteScreen = (screen: PaletteScreen) => {
     if (screen === "settings" || screen === "usage") {
       setSettingsOpen(screen === "usage" ? "usage" : "general");
@@ -848,7 +866,7 @@ function AppShell() {
               const view = botView(bot);
               const latest = botChats(chats, bot.id).find((c) => !c.archived);
               const config = bot.config as { bot?: { preview?: string; state?: string; unread?: boolean } };
-              const live = runs.find(r => r.bot_id === bot.id && ["running", "pending", "waiting_approval"].includes(r.state));
+              const live = runs.find(r => r.bot_id === bot.id && isProcessingRunState(r.state));
               const state = needs.some(n => n.botId === bot.id) || live?.state === "waiting_approval" ? "waiting-approval" : live ? "working" : isMockMode() ? config.bot?.state : "idle";
               const avatarState = state === "thinking" || state === "working" || state === "waiting-approval" || state === "error" ? state : "idle";
               const index = botIds.indexOf(bot.id);
@@ -859,6 +877,7 @@ function AppShell() {
                 <SidebarItem className={styles.railItem} active={routeBotId === bot.id} title={view.name} aria-label={mini ? view.name : undefined} onClick={() => goToBot(bot.id)}>
                   <BotAvatar bot={view} size="md" state={avatarState} decorative />
                   <div className={`${styles.botMeta} ${styles.railText}`}><span className={styles.botName}>{view.name}{index === 0 && botIds.length > 1 ? <span className={styles.mainMark} title={t("sidebar.mainBotHint")}><Star aria-hidden="true" />{t("sidebar.mainBot")}</span> : null}</span><span className={styles.botRole}>{(isMockMode() ? config.bot?.preview : undefined) ?? chatTitleLabel(latest?.title, t("bots.newChat"))}</span></div>
+                  {unreadBots.has(bot.id) ? <span className={styles.unreadDot} role="img" aria-label={t("sidebar.unreadBot")} data-testid="bot-unread" /> : null}
                 </SidebarItem>
                 {canReorder && !mini && botIds.length > 1 ? <button type="button" className={styles.grip} aria-label={t("sidebar.reorderBot", { name: view.name })} title={t("sidebar.reorderHint")} {...reorder.gripProps(bot.id)}><GripVertical aria-hidden="true" /></button> : null}
               </div>;
@@ -1103,6 +1122,7 @@ function AppShell() {
         onScreen={handlePaletteScreen}
         onBot={goToBot}
         onChat={(chatId, botId) => go({ kind: "chat", chatId, botId })}
+        onHelp={() => setHelpOpen(true)}
       />
       <SettingsModal
         open={settingsOpen !== null}

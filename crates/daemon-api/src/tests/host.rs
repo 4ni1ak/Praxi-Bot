@@ -1183,3 +1183,89 @@ async fn failed_demotion_save_does_not_abort_startup() {
     net.shutdown().await;
     other_net.shutdown().await;
 }
+
+struct OrderChannel(crate::AppState);
+#[async_trait]
+impl crate::ChannelControl for OrderChannel {
+    async fn stop(&self) {
+        self.0.0.order.lock().push("channel");
+    }
+    fn info(&self) -> crate::dto::ChannelDto {
+        crate::dto::ChannelDto {
+            id: "telegram".into(),
+            configured: true,
+            enabled: true,
+            running: true,
+            paired_users: 0,
+            status: None,
+        }
+    }
+    fn create_pair_code(&self) -> Result<crate::dto::PairCodeDto, String> {
+        Err("unused".into())
+    }
+}
+
+#[tokio::test]
+async fn shutdown_stops_channels_before_the_scheduler() {
+    let t = setup();
+    t.state.add_channel(Arc::new(OrderChannel(t.state.clone())));
+    t.state.start_scheduler().unwrap();
+    t.state.stop_components().await;
+    assert_eq!(t.state.shutdown_order(), ["channel", "scheduler"]);
+}
+
+#[tokio::test]
+async fn startup_reports_starting_with_503_then_degraded_when_the_store_cannot_open() {
+    use tokio::net::TcpListener;
+    // A directory where the schedule database should be makes opening it fail.
+    let t = setup_with(|data| std::fs::create_dir(data.join("schedules.db")).unwrap());
+    t.state
+        .leader()
+        .set_startup(crate::host::StartupPhase::Starting, None);
+    let Err(err) = t.state.scheduler() else {
+        panic!("scheduler must refuse while starting");
+    };
+    assert_eq!(err.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(err.code_str(), "starting");
+    let health = call(&t, Method::GET, "/v1/health", None).await.json();
+    assert_eq!(health["status"], "ok");
+    assert_eq!(health["startup"], "starting");
+    assert_eq!(health["components_ready"], false);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (stop, stopping) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(crate::serve(listener, t.state.clone(), async move {
+        let _ = stopping.await;
+    }));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while t.state.leader().startup().0 != crate::host::StartupPhase::Degraded {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("a failed store open must surface as degraded");
+    let health = call(&t, Method::GET, "/v1/health", None).await.json();
+    assert_eq!(health["startup"], "degraded");
+    assert_eq!(health["components_ready"], false);
+    let reason = health["startup_reason"].as_str().unwrap();
+    assert!(!reason.contains("schedules.db") && !reason.contains('/') && !reason.contains('\\'));
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn activate_while_verifying_needs_the_epoch_check_and_force() {
+    let t = setup();
+    let (net, other_net) = paired_higher_owner(&t).await;
+    // Still verifying: a known higher active leader refuses a plain activate.
+    let err = t.state.leader().activate(false).await.unwrap_err();
+    assert_eq!(err.status(), StatusCode::CONFLICT);
+    assert!(t.state.leader().with_active(|| ()).is_err());
+    // Force takes ownership above every known epoch and ends verification.
+    let config = t.state.leader().activate(true).await.unwrap();
+    assert_eq!(config.epoch, 10);
+    assert!(t.state.leader().with_active(|| ()).is_ok());
+    t.state.stop_components().await;
+    net.shutdown().await;
+    other_net.shutdown().await;
+}

@@ -4842,8 +4842,17 @@ export interface components {
         Health: {
             /** @description HTTP API compatibility version. */
             api_version: string;
+            /** @description `true` once startup finished without a failure (standby runs no components). */
+            components_ready?: boolean;
             /** @description Capabilities of this host; probes never launch a browser. */
             host: components["schemas"]["HostInfo"];
+            /**
+             * @description Background startup: `starting` while leadership is verified and components
+             *     start, `ready` once finished, `degraded` when a component failed to start.
+             */
+            startup?: components["schemas"]["StartupPhase"];
+            /** @description Why startup is `degraded`; fixed text, no secrets or paths. */
+            startup_reason?: string | null;
             /** @description `ok` when ready for inference, or `setup_required` before provider setup. */
             status: string;
             /**
@@ -6799,6 +6808,11 @@ export interface components {
             /** @description SSH user (default `ubuntu`). */
             user?: string | null;
         };
+        /**
+         * @description How far background startup of the automatic components has got.
+         * @enum {string}
+         */
+        StartupPhase: "starting" | "ready" | "degraded";
         /**
          * @description Result class of one check.
          * @enum {string}
@@ -9228,6 +9242,15 @@ export interface operations {
             };
             /** @description the channel is not running */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the daemon is still starting */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1254,6 +1254,7 @@
     },
     "modeLabel": "While the bot is working",
     "newChatStarted": "Started a new chat.",
+    "newMessages": "New messages",
     "notFound": "This chat does not exist.",
     "notice": {
       "checkpointRestorePartial": "Restore {{checkpointId}} failed; {{count}} file(s) may still be changed. Recover with safety checkpoint {{safetyId}}.",
@@ -2174,6 +2175,10 @@
         "hint": "Remove big files from it and try again.",
         "title": "That skill is too large"
       },
+      "starting": {
+        "hint": "The app is still starting up. Try again in a few seconds.",
+        "title": "Still starting"
+      },
       "terminal_busy": {
         "hint": "Close another terminal on the server, then try again.",
         "title": "All terminals on the server are in use"
@@ -2547,7 +2552,8 @@
     "group": {
       "composer": "Chat composer",
       "dialogs": "Dialogs",
-      "global": "Global"
+      "global": "Global",
+      "slash": "Slash commands (type / in the composer)"
     },
     "intro": "Handy shortcuts while the app is open.",
     "menuAccept": "Pick the highlighted item",
@@ -2555,6 +2561,7 @@
     "menuMove": "Move through the slash / mention menu",
     "menuNav": "Move through popup menus",
     "newline": "New line",
+    "openHelp": "Show this list (when no text field has focus)",
     "palette": "Command palette",
     "paletteMove": "Command palette: move and run",
     "popoverClose": "Close a popup menu",
@@ -3207,6 +3214,7 @@
     "placeholder": "Type a command…",
     "runSchedule": "Run now: {{name}}",
     "scheduleStarted": "Schedule started",
+    "shortcuts": "Keyboard shortcuts",
     "switchBot": "Switch to {{name}}",
     "title": "Command palette"
   },
@@ -3955,6 +3963,7 @@
     "searchBots": "Search bots",
     "settings": "Settings",
     "unread": "Unread message",
+    "unreadBot": "New messages from this bot",
     "usage": "Usage"
   },
   "stopStatus": {

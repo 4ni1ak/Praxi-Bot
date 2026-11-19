@@ -1213,6 +1213,7 @@
     },
     "modeLabel": "Während der Bot arbeitet",
     "newChatStarted": "Neuer Chat gestartet.",
+    "newMessages": "Neue Nachrichten",
     "notFound": "Dieser Chat existiert nicht.",
     "notice": {
       "checkpointRestorePartial": "Wiederherstellung von {{checkpointId}} fehlgeschlagen; {{count}} Datei(en) sind möglicherweise noch geändert. Stelle sie mit dem Sicherheits-Checkpoint {{safetyId}} wieder her.",
@@ -2078,6 +2079,10 @@
         "hint": "Entferne große Dateien daraus und versuche es erneut.",
         "title": "Dieser Skill ist zu groß"
       },
+      "starting": {
+        "hint": "Die App startet noch. Versuche es in ein paar Sekunden erneut.",
+        "title": "Startet noch"
+      },
       "terminal_busy": {
         "hint": "Schließe ein anderes Terminal auf dem Server und versuche es dann erneut.",
         "title": "Alle Terminals auf dem Server sind belegt"
@@ -2451,7 +2456,8 @@
     "group": {
       "composer": "Chat-Eingabe",
       "dialogs": "Dialoge",
-      "global": "Global"
+      "global": "Global",
+      "slash": "Slash-Befehle (im Eingabefeld / tippen)"
     },
     "intro": "Praktische Kürzel, solange die App geöffnet ist.",
     "menuAccept": "Markierten Eintrag auswählen",
@@ -2459,6 +2465,7 @@
     "menuMove": "Durch das Slash-/Erwähnungsmenü navigieren",
     "menuNav": "Durch Popup-Menüs navigieren",
     "newline": "Neue Zeile",
+    "openHelp": "Diese Liste anzeigen (wenn kein Textfeld fokussiert ist)",
     "palette": "Befehlspalette",
     "paletteMove": "Befehlspalette: navigieren und ausführen",
     "popoverClose": "Popup-Menü schließen",
@@ -3104,6 +3111,7 @@
     "placeholder": "Befehl eingeben …",
     "runSchedule": "Jetzt ausführen: {{name}}",
     "scheduleStarted": "Zeitplan gestartet",
+    "shortcuts": "Tastaturkürzel",
     "switchBot": "Zu {{name}} wechseln",
     "title": "Befehlspalette"
   },
@@ -3852,6 +3860,7 @@
     "searchBots": "Bots suchen",
     "settings": "Einstellungen",
     "unread": "Ungelesene Nachricht",
+    "unreadBot": "Neue Nachrichten von diesem Bot",
     "usage": "Nutzung"
   },
   "stopStatus": {
