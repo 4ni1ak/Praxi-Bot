@@ -3438,6 +3438,10 @@
     "stopAllNow": "Hepsini şimdi durdur",
     "letContinue": "Devam etsinler"
   },
+  "peerLink": {
+    "direct": "Doğrudan · {{rtt}} ms",
+    "relay": "Röle · {{rtt}} ms"
+  },
   "computerPicker": {
     "label": "Bilgisayar: {{name}}",
     "menu": "Bilgisayar",

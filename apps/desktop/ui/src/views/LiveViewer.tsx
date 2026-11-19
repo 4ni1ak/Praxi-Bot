@@ -16,6 +16,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { PeerLinkBadge } from "../components/PeerLinkBadge";
 import { Button } from "ui";
 import { TargetPicker } from "../components/TargetPicker";
 import type { HumanAction, TargetInfo } from "../api/types";
@@ -436,6 +437,7 @@ export function LiveViewer({
         </div>
 
         <div className={styles.headerRight}>
+          <PeerLinkBadge enabled={source === "home" && !isLocalClient} className={styles.stateBadge} />
           <span
             className={styles.stateBadge}
             data-tone={tone}
