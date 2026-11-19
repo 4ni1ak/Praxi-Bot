@@ -560,6 +560,7 @@ fn rule() -> ModelRule {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)] // callers build the list inline
 fn list(models: Vec<Value>) -> Value {
     json!({"data": models})
 }

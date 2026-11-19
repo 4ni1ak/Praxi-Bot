@@ -81,6 +81,11 @@ pub struct Skill {
     pub source: Source,
     /// Skill directory on disk; `None` for embedded bundled skills.
     pub dir: Option<PathBuf>,
+    /// Saved from a run that had already read untrusted or private content.
+    ///
+    /// The name and description are data, not trusted system-prompt
+    /// instructions. A later clean overwrite clears this.
+    pub untrusted: bool,
 }
 
 /// Validate a skill name: `[a-z0-9._-]`, starts with alphanumeric, no `..`,
@@ -150,6 +155,9 @@ pub fn parse_skill(content: &str, source: Source, dir: Option<PathBuf>) -> Resul
     if description.trim().is_empty() {
         return Err("`description` must not be empty".into());
     }
+    if description.chars().any(char::is_control) {
+        return Err("`description` must be a single line without control characters".into());
+    }
     if description.chars().count() > MAX_DESCRIPTION_LEN {
         return Err(format!(
             "`description` is longer than {MAX_DESCRIPTION_LEN} characters"
@@ -180,6 +188,7 @@ pub fn parse_skill(content: &str, source: Source, dir: Option<PathBuf>) -> Resul
         body,
         source,
         dir,
+        untrusted: false,
     })
 }
 

@@ -37,7 +37,7 @@ pub trait DeciderHost: Send + Sync {
 /// Backends the owner can pick in the UI.
 const PRESETS: [&str; 3] = ["gemini", "openrouter_free", "gemini_then_openrouter_free"];
 
-/// Pattern of the free OpenRouter decision models (resolved by rule from the
+/// Pattern of the free `OpenRouter` decision models (resolved by rule from the
 /// live model list, never a fixed id).
 const OPENROUTER_FREE_MATCH: &str = "*decider*:free";
 

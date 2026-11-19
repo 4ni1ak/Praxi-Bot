@@ -1,0 +1,240 @@
+{
+ "cap_per_toolkit": 20,
+ "native_first": [],
+ "popular": [
+  {
+   "slug": "gmail",
+   "name": "Gmail",
+   "description": "Read, search and send email.",
+   "group": "communication"
+  },
+  {
+   "slug": "googlecalendar",
+   "name": "Google Calendar",
+   "description": "Check and create calendar events.",
+   "group": "productivity"
+  },
+  {
+   "slug": "googledrive",
+   "name": "Google Drive",
+   "description": "Find and manage files and folders.",
+   "group": "productivity"
+  },
+  {
+   "slug": "github",
+   "name": "GitHub",
+   "description": "Repositories, issues and pull requests.",
+   "group": "dev"
+  },
+  {
+   "slug": "slack",
+   "name": "Slack",
+   "description": "Read channels and post messages.",
+   "group": "communication"
+  },
+  {
+   "slug": "notion",
+   "name": "Notion",
+   "description": "Pages, databases and notes.",
+   "group": "productivity"
+  },
+  {
+   "slug": "instagram",
+   "name": "Instagram",
+   "description": "Posts, media and account insights.",
+   "group": "social"
+  },
+  {
+   "slug": "linkedin",
+   "name": "LinkedIn",
+   "description": "Profile, posts and company pages.",
+   "group": "social"
+  },
+  {
+   "slug": "twitter",
+   "name": "X",
+   "description": "Search, read and post on X.",
+   "group": "social"
+  },
+  {
+   "slug": "discord",
+   "name": "Discord",
+   "description": "Servers, channels and messages.",
+   "group": "communication"
+  },
+  {
+   "slug": "telegram",
+   "name": "Telegram",
+   "description": "Chats and bot messages.",
+   "group": "communication"
+  },
+  {
+   "slug": "whatsapp",
+   "name": "WhatsApp",
+   "description": "Send and read WhatsApp Business messages.",
+   "group": "communication"
+  },
+  {
+   "slug": "youtube",
+   "name": "YouTube",
+   "description": "Videos, channels and playlists.",
+   "group": "social"
+  },
+  {
+   "slug": "spotify",
+   "name": "Spotify",
+   "description": "Playlists, playback and library.",
+   "group": "social"
+  },
+  {
+   "slug": "facebook",
+   "name": "Facebook",
+   "description": "Pages, posts and insights.",
+   "group": "social"
+  },
+  {
+   "slug": "tiktok",
+   "name": "TikTok",
+   "description": "Videos and account data.",
+   "group": "social"
+  },
+  {
+   "slug": "reddit",
+   "name": "Reddit",
+   "description": "Browse and post to subreddits.",
+   "group": "social"
+  },
+  {
+   "slug": "googlesheets",
+   "name": "Google Sheets",
+   "description": "Read and update spreadsheets.",
+   "group": "productivity"
+  },
+  {
+   "slug": "googledocs",
+   "name": "Google Docs",
+   "description": "Create and edit documents.",
+   "group": "productivity"
+  },
+  {
+   "slug": "outlook",
+   "name": "Outlook",
+   "description": "Email and calendar from Microsoft.",
+   "group": "communication"
+  },
+  {
+   "slug": "microsoft_teams",
+   "name": "Microsoft Teams",
+   "description": "Teams chats and channels.",
+   "group": "communication"
+  },
+  {
+   "slug": "airtable",
+   "name": "Airtable",
+   "description": "Bases, tables and records.",
+   "group": "productivity"
+  },
+  {
+   "slug": "trello",
+   "name": "Trello",
+   "description": "Boards, lists and cards.",
+   "group": "productivity"
+  },
+  {
+   "slug": "asana",
+   "name": "Asana",
+   "description": "Tasks and projects.",
+   "group": "productivity"
+  },
+  {
+   "slug": "linear",
+   "name": "Linear",
+   "description": "Issues, projects and cycles.",
+   "group": "dev"
+  },
+  {
+   "slug": "jira",
+   "name": "Jira",
+   "description": "Issues and sprints.",
+   "group": "dev"
+  },
+  {
+   "slug": "gitlab",
+   "name": "GitLab",
+   "description": "Repositories and merge requests.",
+   "group": "dev"
+  },
+  {
+   "slug": "supabase",
+   "name": "Supabase",
+   "description": "Databases and project management.",
+   "group": "dev"
+  },
+  {
+   "slug": "stripe",
+   "name": "Stripe",
+   "description": "Payments, customers and invoices.",
+   "group": "finance"
+  },
+  {
+   "slug": "quickbooks",
+   "name": "QuickBooks",
+   "description": "Invoices, expenses and accounting.",
+   "group": "finance"
+  },
+  {
+   "slug": "shopify",
+   "name": "Shopify",
+   "description": "Products, orders and customers.",
+   "group": "business"
+  },
+  {
+   "slug": "hubspot",
+   "name": "HubSpot",
+   "description": "Contacts, deals and marketing.",
+   "group": "business"
+  },
+  {
+   "slug": "salesforce",
+   "name": "Salesforce",
+   "description": "Leads, accounts and opportunities.",
+   "group": "business"
+  },
+  {
+   "slug": "zoom",
+   "name": "Zoom",
+   "description": "Meetings and recordings.",
+   "group": "communication"
+  },
+  {
+   "slug": "dropbox",
+   "name": "Dropbox",
+   "description": "Files and shared folders.",
+   "group": "productivity"
+  },
+  {
+   "slug": "todoist",
+   "name": "Todoist",
+   "description": "Tasks and projects.",
+   "group": "productivity"
+  }
+ ],
+ "read_only_actions": [
+  "SLACK_LIST_ALL_CHANNELS",
+  "SLACK_FETCH_CONVERSATION_HISTORY",
+  "HUBSPOT_LIST_CONTACTS",
+  "AIRTABLE_LIST_RECORDS",
+  "INSTAGRAM_GET_USER_MEDIA",
+  "INSTAGRAM_GET_USER_INFO",
+  "LINKEDIN_GET_MY_INFO",
+  "TWITTER_USER_LOOKUP_ME",
+  "TWITTER_RECENT_SEARCH",
+  "FACEBOOK_GET_PAGE_DETAILS",
+  "SALESFORCE_GET_RECORD",
+  "GMAIL_FETCH_EMAILS",
+  "GOOGLECALENDAR_EVENTS_LIST",
+  "GITHUB_LIST_REPOSITORY_ISSUES",
+  "NOTION_SEARCH_NOTION_PAGE",
+  "LINEAR_LIST_LINEAR_ISSUES"
+ ]
+}

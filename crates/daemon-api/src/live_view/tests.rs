@@ -1,4 +1,5 @@
 #![allow(clippy::too_many_lines)]
+mod availability_scope;
 mod browser_target_loss;
 use super::*;
 use ::live_view::*;
@@ -15,6 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tower::ServiceExt;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const OWNER_KEY: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
 const PIXEL_SECRET: &[u8] = b"pixel-password-OTP-never-persist-4815162342";
 const TEXT_SECRET: &str = "human-input-secret-never-persist-7654321";
 #[derive(Default)]
@@ -207,6 +209,7 @@ impl Test {
             agent_core::LoopConfig::default(),
         );
         let state = AppState::new(agent, storage, crate::DaemonConfig::new(TOKEN)).unwrap();
+        state.set_owner_key(OWNER_KEY.into());
         let target = Arc::new(Target::new());
         state.live_view().registry.register(target.clone());
         Self {
@@ -227,6 +230,7 @@ impl Test {
             agent_core::LoopConfig::default(),
         );
         let state = AppState::new(agent, storage, crate::DaemonConfig::new(TOKEN)).unwrap();
+        state.set_owner_key(OWNER_KEY.into());
         state.live_view().registry.register(self.target.clone());
         Self {
             state,
@@ -264,6 +268,7 @@ impl Test {
             .uri(path)
             .header("host", "localhost")
             .header("authorization", format!("Bearer {TOKEN}"))
+            .header("x-praxi-owner-key", OWNER_KEY)
             .header("accept", MEDIA_TYPE)
             .header("content-type", "application/json")
             .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
@@ -363,6 +368,7 @@ async fn all_routes_require_auth_host_origin_and_never_query_tokens() {
     let id = Uuid::now_v7();
     for (method, path, body) in [
         (Method::GET, "/v1/view/targets".into(), None),
+        (Method::GET, "/v1/view/availability".into(), None),
         (Method::POST, "/v1/view/sessions".into(), Some(json!({}))),
         (Method::GET, format!("/v1/view/sessions/{id}/frames"), None),
         (
@@ -911,7 +917,7 @@ async fn explicit_reacquisition_rotates_epoch_and_old_input_never_applies() {
     );
 }
 #[tokio::test(start_paused = true)]
-async fn blocked_body_is_cancelled_after_two_seconds_and_capture_is_dropped() {
+async fn blocked_body_is_cancelled_after_eight_seconds_and_capture_is_dropped() {
     let t = Test::new();
     let id = t.session(None).await;
     let response = t
@@ -927,7 +933,7 @@ async fn blocked_body_is_cancelled_after_two_seconds_and_capture_is_dropped() {
         t.target.frame(seq, 1);
     }
     tokio::task::yield_now().await;
-    tokio::time::advance(Duration::from_millis(2100)).await;
+    tokio::time::advance(Duration::from_millis(8100)).await;
     for _ in 0..20 {
         tokio::task::yield_now().await;
     }
@@ -1126,7 +1132,7 @@ async fn a_cancelled_input_request_aborts_its_inject_invalidates_the_epoch_and_o
     assert!(!t.state.hub().override_pending().0);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn bounded_duplicate_window_requires_resync_after_sixty_four_batches() {
     let t = Test::new();
     let (id, owned, _body) = t.active(None).await;
@@ -1137,13 +1143,12 @@ async fn bounded_duplicate_window_requires_resync_after_sixty_four_batches() {
         batch
     };
     for seq in 1..=65 {
-        assert_eq!(
-            t.call(None, Method::POST, &path, Some(request(seq)))
-                .await
-                .0,
-            StatusCode::OK
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        if seq == 65 {
+            // Refill one token beyond the 64-event burst without aging out the frame.
+            tokio::time::advance(Duration::from_millis(10)).await;
+        }
+        let (status, result) = t.call(None, Method::POST, &path, Some(request(seq))).await;
+        assert_eq!(status, StatusCode::OK, "batch {seq}: {result}");
     }
     let (status, result) = t.call(None, Method::POST, &path, Some(request(1))).await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -1196,6 +1201,54 @@ async fn takeover_session_binding_and_text_byte_rate_are_independent_limits() {
         .await
         .0,
         StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+/// 244-V: why a screen is missing is served under the same rule as the target
+/// list: no token = 401, a peer without screen:view = 403, nothing is leaked.
+/// The reason is a fixed code, never free text.
+#[tokio::test]
+async fn availability_follows_the_target_list_access_rule_and_carries_a_code() {
+    let t = Test::new();
+    // Nothing recorded: an empty list for the local user.
+    let (status, body) = t
+        .call(None, Method::GET, "/v1/view/availability", None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([]));
+    t.state
+        .live_view()
+        .registry
+        .note_unavailable(live_view::TargetUnavailable {
+            kind: live_view::TargetKind::Desktop,
+            host_id: "local".into(),
+            reason: live_view::Reason::Unavailable,
+            code: live_view::UnavailableCode::DesktopOff,
+        });
+    let (status, body) = t
+        .call(None, Method::GET, "/v1/view/availability", None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body[0]["kind"], "desktop");
+    assert_eq!(body[0]["reason"], "unavailable");
+    assert_eq!(body[0]["code"], "desktop_off");
+    assert!(
+        body[0].get("detail").is_none(),
+        "no free text on the wire: {body}"
+    );
+    // A granted peer reads it; an ungranted one is refused like for the targets.
+    assert_eq!(
+        t.call(Some("alice"), Method::GET, "/v1/view/availability", None)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    t.auto_grant.store(false, Ordering::SeqCst);
+    assert_eq!(
+        t.call(Some("bob"), Method::GET, "/v1/view/availability", None)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
     );
 }
 
@@ -1984,6 +2037,7 @@ fn alice_actor() -> Actor {
         key: "peer:alice".into(),
         recovery: true,
         local: false,
+        admin: false,
     }
 }
 
@@ -3773,6 +3827,7 @@ async fn a_revoked_input_grant_stops_applying_while_the_executor_is_busy() {
         key: "peer:alice".into(),
         recovery: false,
         local: false,
+        admin: false,
     };
     assert!(live.allowed(&peer, true));
     let busy = live.executor.lock().await; // a long input batch holds it
@@ -4374,6 +4429,7 @@ async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geo
         agent_core::LoopConfig::default(),
     );
     let state = AppState::new(agent, storage, crate::DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     state.live_view().registry.register(desktop_target.clone());
     let t = Test {
         state,
@@ -4591,4 +4647,143 @@ async fn daemon_rejects_stale_revision_click_on_desktop_target_while_session_geo
     assert_eq!(res2["applied_through"], 1);
     assert_eq!(res2["state"], "active");
     assert_eq!(injected_calls.load(Ordering::SeqCst), 1);
+}
+
+fn view_actor(key: &str, admin: bool) -> Actor {
+    Actor {
+        key: format!("peer:{key}"),
+        recovery: true,
+        local: false,
+        admin,
+    }
+}
+
+#[tokio::test]
+async fn the_paired_admin_desktop_needs_no_manual_screen_grant_and_the_owners_off_sticks() {
+    let t = Test::new();
+    let live = Arc::clone(t.state.live_view());
+    let (admin, other) = (view_actor("adm", true), view_actor("adm", false));
+    // Administration is the grant: view AND input, with nothing typed on the server.
+    assert!(live.allowed(&admin, false) && live.allowed(&admin, true));
+    // Any other paired device (a phone, a desktop without administration) has nothing.
+    assert!(!live.allowed(&other, false));
+    // The host's owner can still switch it off (revocable), and a restart keeps that "off".
+    grant(&t, "adm", false, false).await;
+    assert!(!live.allowed(&admin, false));
+    let restarted = t.restarted();
+    restarted.state.load_screen_privileges().await;
+    assert!(!restarted.state.live_view().allowed(&admin, false));
+    // A fresh administrator grant clears the earlier "off".
+    t.state.clear_screen_denial("peer:adm");
+    assert!(live.allowed(&admin, true));
+    // A view-only choice made on the host is honoured as well.
+    grant(&t, "adm", true, false).await;
+    assert!(live.allowed(&admin, false) && !live.allowed(&admin, true));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_host_captures_nothing_without_a_session_and_ends_a_viewer_that_went_idle() {
+    let t = Test::new();
+    let frames = |id: Uuid| format!("/v1/view/sessions/{id}/frames");
+    let status = |t: &Test| {
+        let t = t.state.clone();
+        async move {
+            let req = Request::builder()
+                .uri("/v1/view/status")
+                .header("host", "localhost")
+                .header("authorization", format!("Bearer {TOKEN}"))
+                .body(Body::empty())
+                .unwrap();
+            let r = crate::router(t).oneshot(req).await.unwrap();
+            let bytes = r.into_body().collect().await.unwrap().to_bytes();
+            serde_json::from_slice::<Value>(&bytes).unwrap()["state"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        }
+    };
+    // Reading targets and status never starts a capture.
+    assert_eq!(
+        t.call(None, Method::GET, "/v1/view/targets", None).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(status(&t).await, "idle");
+    assert_eq!(t.target.source.subscribers(), 0);
+    // A live session captures; a heartbeat that says "hidden/unfocused" keeps it alive but is no
+    // sign of life, so the idle limit (3 minutes) ends it and capture stops with it.
+    let id = t.session(None).await;
+    let _body = t
+        .response(None, Method::GET, &frames(id), None)
+        .await
+        .into_body();
+    tokio::task::yield_now().await;
+    assert_eq!(t.target.source.subscribers(), 1);
+    assert_eq!(status(&t).await, "live");
+    for _ in 0..8 {
+        tokio::time::advance(Duration::from_secs(25)).await;
+        tokio::task::yield_now().await;
+        let _ = t
+            .call(
+                None,
+                Method::PUT,
+                &format!("/v1/view/sessions/{id}/heartbeat"),
+                Some(json!({"active": false})),
+            )
+            .await;
+    }
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        t.target.source.subscribers(),
+        0,
+        "idle viewer must stop capture"
+    );
+    assert_eq!(status(&t).await, "paused_idle");
+    // The hard cap ends even an attentive viewer.
+    let id = t.session(None).await;
+    assert_eq!(status(&t).await, "starting");
+    for _ in 0..75 {
+        tokio::time::advance(Duration::from_secs(25)).await;
+        tokio::task::yield_now().await;
+        let _ = t
+            .call(
+                None,
+                Method::PUT,
+                &format!("/v1/view/sessions/{id}/heartbeat"),
+                Some(json!({})),
+            )
+            .await;
+    }
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert!(t.state.live_view().sessions.lock().is_empty());
+    assert_eq!(status(&t).await, "paused_idle");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_thumbnail_is_one_captured_frame_then_served_from_the_cache_without_a_session() {
+    let t = Test::new();
+    let path = format!("/v1/view/targets/{}/thumbnail", t.target.info().target_id);
+    let (first, ()) = tokio::join!(t.response(None, Method::GET, &path, None), async {
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+            if t.target.source.subscribers() > 0 {
+                break;
+            }
+        }
+        t.target.frame(1, 1);
+    });
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(first.headers()["content-type"], "image/jpeg");
+    let bytes = first.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&bytes[..], PIXEL_SECRET);
+    // The capture ended with the request: no session, no subscriber.
+    assert_eq!(t.target.source.subscribers(), 0);
+    assert!(t.state.live_view().sessions.lock().is_empty());
+    // A second look within the interval is the same image, with no new capture.
+    let again = t.response(None, Method::GET, &path, None).await;
+    assert_eq!(again.status(), StatusCode::OK);
+    assert_eq!(t.target.source.subscribers(), 0);
 }

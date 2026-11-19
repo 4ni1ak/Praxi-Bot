@@ -192,19 +192,14 @@ impl MemoryStore {
             .collect())
     }
 
-    /// Memories relevant to `query` for `user` as seen by `bot` (shared +
-    /// bot-scoped), best first, cut to `budget_tokens`.
-    ///
-    /// # Errors
-    /// Embedder or SQLite failure.
-    pub fn recall(
+    fn select_recall(
         &self,
         user: UserId,
         bot: BotId,
         query: &str,
         budget_tokens: usize,
-    ) -> Result<Vec<Memory>> {
-        let now = now_ms();
+        now: i64,
+    ) -> Result<Vec<(Memory, f64)>> {
         let cfg = self.config;
         let mut scored: Vec<(f64, Memory)> = self
             .gather(user, bot, query, self.config.candidates)?
@@ -224,14 +219,50 @@ impl MemoryStore {
 
         let mut spent = 0usize;
         let mut out = Vec::new();
-        for (_, m) in scored {
+        for (score, m) in scored {
             let cost = estimate_tokens(&m.content) + 4;
             if spent + cost > budget_tokens {
                 break;
             }
             spent += cost;
-            out.push(m);
+            out.push((m, score));
         }
+        Ok(out)
+    }
+
+    /// Preview the memories and final scores that [`recall`](Self::recall) would
+    /// select for `query` within `budget_tokens`, without touching `last_used_ms`.
+    ///
+    /// # Errors
+    /// Embedder or SQLite failure.
+    pub fn preview_recall(
+        &self,
+        user: UserId,
+        bot: BotId,
+        query: &str,
+        budget_tokens: usize,
+    ) -> Result<Vec<(Memory, f64)>> {
+        self.select_recall(user, bot, query, budget_tokens, now_ms())
+    }
+
+    /// Memories relevant to `query` for `user` as seen by `bot` (shared +
+    /// bot-scoped), best first, cut to `budget_tokens`.
+    ///
+    /// # Errors
+    /// Embedder or SQLite failure.
+    pub fn recall(
+        &self,
+        user: UserId,
+        bot: BotId,
+        query: &str,
+        budget_tokens: usize,
+    ) -> Result<Vec<Memory>> {
+        let now = now_ms();
+        let mut out: Vec<Memory> = self
+            .select_recall(user, bot, query, budget_tokens, now)?
+            .into_iter()
+            .map(|(m, _)| m)
+            .collect();
         if !out.is_empty() {
             let conn = self.conn();
             for m in &mut out {

@@ -347,7 +347,7 @@ test("heartbeat stops carrying takeover_id once the stream is dead or frozen", (
 test("reconnect backoff is bounded and a new session never auto-resumes input", () => {
   assert.deepEqual(
     [1, 2, 3, 4, 5, 6, 10].map(reconnectDelayMs),
-    [1000, 2000, 4000, 8000, 15000, 15000, 15000]
+    [500, 1000, 2000, 4000, 4000, 4000, 4000]
   );
   let st = applyStreamDisconnected(owning());
   assert.equal(st.disconnected, true);
@@ -441,11 +441,12 @@ test("panel and viewer closed (or window hidden) stop the capture session", () =
     hasClient: true,
     documentHidden: false,
     target,
-    viewerOpen: false,
-    panelActive: false
+    viewerOpen: false
   };
+  // The card alone never holds a live session: the host stays idle until someone clicks.
   assert.equal(computeWantSession(base), false);
-  assert.equal(computeWantSession({ ...base, panelActive: true }), true);
+  assert.equal(computeWantSession({ ...base, cardRequested: true }), true);
+  assert.equal(computeWantSession({ ...base, cardRequested: true, documentHidden: true }), false);
   assert.equal(computeWantSession({ ...base, viewerOpen: true }), true);
   assert.equal(
     computeWantSession({ ...base, viewerOpen: true, documentHidden: true }),

@@ -20,7 +20,7 @@
 //! - [`parse_natural_language`] converts common English and Turkish schedule
 //!   phrases into a [`ScheduleSpec`] using a deterministic table-driven parser.
 //!
-//! # Durable dispatch boundary (task 136)
+//! # Durable dispatch boundary
 //! An occurrence is identified by `schedule_id:due_ms`. Pending/dispatched
 //! intents survive restart, but the current [`ScheduleExecutor`] cannot
 //! durably deduplicate a start or return its `run_id`. At startup the engine
@@ -36,9 +36,13 @@ pub mod engine;
 pub mod error;
 pub mod model;
 pub mod nl;
+pub mod precheck;
 pub mod store;
+pub mod watch;
 pub mod webhook;
 
+#[cfg(test)]
+mod c225_tests;
 #[cfg(test)]
 mod tests;
 
@@ -46,8 +50,8 @@ pub use clock::{Clock, FakeClock, SystemClock};
 pub use engine::{CLOCK_JUMP_THRESHOLD_MS, MISFIRE_GRACE_MS, ScheduleExecutor, Scheduler};
 pub use error::{Result, SchedulerError};
 pub use model::{
-    MisfirePolicy, ParsedCron, Payload, RUN_ALL_CAP, Schedule, ScheduleId, ScheduleOrigin,
-    SchedulePayload, ScheduleSpec, Spec, Trigger,
+    FileEvent, MisfirePolicy, ParsedCron, Payload, Precheck, RUN_ALL_CAP, Schedule, ScheduleId,
+    ScheduleOrigin, SchedulePayload, ScheduleSpec, Spec, Trigger,
 };
 pub use nl::{parse_natural_language, parse_natural_language_with_tz, parse_nl};
 pub use protocol::{BotId, ChatId, Initiator, InitiatorKind, TaskId};

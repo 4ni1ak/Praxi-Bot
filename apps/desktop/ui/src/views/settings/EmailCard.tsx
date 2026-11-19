@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import { BotAvatar, Button, Card } from "ui";
 import { BrandIcon } from "../../components/BrandIcon";
 import { botView } from "../../lib/botProfile";
+import { MAIL_CHANGED_EVENT, nextStep } from "../../lib/botMail";
 import type { EmailAccount, EmailTestReport } from "../../api/types";
 import { openExternal } from "../../lib/externalLink";
 import { BotAccessPicker } from "../../components/BotAccessPicker";
@@ -49,9 +50,15 @@ import {
 } from "../../lib/emailAccounts";
 import { useDaemon } from "../../state/DaemonContext";
 import styles from "./EmailCard.module.css";
+import { humanLine } from "../../lib/humanError";
 
 function errorText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return humanLine(e);
+}
+
+/** Tell open bot panels that a mailbox was added, changed or removed. */
+function mailChanged(): void {
+  window.dispatchEvent(new Event(MAIL_CHANGED_EVENT));
 }
 
 const PRESET_IDS: readonly EmailPresetId[] = [
@@ -60,11 +67,12 @@ const PRESET_IDS: readonly EmailPresetId[] = [
 ];
 
 /** One line per server: "IMAP: Connected", "SMTP: Login rejected". */
-function TestResult({ report }: { report: EmailTestReport }) {
+export function TestResult({ report }: { report: EmailTestReport }) {
   const { t } = useTranslation();
   // An API-backed mailbox has one check; the IMAP and SMTP lines would repeat it.
   const keys = report.api ? (["api"] as const) : (["imap", "smtp"] as const);
   return (
+    <>
     <ul className={styles.result} data-testid="email-test-result">
       {keys.map((k) => {
         const status = k === "api" ? (report.api ?? "protocol") : report[k];
@@ -82,6 +90,10 @@ function TestResult({ report }: { report: EmailTestReport }) {
         );
       })}
     </ul>
+    <p className={formStyles.hint} data-testid="email-next-step">
+      {t(`settingsModal.email.next.${nextStep(report)}`)}
+    </p>
+    </>
   );
 }
 
@@ -803,6 +815,7 @@ export function EmailCard() {
     try {
       await client.deleteEmailAccount(name, { deleteInbox });
       toast.show(t("settingsModal.email.toast.deleted", { name }), "success");
+      mailChanged();
       await reload();
     } catch (e) {
       toast.show(errorText(e), "danger");
@@ -881,6 +894,7 @@ export function EmailCard() {
           existing={list.map((a) => a.name)}
           onDone={async () => {
             setMode("list");
+            mailChanged();
             await reload();
           }}
         />
@@ -891,6 +905,7 @@ export function EmailCard() {
           original={editing}
           onDone={async () => {
             setMode("list");
+            mailChanged();
             await reload();
           }}
         />

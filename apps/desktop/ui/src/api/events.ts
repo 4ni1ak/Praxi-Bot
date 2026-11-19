@@ -107,6 +107,19 @@ export function parseSseEnvelope(
         nextCursor: currentCursor
       };
     }
+    if (m.event === "view_targets_changed" || raw.type === "view_targets_changed") {
+      // A pixel-free hint: a screen appeared, went idle, attached or closed.
+      return {
+        envelope: {
+          v: 1,
+          seq: 0,
+          gseq: currentCursor ?? 0,
+          ts_ms: nowMs,
+          event: { type: "view_targets_changed" }
+        },
+        nextCursor: currentCursor
+      };
+    }
     const env = raw as unknown as {
       v: number;
       seq: number;

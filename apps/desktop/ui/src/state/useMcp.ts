@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { McpCatalogEntry, McpServer } from "../api/types";
-import { applyServerEvent } from "../lib/mcpApps";
+import { createScopedLoader } from "../lib/scopedLoader";
+import { applyServerEvent, eventNeedsRefetch } from "../lib/mcpApps";
 import { useDaemon } from "./DaemonContext";
+import { humanLine } from "../lib/humanError";
 
 /**
  * Connected MCP servers + the catalog, kept fresh by the daemon's
@@ -22,24 +24,29 @@ export function useMcp(active: boolean): {
   const serversRef = useRef<McpServer[]>([]);
   serversRef.current = servers;
 
+  const loader = useRef(
+    createScopedLoader<{ s: McpServer[]; c: McpCatalogEntry[] }>(
+      (v) => {
+        setServers(v?.s ?? []);
+        setCatalog(v?.c ?? []);
+        if (v) {
+          setError(null);
+        }
+      },
+      (e) => setError(humanLine(e))
+    )
+  );
   const reload = useCallback(async () => {
     if (!client) {
+      loader.current.switchTo(null);
       return;
     }
     setLoading(true);
-    try {
-      const [s, c] = await Promise.all([
-        client.listMcpServers(),
-        client.mcpCatalog()
-      ]);
-      setServers(s);
-      setCatalog(c);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
+    await loader.current.load(client, async () => {
+      const [s, c] = await Promise.all([client.listMcpServers(), client.mcpCatalog()]);
+      return { s, c };
+    });
+    setLoading(false);
   }, [client]);
 
   useEffect(() => {
@@ -57,11 +64,13 @@ export function useMcp(active: boolean): {
       if (ev.type !== "mcp_server_changed") {
         return;
       }
-      // A server this list has not seen: fetch the fresh list.
+      // Show the new status at once; the event has no diagnostics, so settled
+      // transitions (and servers this list has not seen) refetch the real DTO.
       const next = applyServerEvent(serversRef.current, ev);
       if (next) {
         setServers(next);
-      } else {
+      }
+      if (eventNeedsRefetch(serversRef.current, ev)) {
         void reload();
       }
     });

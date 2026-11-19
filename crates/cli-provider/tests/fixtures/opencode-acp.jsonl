@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"private thought"}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session","update":{"sessionUpdate":"tool_call","toolCallId":"native","title":"bash"}}}
+{"jsonrpc":"2.0","id":5,"method":"session/request_permission","params":{"sessionId":"session"}}
+{"jsonrpc":"2.0","id":4,"result":{"stopReason":"end_turn"}}

@@ -76,7 +76,7 @@ A bot is only offered the email tools when at least one account is usable by it
 ## Managing accounts without editing files
 
 With the daemon running you can add, change, test and remove accounts from
-**Settings, Computer, E-mail** in the desktop app, or from the command line:
+**Settings, Mail** in the desktop app, or from the command line:
 
 ```sh
 bot email add work alice@gmail.com --preset gmail --bot Atlas --password-env MAIL_PW
@@ -102,6 +102,22 @@ restart is needed. The password goes to the secret store as
 (the account list only says whether one is stored). Changing an account's
 servers or login requires entering the password again, so a stored password can
 not be redirected to another server.
+
+The bot panel (right side, "Library" tab) has a **Mail** block for the selected
+bot: the mailboxes it may use, a "Check connection" button with a next step when
+a check fails, and a switch "Let <bot> use mail". The switch adds or removes
+`email_*` in the bot's `[tools] allow` / `exclude` lists (the opt-in described in
+[Bots and profiles](bots-and-profiles.md)); it touches nothing else, and sending
+still follows the bot's permission mode.
+
+Each mailbox in that block can also **show recent mail** (the newest ten
+headers: subject, sender, date; read-only, nothing is marked read and no body is
+fetched) and **send a test mail**. The test mail is one fixed message from the
+mailbox to its own address; it cannot be addressed to anyone else. Both use
+`GET /v1/email/accounts/{name}/messages` and
+`POST /v1/email/accounts/{name}/send-test`, which need the owner key (the desktop
+app has it; a bare API token does not). On a paired host only a desktop may read the
+headers, and the test mail is sent from the host itself.
 
 ### One mailbox per bot
 
@@ -159,7 +175,7 @@ Besides your own mailbox, a bot can have an address such as `name@agentmail.to`,
 created at [AgentMail](https://agentmail.to) with **your own** AgentMail account
 and API key. Praxi-Bot holds no key of its own and runs no relay.
 
-- In **Settings, Computer, E-mail** choose "Give this bot an address (AgentMail)",
+- In **Settings, Mail** choose "Give this bot an address (AgentMail)",
   paste your API key, pick the bot (or any bot, explicitly) and, optionally, a name
   for the address. From the command line:
   `bot email add --provider agentmail --name helper --bot Atlas --api-key-env AGENTMAIL_KEY`.

@@ -273,7 +273,7 @@ install_desktop_packages() {
       die "missing required apt package candidate(s) on ${ARCH}: ${missing_pkgs[*]}"
     fi
 
-    for pkg in libatk-adaptor libgail-common libglib2.0-bin tango-icon-theme; do
+    for pkg in libatk-adaptor libgail-common libglib2.0-bin tango-icon-theme fonts-noto-color-emoji fonts-noto-cjk; do
       if apt_candidate "${pkg}"; then
         pkgs_apt+=("${pkg}")
       else
@@ -305,6 +305,10 @@ install_desktop_packages() {
       fi
     fi
     dnf install -y --setopt=install_weak_deps=False "${pkgs_dnf[@]}"
+    for pkg in google-noto-emoji-color-fonts google-noto-sans-cjk-ttc-fonts; do
+      dnf install -y --setopt=install_weak_deps=False "${pkg}" \
+        || warn "could not install ${pkg}; emoji or CJK text in the browser may show empty boxes"
+    done
   else
     die "supported package manager (apt-get, or dnf in --system mode) not found; pass --skip-packages if already installed"
   fi
@@ -538,17 +542,25 @@ for candidate in "${BOT_BROWSER_PATH:-}" "${PRAXI_BROWSER_PATH:-}" /opt/praxi-br
   break
 done
 if [[ -n "${browser_bin}" ]]; then
+  browser_icon="web-browser"
+  [[ ! -f "${browser_bin%/*}/product_logo_48.png" ]] || browser_icon="${browser_bin%/*}/product_logo_48.png"
   cat > "${XDG_DATA_HOME}/applications/praxi-browser.desktop" <<DESKTOP
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=Web Browser
-Comment=Launch browser manually (lazy, not autostarted)
+Comment=Open the web browser (opened only by a person, never autostarted)
 Exec=${browser_bin} --no-first-run --no-default-browser-check --disable-dev-shm-usage --disable-gpu %U
+Icon=${browser_icon}
 Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
 DESKTOP
+  # Also put it on the desktop so a person watching the live view sees it.
+  # Executable .desktop files on ~/Desktop open without a trust prompt in Xfce.
+  mkdir -p "${HOME}/Desktop"
+  cp "${XDG_DATA_HOME}/applications/praxi-browser.desktop" "${HOME}/Desktop/praxi-browser.desktop"
+  chmod 0755 "${HOME}/Desktop/praxi-browser.desktop"
 fi
 if [[ "${PRAXI_ENABLE_SESSION_APPS:-0}" == "1" ]]; then
   for app_desktop in xfce4-terminal.desktop thunar.desktop; do

@@ -22,15 +22,29 @@ use tower::ServiceExt;
 use crate::fake::FakeProvider;
 use crate::{AppState, DaemonConfig, router};
 
+mod attachments;
+mod bot_patch;
+mod cli_engines;
+mod composio;
 mod doctor;
 mod email;
+mod fill_secrets;
 mod host;
+mod host_admin;
+mod host_slice;
+mod knowledge;
+mod knowledge_brain;
 mod mcp;
+mod memory;
+mod model_catalog;
+mod peer_knowledge;
 mod schedules;
 mod skills;
 mod web;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+/// The owner key of the test daemon; `call()` presents it like the desktop app does.
+pub(crate) const OWNER_KEY: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
 
 const PROFILE: &str = r#"
 [bot]
@@ -54,6 +68,7 @@ impl Tool for Danger {
             effect: Effect::Write,
             category: PermissionCategory::Fs,
             platforms: vec![Platform::All],
+            content: tool_registry::ContentClass::none(),
         })
     }
     async fn call(&self, _: &ToolContext, _: Value) -> Result<ToolOutput, ToolError> {
@@ -87,6 +102,7 @@ fn setup_with(prepare: impl FnOnce(&std::path::Path)) -> T {
         LoopConfig::default(),
     );
     let state = AppState::new(agent.clone(), storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     state.set_detector(Arc::new(cli_provider::Detector::with_env(
         cli_provider::PathEnv::for_test(dir.path().join("sealed-cli-path")),
     )));
@@ -119,7 +135,21 @@ async fn send(
 ) -> Resp {
     let mut b = Request::builder().method(method).uri(path);
     let mut has_host = false;
+    // The test daemon's "desktop app": a bearer request carries the owner key
+    // unless the test says it is a token-only caller or sets the header itself.
+    let bearer = extra
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
+    let marked = extra.iter().any(|(k, _)| {
+        k.eq_ignore_ascii_case("x-test-token-only") || k.eq_ignore_ascii_case("x-praxi-owner-key")
+    });
+    if bearer && !marked {
+        b = b.header("x-praxi-owner-key", OWNER_KEY);
+    }
     for (k, v) in extra {
+        if k.eq_ignore_ascii_case("x-test-token-only") {
+            continue;
+        }
         has_host |= k.eq_ignore_ascii_case("host");
         b = b.header(*k, *v);
     }
@@ -149,6 +179,19 @@ fn auth() -> (&'static str, String) {
 async fn call(t: &T, method: Method, path: &str, body: Option<Value>) -> Resp {
     let (k, v) = auth();
     send(&t.app, method, path, body, &[(k, v.as_str())]).await
+}
+
+/// A caller that holds only the general API token (a CLI engine, a script).
+async fn call_token_only(t: &T, method: Method, path: &str, body: Option<Value>) -> Resp {
+    let (k, v) = auth();
+    send(
+        &t.app,
+        method,
+        path,
+        body,
+        &[(k, v.as_str()), ("x-test-token-only", "1")],
+    )
+    .await
 }
 
 async fn make_chat(t: &T) -> (String, String) {
@@ -392,6 +435,14 @@ async fn browser_origin_must_be_the_desktop_app() {
             .unwrap()
             .contains("authorization")
     );
+    // The web view sends the owner key on cross-origin calls: the preflight must allow it
+    // (without this the real app's owner routes fail in the browser, card 262).
+    assert!(
+        r.headers["access-control-allow-headers"]
+            .to_str()
+            .unwrap()
+            .contains("x-praxi-owner-key")
+    );
     let r = send(
         &t.app,
         Method::OPTIONS,
@@ -444,7 +495,7 @@ async fn bots_crud() {
         &t,
         Method::PUT,
         &path,
-        Some(json!({"config": {
+        Some(json!({"expected_version": 1, "config": {
             "bot": {"id": "tester", "name": "Renamed"},
             "models": {"executor": "fake/other"}
         }})),
@@ -1066,6 +1117,7 @@ impl Tool for Ask {
             effect: Effect::Read,
             category: PermissionCategory::Meta,
             platforms: vec![Platform::All],
+            content: tool_registry::ContentClass::none(),
         })
     }
     async fn call(&self, _: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
@@ -1078,6 +1130,7 @@ impl Tool for Ask {
                 }),
             }],
             spill: None,
+            exposure: None,
         })
     }
 }
@@ -1483,6 +1536,7 @@ fn setup_desktop() -> (T, Arc<crate::fake::FakeDesktop>) {
         latch_wait: Duration::from_secs(30 * 60),
     };
     let state = AppState::new(agent.clone(), storage, cfg).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     (
         T {
             app: router(state.clone()),
@@ -1516,6 +1570,27 @@ async fn run_and_reply_seen(t: &T, chat: &str, text: &str) -> (String, Vec<proto
             .expect("run never finished")
             .expect("stream closed");
         let ev = item.envelope.event;
+        // A screen read taints the chat, so the following desktop action is
+        // egress and asks before the control overlay. These tests are about
+        // the overlay. Approve that one card and leave the overlay alone.
+        if let protocol::Event::ApprovalNeeded(a) = &ev
+            && a.details
+                .as_ref()
+                .and_then(|d| d.get("kind"))
+                .and_then(|k| k.as_str())
+                == Some("egress")
+        {
+            let (k, v) = auth();
+            let r = send(
+                &t.app,
+                Method::POST,
+                &format!("/v1/approvals/{}", a.call_id),
+                Some(json!({"decision": "approve", "scope": "once"})),
+                &[(k, v.as_str())],
+            )
+            .await;
+            assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+        }
         let finished =
             matches!(&ev, protocol::Event::RunFinished(f) if f.run_id.to_string() == run);
         let mine = match &ev {
@@ -1664,12 +1739,27 @@ async fn human_driving_waits_then_discards_stale_click_without_model_retry() {
     let instruction = click_after_state(3);
     let pending = run_and_reply_seen(&t, &chat, &instruction);
     tokio::pin!(pending);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(100), &mut pending)
-            .await
-            .is_err(),
-        "paused call must wait"
-    );
+    // A fixed 100 ms is not enough on a slow runner: the click may still be in
+    // the model or the egress approval, and releasing then sends it to the
+    // overlay instead of the pause wait. Release only once the hub has parked
+    // this run on the latch. Keep polling the run so that approval can proceed.
+    let already = t.state.hub().affected_run_count();
+    let park = async {
+        loop {
+            if t.state.hub().affected_run_count() > already {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::select! {
+        outcome = &mut pending => {
+            panic!("paused call finished before the click parked: {outcome:?}");
+        }
+        result = tokio::time::timeout(Duration::from_secs(10), park) => {
+            result.expect("click never parked on the pause");
+        }
+    }
     assert_eq!(desktop.actions.load(std::sync::atomic::Ordering::SeqCst), 1);
 
     // Handing the wheel back lets the bot continue (an idle registration that
@@ -2024,6 +2114,9 @@ async fn listing_runs_writes_nothing_to_disk() {
         role: "user".to_owned(),
         content: "hello".to_owned(),
         created_at_ms: now,
+        exposure_untrusted: false,
+        exposure_private: false,
+        exposure_sources: Vec::new(),
     })
     .unwrap();
     st.insert_step(&storage::RunStep {
@@ -2235,28 +2328,18 @@ async fn providers_detected_requires_auth() {
 }
 
 #[tokio::test]
-async fn providers_detected_reports_six_rows() {
+async fn providers_detected_reports_five_rows_without_the_retired_gemini_cli() {
     let t = setup();
     let r = call(&t, Method::GET, "/v1/providers/detected", None).await;
     assert_eq!(r.status, StatusCode::OK);
     let list = r.json();
     let items = list.as_array().unwrap();
-    assert_eq!(items.len(), 6);
+    assert_eq!(items.len(), 5);
     let ids: Vec<&str> = items
         .iter()
         .map(|item| item["id"].as_str().unwrap())
         .collect();
-    assert_eq!(
-        ids,
-        vec![
-            "claude",
-            "codex",
-            "cursor",
-            "opencode",
-            "gemini",
-            "chatgpt-plan"
-        ]
-    );
+    assert_eq!(ids, vec!["claude", "codex", "cursor", "opencode", "agy"]);
     for row in items {
         assert_eq!(row["runnable"], false);
     }
@@ -2295,10 +2378,12 @@ async fn providers_detected_sentinel_token_is_never_leaked_or_read() {
     let list = r.json();
     let items = list.as_array().unwrap();
     let opencode = items.iter().find(|x| x["id"] == "opencode").unwrap();
-    let gemini = items.iter().find(|x| x["id"] == "gemini").unwrap();
+    assert!(
+        items.iter().all(|x| x["id"] != "gemini"),
+        "retired and not installed: never listed"
+    );
 
     assert_eq!(opencode["auth"], "unknown");
-    assert_eq!(gemini["auth"], "unknown");
 }
 
 // ----------------------------------------------------------- usage cost
@@ -2330,6 +2415,7 @@ async fn usage_carries_cost_only_when_a_price_is_known() {
         config,
     );
     let state = AppState::new(agent.clone(), storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     let priced = T {
         app: router(state.clone()),
         state,
@@ -2370,6 +2456,7 @@ async fn usage_cost_uses_the_providers_catalog_prices_and_follows_a_reload() {
         LoopConfig::default(),
     );
     let state = AppState::new(agent.clone(), storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     let t = T {
         app: router(state.clone()),
         state,
@@ -2563,7 +2650,7 @@ async fn heartbeats_never_release_a_pause_only_the_release_flag_does() {
         &t,
         Method::PUT,
         "/v1/control/state",
-        Some(json!({"mode": "human_driving"})),
+        Some(json!({"mode": "paused"})),
     )
     .await;
     // A reopened UI heartbeats idle, a stale beat says bot_driving.
@@ -2575,7 +2662,7 @@ async fn heartbeats_never_release_a_pause_only_the_release_flag_does() {
             Some(json!({"mode": mode})),
         )
         .await;
-        assert_eq!(r.json()["latched"], "human_driving", "{mode}");
+        assert_eq!(r.json()["latched"], "paused", "{mode}");
     }
     let r = call(
         &t,
@@ -2585,6 +2672,30 @@ async fn heartbeats_never_release_a_pause_only_the_release_flag_does() {
     )
     .await;
     assert!(r.json()["latched"].is_null());
+}
+
+#[tokio::test]
+async fn a_human_driving_claim_ends_when_its_reporter_reports_idle() {
+    let t = setup();
+    let r = call(
+        &t,
+        Method::PUT,
+        "/v1/control/state",
+        Some(json!({"mode": "human_driving"})),
+    )
+    .await;
+    assert_eq!(r.json()["latched"], "human_driving");
+    let r = call(
+        &t,
+        Method::PUT,
+        "/v1/control/state",
+        Some(json!({"mode": "idle"})),
+    )
+    .await;
+    assert!(
+        r.json()["latched"].is_null(),
+        "a reopened UI must not leave observation refused"
+    );
 }
 
 #[tokio::test]
@@ -2606,6 +2717,7 @@ async fn latched_pause_survives_a_daemon_restart() {
         LoopConfig::default(),
     );
     let state = AppState::new(agent, storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     assert_eq!(state.hub().latched(), Some(crate::dto::ControlMode::Paused));
 }
 
@@ -2669,6 +2781,7 @@ async fn providers_lists_secret_free_cli_records_without_probing() {
         command: "missing-c062-fixture".into(),
     });
     let cfg = provider_catalog::ProviderConfig {
+        quarantined: std::collections::BTreeMap::default(),
         providers: vec![p],
         default_provider: None,
     };
@@ -2926,14 +3039,9 @@ async fn providers_cli_enable_refuses_non_runnable_unknown_and_extra_fields() {
     let t = setup();
     let cfg_path = provider_catalog::config_path(t.state.storage().data_dir());
 
-    for id in [
-        "codex",
-        "chatgpt-plan",
-        "cursor",
-        "opencode",
-        "gemini",
-        "unknown",
-    ] {
+    // CLIs with a native-tools driver can be enabled; they only run with their own tools.
+    {
+        let id = "unknown";
         let r = call(
             &t,
             Method::POST,
@@ -2969,6 +3077,15 @@ async fn providers_cli_enable_refuses_non_runnable_unknown_and_extra_fields() {
         !cfg_path.exists(),
         "no providers.toml should be written when all enables were refused"
     );
+    let native = call(
+        &t,
+        Method::POST,
+        "/v1/providers/cli/enable",
+        Some(json!({ "id": "opencode" })),
+    )
+    .await;
+    assert_eq!(native.status, StatusCode::OK, "{:?}", native.json());
+    assert_eq!(native.json()["id"], "cli:opencode");
 }
 
 #[test]
@@ -3138,6 +3255,7 @@ async fn providers_cli_enable_preserves_existing_default_model_and_model_caps() 
         },
     );
     provider_catalog::ProviderConfig {
+        quarantined: std::collections::BTreeMap::default(),
         providers: vec![existing],
         default_provider: None,
     }
@@ -3217,7 +3335,8 @@ async fn bots_round_trip_runtime_computer_target_and_reject_invalid() {
                     "bot": {"id": "tester", "name": "Tester"},
                     "models": {"executor": "fake/echo"}
                 },
-                "runtime": {"computer": input}
+                "runtime": {"computer": input},
+                "expected_version": call(&t, Method::GET, &bot_path, None).await.json()["version"]
             })),
         )
         .await;
@@ -3251,7 +3370,8 @@ async fn bots_round_trip_runtime_computer_target_and_reject_invalid() {
                 "bot": {"id": "tester", "name": "Tester"},
                 "models": {"executor": "fake/echo"}
             },
-            "runtime": {"computer": "quantum"}
+            "runtime": {"computer": "quantum"},
+            "expected_version": 7
         })),
     )
     .await;
@@ -3411,7 +3531,7 @@ async fn put_bot_without_runtime_preserves_target_and_rejects_conflicting_overri
         &t,
         Method::PUT,
         &path,
-        Some(json!({"profile_toml": PROFILE})),
+        Some(json!({"profile_toml": PROFILE, "expected_version": 1})),
     )
     .await;
     assert_eq!(updated.status, StatusCode::OK);
@@ -3422,13 +3542,98 @@ async fn put_bot_without_runtime_preserves_target_and_rejects_conflicting_overri
         &path,
         Some(json!({
             "profile_toml": format!("{PROFILE}\n[runtime]\ncomputer = \"host\"\n"),
-            "runtime": {"computer": "pc"}
+            "runtime": {"computer": "pc"},
+            "expected_version": 2
         })),
     )
     .await;
     assert_eq!(conflict.status, StatusCode::BAD_REQUEST);
     let current = call(&t, Method::GET, &path, None).await;
     assert_eq!(current.json()["runtime"]["computer"], "pc");
+}
+
+#[tokio::test]
+async fn engine_settings_change_only_through_the_owner_endpoint_with_consent() {
+    let t = setup();
+    let workspace = tempfile::tempdir().unwrap();
+    let profile = PROFILE.replace("fake/echo", "cli:claude/sonnet");
+    let engine = format!(
+        "{profile}
+[engine]
+mode = \"native_tools\"
+"
+    );
+    // Create and update refuse an engine table that arrives through the profile.
+    let denied = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": engine})),
+    )
+    .await;
+    assert_eq!(denied.status, StatusCode::FORBIDDEN);
+    let created = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": profile})),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    let bot = created.json()["id"].as_str().unwrap().to_owned();
+    let path = format!("/v1/bots/{bot}");
+    let denied = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"profile_toml": engine, "expected_version": 1})),
+    )
+    .await;
+    assert_eq!(denied.status, StatusCode::FORBIDDEN);
+    // The engine endpoint needs the consent flag and a safe workspace.
+    let body = |consent: bool| {
+        json!({
+            "mode": "native_tools", "workspace": workspace.path().display().to_string(),
+            "consent_native_tools": consent
+        })
+    };
+    let no = call(
+        &t,
+        Method::PUT,
+        &format!("{path}/engine"),
+        Some(body(false)),
+    )
+    .await;
+    assert_eq!(no.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let data = t.state.storage().data_dir().display().to_string();
+    let bad = call(
+        &t,
+        Method::PUT,
+        &format!("{path}/engine"),
+        Some(json!({
+            "mode": "native_tools", "workspace": data, "consent_native_tools": true
+        })),
+    )
+    .await;
+    assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let ok = call(&t, Method::PUT, &format!("{path}/engine"), Some(body(true))).await;
+    assert_eq!(ok.status, StatusCode::OK, "{:?}", ok.json());
+    assert_eq!(ok.json()["config"]["engine"]["approval_level"], "ask");
+    assert!(ok.json()["config"]["engine"]["consent"]["native_tools_at_ms"].is_number());
+    // A profile edit that does not mention the engine keeps it.
+    let kept = call(
+        &t,
+        Method::PUT,
+        &path,
+        Some(json!({"profile_toml": profile, "expected_version": ok.json()["version"]})),
+    )
+    .await;
+    assert_eq!(kept.status, StatusCode::OK);
+    assert_eq!(kept.json()["config"]["engine"]["mode"], "native_tools");
+    // The kill switch returns the bot to Praxi-governed.
+    let killed = call(&t, Method::POST, &format!("{path}/engine/kill"), None).await;
+    assert_eq!(killed.status, StatusCode::OK);
+    assert_eq!(killed.json()["config"]["engine"]["mode"], "praxi_governed");
 }
 
 // ------------------------------------------------------ POST /v1/runs/stop
@@ -4118,4 +4323,205 @@ async fn the_stop_book_is_bounded_per_actor() {
         assert_eq!(r.status, StatusCode::OK);
     }
     assert!(t.state.stops().lock().len() <= crate::stop::LOCAL_MAX_STOPS);
+}
+
+#[tokio::test]
+async fn c225_schedule_extensions_local_owner_only_for_every_role_and_path_alias() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let body = json!({"bot_id":bot,"name":"check","spec":{"every":{"seconds":60}},"payload":{"kind":"agent_prompt","text":"review"},"precheck":{"kind":"script","code":"return false;"}});
+    let owner = call(&t, Method::POST, "/v1/schedules", Some(body.clone())).await;
+    assert_eq!(owner.status, StatusCode::CREATED, "{:?}", owner.json());
+    assert_eq!(owner.json()["precheck"]["code"], "return false;");
+    let id = owner.json()["id"].as_str().unwrap().to_owned();
+    for role in [
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for (method, path) in [
+            (Method::POST, "/v1/schedules".to_owned()),
+            (Method::POST, "/v1/%73chedules".to_owned()),
+            (Method::POST, "/v1//schedules".to_owned()),
+            (Method::POST, "/v1/schedules/".to_owned()),
+            (Method::PUT, format!("/v1/schedules/{id}")),
+            (Method::PUT, format!("/v1/schedules%2F{id}")),
+            (Method::PUT, format!("/v1/schedules//{id}")),
+            (Method::PUT, format!("/v1/schedules/{id}/")),
+        ] {
+            let mut req = Request::builder()
+                .method(method)
+                .uri(&path)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            req.extensions_mut().insert(crate::PeerIdentity {
+                key: "fake-peer".into(),
+                role,
+            });
+            let response = crate::peer_router(t.state.clone())
+                .oneshot(req)
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{role:?} {path}");
+        }
+    }
+    assert_eq!(t.state.schedule_store().unwrap().list().unwrap().len(), 1);
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    let event = audit
+        .iter()
+        .find(|a| a.action == "schedule.create_intent")
+        .unwrap();
+    assert!(!event.detail.to_string().contains("return false"));
+    assert!(event.detail.get("schedule_id").is_some());
+}
+
+#[tokio::test]
+async fn usage_purpose_totals_are_additive_and_preserve_the_legacy_shape() {
+    let t = setup();
+    let (bot, chat) = make_chat(&t).await;
+    run_and_reply(&t, &chat, "hello").await;
+    let initial = call(&t, Method::GET, "/v1/usage", None).await.json();
+    assert_eq!(initial["by_purpose"]["executor"], initial["total"]);
+    assert_eq!(
+        initial["total"],
+        json!({
+            "prompt_tokens": 10, "completion_tokens": 5, "cached_tokens": 0,
+            "model_calls": 1, "cost_usd": null
+        })
+    );
+    let mut legacy_view = initial.clone();
+    legacy_view.as_object_mut().unwrap().remove("by_purpose");
+    assert_eq!(
+        legacy_view,
+        json!({"runs": 1, "total": initial["total"],
+        "by_bot": [{"bot_id": bot, "prompt_tokens": 10, "completion_tokens": 5,
+            "cached_tokens": 0, "model_calls": 1, "cost_usd": null}]})
+    );
+
+    let st = t.state.storage();
+    let user = t.state.user_id();
+    let run = st.list_runs(user).unwrap()[0].id;
+    // A classifier invocation with no token report is still a real call.
+    let intent = json!({"ledger_version": 1, "call_id": uuid::Uuid::now_v7(),
+        "purpose": "router", "model": "fake/classifier", "step_n": 0,
+        "calls": 1, "tokens": null, "cost_usd": null});
+    st.append_audit(user, Some(run), "bot", "llm.call_started", &intent)
+        .unwrap();
+    st.append_audit(user, Some(run), "bot", "usage", &intent)
+        .unwrap();
+    let u = call(&t, Method::GET, "/v1/usage", None).await.json();
+    assert_eq!(u["by_purpose"]["router"]["model_calls"], 1);
+    assert_eq!(u["total"]["model_calls"], 2);
+    for key in [
+        "prompt_tokens",
+        "completion_tokens",
+        "cached_tokens",
+        "model_calls",
+    ] {
+        let sum: u64 = u["by_purpose"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|p| p[key].as_u64().unwrap())
+            .sum();
+        assert_eq!(u["total"][key], sum, "{key}");
+        assert_eq!(u["by_bot"][0][key], sum, "{key}");
+    }
+}
+
+#[tokio::test]
+async fn usage_legacy_steps_remain_counted_after_a_run_acquires_ledger_entries() {
+    let t = setup();
+    let (_, chat) = make_chat(&t).await;
+    run_and_reply(&t, &chat, "hello").await;
+    let st = t.state.storage();
+    let user = t.state.user_id();
+    let original = st.list_runs(user).unwrap()[0].clone();
+    let mut legacy = original.clone();
+    legacy.id = protocol::RunId::new();
+    st.insert_run(&legacy).unwrap();
+    for mut step in st.list_steps(original.id).unwrap() {
+        step.id = uuid::Uuid::now_v7();
+        step.run_id = legacy.id;
+        st.insert_step(&step).unwrap();
+    }
+    // Only the resumed call is ledger-aware; old successful steps still count.
+    st.append_audit(
+        user,
+        Some(legacy.id),
+        "bot",
+        "llm.call_started",
+        &json!({
+            "ledger_version": 1, "call_id": uuid::Uuid::now_v7(), "purpose": "executor",
+            "model": "fake/echo", "step_n": 9, "tokens": null
+        }),
+    )
+    .unwrap();
+    let u = call(&t, Method::GET, "/v1/usage", None).await.json();
+    assert_eq!(u["runs"], 2);
+    assert_eq!(u["total"]["model_calls"], 3);
+    assert_eq!(u["total"]["prompt_tokens"], 20);
+    assert_eq!(u["by_purpose"]["executor"], u["total"]);
+}
+
+#[tokio::test]
+async fn only_the_owner_changes_a_bots_file_access_mode() {
+    let t = setup();
+    let (bot, _) = make_chat(&t).await;
+    let uri = format!("/v1/bots/{bot}/files");
+    let r = call(&t, Method::GET, &uri, None).await;
+    assert_eq!(r.json()["mode"], "computer", "default is This computer");
+
+    let folder = tempfile::tempdir().unwrap();
+    let body = json!({"mode": "folder", "folders": [folder.path()]});
+    let r = call(&t, Method::PUT, &uri, Some(body.clone())).await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+    assert_eq!(r.json()["mode"], "folder");
+
+    // A paired peer is refused on the dedicated route and on the generic editor.
+    let peer_put = |uri: String, body: Value| {
+        let t = &t;
+        async move {
+            let mut req = Request::builder()
+                .method(Method::PUT)
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            req.extensions_mut().insert(crate::PeerIdentity {
+                key: "peer-key".into(),
+                role: crate::PeerRole::Desktop,
+            });
+            crate::peer_router(t.state.clone())
+                .oneshot(req)
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+    assert_eq!(
+        peer_put(uri.clone(), json!({"mode": "computer"})).await,
+        StatusCode::FORBIDDEN
+    );
+    let stored = call(&t, Method::GET, &format!("/v1/bots/{bot}"), None).await;
+    let version = stored.json()["version"].clone();
+    let profile: Value = serde_json::from_str(&toml_to_json_profile(&stored)).unwrap();
+    let mut changed = profile.clone();
+    changed["files"] = json!({"mode": "computer"});
+    assert_eq!(
+        peer_put(
+            format!("/v1/bots/{bot}"),
+            json!({"config": changed, "expected_version": version})
+        )
+        .await,
+        StatusCode::FORBIDDEN
+    );
+    let r = call(&t, Method::GET, &uri, None).await;
+    assert_eq!(r.json()["mode"], "folder", "peer attempts changed nothing");
+}
+
+fn toml_to_json_profile(bot: &Resp) -> String {
+    bot.json()["config"].to_string()
 }

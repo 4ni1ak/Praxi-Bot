@@ -24,7 +24,8 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tool_registry::{
-    Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError, ToolOutput, ToolSpec,
+    ContentClass, Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError, ToolOutput,
+    ToolSpec,
 };
 
 use crate::error::WorkflowError;
@@ -52,6 +53,14 @@ fn spec(
         effect,
         category,
         platforms: vec![Platform::All],
+        content: match name {
+            // Replay drives other tools and the report is untrusted data.
+            RUN_TOOL_NAME => ContentClass::all(),
+            // Names, descriptions and parameters of saved workflows, which a
+            // tainted run or an import may have written.
+            LIST_TOOL_NAME => ContentClass::untrusted_private(),
+            _ => ContentClass::unspecified(),
+        },
     }
 }
 
@@ -218,6 +227,13 @@ impl Tool for WorkflowRun {
         let mut opts = self.opts.clone();
         opts.run_id.clone_from(&ctx.run_id);
         opts.bot_id.clone_from(&ctx.bot_id);
+        // A saved workflow is persisted behaviour, including all substituted
+        // parameters. Record that exposure before its first outbound step.
+        self.gate.note_exposure(
+            &ctx.run_id,
+            ContentClass::untrusted_private(),
+            "saved workflow",
+        );
         let report = Replayer::new(self.handles.clone(), opts)
             .replay(&wf, &i.params, self.gate.as_ref())
             .await

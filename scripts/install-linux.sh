@@ -31,6 +31,8 @@
 #   --sha256 <hex>       Additional checksum check; never replaces provenance verification
 #   --verify-only       Verify without installing; does not require root or Linux
 #   --port <port>        Daemon port on 127.0.0.1 (default: 47821)
+#   --host-mode          Run the service as 'bot serve --host' (always-on host; still 127.0.0.1 only,
+#                        no inbound port; kept on re-install once set)
 #   --with-desktop       Also install Xvfb + Chromium and a praxi-xvfb.service virtual display
 #   --with-desktop-session  Also install minimal Xfce session on Xvfb (default 1280x800x24; implies --with-desktop)
 #   --with-session-apps  With --with-desktop-session: also install/expose xfce4-terminal and thunar (runs as praxi with read access to praxi.env)
@@ -71,6 +73,7 @@ EXPECTED_SHA=""
 VERIFY_ONLY=0
 PORT="47821"
 PORT_SET=0
+HOST_MODE=0
 DISPLAY_SET=0
 SCREEN_SET=0
 WITH_DESKTOP=0
@@ -136,6 +139,7 @@ Options:
   --sha256 <hex>       Additional checksum check; never replaces provenance verification
   --verify-only       Verify without installing; does not require root or Linux
   --port <port>        Daemon port on 127.0.0.1 (default: 47821; kept on re-install unless given)
+  --host-mode          Run the service as 'bot serve --host' (kept on re-install once set; opens no port)
   --with-desktop       Also install Xvfb + Chromium and a praxi-xvfb.service virtual display
   --with-desktop-session  Also install minimal Xfce session on Xvfb (default 1280x800x24; implies --with-desktop)
   --with-session-apps  With --with-desktop-session: also install/expose xfce4-terminal and thunar
@@ -205,6 +209,7 @@ while [[ $# -gt 0 ]]; do
     --sha256) need_arg "$@"; EXPECTED_SHA="$(sha256_hex "$2")"; shift 2 ;;
     --verify-only) VERIFY_ONLY=1; shift ;;
     --port) need_arg "$@"; PORT="$2"; PORT_SET=1; shift 2 ;;
+    --host-mode) HOST_MODE=1; shift ;;
     --with-desktop) WITH_DESKTOP=1; shift ;;
     --with-desktop-session) WITH_DESKTOP_SESSION=1; WITH_DESKTOP=1; shift ;;
     --with-session-apps) WITH_SESSION_APPS=1; shift ;;
@@ -353,32 +358,50 @@ install_cft() {
     platform=linux-arm64
     expected_sha="${sha256_linux_arm64}"
   fi
-  local libs=(libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0
-    libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2)
-  for pkg in libasound2 libatspi2.0-0; do
-    if apt_candidate "${pkg}t64"; then libs+=("${pkg}t64"); else libs+=("${pkg}"); fi
-  done
-  apt-get install -y --no-install-recommends unzip "${libs[@]}"
-  browser_work="$(mktemp -d)"
-  log "installing official Chrome for Testing ${version} (${platform}); no snap/PPA"
-  if ! curl -fSL --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 180 \
-    "https://storage.googleapis.com/chrome-for-testing-public/${version}/${platform}/chrome-${platform}.zip" \
-    -o "${browser_work}/chrome.zip"; then
-    rm -rf "${browser_work}"
-    die "Chrome for Testing download failed; install a non-snap browser and use --skip-packages"
+  local url="https://storage.googleapis.com/chrome-for-testing-public/${version}/${platform}/chrome-${platform}.zip"
+  # Shared libraries Chrome links against, plus unzip for the archive.
+  if command -v apt-get >/dev/null 2>&1; then
+    local libs=(libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0
+      libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2)
+    for pkg in libasound2 libatspi2.0-0; do
+      if apt_candidate "${pkg}t64"; then libs+=("${pkg}t64"); else libs+=("${pkg}"); fi
+    done
+    apt-get install -y --no-install-recommends unzip "${libs[@]}"
+  else
+    dnf install -y --setopt=install_weak_deps=False unzip nss atk at-spi2-atk cups-libs \
+      libdrm libxkbcommon libXcomposite libXdamage libXfixes libXrandr mesa-libgbm pango \
+      cairo alsa-lib || die "could not install the libraries Chrome for Testing needs (see the dnf error above). Install them, then re-run this installer; it resumes where it stopped."
   fi
-  actual_sha="$(sha256_hex "$(sha256sum "${browser_work}/chrome.zip")")"
-  if [[ "${actual_sha}" != "${expected_sha}" ]]; then
-    rm -f "${browser_work}/chrome.zip"
+  # Idempotent: a re-run (bot host repair, upgrades) keeps a working pinned browser.
+  if [[ -x /opt/praxi-browser/chrome ]] && /opt/praxi-browser/chrome --version 2>/dev/null | grep -qF "${version}"; then
+    log "Chrome for Testing ${version} (${platform}) is already installed; skipping the download"
+  else
+    browser_work="$(mktemp -d)"
+    log "installing official Chrome for Testing ${version} (${platform}); no snap/PPA"
+    if ! curl -fSL --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 300 \
+      --retry 3 --retry-delay 5 --retry-connrefused "${url}" -o "${browser_work}/chrome.zip"; then
+      rm -rf "${browser_work}"
+      die "could not download the browser (Chrome for Testing ${version}, ${platform}) from storage.googleapis.com.
+  What to do next:
+    1. Check that this server can reach https://storage.googleapis.com (for example: curl -I ${url}).
+    2. Re-run the same install command. It resumes and skips what is already installed.
+    3. Or install a non-snap Chrome or Chromium yourself, then re-run with --skip-packages
+       (Ubuntu's chromium package is a snap and is not supported; see docs/guide/remote-host.md).
+  The rest of the host does not depend on the browser, but browser tools stay unavailable until it is installed."
+    fi
+    actual_sha="$(sha256_hex "$(sha256sum "${browser_work}/chrome.zip")")"
+    if [[ "${actual_sha}" != "${expected_sha}" ]]; then
+      rm -f "${browser_work}/chrome.zip"
+      rm -rf "${browser_work}"
+      die "Chrome for Testing SHA-256 mismatch for ${platform} (expected ${expected_sha}, got ${actual_sha}). The download was corrupted or altered; nothing was installed. Re-run to retry, and report it if it keeps failing."
+    fi
+    log "Chrome for Testing checksum OK"
+    unzip -q "${browser_work}/chrome.zip" -d "${browser_work}"
+    install -d -m 0755 /opt/praxi-browser
+    cp -a "${browser_work}/chrome-${platform}/." /opt/praxi-browser/
+    chown -R root:root /opt/praxi-browser
     rm -rf "${browser_work}"
-    die "Chrome for Testing SHA-256 mismatch for ${platform} (expected ${expected_sha}, got ${actual_sha})"
   fi
-  log "Chrome for Testing checksum OK"
-  unzip -q "${browser_work}/chrome.zip" -d "${browser_work}"
-  install -d -m 0755 /opt/praxi-browser
-  cp -a "${browser_work}/chrome-${platform}/." /opt/praxi-browser/
-  chown -R root:root /opt/praxi-browser
-  rm -rf "${browser_work}"
   # Ubuntu 24.04 restricts user namespaces to named AppArmor applications.
   # Same userns-only profile as Ubuntu's /etc/apparmor.d/chrome; keep the
   # browser sandbox enabled and leave all systemd protections in place.
@@ -391,6 +414,35 @@ profile praxi-browser /opt/praxi-browser/chrome flags=(unconfined) {
 }
 PROFILE
     apparmor_parser -r /etc/apparmor.d/praxi-browser
+  fi
+  # Fail now, with the cause, instead of a browser that silently cannot start.
+  local missing
+  missing="$(ldd /opt/praxi-browser/chrome 2>/dev/null | awk '/not found/ {print $1}' | sort -u | tr '\n' ' ')"
+  if [[ -n "${missing}" ]]; then
+    die "the browser at /opt/praxi-browser/chrome is missing shared libraries: ${missing}. Install the packages that provide them and re-run this installer."
+  fi
+  /opt/praxi-browser/chrome --version >/dev/null 2>&1 \
+    || die "the browser at /opt/praxi-browser/chrome does not start on this CPU (${ARCH}). Remove /opt/praxi-browser and re-run this installer to download the matching build."
+}
+
+# Turkish needs nothing beyond Noto Sans; emoji and CJK pages need these two
+# families. Missing fonts only make some text render as empty boxes, so a
+# failure here is a warning, never an install failure.
+install_desktop_fonts() {
+  local pkg fonts=()
+  if command -v apt-get >/dev/null 2>&1; then
+    for pkg in fonts-noto-color-emoji fonts-noto-cjk; do
+      if apt_candidate "${pkg}"; then fonts+=("${pkg}"); else warn "font package '${pkg}' has no candidate on ${ARCH}; skipping"; fi
+    done
+    if [[ "${#fonts[@]}" -gt 0 ]]; then
+      apt-get install -y --no-install-recommends "${fonts[@]}" \
+        || warn "could not install ${fonts[*]}; emoji or CJK text in the browser may show empty boxes. Install them later with apt-get install ${fonts[*]}"
+    fi
+  elif command -v dnf >/dev/null 2>&1; then
+    for pkg in google-noto-emoji-color-fonts google-noto-sans-cjk-ttc-fonts; do
+      dnf install -y --setopt=install_weak_deps=False "${pkg}" \
+        || warn "could not install ${pkg}; emoji or CJK text in the browser may show empty boxes"
+    done
   fi
 }
 
@@ -472,11 +524,18 @@ install_packages() {
       else
         install_cft
       fi
+      install_desktop_fonts
     fi
   elif command -v dnf >/dev/null 2>&1; then
     dnf install -y --setopt=install_weak_deps=False "${pkgs_dnf[@]}"
     if [[ "${WITH_DESKTOP}" -eq 1 ]]; then
-      dnf install -y --setopt=install_weak_deps=False chromium || die "install a non-snap Chromium and re-run with --skip-packages"
+      # Distro chromium when the enabled repos have one; otherwise the same
+      # pinned Chrome for Testing build (x86_64 and aarch64) as on Ubuntu.
+      if ! dnf install -y --setopt=install_weak_deps=False chromium; then
+        warn "no chromium package in the enabled repositories; using Chrome for Testing instead"
+        install_cft
+      fi
+      install_desktop_fonts
     fi
   else
     warn "unknown package manager; install curl, tar, libdbus, libssl.so.3 (and Xvfb + Chromium for --with-desktop) yourself"
@@ -510,12 +569,22 @@ fi
 if [[ "${VERSION}" == "latest" ]]; then
   # Resolve the tag before downloading. Never trust an arbitrary redirect host
   # or a mutable 'latest' identity as the expected signer/source ref.
-  latest_url="$(curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
-    -o /dev/null --write-out '%{redirect_url}' "https://github.com/${REPO}/releases/latest")" \
-    || die "could not resolve the latest release tag"
   latest_prefix="https://github.com/${REPO}/releases/tag/"
-  [[ "${latest_url}" == "${latest_prefix}"* ]] || die "latest release did not resolve to the expected repository"
-  VERSION="${latest_url#"${latest_prefix}"}"
+  if latest_url="$(curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
+    -o /dev/null --write-out '%{redirect_url}' "https://github.com/${REPO}/releases/latest")"; then
+    [[ "${latest_url}" == "${latest_prefix}"* ]] || die "latest release did not resolve to the expected repository"
+    VERSION="${latest_url#"${latest_prefix}"}"
+  else
+    # GitHub's "latest" never points at a pre-release and answers 404 while only pre-releases
+    # exist (v0.1.0-alpha.1). Ask the API of the pinned repository for its newest release instead;
+    # the tag still goes through the same format check and the same pinned provenance identity.
+    api_json="$(curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
+      "https://api.github.com/repos/${REPO}/releases?per_page=1")" \
+      || die "could not resolve the latest release tag"
+    VERSION="$(printf '%s' "${api_json}" \
+      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+    [[ -n "${VERSION}" ]] || die "could not resolve the latest release tag (no published release)"
+  fi
 fi
 [[ "${VERSION}" =~ ^v[0-9][0-9A-Za-z._+-]*$ ]] || die "invalid release tag (expected v followed by a version)"
 [[ -z "${EXPECTED_SHA}" || "${EXPECTED_SHA}" =~ ^[0-9a-f]{64}$ ]] || die "invalid --sha256"
@@ -688,14 +757,25 @@ if [[ -n "${TRUSTED_ROOT}" ]]; then
   cp -- "${TRUSTED_ROOT}" "${WORK}/trusted_root.jsonl"
   trust_args=(--custom-trusted-root "${WORK}/trusted_root.jsonl")
 fi
-# Identity constraints remain fixed in both online and offline verification.
-gh attestation verify "${WORK}/${ASSET}" --bundle "${WORK}/${BUNDLE_ASSET}" ${trust_args[@]+"${trust_args[@]}"} \
-  --repo "${REPO}" --hostname github.com \
-  --signer-workflow "${SIGNER_WORKFLOW}" \
-  --source-ref "refs/tags/${VERSION}" --deny-self-hosted-runners \
-  --cert-oidc-issuer https://token.actions.githubusercontent.com \
-  --predicate-type https://slsa.dev/provenance/v1 --digest-alg sha256 \
-  || die "provenance verification failed; refusing to install (a checksum is not proof of origin)"
+# Identity constraints remain fixed in both online and offline verification. The only accepted
+# source ref is the release tag itself; a PRE-RELEASE tag (v1.2.3-alpha.1, any suffix) may also
+# carry provenance from this repository's linux-release workflow run on main, which is how a
+# maintainer republishes the Linux assets of an existing pre-release. Final tags never do.
+source_refs=("refs/tags/${VERSION}")
+[[ "${VERSION}" == *-* ]] && source_refs+=("refs/heads/main")
+verified=0
+for source_ref in "${source_refs[@]}"; do
+  if gh attestation verify "${WORK}/${ASSET}" --bundle "${WORK}/${BUNDLE_ASSET}" ${trust_args[@]+"${trust_args[@]}"} \
+    --repo "${REPO}" --hostname github.com \
+    --signer-workflow "${SIGNER_WORKFLOW}" \
+    --source-ref "${source_ref}" --deny-self-hosted-runners \
+    --cert-oidc-issuer https://token.actions.githubusercontent.com \
+    --predicate-type https://slsa.dev/provenance/v1 --digest-alg sha256; then
+    verified=1
+    break
+  fi
+done
+[[ "${verified}" -eq 1 ]] || die "provenance verification failed; refusing to install (a checksum is not proof of origin)"
 log "verified release provenance for ${VERSION}"
 if [[ "${VERIFY_ONLY}" -eq 1 ]]; then
   log "verification complete; no installation performed"
@@ -762,7 +842,9 @@ for browser in /opt/praxi-browser/chrome /usr/bin/google-chrome /usr/bin/google-
   break
 done
 if [[ "${WITH_DESKTOP}" -eq 1 ]]; then
-  [[ -n "${BROWSER_BIN}" ]] || die "no non-snap browser found; snap-only installs are unsupported. Install Chrome/Chromium (see docs/guide/remote-host.md)"
+  [[ -n "${BROWSER_BIN}" ]] || die "no non-snap browser found; snap-only installs are unsupported.
+  What to do next: re-run without --skip-packages so the installer downloads Chrome for Testing, or install a
+  non-snap Chrome/Chromium and pass its path as BOT_BROWSER_PATH (see docs/guide/remote-host.md)."
 fi
 
 # ------------------------------------------------------------------ user
@@ -1031,9 +1113,16 @@ elif [[ "${WITHOUT_DESKTOP}" -eq 1 && -f "${UNIT_DIR}/${SLICE_NAME}" ]]; then
   rm -f "${UNIT_DIR}/${SLICE_NAME}"
 fi
 
+# Host mode is sticky: a re-install without --host-mode keeps an existing host unit.
+if [[ "${HOST_MODE}" -eq 0 && -f "${UNIT_DIR}/praxi.service" ]] && grep -Eq '^ExecStart=.*/bot serve --host([[:space:]]|$)' "${UNIT_DIR}/praxi.service"; then
+  HOST_MODE=1
+fi
+SERVE_ARGS="serve"
+[[ "${HOST_MODE}" -eq 0 ]] || SERVE_ARGS="serve --host"
+
 cat > "${UNIT_DIR}/praxi.service" <<UNIT
 [Unit]
-Description=Praxi-Bot daemon (bot serve, 127.0.0.1 only)
+Description=Praxi-Bot daemon (bot ${SERVE_ARGS}, 127.0.0.1 only)
 After=network-online.target
 Wants=network-online.target
 
@@ -1044,7 +1133,7 @@ ${SLICE_LINE:+${SLICE_LINE}
 Group=${SVC_USER}
 WorkingDirectory=${DATA_DIR}
 EnvironmentFile=${ENV_FILE}
-ExecStart=${PREFIX}/bin/bot serve
+ExecStart=${PREFIX}/bin/bot ${SERVE_ARGS}
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
@@ -1282,17 +1371,25 @@ for candidate in "${BOT_BROWSER_PATH:-}" "${PRAXI_BROWSER_PATH:-}" /opt/praxi-br
   break
 done
 if [[ -n "${browser_bin}" ]]; then
+  browser_icon="web-browser"
+  [[ ! -f "${browser_bin%/*}/product_logo_48.png" ]] || browser_icon="${browser_bin%/*}/product_logo_48.png"
   cat > "${XDG_DATA_HOME}/applications/praxi-browser.desktop" <<DESKTOP
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=Web Browser
-Comment=Launch browser manually (lazy, not autostarted)
+Comment=Open the web browser (opened only by a person, never autostarted)
 Exec=${browser_bin} --no-first-run --no-default-browser-check --disable-dev-shm-usage --disable-gpu %U
+Icon=${browser_icon}
 Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
 DESKTOP
+  # Also put it on the desktop so a person watching the live view sees it.
+  # Executable .desktop files on ~/Desktop open without a trust prompt in Xfce.
+  mkdir -p "${HOME}/Desktop"
+  cp "${XDG_DATA_HOME}/applications/praxi-browser.desktop" "${HOME}/Desktop/praxi-browser.desktop"
+  chmod 0755 "${HOME}/Desktop/praxi-browser.desktop"
 fi
 if [[ "${PRAXI_ENABLE_SESSION_APPS:-0}" == "1" ]]; then
   for app_desktop in xfce4-terminal.desktop thunar.desktop; do

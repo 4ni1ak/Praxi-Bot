@@ -28,6 +28,11 @@ out keeps its previous value. `bots: null` means every bot.
   (they ask for approval) even when the server marks them read-only. Set
   `trust_hints = true` on that server only if you trust it to lower its own
   tools to read-only.
+- **What the results are.** An MCP result is untrusted. It is also a private
+  read unless `public_content = true`, and every tool is treated as able to
+  send data off the machine unless `local_only = true`. Those two flags are
+  how the egress gate decides whether a later send must ask. Both default to
+  false.
 - **Who may use it:** `bots` is a list of bot ids (the bot's storage UUID, not
   its profile id), or omitted / `null` for every bot. An empty list `[]` means
   no bot at all, never every bot. A bot that is not listed does not see the
@@ -61,6 +66,8 @@ id = "files"
 enabled = true
 category = "fs"          # accounts (default) | fs | shell | browser | ...
 trust_hints = false      # true: believe this server's readOnlyHint
+public_content = false   # true: results are not treated as private reads
+local_only = false       # true: tools cannot send data off this machine
 # bots = ["bot-a"]       # omit or null: every bot
 tool_allow = ["read_*"]
 
@@ -80,3 +87,24 @@ in the curated catalog.
 
 A stdio `command` is executed. Do not point it at a shell one-liner or at a
 program you would not run yourself in a terminal as the daemon user.
+
+For HTTP OAuth, client identity is optional (CIMD, pre-registered client, then
+legacy dynamic registration). A confidential client uses a secret **name**:
+
+```toml
+[[server]]
+id = "remote"
+[server.transport]
+type = "http"
+url = "https://example.com/mcp"
+[server.oauth]
+client_id = "registered-client"
+client_secret_ref = "mcp/remote-client-secret"
+# client_metadata_url = "https://your-domain.example/mcp-client.json"
+# allow_loopback_http = true   # local development only; default false
+```
+
+Store that secret using `bot secrets set mcp/remote-client-secret`; never put
+its value in `mcp.toml`. Access and refresh tokens live in the secret store
+under `mcp/remote/oauth`. Client secrets are resolved again on reconnect so
+rotation takes effect. OAuth settings are refused on stdio transports.

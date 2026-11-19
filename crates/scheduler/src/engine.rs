@@ -3,7 +3,7 @@
 //! via monotonic vs. wall time, applying [`MisfirePolicy`], reserving durable
 //! occurrence intents, and enforcing a per-schedule concurrency limit of 1.
 //!
-//! Recovery boundary (task 136): the current executor cannot accept the
+//! Recovery boundary: the current executor cannot accept the
 //! `schedule_id:due_ms` idempotency key or return a durable `run_id`. Pending
 //! and interrupted dispatches survive in SQLite but are deliberately NOT
 //! replayed on startup. Retrying a dispatch could duplicate an agent run.
@@ -40,13 +40,33 @@ pub const MISFIRE_GRACE_MS: i64 = 5_000;
 
 /// Maximum sleep slice when no schedule has a nearer `next_run_at` so periodic
 /// wall-clock checks remain bounded.
-const MAX_IDLE_SLEEP_MS: u64 = 60_000;
+const MAX_IDLE_SLEEP_MS: u64 = 1_000;
 
 /// Callback invoked by the [`Scheduler`] when a schedule or webhook fires.
 #[async_trait]
 pub trait ScheduleExecutor: Send + Sync + 'static {
     /// Execute a single triggered occurrence of `schedule`.
     async fn execute(&self, schedule: &Schedule) -> Result<()>;
+
+    /// Read-only host for a precheck; never creates an agent run.
+    async fn precheck(
+        &self,
+        _schedule: &Schedule,
+        _previous: Option<&str>,
+    ) -> Result<crate::precheck::Outcome> {
+        Err(SchedulerError::Execution(
+            "precheck host unavailable".into(),
+        ))
+    }
+
+    /// Bounded filesystem metadata or e-mail headers, through host permission gates.
+    async fn poll_trigger(
+        &self,
+        _schedule: &Schedule,
+        _trigger: &crate::Trigger,
+    ) -> Result<Vec<crate::watch::Observation>> {
+        Err(SchedulerError::Execution("trigger host unavailable".into()))
+    }
 }
 
 struct InFlightGuard {
@@ -75,6 +95,7 @@ struct Inner {
     req_seq: AtomicU64,
     pass_tx: watch::Sender<u64>,
     replay_guard: ReplayGuard,
+    watch_slots: Arc<tokio::sync::Semaphore>,
 }
 
 /// Handle to the running scheduler engine.
@@ -127,6 +148,7 @@ impl Scheduler {
             req_seq: AtomicU64::new(0),
             pass_tx,
             replay_guard: ReplayGuard::default(),
+            watch_slots: Arc::new(tokio::sync::Semaphore::new(4)),
         });
 
         let init_wall = inner.clock.wall_ms();
@@ -138,7 +160,7 @@ impl Scheduler {
             Ok(0) => {}
             Ok(count) => tracing::warn!(
                 count,
-                "marked unresolved schedule occurrences missed/interrupted; automatic replay awaits durable idempotent starts (task 136)"
+                "marked unresolved schedule occurrences missed/interrupted; automatic replay awaits durable idempotent starts"
             ),
             Err(error) => tracing::error!(%error, "failed to recover unresolved schedule intents"),
         }
@@ -205,7 +227,7 @@ impl Scheduler {
             return Err(SchedulerError::Busy(id.to_string()));
         };
         self.commit_replay(pending, now_ms)?;
-        self.inner.executor.execute(&fired).await
+        execute_checked(&self.inner.store, self.inner.executor.as_ref(), &fired).await
     }
 
     /// Like [`Self::handle_webhook`], but returns as soon as the request is
@@ -276,6 +298,9 @@ impl Scheduler {
             .store
             .get(id)?
             .ok_or_else(|| SchedulerError::NotFound(format!("schedule {id}")))?;
+        if self.inner.store.frozen_for(id)?.is_some() {
+            return Err(SchedulerError::Frozen(id.to_string()));
+        }
         let Some(guard) = try_acquire_in_flight(&self.inner, &schedule) else {
             return Err(SchedulerError::Busy(id.to_string()));
         };
@@ -398,6 +423,10 @@ async fn run_loop(inner: Arc<Inner>, mut prev_wall_ms: i64, mut prev_mono_ms: i6
             tracing::error!(error = %e, "error processing due schedules");
         }
 
+        if let Err(error) = poll_triggers(&inner, now_wall_ms) {
+            let _ = error;
+            tracing::error!("schedule trigger pass failed");
+        }
         let _ = inner.pass_tx.send(observed_req);
 
         // If another tick was requested while we were running, loop immediately.
@@ -553,7 +582,6 @@ fn try_acquire_in_flight(inner: &Arc<Inner>, schedule: &Schedule) -> Option<InFl
     if in_flight.contains(&schedule.id) {
         tracing::warn!(
             schedule_id = %schedule.id,
-            name = %schedule.name,
             "skipping scheduled run: previous execution is still in flight (concurrency limit = 1)"
         );
         drop(in_flight);
@@ -573,14 +601,12 @@ fn try_acquire_in_flight(inner: &Arc<Inner>, schedule: &Schedule) -> Option<InFl
 }
 
 fn spawn_direct_execution(inner: &Arc<Inner>, schedule: Schedule, guard: InFlightGuard) {
-    let executor = Arc::clone(&inner.executor);
+    let inner = Arc::clone(inner);
     tokio::spawn(async move {
         let _guard = guard;
-        if let Err(e) = executor.execute(&schedule).await {
+        if let Err(_e) = execute_checked(&inner.store, inner.executor.as_ref(), &schedule).await {
             tracing::error!(
                 schedule_id = %schedule.id,
-                name = %schedule.name,
-                error = %e,
                 "scheduled execution failed"
             );
         }
@@ -636,7 +662,7 @@ fn spawn_timer_executions(
                 }
             };
             let occurrence = format!("{id}:{due_ms}");
-            let outcome = inner.executor.execute(&schedule).await;
+            let outcome = execute_checked(&inner.store, inner.executor.as_ref(), &schedule).await;
             if let Err(error) = &outcome {
                 tracing::error!(%occurrence, %error, "scheduled execution failed");
             }
@@ -646,4 +672,144 @@ fn spawn_timer_executions(
             }
         }
     });
+}
+
+/// Every ingress shares this no-run-before-precheck boundary. A stale definition
+/// cannot finish its check and start work after an owner edit or deletion.
+pub(crate) async fn execute_checked(
+    store: &ScheduleStore,
+    executor: &dyn ScheduleExecutor,
+    schedule: &Schedule,
+) -> Result<()> {
+    // A schedule that moved to a server never fires here, whichever ingress asked.
+    if store.frozen_for(schedule.id)?.is_some() {
+        return Ok(());
+    }
+    let mut fired = schedule.clone();
+    if fired.precheck.is_some() {
+        let mut state = store.check_state(schedule)?;
+        let outcome = tokio::time::timeout(
+            crate::precheck::TIMEOUT,
+            executor.precheck(schedule, state.last_hash.as_deref()),
+        )
+        .await;
+        if let Ok(Ok(outcome)) = outcome {
+            state.precheck_errors = 0;
+            if let Some(hash) = outcome.hash {
+                state.last_hash = Some(hash);
+            }
+            if !outcome.run {
+                state.skipped_by_precheck = state.skipped_by_precheck.saturating_add(1);
+            }
+            if !store.save_check_state(schedule, &state)? {
+                return Ok(());
+            }
+            if !outcome.run {
+                return Ok(());
+            }
+            if let Some(input) = outcome.input {
+                fired.external_input = Some(input);
+            }
+        } else {
+            state.precheck_errors = state.precheck_errors.saturating_add(1);
+            if !store.save_check_state(schedule, &state)? {
+                return Ok(());
+            }
+            fired.precheck_failed = true;
+        }
+    }
+    let Some(current) = store.get(schedule.id)? else {
+        return Ok(());
+    };
+    if current.revision != schedule.revision {
+        return Ok(());
+    }
+    // The tenth failed check still fails open; the next firing is paused.
+    executor.execute(&fired).await
+}
+
+fn poll_triggers(inner: &Arc<Inner>, now: i64) -> Result<()> {
+    for schedule in inner.store.list()? {
+        if !schedule.enabled || inner.in_flight.lock().contains(&schedule.id) {
+            continue;
+        }
+        let Some(trigger) = inner.store.get_trigger(schedule.id)? else {
+            continue;
+        };
+        if matches!(trigger, crate::Trigger::Webhook { .. }) {
+            continue;
+        }
+        let state = inner.store.check_state(&schedule)?;
+        let mut watch = state.watch.clone().unwrap_or_default();
+        // Do not occupy a poll slot or write SQLite on idle one-second wakes.
+        if now < watch.next_poll_ms && watch.take_ready(&trigger, now).is_none() {
+            continue;
+        }
+        let Ok(slot) = Arc::clone(&inner.watch_slots).try_acquire_owned() else {
+            continue;
+        };
+        let Some(guard) = try_acquire_in_flight(inner, &schedule) else {
+            continue;
+        };
+        let inner = Arc::clone(inner);
+        tokio::spawn(async move {
+            let _guard = guard;
+            let result = poll_one(&inner, &schedule, &trigger, state, now).await;
+            drop(slot);
+            let result = match result {
+                Ok(Some(fired)) => {
+                    execute_checked(&inner.store, inner.executor.as_ref(), &fired).await
+                }
+                Ok(None) => Ok(()),
+                Err(error) => Err(error),
+            };
+            if result.is_err() {
+                tracing::error!(schedule_id=%schedule.id,"schedule source polling failed");
+            }
+        });
+    }
+    Ok(())
+}
+
+async fn poll_one(
+    inner: &Arc<Inner>,
+    schedule: &Schedule,
+    trigger: &crate::Trigger,
+    mut state: crate::precheck::CheckState,
+    now: i64,
+) -> Result<Option<Schedule>> {
+    let mut watch = state.watch.take().unwrap_or_default();
+    if now >= watch.next_poll_ms {
+        let observed = tokio::select! {
+            ()=inner.cancel.cancelled()=>return Ok(None),
+            result=tokio::time::timeout(crate::precheck::TIMEOUT,inner.executor.poll_trigger(schedule,trigger))=>match result {
+                Ok(Ok(entries))=>watch.observe(trigger,now,entries).is_ok(), _=>false,
+            }
+        };
+        if observed {
+            state.trigger_errors = 0;
+        } else {
+            state.trigger_errors = state.trigger_errors.saturating_add(1);
+            watch.next_poll_ms = now.saturating_add(match trigger {
+                crate::Trigger::Email { .. } => crate::watch::EMAIL_POLL_MS,
+                _ => crate::watch::FILE_POLL_MS,
+            });
+        }
+    }
+    let ready = if state.trigger_errors < 10 {
+        watch.take_ready(trigger, now)
+    } else {
+        None
+    };
+    state.watch = Some(watch);
+    if !inner.store.save_check_state(schedule, &state)? {
+        return Ok(None);
+    }
+    if let Some(input) = ready {
+        let mut fired = schedule.clone();
+        fired.external_input = Some(input);
+        inner.store.touch_last_run(fired.id, now)?;
+        return Ok(Some(fired));
+    }
+    Ok(None)
 }

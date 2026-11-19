@@ -690,6 +690,7 @@ impl Decider {
         })
     }
 
+    #[allow(clippy::too_many_lines)] // one ordered pass: cache, budget, cooldowns, backends, validation
     async fn decide_inner(
         &self,
         req: &DecisionRequest,

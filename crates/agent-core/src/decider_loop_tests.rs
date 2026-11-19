@@ -632,6 +632,7 @@ async fn the_ladder_keeps_priority_and_subagents_are_not_planned() {
 /// nothing else: a write still asks for approval, a tool the profile hides
 /// stays hidden, and nothing runs without the permission engine's consent.
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // one scenario per hostile plan, asserted end to end
 async fn a_hostile_decider_cannot_bypass_the_permission_engine() {
     for hostile in ["only-fs", "trivial", "everything"] {
         let env = setup();
@@ -722,11 +723,11 @@ async fn a_hostile_decider_cannot_bypass_the_permission_engine() {
             .collect();
         assert_eq!(tool_texts.len(), 4, "{hostile}");
         assert!(
-            tool_texts[0].contains("denied"),
+            tool_texts[0].contains("not authorized"),
             "{hostile}: {tool_texts:?}"
         );
         assert!(
-            tool_texts[1].contains("denied"),
+            tool_texts[1].contains("not authorized"),
             "{hostile}: {tool_texts:?}"
         );
         assert!(

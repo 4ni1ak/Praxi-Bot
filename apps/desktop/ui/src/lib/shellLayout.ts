@@ -1,7 +1,9 @@
 /**
- * Geometry of the app shell (card 198-B): the resizable left rail and right panel.
+ * Geometry of the app shell: the resizable left rail and right panel.
  * Pure functions plus a tolerant localStorage mirror, so the numbers are testable.
  */
+import { paintedUiStyle } from "ui/surface-model";
+import type { UiStyle } from "ui/theme-model";
 
 /** Rail widths in px.  Below `RAIL_COLLAPSE_BELOW` the rail snaps to icons only. */
 export const RAIL_MINI = 68;
@@ -54,9 +56,18 @@ export const MAIN_MIN = 320;
 export const FLOAT_PAD = 12;
 export const FLOAT_GAP = 12;
 
-/** The shell floats in the glass style or over a backdrop (mirrors `applyTheme`'s `data-float`). */
-export function isFloatShell(style: string, backdropActive: boolean): boolean {
-  return style === "glass" || backdropActive;
+/**
+ * The shell floats in the glass and tinted styles or over a backdrop (mirrors `applyTheme`'s
+ * `data-float`).  `style` is the saved style; the painted one may differ on this platform
+ * (reduced transparency paints solid), which `painted` resolves.
+ */
+export function isFloatShell(
+  style: string,
+  backdropActive: boolean,
+  painted: (style: UiStyle) => UiStyle = paintedUiStyle
+): boolean {
+  const s = painted(style as UiStyle);
+  return s === "glass" || s === "tinted" || backdropActive;
 }
 
 /**

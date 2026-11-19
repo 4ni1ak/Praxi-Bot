@@ -186,18 +186,34 @@ fn short_id(id: &str) -> &str {
 }
 
 /// What the CLI prints for an approval. Details (a schedule) are shown in full;
-/// if they cannot be shown, the approval is left to the desktop app.
+/// if they cannot be shown, or they are too large to review here, the
+/// approval is left to the desktop app.
 fn approval_text(a: &protocol::event::ApprovalNeeded) -> String {
+    const MAX_REVIEW_CHARS: usize = 40 * 3500;
     match &a.details {
         None => format!(
             "\n[approval needed] {}\n  approve with: bot approve {}",
             a.summary, a.call_id
         ),
         Some(d) => match protocol::approval_text::describe_details(d) {
-            Some(full) => format!(
-                "\n[approval needed: {}]\n{full}  approve once with: bot approve {}",
-                a.tool_name, a.call_id
+            Some(full) if full.chars().count() > MAX_REVIEW_CHARS => format!(
+                "\n[approval needed: {}] this approval is too large to review here. Review it in the desktop app.",
+                a.tool_name
             ),
+            Some(full) => {
+                let run = if protocol::approval_text::control_grant_offered(d) {
+                    format!(
+                        "\n  approve for this task (this program only) with: bot approve {} --scope run_control",
+                        a.call_id
+                    )
+                } else {
+                    String::new()
+                };
+                format!(
+                    "\n[approval needed: {}]\n{full}  approve once with: bot approve {}{run}",
+                    a.tool_name, a.call_id
+                )
+            }
             None => format!(
                 "\n[approval needed: {}] this client cannot show what it would do; approve or deny it in the desktop app",
                 a.tool_name
@@ -617,12 +633,61 @@ mod tests {
     }
 
     #[test]
+    fn cli_shows_complete_app_action_arguments() {
+        let body = format!("{}RECIPIENT-AT-END", "x".repeat(2000));
+        let text = approval_text(&needed(Some(serde_json::json!({
+            "kind":"app_action","app_name":"GitHub","action_slug":"GITHUB_SEND", "version":"20260901_00", "arguments":{"body":body}
+        }))));
+        assert!(
+            text.contains(&body)
+                && text.contains("GitHub / GITHUB_SEND")
+                && text.contains("via Composio")
+        );
+        assert!(text.contains("bot approve"));
+        assert!(!text.contains("cut at 300 bytes"));
+    }
+
+    #[test]
     fn cli_refuses_to_approve_details_it_cannot_show() {
         let text = approval_text(&needed(Some(serde_json::json!({"kind": "mystery"}))));
         assert!(text.contains("desktop app"));
         assert!(!text.contains("bot approve"));
         // Plain approvals are unchanged.
         assert!(approval_text(&needed(None)).contains("bot approve"));
+    }
+
+    #[test]
+    fn cli_egress_card_shows_the_computer_target() {
+        let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let text = approval_text(&needed(Some(serde_json::json!({
+            "kind": "egress",
+            "reason": "typing after a read",
+            "host": "the desktop",
+            "payload": "hello",
+            "payload_kind": "body",
+            "computer_target": {"kind": "pc", "node_id": id, "node_name": "Work PC"},
+        }))));
+        assert!(
+            text.contains(&format!("COMPUTER: pc \"Work PC\" (id {id})")),
+            "{text}"
+        );
+        assert!(text.contains("bot approve"), "{text}");
+    }
+
+    #[test]
+    fn cli_refuses_an_approval_too_large_to_review() {
+        let marker = "PAYLOAD-MARKER-XYZ";
+        let payload = marker.repeat(40 * 3500);
+        let text = approval_text(&needed(Some(serde_json::json!({
+            "kind": "egress",
+            "reason": "send",
+            "host": "example.test",
+            "payload": payload,
+            "payload_kind": "body",
+        }))));
+        assert!(text.contains("desktop app"), "{text}");
+        assert!(!text.contains("bot approve"), "{text}");
+        assert!(!text.contains(marker), "{text}");
     }
 
     const TOKEN: &str = "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd";
@@ -642,6 +707,7 @@ mod tests {
             None,
         );
         let state = AppState::new(agent, storage, DaemonConfig::new(TOKEN)).unwrap();
+        state.set_owner_key(crate::client::TEST_OWNER_KEY.into());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(daemon_api::serve(listener, state, std::future::pending()));
@@ -651,7 +717,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn bots_chat_status_approve_against_a_live_daemon() {
         let (dir, url) = daemon().await;
-        let c = Client::new(&url, TOKEN.to_owned());
+        let c = Client::new(&url, TOKEN.to_owned())
+            .with_owner_key(Some(crate::client::TEST_OWNER_KEY.to_owned()));
         let mut out = Vec::new();
 
         let file = dir.path().join("bot.toml");
@@ -770,7 +837,8 @@ mod tests {
     #[allow(clippy::too_many_lines)]
     async fn answer_and_grants_commands_against_a_live_daemon() {
         let (dir, url) = daemon().await;
-        let c = Client::new(&url, TOKEN.to_owned());
+        let c = Client::new(&url, TOKEN.to_owned())
+            .with_owner_key(Some(crate::client::TEST_OWNER_KEY.to_owned()));
         let (bot, chat) = setup_bot_and_chat(&c, dir.path()).await;
         let mut out = Vec::new();
 
@@ -893,7 +961,8 @@ mod tests {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", l.local_addr().unwrap());
         drop(l);
-        let c = Client::new(&url, TOKEN.to_owned());
+        let c = Client::new(&url, TOKEN.to_owned())
+            .with_owner_key(Some(crate::client::TEST_OWNER_KEY.to_owned()));
         let err = status(&c, false, &mut Vec::new()).await.unwrap_err();
         assert_eq!(code_of(&*err), exit::UNREACHABLE);
     }
@@ -901,7 +970,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn schedules_add_list_run_now_rm_against_a_live_daemon() {
         let (dir, url) = daemon().await;
-        let c = Client::new(&url, TOKEN.to_owned());
+        let c = Client::new(&url, TOKEN.to_owned())
+            .with_owner_key(Some(crate::client::TEST_OWNER_KEY.to_owned()));
         let (bot, _) = setup_bot_and_chat(&c, dir.path()).await;
         let mut out = Vec::new();
 

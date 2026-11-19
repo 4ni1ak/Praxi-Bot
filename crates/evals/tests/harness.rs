@@ -129,6 +129,11 @@ expect:
     assert!(r.success, "{:?}", r.failures);
     assert_eq!(r.llm_calls, 2);
     assert_eq!(
+        r.llm_calls_by_purpose,
+        BTreeMap::from([("executor".to_owned(), 2)]),
+        "the live fake-provider flow populates the serialized purpose ledger"
+    );
+    assert_eq!(
         (r.input_tokens, r.output_tokens, r.cached_tokens),
         (300, 50, 40)
     );

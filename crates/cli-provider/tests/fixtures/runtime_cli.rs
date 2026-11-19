@@ -2,6 +2,19 @@
 use serde_json::{Value, json};
 use std::io::{BufRead, Read, Write};
 
+// Integration callers exercise the production environment allowlist. Their
+// controls live beside this fake executable, never in production passthrough.
+fn fixture_env(key: &str) -> Result<String, std::env::VarError> {
+    std::env::var(key).or_else(|error| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| std::fs::read(exe.parent()?.join("fixture-config.json")).ok())
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .and_then(|config| config[key].as_str().map(str::to_owned))
+            .ok_or(error)
+    })
+}
+
 #[allow(clippy::needless_pass_by_value)] // Fixture frames are intentionally written inline.
 fn emit(v: Value) {
     println!("{v}");
@@ -13,7 +26,7 @@ fn read(reader: &mut impl BufRead) -> Value {
     serde_json::from_str(&s).unwrap()
 }
 fn log(name: &str, value: &str) {
-    if let Ok(dir) = std::env::var("FAKE_LOG") {
+    if let Ok(dir) = fixture_env("FAKE_LOG") {
         std::fs::write(std::path::Path::new(&dir).join(name), value).unwrap();
     }
 }
@@ -67,9 +80,9 @@ fn main() {
         );
     }
     if args.iter().any(|s| s == "--version") {
-        let mut version = std::env::var("FAKE_VERSION").unwrap_or_else(|_| "2.1.300".into());
-        if std::env::var("FAKE_VERSION_STEP").is_ok() {
-            let dir = std::env::var("FAKE_LOG").unwrap_or_else(|_| ".".into());
+        let mut version = fixture_env("FAKE_VERSION").unwrap_or_else(|_| "2.1.300".into());
+        if fixture_env("FAKE_VERSION_STEP").is_ok() {
+            let dir = fixture_env("FAKE_LOG").unwrap_or_else(|_| ".".into());
             let stamp = std::path::Path::new(&dir).join("version-probes");
             let seen = std::fs::read_to_string(&stamp)
                 .ok()
@@ -84,7 +97,7 @@ fn main() {
         return;
     }
     if args.iter().any(|s| s == "--help" || s == "-h") {
-        let modes = std::env::var("FAKE_PERMISSION_MODES")
+        let modes = fixture_env("FAKE_PERMISSION_MODES")
             .unwrap_or_else(|_| "acceptEdits,auto,bypassPermissions,manual,dontAsk,plan".into());
         let quoted = modes
             .split(',')
@@ -105,7 +118,7 @@ fn main() {
         &serde_json::to_string(&std::env::vars().collect::<std::collections::BTreeMap<_, _>>())
             .unwrap(),
     );
-    let mode = std::env::var("FAKE_MODE").unwrap_or_default();
+    let mode = fixture_env("FAKE_MODE").unwrap_or_default();
     if mode == "hang" {
         std::thread::sleep(std::time::Duration::from_secs(120));
         return;
@@ -152,13 +165,22 @@ fn main() {
         log("stdin", &prompt.to_string());
         assert_eq!(prompt["type"], "user");
         if mode == "unknown-frame" {
-            emit(json!({"type":"system","subtype":"init"}));
+            emit(json!({"type":"tool_runner","subtype":"init"}));
             emit(
                 json!({"type":"stream_event","event":{"delta":{"type":"text_delta","text":"SHOULD_NOT_APPLY"}}}),
             );
             std::thread::sleep(std::time::Duration::from_secs(120));
             return;
         }
+        if mode == "bash-listed" {
+            emit(json!({"type":"system","subtype":"init","tools":["Bash"]}));
+            std::thread::sleep(std::time::Duration::from_secs(120));
+            return;
+        }
+        // What a real Claude Code prints around the answer (2.1.325).
+        emit(json!({"type":"system","subtype":"init","tools":[]}));
+        emit(json!({"type":"system","subtype":"status","status":"requesting"}));
+        emit(json!({"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}));
         if mode == "bash" {
             emit(
                 json!({"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"tool_use","name":"Bash","input":{"command":"bad"}}}}),
@@ -241,7 +263,7 @@ fn main() {
         )
     };
     if mode == "hang-tree" {
-        let dir = std::path::PathBuf::from(std::env::var("FAKE_LOG").unwrap()).join("descendant");
+        let dir = std::path::PathBuf::from(fixture_env("FAKE_LOG").unwrap()).join("descendant");
         std::fs::create_dir(&dir).unwrap();
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .env("FAKE_MODE", "hang")

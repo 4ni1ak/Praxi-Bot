@@ -97,6 +97,11 @@ pub struct Device {
     /// Unique incarnation of the pairing, renewed on every successful pair.
     #[serde(default)]
     pub pairing_generation: String,
+    /// Host administration: set only on the side that issued the invite (or
+    /// by its local owner afterwards), never taken from what the peer claims.
+    /// Lets a paired desktop send keys and settings to this daemon.
+    #[serde(default)]
+    pub admin: bool,
 }
 
 impl Device {
@@ -228,6 +233,28 @@ impl DeviceStore {
         Ok(true)
     }
 
+    /// Grant or withdraw host administration for a device; returns `false`
+    /// if the device is unknown.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the list cannot be persisted. Memory is unchanged.
+    pub fn set_admin(&self, key: &PublicKey, admin: bool) -> Result<bool> {
+        let id = key_to_string(key);
+        let mut guard = self.devices.lock();
+        let Some(index) = guard.iter().position(|d| d.id == id) else {
+            return Ok(false);
+        };
+        if guard[index].admin == admin {
+            return Ok(true);
+        }
+        let mut next = guard.clone();
+        next[index].admin = admin;
+        self.persist(&next)?;
+        *guard = next;
+        Ok(true)
+    }
+
     /// Remove a device; returns whether it existed.
     ///
     /// The replacement list is committed with the temp-file rename before
@@ -263,6 +290,7 @@ mod tests {
             addr: None,
             paired_at: 1,
             pairing_generation: String::new(),
+            admin: false,
         }
     }
 

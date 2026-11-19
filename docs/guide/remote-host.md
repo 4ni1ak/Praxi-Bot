@@ -7,11 +7,10 @@ reachable only from the machine itself.
 
 > **Status.** The daemon (`bot serve`) and the Telegram channel work on Linux.
 > The node-agent (`bot-node`) and the iroh peer network are **experimental**:
-> the core side is not connected to the daemon yet, and the Linux desktop
-> backend (`desktop-linux`) has no implementation yet, so `bot-node run`
-> currently refuses to start on Linux. Xvfb and Chromium are installed for the
-> planned desktop and browser automation, not because every tool already uses
-> them.
+> the Linux desktop backend (`desktop-linux`, X11 with AT-SPI2) exists, so
+> `bot-node run` can serve a display on Linux, but the Linux node path has not
+> been verified end to end. Xvfb and Chromium are installed for desktop and
+> browser automation, not because every tool already uses them.
 
 > **Releasing (maintainers).** Pushing a `v*` tag does **not** publish
 > anything. Publishing needs a manual dispatch of **Linux Server Packages** on
@@ -252,13 +251,49 @@ ssh -L 47821:127.0.0.1:47821 user@your-server
 The API token lives in `/var/lib/praxi` (readable only by `praxi`); clients on
 the tunnel authenticate with it like on a local install.
 
+### Using the host from the desktop app
+
+The desktop app can show the host's screen (the Xvfb desktop and the bot's
+browser), take it over and hand it back, and chat with bots that run **on the
+host**. It needs no extra port: the app's own daemon opens an outbound iroh
+channel to the host, and every request is checked by the host's peer guard as a
+paired *Desktop*.
+
+1. The host must run as a host: `bot serve --host` (this also turns peer
+   networking on). An installed `praxi.service` runs `bot serve`; override it
+   with a drop-in (`sudo systemctl edit praxi`):
+
+   ```ini
+   [Service]
+   ExecStart=
+   ExecStart=/opt/praxi/bin/bot serve --host
+   ```
+
+2. On the host, create a one-time pairing ticket for the desktop and copy it:
+   `praxi host invite --role desktop`
+3. In the app, open the computer selector in the header, **Add a host…**, and
+   paste the ticket. The selector then lists the host next to "This computer".
+4. Pairing does not allow screen access by itself. On the host, let the paired
+   desktop watch and take over (kept across restarts, local user only):
+   `praxi host screen --all-desktops` (add `--view-only` for watching only,
+   `--revoke` to remove). `praxi host devices` lists device keys.
+
+On a host, a paired Desktop can operate bots, chats and runs and use the screen
+but cannot change secrets or provider keys, MCP servers, skills, email or web
+search credentials, Telegram pairing, or import/hand over state; do those on the
+host itself. Until the host has a model key of its own, the app says "this host
+has no model key yet": the screen and bot management work, chats cannot be
+answered. Put the key on the host with `praxi setup` (see section 3).
+
 ### Letting another core control this machine (experimental)
 
-This is **not functional on Linux yet**. `bot-node run` exits because there is
-no Linux desktop backend, and enabling `praxi-node.service` would restart it
-every 10 seconds. Leave that unit disabled.
+`bot-node run` needs a reachable X11 display (a physical one or the Xvfb
+display from `--with-desktop`; Wayland is refused) and at least one paired
+core. Without them it exits, and `praxi-node.service` would restart it every
+10 seconds, so the unit is installed but not enabled. Pair first, then enable
+it.
 
-When the backend exists, `bot-node` connects **outward** over iroh (QUIC with
+`bot-node` connects **outward** over iroh (QUIC with
 relay fallback), so no inbound port is needed. On the machine that should be
 controlled:
 
@@ -268,7 +303,7 @@ sudo praxi-node join '<bot-pair:...>'     # one-time ticket from the core
 
 The ticket is single-use; afterwards the devices use stored keys. See ADR-0006
 in the design documents for the model. Enable `praxi-node.service` only after
-`bot-node run` works on Linux.
+`bot-node join` has succeeded and `bot-node run` starts by hand.
 
 ## 4. Firewall notes (Oracle Cloud)
 
@@ -324,7 +359,9 @@ compute their hashes using `sha256sum`, and update `version`,
 `install_cft`.
 
 Fedora/RHEL uses `chromium` from the administrator's enabled RPM repos, without
-weak dependencies; absence is an installation error. No PPA or snap is added.
+weak dependencies. When those repos have no `chromium` (Oracle Linux, for
+example), the installer falls back to the same pinned Chrome for Testing archive
+as on Ubuntu, for either CPU. No PPA or snap is added.
 An xtradeb PPA would add third-party trust and isn't needed with the official
 ARM64 archive. Playwright also supports ARM64, but adds a separate runtime and
 browser lifecycle that this installer doesn't need.
@@ -335,6 +372,25 @@ unsupported and produce a clear diagnostic. With `--skip-packages`, provide a
 working non-snap browser yourself. `BOT_BROWSER_PATH` overrides discovery;
 `PRAXI_BROWSER_PATH` remains a compatible fallback. An invalid override fails
 instead of silently choosing a different browser.
+
+Re-running the installer (`bot host repair`, upgrades) is idempotent for the
+browser: a working `/opt/praxi-browser` at the pinned version is kept and not
+downloaded again, while the shared libraries, AppArmor profile and fonts are
+re-checked. After installing, the installer checks that the browser starts and
+has all its shared libraries, and fails with the missing names if not. If the
+download fails (no route to `storage.googleapis.com`, a proxy, a full disk), the
+installer stops with the reason and these next steps: check the network from the
+server, re-run the same command (it resumes), or install a non-snap Chrome or
+Chromium yourself, set `BOT_BROWSER_PATH`, and re-run with `--skip-packages`.
+`bot host add`/`repair` reports a **Browser for the bot's computer** health
+row (warning when none is installed) next to the virtual-display row.
+
+**Fonts.** With `--with-desktop` the installer also installs
+`fonts-noto-color-emoji` and `fonts-noto-cjk` (Fedora/RHEL:
+`google-noto-emoji-color-fonts`, `google-noto-sans-cjk-ttc-fonts`) next to the
+Noto and Liberation families, so Turkish, Japanese/Chinese/Korean text and emoji
+render in the browser and in screenshots instead of empty boxes. A font package
+that is unavailable or fails to install is a warning, not an install failure.
 
 The browser needs **libcups**, the client library; it does not need a print
 server. Packages use `--no-install-recommends`. The installer disables/stops
@@ -364,8 +420,8 @@ installs, or preserving the existing `praxi-xvfb.service` geometry unless
 `--screen` is passed), running as the same unprivileged `praxi` user:
 
 - **Application menu usage & security posture:** During live-view takeover, open
-  the top-left **Applications** menu on `xfce4-panel` to launch **Web Browser**
-  (manual launch). `xfce4-terminal` and `thunar` are **not** installed or
+  the **Web Browser** icon on the desktop, or the top-left **Applications** menu on
+  `xfce4-panel`, to launch it (manual launch; it is never autostarted). `xfce4-terminal` and `thunar` are **not** installed or
   exposed in the menu by default; pass `--with-session-apps` if you explicitly
   need them, or `--without-session-apps` to hide them again. Note that
   `--without-session-apps` only writes `Hidden=true` `.desktop` overrides and

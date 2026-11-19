@@ -26,7 +26,7 @@ export function BotAvatar({
   className
 }: {
   bot: BotIdentity;
-  size?: 'xs' | 'sm' | 'md' | 'lg' | 'hero';
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'panel' | 'hero';
   state?: BotAvatarState;
   /** Ambient bobbing and idle gestures. Defaults on for `lg` and `hero` when idle. */
   live?: boolean;
@@ -43,7 +43,7 @@ export function BotAvatar({
   const gazeRef = useRef<SVGGElement | null>(null);
 
   const hasCustomAvatar = Boolean(bot.avatar && bot.avatar !== failedSrc);
-  const isLive = live ?? ((size === 'hero' || size === 'lg') && state === 'idle');
+  const isLive = live ?? ((size === 'hero' || size === 'panel' || size === 'lg') && state === 'idle');
 
   useEffect(() => {
     if (hasCustomAvatar) {
@@ -67,7 +67,7 @@ export function BotAvatar({
   }, [hasCustomAvatar, isLive]);
 
   const assetSrc =
-    size === 'hero' || size === 'lg'
+    size === 'hero' || size === 'panel' || size === 'lg'
       ? CHARACTER_ASSETS[shape.id].lg
       : CHARACTER_ASSETS[shape.id].sm;
   const blinkDelay = `${-((shape.hash % 50) / 10).toFixed(1)}s`;

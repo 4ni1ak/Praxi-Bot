@@ -32,7 +32,7 @@ fn probe_tree(args: &[String]) -> bool {
     let Ok(mode) = std::env::var("PROBE_TREE_MODE") else {
         return false;
     };
-    if args != ["--version"] {
+    if args != ["--version"] && args.first().is_none_or(|arg| arg != "install") {
         return false;
     }
     let ready = std::env::var("PROBE_TREE_READY").unwrap();
@@ -98,6 +98,37 @@ fn main() {
     }
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "install") {
+        if probe_tree(&args) {
+            return;
+        }
+        if let Ok(dir) = std::env::var("FAKE_INSTALL_LOG") {
+            let dir = std::path::Path::new(&dir);
+            std::fs::write(
+                dir.join("install-argv"),
+                serde_json::to_string(&args).unwrap(),
+            )
+            .unwrap();
+            std::fs::write(
+                dir.join("install-env"),
+                serde_json::to_string(
+                    &std::env::vars().collect::<std::collections::BTreeMap<_, _>>(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        println!("fixture output");
+        std::io::stdout().flush().unwrap();
+        match std::env::var("FAKE_INSTALL_MODE").as_deref() {
+            Ok("hang") => std::thread::sleep(Duration::from_secs(60)),
+            Ok("flood") => println!("{}", "x".repeat(65537)),
+            Ok("fail") => std::process::exit(1),
+            _ => {}
+        }
+        return;
+    }
+
     if probe_tree(&args) {
         return;
     }
@@ -167,7 +198,7 @@ fn main() {
                 println!(
                     r#"{{"loggedIn": true, "email": "alice@example.com", "accessToken": "SUPER_SECRET_TOKEN_DO_NOT_LEAK", "orgName": "Acme Corp"}}"#
                 );
-            } else if std::env::var("FAKE_AUTH_SIGNED_OUT").is_ok() {
+            } else if std::env::var("FAKE_SIGNED_OUT").is_ok() {
                 println!(r#"{{"loggedIn": false}}"#);
             } else {
                 println!(r#"{{"loggedIn": true, "email": "claude@example.com"}}"#);
@@ -176,7 +207,7 @@ fn main() {
         "login status" => {
             if std::env::var("FAKE_CODEX_GARBAGE_STDERR").is_ok() {
                 eprintln!("some garbage traceback without login status");
-            } else if std::env::var("FAKE_AUTH_SIGNED_OUT").is_ok() {
+            } else if std::env::var("FAKE_SIGNED_OUT").is_ok() {
                 println!("Not logged in");
             } else {
                 println!("Logged in using ChatGPT");
@@ -188,7 +219,7 @@ fn main() {
             } else if std::env::var("FAKE_CURSOR_PLAIN").is_ok() {
                 eprintln!("flag --format not recognized");
                 std::process::exit(1);
-            } else if std::env::var("FAKE_AUTH_SIGNED_OUT").is_ok() {
+            } else if std::env::var("FAKE_SIGNED_OUT").is_ok() {
                 println!(r#"{{"status": "unauthenticated"}}"#);
             } else {
                 println!(r#"{{"status": "authenticated"}}"#);
@@ -197,7 +228,7 @@ fn main() {
         "status" => {
             if let Ok(text) = std::env::var("FAKE_CURSOR_TEXT") {
                 println!("{text}");
-            } else if std::env::var("FAKE_AUTH_SIGNED_OUT").is_ok() {
+            } else if std::env::var("FAKE_SIGNED_OUT").is_ok() {
                 println!("not logged in");
             } else {
                 println!("authenticated");

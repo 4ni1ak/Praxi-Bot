@@ -1,9 +1,9 @@
 //! Free decision-model resolution **by rule**, never by a wired-in id.
 //!
-//! Free OpenRouter model ids come and go (`...-v1.3:free` is replaced by
+//! Free `OpenRouter` model ids come and go (`...-v1.3:free` is replaced by
 //! `...-v1.4:free`, a free period ends on a date). The owner therefore writes a
 //! *rule* (`match = "*decider*:free"`, `prefer = ["flash"]`) and the
-//! [`ModelResolver`] picks the id from OpenRouter's live model list
+//! [`ModelResolver`] picks the id from `OpenRouter`'s live model list
 //! (`GET /api/v1/models`): only models whose every listed price is zero, whose
 //! id fits the pattern, whose `expiration_date` has not passed and whose id has
 //! a safe shape. The choice is cached on disk (refreshed every 6 hours), the
@@ -261,7 +261,7 @@ impl ModelResolver {
     /// Override the model-list endpoint (tests, proxies).
     #[must_use]
     pub fn with_url(mut self, url: impl Into<String>) -> Self {
-        self.url = url.into().trim_end_matches('/').to_owned();
+        url.into().trim_end_matches('/').clone_into(&mut self.url);
         self
     }
 
