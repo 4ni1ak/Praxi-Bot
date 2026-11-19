@@ -45,6 +45,8 @@ mod egress_tests;
 #[cfg(test)]
 mod mode_tests;
 #[cfg(test)]
+mod pc_scope_tests;
+#[cfg(test)]
 mod router_tests;
 #[cfg(test)]
 mod scoped_tests;

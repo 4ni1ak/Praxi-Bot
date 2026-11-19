@@ -28,6 +28,12 @@ pub struct LaunchOptions {
     pub window_size: (u32, u32),
     /// How long to wait for the debugging endpoint to appear.
     pub startup_timeout: Duration,
+    /// Network guard of a served session (a filtering proxy for every
+    /// request, children paused until checked); `None`: no network policy.
+    pub served: Option<crate::destination::ServedNetwork>,
+    /// The guard's proxy address, set by [`crate::Browser::launch`] when
+    /// `served` is set (never by callers).
+    pub served_proxy: Option<std::net::SocketAddr>,
 }
 
 impl Default for LaunchOptions {
@@ -39,6 +45,8 @@ impl Default for LaunchOptions {
             args: Vec::new(),
             window_size: (1280, 800),
             startup_timeout: Duration::from_secs(20),
+            served: None,
+            served_proxy: None,
         }
     }
 }
@@ -161,7 +169,6 @@ pub fn build_args_for_host(
         "--no-first-run".into(),
         "--no-default-browser-check".into(),
         "--disable-background-networking".into(),
-        "--disable-popup-blocking".into(),
         "--disable-default-apps".into(),
         "--disable-sync".into(),
         "--disable-dev-shm-usage".into(),
@@ -173,6 +180,15 @@ pub fn build_args_for_host(
             opts.window_size.0, opts.window_size.1
         ),
     ];
+    let served = opts.served.is_some() || opts.served_proxy.is_some();
+    if !served {
+        // Our own sessions open popups as tabs; a served one keeps Chrome's
+        // popup blocker.
+        a.push("--disable-popup-blocking".into());
+    }
+    if let Some(proxy) = opts.served_proxy {
+        a.extend(crate::proxy::FilterProxy::chrome_args(proxy));
+    }
     if opts.headless || (linux && !display) {
         a.push("--headless=new".into());
         a.push("--hide-scrollbars".into());
@@ -185,6 +201,15 @@ pub fn build_args_for_host(
                     || (!arg.starts_with("--no-sandbox")
                         && !arg.starts_with("--disable-setuid-sandbox")
                         && !arg.starts_with("--headless"))
+            })
+            // Extra flags never loosen a served session's network guard.
+            .filter(|arg| {
+                !served
+                    || !(arg.starts_with("--proxy")
+                        || arg.starts_with("--host-resolver-rules")
+                        || arg.starts_with("--no-proxy")
+                        || arg.starts_with("--disable-popup-blocking")
+                        || arg.starts_with("--force-webrtc-ip-handling-policy"))
             })
             .cloned(),
     );
@@ -291,6 +316,39 @@ mod tests {
         .unwrap();
         assert!(!is_snap_browser(&path));
         std::fs::remove_file(path).unwrap();
+    }
+
+    /// Review blocker 2: a served session keeps the popup blocker, sends
+    /// everything through its proxy, and extra flags cannot loosen that.
+    #[test]
+    fn a_served_session_is_proxied_and_keeps_the_popup_blocker() {
+        let own = build_args_for_host(
+            &LaunchOptions::default(),
+            Path::new("/p"),
+            false,
+            true,
+            false,
+        );
+        assert!(own.contains(&"--disable-popup-blocking".to_owned()));
+        let served = LaunchOptions {
+            served_proxy: Some(std::net::SocketAddr::from(([127, 0, 0, 1], 4567))),
+            args: vec![
+                "--proxy-server=direct://".into(),
+                "--disable-popup-blocking".into(),
+                "--proxy-bypass-list=*".into(),
+            ],
+            ..LaunchOptions::default()
+        };
+        let a = build_args_for_host(&served, Path::new("/p"), false, true, false);
+        assert!(!a.contains(&"--disable-popup-blocking".to_owned()), "{a:?}");
+        assert!(a.contains(&"--proxy-server=http://127.0.0.1:4567".to_owned()));
+        assert_eq!(
+            a.iter().filter(|x| x.starts_with("--proxy-server")).count(),
+            1,
+            "{a:?}"
+        );
+        assert!(a.contains(&"--proxy-bypass-list=<-loopback>".to_owned()));
+        assert!(!a.contains(&"--proxy-bypass-list=*".to_owned()));
     }
 
     #[test]

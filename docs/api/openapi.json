@@ -13098,7 +13098,7 @@
       },
       "ComputerAccessInput": {
         "type": "object",
-        "description": "Switches for one host.",
+        "description": "Switches for one host. Each family is its own switch; all are off until\nthe person at this computer turns them on.",
         "required": [
           "enabled"
         ],
@@ -13107,9 +13107,21 @@
             "type": "boolean",
             "description": "Do not ask before the first look at the screen each session."
           },
+          "browser": {
+            "type": "boolean",
+            "description": "Let them use this computer's managed browser."
+          },
+          "commands": {
+            "type": "boolean",
+            "description": "Let them run shell commands here (each one asks)."
+          },
           "enabled": {
             "type": "boolean",
-            "description": "Let this host's bots use this computer."
+            "description": "Screen and input: let this host's bots look at the screen, click, type\nand start programs on this computer."
+          },
+          "files": {
+            "type": "boolean",
+            "description": "Let them read files here (writing asks every time)."
           }
         }
       },
@@ -15409,6 +15421,18 @@
           "computer_access_always": {
             "type": "boolean",
             "description": "... and may look at the screen without asking first each session."
+          },
+          "computer_browser": {
+            "type": "boolean",
+            "description": "The owner lets this host's bots use this computer's browser."
+          },
+          "computer_commands": {
+            "type": "boolean",
+            "description": "... run commands on it."
+          },
+          "computer_files": {
+            "type": "boolean",
+            "description": "... read its files."
           },
           "detail": {
             "type": [
@@ -18573,6 +18597,13 @@
           "action": {
             "type": "string",
             "description": "`click`, `type`, `key`, `scroll`, `launch`, ..."
+          },
+          "bot_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of the server's bot that is asking (untrusted text, from the\nserver). Absent for a run placed on this computer that names no bot."
           },
           "created_ms": {
             "type": "integer",

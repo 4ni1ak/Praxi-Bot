@@ -155,6 +155,8 @@ pub struct RefEntry {
     pub role: String,
     /// Accessible name.
     pub name: String,
+    /// The element holds a secret (password, one-time code, card number).
+    pub sensitive: bool,
 }
 
 type RefKey = (Option<String>, String, i64);
@@ -410,6 +412,8 @@ struct Builder<'a> {
     refs: &'a mut RefMap,
     out: Vec<SnapNode>,
     truncated: bool,
+    /// Whether the node being pushed holds a secret (set around `push`).
+    cur_sensitive: bool,
 }
 
 /// Maximum AX nesting (hidden levels included) followed before the walk is cut off. Guards the
@@ -453,6 +457,7 @@ pub fn build_snapshot(
         refs,
         out: Vec::new(),
         truncated: false,
+        cur_sensitive: false,
     };
     if !frames.is_empty() {
         b.emit_frame(0, 0, 0);
@@ -536,6 +541,7 @@ impl Builder<'_> {
                     frame_id: frame.frame_id.clone(),
                     role: role.to_string(),
                     name: name.to_string(),
+                    sensitive: self.cur_sensitive,
                 },
             )
         });
@@ -619,11 +625,11 @@ impl Builder<'_> {
         // Mask sensitive values.
         let mut value = node.value.clone();
         let unknown_sensitivity = self.frames[f].extras_failed && FREE_TEXT_ROLES.contains(&role);
-        if (extra.as_ref().is_some_and(DomExtra::is_sensitive) || unknown_sensitivity)
-            && value.is_some()
-        {
+        let is_secret = extra.as_ref().is_some_and(DomExtra::is_sensitive);
+        if (is_secret || unknown_sensitivity) && value.is_some() {
             value = Some(MASK.to_string());
         }
+        self.cur_sensitive = is_secret;
 
         let child_depth = if skip_line { depth } else { depth + 1 };
         if !skip_line {
@@ -643,6 +649,7 @@ impl Builder<'_> {
                 interactive || clickable,
             );
         }
+        self.cur_sensitive = false;
         // Interactive leaves with the same text children would only repeat the name.
         let parent = if skip_line {
             parent_name

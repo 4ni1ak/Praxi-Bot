@@ -1082,7 +1082,10 @@ pub(crate) async fn send_message(
         .get("x-praxi-message-source")
         .and_then(|v| v.to_str().ok());
     let source = if !actor.local {
-        "peer"
+        // The owner's admin desktop of this host is told apart from any other
+        // paired device: only its messages may start work on the user's own
+        // computer (`pc_*`).
+        if actor.admin { "peer_admin" } else { "peer" }
     } else if hint == Some("telegram") {
         "telegram"
     } else if hint == Some("local_ui") && s.owner_ok(&headers) {

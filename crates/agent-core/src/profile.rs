@@ -214,6 +214,10 @@ pub struct BotProfile {
     restrict: Vec<GlobSet>,
     hide_desktop: bool,
     hide_browser: bool,
+    /// An unset file mode denies files on this daemon (see
+    /// [`Self::with_unset_files_denied`]). Fails closed until the run context
+    /// says otherwise; only the `pc_fs_*` visibility reads it.
+    unset_files_denied: bool,
 }
 
 fn globs(patterns: &[String]) -> Result<GlobSet, String> {
@@ -250,6 +254,7 @@ impl TryFrom<Raw> for BotProfile {
             restrict: Vec::new(),
             hide_desktop: false,
             hide_browser: false,
+            unset_files_denied: true,
             id: r.bot.id,
             name: r.bot.name,
             persona: r.bot.persona,
@@ -344,6 +349,9 @@ impl BotProfile {
     /// computer availability.
     #[must_use]
     pub fn tool_visible(&self, tool_name: &str) -> bool {
+        if let Some(inner) = tool_name.strip_prefix(builtin_tools::pc::PC_PREFIX) {
+            return self.pc_tool_visible(tool_name, inner);
+        }
         // Shell commands and scripts cannot be confined to folders, so a
         // "Folder only" bot does not get them (honest sandbox, not a pretence).
         (self.files.mode != Some(FileAccessMode::Folder)
@@ -353,6 +361,60 @@ impl BotProfile {
             && (self.tools.allow.is_empty() || self.allow.is_match(tool_name))
             && !self.exclude.is_match(tool_name)
             && self.restrict.iter().all(|g| g.is_match(tool_name))
+    }
+
+    /// The `pc_*` family (the user's own computer) is opt-in per bot: hidden
+    /// unless `[tools] allow` has an entry written for it (one starting with
+    /// `pc_`; a bare `*` is not an opt-in), and every per-bot restriction of
+    /// the same tool on the bot's own computer applies to it as well: the
+    /// `exclude` list and the "Folder only" rule are matched against the name
+    /// without the prefix too, and the files of the user's computer need the
+    /// bot's file access to be "This computer" (a "Folder only" bot, or one
+    /// whose unset mode is denied on this host, never reads them).
+    fn pc_tool_visible(&self, name: &str, inner: &str) -> bool {
+        // Only an allow entry written for the family (`pc_...`) can match a
+        // `pc_*` name: a bare `*` or `fs_*` next to `pc_info` never widens it.
+        let opted_in = self
+            .tools
+            .allow
+            .iter()
+            .filter(|g| g.starts_with(builtin_tools::pc::PC_PREFIX))
+            .any(|g| globset::Glob::new(g).is_ok_and(|g| g.compile_matcher().is_match(name)));
+        let folder_only = self.files.mode == Some(FileAccessMode::Folder);
+        let shell_like = inner.starts_with("shell_") || inner.starts_with("script_");
+        let files_ok = match self.files.mode {
+            Some(FileAccessMode::Computer) => true,
+            Some(FileAccessMode::Folder) => false,
+            None => !self.unset_files_denied,
+        };
+        let excluded = self.exclude.is_match(name) || self.exclude.is_match(inner);
+        let files_denied = inner.starts_with("fs_") && !files_ok;
+        let folder_denied = folder_only && shell_like;
+        opted_in
+            && !folder_denied
+            && !files_denied
+            && !excluded
+            // A narrowed (subagent) surface must name the `pc_` tool itself.
+            && self.restrict.iter().all(|g| g.is_match(name))
+    }
+
+    /// [`Self::tool_visible`] and the category rule together, for a tool of
+    /// this name and category. The `pc_*` family acts on the user's own
+    /// computer, so what the RUN's computer has (a desktop, a browser) does not
+    /// hide it; the profile's own allow/exclude lists still do.
+    #[must_use]
+    pub fn spec_visible(&self, name: &str, category: PermissionCategory) -> bool {
+        self.tool_visible(name)
+            && (name.starts_with(builtin_tools::pc::PC_PREFIX) || self.category_visible(category))
+    }
+
+    /// Copy of this profile that knows whether an UNSET file mode is denied
+    /// on this daemon (an always-on host whose owner never chose one).
+    #[must_use]
+    pub fn with_unset_files_denied(&self, denied: bool) -> Self {
+        let mut p = self.clone();
+        p.unset_files_denied = denied;
+        p
     }
 
     /// Whether a tool's permission category is permitted by the resolved

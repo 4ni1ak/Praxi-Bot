@@ -207,6 +207,8 @@ pub struct FieldTarget {
     pub frame_origin: Option<String>,
     /// Origin of the top-level document (`None` = opaque / unknown).
     pub top_origin: Option<String>,
+    /// The field holds a secret (password, one-time code, card number).
+    pub sensitive: bool,
 }
 
 /// An `http(s)` origin as Chrome reports it, or `None` for `null`, `://`,
@@ -303,6 +305,7 @@ impl Page {
                         .ok_or_else(|| Error::Element("unknown focused node".into()))?,
                     name: String::new(),
                     role: String::new(),
+                    sensitive: false,
                 });
             }
         }
@@ -575,6 +578,7 @@ impl Page {
             role: e.role.clone(),
             frame_origin: frame.origin,
             top_origin: self.top_origin().await,
+            sensitive: e.sensitive,
         })
     }
 

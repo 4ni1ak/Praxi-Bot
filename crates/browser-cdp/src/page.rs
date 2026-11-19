@@ -326,6 +326,17 @@ impl Page {
     }
 
     pub(crate) async fn enable_domains(&self, session: &str, main: bool) -> Result<()> {
+        // Before anything can navigate: every request of a guarded browser is
+        // judged by the destination policy.
+        if self.client.has_destination_check() {
+            self.client
+                .send_on(
+                    Some(session),
+                    "Fetch.enable",
+                    json!({"patterns": [{"urlPattern": "*"}]}),
+                )
+                .await?;
+        }
         for d in [
             "Page.enable",
             "DOM.enable",
@@ -339,11 +350,14 @@ impl Page {
                 .send_on(Some(session), "Network.enable", json!({}))
                 .await?;
         }
+        // A guarded browser's frames and workers start paused; the client
+        // resumes each only after its requests are checked.
+        let pause = self.client.has_destination_check();
         self.client
             .send_on(
                 Some(session),
                 "Target.setAutoAttach",
-                json!({"autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true}),
+                json!({"autoAttach": true, "waitForDebuggerOnStart": pause, "flatten": true}),
             )
             .await?;
         if let Ok(mut r) = self.shared.ready.lock() {

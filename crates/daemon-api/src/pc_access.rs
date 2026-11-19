@@ -26,6 +26,10 @@ pub struct PcRequestInfo {
     pub host_id: String,
     /// Name the host announced (untrusted text, shown as "from the server").
     pub host_name: String,
+    /// Name of the server's bot that is asking (untrusted text, from the
+    /// server). Absent for a run placed on this computer that names no bot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_name: Option<String>,
     /// `session_read` (first look at the screen this session) or `act`.
     pub kind: String,
     /// `click`, `type`, `key`, `scroll`, `launch`, ...
@@ -51,14 +55,27 @@ pub struct PcRequestDecision {
     pub allow: bool,
 }
 
-/// Switches for one host.
+/// Switches for one host. Each family is its own switch; all are off until
+/// the person at this computer turns them on.
+// One flag per family (wire shape).
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ComputerAccessInput {
-    /// Let this host's bots use this computer.
+    /// Screen and input: let this host's bots look at the screen, click, type
+    /// and start programs on this computer.
     pub enabled: bool,
     /// Do not ask before the first look at the screen each session.
     #[serde(default)]
     pub always_read: bool,
+    /// Let them use this computer's managed browser.
+    #[serde(default)]
+    pub browser: bool,
+    /// Let them run shell commands here (each one asks).
+    #[serde(default)]
+    pub commands: bool,
+    /// Let them read files here (writing asks every time).
+    #[serde(default)]
+    pub files: bool,
 }
 
 /// What a card says; built by the embedder from the parsed request.
@@ -86,6 +103,10 @@ pub struct PcRequests {
 const MAX_PENDING: usize = 16;
 /// One host cannot occupy more than this many cards at once.
 const MAX_PER_HOST: usize = 2;
+/// Longest target a card shows (a complete canonical path or folder).
+pub const MAX_TARGET: usize = 2000;
+/// Longest payload a card shows.
+pub const MAX_PAYLOAD: usize = 4000;
 /// A read counts as "looking right now" for this long.
 const READING_WINDOW: Duration = Duration::from_secs(8);
 
@@ -117,6 +138,24 @@ impl PcRequests {
         preview: PcPreview,
         timeout: Duration,
     ) -> bool {
+        self.ask_as(host_id, host_name, None, preview, timeout)
+            .await
+    }
+
+    /// [`Self::ask`] for one named bot of the host (shown on the card).
+    pub async fn ask_as(
+        &self,
+        host_id: &str,
+        host_name: &str,
+        bot_name: Option<&str>,
+        preview: PcPreview,
+        timeout: Duration,
+    ) -> bool {
+        // A card never shows less than what would run: a field that would be
+        // cut or altered to fit makes the request be refused instead.
+        if !fits(&preview) {
+            return false;
+        }
         let id = uuid::Uuid::now_v7().to_string();
         let (tx, rx) = oneshot::channel();
         {
@@ -131,10 +170,11 @@ impl PcRequests {
                     id: id.clone(),
                     host_id: host_id.to_owned(),
                     host_name: clean(host_name, 64),
+                    bot_name: bot_name.map(|b| clean(b, 64)),
                     kind: preview.kind.to_owned(),
                     action: clean(&preview.action, 32),
-                    target: clean(&preview.target, 300),
-                    payload: bounded(&preview.payload, 4000),
+                    target: clean(&preview.target, MAX_TARGET),
+                    payload: bounded(&preview.payload, MAX_PAYLOAD),
                     created_ms: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(0)),
@@ -203,6 +243,20 @@ impl PcRequests {
     }
 }
 
+/// The preview is shown whole: nothing is cut and no control character is
+/// replaced.
+fn fits(p: &PcPreview) -> bool {
+    p.action.chars().count() <= 32
+        && !p.action.chars().any(char::is_control)
+        && p.target.chars().count() <= MAX_TARGET
+        && !p.target.chars().any(char::is_control)
+        && p.payload.chars().count() <= MAX_PAYLOAD
+        && !p
+            .payload
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t')
+}
+
 /// Single line, no control characters, bounded: peer-supplied text on a card.
 fn clean(text: &str, max: usize) -> String {
     text.chars()
@@ -241,6 +295,19 @@ mod tests {
             target: "Notepad".into(),
             payload: "OK".into(),
         }
+    }
+
+    /// A target that would be cut on the card is refused, not shown cut.
+    #[tokio::test]
+    async fn a_target_too_long_to_show_whole_is_refused_without_a_card() {
+        let q = PcRequests::new();
+        let mut long = preview();
+        long.target = format!("{}/.git/hooks/post-checkout", "d/".repeat(MAX_TARGET));
+        assert!(!q.ask("h", "Server", long, Duration::from_secs(5)).await);
+        assert!(q.list().is_empty());
+        let mut hidden = preview();
+        hidden.target = "C:/a\nC:/b".into();
+        assert!(!q.ask("h", "Server", hidden, Duration::from_secs(5)).await);
     }
 
     #[tokio::test]

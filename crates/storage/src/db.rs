@@ -1343,6 +1343,20 @@ impl Storage {
             .unwrap_or_default())
     }
 
+    /// Recorded origins of every user message delivered into `run` (the one
+    /// that started it and any steered in later).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn run_user_message_sources(&self, run: RunId) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT source FROM messages WHERE run_id = ?1 AND role = 'user' ORDER BY created_at_ms",
+        )?;
+        let rows = stmt.query_map(params![run.to_string()], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     /// Texts of the user messages of `chat` that the owner typed in the desktop app.
     ///
     /// # Errors
