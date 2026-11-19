@@ -175,6 +175,11 @@ fn host_mode_desktop_denial(method: &Method, check_path: &str) -> Option<&'stati
     if (under("/v1/email") || under("/v1/web/search")) && mutating {
         return Some("account credentials are managed on the host itself");
     }
+    // The dictation key and endpoint: audio could be redirected to another service.
+    // Transcribing (POST /v1/voice/transcribe) stays open to the operator.
+    if check_path == "/v1/voice" && mutating {
+        return Some("the dictation service and its key are managed on the host itself");
+    }
     if *method == Method::POST
         && (PHONE_DENIED_POST_PATHS.contains(&check_path)
             || check_path == "/v1/channels/telegram/pair-code")

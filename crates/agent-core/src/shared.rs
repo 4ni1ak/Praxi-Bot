@@ -1890,6 +1890,28 @@ impl Shared {
         )
     }
 
+    /// The "choosing tools" prompt block: which tool family fits which job and
+    /// that a claim needs the result of the call behind it. Built from the
+    /// tools the bot may use (all of them in discovery mode, where `specs`
+    /// holds only the meta tools), so it is stable across a run's model calls.
+    pub(crate) fn tool_guidance_block(&self, ctx: &RunCtx, specs: &[ToolSpec]) -> Option<String> {
+        let families = if specs.iter().any(|s| s.name == agent_router::FIND_TOOL) {
+            let visible = self.visible_specs(&ctx.profile, ctx.bot_id);
+            crate::tool_guidance::Families::of(
+                visible
+                    .iter()
+                    .filter(|s| {
+                        self.decide(ctx, &s.name, s.effect, s.category, &Value::Null)
+                            != Decision::Deny
+                    })
+                    .map(|s| s.name.as_str()),
+            )
+        } else {
+            crate::tool_guidance::Families::of(specs.iter().map(|s| s.name.as_str()))
+        };
+        crate::tool_guidance::block(families)
+    }
+
     /// This daemon is an always-on host (the bots' own computer).
     pub(crate) fn is_host_homed(&self) -> bool {
         self.computer_provider
@@ -2089,6 +2111,10 @@ pub(crate) struct ResultRec {
     /// before the field existed; those rows are not classified from their text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fact: Option<crate::taint::ExecFact>,
+    /// How the call ended (ok, error, timed out, denied, ...). Absent on rows
+    /// written before the field existed; the ledger classifies those itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<crate::ledger::Outcome>,
 }
 
 pub(crate) const STEP_USER: &str = "user_message";

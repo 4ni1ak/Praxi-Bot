@@ -136,6 +136,13 @@
       "grantTool": "{{name}} için her zaman izin ver",
       "inertGrant": "Etkin değil: bu kural bir bilgisayara bağlı değil ve artık uygulanmıyor.",
       "scopedAllow": "Şu bilgisayarlarda izinli: {{scopes}}",
+      "grantScoped": "{{tool}} aracına {{target}} için her zaman izin ver",
+      "mode": "Mod: {{mode}}",
+      "modes": {
+        "ask": "Sor",
+        "balanced": "Dengeli",
+        "full": "Tam"
+      },
       "revoke": "Geri al",
       "workspace": {
         "title": "Çalışma alanı varsayılanı",
@@ -349,6 +356,22 @@
       "always": "Her zaman",
       "deny": "Reddet",
       "reasonPlaceholder": "Reddetme gerekçesi (isteğe bağlı)",
+      "memory": {
+        "thisChat": "{{target}} için bu sohbette izin ver",
+        "always": "{{target}} için bu botta her zaman izin ver",
+        "target": {
+          "origin": "{{value}} sitesi",
+          "folder": "{{value}} içindeki dosyalar",
+          "command": "“{{value}}” komutları"
+        }
+      },
+      "batch": {
+        "title": "{{count}} onay gerekiyor",
+        "allowSelected": "Seçilenlere izin ver ({{count}})",
+        "denyAll": "Hepsini reddet",
+        "repeated": "×{{count}}",
+        "select": "İzin ver: {{name}}"
+      },
       "control": {
         "button": "Bu görev: {{program}}",
         "offered": "Yalnızca bu görev için {{program}} içine yazmaya izin verilsin mi?",
@@ -1046,6 +1069,18 @@
       "terminal_gone": {
         "title": "Terminal oturumu bitti",
         "hint": "Terminali yeniden aç."
+      },
+      "bad_voice_config": {
+        "title": "Dikte ayarları kabul edilmedi",
+        "hint": "Ayarlar bölümünde yazıya dökme hizmetinin adresini, modelini ve anahtarını kontrol edip tekrar dene."
+      },
+      "voice_not_configured": {
+        "title": "Dikte kurulu değil",
+        "hint": "Mesajları sesle yazmak için Ayarlar bölümünden bir yazıya dökme hizmeti ekle."
+      },
+      "voice_upstream_failed": {
+        "title": "Yazıya dökme hizmeti yanıt vermedi",
+        "hint": "Kaydın yazıya çevrilemedi. Ayarlar bölümünde hizmeti ve anahtarını kontrol edip tekrar dene."
       },
       "provider_endpoint": {
         "title": "Sağlayıcının API adresi bulunamadı",
@@ -3985,6 +4020,12 @@
     }
   },
   "voice": {
+    "bot": {
+      "title": "Bu botun sesi",
+      "useGlobal": "Ayarlardakiyle aynı",
+      "preview": "Merhaba, bu benim sesim.",
+      "hint": "Bu bot için sesli okuma düğmesine uygulanır, yalnızca bu cihazda."
+    },
     "speak": "Sesli oku",
     "stop": "Okumayı durdur",
     "codeOmitted": "(kod atlandı)",
@@ -3995,6 +4036,22 @@
     "online": "çevrimiçi",
     "speed": "Hız",
     "unsupported": "Bu sistemde konuşma sesi yok.",
+    "dictate": "Sesle yaz",
+    "dictateStop": "Durdur ve yazıya çevir",
+    "micDenied": "Mikrofon kullanılamıyor. Mikrofon erişimine izin verip tekrar dene.",
+    "notConfigured": "Sesle yazma henüz kurulu değil. Ayarlar > Genel bölümünden bir yazıya çevirme servisi ekle.",
+    "stt": {
+      "title": "Sesle yazma servisi",
+      "description": "Kayıtların nerede yazıya çevrileceği: OpenAI uyumlu bir servis (bulut sağlayıcı ya da yerel whisper sunucusu).",
+      "url": "Servis adresi",
+      "model": "Model",
+      "key": "API anahtarı",
+      "keyStored": "Anahtar kayıtlı (değiştirmek için yaz)",
+      "save": "Kaydet",
+      "saved": "Sesle yazma ayarları kaydedildi",
+      "clearKey": "Anahtarı sil",
+      "privacy": "Kayıt yalnızca mikrofona bastığında ve yalnızca bu adrese gönderilir. Anahtar gizli depoda kalır."
+    },
     "speakAuto": {
       "title": "Cevapları sesli oku",
       "description": "Biten her cevabı otomatik olarak sesli oku."

@@ -22,6 +22,7 @@ mod discovery_prompt;
 mod exec;
 mod history;
 mod knowledge;
+mod ledger;
 mod memory;
 mod mention;
 mod profile;
@@ -31,6 +32,7 @@ mod scoped_grant;
 mod shared;
 mod subagent;
 mod taint;
+mod tool_guidance;
 pub mod usage;
 
 #[cfg(test)]

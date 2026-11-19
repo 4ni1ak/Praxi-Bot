@@ -22,6 +22,7 @@ import {
   appActionDetails,
   formatFiring,
   brainDetails,
+  memoryOffer,
   scheduleDetails,
   type ControlGrantDetails,
   type EgressApprovalDetails,
@@ -381,6 +382,11 @@ export function ApprovalCard({
   const folders = Array.isArray(folderFacts) ? folderFacts.filter((f): f is string => typeof f === "string") : [];
   const facts = tool.details as { why?: unknown; once_only?: unknown } | null | undefined;
   const why = typeof facts?.why === "string" ? facts.why : null;
+  // What "this chat" / "always" would remember: one site, folder or command, never the whole tool.
+  const memory = memoryOffer(tool.details);
+  const memoryTarget = memory
+    ? t(`chat.approval.memory.target.${memory.kind}`, { value: memory.pattern })
+    : null;
   // The daemon says whether a standing choice may be offered; older events: any details mean once only.
   const onceOnly = typeof facts?.once_only === "boolean" ? facts.once_only : tool.details != null;
 
@@ -543,7 +549,9 @@ export function ApprovalCard({
                 disabled={disabled}
                 onClick={() => void decide("approve", "this_chat")}
               >
-                {t("chat.approval.thisChat")}
+                {memoryTarget
+                  ? t("chat.approval.memory.thisChat", { target: memoryTarget })
+                  : t("chat.approval.thisChat")}
               </Button>
               {/* A taint-gate card keeps its choice to this chat (tool class and site). */}
               {why === "egress" || why === "executes" ? null : (
@@ -553,7 +561,9 @@ export function ApprovalCard({
                 disabled={disabled}
                 onClick={() => void decide("approve", "always")}
               >
-                {t("chat.approval.always")}
+                {memoryTarget
+                  ? t("chat.approval.memory.always", { target: memoryTarget })
+                  : t("chat.approval.always")}
               </Button>
               )}
             </>
