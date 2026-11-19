@@ -32,6 +32,7 @@ mod scoped_grant;
 mod shared;
 mod subagent;
 mod taint;
+mod tool_guidance;
 pub mod usage;
 
 #[cfg(test)]
