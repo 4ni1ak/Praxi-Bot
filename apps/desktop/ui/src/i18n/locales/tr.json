@@ -839,6 +839,7 @@
     },
     "myComputer": "Benim bilgisayarım",
     "needsDesktop": "{{name}} sunucusunda masaüstü oturumu yok, bu yüzden gösterilecek ekran yok. Eklemek için bu bilgisayarda şunu çalıştır:",
+    "noChatMatches": "Eşleşen sohbet yok",
     "now": {
       "detailTitle": "Şu anki çalışma",
       "open": "Ayrıntıyı aç",
@@ -853,6 +854,7 @@
     "runsOnHost": "{{name}} sunucusunda çalışır",
     "runsOnLocal": "Bu bilgisayarda çalışır",
     "screenListFailed": "{{name}} ekran listesi yüklenemedi. Birazdan yeniden denenecek.",
+    "searchChats": "Sohbetlerde ara…",
     "serverIssue": {
       "connecting": "{{name}} sunucusuna bağlanılıyor… yanıt verince ekranı burada görünür.",
       "notPaired": "{{name}} bu bilgisayarı artık kabul etmiyor. Yeni bir biletle yeniden eşleştir.",
