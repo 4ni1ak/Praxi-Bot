@@ -1116,7 +1116,7 @@ export function ChatView({
               <Markdown text={item.text} />
             </div>
             <CopyButton text={item.text} />
-            <SpeakButton id={`${runId}:${item.ts}`} text={item.text} />
+            <SpeakButton id={`${runId}:${item.ts}`} text={item.text} botId={chat?.bot_id} />
             <MessageInfo side="bot" ts={item.ts} runId={runId} run={run} runDto={runs.find((r) => r.id === runId)} />
             <MessageTime
               ts={item.ts}
@@ -1316,7 +1316,7 @@ export function ChatView({
                       <Markdown text={e.text} />
                     </div>
                     <CopyButton text={e.text} />
-                    <SpeakButton id={e.key} text={e.text} />
+                    <SpeakButton id={e.key} text={e.text} botId={e.botId ?? chat?.bot_id} />
                     <MessageInfo side="bot" ts={e.ts} runId={e.runId} run={e.runId ? events.runs[e.runId] : undefined} runDto={runs.find((r) => r.id === e.runId)} />
                     <MessageTime ts={e.ts} mode={messageTimes} />
                   </div>
