@@ -25,6 +25,7 @@ tempfile.workspace = true
 live-view.workspace = true
 host-provision = { path = "../../crates/host-provision", version = "0.1.0" }
 peer-network = { path = "../../crates/peer-network", version = "0.1.0" }
+state-bundle = { path = "../../crates/state-bundle", version = "0.1.0" }
 remote-api = { path = "../../crates/remote-api", version = "0.1.0", features = ["server"] }
 agent-core = { path = "../../crates/agent-core", version = "0.1.0" }
 async-trait.workspace = true
