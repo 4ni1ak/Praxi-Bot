@@ -1,5 +1,4 @@
 import { load, type Store } from "@tauri-apps/plugin-store";
-import type { PermissionPreset } from "../api/types";
 import { DEFAULT_STOP_HOTKEY, PRODUCT_CONFIG } from "../config/product";
 import type { SupportedLanguage } from "../i18n";
 import {
@@ -7,6 +6,9 @@ import {
   normalizeAppearance,
   type AppearanceSettings
 } from "../lib/appearance";
+import { parseBotOrder } from "../lib/botOrder";
+import { DEFAULT_VOICE_RATE, parseVoiceName, parseVoiceRate } from "../lib/voicePrefs";
+import { type MessageTimes, parseMessageTimes } from "../lib/messageTime";
 import {
   type ComputerTarget,
   parseComputerTarget,
@@ -24,10 +26,6 @@ export interface AppSettings extends AppearanceSettings {
   onboardingCompleted: boolean;
   onboardingSkipped: boolean;
   onboardingStep: number;
-  onboardingProviderId: string;
-  onboardingModel: string;
-  onboardingPermissionPreset: PermissionPreset;
-  onboardingBotId: string;
   autostart: boolean;
   /** OS notification when an approval or question waits (window unfocused). */
   notifyNeedsYou: boolean;
@@ -45,8 +43,18 @@ export interface AppSettings extends AppearanceSettings {
   windowFrame: boolean;
   /** Key chord that sends a chat message. */
   sendWith: SendWith;
+  /** How message times show in the chat. */
+  messageTimes: MessageTimes;
   /** Where the bot's computer / browser runs. */
   computerTarget: ComputerTarget;
+  /** Sidebar bot order (bot ids); the first bot is the main bot. Empty = daemon order. */
+  botOrder: string[];
+  /** OS speech voice used to read replies aloud; "" = automatic (matches the UI language). */
+  voiceName: string;
+  /** Speaking speed of read-aloud replies (0.5 - 2). */
+  voiceRate: number;
+  /** Read each finished bot reply aloud automatically. */
+  speakReplies: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -60,10 +68,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   onboardingCompleted: false,
   onboardingSkipped: false,
   onboardingStep: 1,
-  onboardingProviderId: "",
-  onboardingModel: "",
-  onboardingPermissionPreset: "approve-destructive",
-  onboardingBotId: "",
   autostart: false,
   notifyNeedsYou: true,
   notifyLongRun: true,
@@ -73,7 +77,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   accountName: "",
   windowFrame: true,
   sendWith: "enter",
-  computerTarget: "this-pc"
+  messageTimes: "minutes",
+  computerTarget: "this-pc",
+  botOrder: [],
+  voiceName: "",
+  voiceRate: DEFAULT_VOICE_RATE,
+  speakReplies: false
 };
 
 export function shouldOpenOnboardingOnStart(
@@ -119,7 +128,12 @@ export function loadSettingsSync(): AppSettings | null {
       ...DEFAULT_SETTINGS,
       ...parsed,
       ...normalizeAppearance(parsed as Record<string, unknown>),
-      computerTarget: parseComputerTarget(parsed.computerTarget)
+      computerTarget: parseComputerTarget(parsed.computerTarget),
+      messageTimes: parseMessageTimes(parsed.messageTimes),
+      botOrder: parseBotOrder(parsed.botOrder),
+      voiceName: parseVoiceName(parsed.voiceName),
+      voiceRate: parseVoiceRate(parsed.voiceRate),
+      speakReplies: parsed.speakReplies === true
     };
   } catch {
     return null;
@@ -163,18 +177,6 @@ export async function loadSettings(): Promise<AppSettings> {
       const onboardingStep =
         (await store.get<number>("onboardingStep")) ??
         DEFAULT_SETTINGS.onboardingStep;
-      const onboardingProviderId =
-        (await store.get<string>("onboardingProviderId")) ??
-        DEFAULT_SETTINGS.onboardingProviderId;
-      const onboardingModel =
-        (await store.get<string>("onboardingModel")) ??
-        DEFAULT_SETTINGS.onboardingModel;
-      const onboardingPermissionPreset =
-        (await store.get<PermissionPreset>("onboardingPermissionPreset")) ??
-        DEFAULT_SETTINGS.onboardingPermissionPreset;
-      const onboardingBotId =
-        (await store.get<string>("onboardingBotId")) ??
-        DEFAULT_SETTINGS.onboardingBotId;
       const autostart =
         (await store.get<boolean>("autostart")) ?? DEFAULT_SETTINGS.autostart;
       const notifyNeedsYou =
@@ -199,9 +201,15 @@ export async function loadSettings(): Promise<AppSettings> {
         (await store.get<boolean>("windowFrame")) ??
         DEFAULT_SETTINGS.windowFrame;
       const sendWith = parseSendWith(await store.get<string>("sendWith"));
+      const messageTimes = parseMessageTimes(await store.get<string>("messageTimes"));
       const computerTarget = parseComputerTarget(
         await store.get<string>("computerTarget")
       );
+
+      const botOrder = parseBotOrder(await store.get<unknown>("botOrder"));
+      const voiceName = parseVoiceName(await store.get<string>("voiceName"));
+      const voiceRate = parseVoiceRate(await store.get<number>("voiceRate"));
+      const speakReplies = (await store.get<boolean>("speakReplies")) === true;
 
       return {
         ...appearance,
@@ -214,10 +222,6 @@ export async function loadSettings(): Promise<AppSettings> {
         onboardingCompleted,
         onboardingSkipped,
         onboardingStep,
-        onboardingProviderId,
-        onboardingModel,
-        onboardingPermissionPreset,
-        onboardingBotId,
         autostart,
         notifyNeedsYou,
         notifyLongRun,
@@ -227,7 +231,12 @@ export async function loadSettings(): Promise<AppSettings> {
         accountName,
         windowFrame,
         sendWith,
-        computerTarget
+        messageTimes,
+        computerTarget,
+        botOrder,
+        voiceName,
+        voiceRate,
+        speakReplies
       };
     } catch {
       // Fall back to localStorage below if reading from plugin-store fails
@@ -259,13 +268,6 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
       await store.set("onboardingCompleted", settings.onboardingCompleted);
       await store.set("onboardingSkipped", settings.onboardingSkipped);
       await store.set("onboardingStep", settings.onboardingStep);
-      await store.set("onboardingProviderId", settings.onboardingProviderId);
-      await store.set("onboardingModel", settings.onboardingModel);
-      await store.set(
-        "onboardingPermissionPreset",
-        settings.onboardingPermissionPreset
-      );
-      await store.set("onboardingBotId", settings.onboardingBotId);
       await store.set("autostart", settings.autostart);
       await store.set("notifyNeedsYou", settings.notifyNeedsYou);
       await store.set("notifyLongRun", settings.notifyLongRun);
@@ -275,7 +277,12 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
       await store.set("accountName", settings.accountName);
       await store.set("windowFrame", settings.windowFrame);
       await store.set("sendWith", settings.sendWith);
+      await store.set("messageTimes", settings.messageTimes);
       await store.set("computerTarget", settings.computerTarget);
+      await store.set("botOrder", settings.botOrder);
+      await store.set("voiceName", settings.voiceName);
+      await store.set("voiceRate", settings.voiceRate);
+      await store.set("speakReplies", settings.speakReplies);
       await store.save();
     } catch {
       // Ignore store write errors in non-Tauri environments

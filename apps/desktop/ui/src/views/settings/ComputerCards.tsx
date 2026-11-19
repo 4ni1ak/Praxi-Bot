@@ -1,3 +1,4 @@
+import { TrustedFolders } from "../../components/TrustedFolders";
 import { Monitor } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -11,7 +12,7 @@ import {
 import { useLiveView } from "../../state/LiveViewContext";
 import styles from "../SettingsModal.module.css";
 import { PermissionsSection } from "../SettingsSections";
-import { EmailCard } from "./EmailCard";
+import { ComputerAccessCard } from "../../components/ComputerAccess";
 import { WebSearchCard } from "./WebSearchCard";
 import type { CardDef, SettingsBridge } from "./types";
 
@@ -112,6 +113,24 @@ export function computerCards(b: SettingsBridge, t: TFunction): CardDef[] {
       )
     },
     {
+      id: "my-computer",
+      section: "computer",
+      kind: "block",
+      title: t("computerAccess.title"),
+      description: t("computerAccess.description"),
+      keywords: "bots use computer server host bilgisayar sunucu botlarim izin",
+      node: <ComputerAccessCard />
+    },
+    {
+      id: "trusted-folders",
+      section: "computer",
+      kind: "block",
+      title: t("folderTrust.title"),
+      description: t("folderTrust.description"),
+      keywords: "trust folder repository klasor guven depo",
+      node: <TrustedFolders />
+    },
+    {
       id: "permissions",
       section: "computer",
       kind: "block",
@@ -119,15 +138,6 @@ export function computerCards(b: SettingsBridge, t: TFunction): CardDef[] {
       description: t("settings.permissions.description"),
       keywords: "policy permission izin",
       node: <PermissionsSection />
-    },
-    {
-      id: "email",
-      section: "computer",
-      kind: "block",
-      title: t("settingsModal.email.title"),
-      description: t("settingsModal.email.description"),
-      keywords: "mail e-posta eposta imap smtp gmail outlook yahoo icloud mailbox posta kutusu",
-      node: <EmailCard />
     },
     {
       id: "web-search",

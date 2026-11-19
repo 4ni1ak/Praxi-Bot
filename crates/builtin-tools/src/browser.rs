@@ -15,15 +15,22 @@ use browser_cdp::{
     ActionResult, Browser, DialogAction, DialogOptions, LaunchOptions, Page, ScreenshotOptions,
     ScreenshotTarget, SnapshotOptions, WaitCondition,
 };
+use secret_store::{FillSecrets, sanitize_label};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tool_registry::{
-    Effect, PermissionCategory, Tool, ToolContext, ToolError, ToolOutput, ToolSpec,
+    Effect, PermissionCategory, StandingGrant, Tool, ToolContext, ToolError, ToolOutput, ToolSpec,
 };
 
 use crate::control::{ActionPermit, ControlRequest, DesktopControlGate};
+use crate::fill_secret::{Source, names_a_secret, refused, scrub, source};
 use crate::util::{exec_err, finish_text, parse, save_file, spec};
+
+pub use browser_cdp::FieldTarget;
+
+/// Why a driver cannot type a secret.
+const NO_SECRET_FILL: &str = "this browser backend cannot tell which page frame holds a field, so secrets are not typed with it";
 
 /// What `browser_wait` waits for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +57,8 @@ pub trait BrowserDriver: Send + Sync {
     fn for_headless(&self, _headless: bool) -> Option<Arc<dyn BrowserDriver>> {
         None
     }
+    /// Close every browser this driver owns (bot deleted, daemon stopping).
+    async fn close_all(&self) {}
     /// Navigate to `url` (starting the browser if needed); returns the page snapshot.
     async fn open(&self, url: &str, profile: Option<&str>) -> Result<String, String>;
     /// Navigate to `url` with dialog options.
@@ -79,6 +88,25 @@ pub trait BrowserDriver: Send + Sync {
     }
     /// Replace the text of input `r`.
     async fn fill(&self, r: &str, text: &str) -> Result<String, String>;
+    /// Where field `r` lives right now (label, role, and the origin of the
+    /// FRAME that holds it, as the browser reports it). Backends that cannot
+    /// say refuse, so no secret is ever typed through them.
+    async fn field_target(&self, r: &str) -> Result<FieldTarget, String> {
+        let _ = r;
+        Err(NO_SECRET_FILL.into())
+    }
+    /// Type `text` (an owner-stored secret) into field `r`, but only while the
+    /// field's frame origin, re-read from the browser immediately before the
+    /// text is inserted, satisfies `accept`. Never put `text` in the result.
+    async fn fill_secret(
+        &self,
+        r: &str,
+        text: &str,
+        accept: &(dyn Fn(Option<String>) -> bool + Send + Sync),
+    ) -> Result<String, String> {
+        let _ = (r, text, accept);
+        Err(NO_SECRET_FILL.into())
+    }
     /// Choose option `value` in select `r`.
     async fn select(&self, r: &str, value: &str) -> Result<String, String>;
     /// Press a key or chord such as `Enter` or `Control+a`.
@@ -104,6 +132,30 @@ pub trait BrowserDriver: Send + Sync {
     ) -> Result<(Vec<u8>, &'static str), String>;
     /// Evaluate JavaScript in the page.
     async fn eval(&self, js: &str) -> Result<Value, String>;
+    /// Browser-reported origin of the receiving ref, or the focused frame for a key press.
+    async fn input_origin(&self, r: Option<&str>) -> Option<String> {
+        self.field_target(r?).await.ok()?.frame_origin
+    }
+    /// URL of the top-level page of the current session as the BROWSER reports it (target
+    /// info, not page script). `None`: no session, or the driver cannot tell.
+    async fn current_url(&self) -> Option<String> {
+        None
+    }
+}
+
+/// `scheme://host:port` of an http(s) URL: lower case, no trailing dot, default port explicit.
+#[must_use]
+pub fn origin_of(url: &str) -> Option<String> {
+    let url = url::Url::parse(url).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = url.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+    Some(format!(
+        "{}://{host}:{}",
+        url.scheme(),
+        url.port_or_known_default()?
+    ))
 }
 
 /// Runtime browser settings.
@@ -156,6 +208,9 @@ pub struct CdpDriver {
     activity: Arc<std::sync::RwLock<Option<ActivityProbe>>>,
     reaper_started: std::sync::atomic::AtomicBool,
     peers: Option<(String, BrowserPeers)>,
+    /// Live-view slot of this bot's browser: idle until a session launches,
+    /// then bound to its page. Capture stays lazy (viewer-driven).
+    view: Option<Arc<browser_cdp::BrowserViewTarget>>,
 }
 
 /// Reports whether real bot work is going on (see [`CdpDriver::set_activity_probe`]).
@@ -251,6 +306,7 @@ impl CdpDriver {
             takeover_pin: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             activity: Arc::new(std::sync::RwLock::new(None)),
             reaper_started: std::sync::atomic::AtomicBool::new(false),
+            view: None,
         }
     }
 
@@ -311,7 +367,7 @@ impl CdpDriver {
                         }
                     });
                     if let Some(session) = idle {
-                        let _ = session.browser.close().await;
+                        close_session(other.view.as_deref(), session).await;
                     }
                 }
             }
@@ -357,7 +413,7 @@ impl CdpDriver {
             .is_some_and(|sess| !Self::session_alive(sess) || sess.headless != desired_headless)
             && let Some(old) = guard.take()
         {
-            let _ = old.browser.close().await;
+            close_session(self.view.as_deref(), old).await;
         }
         if let Some(existing) = guard.as_ref() {
             if let Some(p) = profile
@@ -373,6 +429,16 @@ impl CdpDriver {
                 return Err("browser_idle; call browser_open before reading the browser".into());
             }
             *guard = Some(self.launch_session(profile).await?);
+            // Watching starts nothing: binding only tells the idle slot which
+            // page to serve. The slot follows the driver that actually runs
+            // (headless or headed); if it is still held by an older browser of
+            // this bot, that one is retired to idle first.
+            if let (Some(view), Some(session)) = (&self.view, guard.as_ref())
+                && view.attach_page(&session.page).is_err()
+            {
+                let _ = view.detach_to_idle().await;
+                let _ = view.attach_page(&session.page);
+            }
         }
         let session = guard.as_mut().expect("session just ensured");
         session.last_work = tokio::time::Instant::now();
@@ -402,6 +468,7 @@ impl CdpDriver {
             return;
         }
         let weak_session = Arc::downgrade(&self.session);
+        let view = self.view.clone();
         let pin = Arc::clone(&self.takeover_pin);
         let activity = Arc::clone(&self.activity);
         let timeout = self.settings.idle_timeout;
@@ -417,15 +484,32 @@ impl CdpDriver {
                 let Some(session) = weak_session.upgrade() else {
                     break;
                 };
-                reap_tick(&session, timeout, &pin, &activity, &mut state).await;
+                reap_tick(
+                    &session,
+                    view.as_deref(),
+                    timeout,
+                    &pin,
+                    &activity,
+                    &mut state,
+                )
+                .await;
             }
         });
     }
 
     /// Close the browser (the next call launches a new one).
     pub async fn shutdown(&self) {
-        if let Some(sess) = self.session.lock().await.take() {
-            let _ = sess.browser.close().await;
+        let session = self.session.lock().await.take();
+        if let Some(sess) = session {
+            close_session(self.view.as_deref(), sess).await;
+        }
+        let alternate = self.alternate_mode.lock().clone();
+        if let Some(alt) = alternate {
+            // One level only: the alternate driver has no alternate of its own.
+            let session = alt.session.lock().await.take();
+            if let Some(sess) = session {
+                close_session(alt.view.as_deref(), sess).await;
+            }
         }
     }
 
@@ -448,6 +532,7 @@ struct ReapState {
 /// action admitted just before the close is not racing it.
 async fn reap_tick(
     session: &Mutex<Option<Session>>,
+    view: Option<&browser_cdp::BrowserViewTarget>,
     timeout: Duration,
     pin: &std::sync::atomic::AtomicBool,
     activity: &std::sync::RwLock<Option<ActivityProbe>>,
@@ -482,8 +567,27 @@ async fn reap_tick(
         && !run_active()
         && let Some(s) = slot.take()
     {
-        let _ = s.browser.close().await;
+        close_session(view, s).await;
     }
+}
+
+/// Close a browser and return its live-view slot to idle (only when the slot
+/// still points at this browser's page), so the panel says "browser idle"
+/// instead of a generic failure, and notifies listeners.
+async fn close_session(view: Option<&browser_cdp::BrowserViewTarget>, session: Session) {
+    if let Some(view) = view {
+        let _ = view.detach_if_bound(&session.page).await;
+    }
+    let _ = session.browser.close().await;
+}
+
+tokio::task_local! {
+    // Carried across control-gate waits, then checked with the session lock held.
+    static EXPECTED_PAGE_ORIGIN: Option<String>;
+}
+
+fn expected_input_origin() -> Option<String> {
+    EXPECTED_PAGE_ORIGIN.try_with(Clone::clone).ok().flatten()
 }
 
 /// Run `$body` against the cached session. A closed browser is replaced inside
@@ -543,10 +647,18 @@ impl BrowserDriver for CdpDriver {
                     let mut driver = CdpDriver::new(settings);
                     driver.takeover_pin = Arc::clone(&self.takeover_pin);
                     driver.activity = Arc::clone(&self.activity);
+                    // One live-view slot per bot, whichever mode runs: the
+                    // alternate driver binds it when it launches (and retires
+                    // the other mode's page from it).
+                    driver.view.clone_from(&self.view);
                     Arc::new(driver)
                 })
                 .clone(),
         )
+    }
+
+    async fn close_all(&self) {
+        self.shutdown().await;
     }
 
     async fn open_opts(
@@ -592,7 +704,9 @@ impl BrowserDriver for CdpDriver {
             prompt_text: prompt_text.map(str::to_string),
         };
         let acted = with_session!(self, None, |sess| {
-            sess.page.click_with(r, &dialog_opts).await
+            sess.page
+                .click_with_origin(r, &dialog_opts, expected_input_origin().as_deref())
+                .await
         })?;
         render_action(&acted)
     }
@@ -602,19 +716,57 @@ impl BrowserDriver for CdpDriver {
     }
 
     async fn fill(&self, r: &str, text: &str) -> Result<String, String> {
-        let acted = with_session!(self, None, |sess| { sess.page.fill(r, text).await })?;
+        let acted = with_session!(self, None, |sess| {
+            sess.page
+                .fill_with_origin(r, text, expected_input_origin().as_deref())
+                .await
+        })?;
+        render_action(&acted)
+    }
+
+    async fn input_origin(&self, r: Option<&str>) -> Option<String> {
+        let result: Result<Option<String>, String> = async {
+            with_session!(self, None, false, |sess| {
+                sess.page.input_origin(r).await
+            })
+        }
+        .await;
+        result.ok().flatten()
+    }
+
+    async fn field_target(&self, r: &str) -> Result<FieldTarget, String> {
+        with_session!(self, None, false, |sess| {
+            sess.page.field_target(r).await
+        })
+    }
+
+    async fn fill_secret(
+        &self,
+        r: &str,
+        text: &str,
+        accept: &(dyn Fn(Option<String>) -> bool + Send + Sync),
+    ) -> Result<String, String> {
+        let acted = with_session!(self, None, false, |sess| {
+            sess.page.fill_secret(r, text, accept).await
+        })?;
         render_action(&acted)
     }
 
     async fn select(&self, r: &str, value: &str) -> Result<String, String> {
         let acted = with_session!(self, None, |sess| {
-            sess.page.select_option(r, value).await
+            sess.page
+                .select_option_with_origin(r, value, expected_input_origin().as_deref())
+                .await
         })?;
         render_action(&acted)
     }
 
     async fn press(&self, key: &str) -> Result<String, String> {
-        let acted = with_session!(self, None, |sess| { sess.page.press_key(key).await })?;
+        let acted = with_session!(self, None, |sess| {
+            sess.page
+                .press_key_with_origin(key, expected_input_origin().as_deref())
+                .await
+        })?;
         render_action(&acted)
     }
 
@@ -708,6 +860,23 @@ impl BrowserDriver for CdpDriver {
     async fn eval(&self, js: &str) -> Result<Value, String> {
         with_session!(self, None, |sess| { sess.page.evaluate(js).await })
     }
+
+    async fn current_url(&self) -> Option<String> {
+        // Never starts a browser just to ask.
+        let listed: Result<Option<String>, String> = async {
+            with_session!(self, None, false, |sess| {
+                let current = sess.page.target_id().to_string();
+                sess.browser.pages().await.map(|pages| {
+                    pages
+                        .into_iter()
+                        .find(|t| t.target_id == current)
+                        .map(|t| t.url)
+                })
+            })
+        }
+        .await;
+        listed.ok().flatten()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -732,13 +901,19 @@ struct Shared {
     data_dir: PathBuf,
     control: Option<Arc<dyn DesktopControlGate>>,
     observed_epoch: Arc<std::sync::atomic::AtomicU64>,
+    /// Owner-stored secrets the fill tool may type; `None` refuses `secret`.
+    fill_secrets: Option<Arc<FillSecrets>>,
 }
 
 /// The tool context supplies the bot identity, never the model's input.
+type BotDrivers = Arc<parking_lot::Mutex<std::collections::HashMap<String, Arc<Shared>>>>;
+
 struct ManagedBrowsers {
     settings: BrowserSettings,
     peers: BrowserPeers,
-    bots: parking_lot::Mutex<std::collections::HashMap<String, Arc<Shared>>>,
+    bots: BotDrivers,
+    /// Where each bot's idle browser view target is registered.
+    views: Option<Arc<live_view::TargetRegistry>>,
 }
 
 impl Shared {
@@ -762,6 +937,26 @@ impl Shared {
             settings.profiles_root = root.join("profiles");
             let mut cdp = CdpDriver::new(settings);
             cdp.peers = Some((id.into(), Arc::clone(&managed.peers)));
+            if let Some(views) = &managed.views {
+                let pin = Arc::clone(&cdp.takeover_pin);
+                // Weak: the registry holds the target, the target must not hold the registry.
+                let registry = Arc::downgrade(views);
+                let target =
+                    browser_cdp::BrowserViewTarget::new_idle(browser_cdp::BrowserViewConfig {
+                        bot_id: uuid::Uuid::parse_str(id).ok(),
+                        takeover_pin: Some(Arc::new(move |on| {
+                            pin.store(on, std::sync::atomic::Ordering::SeqCst);
+                        })),
+                        on_change: Some(Arc::new(move || {
+                            if let Some(registry) = registry.upgrade() {
+                                registry.notify_changed();
+                            }
+                        })),
+                        ..browser_cdp::BrowserViewConfig::default()
+                    });
+                views.register(target.clone());
+                cdp.view = Some(target);
+            }
             if let Some(gate) = self.control.clone() {
                 let bot_id = id.to_owned();
                 cdp.set_activity_probe(Arc::new(move || gate.computer_in_use_for_bot(&bot_id)));
@@ -774,6 +969,7 @@ impl Shared {
                 data_dir: self.data_dir.clone(),
                 control: self.control.clone(),
                 observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                fill_secrets: self.fill_secrets.clone(),
             })
         })))
     }
@@ -786,18 +982,56 @@ pub fn managed_tools(
     settings: BrowserSettings,
     data_dir: &Path,
     control: Option<Arc<dyn DesktopControlGate>>,
+    views: Option<Arc<live_view::TargetRegistry>>,
+) -> Vec<Arc<dyn Tool>> {
+    managed_tools_with_secrets(settings, data_dir, control, views, None)
+}
+
+/// [`managed_tools`] whose `browser_fill` may type the owner's fill secrets.
+#[must_use]
+pub fn managed_tools_with_secrets(
+    settings: BrowserSettings,
+    data_dir: &Path,
+    control: Option<Arc<dyn DesktopControlGate>>,
+    views: Option<Arc<live_view::TargetRegistry>>,
+    fill_secrets: Option<Arc<FillSecrets>>,
 ) -> Vec<Arc<dyn Tool>> {
     let driver = Arc::new(CdpDriver::new(settings.clone()));
+    let peers = BrowserPeers::default();
+    let bots = BotDrivers::default();
+    if let Some(registry) = &views {
+        wire_retirement(registry, &bots, &peers);
+    }
     tools_with_pool(
         driver,
         data_dir,
         control,
         Some(ManagedBrowsers {
             settings,
-            peers: BrowserPeers::default(),
-            bots: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            peers,
+            bots,
+            views,
         }),
+        fill_secrets,
     )
+}
+
+/// A deleted bot leaves no driver, browser or selectable screen behind.
+fn wire_retirement(registry: &live_view::TargetRegistry, bots: &BotDrivers, peers: &BrowserPeers) {
+    let (bots, peers) = (Arc::clone(bots), Arc::clone(peers));
+    registry.on_bot_retired(move |bot| retire_bot(&bots, &peers, &bot.to_string()));
+}
+
+/// Forget a deleted bot's driver and close its browser (in the background).
+fn retire_bot(bots: &BotDrivers, peers: &BrowserPeers, id: &str) {
+    let removed = bots.lock().remove(id);
+    peers.lock().remove(id);
+    if let Some(shared) = removed {
+        let driver = Arc::clone(&shared.driver);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move { driver.close_all().await });
+        }
+    }
 }
 
 /// One browser tool.
@@ -814,7 +1048,18 @@ pub fn tools(
     data_dir: &Path,
     control: Option<Arc<dyn DesktopControlGate>>,
 ) -> Vec<Arc<dyn Tool>> {
-    tools_with_pool(driver, data_dir, control, None)
+    tools_with_pool(driver, data_dir, control, None, None)
+}
+
+/// [`tools`] whose `browser_fill` may type the owner's fill secrets.
+#[must_use]
+pub fn tools_with_secrets(
+    driver: Arc<dyn BrowserDriver>,
+    data_dir: &Path,
+    control: Option<Arc<dyn DesktopControlGate>>,
+    fill_secrets: Option<Arc<FillSecrets>>,
+) -> Vec<Arc<dyn Tool>> {
+    tools_with_pool(driver, data_dir, control, None, fill_secrets)
 }
 
 fn tools_with_pool(
@@ -822,6 +1067,7 @@ fn tools_with_pool(
     data_dir: &Path,
     control: Option<Arc<dyn DesktopControlGate>>,
     managed: Option<ManagedBrowsers>,
+    fill_secrets: Option<Arc<FillSecrets>>,
 ) -> Vec<Arc<dyn Tool>> {
     let shared = Arc::new(Shared {
         driver,
@@ -829,6 +1075,7 @@ fn tools_with_pool(
         data_dir: data_dir.to_path_buf(),
         control,
         observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        fill_secrets,
     });
     let b = PermissionCategory::Browser;
     let ref_prop =
@@ -838,7 +1085,7 @@ fn tools_with_pool(
             Op::Open,
             spec(
                 "browser_open",
-                "Open a URL in the browser and return the page snapshot. Example: {\"url\":\"https://example.com\"}",
+                "Open a URL in the bot's own managed browser and return the page snapshot. This is not the user's browser; to see what the user has open, use desktop_list_apps. Example: {\"url\":\"https://example.com\"}",
                 json!({"type":"object","properties":{
                     "url":{"type":"string","description":"Full URL."},
                     "profile":{"type":"string","description":"Profile name, or 'isolated' for a disposable profile. Omit to use the configured per-bot default. Only honoured when the browser starts."},
@@ -853,7 +1100,7 @@ fn tools_with_pool(
             Op::Snapshot,
             spec(
                 "browser_snapshot",
-                "Read the page as lines like [e12] button \"Sign in\". Use the refs in other browser tools. Example: {\"interactive_only\":true}",
+                "Read the managed browser's page as lines like [e12] button \"Sign in\". about:blank or no page here says nothing about the user's own browser or screen (use desktop_list_apps for that). Use the refs in other browser tools. Example: {\"interactive_only\":true}",
                 json!({"type":"object","properties":{
                     "interactive_only":{"type":"boolean","description":"Only list clickable/typable elements."}
                 }}),
@@ -879,11 +1126,12 @@ fn tools_with_pool(
             Op::Fill,
             spec(
                 "browser_fill",
-                "Replace the text of an input. Example: {\"ref\":\"e5\",\"text\":\"hello\"}",
+                "Replace the text of an input. Give exactly one of `text` (what you type) or `secret` (the name of a secret the owner stored, from secrets_list: it is typed for you and you never see the value). Example: {\"ref\":\"e5\",\"text\":\"hello\"} or {\"ref\":\"e5\",\"secret\":\"login/github\"}",
                 json!({"type":"object","properties":{
                     "ref":ref_prop,
-                    "text":{"type":"string","description":"New text."}
-                },"required":["ref","text"]}),
+                    "text":{"type":"string","description":"New text. Not with `secret`."},
+                    "secret":{"type":"string","description":"Name of an owner-stored secret to type instead of `text`."}
+                },"required":["ref"]}),
                 Effect::Write,
                 b,
             ),
@@ -958,7 +1206,7 @@ fn tools_with_pool(
             Op::Tabs,
             spec(
                 "browser_tabs",
-                "List open tabs (current is marked *), or switch with switch_to. Example: {\"switch_to\":2}",
+                "List open tabs of the bot's managed browser (current is marked *), or switch with switch_to. Not the user's tabs: empty or about:blank here says nothing about their browser. Example: {\"switch_to\":2}",
                 json!({"type":"object","properties":{
                     "switch_to":{"type":"integer","minimum":1,"description":"Tab number from the list."}
                 }}),
@@ -1032,7 +1280,6 @@ struct BackIn {
 #[derive(Deserialize)]
 struct FillIn {
     r#ref: String,
-    text: String,
 }
 
 #[derive(Deserialize)]
@@ -1103,6 +1350,117 @@ fn check_open_url(url: &str) -> Result<(), ToolError> {
         Err(ToolError::InvalidInput(
             "browser_open only accepts full http:// or https:// URLs (or about:blank)".into(),
         ))
+    }
+}
+
+/// Type the owner's fill secret `name` into field `r`.
+///
+/// The live frame origin of the receiving field is resolved and compared with
+/// the secret's allow-list FIRST; a field that is not on the list is refused
+/// before the value is read. The value is read from the store only now, kept in
+/// memory, handed to the driver (which re-checks the frame origin immediately
+/// before inserting) and wiped on drop. Nothing returned contains it.
+///
+/// # Errors
+/// The field cannot be located, its frame origin is not on the secret's
+/// allow-list, the secret has no value, or the browser refuses; the message
+/// never contains the value.
+pub async fn fill_with_secret(
+    driver: &dyn BrowserDriver,
+    secrets: &FillSecrets,
+    r: &str,
+    name: &str,
+) -> Result<String, String> {
+    let target = driver.field_target(r).await?;
+    secrets
+        .check_browser_in(
+            name,
+            target.frame_origin.as_deref(),
+            target.top_origin.as_deref(),
+        )
+        .map_err(|e| e.to_string())?;
+    let value = secrets.resolve_value(name).map_err(|e| e.to_string())?;
+    let top = target.top_origin.clone();
+    let accept = |origin: Option<String>| {
+        secrets
+            .check_browser_in(name, origin.as_deref(), top.as_deref())
+            .is_ok()
+    };
+    let result = driver.fill_secret(r, value.expose(), &accept).await;
+    let shown = match result {
+        Ok(text) => Ok(scrub(&text, &value)),
+        Err(e) => Err(scrub(&e, &value)),
+    };
+    drop(value);
+    shown
+}
+
+impl BrowserTool {
+    fn fill_secrets(&self) -> Result<Arc<FillSecrets>, ToolError> {
+        self.shared
+            .fill_secrets
+            .clone()
+            .ok_or_else(|| exec_err("no secrets are configured on this daemon"))
+    }
+
+    /// The per-bot (and per-run mode) shared state a call runs on. The same
+    /// selection serves the call and its approval checks, so what is checked
+    /// is what will receive the text.
+    fn select_shared(&self, ctx: &ToolContext) -> Result<Arc<Shared>, ToolError> {
+        let mut shared = self.shared.for_bot(ctx.bot_id.as_deref())?;
+        if let Some(headless) = self
+            .shared
+            .control
+            .as_ref()
+            .and_then(|gate| gate.browser_headless_for_run(&ctx.run_id))
+            && let Some(driver) = shared.driver.for_headless(headless)
+        {
+            // The alternate driver is already bot-scoped. Wrapping it in
+            // `managed` would attach the other mode's profile pool.
+            shared = Arc::new(Shared {
+                driver,
+                managed: None,
+                data_dir: shared.data_dir.clone(),
+                control: shared.control.clone(),
+                observed_epoch: shared.observed_epoch.clone(),
+                fill_secrets: shared.fill_secrets.clone(),
+            });
+        }
+        Ok(shared)
+    }
+
+    /// Facts about the live receiving field of a `secret` fill, or the refusal.
+    /// Returns the secret's name, the field and the standing grant that
+    /// matches it exactly, if any.
+    async fn secret_fill_facts(
+        &self,
+        ctx: &ToolContext,
+        input: &Value,
+    ) -> Result<Option<(String, FieldTarget, Option<String>)>, ToolError> {
+        if self.op != Op::Fill {
+            return Ok(None);
+        }
+        let Source::Secret(name) = source(input, "text")? else {
+            return Ok(None);
+        };
+        let i: FillIn = parse(input.clone())?;
+        let secrets = self.fill_secrets()?;
+        let shared = self.select_shared(ctx)?;
+        let target = shared
+            .driver
+            .field_target(&i.r#ref)
+            .await
+            .map_err(exec_err)?;
+        // Refuse here, BEFORE any approval is offered, when the live frame is
+        // not on this secret's allow-list.
+        let grant = secrets
+            .check_browser_in(
+                &name,
+                target.frame_origin.as_deref(),
+                target.top_origin.as_deref(),
+            )
+            .map_err(|e| refused(&e))?;
+        Ok(Some((name, target, grant)))
     }
 }
 
@@ -1296,6 +1654,7 @@ impl BrowserTool {
                     .map_err(exec_err)?
             }
             Op::Fill => {
+                let what = source(&input, "text")?;
                 let i: FillIn = parse(input)?;
                 let permit = self.gate(run_id, "type", i.r#ref.clone()).await?;
                 if permit.needs_observation()
@@ -1323,10 +1682,21 @@ impl BrowserTool {
                         "Human intervention completed; previous action discarded. Fresh observation:\n{fresh}"
                     ));
                 }
-                permit
-                    .protect(async move { d.fill(&i.r#ref, &i.text).await })
-                    .await
-                    .map_err(exec_err)?
+                match what {
+                    Source::Text(text) => permit
+                        .protect(async move { d.fill(&i.r#ref, &text).await })
+                        .await
+                        .map_err(exec_err)?,
+                    Source::Secret(name) => {
+                        let secrets = self.fill_secrets()?;
+                        permit
+                            .protect(async move {
+                                fill_with_secret(d.as_ref(), &secrets, &i.r#ref, &name).await
+                            })
+                            .await
+                            .map_err(exec_err)?
+                    }
+                }
             }
             Op::Select => {
                 let i: SelectIn = parse(input)?;
@@ -1577,6 +1947,91 @@ impl Tool for BrowserTool {
         &self.spec
     }
 
+    async fn current_origin(&self, ctx: &ToolContext, input: &Value) -> Option<String> {
+        // Only the actions that act on the page that is open now (not open/eval/tabs/back).
+        if !matches!(self.op, Op::Click | Op::Fill | Op::Select | Op::Press) {
+            return None;
+        }
+        let shared = self.select_shared(ctx).ok()?;
+        shared
+            .driver
+            .input_origin(if self.op == Op::Press {
+                None
+            } else {
+                input.get("ref")?.as_str()
+            })
+            .await
+            .and_then(|o| origin_of(&o))
+    }
+
+    fn egress_extra(&self, _ctx: &ToolContext, input: &Value) -> Option<String> {
+        if !matches!(self.op, Op::Open) {
+            return None;
+        }
+        let named = input
+            .get("profile")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty());
+        let line = match named {
+            Some("isolated") => "profile: isolated (temporary, not logged in)".to_owned(),
+            Some(name) => format!("profile: {name} (named profile, may be logged in)"),
+            None if self.shared.managed.is_some() => {
+                "profile: default (persistent per-bot profile, may be logged in)".to_owned()
+            }
+            None => "profile: isolated (temporary, not logged in)".to_owned(),
+        };
+        Some(line)
+    }
+
+    /// Typing an owner-stored secret is confirmed on every call, however
+    /// permissive the policy, preset, grants or read shortcuts are.
+    fn always_ask_for(&self, input: &Value) -> bool {
+        self.op == Op::Fill && names_a_secret(input)
+    }
+
+    async fn standing_grant(&self, ctx: &ToolContext, input: &Value) -> Option<StandingGrant> {
+        let (name, target, grant) = self.secret_fill_facts(ctx, input).await.ok().flatten()?;
+        let id = grant?;
+        let origin = target.frame_origin?;
+        Some(StandingGrant {
+            id,
+            label: format!(
+                "secret {} on {}",
+                sanitize_label(&name, 80),
+                sanitize_label(&origin, 80)
+            ),
+        })
+    }
+
+    async fn approval_details(
+        &self,
+        ctx: &ToolContext,
+        input: &Value,
+    ) -> Result<Option<Value>, ToolError> {
+        let Some((name, target, grant)) = self.secret_fill_facts(ctx, input).await? else {
+            return Ok(None);
+        };
+        let frame = target.frame_origin.clone().unwrap_or_default();
+        let top = target.top_origin.clone();
+        let differs = top.as_deref() != Some(frame.as_str());
+        Ok(Some(json!({
+            "kind": "secret_fill",
+            "tool": "browser_fill",
+            "secret": sanitize_label(&name, 80),
+            "field": sanitize_label(&target.name, 80),
+            "field_role": sanitize_label(&target.role, 40),
+            "frame_origin": frame,
+            "top_origin": top,
+            "frame_differs_from_top": differs,
+            "has_standing_grant": grant.is_some(),
+            "note": if differs {
+                "The field is inside an embedded frame whose origin differs from the page's: the secret goes to the frame origin shown."
+            } else {
+                "The secret value is typed by Praxi; the assistant never sees it."
+            },
+        })))
+    }
+
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         if self
             .shared
@@ -1588,30 +2043,31 @@ impl Tool for BrowserTool {
                 "browser is unavailable for this run's computer target",
             ));
         }
-        let mut shared = self.shared.for_bot(ctx.bot_id.as_deref())?;
-        if let Some(headless) = self
-            .shared
-            .control
-            .as_ref()
-            .and_then(|gate| gate.browser_headless_for_run(&ctx.run_id))
-            && let Some(driver) = shared.driver.for_headless(headless)
+        let shared = self.select_shared(ctx)?;
+        // Recheck the receiving frame after approval. The CDP driver repeats this
+        // check with the session lock held immediately before sending input.
+        if let Some(expected) = &ctx.expected_origin
+            && matches!(self.op, Op::Click | Op::Fill | Op::Select | Op::Press)
         {
-            // The alternate driver is already bot-scoped. Wrapping it in
-            // `managed` would attach the other mode's profile pool.
-            shared = Arc::new(Shared {
-                driver,
-                managed: None,
-                data_dir: shared.data_dir.clone(),
-                control: shared.control.clone(),
-                observed_epoch: shared.observed_epoch.clone(),
-            });
+            let now = self.current_origin(ctx, &input).await;
+            if now.as_deref() != Some(expected.as_str()) {
+                return Err(exec_err(format!(
+                    "the receiving frame is no longer on {expected} (it is on {}): look at the page again, then repeat the action so it can be approved for the new site",
+                    now.as_deref().unwrap_or("an unknown page")
+                )));
+            }
         }
         let selected = BrowserTool {
             spec: self.spec.clone(),
             op: self.op,
             shared,
         };
-        let text = selected.run(&ctx.run_id, input).await?;
+        let text = EXPECTED_PAGE_ORIGIN
+            .scope(
+                ctx.expected_origin.clone(),
+                selected.run(&ctx.run_id, input),
+            )
+            .await?;
         Ok(finish_text(ctx, &self.shared.data_dir.join("spill"), text))
     }
 }
@@ -1630,8 +2086,23 @@ pub(crate) mod fake {
         pub calls: PMutex<Vec<String>>,
         /// When set, mutating actions go through the desktop control gate.
         pub on_desktop: bool,
+        /// The URL `current_url` reports (`None`: unknown).
+        pub url: PMutex<Option<String>>,
         /// Runs inside every backend call (a human takeover landing mid-call).
         pub hook: PMutex<Option<FakeHook>>,
+        /// Where each ref lives (for `field_target`); an unknown ref errors.
+        pub targets: PMutex<std::collections::HashMap<String, FieldTarget>>,
+        /// The origin the browser reports at insertion time when it differs
+        /// from the target's (a navigation after the card was shown).
+        #[allow(clippy::option_option)]
+        // outer: "override set", inner: the reported origin
+        pub origin_at_insert: PMutex<Option<Option<String>>>,
+        /// What actually reached the page through `fill_secret`.
+        pub typed_secrets: PMutex<Vec<String>>,
+        /// The raw (pre-scrub) text `fill_secret` produced.
+        pub raw_secret_output: PMutex<String>,
+        /// Make the page echo the typed value in the action result.
+        pub echo_value: bool,
     }
 
     impl FakeBrowser {
@@ -1651,6 +2122,17 @@ pub(crate) mod fake {
 
     #[async_trait]
     impl BrowserDriver for FakeBrowser {
+        async fn input_origin(&self, r: Option<&str>) -> Option<String> {
+            self.targets
+                .lock()
+                .get(r.unwrap_or("focused"))
+                .and_then(|t| t.frame_origin.clone())
+        }
+
+        async fn current_url(&self) -> Option<String> {
+            self.url.lock().clone()
+        }
+
         fn on_desktop(&self) -> bool {
             self.on_desktop
         }
@@ -1697,6 +2179,45 @@ pub(crate) mod fake {
         }
         async fn fill(&self, r: &str, t: &str) -> Result<String, String> {
             self.rec(&format!("fill:{r}:{t}"))
+        }
+        async fn field_target(&self, r: &str) -> Result<FieldTarget, String> {
+            self.rec(&format!("field_target:{r}"))?;
+            self.targets
+                .lock()
+                .get(r)
+                .cloned()
+                .ok_or_else(|| format!("unknown ref {r}"))
+        }
+        async fn fill_secret(
+            &self,
+            r: &str,
+            text: &str,
+            accept: &(dyn Fn(Option<String>) -> bool + Send + Sync),
+        ) -> Result<String, String> {
+            // The call log never carries the value.
+            self.rec(&format!("fill_secret:{r}"))?;
+            let live = match self.origin_at_insert.lock().clone() {
+                Some(o) => o,
+                None => self
+                    .targets
+                    .lock()
+                    .get(r)
+                    .and_then(|t| t.frame_origin.clone()),
+            };
+            if !accept(live) {
+                return Err(
+                    "refused: the frame is not an origin the owner allowed; nothing was typed"
+                        .into(),
+                );
+            }
+            self.typed_secrets.lock().push(text.to_owned());
+            let out = if self.echo_value {
+                format!("filled {r}; the field now shows value={text}")
+            } else {
+                format!("filled {r}")
+            };
+            self.raw_secret_output.lock().clone_from(&out);
+            Ok(out)
         }
         async fn select(&self, r: &str, v: &str) -> Result<String, String> {
             self.rec(&format!("select:{r}:{v}"))
@@ -1897,6 +2418,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn page_grants_follow_receiving_and_focused_frames_not_the_top_url() {
+        let (_dir, fake, tools) = build();
+        *fake.url.lock() = Some("https://owner.test/".into());
+        let target = |origin: Option<&str>| FieldTarget {
+            name: "embedded input".into(),
+            role: "textbox".into(),
+            frame_origin: origin.map(str::to_owned),
+            top_origin: Some("https://owner.test".into()),
+        };
+        fake.targets
+            .lock()
+            .insert("e1".into(), target(Some("https://attacker.test")));
+        fake.targets
+            .lock()
+            .insert("focused".into(), target(Some("https://attacker.test")));
+        let ctx = ToolContext {
+            expected_origin: Some("https://owner.test:443".into()),
+            ..ToolContext::default()
+        };
+        let fill = get(&tools, "browser_fill");
+        let input = json!({"ref":"e1", "text":"private document"});
+        assert_eq!(
+            fill.current_origin(&ctx, &input).await.as_deref(),
+            Some("https://attacker.test:443")
+        );
+        assert!(fill.call(&ctx, input.clone()).await.is_err());
+        let press = get(&tools, "browser_press");
+        assert_eq!(
+            press
+                .current_origin(&ctx, &json!({"key":"Enter"}))
+                .await
+                .as_deref(),
+            Some("https://attacker.test:443")
+        );
+        assert!(press.call(&ctx, json!({"key":"Enter"})).await.is_err());
+        // A sandboxed/opaque receiver never supplies a reusable origin.
+        fake.targets.lock().insert("e1".into(), target(None));
+        assert!(fill.current_origin(&ctx, &input).await.is_none());
+        assert!(fill.call(&ctx, input.clone()).await.is_err());
+        assert!(
+            fake.calls.lock().is_empty(),
+            "no rejected input reached the driver"
+        );
+        fake.targets
+            .lock()
+            .insert("e1".into(), target(Some("https://owner.test")));
+        assert!(fill.call(&ctx, input).await.is_ok());
+    }
+
+    #[tokio::test]
     async fn tools_forward_arguments_to_the_driver() {
         let (_d, fake, t) = build();
         let ctx = ToolContext::default();
@@ -2024,6 +2595,50 @@ mod tests {
         );
     }
 
+    /// 244-V: a managed bot browser gets an idle live-view target the moment the
+    /// bot is first selected; nothing is launched and nothing is captured.
+    #[test]
+    fn managed_bot_browser_registers_an_idle_view_target_without_launching() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = BrowserSettings::isolated(dir.path());
+        let registry = Arc::new(live_view::TargetRegistry::default());
+        let shared = Arc::new(Shared {
+            driver: Arc::new(CdpDriver::new(settings.clone())),
+            managed: Some(ManagedBrowsers {
+                settings,
+                peers: BrowserPeers::default(),
+                bots: BotDrivers::default(),
+                views: Some(Arc::clone(&registry)),
+            }),
+            data_dir: dir.path().into(),
+            control: None,
+            fill_secrets: None,
+            observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        });
+        assert!(
+            registry.targets().is_empty(),
+            "nothing before a bot uses the browser"
+        );
+        let bot = "0194a1c2-0000-7000-8000-000000000001";
+        let _ = shared.for_bot(Some(bot)).unwrap();
+        let _ = shared.for_bot(Some(bot)).unwrap();
+        let targets = registry.targets();
+        assert_eq!(targets.len(), 1, "one slot per bot, not per call");
+        assert_eq!(targets[0].kind, live_view::TargetKind::Browser);
+        assert_eq!(targets[0].bot_id, uuid::Uuid::parse_str(bot).ok());
+        assert_eq!(
+            targets[0].unavailable_reason,
+            Some(live_view::Reason::BrowserIdle)
+        );
+        // Idle means no Chromium and no profile directory.
+        assert!(!dir.path().join("browsers").exists());
+        // A second bot gets its own slot.
+        let _ = shared
+            .for_bot(Some("0194a1c2-0000-7000-8000-000000000002"))
+            .unwrap();
+        assert_eq!(registry.targets().len(), 2);
+    }
+
     #[test]
     fn managed_profiles_are_per_bot_and_isolated_stays_temporary() {
         let dir = tempfile::tempdir().unwrap();
@@ -2033,11 +2648,13 @@ mod tests {
             managed: Some(ManagedBrowsers {
                 settings,
                 peers: BrowserPeers::default(),
-                bots: parking_lot::Mutex::new(std::collections::HashMap::new()),
+                bots: BotDrivers::default(),
+                views: None,
             }),
             data_dir: dir.path().into(),
             control: None,
             observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            fill_secrets: None,
         });
         let a = shared.for_bot(Some("bot-a")).unwrap();
         let b = shared.for_bot(Some("bot-b")).unwrap();
@@ -2729,6 +3346,7 @@ mod tests {
         async fn tick(driver: &CdpDriver, timeout: Duration, state: &mut ReapState) {
             reap_tick(
                 &driver.session,
+                None,
                 timeout,
                 &driver.takeover_pin,
                 &driver.activity,
@@ -2814,6 +3432,7 @@ mod tests {
         tokio::time::advance(Duration::from_secs(1)).await;
         reap_tick(
             &driver.session,
+            None,
             timeout,
             &driver.takeover_pin,
             &driver.activity,
@@ -2832,6 +3451,7 @@ mod tests {
         }));
         reap_tick(
             &driver.session,
+            None,
             timeout,
             &driver.takeover_pin,
             &driver.activity,
@@ -2962,5 +3582,242 @@ mod tests {
         assert!(drv.for_headless(true).is_none());
         assert!(drv.session.lock().await.is_some());
         server.kill();
+    }
+
+    /// A fake browser: writes `DevToolsActivePort` for the profile the driver is
+    /// about to use, pointing at the in-process fake CDP server, then idles.
+    fn write_cdp_launcher(dir: &Path, profile: &Path, port: u16) -> PathBuf {
+        let file = profile.join("DevToolsActivePort").display().to_string();
+        assert!(!file.contains('"') && !file.contains('\''));
+        #[cfg(windows)]
+        {
+            let path = dir.join("fake-cdp-browser.cmd");
+            std::fs::write(
+                &path,
+                format!(
+                    "@echo off\r\n(echo {port}& echo /devtools/browser/fake)> \"{file}\"\r\nping -n 8 127.0.0.1 >nul\r\n"
+                ),
+            )
+            .unwrap();
+            path
+        }
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = dir.join("fake-cdp-browser");
+            std::fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n/devtools/browser/fake\\n' {port} > '{file}'\nsleep 8\n"
+                ),
+            )
+            .unwrap();
+            let mut perms = std::fs::metadata(&path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms).unwrap();
+            path
+        }
+    }
+
+    async fn session_for(server: &FakeCdp) -> Session {
+        let browser = Browser::connect(&server.url).await.unwrap();
+        let page = browser.first_page().await.unwrap();
+        Session {
+            browser,
+            page,
+            profile: None,
+            headless: true,
+            last_work: tokio::time::Instant::now(),
+        }
+    }
+
+    fn drain(rx: &mut tokio::sync::broadcast::Receiver<()>) -> usize {
+        let mut n = 0;
+        while rx.try_recv().is_ok() {
+            n += 1;
+        }
+        n
+    }
+
+    /// 244-V #2/#3: a host-desktop run (headed) launches through the alternate
+    /// driver. The bot's ONE registered slot must bind to that browser, and the
+    /// registry must announce it (register + attach) with no control event.
+    #[tokio::test]
+    async fn a_headed_host_run_binds_the_bots_registered_view_slot_and_announces_it() {
+        struct HostGate;
+        #[async_trait]
+        impl DesktopControlGate for HostGate {
+            async fn before_action(&self, _req: &ControlRequest) -> Result<(), String> {
+                Ok(())
+            }
+            fn browser_headless_for_run(&self, _run_id: &str) -> Option<bool> {
+                Some(false)
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let bot = "0194a1c2-0000-7000-8000-0000000000a1";
+        let server = FakeCdp::start();
+        let port: u16 = server
+            .url
+            .rsplit(':')
+            .next()
+            .unwrap()
+            .split('/')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        // The headed driver of a managed bot uses `<browsers>/<bot>/headed`.
+        let profile = dir.path().join("browsers").join(bot).join("headed");
+        let launcher = write_cdp_launcher(dir.path(), &profile, port);
+        let registry = Arc::new(live_view::TargetRegistry::default());
+        let mut changes = registry.subscribe_changes();
+        let tools = managed_tools(
+            BrowserSettings {
+                executable: Some(launcher),
+                headless: true,
+                ..BrowserSettings::isolated(dir.path())
+            },
+            dir.path(),
+            Some(Arc::new(HostGate)),
+            Some(Arc::clone(&registry)),
+        );
+        let ctx = ToolContext {
+            run_id: "run-host".into(),
+            bot_id: Some(bot.into()),
+            ..ToolContext::default()
+        };
+        // The navigation itself may fail against the fake server; the launch and
+        // the binding happen before it.
+        let _ = get(&tools, "browser_open")
+            .call(&ctx, json!({"url": "https://example.com"}))
+            .await;
+        let targets = registry.targets();
+        assert_eq!(targets.len(), 1, "one slot per bot, headless or headed");
+        assert_eq!(
+            targets[0].unavailable_reason, None,
+            "the slot is bound to the browser that actually runs, not left idle"
+        );
+        assert_eq!(targets[0].bot_id, uuid::Uuid::parse_str(bot).ok());
+        assert!(
+            drain(&mut changes) >= 2,
+            "registering the slot and binding it are both announced"
+        );
+        server.kill();
+    }
+
+    /// 244-V #6: a normal close (idle reclamation, shutdown) returns the slot to
+    /// the idle state, announces it, and a relaunch binds it again.
+    #[tokio::test]
+    async fn closing_the_browser_returns_the_slot_to_idle_and_a_relaunch_rebinds_it() {
+        use live_view::{Reason, ViewTarget};
+        let dir = tempfile::tempdir().unwrap();
+        let changes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&changes);
+        let view = browser_cdp::BrowserViewTarget::new_idle(browser_cdp::BrowserViewConfig {
+            on_change: Some(Arc::new(move || {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            })),
+            ..browser_cdp::BrowserViewConfig::default()
+        });
+        let mut driver = CdpDriver::new(BrowserSettings::isolated(dir.path()));
+        driver.view = Some(view.clone());
+        for round in 0..2 {
+            let server = FakeCdp::start();
+            let session = session_for(&server).await;
+            view.attach_page(&session.page).unwrap();
+            *driver.session.lock().await = Some(session);
+            assert_eq!(view.info().unavailable_reason, None, "round {round}: bound");
+            let before = changes.load(std::sync::atomic::Ordering::SeqCst);
+            // Idle reclamation: the reaper closes it.
+            reap_tick(
+                &driver.session,
+                driver.view.as_deref(),
+                Duration::ZERO,
+                &driver.takeover_pin,
+                &driver.activity,
+                &mut ReapState::default(),
+            )
+            .await;
+            assert!(driver.session.lock().await.is_none());
+            assert_eq!(
+                view.info().unavailable_reason,
+                Some(Reason::BrowserIdle),
+                "round {round}: idle, not a generic failure"
+            );
+            assert!(
+                changes.load(std::sync::atomic::Ordering::SeqCst) > before,
+                "round {round}: the return to idle is announced"
+            );
+            server.kill();
+        }
+        // Shutdown takes the same path.
+        let server = FakeCdp::start();
+        let session = session_for(&server).await;
+        view.attach_page(&session.page).unwrap();
+        *driver.session.lock().await = Some(session);
+        driver.shutdown().await;
+        assert_eq!(view.info().unavailable_reason, Some(Reason::BrowserIdle));
+        server.kill();
+    }
+
+    /// 244-V #6: create-use-delete cycles leave nothing behind: the registry, the
+    /// driver map and the peer map stay empty, and the deleted bot's browser closes.
+    #[tokio::test]
+    async fn deleting_bots_removes_their_slots_drivers_and_browsers_without_leaking() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = BrowserSettings::isolated(dir.path());
+        let registry = Arc::new(live_view::TargetRegistry::default());
+        let bots = BotDrivers::default();
+        let peers = BrowserPeers::default();
+        wire_retirement(&registry, &bots, &peers);
+        let shared = Arc::new(Shared {
+            driver: Arc::new(CdpDriver::new(settings.clone())),
+            managed: Some(ManagedBrowsers {
+                settings,
+                peers: Arc::clone(&peers),
+                bots: Arc::clone(&bots),
+                views: Some(Arc::clone(&registry)),
+            }),
+            data_dir: dir.path().into(),
+            control: None,
+            fill_secrets: None,
+            observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        });
+        for n in 0..20u128 {
+            let id = uuid::Uuid::from_u128(0x0194_a1c2_0000_7000_8000_0000_0000_0000 + n);
+            let _bot_shared = shared.for_bot(Some(&id.to_string())).unwrap();
+            assert_eq!(registry.targets().len(), 1);
+            // The bot used its browser.
+            let server = FakeCdp::start();
+            let browser = Browser::connect(&server.url).await.unwrap();
+            let page = browser.first_page().await.unwrap();
+            let cdp = peers
+                .lock()
+                .get(&id.to_string())
+                .and_then(std::sync::Weak::upgrade)
+                .expect("the bot's driver");
+            *cdp.session.lock().await = Some(Session {
+                browser,
+                page,
+                profile: None,
+                headless: true,
+                last_work: tokio::time::Instant::now(),
+            });
+            // Delete the bot.
+            assert_eq!(registry.retire_bot(id), 1);
+            for _ in 0..200 {
+                if cdp.session.lock().await.is_none() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(cdp.session.lock().await.is_none(), "its browser was closed");
+            drop(cdp);
+            assert!(registry.targets().is_empty(), "slot removed");
+            assert!(bots.lock().is_empty(), "driver slot removed");
+            assert!(peers.lock().is_empty(), "peer entry removed");
+            server.kill();
+        }
     }
 }

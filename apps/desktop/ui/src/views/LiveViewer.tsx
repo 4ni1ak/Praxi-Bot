@@ -1,10 +1,10 @@
 import {
   ArrowLeft,
   Globe,
+  Info,
   Monitor,
   OctagonX,
-  RefreshCw,
-  ShieldCheck
+  RefreshCw
 } from "lucide-react";
 import {
   useCallback,
@@ -16,7 +16,9 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { PeerLinkBadge } from "../components/PeerLinkBadge";
 import { Button } from "ui";
+import { TargetPicker } from "../components/TargetPicker";
 import type { HumanAction, TargetInfo } from "../api/types";
 import {
   computeContainedImageRect,
@@ -39,20 +41,21 @@ import {
 import { viewerKeyAction } from "../lib/liveViewLayers";
 import { layerStack } from "../lib/modalStack";
 import { useDaemon } from "../state/DaemonContext";
-import { useLiveView } from "../state/LiveViewContext";
+import { LiveViewerChat, type LiveChatSlots } from "./LiveViewerChat";
+import { useLiveView, useLocalLiveView } from "../state/LiveViewContext";
+import { requestStop } from "../state/appStop";
 import styles from "./LiveViewer.module.css";
 
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-function targetOptionLabel(
+function targetOptionHint(
   tInfo: TargetInfo,
   botName: string | null,
   translate: (k: string, opts?: Record<string, unknown>) => string
 ): string {
-  const kind = translate(`liveView.kind.${tInfo.kind}`);
   const summary = summarizeTarget(tInfo);
-  const parts = [`${kind} · ${tInfo.host_id}`];
+  const parts: string[] = [];
   if (botName) {
     parts.push(botName);
   }
@@ -61,18 +64,35 @@ function targetOptionLabel(
   } else if (!summary.canInput) {
     parts.push(translate("liveView.viewOnly"));
   }
-  return parts.join(" — ");
+  return parts.join(" · ");
 }
 
-export function LiveViewer() {
+/**
+ * The screen viewer. `source="local"` is the one of THIS computer while a server is home (the
+ * right panel's "my computer" screen); by default it follows the views' computer.
+ */
+export function LiveViewer({
+  source = "home",
+  onChatSlots
+}: {
+  source?: "home" | "local";
+  onChatSlots?: (slots: LiveChatSlots | null) => void;
+} = {}) {
   const { t } = useTranslation();
   const { bots, needs } = useDaemon();
+  const questionCount = needs.filter((item) => item.kind === "question").length;
+  const homeView = useLiveView();
+  const localView = useLocalLiveView();
+  const view = source === "local" ? localView : homeView;
   const {
     targets,
     selectedTarget,
     controlState,
     state,
     frameUrl,
+    streamFailure,
+    targetsError,
+    retryStream,
     viewerOpen,
     loadingTargets,
     panelAction,
@@ -86,12 +106,12 @@ export function LiveViewer() {
     recoverTakeover,
     clearPause,
     isLocalClient,
-    overrideStop,
     enqueueInput,
     resetInputState,
     setComposing
-  } = useLiveView();
+  } = view;
 
+  const viewFailure = streamFailure ?? (!frameUrl ? targetsError : null);
   const [selectedOutcome, setSelectedOutcome] = useState<HumanAction | "none">(
     "none"
   );
@@ -381,46 +401,43 @@ export function LiveViewer() {
             <ArrowLeft />
             <span>{t("liveView.backToChat")}</span>
           </Button>
+        </div>
 
-          <div className={styles.targetPicker}>
-            <KindIcon aria-hidden="true" />
-            <select
-              className={styles.select}
-              aria-label={t("liveView.targetsLabel")}
-              data-testid="live-viewer-target-select"
-              value={selectedTarget?.target_id ?? ""}
-              disabled={controlBusy}
-              title={controlBusy ? t("liveView.targetLocked") : undefined}
-              onChange={(e) => selectTarget(e.target.value)}
-            >
-              {targets.length === 0 ? (
-                <option value="">{t("liveView.noTargets")}</option>
-              ) : (
-                targets.map((trg) => (
-                  <option key={trg.target_id} value={trg.target_id}>
-                    {targetOptionLabel(
-                      trg,
-                      trg.bot_id ? botNames.get(trg.bot_id) ?? null : null,
-                      t
-                    )}
-                  </option>
-                ))
-              )}
-            </select>
-            <button
-              type="button"
-              className={styles.iconBtn}
-              title={t("liveView.refresh")}
-              aria-label={t("liveView.refresh")}
-              disabled={loadingTargets}
-              onClick={() => void refreshTargets()}
-            >
-              <RefreshCw />
-            </button>
-          </div>
+        <div className={styles.targetPicker}>
+          <TargetPicker
+            options={targets.map((trg) => ({
+              id: trg.target_id,
+              label: `${t(`liveView.kind.${trg.kind}`)} · ${trg.host_id}`,
+              hint: targetOptionHint(
+                trg,
+                trg.bot_id ? botNames.get(trg.bot_id) ?? null : null,
+                t
+              ),
+              icon: trg.kind === "browser" ? <Globe /> : <Monitor />
+            }))}
+            value={selectedTarget?.target_id ?? ""}
+            onPick={selectTarget}
+            label={t("liveView.targetsLabel")}
+            placeholder={t("liveView.noTargets")}
+            icon={<KindIcon aria-hidden="true" />}
+            disabled={controlBusy}
+            title={controlBusy ? t("liveView.targetLocked") : undefined}
+            testId="live-viewer-target-select"
+          />
+          <button
+            type="button"
+            className={styles.iconBtn}
+            title={t("liveView.refresh")}
+            aria-label={t("liveView.refresh")}
+            disabled={loadingTargets}
+            onClick={() => void refreshTargets()}
+          >
+            <RefreshCw />
+          </button>
         </div>
 
         <div className={styles.headerRight}>
+          <PeerLinkBadge enabled={source === "home" && !isLocalClient} className={styles.stateBadge} />
           <span
             className={styles.stateBadge}
             data-tone={tone}
@@ -430,56 +447,59 @@ export function LiveViewer() {
             <span>{badgeLabel}</span>
           </span>
           {actions.includes("stop") ? (
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => void overrideStop()}
-            data-testid="live-viewer-stop"
-          >
-            <OctagonX />
-            <span>{t("liveView.emergencyStop")}</span>
-          </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => {
+                requestStop("viewer");
+              }}
+              data-testid="live-viewer-stop"
+            >
+              <OctagonX />
+              <span>{t("liveView.emergencyStop")}</span>
+            </Button>
           ) : null}
         </div>
       </header>
 
-      <div className={styles.noticeBar}>
-        <span className={styles.noticeLeft}>
-          <ShieldCheck aria-hidden="true" />
-          <span>{t("liveView.privacyNotice")}</span>
-          <span>·</span>
-          <span>{t("liveView.globalPauseNotice")}</span>
+      {otherOwner || state.lastError || viewFailure || state.disconnected || state.needsResync ? (
+        <div className={styles.statusLine} role="status">
           {otherOwner ? (
-            <>
-              <span>·</span>
-              <strong>{t("liveView.otherOwner", { owner: otherOwner })}</strong>
-            </>
+            <strong>{t("liveView.otherOwner", { owner: otherOwner })}</strong>
           ) : null}
-        </span>
-        {state.lastError ? (
-          <span className={styles.errorInline} role="alert">
-            {t(`liveView.errors.${state.lastError.code}`, {
-              defaultValue: t(`liveView.reasons.${state.lastError.code}`, {
-                defaultValue: t("liveView.errors.generic")
-              })
-            })}
-          </span>
-        ) : state.disconnected ? (
-          <span className={styles.errorInline}>{t("liveView.reconnecting")}</span>
-        ) : state.needsResync ? (
-          <span className={styles.errorInline}>
-            {t("liveView.reasons.resync_required")}
-          </span>
-        ) : null}
-      </div>
+          {state.lastError || viewFailure ? (
+            <span className={styles.errorInline} role="alert">
+              {t(`liveView.errors.${state.lastError?.code ?? viewFailure}`, {
+                defaultValue: t(`liveView.reasons.${state.lastError?.code ?? viewFailure}`, {
+                  defaultValue: t("liveView.errors.generic")
+                })
+              })}
+              {viewFailure && !frameUrl ? (
+                <Button variant="secondary" size="sm" onClick={() => {
+                  retryStream();
+                  void refreshTargets();
+                }}>
+                  {t("computerCard.retry")}
+                </Button>
+              ) : null}
+            </span>
+          ) : state.disconnected ? (
+            <span className={styles.errorInline}>{t("liveView.reconnecting")}</span>
+          ) : state.needsResync ? (
+            <span className={styles.errorInline}>
+              {t("liveView.reasons.resync_required")}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
-      {needs.length > 0 ? (
+      {questionCount > 0 ? (
         <div
           className={styles.approvalBar}
           role="status"
           data-testid="live-viewer-approvals"
         >
-          <span>{t("liveView.approvalsWaiting", { count: needs.length })}</span>
+          <span>{t("liveView.approvalsWaiting", { count: questionCount })}</span>
           <Button
             variant="secondary"
             size="sm"
@@ -495,6 +515,14 @@ export function LiveViewer() {
         <div
           className={styles.stageFrame}
           data-active={isInteractive ? "true" : "false"}
+          data-has-frame={frameUrl && state.latestFrame ? "true" : "false"}
+          style={
+            frameUrl && state.latestFrame
+              ? {
+                  aspectRatio: `${state.latestFrame.width} / ${state.latestFrame.height}`
+                }
+              : undefined
+          }
         >
           {frameUrl && (!targetSummary || targetSummary.available) ? (
             <div
@@ -594,12 +622,13 @@ export function LiveViewer() {
             </div>
           ) : (
             <div className={styles.emptyStage} data-testid="live-viewer-unavailable">
-              <KindIcon aria-hidden="true" />
+              <span className={styles.emptyIcon}>
+                <KindIcon aria-hidden="true" />
+              </span>
               <p className={styles.emptyTitle}>
                 {selectedTarget
-                  ? t(`liveView.kind.${selectedTarget.kind}`)
+                  ? `${t(`liveView.kind.${selectedTarget.kind}`)} · ${selectedTarget.host_id}`
                   : t("botPanel.computer")}
-                {selectedTarget ? ` · ${selectedTarget.host_id}` : ""}
               </p>
               <p className={styles.emptyBody}>
                 {unavailableReason
@@ -619,6 +648,15 @@ export function LiveViewer() {
             </div>
           )}
         </div>
+        <p
+          className={styles.privacyHint}
+          title={t("liveView.globalPauseNotice")}
+          data-testid="live-viewer-privacy"
+        >
+          <Info aria-hidden="true" />
+          <span>{t("liveView.privacyNotice")}</span>
+        </p>
+        <LiveViewerChat onChatSlots={onChatSlots} />
       </div>
 
       <div className={styles.bottomDock} data-testid="live-view-bar">
@@ -672,7 +710,7 @@ export function LiveViewer() {
                     )
                   }
                 >
-                  {t("liveView.doneAction")}
+                  {t("liveView.handBackAction")}
                 </Button>
               )}
             </div>

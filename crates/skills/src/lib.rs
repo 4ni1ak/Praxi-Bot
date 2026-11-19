@@ -30,13 +30,14 @@ mod bundled;
 mod frontmatter;
 pub mod hub;
 mod index;
+pub mod owner;
 mod scoped_store;
 mod skill;
 mod tools;
 
 pub use index::{
     Assignment, AssignmentMode, AssignmentMode as Mode, AssignmentSource, MAX_FILE_BYTES,
-    PROMPT_BUDGET_BYTES, SKILL_FILE, SkillIndex, SkillIssue, SkillPaths, SkillRoots,
+    PROMPT_BUDGET_BYTES, SKILL_FILE, SkillIndex, SkillIssue, SkillPaths, SkillReview, SkillRoots,
     validate_bot_id,
 };
 pub use scoped_store::WrittenSkill;

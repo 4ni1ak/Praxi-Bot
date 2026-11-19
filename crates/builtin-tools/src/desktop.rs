@@ -6,7 +6,7 @@
 //! * When the accessibility tree is `Weak`, the state also lists OCR text boxes
 //!   with set-of-marks numbers; `index: "mark:<n>"` clicks a mark by coordinates.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,14 +15,15 @@ use std::time::Duration;
 use async_trait::async_trait;
 use desktop_api::snapshot::AppSpec;
 use desktop_api::{
-    Action, ClickMethod, CoordinateSpace, DesktopBackend, DesktopError, Quality, Region, Snapshot,
-    Target, TreeQuality, render_snapshot,
+    ActGuard, Action, ClickMethod, CoordinateSpace, DesktopBackend, DesktopError, Quality, Region,
+    Snapshot, Target, TreeQuality, render_snapshot,
 };
 use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tool_registry::{
-    Effect, PermissionCategory, Tool, ToolContext, ToolError, ToolOutput, ToolSpec,
+    ControlIdentity, ControlKind, ControlTarget, Effect, PermissionCategory, Tool, ToolContext,
+    ToolError, ToolOutput, ToolSpec,
 };
 use tracing::Instrument as _;
 use vision::{BoundingBox, OcrEngine};
@@ -30,7 +31,9 @@ use vision::{BoundingBox, OcrEngine};
 use protocol::event::ControlRect;
 
 use crate::control::{ActionPermit, ControlRequest, DesktopControlGate};
+use crate::fill_secret::{Source, names_a_secret, refused, scrub, source};
 use crate::util::{exec_err, finish_text, parse, save_file, spec};
+use secret_store::{FillSecrets, SecretValue, sanitize_label};
 
 /// An OCR engine usable from tools.
 pub type SharedOcr = Arc<dyn OcrEngine + Send + Sync>;
@@ -102,6 +105,8 @@ struct State {
     marks: BTreeMap<u32, (f64, f64)>,
     /// Element index to its label and on-screen bounds (for the control gate).
     targets: BTreeMap<u32, (String, Option<ControlRect>)>,
+    /// Indexes of password fields in the last observation (`secure` state).
+    secure: BTreeSet<u32>,
 }
 
 /// A small capped map of per-run states (LRU eviction: touch on every use).
@@ -183,6 +188,8 @@ struct Shared {
     data_dir: PathBuf,
     settings: DesktopSettings,
     control: Option<Arc<dyn DesktopControlGate>>,
+    /// Owner-stored secrets the type tools may type; `None` refuses `secret`.
+    fill_secrets: Option<Arc<FillSecrets>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -274,6 +281,34 @@ fn union(a: Option<ControlRect>, b: Option<ControlRect>) -> Option<ControlRect> 
     }
 }
 
+/// Why `executable` cannot be started on a desktop whose platform is `platform`,
+/// when it plainly belongs to another operating system (a `/opt/...` path on
+/// Windows, `chrome.exe` or `C:\...` on Linux/macOS). Decided before any
+/// approval is raised: the user is never asked about a call that cannot work.
+fn foreign_launch_refusal(platform: &str, executable: &str) -> Option<String> {
+    let exe = executable.trim();
+    let drive = {
+        let b = exe.as_bytes();
+        b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == 0x5c || b[2] == b'/')
+    };
+    let (os, other) = match platform {
+        "windows" if exe.starts_with('/') => ("Windows", "Linux or macOS"),
+        "linux" | "macos" if drive || exe.to_ascii_lowercase().ends_with(".exe") => (
+            if platform == "linux" {
+                "Linux"
+            } else {
+                "macOS"
+            },
+            "Windows",
+        ),
+        _ => return None,
+    };
+    Some(format!(
+        "wrong computer: {exe:?} looks like a {other} program or path, but this desktop is a {os} computer. \
+Nothing was started and the user was not asked. Use a program name or path that exists on {os}; to open a web page use browser_open when it is listed."
+    ))
+}
+
 fn derr(e: &DesktopError) -> ToolError {
     let hint = match e {
         DesktopError::ElementNotFound { .. } => STALE_HINT,
@@ -283,7 +318,76 @@ fn derr(e: &DesktopError) -> ToolError {
     exec_err(format!("{e}{hint}"))
 }
 
+/// A result that may have come from typing a secret: scrub the value (and its
+/// encodings) out of the text and out of any error message.
+fn finish_secret(
+    result: Result<String, ToolError>,
+    secret: Option<&SecretValue>,
+) -> Result<String, ToolError> {
+    let Some(v) = secret else {
+        return result;
+    };
+    match result {
+        Ok(t) => Ok(scrub(&t, v)),
+        Err(ToolError::InvalidInput(m)) => Err(ToolError::InvalidInput(scrub(&m, v))),
+        Err(ToolError::PermissionDenied(m)) => Err(ToolError::PermissionDenied(scrub(&m, v))),
+        Err(ToolError::Execution(m)) => Err(ToolError::Execution(scrub(&m, v))),
+        Err(other) => Err(ToolError::Execution(scrub(&other.to_string(), v))),
+    }
+}
+
+/// What a secret fill needs to know about the window that receives it.
+struct WindowFacts {
+    title: String,
+    identity: Option<String>,
+}
+
 impl Shared {
+    fn fill_secrets(&self) -> Result<Arc<FillSecrets>, ToolError> {
+        self.fill_secrets
+            .clone()
+            .ok_or_else(|| exec_err("no secrets are configured on this daemon"))
+    }
+
+    /// The window this run observed, as the backend lists it NOW, with the
+    /// verified program identity the backend supplies (`None` when it cannot).
+    async fn live_window(&self, run_id: &str) -> Result<WindowFacts, ToolError> {
+        let scope = self.observed_scope(run_id)?;
+        let backend = self.backend(run_id)?;
+        let wins = backend.windows().await.map_err(|e| derr(&e))?;
+        let win = wins.into_iter().find(|w| w.id == scope).ok_or_else(|| {
+            exec_err("the window that holds the field is gone; call desktop_get_state")
+        })?;
+        let identity = backend.program_identity(&win).await;
+        Ok(WindowFacts {
+            title: win.title,
+            identity,
+        })
+    }
+
+    /// Refuse unless the receiving program's verified identity is on the
+    /// secret's allow-list.
+    async fn verify_window_program(
+        &self,
+        run_id: &str,
+        name: &str,
+    ) -> Result<WindowFacts, ToolError> {
+        let secrets = self.fill_secrets()?;
+        let facts = self.live_window(run_id).await?;
+        secrets
+            .check_desktop(name, facts.identity.as_deref())
+            .map_err(|e| refused(&e))?;
+        Ok(facts)
+    }
+
+    /// The secret's value, after the live program check.
+    async fn secret_for_window(&self, run_id: &str, name: &str) -> Result<SecretValue, ToolError> {
+        self.verify_window_program(run_id, name).await?;
+        self.fill_secrets()?
+            .resolve_value(name)
+            .map_err(|e| refused(&e))
+    }
+
     /// Resolve a reference against the caller's run state. `expect_gen` is required
     /// and must match the run's current generation (otherwise: stale hint).
     fn target(
@@ -434,10 +538,19 @@ impl Shared {
         run_id: &str,
         action: Action,
         permit: &ActionPermit,
+        guard: Option<&ActGuard>,
     ) -> Result<String, ToolError> {
         let backend = self.backend(run_id)?;
+        let guard = guard.cloned();
         let res = permit
-            .protect(async move { backend.act(action).await })
+            .protect(async move {
+                match guard {
+                    // Covered by a run-scoped control grant: the backend checks
+                    // the window right before the OS call and may refuse.
+                    Some(g) => backend.act_guarded(action, g).await,
+                    None => backend.act(action).await,
+                }
+            })
             .await
             .map_err(exec_err)?
             .map_err(|e| derr(&e))?;
@@ -480,6 +593,11 @@ impl Shared {
                 st.generation = Some(snap.generation);
                 st.observation_epoch = observation_epoch;
                 st.marks.clear();
+                st.secure = rendered_nodes
+                    .iter()
+                    .filter(|n| n.states.iter().any(|s| s == "secure"))
+                    .map(|n| n.index)
+                    .collect();
                 st.targets = rendered_nodes
                     .iter()
                     .map(|n| {
@@ -677,6 +795,21 @@ pub fn tools_dynamic(
     settings: DesktopSettings,
     control: Option<Arc<dyn DesktopControlGate>>,
 ) -> Vec<Arc<dyn Tool>> {
+    tools_dynamic_with_secrets(default_backend, ocr, data_dir, settings, control, None)
+}
+
+/// [`tools_dynamic`] whose `desktop_type` / `desktop_set_value` may type the
+/// owner's fill secrets (only into a program with a verified identity on the
+/// secret's allow-list).
+#[must_use]
+pub fn tools_dynamic_with_secrets(
+    default_backend: Option<Arc<dyn DesktopBackend>>,
+    ocr: Option<SharedOcr>,
+    data_dir: &Path,
+    settings: DesktopSettings,
+    control: Option<Arc<dyn DesktopControlGate>>,
+    fill_secrets: Option<Arc<FillSecrets>>,
+) -> Vec<Arc<dyn Tool>> {
     let shared = Arc::new(Shared {
         default_backend,
         ocr,
@@ -684,6 +817,7 @@ pub fn tools_dynamic(
         data_dir: data_dir.to_path_buf(),
         settings,
         control,
+        fill_secrets,
     });
     let d = PermissionCategory::Desktop;
     let index_prop = json!({
@@ -704,7 +838,7 @@ pub fn tools_dynamic(
             Op::ListApps,
             spec(
                 "desktop_list_apps",
-                "List visible windows (open apps, programs) with id, pid and title. Example: {}",
+                "List visible windows (open apps, programs) with id, pid and title; the foreground one is marked focused. Cheapest way to see what the user is doing or watching now: a browser window title holds the page or video name. Use it for \"what is on my screen / what am I watching\" before anything else. Example: {}",
                 json!({"type":"object","properties":{}}),
                 Effect::Read,
                 d,
@@ -753,12 +887,13 @@ pub fn tools_dynamic(
             Op::Type,
             spec(
                 "desktop_type",
-                "Click an element to focus it, then type text with the keyboard (enter text). Not for starting apps (use desktop_launch). Returns the refreshed UI tree. Pass gen from the observation you read the index from. Example: {\"index\":5,\"gen\":3,\"text\":\"hello\"}",
+                "Click an element to focus it, then type text with the keyboard (enter text). Give exactly one of `text` (what you type) or `secret` (the name of a secret the owner stored, from secrets_list: it is typed for you and you never see the value). Not for starting apps (use desktop_launch). Returns the refreshed UI tree. Pass gen from the observation you read the index from. Example: {\"index\":5,\"gen\":3,\"text\":\"hello\"}",
                 json!({"type":"object","properties":{
                     "index":index_prop,
                     "gen":gen_prop,
-                    "text":{"type":"string","description":"Text to type."}
-                },"required":["index","text","gen"]}),
+                    "text":{"type":"string","description":"Text to type. Not with `secret`."},
+                    "secret":{"type":"string","description":"Name of an owner-stored secret to type instead of `text`."}
+                },"required":["index","gen"]}),
                 Effect::Write,
                 d,
             ),
@@ -767,12 +902,13 @@ pub fn tools_dynamic(
             Op::SetValue,
             spec(
                 "desktop_set_value",
-                "Replace the value of a text field or combo box. Pass gen from the observation you read the index from. Example: {\"index\":5,\"gen\":3,\"value\":\"hello\"}",
+                "Replace the value of a text field or combo box. Give exactly one of `value` or `secret` (the name of a secret the owner stored, from secrets_list: it is set for you and you never see the value). Pass gen from the observation you read the index from. Example: {\"index\":5,\"gen\":3,\"value\":\"hello\"}",
                 json!({"type":"object","properties":{
                     "index":index_prop,
                     "gen":gen_prop,
-                    "value":{"type":"string","description":"New value."}
-                },"required":["index","value","gen"]}),
+                    "value":{"type":"string","description":"New value. Not with `secret`."},
+                    "secret":{"type":"string","description":"Name of an owner-stored secret to set instead of `value`."}
+                },"required":["index","gen"]}),
                 Effect::Write,
                 d,
             ),
@@ -877,7 +1013,6 @@ struct TypeIn {
     index: Value,
     #[serde(rename = "gen")]
     expect_gen: Option<u64>,
-    text: String,
 }
 
 #[derive(Deserialize)]
@@ -885,7 +1020,6 @@ struct SetValueIn {
     index: Value,
     #[serde(rename = "gen")]
     expect_gen: Option<u64>,
-    value: String,
 }
 
 #[derive(Deserialize)]
@@ -955,15 +1089,147 @@ fn window_line(w: &desktop_api::WindowInfo) -> String {
     )
 }
 
+async fn finish_control_target(
+    backend: &dyn DesktopBackend,
+    kind: ControlKind,
+    refusal: Option<String>,
+    focus_matters: bool,
+) -> Option<ControlTarget> {
+    let mut t = backend.input_target().await.ok()??;
+    if !focus_matters {
+        t.password_focus = false;
+    }
+    let refusal = refusal.or_else(|| desktop_api::guard::judge(&t).map(|r| r.code().to_owned()));
+    Some(ControlTarget {
+        kind,
+        identity: ControlIdentity {
+            image_path: t.identity.image_path,
+            pid: t.identity.pid,
+            start_time: t.identity.start_time,
+        },
+        window_title: card_title(&t.title),
+        refusal,
+    })
+}
+
+/// The program a desktop input step would reach, for callers that send the
+/// input themselves (workflow replay). `keys` is the chord of a key step;
+/// `secure_element` says the step's element is a password field; a key step
+/// without an element goes to the live focus (`focus_matters`). `None` when
+/// the backend cannot name a program: no grant is offered.
+pub async fn resolve_input_target(
+    backend: &dyn DesktopBackend,
+    kind: ControlKind,
+    keys: Option<&[String]>,
+    secure_element: bool,
+    focus_matters: bool,
+) -> Option<ControlTarget> {
+    let mut refusal = None;
+    if let Some(keys) = keys
+        && let Some(r) = backend.key_chord_refusal(keys)
+    {
+        refusal = Some(r.code().to_owned());
+    }
+    if secure_element {
+        refusal.get_or_insert_with(|| desktop_api::Refusal::PasswordField.code().to_owned());
+    }
+    finish_control_target(backend, kind, refusal, focus_matters).await
+}
+
+/// The backend guard for a program the loop named in `ToolContext::control_guard`.
+fn act_guard_for(id: &ControlIdentity) -> ActGuard {
+    ActGuard {
+        expect: desktop_api::ProcessIdentity {
+            image_path: id.image_path.clone(),
+            pid: id.pid,
+            start_time: id.start_time,
+        },
+    }
+}
+
+/// Window title for a card: no control characters, bounded.
+fn card_title(title: &str) -> String {
+    title
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(120)
+        .collect()
+}
+
 impl DesktopTool {
+    /// The kind of input this tool sends, for the three tools a run-scoped
+    /// control grant can ever cover. Click, scroll and drag have no target:
+    /// a drag always asks.
+    fn control_kind(&self) -> Option<ControlKind> {
+        match self.op {
+            Op::Type => Some(ControlKind::Type),
+            Op::SetValue => Some(ControlKind::SetValue),
+            Op::Key => Some(ControlKind::Key),
+            _ => None,
+        }
+    }
+
+    /// Resolve, before the permission decision, which program this call would
+    /// send input to. `None` when the backend cannot name a program (Linux,
+    /// macOS, a remote computer): no grant is offered and the call behaves as
+    /// without this feature. The chord, password-field and window-class
+    /// verdicts are carried as `refusal`; the backend checks them again right
+    /// before it sends.
+    async fn resolve_control_target(&self, run_id: &str, input: &Value) -> Option<ControlTarget> {
+        let kind = self.control_kind()?;
+        let sh = &self.shared;
+        let backend = sh.backend(run_id).ok()?;
+        let secure_ref = |v: &Value| -> bool {
+            match parse_ref(v) {
+                Ok(ElementRef::Index(i)) => sh
+                    .state
+                    .lock()
+                    .get(run_id)
+                    .is_some_and(|st| st.secure.contains(&i)),
+                _ => false,
+            }
+        };
+        let mut refusal: Option<String> = None;
+        let mut focus_matters = false;
+        match self.op {
+            Op::Key => {
+                match input.get("keys").map(parse_keys) {
+                    Some(Ok(keys)) => {
+                        if let Some(r) = backend.key_chord_refusal(&keys) {
+                            refusal = Some(r.code().to_owned());
+                        }
+                    }
+                    _ => refusal = Some(desktop_api::Refusal::Chord.code().to_owned()),
+                }
+                match input.get("index") {
+                    // A key press that first clicks an element is a click, and a
+                    // task-wide permission never covers a click: it asks.
+                    Some(idx) if !idx.is_null() => return None,
+                    // No element: the keys go to whatever has the focus.
+                    _ => focus_matters = true,
+                }
+            }
+            Op::Type | Op::SetValue if input.get("index").is_some_and(secure_ref) => {
+                refusal = Some(desktop_api::Refusal::PasswordField.code().to_owned());
+            }
+            _ => {}
+        }
+        finish_control_target(backend.as_ref(), kind, refusal, focus_matters).await
+    }
+
     /// Observation tools discard their result if control changed while they
     /// ran: a screenshot, an OCR pass or a window list that straddles the start
     /// of a human takeover never reaches the model.
-    async fn run(&self, run_id: &str, input: Value) -> Result<String, ToolError> {
+    async fn run(
+        &self,
+        run_id: &str,
+        input: Value,
+        guard: Option<ActGuard>,
+    ) -> Result<String, ToolError> {
         let observing = matches!(self.op, Op::ListApps | Op::GetState);
         let gate = self.shared.control.clone();
         let epoch = gate.as_ref().map(|g| g.observation_epoch());
-        let text = self.run_inner(run_id, input).await?;
+        let text = self.run_inner(run_id, input, guard.as_ref()).await?;
         if let (Some(gate), Some(epoch)) = (gate, epoch) {
             if observing
                 && (gate.observation_epoch() != epoch || gate.observation_refused().is_some())
@@ -981,7 +1247,12 @@ impl DesktopTool {
         Ok(text)
     }
 
-    async fn run_inner(&self, run_id: &str, input: Value) -> Result<String, ToolError> {
+    async fn run_inner(
+        &self,
+        run_id: &str,
+        input: Value,
+        guard: Option<&ActGuard>,
+    ) -> Result<String, ToolError> {
         let sh = &self.shared;
         if matches!(self.op, Op::ListApps | Op::GetState)
             && let Some(message) = sh.control.as_ref().and_then(|g| g.observation_refused())
@@ -1008,6 +1279,12 @@ impl DesktopTool {
             }
             Op::Launch => {
                 let i: LaunchIn = parse(input)?;
+                if let Some(reason) = foreign_launch_refusal(
+                    &sh.backend(run_id)?.capabilities().platform,
+                    &i.executable,
+                ) {
+                    return Err(exec_err(reason));
+                }
                 let permit = sh
                     .gate(run_id, "launch", i.executable.clone(), None)
                     .await?;
@@ -1131,11 +1408,12 @@ impl DesktopTool {
                     ));
                 }
                 let head = sh
-                    .act(run_id, Action::Click { target, method }, &permit)
+                    .act(run_id, Action::Click { target, method }, &permit, None)
                     .await?;
                 sh.settle_and_refresh(run_id, head).await
             }
             Op::Type => {
+                let what = source(&input, "text")?;
                 let i: TypeIn = parse(input)?;
                 if i.expect_gen.is_none() {
                     return Err(ToolError::InvalidInput(MISSING_GEN_MSG.into()));
@@ -1158,22 +1436,44 @@ impl DesktopTool {
                         "Human intervention completed; previous action discarded. Fresh observation:\n{fresh}"
                     ));
                 }
+                // A secret is resolved only now (after the approval and the
+                // live program check), held in memory and wiped on drop.
+                let secret = match &what {
+                    Source::Text(_) => None,
+                    Source::Secret(name) => Some(sh.secret_for_window(run_id, name).await?),
+                };
                 // Focus the element with a real click, then type into the focus.
-                sh.act(
-                    run_id,
-                    Action::Click {
-                        target,
-                        method: ClickMethod::Global,
-                    },
-                    &permit,
-                )
-                .await?;
-                let head = sh
-                    .act(run_id, Action::TypeText { text: i.text }, &permit)
+                let typed = async {
+                    sh.act(
+                        run_id,
+                        Action::Click {
+                            target,
+                            method: ClickMethod::Global,
+                        },
+                        &permit,
+                        guard,
+                    )
                     .await?;
-                sh.settle_and_refresh(run_id, head).await
+                    let text = match (&what, &secret) {
+                        (Source::Text(t), _) => t.clone(),
+                        (Source::Secret(name), Some(v)) => {
+                            // The program that owns the window is verified again
+                            // right before the keys are sent.
+                            sh.verify_window_program(run_id, name).await?;
+                            v.expose().to_owned()
+                        }
+                        (Source::Secret(_), None) => String::new(),
+                    };
+                    let head = sh
+                        .act(run_id, Action::TypeText { text }, &permit, guard)
+                        .await?;
+                    sh.settle_and_refresh(run_id, head).await
+                }
+                .await;
+                finish_secret(typed, secret.as_ref())
             }
             Op::SetValue => {
+                let what = source(&input, "value")?;
                 let i: SetValueIn = parse(input)?;
                 if i.expect_gen.is_none() {
                     return Err(ToolError::InvalidInput(MISSING_GEN_MSG.into()));
@@ -1196,17 +1496,23 @@ impl DesktopTool {
                         "Human intervention completed; previous action discarded. Fresh observation:\n{fresh}"
                     ));
                 }
-                let head = sh
-                    .act(
-                        run_id,
-                        Action::SetValue {
-                            target,
-                            value: i.value,
-                        },
-                        &permit,
-                    )
-                    .await?;
-                sh.settle_and_refresh(run_id, head).await
+                let secret = match &what {
+                    Source::Text(_) => None,
+                    Source::Secret(name) => Some(sh.secret_for_window(run_id, name).await?),
+                };
+                let set = async {
+                    let value = match (&what, &secret) {
+                        (Source::Text(t), _) => t.clone(),
+                        (Source::Secret(_), Some(v)) => v.expose().to_owned(),
+                        (Source::Secret(_), None) => String::new(),
+                    };
+                    let head = sh
+                        .act(run_id, Action::SetValue { target, value }, &permit, guard)
+                        .await?;
+                    sh.settle_and_refresh(run_id, head).await
+                }
+                .await;
+                finish_secret(set, secret.as_ref())
             }
             Op::Key => {
                 let i: KeyIn = parse(input)?;
@@ -1251,10 +1557,13 @@ impl DesktopTool {
                             method: ClickMethod::Global,
                         },
                         &permit,
+                        guard,
                     )
                     .await?;
                 }
-                let head = sh.act(run_id, Action::KeyPress { keys }, &permit).await?;
+                let head = sh
+                    .act(run_id, Action::KeyPress { keys }, &permit, guard)
+                    .await?;
                 sh.settle_and_refresh(run_id, head).await
             }
             Op::Scroll => {
@@ -1305,6 +1614,7 @@ impl DesktopTool {
                             delta_y: i.dy,
                         },
                         &permit,
+                        None,
                     )
                     .await?;
                 sh.settle_and_refresh(run_id, head).await
@@ -1339,10 +1649,21 @@ impl DesktopTool {
                     ));
                 }
                 let head = sh
-                    .act(run_id, Action::Drag { from, to, method }, &permit)
+                    .act(run_id, Action::Drag { from, to, method }, &permit, None)
                     .await?;
                 sh.settle_and_refresh(run_id, head).await
             }
+        }
+    }
+}
+
+impl DesktopTool {
+    /// The text key of this tool's secret-capable parameter.
+    fn text_key(&self) -> Option<&'static str> {
+        match self.op {
+            Op::Type => Some("text"),
+            Op::SetValue => Some("value"),
+            _ => None,
         }
     }
 }
@@ -1353,9 +1674,77 @@ impl Tool for DesktopTool {
         &self.spec
     }
 
+    async fn control_target(&self, ctx: &ToolContext, input: &Value) -> Option<ControlTarget> {
+        self.resolve_control_target(&ctx.run_id, input).await
+    }
+
+    /// Typing an owner-stored secret is confirmed on every call, however
+    /// permissive the policy, preset, grants or read shortcuts are. A desktop
+    /// program never has a standing grant (the default `standing_grant`).
+    fn always_ask_for(&self, input: &Value) -> bool {
+        self.text_key().is_some() && names_a_secret(input)
+    }
+
+    async fn approval_details(
+        &self,
+        ctx: &ToolContext,
+        input: &Value,
+    ) -> Result<Option<Value>, ToolError> {
+        if matches!(self.op, Op::Launch) {
+            // A program of another operating system (a Linux path on a Windows PC)
+            // is refused here, BEFORE any approval card: the user is never asked
+            // about a call that cannot work.
+            if let Some(exe) = input.get("executable").and_then(Value::as_str)
+                && let Ok(backend) = self.shared.backend(&ctx.run_id)
+                && let Some(reason) = foreign_launch_refusal(&backend.capabilities().platform, exe)
+            {
+                return Err(ToolError::Execution(reason));
+            }
+            return Ok(None);
+        }
+        let Some(key) = self.text_key() else {
+            return Ok(None);
+        };
+        let Source::Secret(name) = source(input, key)? else {
+            return Ok(None);
+        };
+        let sh = &self.shared;
+        let r = parse_ref(
+            input
+                .get("index")
+                .ok_or_else(|| ToolError::InvalidInput("missing index".into()))?,
+        )?;
+        let expect_gen = input.get("gen").and_then(Value::as_u64);
+        if expect_gen.is_none() {
+            return Err(ToolError::InvalidInput(MISSING_GEN_MSG.into()));
+        }
+        sh.target(&ctx.run_id, r, expect_gen)?;
+        let (label, _) = sh.describe(&ctx.run_id, r)?;
+        // Refuse here, BEFORE any approval is offered, when the receiving
+        // program is not one the owner allowed for this secret.
+        let facts = sh.verify_window_program(&ctx.run_id, &name).await?;
+        Ok(Some(json!({
+            "kind": "secret_fill",
+            "tool": self.spec.name,
+            "secret": sanitize_label(&name, 80),
+            "field": sanitize_label(&label, 80),
+            "window": sanitize_label(&facts.title, 80),
+            "program": sanitize_label(facts.identity.as_deref().unwrap_or_default(), 80),
+            "has_standing_grant": false,
+            "note": "The secret value is typed by Praxi; the assistant never sees it.",
+        })))
+    }
+
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
+        // Only the four input tools take part in a control grant; any other
+        // tool ignores a guard.
+        let guard = if self.control_kind().is_some() {
+            ctx.control_guard.as_ref().map(act_guard_for)
+        } else {
+            None
+        };
         let text = self
-            .run(&ctx.run_id, input)
+            .run(&ctx.run_id, input, guard)
             .instrument(tracing::info_span!(
                 "desktop.tool",
                 tool = %self.spec.name,
@@ -1400,6 +1789,15 @@ pub(crate) mod fake {
         pub launched_at: Mutex<Option<tokio::time::Instant>>,
         /// Runs inside `screenshot` / `windows` (a takeover landing mid-capture).
         pub hook: Mutex<Option<FakeHook>>,
+        /// The window and program input would reach now. `None` = this fake
+        /// cannot name a program (like Linux today): no grant, no guard.
+        pub input: Mutex<Option<desktop_api::InputTarget>>,
+        /// Actions that passed through `act_guarded` (and then ran).
+        pub guarded: Mutex<Vec<Action>>,
+        /// The edit (index 3) is a password field in the snapshot.
+        pub secure_edit: bool,
+        /// The verified program identity this backend reports (`None` = it cannot verify).
+        pub identity: Mutex<Option<String>>,
     }
 
     impl FakeDesktop {
@@ -1418,6 +1816,27 @@ pub(crate) mod fake {
                 launched_window_pid: 4242,
                 launched_at: Mutex::new(None),
                 hook: Mutex::new(None),
+                input: Mutex::new(None),
+                guarded: Mutex::new(Vec::new()),
+                secure_edit: false,
+                identity: Mutex::new(None),
+            }
+        }
+
+        /// A program that input would reach, with a complete identity.
+        pub fn notepad() -> desktop_api::InputTarget {
+            desktop_api::InputTarget {
+                window_id: 77,
+                title: "Untitled - Notepad".into(),
+                class: "Notepad".into(),
+                identity: desktop_api::ProcessIdentity {
+                    image_path: "C:\\Windows\\System32\\notepad.exe".into(),
+                    pid: 4242,
+                    start_time: 1_000,
+                },
+                elevated: Some(false),
+                password_focus: false,
+                owned: false,
             }
         }
     }
@@ -1470,7 +1889,11 @@ pub(crate) mod fake {
                                 width: 80.0,
                                 height: 24.0,
                             }),
-                            vec![],
+                            if i == 3 && self.secure_edit {
+                                vec!["secure".to_owned()]
+                            } else {
+                                vec![]
+                            },
                         )
                     })
                     .collect()
@@ -1520,6 +1943,33 @@ pub(crate) mod fake {
             })
         }
 
+        async fn input_target(&self) -> Result<Option<desktop_api::InputTarget>, DesktopError> {
+            Ok(self.input.lock().clone())
+        }
+
+        async fn act_guarded(
+            &self,
+            action: Action,
+            guard: desktop_api::ActGuard,
+        ) -> Result<ActionResult, DesktopError> {
+            // The same decision a real backend takes right before it sends.
+            let now = self.input.lock().clone().ok_or_else(|| {
+                DesktopError::GuardRefused(format!(
+                    "not sent: {}",
+                    desktop_api::Refusal::NoIdentity.code()
+                ))
+            })?;
+            desktop_api::guard::check_guard(&guard, &now)
+                .map_err(|r| DesktopError::GuardRefused(format!("not sent: {}", r.code())))?;
+            self.guarded.lock().push(action.clone());
+            self.act(action).await
+        }
+
+        fn key_chord_refusal(&self, keys: &[String]) -> Option<desktop_api::Refusal> {
+            // The same allowlist the real backends use.
+            (!desktop_api::guarded::chord_allowed(keys)).then_some(desktop_api::Refusal::Chord)
+        }
+
         async fn screenshot(&self, _r: Region, _q: Quality) -> Result<Image, DesktopError> {
             let hook = self.hook.lock().clone();
             if let Some(hook) = hook {
@@ -1563,6 +2013,10 @@ pub(crate) mod fake {
             Ok(self.launch_pid)
         }
 
+        async fn program_identity(&self, _window: &WindowInfo) -> Option<String> {
+            self.identity.lock().clone()
+        }
+
         fn capabilities(&self) -> Capabilities {
             Capabilities {
                 platform: "fake".into(),
@@ -1577,6 +2031,25 @@ pub(crate) mod fake {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_program_of_another_os_is_refused_before_any_card() {
+        let linux_on_windows =
+            foreign_launch_refusal("windows", "/opt/praxi-browser/chrome").unwrap();
+        assert!(
+            linux_on_windows.starts_with("wrong computer:")
+                && linux_on_windows.contains("Windows computer")
+        );
+        assert!(
+            foreign_launch_refusal("linux", "chrome.exe")
+                .unwrap()
+                .contains("Linux computer")
+        );
+        assert!(foreign_launch_refusal("linux", r"C:\Program Files\x.exe").is_some());
+        assert!(foreign_launch_refusal("windows", "notepad.exe").is_none());
+        assert!(foreign_launch_refusal("windows", "ms-settings:display").is_none());
+        assert!(foreign_launch_refusal("linux", "/usr/bin/firefox").is_none());
+    }
+
     use super::fake::FakeDesktop;
     use super::*;
     use tool_registry::ContentPart;
@@ -1696,6 +2169,363 @@ mod tests {
             }
         ));
         assert!(matches!(&actions[1], Action::TypeText { text } if text == "hello"));
+    }
+
+    // ---- run-scoped control grant: target and guarded dispatch ----
+
+    fn ctx_for(run: &str) -> ToolContext {
+        ToolContext {
+            run_id: run.into(),
+            ..ToolContext::default()
+        }
+    }
+
+    async fn observed(t: &[Arc<dyn Tool>], ctx: &ToolContext) {
+        get(t, "desktop_get_state")
+            .call(ctx, json!({}))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn control_target_names_one_program_with_its_full_identity() {
+        let fake = Arc::new(FakeDesktop::new(false));
+        *fake.input.lock() = Some(FakeDesktop::notepad());
+        let (_d, t) = build(fake, None);
+        let ctx = ctx_for("r1");
+        observed(&t, &ctx).await;
+        for (tool, input) in [
+            ("desktop_type", json!({"index": 3, "gen": 1, "text": "x"})),
+            (
+                "desktop_set_value",
+                json!({"index": 3, "gen": 1, "value": "x"}),
+            ),
+            ("desktop_key", json!({"keys": "ctrl+a"})),
+        ] {
+            let target = get(&t, tool)
+                .control_target(&ctx, &input)
+                .await
+                .unwrap_or_else(|| panic!("{tool}"));
+            assert!(target.eligible(), "{tool}: {target:?}");
+            assert_eq!(target.program_name(), "notepad.exe");
+            assert_eq!(target.identity.pid, 4242);
+            assert_eq!(target.identity.start_time, 1_000);
+            assert_eq!(target.window_title, "Untitled - Notepad");
+        }
+    }
+
+    #[tokio::test]
+    async fn no_process_identity_means_no_control_target() {
+        let fake = Arc::new(FakeDesktop::new(false)); // `input` stays None
+        let (_d, t) = build(fake, None);
+        let ctx = ctx_for("r1");
+        observed(&t, &ctx).await;
+        for tool in [
+            "desktop_type",
+            "desktop_set_value",
+            "desktop_key",
+            "desktop_drag",
+        ] {
+            assert!(
+                get(&t, tool)
+                    .control_target(&ctx, &json!({"index": 3, "gen": 1, "keys": "a"}))
+                    .await
+                    .is_none(),
+                "{tool}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn only_the_four_input_tools_have_a_control_target() {
+        let fake = Arc::new(FakeDesktop::new(false));
+        *fake.input.lock() = Some(FakeDesktop::notepad());
+        let (_d, t) = build(fake, None);
+        let ctx = ctx_for("r1");
+        observed(&t, &ctx).await;
+        for tool in [
+            "desktop_drag",
+            "desktop_click",
+            "desktop_scroll",
+            "desktop_launch",
+            "desktop_get_state",
+            "desktop_list_apps",
+        ] {
+            assert!(
+                get(&t, tool)
+                    .control_target(&ctx, &json!({"index": 1, "gen": 1}))
+                    .await
+                    .is_none(),
+                "{tool}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn win_chords_and_every_spelling_of_them_are_refused_on_the_target() {
+        let fake = Arc::new(FakeDesktop::new(false));
+        *fake.input.lock() = Some(FakeDesktop::notepad());
+        let (_d, t) = build(fake, None);
+        let ctx = ctx_for("r1");
+        observed(&t, &ctx).await;
+        for keys in [
+            "win+r",
+            "super+r",
+            "cmd+r",
+            "meta",
+            "Windows+e",
+            "alt+space",
+            "alt+f2",
+            "alt+f4",
+            "f4",
+            "f1",
+            "ctrl+n",
+            "ctrl+esc",
+            "alt+tab",
+        ] {
+            let target = get(&t, "desktop_key")
+                .control_target(&ctx, &json!({"keys": keys}))
+                .await
+                .unwrap();
+            assert_eq!(target.refusal.as_deref(), Some("chord"), "{keys}");
+            assert!(!target.eligible(), "{keys}");
+        }
+        let ok = get(&t, "desktop_key")
+            .control_target(&ctx, &json!({"keys": "ctrl+s"}))
+            .await
+            .unwrap();
+        assert!(ok.eligible());
+    }
+
+    #[tokio::test]
+    async fn terminals_elevated_programs_and_dialogs_are_refused_on_the_target() {
+        for (path, class, elevated, want) in [
+            (
+                "C:\\Windows\\System32\\cmd.exe",
+                "ConsoleWindowClass",
+                Some(false),
+                "terminal",
+            ),
+            (
+                "C:\\Windows\\notepad.exe",
+                "Notepad",
+                Some(true),
+                "elevated",
+            ),
+            ("C:\\Windows\\notepad.exe", "Notepad", None, "elevated"),
+            ("C:\\Windows\\notepad.exe", "#32770", Some(false), "dialog"),
+            (
+                "C:\\x\\Code.exe",
+                "Chrome_WidgetWin_1",
+                Some(false),
+                "command_app",
+            ),
+            (
+                "C:\\x\\chrome.exe",
+                "Chrome_WidgetWin_1",
+                Some(false),
+                "browser",
+            ),
+        ] {
+            let fake = Arc::new(FakeDesktop::new(false));
+            let mut input = FakeDesktop::notepad();
+            input.identity.image_path = path.into();
+            input.class = class.into();
+            input.elevated = elevated;
+            *fake.input.lock() = Some(input);
+            let (_d, t) = build(fake, None);
+            let ctx = ctx_for("r1");
+            observed(&t, &ctx).await;
+            let target = get(&t, "desktop_type")
+                .control_target(&ctx, &json!({"index": 3, "gen": 1, "text": "x"}))
+                .await
+                .unwrap();
+            assert_eq!(target.refusal.as_deref(), Some(want), "{path} {class}");
+            assert!(!target.eligible());
+        }
+    }
+
+    #[tokio::test]
+    async fn password_field_in_a_granted_app_still_asks() {
+        // By index: the snapshot marks the node secure.
+        let mut f = FakeDesktop::new(false);
+        f.secure_edit = true;
+        let fake = Arc::new(f);
+        *fake.input.lock() = Some(FakeDesktop::notepad());
+        let (_d, t) = build(fake.clone(), None);
+        let ctx = ctx_for("r1");
+        observed(&t, &ctx).await;
+        for (tool, input) in [
+            ("desktop_type", json!({"index": 3, "gen": 1, "text": "x"})),
+            (
+                "desktop_set_value",
+                json!({"index": 3, "gen": 1, "value": "x"}),
+            ),
+        ] {
+            let target = get(&t, tool).control_target(&ctx, &input).await.unwrap();
+            assert_eq!(target.refusal.as_deref(), Some("password_field"), "{tool}");
+        }
+        // A non-secure element of the same window is fine.
+        let ok = get(&t, "desktop_type")
+            .control_target(&ctx, &json!({"index": 1, "gen": 1, "text": "x"}))
+            .await
+            .unwrap();
+        assert!(ok.eligible());
+
+        // Without an index the keys go to the live focus.
+        let fake2 = Arc::new(FakeDesktop::new(false));
+        let mut input = FakeDesktop::notepad();
+        input.password_focus = true;
+        *fake2.input.lock() = Some(input);
+        let (_d2, t2) = build(fake2, None);
+        observed(&t2, &ctx).await;
+        let focus = get(&t2, "desktop_key")
+            .control_target(&ctx, &json!({"keys": "enter"}))
+            .await
+            .unwrap();
+        assert_eq!(focus.refusal.as_deref(), Some("password_field"));
+        // With an element index the key press first clicks: a click is never
+        // covered by a task-wide permission, so there is no target at all.
+        assert!(
+            get(&t2, "desktop_key")
+                .control_target(&ctx, &json!({"keys": "enter", "index": 1, "gen": 1}))
+                .await
+                .is_none()
+        );
+    }
+
+    fn guard_for(target: &desktop_api::InputTarget) -> tool_registry::ControlIdentity {
+        tool_registry::ControlIdentity {
+            image_path: target.identity.image_path.clone(),
+            pid: target.identity.pid,
+            start_time: target.identity.start_time,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_covered_call_goes_through_the_guarded_path_for_the_click_and_the_text() {
+        let fake = Arc::new(FakeDesktop::new(false));
+        let notepad = FakeDesktop::notepad();
+        *fake.input.lock() = Some(notepad.clone());
+        let (_d, t) = build(fake.clone(), None);
+        let mut ctx = ctx_for("r1");
+        observed(&t, &ctx).await;
+        ctx.control_guard = Some(guard_for(&notepad));
+        get(&t, "desktop_type")
+            .call(&ctx, json!({"index": 3, "gen": 1, "text": "hello"}))
+            .await
+            .unwrap();
+        get(&t, "desktop_key")
+            .call(&ctx, json!({"keys": "ctrl+s"}))
+            .await
+            .unwrap();
+        let guarded = fake.guarded.lock();
+        assert!(
+            matches!(
+                &guarded[0],
+                Action::Click {
+                    method: ClickMethod::Global,
+                    ..
+                }
+            ),
+            "the pre-click is guarded too"
+        );
+        assert!(matches!(&guarded[1], Action::TypeText { text } if text == "hello"));
+        assert!(matches!(&guarded[2], Action::KeyPress { .. }));
+        assert_eq!(guarded.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn an_uncovered_call_never_takes_the_guarded_path() {
+        let fake = Arc::new(FakeDesktop::new(false));
+        *fake.input.lock() = Some(FakeDesktop::notepad());
+        let (_d, t) = build(fake.clone(), None);
+        let ctx = ctx_for("r1"); // no control_guard
+        observed(&t, &ctx).await;
+        get(&t, "desktop_type")
+            .call(&ctx, json!({"index": 3, "gen": 1, "text": "hello"}))
+            .await
+            .unwrap();
+        assert!(fake.guarded.lock().is_empty());
+        assert_eq!(fake.actions.lock().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn typed_text_after_focus_moved_to_another_process_is_not_sent() {
+        let fake = Arc::new(FakeDesktop::new(false));
+        let notepad = FakeDesktop::notepad();
+        *fake.input.lock() = Some(notepad.clone());
+        let (_d, t) = build(fake.clone(), None);
+        let mut ctx = ctx_for("r1");
+        observed(&t, &ctx).await;
+        ctx.control_guard = Some(guard_for(&notepad));
+
+        // A terminal took the focus between the decision and the send.
+        let mut other = notepad.clone();
+        other.identity = desktop_api::ProcessIdentity {
+            image_path: "C:\\Windows\\System32\\cmd.exe".into(),
+            pid: 9,
+            start_time: 5,
+        };
+        other.class = "ConsoleWindowClass".into();
+        *fake.input.lock() = Some(other);
+        for (tool, input) in [
+            (
+                "desktop_type",
+                json!({"index": 3, "gen": 1, "text": "powershell -w hidden"}),
+            ),
+            ("desktop_key", json!({"keys": "Return"})),
+        ] {
+            let err = get(&t, tool)
+                .call(&ctx, input)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("not sent"), "{tool}: {err}");
+        }
+        assert!(
+            fake.actions.lock().is_empty(),
+            "nothing reached the backend"
+        );
+        assert_eq!(fake.typed.lock().as_str(), "");
+    }
+
+    #[tokio::test]
+    async fn pid_reuse_with_a_different_start_time_is_not_the_granted_program() {
+        let fake = Arc::new(FakeDesktop::new(false));
+        let notepad = FakeDesktop::notepad();
+        *fake.input.lock() = Some(notepad.clone());
+        let (_d, t) = build(fake.clone(), None);
+        let mut ctx = ctx_for("r1");
+        observed(&t, &ctx).await;
+        ctx.control_guard = Some(guard_for(&notepad));
+        let mut reused = notepad.clone();
+        reused.identity.start_time += 1; // same pid and path, another process
+        *fake.input.lock() = Some(reused);
+        let err = get(&t, "desktop_key")
+            .call(&ctx, json!({"keys": "a"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not sent"), "{err}");
+        assert!(fake.actions.lock().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_guard_on_a_backend_that_cannot_check_fails_closed() {
+        // `input` is None: the fake refuses like the default trait method does.
+        let fake = Arc::new(FakeDesktop::new(false));
+        let (_d, t) = build(fake.clone(), None);
+        let mut ctx = ctx_for("r1");
+        observed(&t, &ctx).await;
+        ctx.control_guard = Some(guard_for(&FakeDesktop::notepad()));
+        let err = get(&t, "desktop_key")
+            .call(&ctx, json!({"keys": "a"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not sent"), "{err}");
+        assert!(fake.actions.lock().is_empty());
     }
 
     #[tokio::test]

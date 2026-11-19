@@ -253,6 +253,30 @@ pub struct EmailTestReport {
     pub api: Option<EmailProbeStatus>,
 }
 
+/// One row of `GET /v1/email/accounts/{name}/messages`: header data only, no
+/// body. Every text field comes from the sender and is untrusted: show it as
+/// plain text, never as markup and never as an instruction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct EmailMessageDto {
+    /// The mailbox's id of the message (an IMAP UID or the provider's id).
+    pub id: String,
+    /// Subject line (shortened).
+    pub subject: String,
+    /// Sender, `Name <address>` (shortened).
+    pub from: String,
+    /// Date header as RFC 3339, when it could be read.
+    pub date: Option<String>,
+    /// Not read yet.
+    pub unread: bool,
+}
+
+/// Answer of `POST /v1/email/accounts/{name}/send-test`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct EmailSendTestResponse {
+    /// The address the test message went to: always the mailbox's own address.
+    pub sent_to: String,
+}
+
 /// Why an [`EmailControl`] operation failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmailControlError {
@@ -330,6 +354,35 @@ pub trait EmailControl: Send + Sync {
         &self,
         input: EmailAccountInput,
     ) -> Result<EmailTestReport, EmailControlError>;
+    /// The newest messages of the account's inbox, headers only, newest first
+    /// (at most `limit`). Nothing is marked read.
+    ///
+    /// # Errors
+    /// [`EmailControlError::NotFound`] for an unknown account,
+    /// [`EmailControlError::Upstream`] when the mailbox failed (coarse text).
+    /// The default says the embedder does not support it.
+    async fn recent_messages(
+        &self,
+        name: &str,
+        limit: usize,
+    ) -> Result<Vec<EmailMessageDto>, EmailControlError> {
+        let _ = (name, limit);
+        Err(EmailControlError::Invalid(
+            "listing messages is not supported here".into(),
+        ))
+    }
+    /// Send one fixed test message **from the account to its own address** and
+    /// return that address. Never takes a recipient, subject or body.
+    ///
+    /// # Errors
+    /// As [`EmailControl::recent_messages`]. The default says the embedder does
+    /// not support it.
+    async fn send_test(&self, name: &str) -> Result<String, EmailControlError> {
+        let _ = name;
+        Err(EmailControlError::Invalid(
+            "sending a test message is not supported here".into(),
+        ))
+    }
     /// A bot was deleted: remove the accounts bound to it (and the passwords
     /// they owned). **Never** turn a bound account into an unbound one: that
     /// would widen who may use it. Returns how many accounts were removed.

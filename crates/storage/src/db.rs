@@ -13,9 +13,42 @@ use uuid::Uuid;
 use crate::error::{Result, StorageError};
 use crate::migrate;
 use crate::records::{
-    Approval, AuditEntry, Bot, BotSkillAssignment, Chat, EventIndexRow, Message, Run, RunStep,
-    SkillAssignmentMode, User,
+    Approval, AuditEntry, Bot, BotPatch, BotSkillAssignment, Chat, EventIndexRow, Message, Run,
+    RunStep, SkillAssignmentMode, User,
 };
+
+/// How many pre-upgrade database copies are kept under `<data_dir>/backups`.
+const KEPT_UPGRADE_BACKUPS: usize = 3;
+
+/// Before an upgrade changes the schema of an existing database, write a
+/// consistent copy (`VACUUM INTO`, safe with WAL) to
+/// `<data_dir>/backups/bot-v<old>-<unix ms>.db` and keep the newest few, so a
+/// failed or unwanted upgrade can be rolled back by hand. A fresh or
+/// already-current database is not copied. A newer-than-supported database is
+/// left for the migrator to reject.
+fn backup_before_migration(conn: &Connection, data_dir: &Path) -> Result<()> {
+    let current = migrate::current_version(conn)?;
+    if current == 0 || current >= migrate::latest_version() {
+        return Ok(());
+    }
+    let dir = data_dir.join("backups");
+    std::fs::create_dir_all(&dir)?;
+    let target = dir.join(format!("bot-v{current}-{}.db", now_ms()));
+    conn.execute("VACUUM INTO ?1", [target.to_string_lossy().as_ref()])?;
+    let mut copies: Vec<PathBuf> = std::fs::read_dir(&dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("bot-v"))
+        })
+        .collect();
+    copies.sort_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+    while copies.len() > KEPT_UPGRADE_BACKUPS {
+        let _ = std::fs::remove_file(copies.remove(0));
+    }
+    Ok(())
+}
 
 /// Current Unix time in milliseconds.
 #[must_use]
@@ -92,7 +125,7 @@ impl Storage {
         migrate::migrate(&mut conn)?;
         for select in [
             "SELECT id, name, created_at_ms FROM users",
-            "SELECT id, user_id, name, config_json, created_at_ms FROM bots",
+            "SELECT id, user_id, name, config_json, created_at_ms, version FROM bots",
             "SELECT id, user_id, bot_id, title, created_at_ms FROM chats",
             "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms FROM messages",
             RUN_SELECT,
@@ -114,6 +147,20 @@ impl Storage {
                 let _ = skill_assignment_row(row)?;
             }
         }
+        let version_column_valid: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('bots') WHERE name='version' AND upper(type)='INTEGER' AND \"notnull\"=1)",
+            [], |r| r.get(0),
+        )?;
+        let malformed_version: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM bots WHERE typeof(version) != 'integer' OR version < 1)",
+            [],
+            |r| r.get(0),
+        )?;
+        if !version_column_valid || malformed_version {
+            return Err(StorageError::Conflict(
+                "invalid bots.version: required positive INTEGER NOT NULL".into(),
+            ));
+        }
         if conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
             return Err(rusqlite::Error::SqliteFailure(
                 rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY),
@@ -132,7 +179,11 @@ impl Storage {
     pub fn open(data_dir: impl Into<PathBuf>) -> Result<Self> {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir)?;
+        // Resolve host-selected relative paths and symlinked home directories
+        // once, before any knowledge capability treats this root as trusted.
+        let data_dir = crate::paths::without_verbatim_prefix(std::fs::canonicalize(data_dir)?);
         let conn = Connection::open(data_dir.join("bot.db"))?;
+        backup_before_migration(&conn, &data_dir)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         Self::init(conn, data_dir)
@@ -258,16 +309,138 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Replace a bot's name and configuration.  Returns `false` if it does not exist.
+    /// Replace a profile only when its revision still matches the caller's snapshot.
     ///
     /// # Errors
     /// Fails on SQLite/JSON errors.
-    pub fn update_bot(&self, id: BotId, name: &str, config: &Value) -> Result<bool> {
-        let n = self.conn().execute(
-            "UPDATE bots SET name = ?2, config_json = ?3 WHERE id = ?1",
-            params![id.to_string(), name, serde_json::to_string(config)?],
+    pub fn update_bot(
+        &self,
+        id: BotId,
+        name: &str,
+        config: &Value,
+        expected_version: i64,
+    ) -> Result<BotPatch> {
+        self.patch_bot(id, expected_version, |_, _| {
+            Ok((name.to_owned(), config.clone()))
+        })
+    }
+
+    /// Read a profile and revision in one SQLite statement.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn get_bot_versioned(&self, id: BotId) -> Result<Option<(Bot, i64)>> {
+        Ok(self.conn().query_row(
+            "SELECT id, user_id, name, config_json, created_at_ms, version FROM bots WHERE id = ?1",
+            [id.to_string()], |r| Ok((bot_row(r)?, r.get(5)?)),
+        ).optional()?)
+    }
+
+    /// Read a user's profiles and revisions in one SQLite statement.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn list_bots_versioned(&self, user_id: UserId) -> Result<Vec<(Bot, i64)>> {
+        let conn = self.conn();
+        let mut st = conn.prepare("SELECT id, user_id, name, config_json, created_at_ms, version FROM bots WHERE user_id = ?1 ORDER BY id")?;
+        Ok(st
+            .query_map([user_id.to_string()], |r| Ok((bot_row(r)?, r.get(5)?)))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The profile version of a bot (bumped by every write), `None` if it does not exist.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn bot_version(&self, id: BotId) -> Result<Option<i64>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT version FROM bots WHERE id = ?1",
+                [id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// The profile versions of all of a user's bots.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn bot_versions(&self, user_id: UserId) -> Result<std::collections::HashMap<BotId, i64>> {
+        let conn = self.conn();
+        let mut st = conn.prepare("SELECT id, version FROM bots WHERE user_id = ?1")?;
+        let rows = st.query_map([user_id.to_string()], |r| {
+            Ok((BotId(uuid_at(r, 0)?), r.get::<_, i64>(1)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Change a bot's name and profile atomically if its version is still
+    /// `expected_version`.  `apply` receives the stored name and profile and
+    /// returns the new ones (or a refusal); it runs inside the transaction, so
+    /// no other write can land between the read and the write.  The version is
+    /// bumped on success.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn patch_bot<F>(&self, id: BotId, expected_version: i64, apply: F) -> Result<BotPatch>
+    where
+        F: FnOnce(&str, &Value) -> std::result::Result<(String, Value), String>,
+    {
+        self.write_bot(id, Some(expected_version), apply)
+    }
+
+    /// Atomically derive the next name/profile from the stored one and write it,
+    /// advancing the bot revision, WITHOUT a version precondition. For writers
+    /// that own one field (the dedicated knowledge settings) and must not
+    /// overwrite the rest of a profile with a stale full copy.
+    ///
+    /// # Errors
+    /// Fails on SQLite/JSON errors.
+    pub fn modify_bot<F>(&self, id: BotId, apply: F) -> Result<BotPatch>
+    where
+        F: FnOnce(&str, &Value) -> std::result::Result<(String, Value), String>,
+    {
+        self.write_bot(id, None, apply)
+    }
+
+    fn write_bot<F>(&self, id: BotId, expected_version: Option<i64>, apply: F) -> Result<BotPatch>
+    where
+        F: FnOnce(&str, &Value) -> std::result::Result<(String, Value), String>,
+    {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let stored = tx
+            .query_row(
+                "SELECT id, user_id, name, config_json, created_at_ms, version FROM bots WHERE id = ?1",
+                [id.to_string()],
+                |r| Ok((bot_row(r)?, r.get::<_, i64>(5)?)),
+            )
+            .optional()?;
+        let Some((bot, version)) = stored else {
+            return Ok(BotPatch::Missing);
+        };
+        if expected_version.is_some_and(|expected| expected != version) {
+            return Ok(BotPatch::Stale { bot, version });
+        }
+        let (name, config) = match apply(&bot.name, &bot.config) {
+            Ok(next) => next,
+            Err(why) => return Ok(BotPatch::Rejected(why)),
+        };
+        tx.execute(
+            "UPDATE bots SET name = ?2, config_json = ?3, version = version + 1 WHERE id = ?1",
+            params![id.to_string(), name, serde_json::to_string(&config)?],
         )?;
-        Ok(n > 0)
+        tx.commit()?;
+        Ok(BotPatch::Applied {
+            bot: Bot {
+                name,
+                config,
+                ..bot
+            },
+            version: version + 1,
+        })
     }
 
     /// Delete a bot and its skill assignment row in the same transaction.
@@ -277,11 +450,29 @@ impl Storage {
     /// Fails on SQLite errors, in particular a foreign-key violation while
     /// chats or runs still reference the bot.
     pub fn delete_bot(&self, id: BotId) -> Result<bool> {
+        self.delete_bot_with_cleanup(id, || Ok(()))
+    }
+
+    /// Delete a bot and run bounded local cleanup before committing its removal.
+    /// Foreign-key checks run first. A cleanup error keeps the owning row, and
+    /// concurrent chat/run insertion cannot race the transaction. The closure
+    /// must not reenter this storage connection or wait for asynchronous work.
+    ///
+    /// # Errors
+    /// SQLite constraints, storage failure, or the supplied cleanup error.
+    pub fn delete_bot_with_cleanup(
+        &self,
+        id: BotId,
+        cleanup: impl FnOnce() -> Result<()>,
+    ) -> Result<bool> {
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let bid = id.to_string();
         tx.execute("DELETE FROM bot_skill_assignment WHERE bot_id = ?1", [&bid])?;
         let n = tx.execute("DELETE FROM bots WHERE id = ?1", [&bid])?;
+        if n > 0 {
+            cleanup()?;
+        }
         tx.commit()?;
         Ok(n > 0)
     }
@@ -525,7 +716,7 @@ impl Storage {
     /// Fails on SQLite errors.
     pub fn insert_message(&self, m: &Message) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO messages (id, user_id, chat_id, run_id, role, content, created_at_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO messages (id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 m.id.to_string(),
                 m.user_id.to_string(),
@@ -533,7 +724,10 @@ impl Storage {
                 m.run_id.map(|r| r.to_string()),
                 m.role,
                 m.content,
-                m.created_at_ms
+                m.created_at_ms,
+                i64::from(m.exposure_untrusted),
+                i64::from(m.exposure_private),
+                serde_json::to_string(&m.exposure_sources)?,
             ],
         )?;
         Ok(())
@@ -547,7 +741,7 @@ impl Storage {
         Ok(self
             .conn()
             .query_row(
-                "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms FROM messages WHERE id = ?1",
+                "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources FROM messages WHERE id = ?1",
                 [id.to_string()],
                 message_row,
             )
@@ -561,7 +755,7 @@ impl Storage {
     pub fn list_messages(&self, chat_id: ChatId) -> Result<Vec<Message>> {
         let conn = self.conn();
         let mut st = conn.prepare(
-            "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms FROM messages WHERE chat_id = ?1 ORDER BY created_at_ms, id",
+            "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources FROM messages WHERE chat_id = ?1 ORDER BY created_at_ms, id",
         )?;
         Ok(st
             .query_map([chat_id.to_string()], message_row)?
@@ -589,7 +783,7 @@ impl Storage {
     ) -> Result<(Vec<Message>, bool)> {
         let conn = self.conn();
         let mut st = conn.prepare(
-            "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, length(CAST(content AS BLOB)) \
+            "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources, length(CAST(content AS BLOB)) \
              FROM messages WHERE chat_id = ?1 AND (?2 IS NULL OR run_id IS NULL OR run_id <> ?2) \
              ORDER BY created_at_ms DESC, id DESC LIMIT ?3",
         )?;
@@ -603,7 +797,7 @@ impl Storage {
         let mut used = 0usize;
         let mut omitted = false;
         while let Some(row) = rows.next()? {
-            let bytes = usize::try_from(row.get::<_, i64>(7)?).map_err(|e| conv_err(7, e))?;
+            let bytes = usize::try_from(row.get::<_, i64>(10)?).map_err(|e| conv_err(10, e))?;
             if messages.len() == max_messages || bytes > max_bytes.saturating_sub(used) {
                 omitted = true;
                 break;
@@ -870,6 +1064,46 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Recent tool executions owned by one user and bot, optionally one run.
+    /// Row and aggregate JSON byte limits are checked before copying payloads
+    /// into Rust. Oversized rows are omitted; callers must not infer permission
+    /// from the absence of a record.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn knowledge_tool_steps(
+        &self,
+        user_id: UserId,
+        bot_id: BotId,
+        run_id: Option<RunId>,
+        max_rows: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<RunStep>> {
+        let conn = self.conn();
+        let select = STEP_SELECT.replacen(" FROM ", ", length(CAST(input_json AS BLOB)) + coalesce(length(CAST(output_json AS BLOB)), 0) + coalesce(length(CAST(retry_json AS BLOB)), 0) + coalesce(length(CAST(error AS BLOB)), 0) + length(CAST(status AS BLOB)) FROM ", 1);
+        let mut statement = conn.prepare(&format!(
+            "{select} WHERE name='tools' AND user_id=?1 AND run_id IN (SELECT id FROM runs WHERE user_id=?1 AND bot_id=?2) AND (?3 IS NULL OR run_id=?3) ORDER BY started_at_ms DESC,id DESC LIMIT ?4"
+        ))?;
+        let mut rows = statement.query(params![
+            user_id.to_string(),
+            bot_id.to_string(),
+            run_id.map(|id| id.to_string()),
+            i64::try_from(max_rows.min(200)).unwrap_or(200)
+        ])?;
+        let mut remaining = max_bytes.min(8 * 1024 * 1024);
+        let mut found = Vec::new();
+        while let Some(row) = rows.next()? {
+            let bytes =
+                usize::try_from(row.get::<_, i64>(14)?).map_err(|error| conv_err(14, error))?;
+            if bytes > remaining {
+                continue;
+            }
+            found.push(step_row(row)?);
+            remaining -= bytes;
+        }
+        Ok(found)
+    }
+
     /// Update a step's status/attempt/result.  `finished_at_ms` is set to now
     /// when `finished` is true, else cleared.
     ///
@@ -934,6 +1168,158 @@ impl Storage {
             ],
         )?;
         Ok(())
+    }
+
+    /// Treat the folder (normalised path) as the owner's own content.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn trust_folder(&self, path: &str) -> Result<()> {
+        self.conn().execute(
+            "INSERT OR IGNORE INTO trusted_folders (path, added_at_ms) VALUES (?1, ?2)",
+            params![path, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    /// Stop trusting the folder. Returns whether it was listed.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn untrust_folder(&self, path: &str) -> Result<bool> {
+        Ok(self
+            .conn()
+            .execute("DELETE FROM trusted_folders WHERE path = ?1", params![path])?
+            > 0)
+    }
+
+    /// The trusted folders, oldest first.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn trusted_folders(&self) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt =
+            conn.prepare("SELECT path FROM trusted_folders ORDER BY added_at_ms, path")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Whether `path` (normalised) is a trusted folder or lies inside one.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn is_trusted_path(&self, path: &str) -> Result<bool> {
+        let conn = self.conn();
+        let mut probe = Some(path);
+        while let Some(p) = probe {
+            let hit: Option<i64> = conn
+                .query_row(
+                    "SELECT 1 FROM trusted_folders WHERE path = ?1",
+                    params![p],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if hit.is_some() {
+                return Ok(true);
+            }
+            probe = p.rfind('/').filter(|i| *i > 0).map(|i| &p[..i]);
+        }
+        Ok(false)
+    }
+
+    /// Record authenticated message origin before the message can drive a tool call.
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn set_message_source(&self, id: Uuid, source: &str) -> Result<()> {
+        self.conn().execute(
+            "UPDATE messages SET source = ?2 WHERE id = ?1",
+            params![id.to_string(), source],
+        )?;
+        Ok(())
+    }
+
+    /// The recorded origin of a message (`owner`, `imported`, `imported_foreign:<name>`, ...).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn message_source(&self, id: Uuid) -> Result<String> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT source FROM messages WHERE id = ?1",
+                [id.to_string()],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_default())
+    }
+
+    /// Texts of the user messages of `chat` that the owner typed in the desktop app.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn owner_message_texts(&self, chat: ChatId) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT content FROM messages WHERE chat_id = ?1 AND role = 'user' AND source = 'owner'
+             ORDER BY created_at_ms DESC LIMIT 200",
+        )?;
+        let rows = stmt.query_map(params![chat.to_string()], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Record that the file (or, with `tree`, everything under the directory) at the already
+    /// normalised `path` has an untrusted origin. Idempotent; a tree mark is never downgraded.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn mark_untrusted_path(&self, path: &str, tree: bool, origin: &str) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO file_provenance (path, tree, origin, recorded_at_ms) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(path) DO UPDATE SET tree = MAX(tree, excluded.tree)",
+            params![path, i64::from(tree), origin, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    /// Recorded provenance spellings, including entries written before canonical identities.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn untrusted_paths(&self) -> Result<Vec<(String, bool)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT path, tree FROM file_provenance")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Whether `path` (normalised: `/` separators, no trailing slash) is marked, itself or through
+    /// a marked ancestor directory.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn is_untrusted_path(&self, path: &str) -> Result<bool> {
+        let conn = self.conn();
+        let mut probe = Some(path);
+        let mut first = true;
+        while let Some(p) = probe {
+            let hit: Option<i64> = conn
+                .query_row(
+                    "SELECT tree FROM file_provenance WHERE path = ?1",
+                    params![p],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(tree) = hit
+                && (first || tree == 1)
+            {
+                return Ok(true);
+            }
+            first = false;
+            probe = p.rfind('/').filter(|i| *i > 0).map(|i| &p[..i]);
+        }
+        Ok(false)
     }
 
     /// Fetch an approval.
@@ -1036,6 +1422,20 @@ impl Storage {
             params![user_id.to_string(), run_id.to_string(), action],
             |row| row.get(0),
         )?)
+    }
+
+    /// The audit rows of one run, oldest first.
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn list_audit_for_run(&self, user_id: UserId, run_id: RunId) -> Result<Vec<AuditEntry>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
+            "SELECT id, user_id, run_id, actor, action, detail_json, ts_ms FROM audit_log WHERE user_id = ?1 AND run_id = ?2 ORDER BY id",
+        )?;
+        Ok(st
+            .query_map([user_id.to_string(), run_id.to_string()], audit_row)?
+            .collect::<rusqlite::Result<_>>()?)
     }
 
     /// The newest audit row of one action for a user (indexed by `id`, no full scan).
@@ -1302,6 +1702,9 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<Message> {
         role: r.get(4)?,
         content: r.get(5)?,
         created_at_ms: r.get(6)?,
+        exposure_untrusted: r.get::<_, i64>(7)? != 0,
+        exposure_private: r.get::<_, i64>(8)? != 0,
+        exposure_sources: serde_json::from_str(&r.get::<_, String>(9)?).unwrap_or_default(),
     })
 }
 
@@ -1372,8 +1775,48 @@ fn audit_row(r: &Row<'_>) -> rusqlite::Result<AuditEntry> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn upgrade_of_an_older_database_is_backed_up_first() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let conn = Connection::open(dir.path().join("bot.db")).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE marker (x); INSERT INTO marker VALUES (1); PRAGMA user_version = 3;",
+            )
+            .unwrap();
+        }
+        // user_version 3 without a ledger bootstraps and then migrates.
+        let _ = Storage::open(dir.path());
+        let backups: Vec<_> = std::fs::read_dir(dir.path().join("backups"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(backups.len(), 1, "{backups:?}");
+        assert!(backups[0].starts_with("bot-v3-"));
+        let copy = Connection::open(dir.path().join("backups").join(&backups[0])).unwrap();
+        let n: i64 = copy
+            .query_row("SELECT x FROM marker", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        // Fresh database: no backups directory content added on reopen at latest.
+        let fresh = tempfile::tempdir().unwrap();
+        Storage::open(fresh.path()).unwrap();
+        assert!(!fresh.path().join("backups").exists());
+    }
+
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn data_dir_is_canonical_but_never_a_verbatim_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Storage::open(dir.path().join("nested").join("..")).unwrap();
+        assert!(!st.data_dir().to_string_lossy().starts_with("\\\\?\\"));
+        assert_eq!(
+            std::fs::canonicalize(st.data_dir()).unwrap(),
+            std::fs::canonicalize(dir.path()).unwrap()
+        );
+    }
 
     struct Fx {
         st: Storage,
@@ -1455,6 +1898,9 @@ mod tests {
             role: "user".into(),
             content: "hi".into(),
             created_at_ms: 5,
+            exposure_untrusted: false,
+            exposure_private: false,
+            exposure_sources: Vec::new(),
         };
         f.st.insert_message(&m).unwrap();
         assert_eq!(f.st.get_message(m.id).unwrap().unwrap(), m);
@@ -1491,6 +1937,9 @@ mod tests {
                 content: format!("message {i}"),
                 // Equal timestamps exercise the deterministic id tie-break.
                 created_at_ms: 10,
+                exposure_untrusted: false,
+                exposure_private: false,
+                exposure_sources: Vec::new(),
             })
             .unwrap();
         }
@@ -1529,6 +1978,9 @@ mod tests {
                 role: "user".into(),
                 content: "é🙂".into(),
                 created_at_ms: i64::from(i),
+                exposure_untrusted: false,
+                exposure_private: false,
+                exposure_sources: Vec::new(),
             })
             .unwrap();
         }
@@ -1565,18 +2017,156 @@ mod tests {
     }
 
     #[test]
+    fn patch_bot_is_atomic_and_versioned() {
+        let f = fx();
+        let v0 = f.st.bot_version(f.bot.id).unwrap().unwrap();
+        // A plain replace bumps the version too, so a patch built on the old one is stale.
+        assert!(matches!(
+            f.st.update_bot(f.bot.id, "n", &json!({"a": 1}), v0)
+                .unwrap(),
+            BotPatch::Applied { .. }
+        ));
+        let v1 = f.st.bot_version(f.bot.id).unwrap().unwrap();
+        assert_eq!(v1, v0 + 1);
+        match f
+            .st
+            .patch_bot(f.bot.id, v0, |_, _| Ok(("x".into(), json!({}))))
+            .unwrap()
+        {
+            BotPatch::Stale { bot, version } => {
+                assert_eq!(version, v1);
+                assert_eq!(bot.name, "n");
+            }
+            other => panic!("expected stale, got {other:?}"),
+        }
+        assert_eq!(f.st.get_bot(f.bot.id).unwrap().unwrap().name, "n");
+        match f
+            .st
+            .patch_bot(f.bot.id, v1, |name, cfg| {
+                let mut c = cfg.clone();
+                c["b"] = json!(2);
+                Ok((format!("{name}!"), c))
+            })
+            .unwrap()
+        {
+            BotPatch::Applied { bot, version } => {
+                assert_eq!(version, v1 + 1);
+                assert_eq!(
+                    (bot.name.as_str(), bot.config),
+                    ("n!", json!({"a": 1, "b": 2}))
+                );
+            }
+            other => panic!("expected applied, got {other:?}"),
+        }
+        // A refusal writes nothing and keeps the version.
+        assert_eq!(
+            f.st.patch_bot(f.bot.id, v1 + 1, |_, _| Err("no".into()))
+                .unwrap(),
+            BotPatch::Rejected("no".into())
+        );
+        assert_eq!(f.st.bot_version(f.bot.id).unwrap(), Some(v1 + 1));
+        assert_eq!(
+            f.st.patch_bot(BotId::new(), 1, |_, _| Err("x".into()))
+                .unwrap(),
+            BotPatch::Missing
+        );
+        assert_eq!(f.st.bot_versions(f.user.id).unwrap()[&f.bot.id], v1 + 1);
+    }
+
+    #[test]
+    fn review95_all_profile_and_skill_writers_bump_one_bot_revision_transactionally() {
+        let f = fx();
+        let bid = f.bot.id.to_string();
+        let assert_revision = |expected| {
+            assert_eq!(
+                f.st.get_bot_versioned(f.bot.id).unwrap().unwrap().1,
+                expected
+            );
+        };
+        assert_revision(1);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::Selected, &["one".into()])
+            .unwrap();
+        assert_revision(2);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::Selected, &["two".into()])
+            .unwrap();
+        assert_revision(3);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::All, &[])
+            .unwrap();
+        assert_revision(4);
+        f.st.set_bot_skill_assignment(f.bot.id, SkillAssignmentMode::Selected, &[])
+            .unwrap();
+        assert_revision(5);
+        f.st.delete_bot_skill_assignment(f.bot.id).unwrap();
+        assert_revision(6);
+        assert!(!f.st.delete_bot_skill_assignment(f.bot.id).unwrap());
+        assert_revision(6); // No changed assignment, no revision.
+        {
+            let mut conn = f.st.conn();
+            let tx = conn.transaction().unwrap();
+            tx.execute("UPDATE bots SET config_json='{}' WHERE id=?1", [&bid])
+                .unwrap();
+            assert_eq!(
+                tx.query_row("SELECT version FROM bots WHERE id=?1", [&bid], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                7
+            );
+            // Rollback includes both the profile and its revision.
+        }
+        assert_revision(6);
+        f.st.conn()
+            .execute("UPDATE bots SET name='sql writer' WHERE id=?1", [&bid])
+            .unwrap();
+        assert_revision(7);
+        assert!(matches!(
+            f.st.update_bot(f.bot.id, "stale", &json!({}), 6).unwrap(),
+            BotPatch::Stale { version: 7, .. }
+        ));
+        assert_revision(7);
+        let list = f.st.list_bots_versioned(f.user.id).unwrap();
+        assert_eq!(list[0].1, 7);
+        assert_eq!(list[0].0.name, "sql writer");
+    }
+
+    #[test]
+    fn review95_modify_bot_changes_one_field_of_the_stored_profile_and_bumps_the_revision() {
+        let f = fx();
+        f.st.update_bot(f.bot.id, "n", &json!({"a": 1, "b": 2}), 1)
+            .unwrap();
+        // A concurrent profile write lands before the dedicated writer runs.
+        let out =
+            f.st.modify_bot(f.bot.id, |name, stored| {
+                let mut next = stored.clone();
+                next["knowledge"] = json!({"auto_retrieve": true});
+                Ok((name.to_owned(), next))
+            })
+            .unwrap();
+        assert!(matches!(out, BotPatch::Applied { version: 3, .. }));
+        let (bot, v) = f.st.get_bot_versioned(f.bot.id).unwrap().unwrap();
+        assert_eq!(v, 3);
+        assert_eq!(
+            bot.config,
+            json!({"a": 1, "b": 2, "knowledge": {"auto_retrieve": true}})
+        );
+    }
+
+    #[test]
     fn update_and_delete_bot() {
         let f = fx();
-        assert!(
-            f.st.update_bot(f.bot.id, "renamed", &json!({"a": 1}))
-                .unwrap()
-        );
+        assert!(matches!(
+            f.st.update_bot(f.bot.id, "renamed", &json!({"a": 1}), 1)
+                .unwrap(),
+            BotPatch::Applied { .. }
+        ));
         let got = f.st.get_bot(f.bot.id).unwrap().unwrap();
         assert_eq!(
             (got.name.as_str(), got.config),
             ("renamed", json!({"a": 1}))
         );
-        assert!(!f.st.update_bot(BotId::new(), "x", &json!({})).unwrap());
+        assert_eq!(
+            f.st.update_bot(BotId::new(), "x", &json!({}), 1).unwrap(),
+            BotPatch::Missing
+        );
         // The fixture chat still references the bot.
         assert!(f.st.delete_bot(f.bot.id).is_err());
         let spare = Bot {
@@ -1589,6 +2179,42 @@ mod tests {
         f.st.insert_bot(&spare).unwrap();
         assert!(f.st.delete_bot(spare.id).unwrap());
         assert!(!f.st.delete_bot(spare.id).unwrap());
+    }
+
+    #[test]
+    fn bot_cleanup_happens_after_constraints_and_before_commit() {
+        let f = fx();
+        assert!(
+            f.st.delete_bot_with_cleanup(f.bot.id, || panic!(
+                "referenced bot must never be cleaned"
+            ))
+            .is_err()
+        );
+        let empty = Bot {
+            id: BotId::new(),
+            user_id: f.user.id,
+            name: "Empty".into(),
+            config: json!({}),
+            created_at_ms: 1,
+        };
+        f.st.insert_bot(&empty).unwrap();
+        assert!(
+            f.st.delete_bot_with_cleanup(empty.id, || Err(crate::StorageError::Io(
+                std::io::Error::other("cleanup failed")
+            )))
+            .is_err()
+        );
+        assert!(f.st.get_bot(empty.id).unwrap().is_some());
+        let mut cleaned = false;
+        assert!(
+            f.st.delete_bot_with_cleanup(empty.id, || {
+                cleaned = true;
+                Ok(())
+            })
+            .unwrap()
+        );
+        assert!(cleaned);
+        assert!(f.st.get_bot(empty.id).unwrap().is_none());
     }
 
     #[test]
@@ -1659,6 +2285,67 @@ mod tests {
         assert_eq!(got.output, Some(json!("ok")));
         assert!(got.finished_at_ms.is_some());
         assert_eq!(f.st.relabel_steps(r.id, "succeeded", "x").unwrap(), 1);
+    }
+
+    #[test]
+    fn knowledge_steps_enforce_owner_row_and_aggregate_byte_bounds() {
+        let f = fx();
+        let run = run(&f);
+        for index in 0..3 {
+            f.st.insert_step(&RunStep {
+                id: Uuid::now_v7(),
+                run_id: run.id,
+                user_id: f.user.id,
+                idx: index,
+                name: "tools".into(),
+                input: json!({}),
+                idempotent: true,
+                retry: None,
+                status: "succeeded".into(),
+                attempt: 1,
+                output: Some(json!(if index == 2 {
+                    "x".repeat(1024)
+                } else {
+                    "small".into()
+                })),
+                error: None,
+                started_at_ms: i64::from(index),
+                finished_at_ms: Some(4),
+            })
+            .unwrap();
+        }
+        let found =
+            f.st.knowledge_tool_steps(f.user.id, f.bot.id, Some(run.id), 3, 40)
+                .unwrap();
+        assert_eq!(
+            found.len(),
+            2,
+            "oversized latest row must not consume the budget"
+        );
+        assert_eq!(
+            f.st.knowledge_tool_steps(f.user.id, f.bot.id, Some(run.id), 3, 20)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            f.st.knowledge_tool_steps(f.user.id, f.bot.id, Some(run.id), 1, 40)
+                .unwrap()
+                .is_empty(),
+            "row cap applies before filtering oversized payloads"
+        );
+        for (user, bot, run) in [
+            (UserId::new(), f.bot.id, run.id),
+            (f.user.id, BotId::new(), run.id),
+            (f.user.id, f.bot.id, RunId::new()),
+        ] {
+            assert_eq!(
+                f.st.knowledge_tool_steps(user, bot, Some(run), 3, 2048)
+                    .unwrap()
+                    .len(),
+                0
+            );
+        }
     }
 
     #[test]
@@ -1742,6 +2429,27 @@ mod tests {
         }
         let st = Storage::open(dir.path()).unwrap();
         assert_eq!(st.get_user(user.id).unwrap().unwrap(), user);
+    }
+
+    #[test]
+    fn untrusted_file_marks_cover_the_file_or_a_whole_tree_and_survive_a_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Storage::open(dir.path()).unwrap();
+        st.mark_untrusted_path("c:/docs/page.txt", false, "write")
+            .unwrap();
+        st.mark_untrusted_path("c:/work/clone", true, "git clone")
+            .unwrap();
+        assert!(st.is_untrusted_path("c:/docs/page.txt").unwrap());
+        assert!(!st.is_untrusted_path("c:/docs/own.txt").unwrap());
+        assert!(
+            !st.is_untrusted_path("c:/docs/page.txt/x").unwrap(),
+            "a file mark is not a tree"
+        );
+        assert!(st.is_untrusted_path("c:/work/clone/src/readme.md").unwrap());
+        assert!(!st.is_untrusted_path("c:/work/clone2/readme.md").unwrap());
+        drop(st);
+        let st = Storage::open(dir.path()).unwrap();
+        assert!(st.is_untrusted_path("c:/work/clone/a/b").unwrap());
     }
 
     #[test]

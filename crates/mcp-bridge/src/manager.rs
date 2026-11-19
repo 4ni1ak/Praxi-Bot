@@ -1,24 +1,37 @@
 //! Lifecycle of MCP servers: connect, reconnect with backoff, tool
 //! registration, failure counting and quarantine.
 
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use crate::diagnostics::ExternalRedactor;
 use parking_lot::Mutex;
 use rmcp::{
-    model::{CallToolRequestParams, CallToolResult, JsonObject},
-    service::ServiceError,
+    RoleClient,
+    model::{
+        CallToolRequestParams, CallToolResult, ClientRequest, JsonObject, PingRequest,
+        ServerNotification, SubscriptionFilter,
+    },
+    service::{Peer, ServiceError},
 };
 use secret_store::SecretStore;
 use tool_registry::{Tool, ToolRegistry};
 
 use crate::{
-    config::{McpServerConfig, ToolFilter},
+    client::Signals,
+    config::{McpServerConfig, McpTransport, ToolFilter},
     diagnostics::StderrLog,
     discovery::discover,
-    error::{McpError, Result},
+    error::{McpError, McpErrorKind, Result},
+    roots::{PathGuard, canonicalize_filesystem_args},
     session::Session,
-    tool::{McpToolAdapter, qualified_name},
+    tool::{Aux, McpAuxAdapter, McpToolAdapter, qualified_name},
     transport::{open, resolve_secrets},
 };
 
@@ -52,13 +65,34 @@ impl Default for Backoff {
     }
 }
 
+/// How long a server gets to answer the liveness probe sent after one of its
+/// calls timed out.
+const LIVENESS_PROBE: Duration = Duration::from_secs(5);
+/// Quiet period after a `tools/list_changed` notification before the tools are
+/// listed again, so a burst of notifications costs one discovery.
+const LIST_CHANGED_DEBOUNCE: Duration = Duration::from_millis(250);
+
+fn authorization_required(error: &rmcp::transport::DynamicTransportError) -> bool {
+    use rmcp::transport::streamable_http_client::{AuthRequiredError, InsufficientScopeError};
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error.error.as_ref());
+    while let Some(current) = source {
+        if current.is::<AuthRequiredError>() || current.is::<InsufficientScopeError>() {
+            return true;
+        }
+        source = current.source();
+    }
+    false
+}
+
 /// Tunables of the bridge.
 #[derive(Debug, Clone, Copy)]
 pub struct McpPolicy {
-    /// Consecutive failures (a failed connect cycle, or a call that failed at
-    /// transport level or timed out) after which a server is quarantined.
-    /// Tool-level errors (`isError`) and JSON-RPC errors answered by the
-    /// server are *not* failures: the server is evidently alive.
+    /// Consecutive failures (a failed connect cycle, a call that failed at
+    /// transport level, or a call that timed out on a server that then did
+    /// not answer a liveness probe either) after which a server is quarantined.
+    /// Tool-level errors (`isError`), JSON-RPC errors answered by the server
+    /// and a slow call on a server that still answers are *not* failures: the
+    /// server is evidently alive.
     pub quarantine_after: u32,
     /// Reconnect backoff.
     pub backoff: Backoff,
@@ -106,15 +140,23 @@ pub struct ServerSnapshot {
     pub tools: Vec<String>,
     /// Most recent error message.
     pub last_error: Option<String>,
+    /// Class of [`Self::last_error`] (`None` when there is no error).
+    pub last_error_kind: Option<McpErrorKind>,
+    /// The server asked for an OAuth sign-in (or its stored sign-in can no
+    /// longer be used). Only the user can clear this, by signing in.
+    pub auth_required: bool,
 }
 
 struct State {
+    auth_required: bool,
     generation: u64,
     retired: bool,
     status: ServerStatus,
     failures: u32,
     tools: Vec<String>,
     last_error: Option<String>,
+    /// Meaningful only while `last_error` is set.
+    last_error_kind: McpErrorKind,
 }
 
 /// Internal per-server state shared with the tool adapters.
@@ -125,6 +167,7 @@ pub(crate) struct Server {
     policy: McpPolicy,
     secrets: Option<Arc<dyn SecretStore>>,
     redactor: Option<ExternalRedactor>,
+    path_guard: Option<PathGuard>,
     stderr: Arc<StderrLog>,
     /// The session; the async mutex also serialises (re)connects.
     session: tokio::sync::Mutex<Option<Arc<Session>>>,
@@ -135,6 +178,19 @@ pub(crate) struct Server {
     /// Live copy of `config.bots`: adapters read this, so a `bots` change
     /// takes effect on the next call without restarting the server.
     bots: Mutex<Option<Vec<String>>>,
+    /// Raised by every session of this server (list-changed notifications).
+    signals: Arc<Signals>,
+    /// Told about OAuth token values before they are used.
+    registrar: Option<crate::oauth::SecretRegistrar>,
+    /// Whether the list-changed watcher task was started.
+    watching: AtomicBool,
+    /// A live HTTP request rejected its bearer, even if local expiry is later.
+    refresh_required: AtomicBool,
+    /// Orders OAuth credential writes against sign-out and removal.
+    credentials: crate::oauth::CredentialGuard,
+    /// When the bearer of the live session expires (Unix seconds): the
+    /// session is replaced before then (review finding 13).
+    bearer_expires_at: Mutex<Option<u64>>,
 }
 
 impl Server {
@@ -149,6 +205,40 @@ impl Server {
 
     pub(crate) fn config(&self) -> &McpServerConfig {
         &self.config
+    }
+
+    fn oauth_options(
+        &self,
+        mut options: crate::oauth::SignInOptions,
+    ) -> Result<crate::oauth::SignInOptions> {
+        options.guard = Some(self.credentials.clone());
+        if let Some(config) = &self.config.oauth {
+            options.client_id.clone_from(&config.client_id);
+            options
+                .client_metadata_url
+                .clone_from(&config.client_metadata_url);
+            options.allow_loopback_http = config.allow_loopback_http;
+            options.expected_issuer.clone_from(&config.issuer);
+            options.client_secret = match &config.client_secret_ref {
+                Some(name) => {
+                    let value = self
+                        .secrets
+                        .as_ref()
+                        .ok_or_else(|| {
+                            McpError::Config("OAuth client secret requires a secret store".into())
+                        })?
+                        .get(name)
+                        .map_err(|_| McpError::Store("cannot read OAuth client secret".into()))?
+                        .ok_or_else(|| McpError::Config("OAuth client secret is missing".into()))?;
+                    if let Some(register) = &self.registrar {
+                        register(value.expose());
+                    }
+                    Some(value.expose().to_owned())
+                }
+                None => None,
+            };
+        }
+        Ok(options)
     }
 
     fn is_alive(s: &Session) -> bool {
@@ -185,13 +275,21 @@ impl Server {
     }
 
     /// Count a failure; quarantine (and hide the tools) when the threshold is hit.
+    /// `error` as text through the daemon's production redactor, when one is
+    /// installed: stored errors reach `GET /v1/mcp/servers` and stderr.
+    fn redacted(&self, error: &McpError) -> String {
+        let text = error.to_string();
+        self.redactor.as_ref().map_or(text.clone(), |r| r(&text))
+    }
+
     fn record_failure(&self, error: &McpError) {
         let mut st = self.state.lock();
         if st.retired {
             return;
         }
         st.failures = st.failures.saturating_add(1);
-        st.last_error = Some(error.to_string());
+        st.last_error = Some(self.redacted(error));
+        st.last_error_kind = error.kind();
         if st.status == ServerStatus::Connected {
             st.status = ServerStatus::Disconnected;
         }
@@ -241,11 +339,17 @@ impl Server {
             .await
     }
 
+    #[allow(clippy::too_many_lines)] // one sequential connect-and-classify flow
     async fn connect_session(&self, reset_on_success: bool) -> Result<Arc<Session>> {
         let mut slot = self.session.lock().await;
         self.check_usable()?;
         if let Some(s) = slot.as_ref() {
-            if Self::is_alive(s) {
+            // A live session keeps the bearer it was opened with: once that
+            // enters the refresh window, reconnect (which refreshes) instead.
+            let bearer_due = self.bearer_expires_at.lock().is_some_and(|at| {
+                at.saturating_sub(crate::oauth::now_secs()) <= crate::oauth::REFRESH_WINDOW_SECS
+            });
+            if Self::is_alive(s) && !bearer_due {
                 return Ok(Arc::clone(s));
             }
             if let Some(old) = slot.take() {
@@ -253,25 +357,66 @@ impl Server {
             }
         }
         self.check_usable()?;
+        // A filesystem server is never started without an explicit, usable folder.
+        let mut launch_config = self.config.clone();
+        if let McpTransport::Stdio { args, .. } = &mut launch_config.transport
+            && let Err(reason) = canonicalize_filesystem_args(args, self.path_guard.as_ref())
+        {
+            let e = McpError::NeedsFolder {
+                server: self.config.id.clone(),
+                reason,
+            };
+            self.record_failure(&e);
+            return Err(e);
+        }
         // Secrets are resolved fresh on every connect cycle and only held for
         // the attempts and the connection's diagnostic redactor. A missing secret means nothing is
         // spawned and nothing is retried.
-        let secrets = match resolve_secrets(&self.config, self.secrets.as_deref()) {
+        let mut secrets = match resolve_secrets(&self.config, self.secrets.as_deref()) {
             Ok(s) => s,
             Err(e) => {
                 self.record_failure(&e);
                 return Err(e);
             }
         };
+        // A stored OAuth sign-in for exactly this server and URL. It is looked
+        // up (and refreshed when it is about to expire) on every connect cycle.
+        if let (McpTransport::Http { url, .. }, Some(store)) =
+            (&self.config.transport, self.secrets.as_ref())
+        {
+            // Boxed: the OAuth client's future is large and would be embedded in
+            // every call future otherwise.
+            match Box::pin(crate::oauth::stored_bearer(
+                self.id(),
+                url,
+                store,
+                self.registrar.as_ref(),
+                self.refresh_required.swap(false, Ordering::AcqRel),
+                &self.oauth_options(crate::oauth::SignInOptions::default())?,
+            ))
+            .await
+            {
+                Ok(Some(bearer)) => {
+                    *self.bearer_expires_at.lock() = bearer.expires_at;
+                    secrets = secrets.with_bearer(&bearer.token);
+                }
+                Ok(None) => *self.bearer_expires_at.lock() = None,
+                Err(e) => {
+                    self.note_connect_error(&e);
+                    return Err(e);
+                }
+            }
+        }
         let attempts = self.policy.backoff.max_attempts.max(1);
         let mut last = None;
         for attempt in 0..attempts {
             match open(
-                &self.config,
+                &launch_config,
                 &secrets,
                 &self.stderr,
                 self.policy.connect_timeout,
                 self.redactor.clone(),
+                Arc::clone(&self.signals),
             )
             .await
             {
@@ -285,14 +430,21 @@ impl Server {
                     if st.status == ServerStatus::Disconnected {
                         st.status = ServerStatus::Connected;
                     }
+                    st.auth_required = false;
                     if reset_on_success {
                         st.failures = 0;
                         st.last_error = None;
                     }
                     return Ok(session);
                 }
-                // A config error cannot be fixed by retrying.
-                Err(e @ McpError::Config(_)) => {
+                // Waiting for the user to sign in is not a failing server:
+                // no retry, no failure count, no quarantine.
+                Err(e @ McpError::AuthRequired(_)) => {
+                    self.note_connect_error(&e);
+                    return Err(e);
+                }
+                // A config error or a missing launcher cannot be fixed by retrying.
+                Err(e @ (McpError::Config(_) | McpError::RuntimeMissing { .. })) => {
                     self.record_failure(&e);
                     return Err(e);
                 }
@@ -308,6 +460,23 @@ impl Server {
         let err = last.expect("at least one attempt was made");
         self.record_failure(&err);
         Err(err)
+    }
+
+    /// Record why a connect did not happen. An authorization requirement is
+    /// remembered as such; anything else is an ordinary failure.
+    fn note_connect_error(&self, error: &McpError) {
+        if matches!(error, McpError::AuthRequired(_)) {
+            let mut st = self.state.lock();
+            if !st.retired {
+                st.auth_required = true;
+                st.last_error = Some(self.redacted(error));
+                if st.status == ServerStatus::Connected {
+                    st.status = ServerStatus::Disconnected;
+                }
+            }
+        } else {
+            self.record_failure(error);
+        }
     }
 
     async fn drop_session(&self) {
@@ -340,38 +509,99 @@ impl Server {
         remote_name: &str,
         arguments: Option<JsonObject>,
     ) -> Result<CallToolResult> {
-        self.check_usable()?;
-        let session = self.ensure_connected(false).await?;
         let mut params = CallToolRequestParams::new(remote_name.to_owned());
         params.arguments = arguments;
-        let id = self.config.id.clone();
-        let outcome =
-            tokio::time::timeout(self.policy.call_timeout, session.peer().call_tool(params)).await;
-        let failure = match outcome {
-            Ok(Ok(result)) => {
-                self.record_session_success(&session).await;
-                return Ok(result);
-            }
-            // The server answered with a JSON-RPC error: it is alive.
-            Ok(Err(ServiceError::McpError(e))) => {
-                self.record_session_success(&session).await;
-                return Err(session.redactor.error(McpError::Transport {
+        self.request_inner(|peer| async move { peer.call_tool(params).await })
+            .await
+    }
+
+    /// Run one request on the live session with the call timeout and the
+    /// failure accounting of a tool call.
+    pub(crate) async fn request<T, F, Fut>(&self, run: F) -> Result<T>
+    where
+        F: FnOnce(Peer<RoleClient>) -> Fut + Clone,
+        Fut: std::future::Future<Output = std::result::Result<T, ServiceError>>,
+    {
+        self.until_retired(self.request_inner(run)).await
+    }
+
+    async fn request_inner<T, F, Fut>(&self, run: F) -> Result<T>
+    where
+        F: FnOnce(Peer<RoleClient>) -> Fut + Clone,
+        Fut: std::future::Future<Output = std::result::Result<T, ServiceError>>,
+    {
+        let mut retried_auth = false;
+        loop {
+            self.check_usable()?;
+            let session = self.ensure_connected(false).await?;
+            let id = self.config.id.clone();
+            // Dropping the request future (this timeout, or the caller's own
+            // cancellation) makes rmcp send `notifications/cancelled` for it.
+            let outcome = tokio::time::timeout(
+                self.policy.call_timeout,
+                run.clone()(session.peer().clone()),
+            )
+            .await;
+            let failure = match outcome {
+                Ok(Ok(result)) => {
+                    self.record_session_success(&session).await;
+                    return Ok(result);
+                }
+                // The server answered with a JSON-RPC error: it is alive.
+                Ok(Err(ServiceError::McpError(e))) => {
+                    self.record_session_success(&session).await;
+                    return Err(session.redactor.error(McpError::Transport {
+                        server: id,
+                        message: e.to_string(),
+                    }));
+                }
+                Ok(Err(ServiceError::TransportSend(ref e))) if authorization_required(e) => {
+                    let error = McpError::AuthRequired(id);
+                    let mut slot = self.session.lock().await;
+                    // An old response must not drop a newer connection or force
+                    // another refresh of credentials already rotated by it.
+                    if slot
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &session))
+                    {
+                        if let Some(old) = slot.take() {
+                            old.request_close();
+                        }
+                        if retried_auth {
+                            self.note_connect_error(&error);
+                        } else {
+                            self.refresh_required.store(true, Ordering::Release);
+                        }
+                    }
+                    drop(slot);
+                    if retried_auth {
+                        return Err(error);
+                    }
+                    retried_auth = true;
+                    continue;
+                }
+                Ok(Err(e)) => McpError::Transport {
                     server: id,
                     message: e.to_string(),
-                }));
-            }
-            Ok(Err(e)) => McpError::Transport {
-                server: id,
-                message: e.to_string(),
-            },
-            Err(_) => McpError::Timeout {
-                server: id,
-                seconds: self.policy.call_timeout.as_secs().max(1),
-            },
-        };
-        let failure = session.redactor.error(failure);
-        self.fail_session(&session, &failure).await;
-        Err(failure)
+                },
+                Err(_) => {
+                    let timeout = McpError::Timeout {
+                        server: id,
+                        seconds: self.policy.call_timeout.as_secs().max(1),
+                    };
+                    // One slow tool must not take the server down for the calls
+                    // running next to it: the session is only dropped when the
+                    // server does not answer anything any more.
+                    if still_answers(&session).await {
+                        return Err(session.redactor.error(timeout));
+                    }
+                    timeout
+                }
+            };
+            let failure = session.redactor.error(failure);
+            self.fail_session(&session, &failure).await;
+            return Err(failure);
+        }
     }
 
     /// Connect, list the tools and (re)register the permitted ones.
@@ -453,13 +683,99 @@ impl Server {
                 tracing::warn!(tool = %session.redactor.scrub(&name), "MCP tool name already registered; skipped");
             }
         }
+        // Resources and prompts are reached through fixed bridge tools, only
+        // for a server that declares the capability. `@` cannot appear in a
+        // server tool name, and the user's tool filter applies to them too.
+        let info = session.peer().peer_info();
+        let capabilities = info.as_ref().map(|i| &i.capabilities);
+        for aux in Aux::ALL {
+            if !capabilities.is_some_and(|c| aux.supported_by(c))
+                || !self.filter.permits(aux.remote_name())
+            {
+                continue;
+            }
+            let name = qualified_name(&self.config.id, aux.remote_name());
+            let adapter: Arc<dyn Tool> = Arc::new(McpAuxAdapter::new(Arc::clone(self), aux));
+            if self.registry.register(adapter) {
+                st.tools.push(name);
+            }
+        }
         st.status = ServerStatus::Connected;
         st.failures = 0;
         st.last_error = None;
-        Ok(st.tools.len())
+        let count = st.tools.len();
+        drop(st);
+        drop(slot);
+        self.watch_list_changes(&session);
+        Ok(count)
+    }
+
+    /// Keep the registry in step with a server that changes its tools at
+    /// runtime. One watcher task per registration re-lists (debounced) when a
+    /// session signals a change; on a `2026-07-28` connection the notification
+    /// only arrives on a `subscriptions/listen` stream, which is opened once
+    /// per session.
+    fn watch_list_changes(self: &Arc<Self>, session: &Arc<Session>) {
+        if !self.watching.swap(true, Ordering::SeqCst) {
+            let server = Arc::downgrade(self);
+            let signals = Arc::clone(&self.signals);
+            let mut retired = self.retired.subscribe();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = retired.wait_for(|gone| *gone) => return,
+                        () = signals.tools_changed.notified() => {}
+                    }
+                    tokio::time::sleep(LIST_CHANGED_DEBOUNCE).await;
+                    let Some(server) = server.upgrade() else {
+                        return;
+                    };
+                    match server.sync_tools().await {
+                        Ok(_) => {}
+                        Err(McpError::UnknownServer(_)) => return,
+                        Err(error) => {
+                            tracing::warn!(server = %server.id(), %error, "MCP tool list refresh failed");
+                        }
+                    }
+                }
+            });
+        }
+        let Some(info) = session.peer().peer_info() else {
+            return;
+        };
+        let filter = SubscriptionFilter::builder()
+            .tools_list_changed()
+            .build()
+            .supported_by(&info.capabilities);
+        if info.protocol_version.has_initialize()
+            || filter.tools_list_changed != Some(true)
+            || session.listening.swap(true, Ordering::SeqCst)
+        {
+            return;
+        }
+        // Only a peer handle: it does not keep the session alive, and the
+        // stream (and this task) ends when the session closes.
+        let peer = session.peer().clone();
+        let signals = Arc::clone(&self.signals);
+        tokio::spawn(async move {
+            let Ok(mut stream) = peer.listen(filter).await else {
+                return;
+            };
+            while let Ok(Some(notification)) = stream.next().await {
+                if matches!(
+                    notification,
+                    ServerNotification::ToolListChangedNotification(_)
+                ) {
+                    signals.tools_changed.notify_one();
+                }
+            }
+        });
     }
 
     fn retire(&self) {
+        // Writers of the retired registration can no longer save credentials.
+        self.credentials.revoke(|| ());
         let mut st = self.state.lock();
         st.retired = true;
         st.generation = st.generation.wrapping_add(1);
@@ -471,15 +787,40 @@ impl Server {
     }
 
     fn snapshot(&self) -> ServerSnapshot {
+        // A server whose process died or whose connection dropped is only
+        // noticed by the next call; do not report it as connected meanwhile.
+        // (Same lock order as everywhere else: session, then state.)
+        let dead = self
+            .session
+            .try_lock()
+            .is_ok_and(|slot| slot.as_ref().is_some_and(|s| !Self::is_alive(s)));
         let st = self.state.lock();
         ServerSnapshot {
             id: self.config.id.clone(),
-            status: st.status,
+            status: if dead && st.status == ServerStatus::Connected {
+                ServerStatus::Disconnected
+            } else {
+                st.status
+            },
             consecutive_failures: st.failures,
             tools: st.tools.clone(),
             last_error: st.last_error.clone(),
+            last_error_kind: st.last_error.as_ref().map(|_| st.last_error_kind),
+            auth_required: st.auth_required,
         }
     }
+}
+
+/// Whether the server still answers anything after one of its calls timed
+/// out. A JSON-RPC error counts: `2026-07-28` servers have no `ping`.
+async fn still_answers(session: &Session) -> bool {
+    let probe = session
+        .peer()
+        .send_request(ClientRequest::PingRequest(PingRequest::default()));
+    matches!(
+        tokio::time::timeout(LIVENESS_PROBE, probe).await,
+        Ok(Ok(_) | Err(ServiceError::McpError(_)))
+    )
 }
 
 /// Signal the session's runtime owner and wait for its bounded cleanup.
@@ -533,6 +874,8 @@ pub struct McpManager {
     policy: McpPolicy,
     secrets: Option<Arc<dyn SecretStore>>,
     redactor: Option<ExternalRedactor>,
+    path_guard: Option<PathGuard>,
+    registrar: Option<crate::oauth::SecretRegistrar>,
     servers: Mutex<BTreeMap<String, Arc<Server>>>,
 }
 
@@ -551,6 +894,8 @@ impl McpManager {
             policy,
             secrets: None,
             redactor: None,
+            path_guard: None,
+            registrar: None,
             servers: Mutex::new(BTreeMap::new()),
         }
     }
@@ -570,6 +915,108 @@ impl McpManager {
     pub fn with_redactor(mut self, redactor: ExternalRedactor) -> Self {
         self.redactor = Some(redactor);
         self
+    }
+
+    /// Host check applied to the folder of every filesystem server before it
+    /// starts (protected locations are refused, see [`crate::root_problem`]).
+    #[must_use]
+    pub fn with_path_guard(mut self, guard: PathGuard) -> Self {
+        self.path_guard = Some(guard);
+        self
+    }
+
+    /// Registers secret values with the host's redactor (the daemon's
+    /// `SharedRedactor::register`). OAuth access and refresh tokens are passed
+    /// to it before they are stored or sent.
+    #[must_use]
+    pub fn with_secret_registrar(mut self, registrar: crate::oauth::SecretRegistrar) -> Self {
+        self.registrar = Some(registrar);
+        self
+    }
+
+    /// Begin an OAuth sign-in for the HTTP server `id`. **Call this only for
+    /// an explicit user action**: it contacts the server's authorization
+    /// server and opens a loopback listener. The caller sends the user's
+    /// browser to [`crate::oauth::SignIn::authorization_url`], awaits
+    /// [`crate::oauth::SignIn::finish`] and then calls [`Self::reenable`].
+    ///
+    /// # Errors
+    /// Unknown server, not an HTTP server, no secret store, or the errors of
+    /// [`crate::oauth::SignIn::start`].
+    pub async fn start_sign_in(
+        &self,
+        id: &str,
+        options: crate::oauth::SignInOptions,
+    ) -> Result<crate::oauth::SignIn> {
+        let server = self.get(id)?;
+        let McpTransport::Http { url, .. } = &server.config.transport else {
+            return Err(McpError::Config(format!(
+                "server `{id}` is not an http server; OAuth sign-in does not apply"
+            )));
+        };
+        let store = self.secrets.clone().ok_or_else(|| {
+            McpError::Config(format!(
+                "server `{id}`: OAuth sign-in needs a secret store to keep the tokens in"
+            ))
+        })?;
+        let options = server.oauth_options(options)?;
+        crate::oauth::SignIn::start(id, url, store, self.registrar.clone(), options).await
+    }
+
+    /// Forget the stored OAuth sign-in of server `id` and drop its session.
+    /// Returns whether credentials existed.
+    ///
+    /// # Errors
+    /// Unknown server, no secret store, or a secret-store failure.
+    pub async fn sign_out(&self, id: &str) -> Result<bool> {
+        let server = self.get(id)?;
+        let store = self.secrets.clone().ok_or_else(|| {
+            McpError::Config(format!("server `{id}`: no secret store is configured"))
+        })?;
+        // Revoke first: a sign-in exchange or refresh in flight can no longer
+        // save, so the delete below is final.
+        let existed = server
+            .credentials
+            .revoke(|| {
+                let client = store.delete(&crate::oauth::registered_client_name(id));
+                let tokens = store.delete(&crate::oauth::credential_name(id));
+                client.and(tokens)
+            })
+            .map_err(|_| McpError::Store("cannot delete OAuth credentials".to_owned()))?;
+        server.drop_session().await;
+        let mut state = server.state.lock();
+        state.generation = state.generation.wrapping_add(1);
+        state.auth_required = false;
+        state.last_error = None;
+        if state.status == ServerStatus::Connected {
+            state.status = ServerStatus::Disconnected;
+        }
+        for tool in state.tools.drain(..) {
+            server.registry.unregister(&tool);
+        }
+        Ok(existed)
+    }
+
+    /// Whether a resource-bound authorization is stored, without network I/O.
+    /// # Errors
+    /// Unknown server, non-HTTP transport, or a secret-store failure.
+    pub async fn has_stored_authorization(&self, id: &str) -> Result<bool> {
+        use rmcp::transport::auth::CredentialStore as _;
+        let server = self.get(id)?;
+        let McpTransport::Http { url, .. } = &server.config.transport else {
+            return Err(McpError::Config(
+                "OAuth applies only to HTTP servers".into(),
+            ));
+        };
+        let Some(store) = self.secrets.clone() else {
+            return Ok(false);
+        };
+        let credentials =
+            crate::oauth::SecretCredentialStore::new(store, id, url, self.registrar.clone())?
+                .load()
+                .await
+                .map_err(|_| McpError::Store("cannot read OAuth state".into()))?;
+        Ok(credentials.is_some_and(|c| c.token_response.is_some()))
     }
 
     fn get(&self, id: &str) -> Result<Arc<Server>> {
@@ -604,6 +1051,7 @@ impl McpManager {
             policy: self.policy,
             secrets: self.secrets.clone(),
             redactor: self.redactor.clone(),
+            path_guard: self.path_guard.clone(),
             stderr: Arc::default(),
             session: tokio::sync::Mutex::new(None),
             state: Mutex::new(State {
@@ -617,10 +1065,18 @@ impl McpManager {
                 failures: 0,
                 tools: Vec::new(),
                 last_error: None,
+                last_error_kind: McpErrorKind::Other,
+                auth_required: false,
             }),
             operation: tokio::sync::Mutex::new(()),
             retired: tokio::sync::watch::channel(false).0,
             bots: Mutex::new(config.bots.clone()),
+            signals: Arc::default(),
+            registrar: self.registrar.clone(),
+            watching: AtomicBool::new(false),
+            refresh_required: AtomicBool::new(false),
+            credentials: crate::oauth::CredentialGuard::default(),
+            bearer_expires_at: Mutex::new(None),
             config,
         });
         {
@@ -842,7 +1298,10 @@ mod tests {
             release: Arc::clone(&release),
         };
         let (client_io, server_io) = tokio::io::duplex(16 * 1024);
-        let (client, server) = tokio::join!(().serve(client_io), server.serve(server_io));
+        let (client, server) = tokio::join!(
+            crate::client::BridgeClient::default().serve(client_io),
+            server.serve(server_io)
+        );
         *handle.0.session.lock().await = Some(Arc::new(Session::from_running(
             client.unwrap(),
             crate::diagnostics::Redactor::default(),

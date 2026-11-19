@@ -12,6 +12,10 @@ pub mod pure;
 mod backend;
 #[cfg(windows)]
 mod capture;
+#[cfg(any(windows, test))]
+mod guard_glue;
+#[cfg(windows)]
+mod identity;
 #[cfg(windows)]
 mod input;
 #[cfg(windows)]

@@ -1,0 +1,48 @@
+.time {
+  flex: none;
+  align-self: flex-end;
+  padding: var(--space-1) var(--space-0);
+  color: var(--color-text-faint);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  opacity: 0.75;
+  transition: opacity var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.time:hover,
+.time:focus-visible {
+  opacity: 1;
+  color: var(--color-text-muted);
+}
+
+.time:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-focus);
+}
+
+/* HH:mm becomes HH:mm:ss in place: both spans share one cell, so nothing shifts. */
+.time:has(.hover) {
+  display: inline-grid;
+}
+
+.rest,
+.hover {
+  grid-area: 1 / 1;
+  text-align: right;
+}
+
+.hover {
+  visibility: hidden;
+}
+
+.time:hover .hover,
+.time:focus-visible .hover {
+  visibility: visible;
+}
+
+.time:hover .rest,
+.time:focus-visible .rest {
+  visibility: hidden;
+}

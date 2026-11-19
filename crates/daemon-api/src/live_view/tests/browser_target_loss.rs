@@ -174,6 +174,7 @@ async fn browser_target_positional_input_continues_working_through_daemon() {
         agent_core::LoopConfig::default(),
     );
     let state = AppState::new(agent, storage, crate::DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key("ownerkey0123456789abcdef0123456789abcdef0123456789abcdef".into());
     state.live_view().registry.register(target.clone());
     let t = Test {
         state,

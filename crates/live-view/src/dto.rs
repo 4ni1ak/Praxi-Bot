@@ -25,6 +25,45 @@ pub struct Capabilities {
     pub reason: Option<Reason>,
 }
 
+/// Why a kind of screen is not offered, as a small FIXED set. Peers only ever
+/// see these codes (the UI words them in its own language); raw backend
+/// diagnostics (paths, user names, display names, environment values) stay in
+/// the local daemon log and never reach this type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UnavailableCode {
+    /// Desktop control is switched off in the daemon's settings.
+    DesktopOff,
+    /// This platform has no screen capture backend.
+    UnsupportedPlatform,
+    /// A Wayland session: only X11 can be captured.
+    Wayland,
+    /// No X11 display is configured or reachable.
+    NoDisplay,
+    /// The desktop could not be opened (locked session, secure desktop,
+    /// missing permission).
+    ScreenUnavailable,
+    /// The desktop backend failed to start.
+    StartFailed,
+    /// The screen is being probed right now.
+    Starting,
+    /// The probe did not answer in time; it is retried.
+    TimedOut,
+}
+
+/// A kind of screen this host cannot offer, and why. Lets the UI say
+/// "No screen: <reason>" instead of an empty panel.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct TargetUnavailable {
+    pub kind: TargetKind,
+    pub host_id: String,
+    pub reason: Reason,
+    /// Fixed reason code; never free text.
+    pub code: UnavailableCode,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TargetInfo {
@@ -59,6 +98,11 @@ pub enum Profile {
 #[serde(rename_all = "snake_case")]
 pub enum Reason {
     BrowserIdle,
+    /// The viewer showed no sign of life (no input, window hidden or unfocused)
+    /// for the idle limit: the host stopped producing images to save resources.
+    ViewerIdle,
+    /// The session reached its hard time limit.
+    TimeLimit,
     RemoteNodeLiveView,
     Unsupported,
     Unavailable,
@@ -179,12 +223,12 @@ impl EffectiveProfile {
     pub fn watch() -> Self {
         Self {
             profile: Profile::Watch,
-            max_width: 960,
-            max_height: 600,
-            quality: 45,
-            max_fps: 1,
-            bytes_per_second: 128 * 1024,
-            burst_bytes: 256 * 1024,
+            max_width: 1920,
+            max_height: 1080,
+            quality: 70,
+            max_fps: 5,
+            bytes_per_second: 1024 * 1024,
+            burst_bytes: 1024 * 1024,
             codec: Codec::Jpeg,
         }
     }
@@ -192,12 +236,12 @@ impl EffectiveProfile {
     pub fn live() -> Self {
         Self {
             profile: Profile::Live,
-            max_width: 1280,
-            max_height: 800,
-            quality: 60,
+            max_width: 1920,
+            max_height: 1080,
+            quality: 70,
             max_fps: 10,
-            bytes_per_second: 768 * 1024,
-            burst_bytes: 1024 * 1024,
+            bytes_per_second: 1536 * 1024,
+            burst_bytes: 2 * 1024 * 1024,
             codec: Codec::Jpeg,
         }
     }
@@ -212,6 +256,11 @@ pub struct CreateSession {
     pub max_height: u32,
     pub codecs: Vec<Codec>,
     pub client_id: Uuid,
+    /// The bot whose panel asks. When set, the target must be this bot's own
+    /// browser or a shared desktop; another bot's browser is refused (403), so
+    /// a bot-scoped view can never resolve to someone else's screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -245,6 +294,41 @@ pub struct SessionUpdate {
 pub struct Heartbeat {
     pub takeover_id: Option<Uuid>,
     pub control_epoch: Option<u64>,
+    /// `false`: the viewer is hidden or unfocused right now. Leave it out (or
+    /// `true`) while someone is looking; a session whose viewer reports
+    /// inactive for the idle limit is ended by the host.
+    #[serde(default)]
+    pub active: Option<bool>,
+}
+
+/// What a viewer needs to know before it asks for the live screen.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenStreamState {
+    /// No live session: the host produces no images.
+    Idle,
+    /// A session exists, its first frame is not out yet.
+    Starting,
+    /// Frames are flowing to this viewer.
+    Live,
+    /// The last live session was ended by the idle or time limit.
+    PausedIdle,
+    /// There is no screen to show (see `reason`).
+    Unavailable,
+}
+
+/// `GET /v1/view/status`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ScreenStatus {
+    pub state: ScreenStreamState,
+    /// Fixed code when `unavailable` (the same codes as `GET /v1/view/availability`).
+    pub reason: Option<UnavailableCode>,
+    /// Seconds without a sign of life after which the host stops the stream.
+    pub idle_timeout_secs: u64,
+    /// Longest a single live session may run, in seconds.
+    pub hard_cap_secs: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -127,7 +127,8 @@ interface (`find_tool`, `get_tool_details`, `use_tool`) instead of the whole lis
 | --- | --- |
 | List bots | `bot bots list` |
 | Inspect one, including its effective policy | `GET /v1/bots/{id}` (API; desktop app) |
-| Replace a profile | `PUT /v1/bots/{id}` (API; desktop app) |
+| Replace a profile | `PUT /v1/bots/{id}` with the `expected_version` from the profile being replaced; missing precondition is `428 precondition_required`, stale is `409 version_conflict` with the current bot. Legacy callers must reload and explicitly retry; the server never upgrades a stale full document automatically |
+| Change single fields safely | `PATCH /v1/bots/{id}` with `expected_version` and `ops` (`set` / `unset` on JSON Pointer paths such as `/models/planner` or `/permissions/categories/fs/level`); a stale version is a `409` that returns the current bot. `GET` and list return profile + `version` in one storage snapshot. Successful profile writes and skill assignment changes advance the same bot revision in their write transaction. The edit modal saves with this. At most 128 operations, 32 path segments / resulting JSON levels, 4096 path bytes and a conservative 1 MiB escaped JSON budget; excessive input is refused before applying it |
 | Delete a bot | `DELETE /v1/bots/{id}`; only possible while it has no chats or runs |
 | See or revoke its "always allow" grants | `bot grants list <bot-id>`, `bot grants revoke ...` |
 

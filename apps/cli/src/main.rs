@@ -1,23 +1,36 @@
 //! Command-line interface entry point for the Praxi-Bot agent (`bot`).
 
+mod calendar_host;
 mod channels;
 #[cfg(test)]
 mod channels_tests;
+mod cli_artifacts;
 mod client;
 mod commands;
+mod components_host;
+mod composio_host;
 mod computer;
 mod doctor;
 mod email_cmd;
 mod email_host;
+mod homeassistant_host;
 mod host;
+mod host_links;
+mod host_provision;
 mod host_runtime;
+mod host_setup;
 mod mcp_host;
+mod mcp_paste;
+mod mcp_serve;
+mod pc_target;
 mod peer;
 mod presets;
 mod prompt;
 mod remote;
 mod serve;
+mod skills_cmd;
 mod update;
+mod view_targets;
 mod web_host;
 mod wizard;
 
@@ -75,6 +88,23 @@ struct Cli {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)] // one-shot CLI args, built once
 enum Command {
+    /// Print a shell completion script to stdout.
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+    /// Generate section 1 man pages in the given directory.
+    ManPages { output_dir: PathBuf },
+    /// Review local skills and explicitly trust reviewed content.
+    Skills {
+        #[command(subcommand)]
+        action: skills_cmd::SkillsCmd,
+    },
+    /// Create or revoke scoped MCP credentials on the local daemon.
+    Token {
+        #[command(subcommand)]
+        action: mcp_serve::TokenCmd,
+    },
     /// Manage the active host and paired devices.
     Host {
         #[command(subcommand)]
@@ -115,6 +145,10 @@ enum Command {
         /// Seconds running tool steps may take to finish on shutdown.
         #[arg(long, default_value_t = 10)]
         shutdown_grace: u64,
+        /// Read the owner key (one line) from standard input. The desktop app
+        /// uses this so the key never appears in argv, a file or the environment.
+        #[arg(long)]
+        owner_key_stdin: bool,
     },
     /// Update the Linux installation (restart is explicit).
     SelfUpdate(update::UpdateArgs),
@@ -160,6 +194,11 @@ enum Command {
         #[command(subcommand)]
         action: EmailCmd,
     },
+    /// Manage the daemon's MCP servers.
+    Mcp {
+        #[command(subcommand)]
+        action: McpCmd,
+    },
     /// Messaging channels (Telegram).
     Channels {
         #[command(subcommand)]
@@ -169,8 +208,10 @@ enum Command {
     Approve {
         /// Tool call id (shown in the chat stream / `approval_needed` event).
         tool_call_id: String,
-        /// How far the approval reaches.
-        #[arg(long, value_parser = ["once", "this_chat", "always", "always_category"], default_value = "once")]
+        /// How far the approval reaches. `run_control` lets the run type into
+        /// the one program the card names, until the run ends; the daemon
+        /// refuses it unless the card offered it.
+        #[arg(long, value_parser = ["once", "this_chat", "always", "always_category", "run_control"], default_value = "once")]
         scope: String,
         /// Deny instead of approving.
         #[arg(long)]
@@ -179,6 +220,28 @@ enum Command {
         #[arg(long, requires = "deny")]
         reason: Option<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum McpCmd {
+    /// Add MCP servers from a paste: a server URL, a `claude mcp add ...`
+    /// line, an `npx`/`uvx` command line, or MCP JSON (`{"mcpServers": ...}`).
+    /// Quote the paste, or give `-` to read it from stdin. Values in it
+    /// (`-e KEY=value`, headers, `env`) go to the secret store, never the config.
+    Add {
+        /// Server name (default: derived from the URL or package).
+        #[arg(long)]
+        name: Option<String>,
+        /// Show what would be added; contact nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// The paste.
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true, trailing_var_arg = true)]
+        input: Vec<String>,
+    },
+    /// Expose a selected bot as a scoped Praxi MCP server over stdio, using a
+    /// token issued with `bot token create`.
+    Serve(mcp_serve::ServeArgs),
 }
 
 #[derive(Subcommand)]
@@ -510,6 +573,11 @@ fn run() -> Result<()> {
         println!("Praxi-Bot. Run `bot setup` to get started, or `bot --help`.");
         return Ok(());
     };
+    match command {
+        Command::Completions { shell } => return Ok(cli_artifacts::completions(*shell)?),
+        Command::ManPages { output_dir } => return Ok(cli_artifacts::man_pages(output_dir)?),
+        _ => {}
+    }
     let data_dir = data_dir(&cli)?;
     let mut say = |s: &str| println!("{s}");
 
@@ -548,8 +616,29 @@ fn run() -> Result<()> {
         return current_thread_runtime()?.block_on(host::join(&data_dir, ticket));
     }
 
+    // Provisioning runs in the owner's terminal and needs no secret store.
+    if let Command::Host {
+        action: host::HostCmd::Provision(cmd),
+    } = command
+    {
+        return host_provision::run(cmd, &data_dir, &|| make_client(&cli, &data_dir));
+    }
+
     // Daemon commands (no secret store needed, except `serve` with real providers).
     match command {
+        Command::Skills { action } => {
+            return skills_cmd::run(&data_dir, action, &mut std::io::stdout());
+        }
+        Command::Mcp {
+            action: McpCmd::Serve(args),
+        } => return mcp_serve::run(&cli, args, &data_dir),
+        Command::Token { action } => {
+            let client = make_client(&cli, &data_dir)?;
+            let result =
+                current_thread_runtime()?.block_on(mcp_serve::token_command(&client, action))?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            return Ok(());
+        }
         Command::Serve { .. } => return run_serve(&cli, command, &data_dir),
         Command::Doctor(c) => return run_doctor(&cli, c, &data_dir),
         Command::SelfUpdate(args) => return update::run(args),
@@ -561,6 +650,7 @@ fn run() -> Result<()> {
         | Command::Answer { .. }
         | Command::Schedules { .. }
         | Command::Email { .. }
+        | Command::Mcp { .. }
         | Command::Grants { .. }
         | Command::Channels {
             action: ChannelsCmd::Telegram {
@@ -613,7 +703,12 @@ fn run() -> Result<()> {
             }
             SecretsCmd::Delete { name } => commands::secrets_delete(store, name),
         },
-        Command::Host { .. }
+        Command::Mcp { .. }
+        | Command::Completions { .. }
+        | Command::ManPages { .. }
+        | Command::Skills { .. }
+        | Command::Token { .. }
+        | Command::Host { .. }
         | Command::SelfUpdate(_)
         | Command::Doctor(_)
         | Command::Serve { .. }
@@ -760,9 +855,24 @@ fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result
             telegram_store: None,
             host_mode,
             peer_enabled,
+            owner_key: None,
         };
         return serve::serve(data_dir, &opts, providers, None, Some(desktop));
     }
+    let owner_key = if matches!(
+        command,
+        Command::Serve {
+            owner_key_stdin: true,
+            ..
+        }
+    ) {
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        let key = line.trim().to_owned();
+        (key.len() >= 32).then_some(key)
+    } else {
+        None
+    };
     let (store, kind) = open_store(cli.secrets_backend, data_dir, &ask_passphrase)?;
     eprintln!("(secret backend: {kind:?})");
     let catalog = load_catalog(cli.catalog_dir.as_ref())?;
@@ -790,6 +900,7 @@ fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result
         telegram_store: Some(telegram_store),
         host_mode,
         peer_enabled,
+        owner_key,
     };
     serve::serve(data_dir, &opts, providers, Some(host), desktop)
 }
@@ -813,7 +924,9 @@ fn make_client(cli: &Cli, data_dir: &std::path::Path) -> Result<Client> {
         .url
         .clone()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", cli.port));
-    Ok(Client::new(&base, token))
+    // The owner key of this data dir: present when the daemon is a terminal
+    // `bot serve` or a host, absent for a daemon the app started (memory only).
+    Ok(Client::new(&base, token).with_owner_key(daemon_api::read_owner_key(data_dir).ok()))
 }
 
 fn current_thread_runtime() -> Result<tokio::runtime::Runtime> {
@@ -882,7 +995,7 @@ fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Resul
     let json = cli.json;
     let outcome = rt.block_on(async {
         match command {
-            Command::Host { action } => host::run(&c, action, json, &mut out).await,
+            Command::Host { action } => host::run(&c, action, json, &mut out, data_dir).await,
             Command::Status => remote::status(&c, json, &mut out).await,
             Command::Bots {
                 action: BotsCmd::List,
@@ -923,6 +1036,7 @@ fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Resul
             }
             Command::Schedules { action } => run_schedules(&c, action, json, &mut out).await,
             Command::Email { action } => run_email(&c, action, json, &mut out).await,
+            Command::Mcp { action } => run_mcp(&c, action, json, &mut out).await,
             Command::Channels {
                 action:
                     ChannelsCmd::Telegram {
@@ -954,6 +1068,32 @@ fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Resul
         rt.block_on(net.shutdown());
     }
     outcome
+}
+
+async fn run_mcp(
+    c: &Client,
+    action: &McpCmd,
+    json: bool,
+    out: &mut dyn std::io::Write,
+) -> Result<()> {
+    let McpCmd::Add {
+        name,
+        dry_run,
+        input,
+    } = action
+    else {
+        return Err("`mcp serve` runs before a daemon client exists".into());
+    };
+    let input = if input.as_slice() == ["-"] {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+        vec![text]
+    } else {
+        input.clone()
+    };
+    let parsed =
+        mcp_paste::parse_argv(&input, name.as_deref()).map_err(|e| email_cmd::rejected(&e))?;
+    mcp_paste::add(c, &parsed, *dry_run, json, out).await
 }
 
 async fn run_email(
@@ -1124,6 +1264,58 @@ mod tests {
     }
 
     #[test]
+    fn mcp_add_takes_the_paste_verbatim_after_its_options() {
+        let cli = Cli::try_parse_from([
+            "bot",
+            "mcp",
+            "add",
+            "--name",
+            "files",
+            "--dry-run",
+            "claude",
+            "mcp",
+            "add",
+            "x",
+            "-e",
+            "A=b c",
+            "--",
+            "npx",
+            "-y",
+            "pkg@1.0.0",
+        ])
+        .unwrap();
+        let Some(Command::Mcp {
+            action:
+                McpCmd::Add {
+                    name,
+                    dry_run,
+                    input,
+                },
+        }) = cli.command
+        else {
+            panic!("not `mcp add`");
+        };
+        assert_eq!(name.as_deref(), Some("files"));
+        assert!(dry_run);
+        assert_eq!(
+            input,
+            [
+                "claude",
+                "mcp",
+                "add",
+                "x",
+                "-e",
+                "A=b c",
+                "--",
+                "npx",
+                "-y",
+                "pkg@1.0.0"
+            ]
+        );
+        assert!(Cli::try_parse_from(["bot", "mcp", "add"]).is_err());
+    }
+
+    #[test]
     fn parses_host_commands() {
         for args in [
             vec!["status"],
@@ -1137,12 +1329,27 @@ mod tests {
             vec!["invite", "--role", "host"],
             vec!["join", "bot-pair:TEST"],
             vec!["revoke", "key"],
+            vec![
+                "add",
+                "ubuntu@203.0.113.7",
+                "--ssh-port",
+                "2222",
+                "--key",
+                "k",
+                "--yes",
+            ],
+            vec!["repair", "opc@203.0.113.7"],
+            vec!["upgrade", "oracle"],
+            vec!["remove", "oracle", "--purge", "--yes"],
         ] {
             let cli = Cli::try_parse_from(["bot", "host"].into_iter().chain(args)).unwrap();
             assert!(matches!(cli.command, Some(Command::Host { .. })));
         }
         assert!(Cli::try_parse_from(["bot", "host", "invite", "--role", "admin"]).is_err());
         assert!(Cli::try_parse_from(["bot", "host", "join"]).is_err());
+        assert!(
+            Cli::try_parse_from(["bot", "host", "remove", "x", "--purge", "--uninstall"]).is_err()
+        );
     }
 
     #[test]

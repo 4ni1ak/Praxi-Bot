@@ -25,9 +25,10 @@ import {
 } from "../lib/schedules";
 import { useDaemon } from "../state/DaemonContext";
 import styles from "./SchedulesView.module.css";
+import { humanLine } from "../lib/humanError";
 
 function errorText(e: unknown): string {
-  return e instanceof ApiError || e instanceof Error ? e.message : String(e);
+  return humanLine(e);
 }
 
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -45,6 +46,8 @@ export function SchedulesView({
   const [notice, setNotice] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // A moved schedule whose server could not be asked: waiting for the owner to confirm.
+  const [confirmReclaimId, setConfirmReclaimId] = useState<string | null>(null);
   /** `null` = no form; `"new"` or a schedule id being edited. */
   const [editing, setEditing] = useState<string | null>(null);
 
@@ -260,13 +263,59 @@ export function SchedulesView({
                             : t("schedules.never")}
                         </dd>
                       </div>
+                      {(s.missed_occurrences ?? 0) > 0 ? (
+                        <div data-testid="schedule-missed">
+                          <dt>{t("schedules.missed")}</dt>
+                          <dd>{s.missed_occurrences}</dd>
+                        </div>
+                      ) : null}
                     </dl>
 
+                    {s.moved_to ? (
+                      <div className={styles.actions} data-testid="schedule-moved">
+                        <p className={formStyles.hint}>
+                          {t("schedules.movedTo", { name: s.moved_to })}
+                        </p>
+                        {confirmReclaimId === s.id ? (
+                          <p className={formStyles.error} role="alert">
+                            {t("schedules.reclaimUnreachable", { name: s.moved_to })}
+                          </p>
+                        ) : null}
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          disabled={busy}
+                          data-testid="schedule-reclaim"
+                          onClick={() => {
+                            const confirmed = confirmReclaimId === s.id;
+                            setConfirmReclaimId(null);
+                            void act(
+                              s.id,
+                              async () => {
+                                try {
+                                  await client!.reclaimSchedule(s.id, confirmed);
+                                } catch (e) {
+                                  if (e instanceof ApiError && e.code === "host_unreachable") {
+                                    setConfirmReclaimId(s.id);
+                                  }
+                                  throw e;
+                                }
+                              },
+                              t("schedules.reclaimed", { name: s.name })
+                            );
+                          }}
+                        >
+                          {confirmReclaimId === s.id
+                            ? t("schedules.reclaimAnyway")
+                            : t("schedules.reclaim")}
+                        </Button>
+                      </div>
+                    ) : null}
                     <div className={styles.actions}>
                       <Button
                         size="sm"
                         variant="primary"
-                        disabled={busy}
+                        disabled={busy || Boolean(s.moved_to)}
                         onClick={() =>
                           void act(
                             s.id,
@@ -280,7 +329,7 @@ export function SchedulesView({
                       <Button
                         size="sm"
                         variant="secondary"
-                        disabled={busy}
+                        disabled={busy || Boolean(s.moved_to)}
                         onClick={() => setEditing(s.id)}
                       >
                         <PenLine />{t("schedules.edit")}

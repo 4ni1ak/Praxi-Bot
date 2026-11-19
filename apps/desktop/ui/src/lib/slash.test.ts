@@ -4,7 +4,8 @@ import {
   applyCompletion,
   detectTrigger,
   mentionHandle,
-  parseLeadingMention,
+  appCommandFor,
+  APP_COMMANDS,
   parseSlashInput,
   SLASH_COMMANDS
 } from "./slash.ts";
@@ -93,16 +94,16 @@ test("every slash command is lowercase and parses", () => {
   }
 });
 
-test("leading mention picks the bot and strips the handle", () => {
-  const bots = [{ name: "Atlas" }, { name: "Deep Work" }, { name: "İpek" }];
+test("mention handle is the bot name without whitespace", () => {
   assert.equal(mentionHandle("Deep Work"), "DeepWork");
-  assert.deepEqual(parseLeadingMention("@atlas do it\nplease", bots), {
-    bot: bots[0],
-    rest: "do it\nplease"
-  });
-  assert.equal(parseLeadingMention("@deepwork go", bots)?.bot, bots[1]);
-  assert.equal(parseLeadingMention("@ipek hi", bots)?.bot, bots[2]);
-  assert.equal(parseLeadingMention("@nobody hi", bots), null);
-  assert.equal(parseLeadingMention("@atlas", bots), null);
-  assert.equal(parseLeadingMention("hi @atlas", bots), null);
+});
+
+test("an app command is exactly /name; arguments or other text go to the bot", () => {
+  assert.equal(appCommandFor("/help")?.target, "help");
+  assert.equal(appCommandFor("  /Models ")?.target, "ai");
+  assert.equal(appCommandFor("/help me with my taxes"), null);
+  assert.equal(appCommandFor("/nope"), null);
+  for (const c of APP_COMMANDS) {
+    assert.ok(!SLASH_COMMANDS.some((d) => d.name === c.name), `${c.name} clashes with a daemon command`);
+  }
 });
