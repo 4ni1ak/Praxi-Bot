@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Save, Workflow, X } from "lucide-react";
 import { Button } from "ui";
 import type { ApiClient } from "../api/client";
+import { humanLine } from "../lib/humanError";
 import { canOfferWorkflow, EMPTY_REVIEW, reviewReducer } from "../lib/workflowReview";
 import { Modal } from "./Modal";
 import styles from "./WorkflowReview.module.css";
@@ -24,7 +25,7 @@ export function WorkflowReview({ client, runId, canRemember }: { client: ApiClie
       if (!canOfferWorkflow(canRemember, proposal.workflow.steps.length)) { setLoadError(t("workflow.tooFewSteps")); return; }
       dispatch({ type: "loaded", proposal });
       dispatch({ type: "open" });
-    } catch (error) { setLoadError(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { setLoadError(humanLine(error)); }
     finally { setLoading(false); }
   };
   if (!canRemember) return null;
@@ -46,7 +47,7 @@ export function WorkflowReview({ client, runId, canRemember }: { client: ApiClie
       await client.saveWorkflow(draft);
       dispatch({ type: "saved" });
     } catch (error) {
-      dispatch({ type: "failed", error: error instanceof Error ? error.message : String(error) });
+      dispatch({ type: "failed", error: humanLine(error) });
     } finally { saving.current = false; }
   };
   return <>
