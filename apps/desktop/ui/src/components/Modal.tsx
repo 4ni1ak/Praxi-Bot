@@ -45,7 +45,7 @@ export function Modal({
     const seq = seqRef.current;
     modalStack.add(seq);
     appInert.acquire(seq);
-    (node?.querySelector<HTMLElement>("[data-autofocus]") ?? node)?.focus();
+    (node?.querySelector<HTMLElement>("[data-autofocus]") ?? node)?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
       if (!modalStack.isTop(seq)) return;
       if (e.key === "Escape") {

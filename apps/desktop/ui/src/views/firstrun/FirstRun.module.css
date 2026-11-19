@@ -266,8 +266,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-1);
   min-height: var(--size-icon-lg);
+}
+
+.tileHead .badge {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .looking {
