@@ -28,8 +28,8 @@ pub fn classify(name: &str) -> Option<ContentClass> {
         // value and no text a run or a page wrote, so it neither taints nor
         // leaves the machine. Tainting it would also stop an owner's standing
         // grant from covering the very fill the list exists for.
-        // Listing or removing bots this bot made is bookkeeping too (no content in).
-        "secrets_list" | "bot_list" | "bot_delete" => ContentClass::none(),
+        // Removing bots this bot made is bookkeeping (no content in).
+        "secrets_list" | "bot_delete" => ContentClass::none(),
         // Editing reads old content and reports match counts, including no-op edits.
         // Observation, including a click or a scroll. Those pick an on-screen
         // target and cannot carry bytes off the machine. A drag can drop a
@@ -65,6 +65,9 @@ pub fn classify(name: &str) -> Option<ContentClass> {
         "schedule_create" | "schedule_update" | "schedule_resume" | "bot_create" | "bot_update" => {
             ContentClass::egress()
         }
+        // A bot's name and persona are text any bot with `manage_bots` can write, so a
+        // listing brings possibly untrusted text in.
+        "bot_list" => ContentClass::untrusted(),
         _ => return None,
     })
 }

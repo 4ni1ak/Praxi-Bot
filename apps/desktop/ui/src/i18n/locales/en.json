@@ -1337,6 +1337,26 @@
         "failed": "Couldn't ask you",
         "running": "Asking you"
       },
+      "bot_create": {
+        "done": "Created a bot",
+        "failed": "Didn't create a bot",
+        "running": "Creating a bot"
+      },
+      "bot_delete": {
+        "done": "Deleted a bot",
+        "failed": "Didn't delete a bot",
+        "running": "Deleting a bot"
+      },
+      "bot_list": {
+        "done": "Checked your bots",
+        "failed": "Couldn't check your bots",
+        "running": "Checking your bots"
+      },
+      "bot_update": {
+        "done": "Changed a bot",
+        "failed": "Didn't change a bot",
+        "running": "Changing a bot"
+      },
       "browser_click": {
         "done": "Clicked on a page",
         "failed": "Didn't click on a page",

@@ -1337,6 +1337,26 @@
         "failed": "Sana sorulamadı",
         "running": "Sana soruluyor"
       },
+      "bot_create": {
+        "done": "Bot oluşturuldu",
+        "failed": "Bot oluşturulmadı",
+        "running": "Bot oluşturuluyor"
+      },
+      "bot_delete": {
+        "done": "Bot silindi",
+        "failed": "Bot silinmedi",
+        "running": "Bot siliniyor"
+      },
+      "bot_list": {
+        "done": "Botlarınız kontrol edildi",
+        "failed": "Botlarınız kontrol edilemedi",
+        "running": "Botlarınız kontrol ediliyor"
+      },
+      "bot_update": {
+        "done": "Bot değiştirildi",
+        "failed": "Bot değiştirilmedi",
+        "running": "Bot değiştiriliyor"
+      },
       "browser_click": {
         "done": "Sayfada tıklandı",
         "failed": "Sayfada tıklanmadı",

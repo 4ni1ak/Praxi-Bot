@@ -514,7 +514,10 @@ async fn bot_create_always_asks_and_is_never_a_standing_grant() {
     let t = setup();
     assert_eq!(t.state.enable_bot_tools(), 4);
     // The caller runs with the `full` preset: the call still asks.
-    let caller = add_bot(&t, "Boss", caller_config("full", &[], true));
+    // A run on this machine's own tools: `auto` (a `pc` target would wait for a desktop).
+    let mut cfg = caller_config("full", &[], true);
+    cfg["runtime"] = json!({"computer": "auto"});
+    let caller = add_bot(&t, "Boss", cfg);
     let r = call(
         &t,
         Method::POST,
@@ -612,4 +615,60 @@ async fn the_daemon_token_file_is_protected_from_the_file_tools_and_named_in_the
 
 fn current_version(t: &T, id: BotId) -> i64 {
     t.state.storage().get_bot_versioned(id).unwrap().unwrap().1
+}
+
+#[tokio::test]
+async fn a_folder_only_caller_cannot_make_a_whole_computer_bot() {
+    let t = setup();
+    let mut cfg = caller_config("approve-destructive", &["fs_read", "bot_*"], true);
+    cfg["files"] = json!({"mode": "folder", "folders": ["/work/a"]});
+    let b = add_bot(&t, "Boss", cfg);
+    let host = DaemonBotHost::new(&t.state);
+    let c = who(&b);
+    let v = make(&host, &c, json!({"name":"Kid","persona":"p"}))
+        .await
+        .unwrap();
+    // The child inherits the caller's folder scope instead of the unset default.
+    assert_eq!(
+        stored(&t, &v.id).config["files"],
+        json!({"mode": "folder", "folders": ["/work/a"]})
+    );
+    // A target the user left on "this computer" is read-only to a folder-only maker.
+    let mut wide = stored(&t, &v.id).config;
+    wide["files"] = json!({"mode": "computer"});
+    t.state
+        .storage()
+        .modify_bot(bid(&v.id), |_, _| Ok(("Kid".to_owned(), wide.clone())))
+        .unwrap();
+    let e = host
+        .preview(
+            &c,
+            &BotChange::Update {
+                id: v.id,
+                req: req(json!({"persona": "q"})),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(e.contains("files"), "{e}");
+}
+
+#[tokio::test]
+async fn read_and_draft_cannot_make_an_approve_destructive_bot() {
+    let t = setup();
+    let (b, host) = boss(&t, "read-and-draft");
+    let c = who(&b);
+    let e = make(
+        &host,
+        &c,
+        json!({"name":"Loose","persona":"p","permission_preset":"approve-destructive"}),
+    )
+    .await
+    .unwrap_err();
+    assert!(e.contains("autonomy"), "{e}");
+    // The default picks what fits, which is read-and-draft or below.
+    let v = make(&host, &c, json!({"name":"Same","persona":"p"}))
+        .await
+        .unwrap();
+    assert_eq!(v.permission_preset, "read-and-draft");
 }

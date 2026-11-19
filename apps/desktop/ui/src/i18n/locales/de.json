@@ -1337,6 +1337,26 @@
         "failed": "Du konntest nicht gefragt werden",
         "running": "Fragt dich"
       },
+      "bot_create": {
+        "done": "Bot erstellt",
+        "failed": "Bot nicht erstellt",
+        "running": "Bot wird erstellt"
+      },
+      "bot_delete": {
+        "done": "Bot gelöscht",
+        "failed": "Bot nicht gelöscht",
+        "running": "Bot wird gelöscht"
+      },
+      "bot_list": {
+        "done": "Ihre Bots geprüft",
+        "failed": "Ihre Bots konnten nicht geprüft werden",
+        "running": "Ihre Bots werden geprüft"
+      },
+      "bot_update": {
+        "done": "Bot geändert",
+        "failed": "Bot nicht geändert",
+        "running": "Bot wird geändert"
+      },
       "browser_click": {
         "done": "Auf einer Seite geklickt",
         "failed": "Auf einer Seite wurde nicht geklickt",

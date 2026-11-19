@@ -223,6 +223,77 @@ fn policy_within(what: &str, cand: &Policy, cap: &Policy, global: &Policy) -> Re
     Ok(())
 }
 
+/// How freely a mode lets calls run without a prompt.
+fn mode_rank(m: permission_engine::AutonomyMode) -> u8 {
+    use permission_engine::AutonomyMode as M;
+    match m {
+        M::Ask => 0,
+        M::Balanced => 1,
+        M::Full => 2,
+    }
+}
+
+/// The mode a policy-holder's preset gives it. A profile with per-category
+/// rules counts as `Ask` when used as a ceiling: nobody gets a lane from a
+/// hand-made policy.
+fn ceiling_mode(p: &agent_core::PermissionsConfig) -> permission_engine::AutonomyMode {
+    if p.categories.is_empty() {
+        p.mode()
+    } else {
+        permission_engine::AutonomyMode::Ask
+    }
+}
+
+/// `Ok` when `cand` prompts at least as often as `cap` allows. `Policy` alone
+/// cannot tell `read-and-draft` from `approve-destructive`; the autonomy mode can.
+fn mode_within(
+    what: &str,
+    cand: permission_engine::AutonomyMode,
+    cap: permission_engine::AutonomyMode,
+) -> Result<(), String> {
+    if mode_rank(cand) > mode_rank(cap) {
+        return Err(format!(
+            "{what}: autonomy `{}` would let calls run without asking more than allowed (`{}`)",
+            cand.as_str(),
+            cap.as_str()
+        ));
+    }
+    Ok(())
+}
+
+/// `Ok` when `cand` reaches no more of the file system than `cap`. An unset
+/// mode means "the host's default", so it is only within another unset mode.
+fn files_within(
+    what: &str,
+    cand: &agent_core::FilesConfig,
+    cap: &agent_core::FilesConfig,
+) -> Result<(), String> {
+    use agent_core::FileAccessMode as F;
+    let broader = || {
+        Err(format!(
+            "{what}: file access would be broader than yours; use `folder` mode inside your own folders"
+        ))
+    };
+    match (cap.mode, cand.mode) {
+        (Some(F::Computer), _) | (None, None) => Ok(()),
+        (None, Some(F::Folder)) if cand.folders.is_empty() => Ok(()),
+        (Some(F::Folder), Some(F::Folder)) => {
+            let inside = |f: &String| {
+                let p = std::path::Path::new(f);
+                !p.components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+                    && cap.folders.iter().any(|c| p.starts_with(c))
+            };
+            if cand.folders.iter().all(inside) {
+                Ok(())
+            } else {
+                broader()
+            }
+        }
+        _ => broader(),
+    }
+}
+
 /// A bot's own policy, else the global one.
 fn policy_of(profile: &agent_core::BotProfile, global: &Policy) -> Policy {
     profile.policy().unwrap_or_else(|| global.clone())
@@ -483,6 +554,16 @@ impl DaemonBotHost {
             &c.policy,
             &c.global,
         )?;
+        mode_within(
+            &format!("{what} has more autonomy than you, so you can only read it"),
+            tp.permissions.mode(),
+            ceiling_mode(&c.profile.permissions),
+        )?;
+        files_within(
+            &format!("{what} reaches more files than you, so you can only read it"),
+            &tp.files,
+            &c.profile.files,
+        )?;
         if let Some(p) = providers_of(&target.config)
             .iter()
             .find(|p| !c.providers.contains(*p))
@@ -514,12 +595,19 @@ impl DaemonBotHost {
     fn preset_for(
         c: &Caller,
         asked: Option<&str>,
-        floor: Option<&Policy>,
+        floor: Option<(&Policy, permission_engine::AutonomyMode)>,
     ) -> Result<String, String> {
         let fits = |name: &str| -> Result<(), String> {
             let p = preset_policy(name).ok_or("unknown preset")?;
             policy_within("the new bot", &p, &c.policy, &c.global)?;
-            if let Some(f) = floor {
+            let mode = permission_engine::AutonomyMode::from_preset(Some(name));
+            mode_within("the new bot", mode, ceiling_mode(&c.profile.permissions))?;
+            if let Some((f, fmode)) = floor {
+                mode_within(
+                    "an update can only lower autonomy; the new level",
+                    mode,
+                    fmode,
+                )?;
                 policy_within(
                     "an update can only lower permissions; the new level",
                     &p,
@@ -670,6 +758,11 @@ impl DaemonBotHost {
         if let Some(rt) = c.bot.config.get("runtime") {
             config.insert("runtime".into(), rt.clone());
         }
+        // File access is inherited, never widened: an unset `[files]` would
+        // fall back to "this computer" for a bot of a folder-only caller.
+        if let Some(f) = c.bot.config.get("files") {
+            config.insert("files".into(), f.clone());
+        }
         let config = Value::Object(config);
         let (name, config) = validate(&name, config)?;
         Ok(Resolved {
@@ -727,7 +820,11 @@ impl DaemonBotHost {
             section(root, "models").insert(k.into(), json!(m));
         }
         if let Some(p) = &req.permission_preset {
-            let preset = Self::preset_for(c, Some(p), Some(&policy_of(&tp, &c.global)))?;
+            let preset = Self::preset_for(
+                c,
+                Some(p),
+                Some((&policy_of(&tp, &c.global), ceiling_mode(&tp.permissions))),
+            )?;
             root.insert("permissions".into(), json!({"preset": preset}));
             touched = true;
         }
