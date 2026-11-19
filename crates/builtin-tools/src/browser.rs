@@ -382,6 +382,23 @@ pub trait BrowserDriver: Send + Sync {
     async fn current_url(&self) -> Option<String> {
         None
     }
+    /// Whether the user is watching this browser right now (a live view is
+    /// attached). `None`: the driver cannot tell, so nothing is claimed.
+    fn live_view_attached(&self) -> Option<bool> {
+        None
+    }
+}
+
+/// The last line of a browser tool result: whether the user can see the page.
+/// The model must not tell the user a page "is open" on their screen unless
+/// this says so.
+#[must_use]
+pub fn view_line(attached: bool) -> &'static str {
+    if attached {
+        "[view: visible to the user in the live view]"
+    } else {
+        "[view: NOT visible to the user (no live view attached); this is the assistant's own browser, do not say they can see it]"
+    }
 }
 
 /// `scheme://host:port` of an http(s) URL: lower case, no trailing dot, default port explicit.
@@ -959,6 +976,13 @@ impl CdpDriver {
 impl BrowserDriver for CdpDriver {
     fn on_desktop(&self) -> bool {
         !self.desired_headless() && browser_cdp::host::has_display()
+    }
+
+    fn live_view_attached(&self) -> Option<bool> {
+        // A screencast runs only while a viewer is subscribed.
+        self.view
+            .as_ref()
+            .map(|view| view.status().active_profile.is_some())
     }
 
     fn for_headless(&self, headless: bool) -> Option<Arc<dyn BrowserDriver>> {
@@ -1544,7 +1568,7 @@ fn tools_with_pool(
             Op::Open,
             spec(
                 "browser_open",
-                "Open a URL in the bot's own managed browser and return the page snapshot. This is not the user's browser; to see what the user has open, use desktop_list_apps. Example: {\"url\":\"https://example.com\"}",
+                "Open a URL in the assistant's own managed browser and return the page snapshot. Use this only when a real page is needed (logging in, clicking, forms, pages that need scripts, or the user wants to watch); to read or look something up use web_search and web_extract first, they are faster and need no browser. The result ends with a [view: ...] line saying whether the user can see the page. This is not the user's browser; to see what the user has open, use desktop_list_apps. Example: {\"url\":\"https://example.com\"}",
                 json!({"type":"object","properties":{
                     "url":{"type":"string","description":"Full URL."},
                     "profile":{"type":"string","description":"Profile name, or 'isolated' for a disposable profile. Omit to use the configured per-bot default. Only honoured when the browser starts."},
@@ -1691,7 +1715,7 @@ fn tools_with_pool(
             Op::Eval,
             spec(
                 "browser_eval",
-                "Run JavaScript in the page and return the JSON result. Last resort. Example: {\"js\":\"document.title\"}",
+                "Run JavaScript in the page and return the JSON result. Last resort, not for reading a page (use browser_snapshot or web_extract). Example: {\"js\":\"document.title\"}",
                 json!({"type":"object","properties":{
                     "js":{"type":"string","description":"A JavaScript expression."}
                 },"required":["js"]}),
@@ -2781,7 +2805,16 @@ impl BrowserTool {
                 selected.run(&ctx.run_id, input),
             )
             .await?;
-        Ok(finish_text(ctx, &self.shared.data_dir.join("spill"), text))
+        let view = selected.shared.driver.live_view_attached();
+        let mut out = finish_text(ctx, &self.shared.data_dir.join("spill"), text);
+        // Honest "seen by user" signal, after any truncation so it is never cut.
+        if let Some(attached) = view
+            && let Some(tool_registry::ContentPart::Text { text }) = out.content.first_mut()
+        {
+            text.push('\n');
+            text.push_str(view_line(attached));
+        }
+        Ok(out)
     }
 }
 
@@ -2876,6 +2909,8 @@ pub(crate) mod fake {
         pub raw_secret_output: PMutex<String>,
         /// Make the page echo the typed value in the action result.
         pub echo_value: bool,
+        /// What `live_view_attached` reports (`None`: cannot tell).
+        pub watched: PMutex<Option<bool>>,
     }
 
     impl FakeBrowser {
@@ -2895,6 +2930,10 @@ pub(crate) mod fake {
 
     #[async_trait]
     impl BrowserDriver for FakeBrowser {
+        fn live_view_attached(&self) -> Option<bool> {
+            *self.watched.lock()
+        }
+
         async fn input_origin(&self, r: Option<&str>) -> Option<String> {
             self.targets
                 .lock()
@@ -3508,6 +3547,23 @@ mod tests {
         let got: Vec<(usize, usize)> = report.iter().map(|(_, s, a)| (*s, *a)).collect();
         eprintln!("fixture model calls (single, act): {report:?}");
         assert_eq!(got, vec![(7, 2), (4, 3), (9, 4)], "{report:?}");
+    }
+
+    #[tokio::test]
+    async fn results_say_whether_the_user_can_see_the_page() {
+        let (_d, fake, t) = build();
+        let ctx = ToolContext::default();
+        let open = get(&t, "browser_open");
+        let call = || open.call(&ctx, json!({"url": "https://example.com"}));
+        // A driver that cannot tell claims nothing.
+        assert!(!text(&call().await.unwrap()).contains("[view:"));
+        *fake.watched.lock() = Some(false);
+        let hidden = text(&call().await.unwrap());
+        assert!(hidden.ends_with(view_line(false)), "{hidden}");
+        assert!(hidden.contains("NOT visible to the user"), "{hidden}");
+        *fake.watched.lock() = Some(true);
+        let seen = text(&call().await.unwrap());
+        assert!(seen.ends_with("[view: visible to the user in the live view]"));
     }
 
     #[tokio::test]
