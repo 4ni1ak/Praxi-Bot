@@ -210,8 +210,12 @@ pub(crate) async fn frames(
                 }
                 let frame_cost = frame.payload.len().saturating_add(live_view::MAX_HEADER);
                 if frame_cost > usize::try_from(profile.burst_bytes).unwrap_or(0)
-                    || meta.width > profile.max_width
-                    || meta.height > profile.max_height
+                    || !live_view::fits_box(
+                        meta.width,
+                        meta.height,
+                        profile.max_width,
+                        profile.max_height,
+                    )
                 {
                     let header = RecordHeader::Status {
                         v: 1,
