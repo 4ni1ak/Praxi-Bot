@@ -559,6 +559,7 @@
       "code": "Code"
     },
     "slash": {
+      "export": "Diesen Chat als Markdown-Datei speichern",
       "new": "Neuen Chat starten",
       "stop": "Aktuellen Lauf stoppen",
       "help": "Hilfe und Tastenkürzel öffnen",
@@ -852,6 +853,7 @@
     "timelineLabel": "Unterhaltung",
     "copyMessage": "Nachricht kopieren",
     "messageCopied": "Kopiert",
+    "export": { "you": "Du", "done": "Chat gespeichert" },
     "jumpToLatest": "Zum Neuesten springen",
     "runBar": {
       "label": "Lauf-Steuerung",
@@ -920,15 +922,15 @@
       },
       "approve-destructive": {
         "name": "Zerstörerisches genehmigen",
-        "hint": "Lesen ist frei; alles, was etwas ändert oder sendet, fragt dich zuerst."
+        "hint": "Lesen, Surfen, Änderungen im Arbeitsbereich und der eigene Computer des Bots laufen frei; Löschen, Senden, Geld und dein eigener PC fragen zuerst."
       },
       "full": {
         "name": "Voll",
-        "hint": "Läuft ohne Nachfrage (einschließlich normalem Löschen von Dateien und Senden), außer Geld, Aktivierung von Zeitplänen und katastrophalen Befehlen auf der Verbotsliste."
+        "hint": "Läuft ohne Nachfrage (auch Löschen und Senden), außer bei Geld, Aktivierung von Zeitplänen und katastrophalen Befehlen auf der Verbotsliste. Nach dem Lesen nicht vertrauenswürdiger Inhalte fragt es weiterhin vor dem Senden von Daten oder dem Start eines Programms."
       },
       "read-and-draft": {
         "name": "Lesen & entwerfen",
-        "hint": "Lesen ist frei; Entwürfe, Dateiänderungen, Seitenabrufe, Klicks, Befehle und Sendungen fragen alle zuerst (gleiche wirksame Richtlinie wie „Zerstörerisches genehmigen“)."
+        "hint": "Lesen ist frei; jede Änderung, jedes Senden, jeder Seitenabruf, Klick und Befehl fragt zuerst."
       },
       "custom": {
         "name": "Benutzerdefiniert",
@@ -975,7 +977,7 @@
     "runs": "Läufe",
     "modelCalls": "Modellaufrufe",
     "tokens": "Tokens",
-    "empty": "Noch keine Nutzung.",
+    "empty": "Noch keine Nutzung. Sobald du einem Bot schreibst, erscheint der Token-Verbrauch hier.",
     "bot": "Bot",
     "calls": "Aufrufe",
     "prompt": "Prompt",
@@ -989,7 +991,7 @@
   "needs": {
     "title": "Braucht dich",
     "subtitle": "Genehmigungen und Fragen, die in allen Chats warten.",
-    "empty": "Nichts wartet auf dich.",
+    "empty": "Nichts wartet auf dich. Wenn ein Bot eine Freigabe braucht oder eine Frage hat, erscheint sie hier.",
     "kind": {
       "approval": "Genehmigung",
       "question": "Frage"
@@ -2754,9 +2756,9 @@
       "auto": "Frei"
     },
     "autonomyHints": {
-      "ask": "Liest Dateien, prüft den Bildschirm und durchsucht das Web ohne Nachfrage; fragt vor dem Entwerfen, Senden, Ändern oder Löschen von Dateien, dem Abrufen von Seiten, Klicken oder Ausführen von Befehlen (gleiche wirksame Richtlinie wie „Ausgewogen“).",
-      "balanced": "Liest Dateien, prüft den Bildschirm und durchsucht das Web frei; fragt vor jedem Schreiben oder Löschen von Dateien, Entwurf, Senden, Seitenabruf, Klick oder Befehl (gleiche wirksame Richtlinie wie „Fragen“).",
-      "auto": "Läuft ohne Nachfrage – einschließlich Löschen gewöhnlicher Dateien, Ausführen von Shell-Befehlen und Senden von Nachrichten – und hält nur bei Geld, Aktivierung von Zeitplänen und Befehlen auf der Verbotsliste an (Datenträger formatieren, System-/Home-Löschungen, Zugangsdatenpfade)."
+      "ask": "Liest Dateien, prüft den Bildschirm und durchsucht das Web ohne Nachfrage; fragt vor jeder Änderung, jedem Senden, Seitenabruf, Klick oder Befehl.",
+      "balanced": "Liest, surft, bearbeitet Dateien im Arbeitsbereich und arbeitet auf dem eigenen Computer des Bots ohne Nachfrage; fragt vor dem Löschen von Dateien, dem Senden, Geldausgaben oder Eingriffen in deinen PC.",
+      "auto": "Läuft ohne Nachfrage, auch bei Löschen, Befehlen und Senden. Fragt weiterhin bei Geld, Aktivierung von Zeitplänen und katastrophalen Befehlen sowie nach dem Lesen nicht vertrauenswürdiger Inhalte vor dem Senden von Daten oder dem Start eines Programms."
     },
     "autonomyCustom": "Verwendet die Berechtigungsvorlage {{preset}}.",
     "advanced": "Erweiterte Einstellungen",
@@ -2802,6 +2804,7 @@
       "localNoSystem": "Der Bot arbeitet hier"
     },
     "reason": {
+      "timeout": "Der Bildschirm konnte nicht rechtzeitig gestartet werden",
       "connecting": "Verbindung zu {{name}} wird hergestellt …",
       "offline": "Server nicht erreichbar",
       "notPaired": "Der Server akzeptiert diesen Computer nicht mehr",
@@ -3071,6 +3074,14 @@
     "confirmQuery": "Abrufanfragen erlauben"
   },
   "liveView": {
+    "chat": {
+      "title": "Mit dem Bot chatten",
+      "collapse": "Chat einklappen",
+      "replying": "Bot antwortet…",
+      "working": "Bot arbeitet…",
+      "approve": "Genehmigen",
+      "reject": "Ablehnen"
+    },
     "title": "Live-Ansicht des Computers",
     "expand": "Große Ansicht öffnen",
     "close": "Ansicht schließen",
@@ -3175,6 +3186,12 @@
     "approvalsWaiting": "{{count}} Element(e) warten im Chat auf deine Entscheidung.",
     "reviewApprovals": "Zurück zum Chat, um zu antworten",
     "errors": {
+      "unauthorized": "Ihre Sitzung ist nicht mehr autorisiert. Verbinden Sie sich erneut mit diesem Computer.",
+      "too_many_streams": "Auf dieser Verbindung sind zu viele Streams offen. Schließen Sie einen anderen Stream und versuchen Sie es erneut.",
+      "network": "Die Bildschirmverbindung wurde unterbrochen. Prüfen Sie Ihr Netzwerk und versuchen Sie es erneut.",
+      "view_quota": "Auf dem Server sind zu viele Bildschirm-Sitzungen offen. Schließen Sie eine unbenutzte Ansicht oder versuchen Sie es gleich erneut.",
+      "server_restarting": "Der Server wird möglicherweise neu gestartet. Versuchen Sie es erneut, sobald er wieder online ist.",
+      "timeout": "Der Bildschirm konnte nicht rechtzeitig gestartet werden.",
       "generic": "Die Anfrage ist fehlgeschlagen. Prüfe die Verbindung und versuche es erneut.",
       "release_failed": "Die Kontrolle konnte nicht zurückgegeben werden. Der Bot bleibt pausiert; versuche Bitirdim erneut.",
       "release_unconfirmed": "Der Daemon meldet deine Übernahme weiterhin als aktiv. Versuche Bitirdim erneut.",
@@ -3424,6 +3441,10 @@
     "dismiss": "Verwerfen",
     "stopAllNow": "Jetzt alles stoppen",
     "letContinue": "Weiterlaufen lassen"
+  },
+  "peerLink": {
+    "direct": "Direkt · {{rtt}} ms",
+    "relay": "Relay · {{rtt}} ms"
   },
   "computerPicker": {
     "label": "Computer: {{name}}",
@@ -3857,6 +3878,10 @@
     "auto": "Automatisch (passend zur App-Sprache)",
     "online": "online",
     "speed": "Tempo",
-    "unsupported": "Dieses System bietet keine Sprachausgabe-Stimmen."
+    "unsupported": "Dieses System bietet keine Sprachausgabe-Stimmen.",
+    "speakAuto": {
+      "title": "Antworten vorlesen",
+      "description": "Jede fertige Antwort automatisch vorlesen."
+    }
   }
 }

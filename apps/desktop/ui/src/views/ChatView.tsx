@@ -22,6 +22,8 @@ import {
   useState
 } from "react";
 import { useTranslation } from "react-i18next";
+import { createPortal } from "react-dom";
+import type { LiveChatSlots } from "./LiveViewerChat";
 import { ownerKey } from "../lib/ownerKey";
 import { BotAvatar, Button } from "ui";
 import { isMockMode } from "../api/mockMode";
@@ -40,6 +42,7 @@ import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
 import { MessageInfo } from "../components/MessageInfo";
 import { CopyButton } from "../components/CopyButton";
+import { useAutoSpeak } from "../components/useAutoSpeak";
 import { SpeakButton } from "../components/SpeakButton";
 import { QueuedMessages } from "../components/QueuedMessages";
 import { RunStatusLine } from "../components/RunStatusLine";
@@ -62,6 +65,7 @@ import {
 } from "../lib/chatLogic";
 import { botWriteMessage, writeBotProfile } from "../lib/botWrite";
 import { splitMentions } from "../lib/mentionText";
+import { transcriptFileName, transcriptMarkdown } from "../lib/transcript";
 import { dayHeader, type MessageTimes } from "../lib/messageTime";
 import { modelGroups } from "../lib/modelPicker";
 import { type ChatRunPhase, runBarModel, runStopUi, STOP_CONFIRM_MS } from "../lib/runBar";
@@ -88,6 +92,8 @@ import {
   SLASH_COMMANDS,
   APP_COMMAND_EVENT,
   APP_COMMANDS,
+  LOCAL_COMMANDS,
+  isExportCommand,
   appCommandFor
 } from "../lib/slash";
 import { FRESH, type HistoryNav, afterEdit, historyKey, userMessageTexts } from "../lib/composerHistory";
@@ -174,7 +180,8 @@ export function ChatView({
   onSwitchChat,
   showAgentRoute = false,
   sendWith = "enter",
-  messageTimes = "minutes"
+  messageTimes = "minutes",
+  liveChatSlots
 }: {
   chatId: string;
   /** Present only when there is a page to go back to; without it the header has no arrow. */
@@ -190,6 +197,7 @@ export function ChatView({
   sendWith?: SendWith;
   /** Settings, General: per-message times off / HH:mm / HH:mm:ss. */
   messageTimes?: MessageTimes;
+  liveChatSlots?: LiveChatSlots | null;
 }) {
   const { t, i18n } = useTranslation();
   const toast = useToast();
@@ -287,6 +295,10 @@ export function ChatView({
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
   const [remember, setRemember] = useState<Record<string, RememberState>>({});
+  useLayoutEffect(() => {
+    if (liveChatSlots?.composer) inputRef.current?.focus({ preventScroll: true });
+  }, [liveChatSlots?.composer]);
+
   useEffect(() => {
     const el = inputRef.current;
     if (el && pendingCaret.current !== null) {
@@ -308,6 +320,7 @@ export function ChatView({
     () => topLevelRuns(events, chatId),
     [events, chatId]
   );
+  useAutoSpeak(chatId, chatRuns);
   const finishedCount = chatRuns.filter(
     (r) => r.finishedMs !== undefined
   ).length;
@@ -562,7 +575,7 @@ export function ChatView({
       return [];
     }
     if (triggerKind === "slash") {
-      return rank([...SLASH_COMMANDS, ...APP_COMMANDS], triggerQuery, (c) => ({
+      return rank([...SLASH_COMMANDS, ...LOCAL_COMMANDS, ...APP_COMMANDS], triggerQuery, (c) => ({
         text: c.name,
         keywords: [t(c.i18nKey)]
       })).map((r) => ({
@@ -640,9 +653,27 @@ export function ChatView({
     });
   };
 
+  /** `/export`: the open chat as a Markdown file (user and bot messages only). */
+  const exportChat = () => {
+    const title = chat?.title && chat.title !== "New chat" ? chat.title : "";
+    const md = transcriptMarkdown(messages, { title: title || view?.name || "Chat", user: t("chat.export.you"), bot: view?.name ?? "Bot" });
+    const url = URL.createObjectURL(new Blob([md], { type: "text/markdown;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = transcriptFileName(title || view?.name || "chat");
+    a.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast.show(t("chat.export.done"), "success");
+  };
+
   const send = async () => {
     const body = text.trim();
     if (!client || !body || sending) {
+      return;
+    }
+    if (isExportCommand(body)) {
+      setText("");
+      exportChat();
       return;
     }
     // "/help", "/settings" ...: the app opens the place itself; nothing is sent to the bot.
@@ -1071,6 +1102,17 @@ export function ChatView({
     );
   }
 
+
+  const liveStatus = awaitingApproval
+    ? t("chat.runBar.waiting")
+    : running
+      ? lastItem?.kind === "item" && lastItem.runId === activeRunId && lastItem.item.kind === "text"
+        ? t("liveView.chat.replying")
+        : barDetail ?? t("liveView.chat.working")
+      : null;
+  const placeComposer = (composer: ReactNode) =>
+    liveChatSlots?.composer ? createPortal(composer, liveChatSlots.composer) : composer;
+
   return (
     <div className={styles.root}>
       {/* v6: no title row (the chat is named in the sidebar); a back button only while a page to go back to exists. */}
@@ -1296,7 +1338,12 @@ export function ChatView({
       ) : null}
       </div>
 
-      <footer className={styles.composer}>
+      {liveChatSlots?.status && liveStatus ? createPortal(
+        <p className={styles.liveReplyStatus} role="status">{liveStatus}</p>,
+        liveChatSlots.status
+      ) : null}
+      {placeComposer(
+      <footer className={styles.composer} data-live-view={liveChatSlots?.composer ? "true" : undefined}>
         {error ? (
           <p className={styles.error} role="alert">
             {error}
@@ -1310,7 +1357,7 @@ export function ChatView({
             onAction={(a) => (a === "restartService" ? void restartDaemon() : void send())}
           />
         ) : null}
-        <div className={styles.dockWrap}>
+        {!liveChatSlots?.composer ? <div className={styles.dockWrap}>
           <RunStatusLine
             model={barModel}
             botName={barBotName}
@@ -1334,7 +1381,7 @@ export function ChatView({
               void next.then(onControl).catch(() => {});
             }}
           />
-        </div>
+        </div> : null}
         <div className={styles.boxWrap}>
           {menuOpen ? (
             <div
@@ -1503,6 +1550,7 @@ export function ChatView({
           </div>
         </div>
       </footer>
+      )}
     </div>
   );
 }

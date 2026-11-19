@@ -244,7 +244,7 @@ export function RunChangesSection({
         try {
           setPreview(await client.previewRestore(runId, pending.checkpointId));
         } catch (previewFailure) {
-          setPreviewError(previewFailure instanceof Error ? previewFailure.message : String(previewFailure));
+          setPreviewError(humanLine(previewFailure));
         }
       }
     } finally {

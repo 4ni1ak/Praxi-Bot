@@ -75,11 +75,11 @@ export const AUTONOMY_LEVELS: readonly AutonomyLevel[] = ["ask", "balanced", "au
 /**
  * Map simple 3-way autonomy to an existing daemon permission preset.
  *
- * Note: `read-and-draft` and `approve-destructive` both set `Ask` on every
- * category in `permission-engine` (`read_tools_skip_ask` lets `Effect::Read`
- * tools run without prompting, while all writes/fetches/drafts/sends/commands
- * ask). `full` sets `Allow` on every category except `Money`, never-list
- * commands, and `always_ask` schedule actions.
+ * The daemon derives the bot's autonomy mode from the preset (see
+ * `docs/design/permissions-ux.md`): `read-and-draft` is Ask (every change asks),
+ * `approve-destructive` is Balanced (reads, browsing, workspace edits and the bot's
+ * own computer run freely; deletes, sends, money and the user's PC ask), `full` is
+ * Full (only hard stops and the untrusted-content gate remain).
  */
 export function autonomyToPreset(level: AutonomyLevel): PermissionPreset {
   switch (level) {
