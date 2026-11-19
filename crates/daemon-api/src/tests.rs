@@ -22,6 +22,7 @@ use tower::ServiceExt;
 use crate::fake::FakeProvider;
 use crate::{AppState, DaemonConfig, router};
 
+mod attachments;
 mod bot_patch;
 mod cli_engines;
 mod composio;
@@ -34,6 +35,7 @@ mod host_slice;
 mod knowledge;
 mod knowledge_brain;
 mod mcp;
+mod memory;
 mod model_catalog;
 mod peer_knowledge;
 mod schedules;

@@ -890,10 +890,10 @@ export function releaseConfirmedBy(
   return t === null || t.id !== takeoverId || (t.state as string) === "released";
 }
 
-/** Bounded exponential reconnect backoff: 1 s, 2 s, 4 s, ... capped at 15 s. */
+/** Bounded exponential reconnect backoff: 0.5 s, 1 s, 2 s, 4 s, capped at 4 s. */
 export function reconnectDelayMs(attempt: number): number {
   const n = Math.max(1, Math.floor(attempt));
-  return Math.min(15_000, 1000 * 2 ** (n - 1));
+  return Math.min(4000, 500 * 2 ** (n - 1));
 }
 
 /**

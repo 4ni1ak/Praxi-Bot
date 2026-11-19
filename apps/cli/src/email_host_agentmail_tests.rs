@@ -488,3 +488,52 @@ async fn an_agentmail_account_is_isolated_to_its_bot_through_the_registered_tool
         "another bot never causes a request with this account key"
     );
 }
+
+#[tokio::test]
+async fn the_owner_lists_headers_and_sends_a_test_only_to_the_mailbox_itself() {
+    let server = MockServer::start().await;
+    mock_create(&server, "helper@agentmail.to").await;
+    Mock::given(method("GET"))
+        .and(path("/v0/inboxes/helper@agentmail.to/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "count": 1,
+            "messages": [{
+                "message_id": "m1", "from": "Ann <ann@example.com>", "to": ["helper@agentmail.to"],
+                "subject": "Hello", "timestamp": "2026-11-12T10:00:00Z", "labels": ["unread"]
+            }]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v0/inboxes/helper@agentmail.to/messages/send"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message_id": "sent_1"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let f = fixture(&server);
+    // Bound to a bot: the owner's view still reaches it (as that bot), nobody else does.
+    f.host.add(input("bot-mail", Some(BOT_A))).await.unwrap();
+
+    let rows = f.host.recent_messages("bot-mail", 5).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, "m1");
+    assert_eq!(rows[0].subject, "Hello");
+    assert!(rows[0].unread);
+
+    assert_eq!(
+        f.host.send_test("bot-mail").await.unwrap(),
+        "helper@agentmail.to"
+    );
+    let reqs = server.received_requests().await.unwrap();
+    let sent = reqs
+        .iter()
+        .find(|r| r.url.path().ends_with("/messages/send"))
+        .unwrap();
+    let body: Value = serde_json::from_slice(&sent.body).unwrap();
+    assert_eq!(body["to"], json!(["helper@agentmail.to"]));
+
+    assert!(matches!(
+        f.host.recent_messages("nope", 5).await,
+        Err(EmailControlError::NotFound(_))
+    ));
+}

@@ -15,6 +15,7 @@ import { ProvidersSection } from "../SettingsSections";
 import { ApiKeyPaste } from "./ApiKeyPaste";
 import { EnginesCard } from "./HomeCards";
 import { KnowledgeCard } from "./KnowledgeCard";
+import { MemoryCard } from "./MemoryCard";
 import type { CardDef } from "./types";
 import { humanLine } from "../../lib/humanError";
 import { useBotsHome } from "../../state/useBotsHome";
@@ -94,6 +95,7 @@ function AdvancedProviders() {
 export function aiCards(t: TFunction): CardDef[] {
   return [
     { id: "knowledge", section: "ai", kind: "block", title: t("knowledge.title"), description: t("knowledge.description"), keywords: "rag memory knowledge kaynak hafiza bilgi brain beyin", node: <KnowledgeCard /> },
+    { id: "memory", section: "ai", kind: "block", title: t("memory.title"), description: t("memory.description"), keywords: "memory recall forget undo remember hafiza hatirla unut geri al gedächtnis", node: <MemoryCard /> },
     {
       id: "detectedAccounts",
       section: "ai",

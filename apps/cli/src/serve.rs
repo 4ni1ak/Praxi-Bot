@@ -318,6 +318,13 @@ fn build_agent_with_skills(
             .ok()
             .as_deref(),
     );
+    let memory = match agent_core::MemoryConfig::open_default(storage.data_dir()) {
+        Ok(cfg) => Some(cfg),
+        Err(e) => {
+            eprintln!("warning: memory store unavailable: {e}");
+            None
+        }
+    };
     // The discovery threshold is `LoopConfig`'s default (40).
     Ok(AgentLoop::new(
         Arc::clone(storage),
@@ -327,7 +334,7 @@ fn build_agent_with_skills(
             redactor: Some(redactor),
             max_computer_runs,
             approval_timeout,
-            memory: agent_core::MemoryConfig::open_default(storage.data_dir()),
+            memory,
             knowledge_decider: Some(Arc::new(agent_core::HeuristicKnowledgeDecider::new(
                 Arc::clone(storage),
             ))),
@@ -1009,6 +1016,7 @@ pub fn serve(
     let composio_tools = mcp_tools.clone();
     let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
         .map(|(host, _)| host);
+    crate::homeassistant_host::start_homeassistant(data_dir, &mcp_tools, telegram_store.as_ref());
     crate::calendar_host::start_calendar(data_dir, &mcp_tools, telegram_store.as_ref());
     register_web(data_dir, port, &mcp_tools, telegram_store.as_ref());
     step("web tools registered");

@@ -12,7 +12,7 @@ use crate::{
     changes, cli_login, components, composio, composio_routes, doctor, doctor_routes, dto, email,
     email_routes, error, file_access, fill_routes, host, host_admin, host_copy, host_import,
     host_links, host_setup, knowledge, knowledge_settings, live_view, mcp, mcp_routes, mcp_server,
-    peer, routes, skill_hub, skill_management, skills, sse, terminal, trusted_folders, web,
+    memory, peer, routes, skill_hub, skill_management, skills, sse, terminal, trusted_folders, web,
     web_routes,
 };
 
@@ -71,6 +71,8 @@ impl Modify for Security {
         knowledge_settings::get_settings, knowledge_settings::put_settings, knowledge::email_captures,
         knowledge_settings::request_embedding_approval, knowledge_settings::confirm_embedding_approval,
         knowledge_settings::revoke_embedding_grant, knowledge_settings::reset_embedding_cooldown,
+        memory::list_memories, memory::create_memory, memory::update_memory, memory::delete_memory,
+        memory::undo_memory, memory::preview_bot_memory,
         routes::list_bots,
         routes::create_bot,
         routes::get_bot,
@@ -92,6 +94,8 @@ impl Modify for Security {
         routes::create_chat,
         routes::list_messages,
         routes::send_message,
+        crate::attachment_routes::upload,
+        crate::attachment_routes::download,
         routes::list_approvals,
         routes::decide_approval,
         routes::answer_question,
@@ -174,6 +178,8 @@ impl Modify for Security {
         email_routes::delete_email_account,
         email_routes::test_email_account,
         email_routes::test_email_draft,
+        email_routes::list_email_messages,
+        email_routes::send_email_test,
         web_routes::get_web_search,
         web_routes::update_web_search,
         web_routes::test_web_search,
@@ -183,7 +189,7 @@ impl Modify for Security {
         peer::PeerLink,
         terminal::OpenTerminalInput, terminal::TerminalInfo, terminal::TerminalOutput, terminal::TerminalInput, terminal::TerminalResize, ::live_view::ScreenStatus, ::live_view::ScreenStreamState, ::live_view::RecordHeader, ::live_view::FrameMetadata, ::live_view::SourceRect,
         dto::ReleaseResult, dto::ControlStateChanged, dto::ScreenPrivilegesInput, sse::SseStatus, sse::Gap, dto::Health, dto::HostInfo, dto::BotDto, dto::BotInput, dto::BotPatchInput, dto::BotPatchOp, dto::BotPatchKind, dto::BotConflictBody, dto::RuntimeConfigDto, dto::ChatDto, dto::CreateChat,
-        dto::MessageDto, dto::RunUsageDto, dto::Mode, dto::SendMessage, dto::DeliveryKind, dto::SendResponse,
+        dto::MessageDto, dto::RunUsageDto, dto::Mode, dto::SendMessage, dto::AttachmentDto, dto::DeliveryKind, dto::SendResponse,
         dto::ApprovalDto, dto::Decision, dto::Scope, dto::DecideApproval,
         dto::DecisionResponse, dto::RunDto, dto::StopScope, dto::StopRunsInput, dto::StopOutcome, dto::StopRunResult, dto::StopRunsResponse, dto::UsageTotals, dto::BotUsage,
         dto::UsageSummary, dto::AnswerQuestion, dto::AnswerResponse, dto::GrantDto,
@@ -206,7 +212,8 @@ impl Modify for Security {
         mcp_server::McpCallInput, mcp_server::ExportedMcpTool,
         email::EmailProviderKind, email::EmailSecurity, email::EmailImapServer, email::EmailSmtpServer,
         email::EmailAccountDto, email::EmailAccountInput, email::EmailAccountPatch,
-        email::EmailProbeStatus, email::EmailTestReport,
+        email::EmailProbeStatus, email::EmailTestReport, email::EmailMessageDto,
+        email::EmailSendTestResponse,
         web::WebSearchConfigDto, web::WebSearchConfigInput, web::WebSearchTestInput,
         web::WebSearchTestReport,
         host::HostMode, host::HostState, host::HostLimits, host::HostConfig, host::HostConflict,
@@ -230,6 +237,9 @@ impl Modify for Security {
         doctor_routes::RepairResult,
         fill_routes::FillSecretDto, fill_routes::CreateFillSecret, fill_routes::UpdateFillSecret,
         fill_routes::FillGrantDto, fill_routes::CreateFillGrant,
+        memory::MemoryKindDto, memory::MemoryTrustDto, memory::MemoryItemDto,
+        memory::CreateMemoryInput, memory::UpdateMemoryInput, memory::MemoryPreviewHitDto,
+        memory::MemoryPreviewDto,
         error::ErrorBody, error::ErrorDetail,
     )),
     modifiers(&Security),
@@ -238,7 +248,7 @@ impl Modify for Security {
         (name = "runs"), (name = "usage"), (name = "events"), (name = "control"),
         (name = "policy"), (name = "providers"), (name = "schedules"), (name = "channels"),
         (name = "host"), (name = "admin"), (name = "mcp"), (name = "secrets"), (name = "email"), (name = "composio"), (name = "web"),
-        (name = "skills"), (name = "doctor"), (name = "mcp-server")
+        (name = "skills"), (name = "doctor"), (name = "mcp-server"), (name = "memory")
     )
 )]
 pub struct ApiDoc;

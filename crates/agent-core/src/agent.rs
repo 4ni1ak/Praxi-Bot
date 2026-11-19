@@ -332,6 +332,22 @@ impl AgentLoop {
         names
     }
 
+    /// Configured memory store, if the memory hook is attached to this loop.
+    #[must_use]
+    pub fn memory_store(&self) -> Option<Arc<memory_store::MemoryStore>> {
+        self.sh.cfg.memory.as_ref().map(|m| Arc::clone(&m.store))
+    }
+
+    /// Recall token budget configured on this loop (defaults to 800).
+    #[must_use]
+    pub fn memory_recall_budget_tokens(&self) -> usize {
+        self.sh
+            .cfg
+            .memory
+            .as_ref()
+            .map_or(800, |m| m.recall_budget_tokens)
+    }
+
     /// Mask registered secrets in external data before an authorized source
     /// adapter persists or embeds it. Source adapters refresh the secret
     /// snapshot once per admitted batch with [`Self::refresh_external_redactor`].

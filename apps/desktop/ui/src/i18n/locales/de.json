@@ -853,6 +853,8 @@
       }
     },
     "timelineLabel": "Unterhaltung",
+    "copyMessage": "Nachricht kopieren",
+    "messageCopied": "Kopiert",
     "export": { "you": "Du", "done": "Chat gespeichert" },
     "jumpToLatest": "Zum Neuesten springen",
     "runBar": {
@@ -1064,6 +1066,10 @@
       "component_conflict": {
         "title": "Gerade nichts zu installieren",
         "hint": "Es ist bereits installiert oder wird gerade installiert, oder auf diesem Computer ist kein Installationsprogramm verfügbar."
+      },
+      "attachment_too_large": {
+        "title": "Dieser Anhang ist zu groß",
+        "hint": "Entferne ihn oder wähle eine kleinere Datei und versuche es dann erneut."
       },
       "approval_once_only": {
         "title": "Diese Genehmigung kann nur einmal erteilt werden",
@@ -1320,6 +1326,10 @@
       "unavailable": {
         "title": "Das ist gerade nicht verfügbar",
         "hint": "Versuche es gleich noch einmal."
+      },
+      "unsupported_attachment": {
+        "title": "Dieser Anhang wird nicht unterstützt",
+        "hint": "Prüfe, ob die Datei nicht leer oder beschädigt ist, oder versuche eine andere Datei."
       },
       "unsupported_media_type": {
         "title": "Dieser Dateityp wird nicht unterstützt",
@@ -2956,7 +2966,17 @@
       "toolsLabel": "{{name}} darf E-Mail nutzen",
       "toolsOnHint": "Lesen ist erlaubt. Senden richtet sich immer nach dem Berechtigungsmodus dieses Bots und fragt standardmäßig zuerst nach.",
       "toolsOffHint": "Das Postfach ist verbunden, aber {{name}} sieht noch keine E-Mail-Werkzeuge. Schalte dies ein, damit der Bot E-Mails lesen und schreiben kann.",
-      "toolsError": "Der E-Mail-Zugriff konnte nicht geändert werden: {{message}}"
+      "toolsError": "Der E-Mail-Zugriff konnte nicht geändert werden: {{message}}",
+      "recent": "Neueste Mails anzeigen",
+      "hideRecent": "Neueste Mails ausblenden",
+      "recentError": "Der Posteingang konnte nicht gelesen werden: {{message}}",
+      "noMessages": "Der Posteingang ist leer.",
+      "noSubject": "(kein Betreff)",
+      "sendTest": "Test-Mail senden",
+      "sendingTest": "Wird gesendet…",
+      "sendTestHint": "Sendet eine kurze Testnachricht an {{address}} selbst, an niemanden sonst.",
+      "testSent": "Test-Mail an {{address}} gesendet. Sie sollte gleich ankommen.",
+      "testError": "Die Test-Mail konnte nicht gesendet werden: {{message}}"
     }
   },
   "terminal": {
@@ -3869,6 +3889,55 @@
       "outdated": "{{cli}} braucht ein Update, bevor Praxi es nutzen kann. Aktualisiere es unter Einstellungen, KI.",
       "sign_in": "{{cli}} ist abgemeldet. Melde dich unter Einstellungen, KI dort an.",
       "unsupported": "Praxi kann {{cli}} auf diesem Computer nicht ausführen."
+    }
+  },
+  "memory": {
+    "title": "Persönliches Gedächtnis",
+    "description": "Sieh dir an, woran sich jeder Bot aus früheren Unterhaltungen erinnert, bearbeite oder vergiss Einträge, mache Änderungen rückgängig und prüfe in der Vorschau, was in die nächste Runde einfließt.",
+    "bot": "Bot",
+    "noBot": "Erstelle einen Bot, um Erinnerungen anzusehen oder hinzuzufügen.",
+    "search": "Erinnerungen durchsuchen",
+    "searchPlaceholder": "Nach Text oder Zitat filtern …",
+    "kindFilter": "Kategorie",
+    "allKinds": "Alle Kategorien",
+    "botOnly": "Nur Erinnerungen dieses Bots",
+    "includeForgotten": "Vergessene Einträge anzeigen",
+    "empty": "Keine Erinnerungen entsprechen diesem Filter.",
+    "scopeShared": "Für alle Bots gemeinsam",
+    "scopeThisBot": "Nur {{bot}}",
+    "forgottenBadge": "Vergessen",
+    "edit": "Bearbeiten",
+    "editLabel": "Erinnerungstext",
+    "saveEdit": "Erinnerung speichern",
+    "forget": "Vergessen",
+    "undo": "Rückgängig",
+    "addTitle": "Erinnerung hinzufügen",
+    "scope": "Bereich",
+    "kind": "Kategorie",
+    "content": "Was gemerkt werden soll",
+    "contentPlaceholder": "Kurze Tatsache oder Präferenz eingeben …",
+    "add": "Erinnerung hinzufügen",
+    "addedNotice": "Erinnerung hinzugefügt.",
+    "updatedNotice": "Erinnerung aktualisiert.",
+    "forgottenNotice": "Erinnerung vergessen.",
+    "undoneNotice": "Letzte Änderung rückgängig gemacht.",
+    "previewTitle": "Was der Bot sieht (Abrufvorschau)",
+    "previewHint": "Gib eine Beispielnachricht ein, um den genauen Datenblock mit abgerufenen Erinnerungen zu sehen, der der Runde vorangestellt wird.",
+    "previewQuery": "Beispiel-Benutzernachricht",
+    "previewPlaceholder": "z. B. Wann erstellen wir die Versionshinweise?",
+    "previewRun": "Abruf testen",
+    "previewTokens": "{{count}} Erinnerungen abgerufen · ~{{used}} / {{budget}} Tokens",
+    "previewEmpty": "Für diese Nachricht würden keine Erinnerungen abgerufen.",
+    "kinds": {
+      "profile": "Benutzerprofil",
+      "bot": "Bot-Wissen",
+      "episodic": "Vergangenes Ereignis",
+      "procedural": "Ablauf",
+      "lesson": "Lektion aus Korrektur"
+    },
+    "trust": {
+      "user": "Vom Benutzer bestätigt",
+      "untrusted": "Nicht vertrauenswürdige Daten"
     }
   },
   "voice": {

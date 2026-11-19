@@ -943,6 +943,19 @@ pub(crate) async fn list_messages(
             .then(|| s.storage().message_source(m.id).ok())
             .flatten()
             .filter(|v| !v.is_empty());
+        let (content, attachments) = if m.role == "user" {
+            let (text, ids) = agent_core::attachments::split_marker(&m.content);
+            let dtos = ids
+                .into_iter()
+                .filter_map(|a| {
+                    agent_core::attachments::meta(s.storage().data_dir(), chat.id, a).ok()
+                })
+                .map(|a| crate::dto::AttachmentDto::from(&a))
+                .collect::<Vec<_>>();
+            (text.to_owned(), dtos)
+        } else {
+            (m.content, Vec::new())
+        };
         out.push(MessageDto {
             id: m.id,
             chat_id: m.chat_id.0,
@@ -951,7 +964,8 @@ pub(crate) async fn list_messages(
             role: m.role,
             created_at_ms: m.created_at_ms,
             source,
-            content: m.content,
+            content,
+            attachments,
         });
     }
     Ok(Json(out))
@@ -973,9 +987,19 @@ pub(crate) async fn send_message(
     ApiJson(input): ApiJson<SendMessage>,
 ) -> Result<(StatusCode, Json<SendResponse>), ApiError> {
     let chat = s.chat_of_user(ChatId(id(&cid)?))?;
-    if input.text.trim().is_empty() {
+    if input.text.trim().is_empty() && input.attachment_ids.is_empty() {
         return Err(ApiError::bad_request("text must not be empty"));
     }
+    if input.attachment_ids.len() > agent_core::attachments::MAX_PER_MESSAGE {
+        return Err(ApiError::bad_request(format!(
+            "at most {} attachments per message",
+            agent_core::attachments::MAX_PER_MESSAGE
+        )));
+    }
+    for att in &input.attachment_ids {
+        agent_core::attachments::meta(s.storage().data_dir(), chat.id, *att)?;
+    }
+    let text = agent_core::attachments::with_marker(&input.text, &input.attachment_ids);
     let mode = match input.mode {
         Mode::Steer => MessageMode::Steer,
         Mode::Queue => MessageMode::Queue,
@@ -993,16 +1017,15 @@ pub(crate) async fn send_message(
     } else {
         "local_api"
     };
-    let (delivery, run_id) =
-        match s
-            .agent()
-            .send_user_message_from(chat.id, &input.text, mode, source)?
-        {
-            Delivery::NewTurn(r) => (DeliveryKind::NewTurn, Some(r.0)),
-            Delivery::Steered(r) => (DeliveryKind::Steered, Some(r.0)),
-            Delivery::Queued => (DeliveryKind::Queued, None),
-            Delivery::Stopped(r) => (DeliveryKind::Stopped, Some(r.0)),
-        };
+    let (delivery, run_id) = match s
+        .agent()
+        .send_user_message_from(chat.id, &text, mode, source)?
+    {
+        Delivery::NewTurn(r) => (DeliveryKind::NewTurn, Some(r.0)),
+        Delivery::Steered(r) => (DeliveryKind::Steered, Some(r.0)),
+        Delivery::Queued => (DeliveryKind::Queued, None),
+        Delivery::Stopped(r) => (DeliveryKind::Stopped, Some(r.0)),
+    };
     Ok((
         StatusCode::ACCEPTED,
         Json(SendResponse { delivery, run_id }),

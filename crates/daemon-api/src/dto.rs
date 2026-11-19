@@ -286,6 +286,26 @@ pub struct MessageDto {
     /// `local_api`); absent for older messages and for replies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// Files attached to a user message.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentDto>,
+}
+
+/// A file attached to a chat message (`POST /v1/chats/{id}/attachments`).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AttachmentDto {
+    /// Attachment id.
+    pub id: Uuid,
+    /// Display name.
+    pub name: String,
+    /// Sniffed media type.
+    pub mime_type: String,
+    /// `image` (sent to the model as a picture), `document` or `text` (sent as text).
+    pub kind: String,
+    /// Original size in bytes.
+    pub size: u64,
+    /// Only the start of the text was given to the model.
+    pub truncated: bool,
 }
 
 /// What a run cost, read from the usage ledger (`GET /v1/runs/{id}/usage`).
@@ -322,6 +342,10 @@ pub struct SendMessage {
     /// Behaviour while a turn is running.
     #[serde(default)]
     pub mode: Mode,
+    /// Ids returned by `POST /v1/chats/{id}/attachments` for this chat (at most 6). The text
+    /// may be empty when files are attached.
+    #[serde(default)]
+    pub attachment_ids: Vec<Uuid>,
 }
 
 /// How a sent message was delivered.
