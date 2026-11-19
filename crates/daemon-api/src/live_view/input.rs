@@ -222,6 +222,7 @@ pub(crate) async fn input(
     drop(waiter);
     let _executor = executor;
     let (target, generation, _) = live.session(&actor, id)?;
+    live.touch(id);
     let batch: InputBatch = match parse(&body) {
         Ok(b) => b,
         Err(e) => {
@@ -369,7 +370,9 @@ pub(crate) async fn input(
         let task_actor = actor.clone();
         let takeover = t.info.id;
         let epoch = t.info.control_epoch;
-        let geometry = event.positional().then_some(batch.geometry_revision);
+        let batch_generation = batch.generation;
+        let batch_revision = batch.geometry_revision;
+        let geometry = event.positional().then_some(batch_revision);
         live.pending_input
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let pending = PendingInput(std::sync::Arc::clone(&live.pending_input));
@@ -401,7 +404,8 @@ pub(crate) async fn input(
             let result = if matches!(event_to_apply, InputEvent::Reset) {
                 sink.release_pressed_inputs().await
             } else {
-                sink.inject(&event_to_apply).await
+                sink.inject_at_revision(&event_to_apply, batch_generation, batch_revision)
+                    .await
             };
             if let Some(inner) = weak.upgrade() {
                 let state = AppState(inner);

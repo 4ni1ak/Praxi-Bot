@@ -1,219 +1,279 @@
-import { Globe, Maximize2, Monitor } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { Eye, Globe, Maximize2, Server, Terminal, Monitor } from "lucide-react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Button } from "ui";
-import {
-  isActivelyOwningTakeover,
-  summarizeTarget,
-  visibleActions
-} from "../lib/liveViewState";
-import { useLiveView } from "../state/LiveViewContext";
+import { isActivelyOwningTakeover, visibleActions } from "../lib/liveViewState";
+import { useLiveView, useLocalLiveView } from "../state/LiveViewContext";
+import { useTranslation } from "react-i18next";
+import { type ComputerSide, hasBothComputers } from "../lib/botComputer";
+import { formatLive, type ComputerView, type UnavailableReason } from "../lib/computerView";
+import { noScreenDetailKey } from "../lib/computerLabel";
+import { useDaemon } from "../state/DaemonContext";
+import { useServerTerminal } from "../state/ServerTerminalContext";
+import { useComputerView } from "../state/useComputerView";
+import { BotGradient } from "./BotGradient";
 import styles from "./BotComputerBlock.module.css";
 
-function panelTone(
-  hasTarget: boolean,
-  viewState: string,
-  unavailable: boolean
-): "watch" | "active" | "acquiring" | "paused" | "idle" {
-  if (!hasTarget || unavailable || viewState === "unavailable") {
-    return "idle";
-  }
-  if (viewState === "active") {
-    return "active";
-  }
-  if (viewState === "acquiring") {
-    return "acquiring";
-  }
-  if (viewState === "paused") {
-    return "paused";
-  }
-  return "watch";
+/** This computer's system, for the status line ("Windows · bot burada çalışıyor"). */
+function thisSystem(): string {
+  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  return /Windows/i.test(ua) ? "Windows" : /Mac/i.test(ua) ? "macOS" : /Linux|X11/i.test(ua) ? "Linux" : "";
 }
 
-export function BotComputerBlock() {
+function reasonKey(reason: UnavailableReason | null): { key: string; detail?: string } {
+  if (reason && typeof reason === "object") {
+    return "noScreen" in reason
+      ? { key: "computerCard.reason.noScreen", detail: noScreenDetailKey(reason.noScreen) }
+      : "streamError" in reason
+        ? { key: `liveView.errors.${reason.streamError}` }
+        : { key: `liveView.reasons.${reason.targetReason}` };
+  }
+  return { key: `computerCard.reason.${reason ?? "failed"}` };
+}
+
+/** The elapsed "CANLI 0:42" label: ticks once a second while live. */
+function LiveClock({ since }: { since: number | null }) {
   const { t } = useTranslation();
-  const {
-    selectedTarget,
-    state,
-    frameUrl,
-    panelAction,
-    openViewer,
-    releaseTakeover,
-    retryRelease,
-    controlState,
-    recoveryPrompt,
-    recoverTakeover,
-    clearPause,
-    isLocalClient
-  } = useLiveView();
-  const panelActions = visibleActions(state, controlState, isLocalClient).panel;
-  // Control can outlive the viewer (a failed hand-back keeps it): never leave the
-  // bot paused with only a status pill, always offer Bitirdim here too.
-  const releasePending = state.pendingRequest?.kind === "release";
-  const showRelease = isActivelyOwningTakeover(state) || releasePending;
-
-  const summary = selectedTarget ? summarizeTarget(selectedTarget) : null;
-  const tone = panelTone(
-    Boolean(selectedTarget),
-    state.viewState,
-    Boolean(summary && !summary.available)
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <span className={styles.rec} data-testid="bot-computer-live">
+      {t("computerCard.live")} {formatLive(since ? now - since : 0)}
+    </span>
   );
+}
 
-  const summaryKey = !selectedTarget
-    ? "liveView.panelSummary.empty"
-    : state.viewState === "active"
-      ? "liveView.panelSummary.active"
-      : state.viewState === "acquiring"
-        ? "liveView.panelSummary.acquiring"
-        : state.viewState === "paused"
-          ? "liveView.panelSummary.paused"
-          : summary && !summary.available
-            ? "liveView.panelSummary.unavailable"
-            : "liveView.panelSummary.watch";
+/**
+ * The computer card (design v7): the computer the bot RUNS ON in one small card. It never opens a
+ * live session by itself: idle shows the bot's grainy gradient and one button; the screen is only
+ * produced while the owner looks (`useComputerView` decides the states and ends the view).
+ */
+export function BotComputerBlock({
+  botId,
+  botColor,
+  visible
+}: {
+  botName?: string;
+  botId?: string | null;
+  /** The bot's own colour (hex), the gradient's source. */
+  botColor?: string;
+  /** The panel is open: closing it ends the view. */
+  visible: boolean;
+}) {
+  const { t } = useTranslation();
+  const serverTerminal = useServerTerminal();
+  const { home, workLocalNow, hostList, activeHostName } = useDaemon();
+  const both = hasBothComputers(home, workLocalNow);
+  const homeLink = home.kind === "host" ? (hostList?.hosts.find((h) => h.id === home.hostId) ?? null) : null;
+  const pcAllowed = homeLink?.computer_access === true;
+  const [side, setSide] = useState<ComputerSide>("bot");
+  const showSwitch = both && pcAllowed;
+  const showingMine = showSwitch && side === "mine";
+  const server = home.kind === "host" && !workLocalNow && !showingMine;
+  const view = useComputerView({ visible, botId, side: showingMine ? "mine" : "bot" });
+  const serverName = activeHostName ?? (home.kind === "host" ? home.name : "") ?? "";
+  const name = server ? serverName || t("computerPicker.host") : t("computerCard.thisComputer");
+  const offline = view.kind === "unavailable" && (view.unavailable === "offline" || view.unavailable === "notPaired" || view.unavailable === "version");
+  const system = thisSystem();
+  const status = server
+    ? offline
+      ? t("computerCard.status.serverOffline")
+      : t("computerCard.status.serverOnline")
+    : system
+      ? t("computerCard.status.local", { system })
+      : t("computerCard.status.localNoSystem");
+  const { key: rk, detail } = reasonKey(view.unavailable);
+  const reason = t(rk, {
+    name: serverName || t("computerPicker.host"),
+    detail: detail ? t(detail) : "",
+    defaultValue: t("computerCard.reason.failed")
+  });
 
-  const KindIcon = selectedTarget?.kind === "browser" ? Globe : Monitor;
+  // Control can outlive the view (a paused latch, a failed hand-back): never leave the bot paused
+  // with nothing to press, so these recovery actions stay on the card whatever the view says.
+  const homeLive = useLiveView();
+  const localLive = useLocalLiveView();
+  const live = showingMine ? localLive : homeLive;
+  const panelActions = visibleActions(live.state, live.controlState, live.isLocalClient).panel;
+  const releasePending = live.state.pendingRequest?.kind === "release";
+  const showRelease = isActivelyOwningTakeover(live.state) || releasePending;
+  const showPause = panelActions.includes("clear_pause") && !showRelease && !live.pauseClearing;
 
-  const actionPercent =
-    panelAction?.rect && state.latestFrame?.sourceRect
-      ? {
-          left: `${Math.min(
-            95,
-            Math.max(
-              5,
-              ((panelAction.rect.x + panelAction.rect.width / 2) /
-                Math.max(1, state.latestFrame.sourceRect.width)) *
-                100
-            )
-          )}%`,
-          top: `${Math.min(
-            95,
-            Math.max(
-              5,
-              ((panelAction.rect.y + panelAction.rect.height / 2) /
-                Math.max(1, state.latestFrame.sourceRect.height)) *
-                100
-            )
-          )}%`
-        }
-      : null;
+  const hint =
+    view.kind === "idle"
+      ? t("computerCard.hint.idle")
+      : view.kind === "starting"
+        ? t("computerCard.hint.starting")
+        : view.kind === "paused"
+          ? t("computerCard.hint.paused")
+          : view.kind === "timeout"
+            ? view.unavailable === "timeout" ? reason : `${t("computerCard.reason.timeout")}. ${reason}`
+            : view.kind === "unavailable" ? reason : "";
+
+  let body: ReactNode = null;
+  if (view.kind === "idle") {
+    body = (
+      <button type="button" className={styles.cta} data-testid="bot-computer-show" onClick={view.start}>
+        <Eye aria-hidden="true" />
+        {t("computerCard.show")}
+      </button>
+    );
+  } else if (view.kind === "starting") {
+    body = <span className={styles.spin} role="status" aria-label={t("computerCard.connecting")} />;
+  } else if (view.kind === "paused") {
+    body = (
+      <button type="button" className={styles.cta} data-testid="bot-computer-resume" onClick={view.start}>
+        <Eye aria-hidden="true" />
+        {t("computerCard.resume")}
+      </button>
+    );
+  } else if (view.kind === "unavailable" || view.kind === "timeout") {
+    body = (
+      <button type="button" className={styles.cta} data-testid="bot-computer-retry" onClick={view.start}>
+        {t("computerCard.retry")}
+      </button>
+    );
+  }
 
   return (
-    <section className={styles.block} aria-labelledby="bot-panel-computer">
-      <div className={styles.head}>
-        <h3 className={styles.label} id="bot-panel-computer">
-          {t("botPanel.computer")}
-        </h3>
-        <span className={styles.statusPill} data-testid="bot-computer-status">
-          <i className={styles.dot} data-tone={tone} aria-hidden="true" />
-          <span>{t(summaryKey)}</span>
-        </span>
-      </div>
-
-      <button
-        type="button"
-        className={styles.card}
-        data-testid="bot-computer-open"
-        aria-label={t("liveView.expand")}
-        onClick={() => openViewer(selectedTarget?.target_id)}
-      >
-        <div className={styles.preview}>
-          {frameUrl ? (
-            <img
-              className={styles.thumb}
-              src={frameUrl}
-              alt={t("liveView.stageAlt", {
-                target: selectedTarget
-                  ? t(`liveView.kind.${selectedTarget.kind}`)
-                  : t("botPanel.computer")
-              })}
-              draggable={false}
-            />
-          ) : (
-            <div className={styles.placeholder}>
-              <KindIcon aria-hidden="true" />
-              <span>
-                {summary?.reason
-                  ? t(`liveView.reasons.${summary.reason}`, {
-                      defaultValue: t("liveView.reasons.unavailable")
-                    })
-                  : t("liveView.noTargets")}
-              </span>
+    <section
+      className={styles.block}
+      aria-labelledby="bot-panel-computer"
+      data-testid="bot-computer"
+      data-kind={view.kind}
+      onPointerMove={view.touch}
+      onPointerDown={view.touch}
+      onKeyDown={view.touch}
+    >
+      <h3 className={styles.label} id="bot-panel-computer">
+        {t("computerCard.title")}
+      </h3>
+      <div className={styles.pc} data-computer={server ? "host" : showingMine ? "mine" : "local"}>
+        <div className={styles.head}>
+          {server ? <Server aria-hidden="true" className={styles.headIcon} /> : <Monitor aria-hidden="true" className={styles.headIcon} />}
+          <div className={styles.title}>
+            <b data-testid="bot-computer-where">{name}</b>
+            <small data-testid="bot-computer-status">
+              <i className={styles.dot} data-offline={offline ? "true" : undefined} aria-hidden="true" />
+              <span>{status}</span>
+            </small>
+          </div>
+          {showSwitch ? (
+            <div className={styles.who} role="group" aria-label={t("botPanel.switcher")}>
+              {(["bot", "mine"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  aria-pressed={side === s}
+                  data-testid={`bot-computer-side-${s}`}
+                  onClick={() => setSide(s)}
+                >
+                  {t(s === "bot" ? "computerCard.sideBot" : "computerCard.sideMine")}
+                </button>
+              ))}
             </div>
-          )}
-          {actionPercent ? (
-            <span
-              className={styles.actionDot}
-              style={actionPercent}
-              aria-hidden="true"
-            />
           ) : null}
-          <span className={styles.expandTag} aria-hidden="true">
-            <Maximize2 />
-          </span>
         </div>
 
-        <div className={styles.footer}>
-          <span className={styles.meta}>
-            <KindIcon aria-hidden="true" />
-            <span className={styles.host}>
-              {selectedTarget
-                ? `${t(`liveView.kind.${selectedTarget.kind}`)} · ${selectedTarget.host_id}`
-                : t("botPanel.computer")}
-            </span>
-          </span>
-          <span className={styles.cap}>
-            {summary?.available
-              ? summary.canInput
-                ? t("liveView.interactive")
-                : t("liveView.viewOnly")
-              : t("liveView.states.unavailable")}
-          </span>
+        <div className={styles.view} data-kind={view.kind} data-testid="bot-computer-view">
+          {view.kind === "live" && view.frameUrl ? (
+            <>
+              <img className={styles.frame} src={view.frameUrl} alt={t("computerCard.frameAlt", { name })} title={t("liveView.privacyNotice")} draggable={false} />
+              <LiveClock since={view.liveSinceMs} />
+              <div className={styles.over}>
+                <button type="button" data-testid="bot-computer-big" onClick={view.bigView}>
+                  <Maximize2 aria-hidden="true" />
+                  {t("computerCard.big")}
+                </button>
+                <button type="button" data-testid="bot-computer-take" onClick={view.takeControl}>
+                  {t("computerCard.take")}
+                </button>
+                <button type="button" data-testid="bot-computer-close" onClick={view.stop}>
+                  {t("computerCard.close")}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              {view.previewUrl ? (
+                <img className={styles.frame} src={view.previewUrl} alt="" draggable={false} />
+              ) : (
+                <BotGradient color={botColor} still={view.kind === "paused" || view.kind === "unavailable" || view.kind === "timeout"} />
+              )}
+              {body}
+              {hint ? <div className={styles.hint}>{hint}</div> : null}
+            </>
+          )}
         </div>
-      </button>
 
-      {panelActions.includes("clear_pause") && !showRelease ? (
-        <div className={styles.release} data-testid="bot-computer-paused-actions">
-          {recoveryPrompt?.mode === "reacquire" ? (
+        {showPause ? (
+          <div className={styles.control} data-testid="bot-computer-paused-actions">
+            {live.recoveryPrompt?.mode === "reacquire" ? (
+              <Button variant="primary" size="sm" data-testid="bot-computer-reacquire" onClick={() => void live.recoverTakeover()}>
+                {t("liveView.reacquireAction")}
+              </Button>
+            ) : null}
+            <Button
+              variant={live.recoveryPrompt?.mode === "reacquire" ? "secondary" : "primary"}
+              size="sm"
+              data-testid="bot-computer-clear-pause"
+              onClick={() => void live.clearPause("own")}
+            >
+              {t("liveView.clearPauseAction")}
+            </Button>
+          </div>
+        ) : null}
+        {showRelease ? (
+          <div className={styles.control}>
             <Button
               variant="primary"
               size="sm"
-              data-testid="bot-computer-reacquire"
-              onClick={() => void recoverTakeover()}
+              data-testid="bot-computer-release"
+              disabled={releasePending && !live.state.lastError}
+              onClick={() => void (releasePending && live.state.lastError ? live.retryRelease() : live.releaseTakeover(null))}
             >
-              {t("liveView.reacquireAction")}
+              {releasePending && live.state.lastError
+                ? t("liveView.retryDone")
+                : releasePending
+                  ? t("liveView.retryingDone")
+                  : t("liveView.doneAction")}
             </Button>
-          ) : null}
-          <Button
-            variant={recoveryPrompt?.mode === "reacquire" ? "secondary" : "primary"}
-            size="sm"
-            data-testid="bot-computer-clear-pause"
-            onClick={() => void clearPause("own")}
-          >
-            {t("liveView.clearPauseAction")}
-          </Button>
-        </div>
-      ) : null}
+          </div>
+        ) : null}
 
-      {showRelease ? (
-        <div className={styles.release}>
-          <Button
-            variant="primary"
-            size="sm"
-            data-testid="bot-computer-release"
-            onClick={() =>
-              void (releasePending && state.lastError
-                ? retryRelease()
-                : releaseTakeover(null))
-            }
-            disabled={releasePending && !state.lastError}
-          >
-            {releasePending && state.lastError
-              ? t("liveView.retryDone")
-              : releasePending
-                ? t("liveView.retryingDone")
-                : t("liveView.doneAction")}
-          </Button>
+        <div className={styles.foot}>
+          {server && serverTerminal.available ? (
+            <button
+              type="button"
+              className={styles.lnk}
+              data-testid="bot-computer-terminal"
+              onClick={() => serverTerminal.open()}
+            >
+              <Terminal aria-hidden="true" />
+              {t("computerCard.terminal")}
+            </button>
+          ) : null}
+          <button type="button" className={styles.lnk} data-testid="bot-computer-browser" onClick={view.openBrowser}>
+            <Globe aria-hidden="true" />
+            {t("computerCard.browser")}
+          </button>
+          <ViewNote view={view} />
         </div>
-      ) : null}
+      </div>
     </section>
   );
+}
+
+/** Right-aligned note: resolution and rate while live, "duraklatıldı" while paused. */
+function ViewNote({ view }: { view: ComputerView }) {
+  const { t } = useTranslation();
+  const note =
+    view.kind === "live"
+      ? [view.resolution, view.fps ? t("computerCard.fps", { fps: view.fps }) : null].filter(Boolean).join(" · ")
+      : view.kind === "paused"
+        ? t("computerCard.pausedNote")
+        : "";
+  return note ? <span className={styles.note}>{note}</span> : <span className={styles.note} />;
 }

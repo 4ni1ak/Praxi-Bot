@@ -15,9 +15,9 @@ use axum::{
     http::StatusCode,
 };
 use live_view::{
-    Codec, CreateSession, EffectiveProfile, Heartbeat, HumanAction, Profile, Reason,
+    Codec, CreateSession, EffectiveProfile, FrameAck, Heartbeat, HumanAction, Profile, Reason,
     ReleaseRequest, SessionInfo, SessionUpdate, TakeoverAccepted, TakeoverRequest, TargetInfo,
-    TargetKind, TargetRegistry, ViewError, ViewState, ViewTarget,
+    TargetKind, TargetRegistry, TargetUnavailable, ViewError, ViewState, ViewTarget,
 };
 use parking_lot::Mutex;
 use std::{
@@ -30,6 +30,33 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub const SESSION_TTL: Duration = Duration::from_secs(30);
+/// A live session whose viewer shows no sign of life (hidden or unfocused window,
+/// no input) this long is ended by the host, so it stops producing images.
+pub const VIEW_IDLE_TIMEOUT: Duration = Duration::from_secs(3 * 60);
+/// No live session runs longer than this, whatever its viewer does.
+pub const VIEW_HARD_CAP: Duration = Duration::from_secs(30 * 60);
+/// A thumbnail of a target is captured at most this often; in between the last
+/// one is served again, so a visible panel costs one frame a minute at most.
+const THUMBNAIL_MIN_INTERVAL: Duration = Duration::from_secs(30);
+/// How long a thumbnail request waits for its single frame.
+const THUMBNAIL_WAIT: Duration = Duration::from_secs(4);
+
+/// A captured still: when, in which codec, the bytes.
+type Thumbnail = (Instant, Codec, Arc<[u8]>);
+
+#[derive(Clone, Copy)]
+pub(crate) struct ViewLimits {
+    pub idle: Duration,
+    pub hard_cap: Duration,
+}
+impl Default for ViewLimits {
+    fn default() -> Self {
+        Self {
+            idle: VIEW_IDLE_TIMEOUT,
+            hard_cap: VIEW_HARD_CAP,
+        }
+    }
+}
 /// Identity is installed only after loopback or trusted transport authentication.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Actor {
@@ -37,6 +64,10 @@ pub struct Actor {
     pub(crate) recovery: bool,
     /// The authenticated local installation (loopback bearer), never a peer.
     pub(crate) local: bool,
+    /// A paired desktop holding host administration (`Device::admin`) on a host,
+    /// read from the device list for THIS request. Such a desktop may watch and
+    /// drive the host's screen without a manual grant (see [`LiveView::allowed`]).
+    pub(crate) admin: bool,
 }
 impl Actor {
     pub(crate) fn local(s: &AppState) -> Self {
@@ -44,6 +75,7 @@ impl Actor {
             key: format!("local-ui:{}", s.user_id()),
             recovery: true,
             local: true,
+            admin: false,
         }
     }
     pub(crate) fn peer(p: &crate::PeerIdentity) -> Self {
@@ -51,10 +83,19 @@ impl Actor {
             key: format!("peer:{}", p.key),
             recovery: p.role == crate::PeerRole::Desktop,
             local: false,
+            admin: false,
+        }
+    }
+    /// A paired peer as seen by THIS daemon right now: the admin desktop of a host
+    /// carries `admin`.
+    pub(crate) fn peer_for(s: &AppState, p: &crate::PeerIdentity) -> Self {
+        Self {
+            admin: s.is_host_admin(Some(p)),
+            ..Self::peer(p)
         }
     }
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ScreenPrivileges {
     pub view: bool,
     pub input: bool,
@@ -73,9 +114,17 @@ struct Session {
     generation: u64,
     profile: EffectiveProfile,
     expires: Instant,
+    /// When the session was created (hard cap) and when its viewer last showed
+    /// a sign of life (idle limit): an active heartbeat, or input.
+    started: Instant,
+    last_active: Instant,
     stream: Option<CancellationToken>,
     geometry: Option<(u64, u64, Instant)>, // revision, frame seq, last live frame
     rendered: Option<u64>,
+    /// The newest frame the viewer reported on screen through `/ack`, and when.
+    acked: Option<(u64, Instant)>,
+    /// Wakes the frame stream when an ack arrives.
+    ack_notify: Arc<tokio::sync::Notify>,
     healthy_since: Option<Instant>,
     next_seq: u64,
     duplicates: VecDeque<input::Duplicate>,
@@ -87,6 +136,13 @@ pub struct LiveView {
     pub registry: Arc<TargetRegistry>,
     sessions: Mutex<BTreeMap<Uuid, Session>>,
     privileges: Mutex<BTreeMap<String, ScreenPrivileges>>,
+    limits: Mutex<ViewLimits>,
+    /// Why each actor's last live session ended, while that is the news
+    /// ("paused to save resources"); cleared when the actor starts a new one.
+    ended: Mutex<BTreeMap<String, Reason>>,
+    /// Latest thumbnail per target: capture time, codec, bytes.
+    thumbnails: Mutex<BTreeMap<Uuid, Thumbnail>>,
+    thumbnail_gate: tokio::sync::Mutex<()>,
     executor: tokio::sync::Mutex<()>,
     rates: Mutex<BTreeMap<String, input::Rate>>,
     pending_input: Arc<std::sync::atomic::AtomicUsize>,
@@ -114,6 +170,12 @@ pub struct LiveView {
     #[cfg(test)]
     release_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
+/// Per-device screen grants kept in the data dir (see `set_screen_privileges`).
+const PRIVILEGES_FILE: &str = "view-privileges.json";
+/// Paired devices whose screen access the host's owner switched OFF. Kept apart
+/// from the grants so a restart does not turn the admin desktop's default
+/// allowance back on for a device the owner revoked.
+const DENIED_FILE: &str = "view-privileges-denied.json";
 /// Input batches that may queue for the executor: per session and in total.
 /// Beyond that the answer is `input_busy` at once.
 const INPUT_WAITERS_PER_SESSION: usize = 4;
@@ -161,6 +223,27 @@ impl LiveView {
         })
     }
 
+    /// The viewer of `id` showed a sign of life.
+    pub(crate) fn touch(&self, id: Uuid) {
+        if let Some(s) = self.sessions.lock().get_mut(&id) {
+            s.last_active = Instant::now();
+        }
+    }
+
+    /// Why a session of `id` should end now, by the idle or hard limit.
+    pub(crate) fn limit_reached(&self, id: Uuid) -> Option<Reason> {
+        let limits = *self.limits.lock();
+        let sessions = self.sessions.lock();
+        let s = sessions.get(&id)?;
+        if s.started.elapsed() >= limits.hard_cap {
+            Some(Reason::TimeLimit)
+        } else if s.last_active.elapsed() >= limits.idle {
+            Some(Reason::ViewerIdle)
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn capture_targets(&self) -> std::collections::BTreeSet<Uuid> {
         self.sessions
             .lock()
@@ -183,21 +266,21 @@ impl LiveView {
         self.privileges.lock().insert(actor, privileges);
     }
     pub(crate) fn allowed(&self, actor: &Actor, input: bool) -> bool {
-        // The local user may watch and drive by default. A paired device has
-        // neither until the local user grants it, per device.
-        let p = self
-            .privileges
-            .lock()
-            .get(&actor.key)
-            .copied()
-            .unwrap_or(if actor.local {
+        // The local user may watch and drive by default, and so may the paired
+        // ADMIN desktop of a host (the owner's own computer: nobody should have
+        // to type a server command to see the bots' screen). An explicit entry
+        // (a revoke made on the host, which is stored) always wins. Any other
+        // paired device has neither until the host's owner grants it.
+        let p = self.privileges.lock().get(&actor.key).copied().unwrap_or(
+            if actor.local || actor.admin {
                 ScreenPrivileges::default()
             } else {
                 ScreenPrivileges {
                     view: false,
                     input: false,
                 }
-            });
+            },
+        );
         p.view && (!input || p.input)
     }
     fn session(&self, actor: &Actor, id: Uuid) -> Result<(Uuid, u64, EffectiveProfile), ApiError> {
@@ -354,9 +437,201 @@ pub(crate) async fn targets(
         )?;
         return Err(ApiError::forbidden("screen:view denied"));
     }
+    // A missing desktop is looked for again (bounded, off the request path).
+    s.live_view().registry.request_reprobe();
     Ok(Json(s.live_view().registry.targets()))
 }
+/// Which kinds of screen this host cannot offer and why (empty when none is
+/// missing), so the panel can say "No screen: <reason>". Same access rule as
+/// `GET /v1/view/targets`; no pixels, no paths.
+#[utoipa::path(get,path="/v1/view/availability",tag="view",security(("bearer"=[])),responses((status=200,body=Vec<TargetUnavailable>)))]
+pub(crate) async fn availability(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+) -> Result<Json<Vec<TargetUnavailable>>, ApiError> {
+    if !s.live_view().allowed(&actor, false) {
+        audit(
+            &s,
+            &actor,
+            "view.denied",
+            serde_json::json!({"reason":"privilege"}),
+        )?;
+        return Err(ApiError::forbidden("screen:view denied"));
+    }
+    s.live_view().registry.request_reprobe();
+    Ok(Json(s.live_view().registry.unavailable()))
+}
+/// Where this viewer stands with the screen stream: idle (nothing runs), starting, live,
+/// paused by the idle limit, or unavailable (with a fixed reason code). Same access rule
+/// as `GET /v1/view/targets`; reading it never starts capture.
+#[utoipa::path(get,operation_id="view_status",path="/v1/view/status",tag="view",security(("bearer"=[])),responses((status=200,body=live_view::ScreenStatus)))]
+pub(crate) async fn status(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+) -> Result<Json<live_view::ScreenStatus>, ApiError> {
+    use live_view::{ScreenStatus, ScreenStreamState as St, UnavailableCode};
+    let live = s.live_view();
+    if !live.allowed(&actor, false) {
+        audit(
+            &s,
+            &actor,
+            "view.denied",
+            serde_json::json!({"reason":"privilege"}),
+        )?;
+        return Err(ApiError::forbidden("screen:view denied"));
+    }
+    let limits = *live.limits.lock();
+    let (mine, streaming) = {
+        let sessions = live.sessions.lock();
+        let mine: Vec<_> = sessions.values().filter(|x| x.actor == actor.key).collect();
+        (!mine.is_empty(), mine.iter().any(|x| x.stream.is_some()))
+    };
+    let offered = live
+        .registry
+        .targets()
+        .iter()
+        .any(|t| t.capabilities.view && t.unavailable_reason.is_none());
+    let (state, reason) = if streaming {
+        (St::Live, None)
+    } else if mine {
+        (St::Starting, None)
+    } else if !offered {
+        let code = live
+            .registry
+            .unavailable()
+            .first()
+            .map_or(UnavailableCode::Starting, |n| n.code);
+        (St::Unavailable, Some(code))
+    } else if live.ended.lock().contains_key(&actor.key) {
+        (St::PausedIdle, None)
+    } else {
+        (St::Idle, None)
+    };
+    Ok(Json(ScreenStatus {
+        state,
+        reason,
+        idle_timeout_secs: limits.idle.as_secs(),
+        hard_cap_secs: limits.hard_cap.as_secs(),
+    }))
+}
+
+/// One still image of a screen, for the small preview in the panel. It is NOT a session:
+/// the host captures a single frame (then stops capturing) and serves that frame again for
+/// 30 s, so a visible panel costs at most one frame per refresh. Same access rule as
+/// `GET /v1/view/targets`.
+#[utoipa::path(get,operation_id="view_thumbnail",path="/v1/view/targets/{id}/thumbnail",tag="view",security(("bearer"=[])),params(("id"=Uuid,Path)),responses((status=200,content_type="image/jpeg",body=Vec<u8>),(status=404,body=crate::error::ErrorBody),(status=503,body=crate::error::ErrorBody)))]
+pub(crate) async fn thumbnail(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<Uuid>,
+) -> Result<axum::response::Response, ApiError> {
+    let live = Arc::clone(s.live_view());
+    if !live.allowed(&actor, false) {
+        audit(
+            &s,
+            &actor,
+            "view.denied",
+            serde_json::json!({"reason":"privilege"}),
+        )?;
+        return Err(ApiError::forbidden("screen:view denied"));
+    }
+    let target = live
+        .registry
+        .get(id)
+        .ok_or_else(|| ApiError::not_found("view target"))?;
+    let info = target.info();
+    if !info.capabilities.view
+        || info.unavailable_reason.is_some()
+        || !info.capabilities.codecs.contains(&Codec::Jpeg)
+    {
+        return Err(ApiError::unavailable("target unavailable"));
+    }
+    let fresh = |live: &LiveView| {
+        live.thumbnails
+            .lock()
+            .get(&id)
+            .filter(|(at, _, _)| at.elapsed() < THUMBNAIL_MIN_INTERVAL)
+            .map(|(_, codec, bytes)| (codec.clone(), Arc::clone(bytes)))
+    };
+    // One capture at a time; whoever waits behind it reuses its frame.
+    let _gate = live.thumbnail_gate.lock().await;
+    let (codec, bytes) = if let Some(hit) = fresh(&live) {
+        hit
+    } else {
+        deny_foreign_bot_target(&s, &actor, None, &info)?;
+        audit(
+            &s,
+            &actor,
+            "view.thumbnail",
+            serde_json::json!({"target_id":id}),
+        )?;
+        let source = target.frame_source();
+        let mut profile = EffectiveProfile::watch();
+        profile.max_width = profile.max_width.min(640);
+        profile.max_height = profile.max_height.min(400);
+        profile.quality = profile.quality.min(70);
+        let subscription = bounded(source.subscribe(profile)).await?;
+        let _ = bounded(source.request_refresh(0)).await;
+        let mut frames = subscription.frames.clone();
+        let frame = tokio::time::timeout(THUMBNAIL_WAIT, async {
+            loop {
+                let latest = frames.borrow_and_update().clone();
+                if let Some(frame) = latest {
+                    break Some(frame);
+                }
+                if frames.changed().await.is_err() {
+                    break None;
+                }
+            }
+        })
+        .await
+        .ok()
+        .flatten();
+        // Capture ends with the last subscription: dropped before anything is answered.
+        drop(subscription);
+        let frame = frame.ok_or_else(|| ApiError::unavailable("no frame yet"))?;
+        let bytes: Arc<[u8]> = Arc::clone(&frame.payload);
+        let codec = frame.metadata.codec.clone();
+        live.thumbnails
+            .lock()
+            .insert(id, (Instant::now(), codec.clone(), Arc::clone(&bytes)));
+        (codec, bytes)
+    };
+    let media = if codec == Codec::Webp {
+        "image/webp"
+    } else {
+        "image/jpeg"
+    };
+    axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, media)
+        .header(axum::http::header::CACHE_CONTROL, "no-store")
+        .body(axum::body::Body::from(bytes.to_vec()))
+        .map_err(ApiError::internal)
+}
+
+/// A bot-scoped panel may only open its own bot's browser or a shared desktop.
+fn deny_foreign_bot_target(
+    s: &AppState,
+    actor: &Actor,
+    asking: Option<Uuid>,
+    info: &TargetInfo,
+) -> Result<(), ApiError> {
+    if let (Some(asking), Some(owner)) = (asking, info.bot_id)
+        && asking != owner
+    {
+        audit(
+            s,
+            actor,
+            "view.denied",
+            serde_json::json!({"target_id":info.target_id,"reason":"bot_scope"}),
+        )?;
+        return Err(ApiError::forbidden("target belongs to another bot"));
+    }
+    Ok(())
+}
 #[utoipa::path(post,path="/v1/view/sessions",tag="view",security(("bearer"=[])),request_body=CreateSession,responses((status=201,body=SessionInfo)))]
+#[allow(clippy::too_many_lines)] // One session row is built in one place.
 pub(crate) async fn create_session(
     State(s): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -378,6 +653,7 @@ pub(crate) async fn create_session(
         .get(i.target_id)
         .ok_or_else(|| ApiError::not_found("view target"))?;
     let info = target.info();
+    deny_foreign_bot_target(&s, &actor, i.bot_id, &info)?;
     if !info.capabilities.view || info.unavailable_reason.is_some() {
         audit(
             &s,
@@ -401,6 +677,7 @@ pub(crate) async fn create_session(
     p.max_width = p.max_width.min(i.max_width);
     p.max_height = p.max_height.min(i.max_height);
     let id = Uuid::now_v7();
+    live.ended.lock().remove(&actor.key);
     {
         let mut sessions = live.sessions.lock();
         // Expired entries are removed by the lifecycle reaper, never revived here.
@@ -434,9 +711,13 @@ pub(crate) async fn create_session(
                 generation: info.generation,
                 profile: p.clone(),
                 expires: Instant::now() + SESSION_TTL,
+                started: Instant::now(),
+                last_active: Instant::now(),
                 stream: None,
                 geometry: None,
                 rendered: None,
+                acked: None,
+                ack_notify: Arc::default(),
                 healthy_since: None,
                 next_seq: 1,
                 duplicates: VecDeque::new(),
@@ -484,7 +765,10 @@ pub(crate) async fn update_session(
         .max_height
         .unwrap_or(old.max_height)
         .clamp(1, p.max_height);
-    p.quality = i.quality.unwrap_or(p.quality).clamp(20, p.quality);
+    p.quality = i.quality.unwrap_or(p.quality).clamp(
+        desktop_api::live_view::QUALITY_FLOOR.min(p.quality),
+        p.quality,
+    );
     p.bytes_per_second = i
         .bytes_per_second
         .unwrap_or(p.bytes_per_second)
@@ -493,10 +777,8 @@ pub(crate) async fn update_session(
     let unhealthy =
         i.decode_ms.is_some_and(|v| v > 100) || i.buffered_frames.is_some_and(|v| v > 1);
     if unhealthy {
-        p.quality = p.quality.min(35);
-        p.max_width = p.max_width.min(640);
-        p.max_height = p.max_height.min(400);
-        p.max_fps = p.max_fps.min(4);
+        // A viewer that cannot keep up gets FEWER frames; picture size and quality stay.
+        p.max_fps = p.max_fps.min(2);
     }
     {
         let mut sessions = live.sessions.lock();
@@ -506,16 +788,13 @@ pub(crate) async fn update_session(
         if unhealthy {
             session.healthy_since = None;
         } else if old.quality < p.quality || old.max_fps < p.max_fps {
+            // Recover in one step after a short healthy spell, not a +5 / 10 s crawl.
             let since = session.healthy_since.get_or_insert_with(Instant::now);
-            if since.elapsed() < Duration::from_secs(10) {
+            if since.elapsed() < Duration::from_secs(2) {
                 p.quality = p.quality.min(old.quality);
                 p.max_width = p.max_width.min(old.max_width);
                 p.max_height = p.max_height.min(old.max_height);
                 p.max_fps = p.max_fps.min(old.max_fps);
-            } else {
-                p.quality = p.quality.min(old.quality.saturating_add(5));
-                p.max_fps = p.max_fps.min(old.max_fps.saturating_add(1));
-                session.healthy_since = Some(Instant::now());
             }
         }
         session.profile = p.clone();
@@ -524,6 +803,28 @@ pub(crate) async fn update_session(
     live.source_profile(target).await?;
     bounded(t.frame_source().request_refresh(0)).await?;
     Ok(Json(p))
+}
+#[utoipa::path(post,path="/v1/view/sessions/{id}/ack",tag="view",security(("bearer"=[])),params(("id"=Uuid,Path)),request_body=FrameAck,responses((status=204)))]
+pub(crate) async fn ack_frame(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<Uuid>,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    let i: FrameAck = parse(&body)?;
+    let live = s.live_view();
+    // Deliberately no executor lock and no refresh: this is sent after every frame.
+    live.session(&actor, id)?;
+    if let Some(session) = live.sessions.lock().get_mut(&id) {
+        if session
+            .acked
+            .is_none_or(|(seq, _)| i.last_rendered_frame_seq >= seq)
+        {
+            session.acked = Some((i.last_rendered_frame_seq, Instant::now()));
+        }
+        session.ack_notify.notify_one();
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 #[utoipa::path(put,path="/v1/view/sessions/{id}/heartbeat",tag="view",security(("bearer"=[])),params(("id"=Uuid,Path)),request_body=Heartbeat,responses((status=204)))]
 pub(crate) async fn heartbeat(
@@ -548,6 +849,12 @@ pub(crate) async fn heartbeat(
     }
     if let Some(session) = live.sessions.lock().get_mut(&id) {
         session.expires = Instant::now() + SESSION_TTL;
+        // A heartbeat that says the viewer is hidden or unfocused keeps the
+        // session alive but does not count as a sign of life (a takeover
+        // owner is always active).
+        if i.active != Some(false) || i.takeover_id.is_some() {
+            session.last_active = Instant::now();
+        }
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -700,6 +1007,9 @@ async fn end_session(
     if let Some(session) = removed {
         if let Some(cancel) = session.stream {
             cancel.cancel();
+        }
+        if matches!(reason, Reason::ViewerIdle | Reason::TimeLimit) {
+            live.ended.lock().insert(actor.key.clone(), reason.clone());
         }
         // Every step runs, whatever an earlier one returns: the session end
         // is audited and the actor's rate state is dropped even if the
@@ -1382,6 +1692,7 @@ fn write_released_audit(s: &AppState, journal: &ReleaseJournal) -> Result<(), Ap
         key: journal.actor.clone(),
         recovery: false,
         local: false,
+        admin: false,
     };
     audit(
         s,
@@ -1505,6 +1816,9 @@ fn flush_note(s: &AppState, journal: &mut ReleaseJournal) -> Result<(), ApiError
                 role: agent_core::control_note::ROLE.into(),
                 content: journal.summary.clone(),
                 created_at_ms: storage::now_ms(),
+                exposure_untrusted: false,
+                exposure_private: false,
+                exposure_sources: Vec::new(),
             })?;
         }
     }
@@ -1536,6 +1850,113 @@ impl AppState {
         actor_key: String,
         privileges: ScreenPrivileges,
     ) -> Result<(), ApiError> {
+        let applied = self.apply_screen_privileges(actor_key, privileges).await;
+        // The grant is persisted so a headless host keeps it across restarts
+        // (nobody is at its screen to grant it again). A failed write never
+        // undoes a revocation that was applied above.
+        let saved = self.persist_screen_privileges().map_err(ApiError::internal);
+        applied.and(saved)
+    }
+
+    /// Forget an explicit "no screen" for a device (a new administrator).
+    pub(crate) fn clear_screen_denial(&self, actor_key: &str) {
+        let removed = {
+            let mut privileges = self.live_view().privileges.lock();
+            if privileges
+                .get(actor_key)
+                .is_some_and(|p| !p.view && !p.input)
+            {
+                privileges.remove(actor_key);
+                true
+            } else {
+                false
+            }
+        };
+        if removed {
+            let _ = self.persist_screen_privileges();
+        }
+    }
+
+    /// The paired-device screen grants that survive a restart (`peer:` keys
+    /// only; the local user's own rights are never stored).
+    fn persist_screen_privileges(&self) -> std::io::Result<()> {
+        let grants: BTreeMap<String, ScreenPrivileges> = self
+            .live_view()
+            .privileges
+            .lock()
+            .iter()
+            .filter(|(k, p)| k.starts_with("peer:") && (p.view || p.input))
+            .map(|(k, p)| (k.clone(), *p))
+            .collect();
+        let denied: Vec<String> = self
+            .live_view()
+            .privileges
+            .lock()
+            .iter()
+            .filter(|(k, p)| k.starts_with("peer:") && !p.view && !p.input)
+            .map(|(k, _)| k.clone())
+            .collect();
+        let dir = self.data_dir();
+        for (name, bytes) in [
+            (PRIVILEGES_FILE, serde_json::to_vec_pretty(&grants)?),
+            (DENIED_FILE, serde_json::to_vec_pretty(&denied)?),
+        ] {
+            let mut file = tempfile::NamedTempFile::new_in(&dir)?;
+            std::io::Write::write_all(&mut file, &bytes)?;
+            file.as_file().sync_all()?;
+            file.persist(dir.join(name)).map_err(|e| e.error)?;
+        }
+        Ok(())
+    }
+
+    /// Load the persisted grants at daemon start. A missing, unreadable or
+    /// malformed file means no grants (fail closed); entries that are not a
+    /// well-formed `peer:<key>` are dropped. Pairing reconciliation still
+    /// revokes grants of devices that are no longer paired.
+    pub async fn load_screen_privileges(&self) -> usize {
+        let well_formed_key = |key: &str| {
+            key.strip_prefix("peer:").is_some_and(|k| {
+                !k.is_empty() && k.len() <= 128 && k.chars().all(|c| c.is_ascii_alphanumeric())
+            })
+        };
+        // Explicit "off" choices come back first, so the admin default cannot undo them.
+        if let Ok(bytes) = std::fs::read(self.data_dir().join(DENIED_FILE))
+            && let Ok(keys) = serde_json::from_slice::<Vec<String>>(&bytes)
+        {
+            for key in keys.into_iter().filter(|k| well_formed_key(k)).take(256) {
+                self.live_view().set_privileges(
+                    key,
+                    ScreenPrivileges {
+                        view: false,
+                        input: false,
+                    },
+                );
+            }
+        }
+        let Ok(bytes) = std::fs::read(self.data_dir().join(PRIVILEGES_FILE)) else {
+            return 0;
+        };
+        let Ok(grants) = serde_json::from_slice::<BTreeMap<String, ScreenPrivileges>>(&bytes)
+        else {
+            return 0;
+        };
+        let mut loaded = 0;
+        for (key, p) in grants {
+            let well_formed = key.strip_prefix("peer:").is_some_and(|k| {
+                !k.is_empty() && k.len() <= 128 && k.chars().all(|c| c.is_ascii_alphanumeric())
+            }) && p.view;
+            if well_formed && self.apply_screen_privileges(key, p).await.is_ok() {
+                loaded += 1;
+            }
+        }
+        loaded
+    }
+
+    async fn apply_screen_privileges(
+        &self,
+        actor_key: String,
+        privileges: ScreenPrivileges,
+    ) -> Result<(), ApiError> {
         let live = self.live_view();
         // A revocation takes effect at once, before the wait for the executor
         // (a long input batch may hold it): only the more restrictive of the
@@ -1560,6 +1981,7 @@ impl AppState {
             key: actor_key.clone(),
             recovery: false,
             local: false,
+            admin: false,
         };
         if (!privileges.view || !privileges.input)
             && let Some(t) = self.hub().takeover().filter(|t| t.actor == actor_key)
@@ -1625,6 +2047,18 @@ impl AppState {
                 },
             )
             .await?;
+        }
+        // A device that is gone has nothing to remember (no stored "off" either).
+        let forgot = {
+            let mut privileges = live.privileges.lock();
+            let before = privileges.len();
+            privileges.retain(|k, p| {
+                !(k.starts_with("peer:") && !paired.contains(k) && !p.view && !p.input)
+            });
+            before != privileges.len()
+        };
+        if forgot {
+            let _ = self.persist_screen_privileges();
         }
         Ok(())
     }

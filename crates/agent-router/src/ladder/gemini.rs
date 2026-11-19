@@ -101,6 +101,14 @@ impl GeminiEmbedder {
 
 #[async_trait]
 impl Embedder for GeminiEmbedder {
+    fn model_name(&self) -> String {
+        format!("gemini/{}", self.model)
+    }
+
+    fn max_batch_size(&self) -> usize {
+        MAX_BATCH
+    }
+
     async fn embed(
         &self,
         texts: &[String],

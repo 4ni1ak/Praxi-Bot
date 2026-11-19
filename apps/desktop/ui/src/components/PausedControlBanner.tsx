@@ -16,10 +16,11 @@ import styles from "./PausedControlBanner.module.css";
  */
 export function PausedControlBanner() {
   const { t } = useTranslation();
-  const { state, controlState, clearPause, openViewer, isLocalClient } =
+  const { state, controlState, clearPause, pauseClearing, openViewer, isLocalClient } =
     useLiveView();
   const actions = visibleActions(state, controlState, isLocalClient).banner;
-  if (actions.length === 0) {
+  // Optimistic: gone the moment the user clicks; a failure brings it back with a toast.
+  if (actions.length === 0 || pauseClearing) {
     return null;
   }
   const foreign = foreignPausedTakeover(state, controlState);

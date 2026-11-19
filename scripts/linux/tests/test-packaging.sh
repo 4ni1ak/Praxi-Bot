@@ -4,6 +4,15 @@
 
 set -euo pipefail
 
+# This test puts fake commands (id, uname, systemctl, ...) on PATH and drives
+# the installers against a sandbox. It is only meaningful, and only safe, on a
+# real Linux host (CI); on Git Bash/MSYS a shim chain once spawned thousands of
+# processes. Refuse to run anywhere else instead of guessing.
+if [[ "${OSTYPE:-}" != linux* ]]; then
+  echo "SKIP: test-packaging.sh runs only on Linux (OSTYPE=${OSTYPE:-unset}); use CI" >&2
+  exit 0
+fi
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 INSTALL_SH="${REPO_ROOT}/scripts/install-linux.sh"
 SETUP_SH="${REPO_ROOT}/scripts/linux/setup-headless.sh"
@@ -106,18 +115,37 @@ sha256sum "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" > "${RELEASE_DIR}/praxi-lin
 printf 'fixture-sigstore\n' > "${RELEASE_DIR}/praxi-linux.sigstore.json"
 
 # Fake system tools
+#
+# Recursion safety: every shim shares ONE exported depth counter (a per-name
+# counter lets uname -> id -> uname chains multiply) and a global invocation
+# budget kept in a file, so neither a self-calling shim nor a fan-out of shims
+# can spawn processes without bound. The shebang is an absolute bash path so
+# starting a shim never does a PATH lookup that could land on another shim.
+BASH_BIN="$(command -v bash)"
+[[ -x "${BASH_BIN}" ]] || fail "could not resolve bash binary"
+SHIM_MAX_DEPTH=6
+SHIM_MAX_CALLS=5000
+SHIM_BUDGET_FILE="${TMP_ROOT}/shim-budget"
+: > "${SHIM_BUDGET_FILE}"
+# The shim text is emitted with printf on purpose: the single-quoted
+# expansions must reach the generated file unexpanded.
+# shellcheck disable=SC2016
 write_fake_shim() {
   local name="$1"
-  local var_name
-  var_name="_PRAXI_FAKE_$(printf '%s' "${name}" | tr '[:lower:]-' '[:upper:]_')_DEPTH"
   {
-    printf '#!/usr/bin/env bash\n'
-    printf '_d="${%s:-0}"\n' "${var_name}"
-    printf 'if [[ "${_d}" -ge 4 ]]; then\n'
+    printf '#!%s\n' "${BASH_BIN}"
+    printf '_d="${_PRAXI_FAKE_DEPTH:-0}"\n'
+    printf 'if [[ "${_d}" -ge %s ]]; then\n' "${SHIM_MAX_DEPTH}"
     printf '  echo "ERROR: fake %s recursion guard triggered (depth=${_d})" >&2\n' "${name}"
     printf '  exit 99\n'
     printf 'fi\n'
-    printf 'export %s=$((_d + 1))\n' "${var_name}"
+    printf 'printf x >> "%s"\n' "${SHIM_BUDGET_FILE}"
+    printf '_c="$(wc -c < "%s")"\n' "${SHIM_BUDGET_FILE}"
+    printf 'if [[ "${_c//[^0-9]/}" -ge %s ]]; then\n' "${SHIM_MAX_CALLS}"
+    printf '  echo "ERROR: fake %s invocation budget exhausted" >&2\n' "${name}"
+    printf '  exit 99\n'
+    printf 'fi\n'
+    printf 'export _PRAXI_FAKE_DEPTH=$((_d + 1))\n'
     cat
   } > "${FAKE_BIN}/${name}"
   chmod +x "${FAKE_BIN}/${name}"
@@ -132,6 +160,9 @@ esac
 EOF
 REAL_ID="$(command -v id)"
 [[ -x "${REAL_ID}" ]] || fail "could not resolve real id binary"
+# The real id must never be a shim: exec-ing a shim from the id shim is the
+# unbounded self-recursion this test once suffered from.
+[[ "${REAL_ID}" != "${FAKE_BIN}"/* ]] || fail "real id resolved inside FAKE_BIN (${REAL_ID})"
 write_fake_shim id <<EOF
 if [[ "\${1:-}" == "-u" && "\${2:-}" == "praxi" ]]; then
   [[ -f "\${SANDBOX_STATE}/user_created" ]] && { echo "999"; exit 0; }
@@ -210,6 +241,10 @@ write_fake_shim systemctl <<'EOF'
 printf '%s\n' "$*" >> "${SANDBOX_STATE}/systemctl.log"
 if [[ "${1:-}" == "--version" ]]; then
   echo "systemd ${FAKE_SYSTEMD_VERSION:-255} (255.4-1ubuntu8.18)"
+  exit 0
+fi
+if [[ "$*" == "show --property=ExecStart --value praxi.service" ]]; then
+  printf '%s\n' "${FAKE_PRAXI_EXEC_START:-}"
   exit 0
 fi
 verb=""
@@ -308,6 +343,10 @@ case "${verb}" in
 esac
 EOF
 write_fake_shim apt-get <<'EOF'
+if [[ "${DEBIAN_FRONTEND:-}" != noninteractive || "${NEEDRESTART_MODE:-}" != l || "${NEEDRESTART_SUSPEND:-}" != 1 ]]; then
+  echo "apt-get must suspend needrestart and run noninteractively" >&2
+  exit 1
+fi
 printf '%s\n' "$*" >> "${SANDBOX_STATE}/apt.log"
 if [[ "${FAKE_FAIL_APT:-0}" -eq 1 && "${1:-}" == "install" ]]; then
   echo "E: Unable to fetch some archives (simulated package failure)" >&2
@@ -433,12 +472,25 @@ fi
 pass "install-linux option conflicts rejected"
 
 # 4b. Verify FAKE_BIN recursion guard trips immediately instead of fork-bombing
-if _PRAXI_FAKE_ID_DEPTH=4 "${FAKE_BIN}/id" -u >/dev/null 2>&1; then
-  fail "fake id recursion guard did not trigger at depth=4"
+if _PRAXI_FAKE_DEPTH="${SHIM_MAX_DEPTH}" "${FAKE_BIN}/id" -u >/dev/null 2>&1; then
+  fail "fake id recursion guard did not trigger at depth=${SHIM_MAX_DEPTH}"
 fi
 rc=0
-_PRAXI_FAKE_SYSTEMCTL_DEPTH=4 "${FAKE_BIN}/systemctl" is-active praxi.service >/dev/null 2>&1 || rc=$?
+_PRAXI_FAKE_DEPTH="${SHIM_MAX_DEPTH}" "${FAKE_BIN}/systemctl" is-active praxi.service >/dev/null 2>&1 || rc=$?
 [[ "${rc}" -eq 99 ]] || fail "expected exit 99 from recursion guard, got ${rc}"
+# A shim must export its incremented depth to children, and must refuse to run
+# once the global call budget is spent.
+write_fake_shim probe <<'PROBE'
+bash -c 'printf "%s" "${_PRAXI_FAKE_DEPTH:-unset}"'
+PROBE
+probe_depth="$("${FAKE_BIN}/probe")"
+[[ "${probe_depth}" == "1" ]] || fail "shim did not export _PRAXI_FAKE_DEPTH=1 to its child (got ${probe_depth})"
+head -c "${SHIM_MAX_CALLS}" /dev/zero > "${SHIM_BUDGET_FILE}"
+rc=0
+"${FAKE_BIN}/probe" >/dev/null 2>&1 || rc=$?
+[[ "${rc}" -eq 99 ]] || fail "expected exit 99 once the shim call budget is spent, got ${rc}"
+: > "${SHIM_BUDGET_FILE}"
+rm -f "${FAKE_BIN}/probe"
 pass "FAKE_BIN recursion guard prevents runaway recursion"
 
 # 5. Legacy bare-Xvfb (origin/main without -auth / xdpyinfo) preserved on no-flag upgrade,
@@ -484,7 +536,7 @@ for d in ("/usr/bin", "/bin"):
         if name == "xdpyinfo":
             continue
         p = os.path.join(dst, name)
-        if not os.path.exists(p):
+        if not os.path.lexists(p):
             os.symlink(os.path.join(d, name), p)
 ' "${NO_X_HOST}"
 for b in "${FAKE_BIN}"/*; do
@@ -524,6 +576,12 @@ FAKE_ACTIVE_UNITS="praxi.service" run_timed bash "${SB_INSTALL}" --version v0.1.
   --skip-packages --no-start > "${TMP_ROOT}/nostart-active-upgrade.log" 2>&1
 assert_file_contains "${TMP_ROOT}/nostart-active-upgrade.log" "stopped for upgrade and remain stopped (--no-start)"
 sed -i '/^BOT_MAX_COMPUTER_RUNS=/d;/^BOT_BROWSER_IDLE_SECONDS=/d' "${SANDBOX}/etc/praxi/praxi.env"
+
+# 5b-host. --host-mode writes 'bot serve --host' and a later plain re-install keeps it
+run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz"   --skip-packages --no-start --host-mode > "${TMP_ROOT}/host-mode.log" 2>&1
+assert_file_contains "${SANDBOX}/etc/systemd/system/praxi.service" "/bot serve --host"
+run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz"   --skip-packages --no-start > "${TMP_ROOT}/host-mode-keep.log" 2>&1
+assert_file_contains "${SANDBOX}/etc/systemd/system/praxi.service" "/bot serve --host"
 
 # 5c. Comprehensive rollback tests across failure stages
 setup_prev_install() {
@@ -605,6 +663,7 @@ if FAKE_STATEFUL_SYSTEMCTL=1 FAKE_FAIL_APT=1 \
   fail "expected package install failure to exit non-zero"
 fi
 assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "stop praxi"
+assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "restart praxi"
 assert_prev_install_restored_and_running "5c-1 package failure"
 
 # 5c-2. Disk-full (ENOSPC) failure during binary install after stopping services
@@ -636,6 +695,7 @@ if FAKE_STATEFUL_SYSTEMCTL=1 FAKE_FAIL_START_UNIT="praxi.service" FAKE_FAIL_ONCE
   fail "expected failed startup during upgrade to exit non-zero and trigger rollback"
 fi
 assert_file_contains "${TMP_ROOT}/rollback-start.log" "rolling back to previous working installation"
+assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "restart praxi"
 assert_prev_install_restored_and_running "5c-4 failed start"
 
 # 5c-5. Readiness check failure AFTER new install started & enabled praxi-xvfb, praxi-desktop, praxi
@@ -1085,5 +1145,16 @@ if command -v systemd-analyze >/dev/null 2>&1; then
 else
   echo "SKIP: systemd-analyze not available on this platform (run on Linux target VM)"
 fi
+
+# 12. The systemd manager reports the replacement command from the loaded drop-in.
+SB_PROVISION="${TMP_ROOT}/provision.sh"
+make_sandboxed_script "${REPO_ROOT}/crates/host-provision/scripts/provision.sh" "${SB_PROVISION}"
+FAKE_PRAXI_EXEC_START='{ path=/opt/praxi/bin/bot ; argv[]=/opt/praxi/bin/bot serve --peer --host ; ignore_errors=no ; pid=123 }' \
+  run_ok "${TMP_ROOT}/provision-host-mode.log" bash "${SB_PROVISION}" status
+assert_file_contains "${TMP_ROOT}/provision-host-mode.log" "unit_hostmode=1"
+FAKE_PRAXI_EXEC_START='{ path=/opt/praxi/bin/bot ; argv[]=/opt/praxi/bin/bot serve --peer ; ignore_errors=no ; pid=123 }' \
+  run_ok "${TMP_ROOT}/provision-standalone-mode.log" bash "${SB_PROVISION}" status
+assert_file_contains "${TMP_ROOT}/provision-standalone-mode.log" "unit_hostmode=0"
+pass "provisioning detects host mode from the effective systemd command"
 
 echo "ALL PACKAGING HERMETIC TESTS PASSED"

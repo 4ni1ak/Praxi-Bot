@@ -6,7 +6,21 @@ use std::{path::Path, sync::Arc};
 pub(crate) fn config(data: &Path, host: bool) -> Result<(PeerConfig, Option<bool>)> {
     let mut cfg = PeerConfig::new(data.join("peer"));
     cfg.local_role = if host { Role::Host } else { Role::Desktop };
-    cfg.display_name = if host { "Praxi host" } else { "Praxi desktop" }.into();
+    if !host {
+        // A desktop serves input requests that wait for its owner's card.
+        cfg.rpc_timeout = peer_network::ACTION_RPC_TIMEOUT;
+    }
+    // The PC shows up on the server under its own name ("EMRE-PC"), not a generic label.
+    cfg.display_name = if host {
+        "Praxi host".to_owned()
+    } else {
+        std::env::var("COMPUTERNAME")
+            .or_else(|_| std::env::var("HOSTNAME"))
+            .ok()
+            .map(|n| n.trim().to_owned())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "Praxi desktop".to_owned())
+    };
     let path = data.join("config.toml");
     let config = match std::fs::read_to_string(path) {
         Ok(text) => text.parse::<toml::Value>()?,
@@ -39,6 +53,7 @@ pub async fn start_server(
     host: bool,
     force: bool,
     state: daemon_api::AppState,
+    handler: Option<Arc<dyn peer_network::RpcHandler>>,
 ) -> Result<Option<PeerNetwork>> {
     let (mut cfg, enabled) = config(data, host)?;
     if !(force || enabled.unwrap_or(host)) {
@@ -48,7 +63,7 @@ pub async fn start_server(
         ALPN_API.to_vec(),
         Arc::new(remote_api::ApiProtocol::new(state)),
     ));
-    let net = PeerNetwork::start(cfg, None).await?;
+    let net = PeerNetwork::start(cfg, handler).await?;
     eprintln!("peer endpoint: {}", net.id());
     Ok(Some(net))
 }
@@ -114,7 +129,7 @@ mod tests {
             daemon_api::DaemonConfig::new("host-only-token"),
         )
         .unwrap();
-        let host = start_server(host_dir.path(), true, false, state)
+        let host = start_server(host_dir.path(), true, false, state, None)
             .await
             .unwrap()
             .unwrap();

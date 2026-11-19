@@ -96,10 +96,10 @@ impl BotPreset {
     /// Every preset keeps the agent-internal tools (questions, todos,
     /// sub-agents, skills, workflows, tool discovery) so the loop works.
     /// The General preset also reaches MCP servers (`mcp:*`); MCP tools still
-    /// ask by default.  Email (`email_*`) is deliberately opt-in per bot: its
-    /// list / search / read tools are `Read` and run without a prompt, and
-    /// together with `web_*` an injected page could read the mailbox into a
-    /// search query.  Stored profiles are not rewritten: to give an existing
+    /// ask by default.  Email (`email_*`) is deliberately opt-in per bot.
+    /// After a private or untrusted read, the egress gate asks before a later
+    /// search or fetch even though `web_search` is a read; an empty allow list
+    /// is not a bypass.  Stored profiles are not rewritten: to give an existing
     /// bot MCP reach add `"mcp:*"` to `[tools] allow` of its profile; add
     /// `"email_*"` only if you accept that.
     #[must_use]
@@ -119,7 +119,9 @@ impl BotPreset {
             // `Destructive` / `Accounts` unless its server is trusted, so the
             // permission policy still asks.  Which bots may use which server is
             // the server's `bots` list.  Email is NOT here: the `email_*` read
-            // tools are `Read` and run without a prompt (see `tool_allow` docs).
+            // tools are `Read` and run without a prompt until the run has read
+            // private or untrusted content, when the egress gate asks before a
+            // later send (see `tool_allow` docs).
             Self::General => v.extend([
                 "fs_read",
                 "fs_list",
@@ -235,6 +237,7 @@ pub fn bot_config(
             "persona": preset.system_prompt(),
             "language": lang.code(),
         },
+        // Tiering is deliberately opt-in: presets never guess a light model.
         "models": { "executor": model },
         "permissions": { "preset": perm.id() },
         "tools": { "allow": preset.tool_allow() },
@@ -244,6 +247,22 @@ pub fn bot_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_presets_leave_optional_model_tiering_disabled() {
+        for preset in BotPreset::ALL {
+            let config = bot_config(
+                preset,
+                PermissionPreset::ApproveDestructive,
+                "Test",
+                "fake/model",
+                Lang::En,
+            );
+            assert_eq!(config["models"], json!({"executor":"fake/model"}));
+            let profile: agent_core::BotProfile = serde_json::from_value(config).unwrap();
+            assert!(profile.models.light.is_none());
+        }
+    }
 
     #[test]
     fn only_general_reaches_mcp_and_no_preset_exposes_email() {

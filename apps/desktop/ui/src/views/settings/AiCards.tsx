@@ -6,16 +6,20 @@ import { ModelPicker } from "../../components/ModelPicker";
 import { useToast } from "../../components/Toast";
 import { modelGroups } from "../../lib/modelPicker";
 import { defaultModelRef } from "../../lib/providerView";
-import { setDefaultProvider } from "../../lib/providers";
-import { canManageProviders, PROVIDERS_LOCAL_ONLY } from "../../lib/providerConnection";
+import { canManageProviders } from "../../lib/providerConnection";
 import { isTauriRuntime } from "../../overlay/events";
 import { useDaemon } from "../../state/DaemonContext";
 import { useProviders } from "../../state/useProviders";
 import pageStyles from "./AiPage.module.css";
 import { ProvidersSection } from "../SettingsSections";
 import { ApiKeyPaste } from "./ApiKeyPaste";
-import { DetectedAccountsBlock } from "./DetectedAccountsBlock";
+import { EnginesCard } from "./HomeCards";
+import { KnowledgeCard } from "./KnowledgeCard";
+import { MemoryCard } from "./MemoryCard";
 import type { CardDef } from "./types";
+import { humanLine } from "../../lib/humanError";
+import { useBotsHome } from "../../state/useBotsHome";
+import { HomeHint } from "../../components/HomeHint";
 
 /** Default provider + model: a searchable dropdown grouped by provider. */
 function DefaultModelRow() {
@@ -26,7 +30,8 @@ function DefaultModelRow() {
   const [override, setOverride] = useState<string | null>(null);
   const mock = client?.baseUrl === MOCK_BASE_URL;
   const providerTarget = { connection: conn, baseUrl: client?.baseUrl };
-  const canChange = (isTauriRuntime() && canManageProviders(providerTarget)) || mock;
+  const home = useBotsHome();
+  const canChange = (isTauriRuntime() && canManageProviders(providerTarget)) || mock || home.target === "host";
 
   const current = useMemo(() => defaultModelRef(dto), [dto]);
   const groups = useMemo(() => modelGroups(dto, current), [dto, current]);
@@ -40,16 +45,12 @@ function DefaultModelRow() {
       return;
     }
     try {
-      const r = await setDefaultProvider(provider, providerTarget, model);
-      if (r.code !== 0) {
-        throw new Error((r.stderr || r.stdout).trim());
-      }
-      await client?.reloadProviders();
+      await home.setDefaultModel(provider, model);
+      await client?.reloadProviders().catch(() => {});
       await reload();
       toast.show(t("modelPicker.switchedDefault", { model: ref }), "success");
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      toast.show(message === PROVIDERS_LOCAL_ONLY ? t("settings.providers.localDaemonOnly") : message, "danger");
+      toast.show(humanLine(e), "danger");
     }
   };
 
@@ -57,6 +58,7 @@ function DefaultModelRow() {
     <section className={pageStyles.sec} aria-labelledby="ai-default-h">
       <div className={pageStyles.head}>
         <h3 id="ai-default-h">{t("settingsModal.ai.defaultModel.heading")}</h3>
+        <HomeHint />
       </div>
       <div className={`${pageStyles.card} ${pageStyles.item}`}>
         <div className={pageStyles.text}>
@@ -92,6 +94,8 @@ function AdvancedProviders() {
 /** Cards of the "AI" section: found on this computer, API key, default, advanced. */
 export function aiCards(t: TFunction): CardDef[] {
   return [
+    { id: "knowledge", section: "ai", kind: "block", title: t("knowledge.title"), description: t("knowledge.description"), keywords: "rag memory knowledge kaynak hafiza bilgi brain beyin", node: <KnowledgeCard /> },
+    { id: "memory", section: "ai", kind: "block", title: t("memory.title"), description: t("memory.description"), keywords: "memory recall forget undo remember hafiza hatirla unut geri al gedächtnis", node: <MemoryCard /> },
     {
       id: "detectedAccounts",
       section: "ai",
@@ -99,7 +103,7 @@ export function aiCards(t: TFunction): CardDef[] {
       title: t("settingsModal.ai.detected.title"),
       description: t("settingsModal.ai.detected.description"),
       keywords: "cli claude codex cursor gemini opencode chatgpt account hesap algilanan bulunan",
-      node: <DetectedAccountsBlock />
+      node: <EnginesCard />
     },
     {
       id: "keys",

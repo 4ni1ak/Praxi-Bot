@@ -22,6 +22,11 @@ use crate::proto::{
 use crate::rpc::{RpcClient, RpcHandler};
 use crate::store::{Device, now_secs};
 
+/// Deadline of a mutating desktop call: the person at the desktop may need
+/// this long to answer the approval card (card wait 120 s + margin). Reads keep
+/// the short default deadline.
+pub const ACTION_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(150);
+
 /// Application error code: element not found.
 pub const ERR_ELEMENT_NOT_FOUND: i64 = -32001;
 /// Application error code: accessibility error.
@@ -145,13 +150,24 @@ struct LaunchParams {
     app: AppSpec,
 }
 
+/// A backend error as the wire error (for serving wrappers outside this crate).
+#[must_use]
+pub fn desktop_error_to_rpc(e: &DesktopError) -> RpcError {
+    desktop_to_rpc(e)
+}
+
 fn desktop_to_rpc(e: &DesktopError) -> RpcError {
     match e {
         DesktopError::ElementNotFound { index, generation } => {
             RpcError::new(ERR_ELEMENT_NOT_FOUND, e.to_string())
                 .with_data(json!({ "index": index, "generation": generation }))
         }
-        DesktopError::Accessibility(m) => RpcError::new(ERR_ACCESSIBILITY, m.clone()),
+        // A remote node never offers a control grant, so a guard stop only
+        // reaches here from a node that checked one; its text already says what
+        // was and was not delivered, so it is passed on as it is.
+        DesktopError::Accessibility(m) | DesktopError::GuardRefused(m) => {
+            RpcError::new(ERR_ACCESSIBILITY, m.clone())
+        }
         DesktopError::Screenshot(m) => RpcError::new(ERR_SCREENSHOT, m.clone()),
         DesktopError::Unsupported(m) => RpcError::new(ERR_UNSUPPORTED, m.clone()),
         DesktopError::Internal(m) => RpcError::new(ERR_DESKTOP_INTERNAL, m.clone()),
@@ -349,16 +365,35 @@ impl RemoteDesktop {
         &self.client
     }
 
+    /// One RPC to the paired computer (`pc.*` families), with the deadline of
+    /// a call that may wait for the person at that computer.
+    ///
+    /// # Errors
+    /// [`PeerError::Rpc`] carries the remote refusal text; other variants are
+    /// transport failures.
+    pub async fn call_raw(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: std::time::Duration,
+    ) -> Result<Value> {
+        self.client.call_with_timeout(method, params, timeout).await
+    }
+
     async fn call<T: DeserializeOwned>(
         &self,
         method: &str,
         params: Value,
     ) -> std::result::Result<T, DesktopError> {
-        let v = self
-            .client
-            .call(method, params)
-            .await
-            .map_err(peer_to_desktop)?;
+        let mutating = matches!(method, "desktop.act" | "desktop.launch");
+        let v = if mutating {
+            self.client
+                .call_with_timeout(method, params, ACTION_RPC_TIMEOUT)
+                .await
+        } else {
+            self.client.call(method, params).await
+        }
+        .map_err(peer_to_desktop)?;
         decode(v).map_err(peer_to_desktop)
     }
 }
@@ -420,5 +455,105 @@ impl DesktopBackend for RemoteDesktop {
 
     fn capabilities(&self) -> Capabilities {
         self.caps.clone()
+    }
+}
+
+/// A [`RemoteDesktop`] whose every request also carries `extra` (for the
+/// user's own computer: which bot of the server is asking, so the computer
+/// keys its allowances and its cards on that bot).
+pub struct AttributedDesktop {
+    remote: std::sync::Arc<RemoteDesktop>,
+    extra: serde_json::Map<String, Value>,
+}
+
+impl RemoteDesktop {
+    /// The same connection, every request naming `extra`.
+    #[must_use]
+    pub fn attributed(
+        self: &std::sync::Arc<Self>,
+        extra: serde_json::Map<String, Value>,
+    ) -> AttributedDesktop {
+        AttributedDesktop {
+            remote: std::sync::Arc::clone(self),
+            extra,
+        }
+    }
+}
+
+impl AttributedDesktop {
+    fn with_extra(&self, params: Value) -> Value {
+        let mut obj = match params {
+            Value::Object(o) => o,
+            _ => serde_json::Map::new(),
+        };
+        for (k, v) in &self.extra {
+            obj.insert(k.clone(), v.clone());
+        }
+        Value::Object(obj)
+    }
+}
+
+#[async_trait]
+impl DesktopBackend for AttributedDesktop {
+    async fn snapshot(&self, scope: Option<u64>) -> std::result::Result<Snapshot, DesktopError> {
+        self.remote
+            .call(
+                "desktop.snapshot",
+                self.with_extra(enc(&SnapshotParams { scope })?),
+            )
+            .await
+    }
+
+    async fn act(&self, action: Action) -> std::result::Result<ActionResult, DesktopError> {
+        self.remote
+            .call("desktop.act", self.with_extra(enc(&ActParams { action })?))
+            .await
+    }
+
+    async fn screenshot(
+        &self,
+        region: Region,
+        quality: Quality,
+    ) -> std::result::Result<Image, DesktopError> {
+        let w: ImageWire = self
+            .remote
+            .call(
+                "desktop.screenshot",
+                self.with_extra(enc(&ScreenshotParams { region, quality })?),
+            )
+            .await?;
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(w.data_base64)
+            .map_err(|e| DesktopError::Screenshot(format!("bad image data from node: {e}")))?;
+        Ok(Image {
+            data,
+            width: w.width,
+            height: w.height,
+            mime_type: w.mime_type,
+        })
+    }
+
+    async fn windows(&self) -> std::result::Result<Vec<WindowInfo>, DesktopError> {
+        self.remote
+            .call("desktop.windows", self.with_extra(Value::Null))
+            .await
+    }
+
+    async fn launch(&self, app: AppSpec) -> std::result::Result<Pid, DesktopError> {
+        let v: Value = self
+            .remote
+            .call(
+                "desktop.launch",
+                self.with_extra(enc(&LaunchParams { app })?),
+            )
+            .await?;
+        v.get("pid")
+            .and_then(Value::as_u64)
+            .and_then(|p| Pid::try_from(p).ok())
+            .ok_or_else(|| DesktopError::Internal("launch result lacks pid".into()))
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        self.remote.caps.clone()
     }
 }

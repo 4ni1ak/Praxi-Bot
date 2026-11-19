@@ -18,6 +18,85 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+/// A takeover is interrupted when no heartbeat/frame publication was seen for this long
+/// (was 2 s: one slow relay round trip dropped control).
+const TAKEOVER_STALE_AFTER: Duration = Duration::from_secs(5);
+/// How long the producer waits for the transport to take the next chunk before it ends the
+/// stream (was 2 s). Only the newest frame is kept while waiting.
+const SEND_STALL: Duration = Duration::from_secs(8);
+/// A frame the viewer has not acknowledged after this long halves the send rate (the stream
+/// stays open: a slow link is not a reason to drop the screen).
+const ACK_TIMEOUT: Duration = Duration::from_millis(1500);
+/// Ack-paced send rate: this share of the measured throughput, within these bounds (bytes/s).
+const RATE_SHARE: f64 = 0.7;
+const RATE_FLOOR: f64 = 32.0 * 1024.0;
+const RATE_CEIL: f64 = 1024.0 * 1024.0;
+/// Frames smaller than this say more about latency than about throughput: no rate sample.
+const RATE_SAMPLE_MIN_BYTES: usize = 16 * 1024;
+
+/// The ack-paced sender: at most one frame is unacknowledged once the viewer has acked at all
+/// (an older client that never acks keeps the plain token-bucket behaviour), and the byte rate
+/// follows what the acks show the link can carry.
+#[derive(Default)]
+pub(super) struct AckPacer {
+    /// The frame sent and not yet acked: sequence, wire bytes, time.
+    inflight: Option<(u64, usize, Instant)>,
+    /// Smoothed throughput, bytes/s (0 = no sample yet).
+    measured: f64,
+    /// The adaptive byte-rate ceiling; `None` until the first sample or timeout.
+    cap: Option<f64>,
+}
+
+impl AckPacer {
+    pub(super) fn sent(&mut self, seq: u64, bytes: usize, at: Instant) {
+        self.inflight = Some((seq, bytes, at));
+    }
+
+    /// Fold in the viewer's newest ack (`acked`, if any) and report whether a new frame may go.
+    pub(super) fn may_send(&mut self, acked: Option<(u64, Instant)>, now: Instant) -> bool {
+        let Some((seq, bytes, at)) = self.inflight else {
+            return true;
+        };
+        if let Some((_, acked_at)) = acked.filter(|(a, _)| *a >= seq) {
+            self.inflight = None;
+            if bytes >= RATE_SAMPLE_MIN_BYTES {
+                let secs = acked_at
+                    .saturating_duration_since(at)
+                    .as_secs_f64()
+                    .max(0.05);
+                let sample = f64::from(u32::try_from(bytes).unwrap_or(u32::MAX)) / secs;
+                self.measured = if self.measured > 0.0 {
+                    0.5 * self.measured + 0.5 * sample
+                } else {
+                    sample
+                };
+                self.cap = Some((RATE_SHARE * self.measured).clamp(RATE_FLOOR, RATE_CEIL));
+            }
+            return true;
+        }
+        if acked.is_none() {
+            // The viewer never acks: no pacing at all.
+            self.inflight = None;
+            return true;
+        }
+        if now.saturating_duration_since(at) >= ACK_TIMEOUT {
+            // The ack is late: slow down, keep the stream, send the next frame.
+            let current = self.cap.unwrap_or(RATE_CEIL);
+            self.cap = Some((current / 2.0).max(RATE_FLOOR));
+            self.measured /= 2.0;
+            self.inflight = None;
+            return true;
+        }
+        false
+    }
+
+    /// The byte rate to refill the token bucket with.
+    pub(super) fn rate(&self, profile_rate: u32) -> f64 {
+        let profile_rate = f64::from(profile_rate);
+        self.cap.map_or(profile_rate, |c| c.min(profile_rate))
+    }
+}
+
 pub(super) fn spawn_reaper(s: &AppState, id: Uuid, actor: Actor) {
     let weak = Arc::downgrade(&s.0);
     tokio::spawn(async move {
@@ -39,6 +118,12 @@ pub(super) fn spawn_reaper(s: &AppState, id: Uuid, actor: Actor) {
                 let _ = end_session(&s, &actor, id, Reason::Expired).await;
                 return;
             }
+            // The host stops producing images for a viewer that went quiet, even
+            // when its client keeps heartbeating (or has vanished with a live TTL).
+            if let Some(reason) = live.limit_reached(id) {
+                let _ = end_session(&s, &actor, id, reason).await;
+                return;
+            }
             let _executor = live.executor.lock().await;
             if let Some(t) = s.hub().takeover().filter(|t| {
                 t.info.session_id == id
@@ -52,7 +137,7 @@ pub(super) fn spawn_reaper(s: &AppState, id: Uuid, actor: Actor) {
                         .lock()
                         .get(&id)
                         .and_then(|s| s.geometry)
-                        .is_some_and(|(_, _, at)| at.elapsed() > Duration::from_secs(2))
+                        .is_some_and(|(_, _, at)| at.elapsed() > TAKEOVER_STALE_AFTER)
                 {
                     let _ = interrupt(&s, &actor, &t, Reason::Stale).await;
                 }
@@ -91,8 +176,18 @@ pub(crate) async fn frames(
         session.stream = Some(cancel.clone());
     }
     let source = target_impl.frame_source();
-    // Bounded like every backend call made under the executor.
-    let subscription = match super::bounded(source.subscribe(profile)).await {
+    // A cold browser can need longer to start capture than the other backend calls.
+    let subscribe = tokio::time::timeout(Duration::from_secs(6), source.subscribe(profile))
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::GATEWAY_TIMEOUT,
+                "unavailable",
+                "the screen backend did not start capture in time",
+            )
+        })
+        .and_then(|result| result.map_err(super::backend));
+    let subscription = match subscribe {
         Ok(sub) => sub,
         Err(e) => {
             if let Some(session) = live.sessions.lock().get_mut(&id) {
@@ -114,6 +209,7 @@ pub(crate) async fn frames(
         let mut sub = subscription;
         let mut last_status = Vec::new();
         let mut last_frame: Option<(u64, u64)> = None;
+        let mut over_budget = 0u32;
         let mut publication = true;
         let mut heartbeat_at = Instant::now();
         // Heartbeat records flow every 5 s; the audit proves the trail is
@@ -121,6 +217,12 @@ pub(crate) async fn frames(
         let mut checkpoint_at = Instant::now();
         let mut token_at = Instant::now();
         let mut tokens = f64::from(EffectiveProfile::watch().burst_bytes);
+        let mut pacer = AckPacer::default();
+        let ack_notify = live
+            .sessions
+            .lock()
+            .get(&id)
+            .map(|session| Arc::clone(&session.ack_notify));
         let mut last_sent = Instant::now()
             .checked_sub(Duration::from_secs(5))
             .unwrap_or_else(Instant::now);
@@ -134,7 +236,7 @@ pub(crate) async fn frames(
             let permit = tokio::select! {
                 () = cancel.cancelled() => break,
                 () = shutdown.cancelled() => break,
-                p = tokio::time::timeout(Duration::from_secs(2),tx.reserve()) => match p { Ok(Ok(p)) => p,_ => break },
+                p = tokio::time::timeout(SEND_STALL,tx.reserve()) => match p { Ok(Ok(p)) => p,_ => break },
             };
             if live.session(&actor, id).is_err() {
                 break;
@@ -173,7 +275,7 @@ pub(crate) async fn frames(
                 let now = Instant::now();
                 tokens = (tokens
                     + now.duration_since(token_at).as_secs_f64()
-                        * f64::from(profile.bytes_per_second))
+                        * pacer.rate(profile.bytes_per_second))
                 .min(f64::from(profile.burst_bytes));
                 token_at = now;
                 let frame_key = (meta.frame_seq, meta.captured_at_ms);
@@ -186,8 +288,12 @@ pub(crate) async fn frames(
                 }
                 let frame_cost = frame.payload.len().saturating_add(live_view::MAX_HEADER);
                 if frame_cost > usize::try_from(profile.burst_bytes).unwrap_or(0)
-                    || meta.width > profile.max_width
-                    || meta.height > profile.max_height
+                    || !live_view::fits_box(
+                        meta.width,
+                        meta.height,
+                        profile.max_width,
+                        profile.max_height,
+                    )
                 {
                     let header = RecordHeader::Status {
                         v: 1,
@@ -208,11 +314,16 @@ pub(crate) async fn frames(
                     } else {
                         break;
                     }
+                    // Slow down instead of wrecking the picture: fewer frames, same size and
+                    // quality; the source re-encodes under the current profile.
+                    over_budget = over_budget.saturating_add(1);
                     let mut degraded = profile;
-                    degraded.quality = 30;
-                    degraded.max_width = degraded.max_width.min(640);
-                    degraded.max_height = degraded.max_height.min(400);
-                    degraded.max_fps = degraded.max_fps.min(4);
+                    degraded.max_fps = degraded.max_fps.div_ceil(2).max(1);
+                    if over_budget > 20 {
+                        // Persistent: only now give up some size (the quality floor stays).
+                        degraded.max_width = degraded.max_width.min(1280);
+                        degraded.max_height = degraded.max_height.min(720);
+                    }
                     if let Some(session) = live.sessions.lock().get_mut(&id) {
                         session.profile = degraded.clone();
                         session.geometry = None;
@@ -250,12 +361,19 @@ pub(crate) async fn frames(
                     ) {
                         Duration::ZERO
                     } else {
-                        Duration::from_secs(3)
+                        Duration::from_secs_f64(1.0 / f64::from(profile.max_fps.max(1)))
                     }
                 } else {
                     Duration::from_secs_f64(1.0 / f64::from(profile.max_fps.max(1)))
                 };
+                let acked = live
+                    .sessions
+                    .lock()
+                    .get(&id)
+                    .and_then(|session| session.acked);
+                let may_go = pacer.may_send(acked, now);
                 if (last_frame != Some(frame_key) || repeated_publication)
+                    && may_go
                     && last_sent.elapsed() >= period
                     && tokens >= f64::from(u32::try_from(frame_cost).unwrap_or(u32::MAX))
                 {
@@ -270,8 +388,10 @@ pub(crate) async fn frames(
                     };
                     if let Ok(bytes) = record.encode() {
                         tokens -= f64::from(u32::try_from(bytes.len()).unwrap_or(u32::MAX));
+                        pacer.sent(meta.frame_seq, bytes.len(), now);
                         permit.send(Ok(Bytes::from(bytes)));
                         last_frame = Some(frame_key);
+                        over_budget = 0;
                         last_sent = now;
                         continue;
                     }
@@ -312,6 +432,12 @@ pub(crate) async fn frames(
                 () = shutdown.cancelled() => break,
                 () = tx.closed() => break,
                 () = tokio::time::sleep(Duration::from_millis(100)) => {},
+                () = async {
+                    match &ack_notify {
+                        Some(n) => n.notified().await,
+                        None => std::future::pending().await,
+                    }
+                } => {},
                 result = sub.frames.changed() => { if result.is_err() { break; } publication = true; },
             }
         }
@@ -356,4 +482,46 @@ pub(crate) async fn frames(
         HeaderValue::from_static("nosniff"),
     );
     Ok(response)
+}
+
+#[cfg(test)]
+mod pacer_tests {
+    use super::*;
+
+    #[test]
+    fn one_unacked_frame_at_most_with_a_measured_rate_and_a_halving_timeout() {
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        let mut p = AckPacer::default();
+        assert!(p.may_send(None, t0), "nothing in flight");
+
+        // A client that never acks is never held back.
+        p.sent(1, 128 * 1024, t0);
+        assert!(p.may_send(None, t0 + ms(10)));
+
+        // Once it acks, the next frame waits for the ack of the one in flight.
+        p.sent(2, 128 * 1024, t0);
+        assert!(!p.may_send(Some((1, t0 + ms(100))), t0 + ms(200)));
+        // 128 KiB acked after 500 ms is 256 KiB/s; 70 % of that is the new rate.
+        assert!(p.may_send(Some((2, t0 + ms(500))), t0 + ms(500)));
+        let rate = p.rate(4 * 1024 * 1024);
+        assert!((rate - 0.7 * 256.0 * 1024.0).abs() < 1.0, "{rate}");
+        assert!(
+            p.rate(64 * 1024) <= 64.0 * 1024.0,
+            "never above the profile"
+        );
+
+        // No ack for 1.5 s: the rate halves and the next frame goes out anyway.
+        p.sent(3, 128 * 1024, t0 + ms(600));
+        assert!(!p.may_send(Some((2, t0 + ms(500))), t0 + ms(2000)));
+        assert!(p.may_send(Some((2, t0 + ms(500))), t0 + ms(2100)));
+        assert!((p.rate(4 * 1024 * 1024) - rate / 2.0).abs() < 1.0);
+
+        // Repeated timeouts bottom out at 32 KiB/s.
+        for n in 0..20u64 {
+            p.sent(10 + n, 1000, t0);
+            assert!(p.may_send(Some((2, t0)), t0 + ms(1600)));
+        }
+        assert!((p.rate(4 * 1024 * 1024) - 32.0 * 1024.0).abs() < 1.0);
+    }
 }

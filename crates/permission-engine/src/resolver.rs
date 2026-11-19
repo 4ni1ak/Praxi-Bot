@@ -27,6 +27,9 @@ pub struct ActionRequest {
     ///
     /// For non-shell actions this may be empty.
     pub raw_command: String,
+    /// The working directory of a shell command (absolute), when the tool names one: a relative
+    /// path in the command is placed there when the never-list looks for CLI sign-in stores.
+    pub cwd: Option<String>,
     /// Who initiated the run.
     pub initiator: InitiatorKind,
 }
@@ -156,7 +159,11 @@ impl PermissionResolver {
         }
 
         // 4b. Never-list match always requires Ask.
-        if !req.raw_command.is_empty() && self.never_list.matches(&req.raw_command) {
+        if !req.raw_command.is_empty()
+            && self
+                .never_list
+                .matches_in(&req.raw_command, req.cwd.as_deref())
+        {
             decision = decision.stricter(Decision::ask());
         }
 
@@ -238,6 +245,7 @@ mod tests {
 
     fn req_human(cat: PermissionCategory) -> ActionRequest {
         ActionRequest {
+            cwd: None,
             category: cat,
             raw_command: String::new(),
             initiator: InitiatorKind::Human,
@@ -246,6 +254,7 @@ mod tests {
 
     fn req_routine(cat: PermissionCategory) -> ActionRequest {
         ActionRequest {
+            cwd: None,
             category: cat,
             raw_command: String::new(),
             initiator: InitiatorKind::Routine,
@@ -374,6 +383,7 @@ mod tests {
             None,
             None,
             &ActionRequest {
+                cwd: None,
                 category: PermissionCategory::Shell,
                 raw_command: "rm -rf /".into(),
                 initiator: InitiatorKind::Human,
@@ -435,12 +445,48 @@ mod tests {
         let global = Policy::full();
         let resolver = PermissionResolver::new();
         let r = ActionRequest {
+            cwd: None,
             category: PermissionCategory::Shell,
             raw_command: "rm -rf /".into(),
             initiator: InitiatorKind::Human,
         };
         let decision = resolver.resolve(&global, None, None, &r);
         assert_eq!(decision, Decision::ask());
+    }
+
+    #[test]
+    fn a_project_cli_folder_runs_but_the_home_store_asks_even_with_full_policy() {
+        let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"));
+        let Ok(home) = home else { return };
+        let global = Policy::full();
+        let resolver = PermissionResolver::new();
+        let ask = |command: &str, cwd: Option<&str>| {
+            resolver.resolve(
+                &global,
+                None,
+                None,
+                &ActionRequest {
+                    cwd: cwd.map(str::to_owned),
+                    category: PermissionCategory::Shell,
+                    raw_command: command.into(),
+                    initiator: InitiatorKind::Human,
+                },
+            ) == Decision::ask()
+        };
+        let project = std::env::temp_dir().join("praxi-project-with-claude-folder");
+        let project = project.to_string_lossy();
+        assert!(
+            !ask("cat .claude/settings.json", Some(&project)),
+            "project-local"
+        );
+        assert!(
+            ask("cat $HOME/.claude/.credentials.json", Some(&project)),
+            "home store"
+        );
+        assert!(
+            ask("cat .claude/.credentials.json", Some(&home)),
+            "cwd is home"
+        );
     }
 
     // ── Rule 4: by_initiator data-driven overrides ───────────────────────────
@@ -559,6 +605,7 @@ mod tests {
 
     fn req_schedule(cat: PermissionCategory, cmd: &str) -> ActionRequest {
         ActionRequest {
+            cwd: None,
             category: cat,
             raw_command: cmd.to_owned(),
             initiator: InitiatorKind::Schedule,

@@ -38,6 +38,7 @@ async fn daemon() -> Daemon {
     let (host, _) =
         crate::email_host::start_email(dir.path(), &agent.tool_registry(), Some(&store)).unwrap();
     let state = AppState::new(agent, storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(crate::client::TEST_OWNER_KEY.into());
     state.set_email(host);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -45,7 +46,8 @@ async fn daemon() -> Daemon {
     Daemon {
         dir,
         store,
-        client: Client::new(&url, TOKEN.to_owned()),
+        client: Client::new(&url, TOKEN.to_owned())
+            .with_owner_key(Some(crate::client::TEST_OWNER_KEY.to_owned())),
     }
 }
 

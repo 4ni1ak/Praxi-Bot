@@ -355,6 +355,9 @@ struct Inner {
     /// Approvals that carry details: only "approve once" may be pressed for
     /// them, whatever callback data arrives (the daemon refuses a grant too).
     once_only_approvals: Mutex<HashSet<ToolCallId>>,
+    /// Approvals whose card fit one message and carries the run-scoped control
+    /// grant button. Only these accept the run-control scope from this chat.
+    run_control_approvals: Mutex<HashSet<ToolCallId>>,
     /// Key identifying the bot the persisted polling offset belongs to.
     offset_key: String,
     cancel: CancellationToken,
@@ -456,6 +459,41 @@ fn validate_base_url(url: &str) -> Result<()> {
     }
 }
 
+fn approval_markup(
+    a: &protocol::event::ApprovalNeeded,
+    offer_run_control: bool,
+) -> Option<InlineKeyboardMarkup> {
+    let mut row = vec![InlineButton::new(
+        "Approve once",
+        format_approval_callback(a.call_id, "once"),
+    )];
+    // Only when the whole card fits one message: the daemon-written lines that
+    // name the program and what it covers are then on screen with the button.
+    if offer_run_control
+        && let Some(program) = a
+            .details
+            .as_ref()
+            .and_then(protocol::approval_text::control_grant_program)
+    {
+        row.push(InlineButton::new(
+            format!("This task: {program}"),
+            format_approval_callback(a.call_id, "run"),
+        ));
+    }
+    // No standing grant for tools that bring details.
+    if a.details.is_none() {
+        row.push(InlineButton::new(
+            "Always",
+            format_approval_callback(a.call_id, "always"),
+        ));
+    }
+    row.push(InlineButton::new(
+        "Deny",
+        format_approval_callback(a.call_id, "deny"),
+    ));
+    InlineKeyboardMarkup::from_rows(vec![row])
+}
+
 impl TelegramChannel {
     /// Construct a [`TelegramChannel`] without spawning the background polling task.
     ///
@@ -517,6 +555,7 @@ impl TelegramChannel {
             clock_offset_ms: std::sync::atomic::AtomicI64::new(0),
             pending_approvals: Mutex::new(HashMap::new()),
             once_only_approvals: Mutex::new(HashSet::new()),
+            run_control_approvals: Mutex::new(HashSet::new()),
             offset_key,
             cancel: CancellationToken::new(),
             status: watch::channel(ChannelStatus::Stopped).0,
@@ -976,6 +1015,7 @@ impl TelegramChannel {
     /// Show an approval request. Details a tool attaches (a schedule) are shown
     /// in full before approval is offered; if that is impossible, approval is
     /// left to the desktop app. The buttons go on the last message only.
+    #[allow(clippy::too_many_lines)] // one card: text, chunks, buttons, bookkeeping
     async fn send_approval(
         &self,
         chat_id: i64,
@@ -1026,6 +1066,23 @@ impl TelegramChannel {
                 ),
             },
         };
+        // Bound one approval to what a person can review in this chat. A
+        // longer card stays on the desktop, with no Approve button here.
+        let redacted = self.redact(&body);
+        let chunks = protocol::approval_text::chunk_text(&redacted, 3500);
+        if chunks.len() > 40 {
+            let _ = self
+                .send_redacted(
+                    chat_id,
+                    &format!(
+                        "⚠️ {} needs approval, but it is too large to review in Telegram. Review it in the desktop app.",
+                        a.tool_name
+                    ),
+                    None,
+                )
+                .await;
+            return Ok(());
+        }
         let markup = if offer {
             {
                 let mut pending = self.inner.pending_approvals.lock();
@@ -1041,29 +1098,24 @@ impl TelegramChannel {
                 }
                 once.insert(a.call_id);
             }
-            let mut row = vec![InlineButton::new(
-                "Approve once",
-                format_approval_callback(a.call_id, "once"),
-            )];
-            // No standing grant for tools that bring details.
-            if a.details.is_none() {
-                row.push(InlineButton::new(
-                    "Always",
-                    format_approval_callback(a.call_id, "always"),
-                ));
+            let offer_run_control = chunks.len() == 1
+                && a.details
+                    .as_ref()
+                    .is_some_and(protocol::approval_text::control_grant_offered);
+            if offer_run_control {
+                let mut run = self.inner.run_control_approvals.lock();
+                if run.len() >= MAX_PENDING_PROMPTS {
+                    run.clear();
+                }
+                run.insert(a.call_id);
             }
-            row.push(InlineButton::new(
-                "Deny",
-                format_approval_callback(a.call_id, "deny"),
-            ));
-            InlineKeyboardMarkup::from_rows(vec![row])
+            approval_markup(&a, offer_run_control)
         } else {
             None
         };
         // Redact first, then split, so a secret cannot straddle two
         // messages; the buttons go on the last message only.
         // Telegram counts UTF-16 units.
-        let chunks = protocol::approval_text::chunk_text(&self.redact(&body), 3500);
         let last = chunks.len() - 1;
         for (i, chunk) in chunks.iter().enumerate() {
             let m = if i == last { markup.as_ref() } else { None };
@@ -1073,6 +1125,7 @@ impl TelegramChannel {
                 // answerable from the desktop app) and say so.
                 self.inner.pending_approvals.lock().remove(&a.call_id);
                 self.inner.once_only_approvals.lock().remove(&a.call_id);
+                self.inner.run_control_approvals.lock().remove(&a.call_id);
                 eprintln!(
                     "telegram: approval {} for {} not offered here: message {} of {} failed: {e}",
                     a.call_id,
@@ -1125,7 +1178,7 @@ impl TelegramChannel {
             if self.inner.pairing.should_send_refusal(user_id) {
                 // Best effort: a failing refusal (blocked bot, 429) is never fatal.
                 match msg.kind {
-                    IncomingKind::Text(_) => {
+                    IncomingKind::Text(_) | IncomingKind::Unsupported(_) => {
                         let _ = self
                             .send_redacted(chat_id, UNPAIRED_REFUSAL_TEXT, None)
                             .await;
@@ -1145,6 +1198,15 @@ impl TelegramChannel {
         match msg.kind {
             IncomingKind::Text(text) => {
                 self.handle_paired_text(chat_id, &text, msg.update_id).await
+            }
+            IncomingKind::Unsupported(label) => {
+                self.send_redacted(
+                    chat_id,
+                    &format!("I can't read a {label} yet. Please send your request as text."),
+                    None,
+                )
+                .await?;
+                Ok(())
             }
             IncomingKind::Callback { query_id, data, .. } => {
                 self.handle_callback(chat_id, &query_id, &data, msg.update_id)
@@ -1726,9 +1788,12 @@ impl TelegramChannel {
             }
             // A card with details is approved once, never as a standing grant.
             let once_only = self.inner.once_only_approvals.lock().contains(&call_id);
+            let run_control_ok = scope == crate::daemon_client::ApprovalScope::RunControl
+                && self.inner.run_control_approvals.lock().contains(&call_id);
             if once_only
                 && decision == ApprovalDecision::Approve
                 && scope != crate::daemon_client::ApprovalScope::Once
+                && !run_control_ok
             {
                 self.inner
                     .bot_api
@@ -1749,6 +1814,7 @@ impl TelegramChannel {
             self.inner.inbox.delivered(update_id, None)?;
             self.inner.pending_approvals.lock().remove(&call_id);
             self.inner.once_only_approvals.lock().remove(&call_id);
+            self.inner.run_control_approvals.lock().remove(&call_id);
             let ack = match decision {
                 ApprovalDecision::Approve => "Approved",
                 ApprovalDecision::Deny => "Denied",

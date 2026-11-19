@@ -37,6 +37,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .lucide { flex-shrink: 0; width: var(--size-icon); height: var(--size-icon); stroke-width: 1.5; }
 button .lucide { width: var(--size-icon-sm); height: var(--size-icon-sm); }
 ::selection { background: var(--color-selection); color: var(--color-selection-text); }
+/* Selection per surface (254-F): a bubble tinted with the bot colour needs its own pair, computed
+   from the bubble colour in themeModel.selectionColors.  Matches the CSS-module class by name so
+   the chat stylesheet stays untouched; descendants (markdown, code) get the same pair. */
+[class*="userBubble"]::selection,
+[class*="userBubble"] *::selection { background: var(--color-selection-user); color: var(--color-selection-user-text); }
+:root[data-meb="accent"] [class*="userBubble"]::selection,
+:root[data-meb="accent"] [class*="userBubble"] *::selection { background: var(--color-selection-accent); color: var(--color-selection-accent-text); }
+:root[data-meb="neutral"] [class*="userBubble"]::selection,
+:root[data-meb="neutral"] [class*="userBubble"] *::selection { background: var(--color-selection-neutral); color: var(--color-selection-neutral-text); }
+:root[data-bubble="line"] [class*="userBubble"]::selection,
+:root[data-bubble="line"] [class*="userBubble"] *::selection { background: var(--color-selection); color: var(--color-selection-text); }
+[class*="assistantBubble"]::selection,
+[class*="assistantBubble"] *::selection { background: var(--color-selection-neutral); color: var(--color-selection-neutral-text); }
 * { scrollbar-width: thin; scrollbar-color: var(--color-scrollbar) transparent; }
 input::placeholder, textarea::placeholder { color: var(--color-text-muted); opacity: 1; }
 @media (prefers-reduced-motion: reduce) {
@@ -54,3 +67,14 @@ input::placeholder, textarea::placeholder { color: var(--color-text-muted); opac
 /* Column resize in progress (rail / bot panel grips): no text selection, no transitions. */
 :root[data-resizing] { user-select: none; cursor: col-resize; }
 :root[data-resizing] * { transition: none !important; }
+
+/* Find in chat: ranges painted by the CSS Custom Highlight API (lib/findInChat.ts). */
+::highlight(praxi-find) {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent-text);
+}
+
+::highlight(praxi-find-current) {
+  background-color: var(--color-accent);
+  color: var(--color-accent-contrast);
+}

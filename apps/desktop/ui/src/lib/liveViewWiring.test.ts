@@ -49,13 +49,31 @@ test("the control bridge registration keeps its identity across control-state re
   );
 });
 
-test("every global Stop call site uses the takeover-only override", () => {
-  const calls = app.match(/overrideStop\([^)]*\)/g) ?? [];
-  assert.ok(calls.length >= 2, "hotkey and banner button");
-  for (const c of calls) {
-    assert.match(c, /onlyIfControlled: true/, c);
-  }
-  assert.match(app, /!event\.repeat/, "key repeat does not re-fire the override");
+test("every global Stop call site is one ledger Stop; the takeover override is decided per origin", () => {
+  // The hotkey and the run banner make ONE Stop decision through the ledger
+  // (native halt + daemon stop + takeover override); App calls nothing else.
+  assert.doesNotMatch(app, /overrideStop\(/, "App no longer pauses the takeover itself");
+  assert.doesNotMatch(app, /stopBotRun\(/, "nor stops native itself");
+  assert.match(app, /if \(!event\.repeat\) \{\s*requestStop\("hotkey"\);/, "one press, never on key repeat");
+  assert.match(app, /requestStop\("banner"\)/);
+  assert.match(viewer, /requestStop\("viewer"\)/);
+  // Behaviour of everything below is tested end to end in stopRuntime.test.ts; these
+  // guards only pin that the React host forwards to that runtime and nothing else.
+  assert.match(host, /runtime\.setOverride\(\(opts\) => void overrideStop\(opts\)\)/);
+  assert.match(host, /onControlStateChanged: \(snap: ControlSnapshot\) => \{\s*runtime\.onNativeSnapshot\(snap\);/);
+  assert.match(host, /onDaemonEvent\(\(env\) => runtime\.onDaemonEvent\(env\)\)/);
+  assert.match(host, /window\.setInterval\(\(\) => runtime\.tick\(\), HEARTBEAT_MS\)/);
+  assert.match(host, /runtime\.attach\(client, bridge\)/);
+  assert.match(host, /confirmDriving: \(\) => runtime\.confirmDriving\(\)/);
+  assert.match(host, /runtime\.scopeChanged\(\);\s*\}, \[targets, runtime\]\);/);
+  assert.doesNotMatch(host, /ledger\.(stopAll|applyList|attachClient|onNativeSnapshot)\(/, "no host logic outside the runtime");
+  const chat = read("../views/ChatView.tsx");
+  assert.match(chat, /cancelRun\(activeRunId, hard/);
+  assert.doesNotMatch(chat, /client\.cancelRun\(/);
+  const widget = read("../overlay/WidgetWindow.tsx");
+  assert.doesNotMatch(widget, /setControlState/, "every widget snapshot goes through reduceWidget");
+  assert.match(widget, /reduceWidget\(prev, failed \? null : snap, performance\.now\(\)\)/);
+  assert.match(app, /isNewerNativeSnapshot\(prev\.stateRev \?\? -1, snap\)/);
 });
 
 test("the viewer layer sits below dialogs and toasts so approvals stay answerable", () => {
@@ -190,7 +208,10 @@ test("the command palette is portaled to body and only the topmost layer handles
 // ---- fourth review ----
 
 test("every client polls the control snapshot (not only the Tauri bridge) and feeds the banner", () => {
-  assert.match(context, /getControlState\(\)\s*\.then\(\(dto\) => ingestControlSnapshot\(dto, ticket\)\)/);
+  assert.match(
+    context,
+    /getControlState\(\)\s*\.then\(\(dto\) => \{\s*if \(clientRef\.current === client\) \{\s*ingestControlSnapshot\(dto, ticket\);/
+  );
   assert.match(context, /CONTROL_POLL_MS/);
   const poll = context.slice(context.indexOf("CONTROL_POLL_MS);") - 400, context.indexOf("CONTROL_POLL_MS);") + 40);
   assert.doesNotMatch(poll, /isTauriRuntime/);
@@ -203,20 +224,13 @@ test("Clear pause goes through the verifying runClearPause and the dock uses the
   assert.match(viewer, /liveView\.connectionLost/);
 });
 
-// ---- #62 reconciliation: the host buffers native events behind the snapshot ----
-
-test("ControlBridgeHost delegates start-up to BridgeSession and shares one StopLedger across bridges", () => {
-  assert.match(host, /new BridgeSession\(bridge,/);
-  assert.match(host, /session\.onNativeEvent\(/);
-  assert.match(host, /retiring: retiringRef\.current/);
-  assert.match(host, /retiringRef\.current = session\.retiredDone/);
-  assert.match(host, /ledger: ledgerRef\.current/);
-  assert.match(host, /targetsSettledRef\.current && settingsLoadedRef\.current/);
-  assert.match(host, /session\.dispose\(\)/);
-  const sess = read("../state/bridgeSession.ts");
-  assert.match(sess, /this\.ready = true;[\s\S]*for \(const ev of plan\.replay\)[\s\S]*await init;/);
-  assert.match(sess, /initializeNativeState\(snap\.mode, plan\.baseline\)/);
-  assert.match(sess, /await wait\(this\.opt\.retiring/);
-  const ctx = read("../state/LiveViewContext.tsx");
-  assert.match(ctx, /setTargetsSettled\(false\);\s*if \(!client\)/);
+test("clearing a pause hides the banner and both buttons at once and never fails silently", () => {
+  // optimistic: one in-flight flag the banner and the panel card both honour
+  assert.match(context, /pauseClearing/);
+  assert.match(banner, /pauseClearing/);
+  assert.match(panelBlock, /!live\.pauseClearing/);
+  // a refusal (owner key, local-only, busy executor) and a changed state both toast
+  const clear = context.slice(context.indexOf("const clearPauseInner"), context.indexOf("const recoverTakeover"));
+  assert.match(clear, /toast\.show\(outcome\.message/);
+  assert.match(clear, /toast\.show\(t\("liveView\.errors\.pause_changed"\)/);
 });

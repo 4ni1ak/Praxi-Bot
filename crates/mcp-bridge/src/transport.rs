@@ -22,20 +22,42 @@ use secret_store::{SecretRef, SecretStore, resolve};
 use tracing::instrument::WithSubscriber;
 
 use crate::{
+    client::{BridgeClient, Signals},
     config::{McpServerConfig, McpTransport, refused_stdio_command},
     diagnostics::{ExternalRedactor, Redactor, StderrLog, capture_stderr},
-    error::{McpError, Result},
+    error::{McpError, Result, runtime_install_hint},
     session::{self, Session},
 };
 
 /// Environment variables that are passed to stdio children even though the
-/// config does not declare them, because the OS runtime itself breaks without
-/// them (Winsock / CRT need `SystemRoot` on Windows).  Empty on other platforms.
+/// config does not declare them, because the launchers themselves break
+/// without them: `npx.cmd` / `uvx` cannot find `node`, `npm` or Python without
+/// `PATH`, and npm / uv need the profile and temp directories for their caches.
+/// None of these carry credentials (proxy variables are deliberately left out:
+/// they may embed passwords; declare them in the server's `env` if needed).
 #[cfg(windows)]
-pub const OS_ESSENTIAL_ENV: &[&str] = &["SystemRoot", "windir"];
+pub const OS_ESSENTIAL_ENV: &[&str] = &[
+    "SystemRoot",
+    "windir",
+    "SystemDrive",
+    "PATH",
+    "PATHEXT",
+    "ComSpec",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
+];
 /// See the Windows variant.
 #[cfg(not(windows))]
-pub const OS_ESSENTIAL_ENV: &[&str] = &[];
+pub const OS_ESSENTIAL_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL"];
 
 /// Largest single JSON-RPC frame accepted from a server: one stdout line, or
 /// one SSE event.  Enforced while reading, before rmcp buffers or parses the
@@ -44,6 +66,11 @@ pub const OS_ESSENTIAL_ENV: &[&str] = &[];
 /// frame closes the transport; an oversized SSE event is rejected by rmcp.
 /// (A JSON HTTP body has rmcp's own fixed bound.)
 pub(crate) const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+
+/// How long a stdio server gets to exit on its own after its stdin was closed
+/// (the shutdown order the MCP stdio transport asks for) before its process
+/// tree is killed. Well below the session's close timeout.
+const GRACEFUL_EXIT: Duration = Duration::from_secs(2);
 
 /// Fails the read as soon as one line exceeds `cap` bytes, so a newline-free
 /// or huge frame never grows rmcp's line buffer past `cap` plus one read.
@@ -102,6 +129,17 @@ impl fmt::Debug for ResolvedSecrets {
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
             .field("env", &self.env.keys().collect::<Vec<_>>())
             .finish()
+    }
+}
+
+impl ResolvedSecrets {
+    /// Attach the OAuth access token of this server. It is sent like a secret
+    /// header (marked sensitive, masked by the session redactor) and only to
+    /// the URL of the config this value was resolved for.
+    pub(crate) fn with_bearer(mut self, token: &str) -> Self {
+        self.headers
+            .insert("Authorization".to_owned(), format!("Bearer {token}"));
+        self
     }
 }
 
@@ -187,12 +225,34 @@ fn build_command(
     if let Some(why) = refused_stdio_command(command, args) {
         return Err(McpError::Config(format!("server `{server}`: {why}")));
     }
-    let spawn_err = |e: std::io::Error| McpError::Spawn {
-        server: server.to_owned(),
-        message: format!("`{command}`: {e}"),
-    };
-    // Resolve against the parent's PATH *before* clearing the child's env.
-    let mut cmd = which_command(command).map_err(spawn_err)?;
+    // Resolve against the parent's PATH *before* clearing the child's env. A
+    // launcher that is not installed is reported with an install hint before
+    // anything is spawned.
+    let mut cmd = which_command(command)
+        .or_else(|e| {
+            // Installed after the daemon started (in-app installer): look in
+            // the usual per-user install folders before giving up.
+            if e.kind() == std::io::ErrorKind::NotFound
+                && let Some(found) = crate::runtime::find_tool(command, &[])
+            {
+                return Ok(tokio::process::Command::new(found));
+            }
+            Err(e)
+        })
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                McpError::RuntimeMissing {
+                    server: server.to_owned(),
+                    command: command.clone(),
+                    hint: runtime_install_hint(command),
+                }
+            } else {
+                McpError::Spawn {
+                    server: server.to_owned(),
+                    message: format!("`{command}`: {e}"),
+                }
+            }
+        })?;
     cmd.env_clear();
     for key in OS_ESSENTIAL_ENV {
         if let Some(v) = std::env::var_os(key) {
@@ -206,17 +266,21 @@ fn build_command(
     Ok(isolate_child(cmd))
 }
 
+/// How long a failed handshake waits for the child's last stderr lines (the
+/// pipe closes as soon as the child is gone, so this is a ceiling, not a delay).
+const STDERR_DRAIN: Duration = Duration::from_millis(500);
+
 fn forward_stderr(
     server: String,
     stderr: tokio::process::ChildStderr,
     log: Arc<StderrLog>,
     redactor: Redactor,
     diagnostics: tracing::Dispatch,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(
         async move { capture_stderr(&server, stderr, &log, &redactor).await }
             .with_subscriber(diagnostics),
-    );
+    )
 }
 
 /// Own the process tree until it has been killed and reaped. rmcp's graceful
@@ -309,10 +373,23 @@ impl Transport<RoleClient> for ChildTree {
     }
 
     async fn close(&mut self) -> std::io::Result<()> {
+        // The guard kills the tree if this future is dropped at any await.
         let mut guard = self.take_child();
         if let Some(child) = guard.0.as_mut() {
-            child.start_kill()?;
-            child.wait().await?;
+            // Spec order: close the server's stdin and let it exit by itself,
+            // so it can flush state and stop its own helpers.
+            let _ = self.io.close().await;
+            let exited = tokio::time::timeout(GRACEFUL_EXIT, child.wait())
+                .await
+                .is_ok_and(|status| status.is_ok());
+            // Kill what is left either way: a server that ignored EOF, or the
+            // wrapper tree (`npx`, `uvx`) of one that exited. After a clean
+            // exit there may be nothing left to signal, which is not an error.
+            let killed = child.start_kill();
+            if !exited {
+                killed?;
+                child.wait().await?;
+            }
         }
         guard.0 = None;
         Ok(())
@@ -347,6 +424,7 @@ pub(crate) async fn open(
     stderr: &Arc<StderrLog>,
     timeout: Duration,
     external: Option<ExternalRedactor>,
+    signals: Arc<Signals>,
 ) -> Result<Session> {
     let redactor = Redactor::new(
         secrets
@@ -371,10 +449,22 @@ pub(crate) async fn open(
                         server: id.to_owned(),
                         message: e.to_string(),
                     })?;
-                if let Some(pipe) = child_stderr {
-                    forward_stderr(id.to_owned(), pipe, stderr, stderr_redactor, diagnostics);
+                let capture = child_stderr.map(|pipe| {
+                    forward_stderr(id.to_owned(), pipe, stderr, stderr_redactor, diagnostics)
+                });
+                match (BridgeClient { signals }).serve(transport).await {
+                    Ok(session) => Ok(session),
+                    Err(e) => {
+                        // The handshake failed: the child is being reaped, so
+                        // its stderr hits EOF. Let the capture task store the
+                        // last lines (its explanation) before the session
+                        // runtime shuts down and the error is published.
+                        if let Some(task) = capture {
+                            let _ = tokio::time::timeout(STDERR_DRAIN, task).await;
+                        }
+                        Err(transport_err(id, e))
+                    }
                 }
-                ().serve(transport).await.map_err(|e| transport_err(id, e))
             }
             McpTransport::Http { url, headers } => {
                 let transport = StreamableHttpClientTransport::from_config(http_config(
@@ -383,7 +473,16 @@ pub(crate) async fn open(
                     headers,
                     &secrets.headers,
                 )?);
-                ().serve(transport).await.map_err(|e| transport_err(id, e))
+                BridgeClient { signals }
+                    .serve(transport)
+                    .await
+                    .map_err(|e| {
+                        if e.is_authorization_required() {
+                            McpError::AuthRequired(id.to_owned())
+                        } else {
+                            transport_err(id, e)
+                        }
+                    })
             }
         }
     })
@@ -393,6 +492,8 @@ pub(crate) async fn open(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+
+    use crate::error::McpErrorKind;
 
     use super::*;
 
@@ -450,6 +551,31 @@ mod tests {
         let http = http_config("s", "https://x/mcp", &BTreeMap::new(), &r.headers).unwrap();
         assert!(http.custom_headers.values().all(HeaderValue::is_sensitive));
         assert!(!format!("{http:?}").contains("s3cr3t-value"));
+    }
+
+    /// Review finding 1: a configured header or child variable must never
+    /// carry the stored OAuth record of this or another server.
+    #[test]
+    fn managed_oauth_records_cannot_be_exfiltrated_through_secret_references() {
+        let record = r#"{"credentials":{"token_response":{"access_token":"victim-access-7c1"}}}"#;
+        let store = Fake(BTreeMap::from([
+            ("mcp/victim/oauth".to_owned(), record.to_owned()),
+            ("MCP/Victim/OAuth".to_owned(), record.to_owned()),
+        ]));
+        for name in ["mcp/victim/oauth", "MCP/Victim/OAuth"] {
+            let mut http = McpServerConfig::http("attacker", "https://attacker.example/mcp");
+            http.secret_headers.insert("X-Stolen".into(), name.into());
+            let mut stdio = McpServerConfig::stdio("child", "node", ["server.js"]);
+            stdio.secret_env.insert("STOLEN".into(), name.into());
+            for cfg in [&http, &stdio] {
+                let err = cfg.validate().unwrap_err().to_string();
+                assert!(err.contains("managed OAuth record"), "{err}");
+                // Even a config that skipped validation (hand-edited file,
+                // older version) cannot resolve it.
+                let err = resolve_secrets(cfg, Some(&store)).unwrap_err().to_string();
+                assert!(!err.contains("victim-access-7c1"), "{err}");
+            }
+        }
     }
 
     #[test]
@@ -516,6 +642,7 @@ mod tests {
             &Arc::default(),
             Duration::from_secs(2),
             None,
+            Arc::default(),
         )
         .await
         .unwrap_err();
@@ -542,10 +669,11 @@ mod tests {
             &Arc::default(),
             Duration::from_secs(2),
             None,
+            Arc::default(),
         )
         .await
         .unwrap_err();
-        assert!(matches!(error, McpError::Spawn { .. }));
+        assert!(matches!(error, McpError::RuntimeMissing { .. }), "{error}");
         let message = error.to_string();
         assert!(!message.contains("environment-sentinel"));
         assert!(!message.contains("header-sentinel"));
@@ -553,7 +681,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_command_is_a_spawn_error() {
+    async fn missing_command_is_a_runtime_missing_error_with_a_hint() {
         let cfg = McpServerConfig::stdio("s", "definitely-not-a-real-binary-xyz", [""; 0]);
         let err = open(
             &cfg,
@@ -561,9 +689,67 @@ mod tests {
             &Arc::default(),
             Duration::from_secs(2),
             None,
+            Arc::default(),
         )
         .await
         .unwrap_err();
-        assert!(matches!(err, McpError::Spawn { .. }), "{err}");
+        assert!(matches!(err, McpError::RuntimeMissing { .. }), "{err}");
+        assert_eq!(err.kind(), McpErrorKind::RuntimeMissing);
+        assert!(err.to_string().contains("was not found on PATH"), "{err}");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_cmd_shim_preserves_one_folder_argument() {
+        use tokio::io::AsyncReadExt;
+        let dir = tempfile::tempdir().unwrap();
+        let shim = dir.path().join("argv fixture.cmd");
+        // This is an argv echo fixture, not an MCP server.
+        std::fs::write(
+            &shim,
+            "@echo off\r\n@echo %1\r\n@if not [%2]==[] exit /b 9\r\n",
+        )
+        .unwrap();
+        let folder = dir.path().join("chosen folder & echo injected");
+        std::fs::create_dir(&folder).unwrap();
+        let cfg = McpServerConfig::stdio(
+            "argv",
+            shim.display().to_string(),
+            [folder.display().to_string()],
+        );
+        let mut cmd = build_command("argv", &cfg.transport, &ResolvedSecrets::default()).unwrap();
+        cmd.command_mut().stdout(Stdio::piped());
+        let mut child = cmd.spawn().unwrap();
+        let mut stdout = child.inner_mut().stdout().take().unwrap();
+        let mut text = String::new();
+        stdout.read_to_string(&mut text).await.unwrap();
+        assert!(child.wait().await.unwrap().success());
+        assert_eq!(text.trim(), format!("\"{}\"", folder.display()));
+    }
+
+    #[test]
+    fn install_hints_name_the_runtime() {
+        assert!(runtime_install_hint("npx").contains("nodejs.org"));
+        assert!(runtime_install_hint("uvx.exe").contains("astral.sh"));
+        assert!(runtime_install_hint("weird").contains("`weird`"));
+    }
+
+    #[test]
+    fn launcher_environment_carries_path_and_no_credentials() {
+        assert!(
+            OS_ESSENTIAL_ENV
+                .iter()
+                .any(|k| k.eq_ignore_ascii_case("PATH")),
+            "npx/uvx cannot find node/python without PATH"
+        );
+        for k in OS_ESSENTIAL_ENV {
+            let u = k.to_ascii_uppercase();
+            assert!(
+                !["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "PROXY"]
+                    .iter()
+                    .any(|bad| u.contains(bad)),
+                "{k} must not be inherited"
+            );
+        }
     }
 }

@@ -29,7 +29,7 @@ use secret_store::SecretStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use storage::{EventJournal, JournalRecord, Run, Storage, read_event_log};
-use task_runtime::{ExecError, Runtime};
+use task_runtime::{ExecError, RunState, Runtime};
 use tokio::sync::{broadcast, oneshot};
 use tokio::task::JoinHandle;
 use tool_registry::{Platform, ToolRegistry, ToolSpec};
@@ -38,6 +38,7 @@ use uuid::Uuid;
 use crate::config::{LoopConfig, ModelPrice, SharedRedactor};
 use crate::profile::BotProfile;
 use crate::subagent::SubSpec;
+use crate::taint::{self, ContentTaint};
 
 /// Errors of the public loop API.
 #[derive(Debug, thiserror::Error)]
@@ -93,6 +94,11 @@ pub enum ApprovalScope {
     /// The tool's whole permission category for this bot: a persisted grant
     /// rule.  Absolute floors (money, never-list) still win.
     AlwaysCategory,
+    /// Typing, keys, value setting and dragging into the one program the card
+    /// names, for the rest of this run only (card 243-1). Never persisted, not
+    /// inherited by sub-agents. Accepted only on a card for which the daemon
+    /// resolved an eligible control target.
+    RunControl,
 }
 
 /// What a persisted "always allow" grant covers.
@@ -102,6 +108,14 @@ pub enum GrantTarget {
     Tool(String),
     /// Every tool of a permission category.
     Category(PermissionCategory),
+    /// One tool on one target (a site, a folder, a command prefix): approval
+    /// memory that never covers another target.
+    Scoped {
+        /// The tool.
+        tool: String,
+        /// The one target the rule covers.
+        scope: crate::scoped_grant::Scope,
+    },
 }
 
 /// A persisted "always allow" rule of a bot (ADR-0012), created by approving
@@ -148,6 +162,8 @@ pub enum Delivery {
 /// persisted grants (what actually happens for a human-initiated call).
 #[derive(Debug, Clone)]
 pub struct EffectivePolicy {
+    /// The bot's autonomy mode (derived from its preset).
+    pub mode: permission_engine::AutonomyMode,
     /// The bot profile's own policy; `None` = the workspace policy applies.
     pub policy: Option<Policy>,
     /// Effective decision per permission category (`Meta` is always allowed and
@@ -404,7 +420,9 @@ pub fn build_providers(
     let mut cli_built: Vec<String> = Vec::new();
     for s in cfg.providers.iter().filter(|p| p.enabled) {
         if let Some(CliSettings::Cli { engine, .. }) = &s.cli {
-            if cli_provider::engine_spec(engine.as_str()).is_some_and(|spec| spec.runnable) {
+            if cli_provider::engine_spec(engine.as_str())
+                .is_some_and(cli_provider::CliEngineSpec::can_enable)
+            {
                 cli_built.push(s.id.clone());
             } else {
                 warn(&format!(
@@ -530,6 +548,7 @@ impl ChatProvider for RedactingProvider {
 
 /// Mask secrets in every message and tool-call argument of `req`.
 pub(crate) fn redact_request(r: &SharedRedactor, req: &mut provider_catalog::ChatRequest) {
+    let knowledge_budgets = crate::knowledge::request_budgets(req);
     for m in &mut req.messages {
         redact_value(r, &mut m.content);
         for c in &mut m.tool_calls {
@@ -538,6 +557,7 @@ pub(crate) fn redact_request(r: &SharedRedactor, req: &mut provider_catalog::Cha
             }
         }
     }
+    crate::knowledge::rebudget_request(req, &knowledge_budgets);
 }
 
 pub(crate) enum Verdict {
@@ -551,11 +571,40 @@ pub(crate) struct Pending {
     /// The card carries tool details or the tool is always-ask: only a
     /// one-time approval may be given for it, on every channel.
     pub once_only: bool,
+    /// The card offers [`ApprovalScope::RunControl`]: the daemon resolved an
+    /// eligible control target for this call.
+    pub grantable: bool,
+    /// The card is a taint-gate card that offers "always for this chat": creating that grant
+    /// takes the owner's authority (the API token alone is not enough).
+    pub gate_grant: bool,
+}
+
+/// Browser actions that act on the page open right now: their allowance is bound to its origin.
+pub(crate) fn is_page_action(name: &str) -> bool {
+    matches!(
+        name,
+        "browser_fill" | "browser_press" | "browser_click" | "browser_select"
+    )
 }
 
 #[derive(Default)]
 pub(crate) struct Grants {
-    pub this_chat: HashSet<(ChatId, String, Option<String>)>,
+    /// `(chat, bot, tool, computer)`: a grant given to one bot never covers another
+    /// bot answering in the same chat (`@mention`).
+    pub this_chat: HashSet<(ChatId, BotId, String, Option<String>)>,
+    /// `(chat, bot, tool class, destination class)`: "always allow for this chat" given to a
+    /// taint-gate card on a Full bot (see `Shared::gate_key`). Never covers a send, a payment,
+    /// a never-list command or a secret fill: those are not grantable.
+    pub gate_chat: HashSet<(ChatId, BotId, &'static str, String)>,
+    /// `(chat, bot, tool, target, computer)`: "allow for this chat" on a tool that is
+    /// remembered per target. Covers only that target (see `scoped_grant`).
+    pub this_chat_scoped: HashSet<(
+        ChatId,
+        BotId,
+        String,
+        crate::scoped_grant::Scope,
+        Option<String>,
+    )>,
     /// Persisted rules, in creation order.
     pub always: Vec<Grant>,
 }
@@ -575,7 +624,25 @@ impl Grants {
                 && match &g.target {
                     GrantTarget::Tool(t) => t == tool,
                     GrantTarget::Category(c) => *c == category,
+                    GrantTarget::Scoped { .. } => false,
                 }
+        })
+    }
+
+    /// A persisted rule for this tool whose target covers `call`.
+    pub fn covers_scoped(
+        &self,
+        bot: BotId,
+        tool: &str,
+        call: &crate::scoped_grant::Scope,
+        computer: Option<&str>,
+    ) -> bool {
+        self.always.iter().any(|g| {
+            !g.inert
+                && g.bot_id == bot
+                && g.computer.as_deref() == computer
+                && matches!(&g.target, GrantTarget::Scoped { tool: t, scope }
+                    if t == tool && scope.covers(call))
         })
     }
 }
@@ -633,6 +700,14 @@ pub(crate) struct RunCtx {
     pub computer: Arc<tokio::sync::OnceCell<tokio::sync::OwnedSemaphorePermit>>,
     pub waiting_computer: Arc<AtomicBool>,
     pub resolved_computer: RunComputer,
+    /// The user's own paired computer, the target of the `pc_*` tools (card 272).
+    /// Not part of `resolved_computer`: a run is placed on ONE computer, the
+    /// per-request target is a second identity with its own grant scope.
+    pub mypc: Option<computer_target::ComputerNode>,
+    /// `pc_*` read families (files, screen, browser) the owner approved in
+    /// THIS run: a read of the user's computer asks once per run and family,
+    /// never once for every run (review blocker 1).
+    pub pc_reads: Mutex<std::collections::BTreeSet<&'static str>>,
     pub run_id: RunId,
     pub chat_id: ChatId,
     pub bot_id: BotId,
@@ -647,9 +722,73 @@ pub(crate) struct RunCtx {
     /// Spawn parameters of a subagent run.
     pub sub: Option<SubSpec>,
     pub state: Mutex<CtxState>,
+    /// Untrusted and private content this run has already shown the model.
+    /// Never cleared. Copied from the parent when a subagent starts, and
+    /// rebuilt from stored steps when the process resumes a run.
+    pub taint: Mutex<ContentTaint>,
+    /// Run-scoped control grants (card 243-1). In memory, per run: gone when
+    /// the run ends and not copied to a sub-agent's own context.
+    pub control_grants: Mutex<Vec<ControlGrant>>,
+    /// Origin the browser page was on when the current page action was resolved (read from the
+    /// browser itself; `None`: unknown, so the action stays once-only). Set by the loop right
+    /// before the decision and handed to the tool as `expected_origin`.
+    pub page_origin: Mutex<Option<String>>,
+}
+
+/// "Let this run type into this program" on one computer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ControlGrant {
+    /// `tool_grant_scope` of the computer it was given on.
+    pub computer: String,
+    /// The one program it covers.
+    pub identity: tool_registry::ControlIdentity,
+}
+
+/// The control kind a built-in tool sends, for the three tools a run-scoped
+/// grant can ever cover. `desktop_launch`, `shell_run`, `script_run` and every
+/// other tool return `None`: nothing covers them.
+pub(crate) fn control_kind_of(name: &str) -> Option<tool_registry::ControlKind> {
+    use tool_registry::ControlKind as K;
+    match name {
+        "desktop_type" => Some(K::Type),
+        "desktop_set_value" => Some(K::SetValue),
+        "desktop_key" => Some(K::Key),
+        _ => None,
+    }
 }
 
 impl RunCtx {
+    /// Own per-run state key for tools that keep any (the browser tab): a subagent
+    /// run is its own lane, a top-level run shares the bot's default.
+    pub(crate) fn lane(&self) -> Option<String> {
+        self.parent_run_id.map(|_| self.run_id.to_string())
+    }
+
+    /// A run-scoped control grant covers this call: same computer, same
+    /// running program (path, pid and start time), a covered kind, and a target
+    /// the deny rules did not refuse.
+    pub(crate) fn control_covers(
+        &self,
+        name: &str,
+        category: PermissionCategory,
+        target: &tool_registry::ControlTarget,
+    ) -> bool {
+        if control_kind_of(name) != Some(target.kind) || !target.eligible() {
+            return false;
+        }
+        let Some(scope) = self.tool_grant_scope(name, category) else {
+            return false;
+        };
+        self.control_grants.lock().iter().any(|g| {
+            g.computer == scope
+                && g.identity.pid == target.identity.pid
+                && g.identity.start_time == target.identity.start_time
+                && g.identity
+                    .image_path
+                    .eq_ignore_ascii_case(&target.identity.image_path)
+        })
+    }
+
     pub(crate) fn grant_scope(&self, category: PermissionCategory) -> Option<String> {
         self.tool_grant_scope("", category)
     }
@@ -659,6 +798,18 @@ impl RunCtx {
         name: &str,
         category: PermissionCategory,
     ) -> Option<String> {
+        // The `pc_*` family acts on the user's own computer, whatever the run is
+        // placed on. Its scope is that computer's id only: a grant given for the
+        // bot's own computer ("host:..", "browser:..", "pc:..", or none for shell
+        // and files) never matches it, and a grant given here never matches
+        // those. Nothing paired still has a scope of its own, so it cannot fall
+        // back to an unscoped grant.
+        if name.starts_with(builtin_tools::pc::PC_PREFIX) {
+            return Some(format!(
+                "mypc:{}",
+                self.mypc.as_ref().map_or("none", |n| n.id.as_str())
+            ));
+        }
         let computer_tool = matches!(
             category,
             PermissionCategory::Desktop | PermissionCategory::Browser
@@ -703,8 +854,13 @@ pub struct SkillHints {
 }
 
 pub(crate) struct Shared {
+    pub usage: crate::usage::Ledger,
     pub storage: Arc<Storage>,
     pub tools: ToolRegistry,
+    /// Whether a bot that never chose a file access mode gets no file access
+    /// (always-on host) instead of "This computer". Evaluated per call.
+    pub fs_unset_denied: RwLock<Option<Arc<dyn Fn() -> bool + Send + Sync>>>,
+    pub checkpoint_access: RwLock<(Vec<std::path::PathBuf>, Vec<std::path::PathBuf>)>,
     pub providers: RwLock<Providers>,
     /// Workspace-wide policy; replaceable at runtime (`PUT /v1/policy`).
     pub global_policy: RwLock<Policy>,
@@ -731,7 +887,10 @@ pub(crate) struct Shared {
     pub pending: Mutex<HashMap<ToolCallId, Pending>>,
     pub grants: Mutex<Grants>,
     pub active: Mutex<HashMap<ChatId, RunId>>,
-    pub queued: Mutex<HashMap<ChatId, VecDeque<String>>>,
+    pub queued: Mutex<HashMap<ChatId, VecDeque<(String, &'static str)>>>,
+    /// Bots still to answer one user message that mentioned several bots
+    /// (`@A @B`), with that message's text. Only the user's own text fills it.
+    pub mention_chain: Mutex<HashMap<ChatId, VecDeque<(BotId, Uuid)>>>,
     pub tasks: Mutex<HashMap<RunId, JoinHandle<()>>>,
     /// Background work (memory extraction).
     pub bg: Mutex<Vec<JoinHandle<()>>>,
@@ -752,6 +911,9 @@ pub(crate) struct Shared {
     pub spawn_gate: Mutex<()>,
     /// Skills index (`AgentLoop::with_skills`).
     pub skills: OnceLock<skills::SkillIndex>,
+    /// Owner-stored fill secrets (from the builtin tool config); workflow
+    /// replay types them through the same checks as the fill tools.
+    pub fill_secrets: OnceLock<Arc<secret_store::FillSecrets>>,
     /// Foreground browser / app source for skill suggestions.
     pub skill_hints: RwLock<Option<SkillHintFn>>,
     /// The K0-K3 decision ladders (one per bot) and the workflow wiring.
@@ -769,6 +931,9 @@ pub(crate) struct Shared {
     /// Serialises a global-policy install with the decision to execute an
     /// already-approved tool. Not held across `.await`.
     pub exec_gate: Mutex<()>,
+    /// Cancellation tokens of the native-tools engine processes running per bot,
+    /// so the owner's kill switch can end them at once.
+    pub native_runs: Mutex<HashMap<BotId, Vec<(uuid::Uuid, tokio_util::sync::CancellationToken)>>>,
     /// Test-only: the drive task waits here after `conclude` and before it
     /// reaps its own [`JoinHandle`].
     #[cfg(test)]
@@ -816,7 +981,11 @@ fn auto_unreachable_notice(
     provider: &dyn ComputerProvider,
     rc: &RunComputer,
 ) -> Option<String> {
-    if !matches!(target, ComputerTarget::Auto) || !provider.paired_pc_unreachable() {
+    // A host-homed bot never "falls back" from the PC: its own computer is the default.
+    if !matches!(target, ComputerTarget::Auto)
+        || provider.is_host()
+        || !provider.paired_pc_unreachable()
+    {
         return None;
     }
     let using = match rc.label {
@@ -862,7 +1031,20 @@ pub(crate) fn kind_for(i: InitiatorKind) -> String {
         InitiatorKind::Channel => format!("{KIND_PREFIX}:channel"),
         InitiatorKind::Subagent => format!("{KIND_PREFIX}:subagent"),
         InitiatorKind::Schedule => format!("{KIND_PREFIX}:schedule"),
+        InitiatorKind::ExternalAgent => format!("{KIND_PREFIX}:external_agent"),
+        InitiatorKind::ExternalSchedule => format!("{KIND_PREFIX}:external_schedule"),
     }
+}
+
+/// Run kind of a turn that answers the user message `msg` for a bot mentioned
+/// in it. The id binds the run to that exact message (first or later bot).
+pub(crate) fn kind_for_mention(msg: Uuid) -> String {
+    format!("{KIND_PREFIX}:mention:{msg}")
+}
+
+/// The user message a mention run (see [`kind_for_mention`]) answers.
+pub(crate) fn mention_message_id(kind: &str) -> Option<Uuid> {
+    kind.strip_prefix("turn:mention:")?.parse().ok()
 }
 
 /// Run kind of a turn started by schedule `id` (the id survives a restart).
@@ -872,7 +1054,8 @@ pub(crate) fn kind_for_schedule(id: TaskId) -> String {
 
 /// The schedule behind a run kind written by [`kind_for_schedule`].
 pub fn schedule_id_of(kind: &str) -> Option<TaskId> {
-    kind.strip_prefix("turn:schedule:")?
+    kind.strip_prefix("turn:schedule:")
+        .or_else(|| kind.strip_prefix("turn:external_schedule:"))?
         .parse()
         .ok()
         .map(TaskId)
@@ -883,7 +1066,13 @@ pub(crate) fn initiator_of(kind: &str) -> InitiatorKind {
         Some("routine") => InitiatorKind::Routine,
         Some("channel") => InitiatorKind::Channel,
         Some("subagent") => InitiatorKind::Subagent,
+        Some(s) if s == "external_schedule" || s.starts_with("external_schedule:") => {
+            InitiatorKind::ExternalSchedule
+        }
         Some(s) if s == "schedule" || s.starts_with("schedule:") => InitiatorKind::Schedule,
+        Some(s) if s == "external_agent" || s.starts_with("external_agent:") => {
+            InitiatorKind::ExternalAgent
+        }
         _ => InitiatorKind::Human,
     }
 }
@@ -897,6 +1086,24 @@ impl Shared {
             .get(model)
             .copied()
             .or_else(|| self.providers.read().price_for(model))
+    }
+
+    /// The profile a top-level run uses: narrowed to the computer it resolved
+    /// to, and told whether an unset file mode is denied here.
+    fn run_profile(&self, raw: &BotProfile, rc: &RunComputer) -> BotProfile {
+        let unset_denied = matches!(self.unset_file_scope(), builtin_tools::FsScope::Folders(_));
+        raw.with_computer_access(rc.desktop_available, rc.browser)
+            .with_unset_files_denied(unset_denied)
+    }
+
+    /// Scope of a bot that never chose a file access mode.
+    pub fn unset_file_scope(&self) -> builtin_tools::FsScope {
+        let denied = self.fs_unset_denied.read().as_ref().is_some_and(|f| f());
+        if denied {
+            builtin_tools::FsScope::Folders(Vec::new())
+        } else {
+            builtin_tools::FsScope::Computer
+        }
     }
 
     /// Profile for a bot: explicit registration, else the bot row's JSON config.
@@ -1149,6 +1356,33 @@ impl Shared {
         None
     }
 
+    /// Why a child run may not take the placement its parent resolved:
+    /// either row is unusable on its own (no stored target, a legacy local id,
+    /// or a host/browser id that is not this machine), or the child's stored
+    /// target or node differs from what the validated parent resolved.
+    fn child_placement_error(
+        child: &Run,
+        parent: &Run,
+        resolved: &RunComputer,
+        provider: Option<&dyn ComputerProvider>,
+    ) -> Option<String> {
+        if let Some(reason) = Self::persisted_computer_error(child, provider)
+            .or_else(|| Self::persisted_computer_error(parent, provider))
+        {
+            return Some(reason.to_owned());
+        }
+        let node = resolved.node.as_ref().map(|n| n.id.as_str());
+        if child.computer_target.as_deref() != Some(resolved.label.as_str())
+            || child.computer_node.as_deref() != node
+        {
+            return Some(
+                "Cannot resume: this sub-agent's stored computer does not match its parent's; start a new run"
+                    .to_owned(),
+            );
+        }
+        None
+    }
+
     /// A stored host/browser run that cannot be compared with this boot's local
     /// identity because the identity key was unreadable. The run stays paused
     /// (retryable on a later boot); it is neither failed nor rebound.
@@ -1263,6 +1497,56 @@ impl Shared {
         }
     }
 
+    /// Exposure a run starts with: the parent's (subagents), what its own
+    /// history already holds, and the provenance of the chat messages that
+    /// enter its context.
+    fn initial_taint(&self, run: &Run, chat_id: ChatId) -> ContentTaint {
+        let mut taint = ContentTaint::default();
+        if let Some(parent_id) = run.parent_run_id {
+            let inherited = self
+                .runs
+                .lock()
+                .get(&parent_id)
+                .map(|ctx| ctx.taint.lock().clone());
+            if let Some(parent) = inherited {
+                taint.inherit(&parent);
+            }
+        }
+        absorb_run_history(&mut taint, self, run.id, 0);
+        // A subagent does not see the chat. A top-level turn, including a
+        // scheduled one, does: provenance rides on the messages that enter
+        // the context. Dropped by the history bound means the bytes are not
+        // in front of the model, so those bits are not inherited.
+        if run.parent_run_id.is_none() {
+            let prior = crate::history::chat_provenance(
+                &self.storage,
+                chat_id,
+                Some(run.id),
+                schedule_id_of(&run.kind),
+            );
+            taint.exposure.inherit(prior.exposure);
+            for label in prior.sources {
+                taint.note_label(&label);
+            }
+            // Another bot's reply (an `@mention` chat) reaches this run as
+            // untrusted data whatever that bot read. Same single exposure
+            // state as every other source: no separate flag for mentions.
+            if crate::history::has_foreign_replies(&self.storage, run) {
+                taint.exposure.observe(true, false);
+                taint.note_label("another bot's reply");
+            }
+        }
+        taint
+    }
+
+    /// The user's own paired computer, the target of the `pc_*` tools.
+    fn mypc_node(&self) -> Option<computer_target::ComputerNode> {
+        self.computer_provider
+            .read()
+            .as_ref()
+            .and_then(|p| p.mypc_node())
+    }
+
     /// Per-run context, built on first use (also after a restart).
     pub fn ctx(&self, run: &Run) -> Result<Arc<RunCtx>, ExecError> {
         if let Some(c) = self.runs.lock().get(&run.id) {
@@ -1279,8 +1563,7 @@ impl Shared {
                     .lock()
                     .remove(&run.id)
                     .unwrap_or_else(|| self.resolve_computer_for_run(&raw_profile, Some(run)));
-                let profile =
-                    Arc::new(raw_profile.with_computer_access(rc.desktop_available, rc.browser));
+                let profile = Arc::new(self.run_profile(&raw_profile, &rc));
                 (
                     profile,
                     raw_profile.policy(),
@@ -1298,6 +1581,20 @@ impl Shared {
                     .map_err(xe)?
                     .ok_or_else(|| xe(format!("parent run {parent_id} not found")))?;
                 let pctx = self.ctx(&parent)?;
+                // A child inherits its parent's resolved computer, but its own
+                // stored placement must agree with it. A resumed child with no
+                // stored target, a legacy id or a different node fails closed
+                // here, before anything runs, with or without startup
+                // reconciliation.
+                let provider = self.computer_provider.read().clone();
+                if let Some(reason) = Self::child_placement_error(
+                    run,
+                    &parent,
+                    &pctx.resolved_computer,
+                    provider.as_deref(),
+                ) {
+                    return Err(xe(reason));
+                }
                 let spec: SubSpec =
                     serde_json::from_value(run.spec.clone().unwrap_or(Value::Null)).map_err(xe)?;
                 let model = spec.model_for(&pctx.profile).map_err(xe)?;
@@ -1324,7 +1621,12 @@ impl Shared {
                     .map(|ctx| Arc::clone(&ctx.computer))
             })
             .unwrap_or_else(|| Arc::new(tokio::sync::OnceCell::new()));
+        let taint = self.initial_taint(run, chat_id);
+        let steer = self.pending_steering(run)?;
+        let mypc = self.mypc_node();
         let ctx = Arc::new(RunCtx {
+            mypc,
+            pc_reads: Mutex::new(std::collections::BTreeSet::new()),
             computer,
             waiting_computer: Arc::new(AtomicBool::new(false)),
             resolved_computer,
@@ -1343,13 +1645,49 @@ impl Shared {
             parent_run_id: run.parent_run_id,
             sub,
             state: Mutex::new(CtxState {
-                steer: VecDeque::new(),
+                steer,
                 closed: false,
                 seq,
                 todos: Vec::new(),
             }),
+            taint: Mutex::new(taint),
+            control_grants: Mutex::new(Vec::new()),
+            page_origin: Mutex::new(None),
         });
         Ok(Arc::clone(self.runs.lock().entry(run.id).or_insert(ctx)))
+    }
+
+    /// Accepted steering is stored as a user message before it is queued.
+    /// Every planned user step consumes one such row, even if its no-op
+    /// execution was interrupted: history replays the durable step input.
+    fn pending_steering(&self, run: &Run) -> Result<VecDeque<String>, ExecError> {
+        if run.parent_run_id.is_some()
+            || RunState::parse(&run.state).is_some_and(RunState::is_terminal)
+        {
+            return Ok(VecDeque::new());
+        }
+        let Some(chat_id) = run.chat_id else {
+            return Ok(VecDeque::new());
+        };
+        let consumed = self
+            .storage
+            .list_steps(run.id)
+            .map_err(xe)?
+            .iter()
+            .filter(|step| step.name == STEP_USER)
+            .count()
+            // The original task belongs to first_step, including when no
+            // step intent was written before the restart.
+            .max(1);
+        Ok(self
+            .storage
+            .list_messages(chat_id)
+            .map_err(xe)?
+            .into_iter()
+            .filter(|message| message.run_id == Some(run.id) && message.role == "user")
+            .skip(consumed)
+            .map(|message| message.content)
+            .collect())
     }
 
     /// Whether `spec` may be shown to / used by the bot of run `run_id` (the
@@ -1373,8 +1711,7 @@ impl Shared {
     /// visibility (an MCP server's `bots` list).  Call-time enforcement stays
     /// in the tool itself; this keeps hidden tools out of what the model sees.
     pub(crate) fn spec_visible(&self, profile: &BotProfile, bot: BotId, spec: &ToolSpec) -> bool {
-        profile.tool_visible(&spec.name)
-            && profile.category_visible(spec.category)
+        profile.spec_visible(&spec.name, spec.category)
             && platform_ok(&spec.platforms)
             // Fail closed: a name the registry no longer knows is not visible.
             && self
@@ -1540,10 +1877,7 @@ impl Shared {
         } else {
             // Same gate as the spec list: a hidden or wrong-platform tool must
             // not run just because the model named it.
-            if !profile.tool_visible(name)
-                || !profile.category_visible(own.category)
-                || !platform_ok(&own.platforms)
-            {
+            if !profile.spec_visible(name, own.category) || !platform_ok(&own.platforms) {
                 return None;
             }
             (Some(own), name.to_owned())
@@ -1566,6 +1900,90 @@ impl Shared {
             .collect();
         specs.sort_by(|a, b| a.name.cmp(&b.name));
         specs
+    }
+
+    /// The discovery-mode prompt block for this bot, or `None` when the model
+    /// was handed its tools directly (no `find_tool` among `specs`) or the bot
+    /// may use none of the advertised families. Built from the permission-
+    /// filtered registry, independent of per-turn router hints. Unchanged
+    /// registry and policy inputs produce identical bytes across turns.
+    pub(crate) fn discovery_block(&self, ctx: &RunCtx, specs: &[ToolSpec]) -> Option<String> {
+        if !specs.iter().any(|s| s.name == agent_router::FIND_TOOL) {
+            return None;
+        }
+        let visible = self.visible_specs(&ctx.profile, ctx.bot_id);
+        let own_screen = self.is_host_homed() && ctx.resolved_computer.label == ComputerLabel::Host;
+        crate::discovery_prompt::block_for(
+            visible
+                .iter()
+                .filter(|s| {
+                    self.decide(ctx, &s.name, s.effect, s.category, &Value::Null) != Decision::Deny
+                })
+                .map(|s| s.name.as_str()),
+            own_screen,
+        )
+    }
+
+    /// The "choosing tools" prompt block: which tool family fits which job and
+    /// that a claim needs the result of the call behind it. Built from the
+    /// tools the bot may use (all of them in discovery mode, where `specs`
+    /// holds only the meta tools), so it is stable across a run's model calls.
+    pub(crate) fn tool_guidance_block(&self, ctx: &RunCtx, specs: &[ToolSpec]) -> Option<String> {
+        let families = if specs.iter().any(|s| s.name == agent_router::FIND_TOOL) {
+            let visible = self.visible_specs(&ctx.profile, ctx.bot_id);
+            crate::tool_guidance::Families::of(
+                visible
+                    .iter()
+                    .filter(|s| {
+                        self.decide(ctx, &s.name, s.effect, s.category, &Value::Null)
+                            != Decision::Deny
+                    })
+                    .map(|s| s.name.as_str()),
+            )
+        } else {
+            crate::tool_guidance::Families::of(specs.iter().map(|s| s.name.as_str()))
+        };
+        crate::tool_guidance::block(families)
+    }
+
+    /// This daemon is an always-on host (the bots' own computer).
+    pub(crate) fn is_host_homed(&self) -> bool {
+        self.computer_provider
+            .read()
+            .as_ref()
+            .is_some_and(|p| p.is_host())
+    }
+
+    /// The display of this computer's own desktop, only when its backend
+    /// really runs (the run resolved to the host with a desktop) and the
+    /// daemon's environment names one.
+    fn real_display(&self, rc: &RunComputer) -> Option<String> {
+        if rc.label != ComputerLabel::Host || rc.desktop.is_none() {
+            return None;
+        }
+        let guard = self.computer_provider.read();
+        let provider: &Arc<dyn ComputerProvider> = guard.as_ref()?;
+        let name = provider.display_name()?;
+        crate::discovery_prompt::clean_display(&name)
+    }
+
+    /// The per-run "where you run" block, only for a host-homed daemon: which
+    /// machine the shell, files, desktop and browser tools act on, its OS and
+    /// shell, and how the user's computer is addressed. Fixed for the run.
+    pub(crate) fn place_block(&self, ctx: &RunCtx) -> Option<String> {
+        if !self.is_host_homed() {
+            return None;
+        }
+        let rc = &ctx.resolved_computer;
+        let platform = rc.desktop.as_ref().map(|d| d.capabilities().platform);
+        let display = self.real_display(rc);
+        crate::discovery_prompt::place_block(&crate::discovery_prompt::Place {
+            label: rc.label,
+            node_name: rc.node.as_ref().map(|n| n.name.as_str()),
+            desktop_platform: platform.as_deref(),
+            browser: rc.browser,
+            display: display.as_deref(),
+        })
     }
 
     pub fn audit(&self, ctx: &RunCtx, actor: &str, action: &str, detail: &serde_json::Value) {
@@ -1635,6 +2053,28 @@ fn needs_barrier(event: &Event) -> bool {
     )
 }
 
+/// Rebuild taint from stored steps of `run_id` and its subagents.
+///
+/// Used when a run context is created (resume, or a parent absorbing a child
+/// whose in-memory context is already gone).
+pub(crate) fn absorb_run_history(taint: &mut ContentTaint, sh: &Shared, run_id: RunId, depth: u32) {
+    if depth > 8 {
+        return;
+    }
+    let Ok(steps) = sh.storage.list_steps(run_id) else {
+        return;
+    };
+    for step in &steps {
+        taint::observe_history_step(taint, &step.name, &step.input, step.output.as_ref());
+    }
+    let Ok(kids) = sh.storage.list_child_runs(run_id) else {
+        return;
+    };
+    for kid in kids {
+        absorb_run_history(taint, sh, kid.id, depth + 1);
+    }
+}
+
 /// Result of [`Shared::resolve_call`].
 pub(crate) struct Resolved {
     pub tool: Arc<dyn tool_registry::Tool>,
@@ -1674,6 +2114,13 @@ pub(crate) struct ModelOut {
     /// Which guard stopped the turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard_reason: Option<String>,
+    /// Tool calls a CLI session ran inside this model step. The ordinary tool
+    /// step is not written for those calls; the facts are.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub executed: Vec<crate::taint::ExecFact>,
+    /// External tool descriptions and schemas that were part of this request.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub metadata: Vec<crate::taint::ExecFact>,
 }
 
 /// One call inside a persisted tool step's input.
@@ -1694,6 +2141,20 @@ pub(crate) struct ResultRec {
     pub is_error: bool,
     pub text: String,
     pub spill_path: Option<String>,
+    /// What this call did to the model's context. Absent only on rows written
+    /// before the field existed; those rows are not classified from their text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fact: Option<crate::taint::ExecFact>,
+    /// Light-tier steps only: host facts about whether the call ran and whether
+    /// it was valid. A tool cannot label its own output clean.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier_executed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier_invalid: Option<bool>,
+    /// How the call ended (ok, error, timed out, denied, ...). Absent on rows
+    /// written before the field existed; the ledger classifies those itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<crate::ledger::Outcome>,
 }
 
 pub(crate) const STEP_USER: &str = "user_message";
@@ -1703,3 +2164,5 @@ pub(crate) const STEP_TOOLS: &str = "tools";
 pub(crate) const STEP_WORKFLOW: &str = "workflow";
 /// A built-in command run by the router (`/new`).
 pub(crate) const STEP_COMMAND: &str = "command";
+/// One system nudge after a model turn ended with no text after tool calls.
+pub(crate) const STEP_NUDGE: &str = "nudge";

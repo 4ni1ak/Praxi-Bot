@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop};
@@ -7,6 +8,26 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
 use crate::runtime::CliError;
+
+const ENGINE_ENV: &[&str] = &[
+    "SYSTEMROOT",
+    "WINDIR",
+    "USERPROFILE",
+    "HOME",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "PATHEXT",
+    "COMSPEC",
+    "LANG",
+    "LC_ALL",
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "CODEX_HOME",
+    "CLAUDE_CONFIG_DIR",
+];
 
 #[cfg(windows)]
 #[path = "winjob.rs"]
@@ -25,70 +46,13 @@ pub const UNRUNNABLE_CLI_MESSAGE: &str =
 /// Shown when enabling an unrecognized CLI engine id.
 pub const UNKNOWN_CLI_MESSAGE: &str = "Unknown coding CLI provider id.";
 
-/// Fixed catalogue specification for a supported coding CLI engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CliEngineSpec {
-    /// Engine identifier (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `chatgpt-plan`).
-    pub id: &'static str,
-    /// Display name shown in the UI.
-    pub display_name: &'static str,
-    /// Fixed server-side `argv0` executable name (never supplied by clients).
-    pub command: &'static str,
-    /// Whether Praxi can currently enable and run turns on this engine.
-    pub runnable: bool,
-}
-
-/// Single source of truth for CLI engines and whether they are runnable in this version.
-pub const CLI_ENGINES: &[CliEngineSpec] = &[
-    CliEngineSpec {
-        id: "claude",
-        display_name: "Claude Code",
-        command: "claude",
-        runnable: true,
-    },
-    CliEngineSpec {
-        id: "codex",
-        display_name: "Codex",
-        command: "codex",
-        runnable: false,
-    },
-    CliEngineSpec {
-        id: "cursor",
-        display_name: "Cursor",
-        command: "cursor-agent",
-        runnable: false,
-    },
-    CliEngineSpec {
-        id: "opencode",
-        display_name: "OpenCode",
-        command: "opencode",
-        runnable: false,
-    },
-    CliEngineSpec {
-        id: "gemini",
-        display_name: "Gemini CLI",
-        command: "gemini",
-        runnable: false,
-    },
-    CliEngineSpec {
-        id: "chatgpt-plan",
-        display_name: "ChatGPT plan",
-        command: "codex",
-        runnable: false,
-    },
-];
-
-/// Look up the fixed specification for a coding CLI engine id.
-#[must_use]
-pub fn engine_spec(id: &str) -> Option<&'static CliEngineSpec> {
-    CLI_ENGINES.iter().find(|spec| spec.id == id)
-}
+pub use crate::registry::{CLI_ENGINES, CliEngineSpec, engine_spec};
 
 /// Stable user-readable refusal message when an engine cannot be enabled/run.
 #[must_use]
 pub fn enable_refusal_message(id: &str) -> &'static str {
     match id {
-        "codex" | "chatgpt-plan" => CODEX_UNCONFINABLE_MESSAGE,
+        "codex" => CODEX_UNCONFINABLE_MESSAGE,
         _ if engine_spec(id).is_some() => UNRUNNABLE_CLI_MESSAGE,
         _ => UNKNOWN_CLI_MESSAGE,
     }
@@ -106,7 +70,7 @@ pub enum AuthState {
 /// A detected coding CLI engine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DetectedCli {
-    /// Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `chatgpt-plan`).
+    /// Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `agy`).
     pub id: String,
     /// Display name.
     pub display_name: String,
@@ -142,6 +106,7 @@ pub struct PathEnv {
     pub xdg_data_home: Option<PathBuf>,
     /// Environment variables (for checking non-empty API keys, and test flags).
     pub env_vars: HashMap<String, String>,
+    sealed_fixture: bool,
 }
 
 impl Default for PathEnv {
@@ -174,16 +139,32 @@ impl PathEnv {
         let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
         let xdg_data_home = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from);
 
-        let env_vars = std::env::vars().collect();
+        // Do not even retain Praxi/provider secrets in the detector snapshot.
+        let env_vars = std::env::vars()
+            .map(|(key, value)| (key.to_ascii_uppercase(), value))
+            .filter(|(key, _)| {
+                ENGINE_ENV.contains(&key.as_str())
+                    || matches!(
+                        key.as_str(),
+                        "NPM_CONFIG_PREFIX" | "NVM_SYMLINK" | "PROGRAMFILES"
+                    )
+            })
+            .collect();
 
-        Self {
+        let mut env = Self {
             path_dirs,
             pathext,
             home_dir,
             local_app_data,
             xdg_data_home,
             env_vars,
+            sealed_fixture: false,
+        };
+        crate::search::augment(&mut env);
+        if let Some(data) = crate::node_runtime::registered_data_dir() {
+            env = env.with_node_runtime(data);
         }
+        env
     }
 
     /// Construct a sealed test environment pointing only to `bin_dir`.
@@ -208,7 +189,26 @@ impl PathEnv {
             local_app_data: None,
             xdg_data_home: None,
             env_vars: HashMap::new(),
+            sealed_fixture: true,
         }
+    }
+
+    /// Put Praxi's own Node.js runtime (and its npm prefix) in front of the search path, when one
+    /// is installed below `data`, and make `npm install -g` use the prefix inside it.
+    #[must_use]
+    pub fn with_node_runtime(mut self, data: &std::path::Path) -> Self {
+        let dirs = crate::node_runtime::path_dirs(data);
+        if dirs.is_empty() {
+            return self;
+        }
+        self.path_dirs.splice(0..0, dirs);
+        self.env_vars.insert(
+            "NPM_CONFIG_PREFIX".to_owned(),
+            crate::node_runtime::npm_prefix(data)
+                .to_string_lossy()
+                .into_owned(),
+        );
+        self
     }
 
     #[must_use]
@@ -262,25 +262,37 @@ pub fn find_candidate(argv0: &str, env: &PathEnv) -> Option<PathBuf> {
     }
 
     for dir in &env.path_dirs {
+        if !crate::search::trusted_directory(dir) {
+            continue;
+        }
         for ext in &env.pathext {
+            if !ext.is_empty()
+                && (!ext.starts_with('.') || !ext[1..].chars().all(|c| c.is_ascii_alphanumeric()))
+            {
+                continue;
+            }
             let candidate = if ext.is_empty() {
                 dir.join(argv0)
             } else {
                 dir.join(format!("{argv0}{ext}"))
             };
-            if candidate.is_file() {
-                return Some(candidate);
+            if candidate.is_file() && crate::search::trusted_candidate(&candidate) {
+                return std::fs::canonicalize(candidate)
+                    .ok()
+                    .map(crate::search::plain_path);
             }
         }
         let direct = dir.join(argv0);
-        if direct.is_file() {
-            return Some(direct);
+        if direct.is_file() && crate::search::trusted_candidate(&direct) {
+            return std::fs::canonicalize(direct)
+                .ok()
+                .map(crate::search::plain_path);
         }
     }
     None
 }
 
-fn is_batch_file(path: &Path) -> bool {
+pub(crate) fn is_batch_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
@@ -292,6 +304,20 @@ fn is_batch_file(path: &Path) -> bool {
 /// Returns [`ShimError::Refused`] if the candidate is a Windows `.cmd` or `.bat` shim
 /// that cannot be safely unwrapped without executing `cmd.exe`.
 pub fn resolve_spawn(candidate: &Path, env: &PathEnv) -> Result<ResolvedCommand, ShimError> {
+    if !candidate.is_absolute() || !crate::search::trusted_candidate(candidate) {
+        return Err(ShimError::Refused);
+    }
+    let mut resolved = resolve_spawn_inner(candidate, env)?;
+    if !resolved.program.is_absolute() || !crate::search::trusted_candidate(&resolved.program) {
+        return Err(ShimError::Refused);
+    }
+    resolved.program = std::fs::canonicalize(resolved.program)
+        .map(crate::search::plain_path)
+        .map_err(|_| ShimError::Refused)?;
+    Ok(resolved)
+}
+
+fn resolve_spawn_inner(candidate: &Path, env: &PathEnv) -> Result<ResolvedCommand, ShimError> {
     if !is_batch_file(candidate) {
         return Ok(ResolvedCommand {
             program: candidate.to_path_buf(),
@@ -303,13 +329,16 @@ pub fn resolve_spawn(candidate: &Path, env: &PathEnv) -> Result<ResolvedCommand,
     // reference is decided first: a native `.exe` named by package.json is
     // used, and a `.js` bin stays refused. The `.cmd` is never passed to cmd.exe.
     if let Ok(text) = std::fs::read_to_string(candidate) {
-        if let Some(decision) = npm_native_exe(candidate, &text) {
+        if let Some(resolved) = cursor_file_shim(candidate, &text, env) {
+            return Ok(resolved);
+        }
+        if let Some(decision) = npm_native_exe(candidate, &text, env) {
             return decision;
         }
         let dir = candidate.parent().unwrap_or_else(|| Path::new("."));
         if let Some(target) = parse_npm_shim_target(&text) {
             let script_path = dir.join(&target);
-            if script_path.is_file() {
+            if script_path.is_file() && crate::search::trusted_candidate(&script_path) {
                 let node = find_node_executable(dir, env);
                 if let Some(node) = node {
                     return Ok(ResolvedCommand {
@@ -345,6 +374,53 @@ pub fn resolve_spawn(candidate: &Path, env: &PathEnv) -> Result<ResolvedCommand,
     Err(ShimError::Refused)
 }
 
+/// Cursor's documented native Windows launcher. Resolve only its literal
+/// sibling script, with -File, never arbitrary `PowerShell` command text.
+fn cursor_file_shim(candidate: &Path, text: &str, env: &PathEnv) -> Option<ResolvedCommand> {
+    let stem = candidate.file_stem()?.to_str()?;
+    if !matches!(stem, "cursor-agent" | "agent") {
+        return None;
+    }
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("-command")
+        || lower.contains("-encodedcommand")
+        || !lower.contains("powershell.exe")
+    {
+        return None;
+    }
+    let script_name = if lower.contains("-file \"%script_dir%\\cursor-agent.ps1\"")
+        || lower.contains("-file \"%~dp0cursor-agent.ps1\"")
+    {
+        "cursor-agent.ps1"
+    } else {
+        return None;
+    };
+    let dir = crate::search::plain_path(std::fs::canonicalize(candidate.parent()?).ok()?);
+    let script = crate::search::plain_path(std::fs::canonicalize(dir.join(script_name)).ok()?);
+    if script.parent() != Some(dir.as_path()) || !crate::search::trusted_candidate(&script) {
+        return None;
+    }
+    let root = env
+        .env_vars
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("SYSTEMROOT"))?
+        .1;
+    let program = Path::new(root).join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    if !program.is_absolute() || !program.is_file() || !crate::search::trusted_candidate(&program) {
+        return None;
+    }
+    Some(ResolvedCommand {
+        program,
+        args: vec![
+            "-NoProfile".into(),
+            "-ExecutionPolicy".into(),
+            "Bypass".into(),
+            "-File".into(),
+            script.to_string_lossy().into_owned(),
+        ],
+    })
+}
+
 fn is_js_extension(target: &str) -> bool {
     let p = Path::new(target);
     p.extension().is_some_and(|ext| {
@@ -377,7 +453,11 @@ struct NpmPackageRef {
 /// taken from that package's `package.json` `bin` entry, not from the path
 /// written in the shim. A `.js` bin is refused. The returned exe is canonical
 /// and stays inside the package directory.
-fn npm_native_exe(candidate: &Path, text: &str) -> Option<Result<ResolvedCommand, ShimError>> {
+fn npm_native_exe(
+    candidate: &Path,
+    text: &str,
+    env: &PathEnv,
+) -> Option<Result<ResolvedCommand, ShimError>> {
     let dir = candidate.parent()?;
     let stem = candidate.file_stem()?.to_str()?;
     let mut saw_ref = false;
@@ -392,7 +472,7 @@ fn npm_native_exe(candidate: &Path, text: &str) -> Option<Result<ResolvedCommand
             continue;
         };
         saw_ref = true;
-        if let Some(decision) = package_bin(dir, stem, &package) {
+        if let Some(decision) = package_bin(dir, stem, &package, env) {
             return Some(decision);
         }
     }
@@ -462,6 +542,7 @@ fn package_bin(
     shim_dir: &Path,
     stem: &str,
     package: &NpmPackageRef,
+    env: &PathEnv,
 ) -> Option<Result<ResolvedCommand, ShimError>> {
     let pkg_dir = shim_dir.join(&package.relative);
     let json_path = pkg_dir.join("package.json");
@@ -481,13 +562,24 @@ fn package_bin(
     let Some(bin_rel) = select_bin(&parsed, stem, unscoped) else {
         return Some(Err(ShimError::Refused));
     };
-    match native_exe_inside(&pkg_dir, bin_rel) {
-        Some(path) => Some(Ok(ResolvedCommand {
+    if let Some(path) = native_exe_inside(&pkg_dir, bin_rel) {
+        return Some(Ok(ResolvedCommand {
             program: path,
             args: Vec::new(),
-        })),
-        None => Some(Err(ShimError::Refused)),
+        }));
     }
+    // `opencode-ai` and similar: the package bin is an extensionless launcher with a
+    // `#!/usr/bin/env node` line. Run it with node, never through the `.cmd` / cmd.exe.
+    let Some(script) = node_launcher_inside(&pkg_dir, bin_rel) else {
+        return Some(Err(ShimError::Refused));
+    };
+    let Some(node) = find_node_executable(shim_dir, env) else {
+        return Some(Err(ShimError::Refused));
+    };
+    Some(Ok(ResolvedCommand {
+        program: node,
+        args: vec![script.to_string_lossy().into_owned()],
+    }))
 }
 
 fn select_bin<'a>(pkg: &'a serde_json::Value, stem: &str, unscoped: &str) -> Option<&'a str> {
@@ -505,6 +597,37 @@ fn select_bin<'a>(pkg: &'a serde_json::Value, stem: &str, unscoped: &str) -> Opt
 /// `Some(path)` only for a real `.exe` that canonicalizes inside `package_dir`.
 /// Scripts, missing files, and any `..` or absolute bin are `None` (refused).
 fn native_exe_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
+    let joined = join_inside(package_dir, bin_rel)?;
+    let ext = joined
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
+    if !ext.eq_ignore_ascii_case("exe") {
+        return None;
+    }
+    existing_inside(package_dir, &joined)
+}
+
+/// A package bin inside the package that node runs: an extensionless file or a
+/// `.js`/`.mjs`/`.cjs` file (`@openai/codex` ships `bin/codex.js`), whose first line is a
+/// `node` shebang.
+fn node_launcher_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
+    let joined = join_inside(package_dir, bin_rel)?;
+    if joined
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| !is_js_extension(&format!("x.{e}")))
+    {
+        return None;
+    }
+    let file = existing_inside(package_dir, &joined)?;
+    let mut head = [0u8; 128];
+    let n = std::io::Read::read(&mut std::fs::File::open(&file).ok()?, &mut head).ok()?;
+    let first = std::str::from_utf8(&head[..n]).ok()?.lines().next()?;
+    (first.starts_with("#!") && first.contains("node")).then_some(file)
+}
+
+fn join_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
     if bin_rel.is_empty() || bin_rel.contains(['\0', '%', '\n', '\r']) {
         return None;
     }
@@ -528,19 +651,18 @@ fn native_exe_inside(package_dir: &Path, bin_rel: &str) -> Option<PathBuf> {
             | std::path::Component::Prefix(_) => return None,
         }
     }
-    let ext = joined
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("");
-    if !ext.eq_ignore_ascii_case("exe") {
-        return None;
-    }
+    Some(joined)
+}
+
+/// `joined` must be an existing file that canonicalizes inside `package_dir`.
+fn existing_inside(package_dir: &Path, joined: &Path) -> Option<PathBuf> {
     if !joined.is_file() {
         return None;
     }
     let root = std::fs::canonicalize(package_dir).ok()?;
-    let file = std::fs::canonicalize(&joined).ok()?;
-    (file.starts_with(&root) && file != root).then_some(file)
+    let file = std::fs::canonicalize(joined).ok()?;
+    (file.starts_with(&root) && file != root && crate::search::trusted_candidate(&file))
+        .then(|| crate::search::plain_path(file))
 }
 
 fn find_node_executable(near: &Path, env: &PathEnv) -> Option<PathBuf> {
@@ -728,8 +850,9 @@ pub(crate) fn lock_executable(
     use std::os::windows::fs::OpenOptionsExt;
     use windows::Win32::Storage::FileSystem::FILE_SHARE_READ;
 
-    resolved.program =
-        std::fs::canonicalize(&resolved.program).map_err(|_| CliError::BinaryChanged)?;
+    resolved.program = std::fs::canonicalize(&resolved.program)
+        .map(crate::search::plain_path)
+        .map_err(|_| CliError::BinaryChanged)?;
     let file = std::fs::OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_READ.0)
@@ -772,7 +895,12 @@ pub(crate) fn binary_pin(path: &Path) -> Option<BinaryPin> {
 pub(crate) fn apply_sanitized_env(cmd: &mut tokio::process::Command, env: &PathEnv) {
     cmd.env_clear();
 
-    let path_val = std::env::join_paths(&env.path_dirs).unwrap_or_default();
+    let path_val = std::env::join_paths(
+        env.path_dirs
+            .iter()
+            .filter(|dir| crate::search::trusted_directory(dir)),
+    )
+    .unwrap_or_default();
     cmd.env("PATH", path_val);
 
     let safe_passthrough = [
@@ -797,25 +925,83 @@ pub(crate) fn apply_sanitized_env(cmd: &mut tokio::process::Command, env: &PathE
         }
     }
 
-    // Preserve the user's non-secret environment, including CLI home overrides.
-    for (k, v) in &env.env_vars {
-        let upper = k.to_ascii_uppercase();
-        if upper == "PATH"
-            || upper.contains("KEY")
-            || upper.contains("TOKEN")
-            || upper.contains("SECRET")
-            || upper.contains("CREDENTIAL")
-        {
-            continue;
+    if env.sealed_fixture {
+        for (key, value) in &env.env_vars {
+            if key.starts_with("FAKE_") || key.starts_with("PROBE_TREE_") {
+                cmd.env(key, value);
+            }
         }
-        cmd.env(k, v);
     }
+    // Explicit allowlist: names without KEY/TOKEN can still carry secrets or
+    // inject code (NODE_OPTIONS, BASH_ENV, LD_PRELOAD, proxy URLs, etc.).
+    for key in [
+        "LANG",
+        "LC_ALL",
+        "XDG_DATA_HOME",
+        "XDG_CONFIG_HOME",
+        "CODEX_HOME",
+        "CLAUDE_CONFIG_DIR",
+    ] {
+        if let Some(value) = env.env_vars.get(key)
+            && !is_secret_env(key, value)
+        {
+            cmd.env(key, value);
+        }
+    }
+}
+
+/// Whether an inherited variable must not reach a coding CLI: its name says
+/// it holds a credential, or its value is a URL with an embedded password
+/// (`DATABASE_URL=postgres://user:pw@host/db`, an authenticated proxy).
+pub(crate) fn is_secret_env(name: &str, value: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    let named = [
+        "KEY",
+        "TOKEN",
+        "SECRET",
+        "CREDENTIAL",
+        "PASSWORD",
+        "PASSWD",
+        "PASSPHRASE",
+        "COOKIE",
+        "PRIVATE",
+    ]
+    .iter()
+    .any(|part| upper.contains(part))
+        // `PGPASS`, `SMTP_PASS`, `NPM_CONFIG__AUTH`, `DOCKER_AUTH_CONFIG`, ...
+        // but not `GIT_AUTHOR_NAME` or the X11 `XAUTHORITY` file path.
+        || upper.split('_').any(|word| {
+            matches!(word, "PASS" | "PWD" | "AUTH" | "PAT" | "DSN") && upper != "PWD"
+        })
+        || upper.ends_with("PASS");
+    named || url_has_password(value)
+}
+
+fn url_has_password(value: &str) -> bool {
+    let Some((_, rest)) = value.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    authority
+        .rsplit_once('@')
+        .is_some_and(|(userinfo, _)| userinfo.contains(':'))
 }
 
 async fn run_process_probe(
     resolved: &ResolvedCommand,
     args: &[&str],
     env: &PathEnv,
+) -> Result<(std::process::ExitStatus, String, String), ProbeError> {
+    run_process_probe_with(resolved, args, env, PROBE_TIMEOUT, MAX_OUTPUT_BYTES).await
+}
+
+/// Same fixed-argv probe with its own time and output bounds (model listings are longer).
+async fn run_process_probe_with(
+    resolved: &ResolvedCommand,
+    args: &[&str],
+    env: &PathEnv,
+    timeout: Duration,
+    cap: usize,
 ) -> Result<(std::process::ExitStatus, String, String), ProbeError> {
     // Last line of defence: Rust runs `.cmd`/`.bat` through `cmd.exe /c` and
     // appends the arguments. Never start those.
@@ -865,7 +1051,7 @@ async fn run_process_probe(
                     let n = n.map_err(|_| ProbeError::Io)?;
                     if n == 0 {
                         stdout_done = true;
-                    } else if stdout_buf.len() + n > MAX_OUTPUT_BYTES {
+                    } else if stdout_buf.len() + n > cap {
                         return Err(ProbeError::OutputTooLarge);
                     } else {
                         stdout_buf.extend_from_slice(&stdout_chunk[..n]);
@@ -875,7 +1061,7 @@ async fn run_process_probe(
                     let n = n.map_err(|_| ProbeError::Io)?;
                     if n == 0 {
                         stderr_done = true;
-                    } else if stderr_buf.len() + n > MAX_OUTPUT_BYTES {
+                    } else if stderr_buf.len() + n > cap {
                         return Err(ProbeError::OutputTooLarge);
                     } else {
                         stderr_buf.extend_from_slice(&stderr_chunk[..n]);
@@ -887,10 +1073,10 @@ async fn run_process_probe(
                     // pipes. End the owned tree before draining to EOF.
                     child.terminate().await;
                     if !stdout_done {
-                        read_capped(&mut stdout, &mut stdout_buf, MAX_OUTPUT_BYTES).await?;
+                        read_capped(&mut stdout, &mut stdout_buf, cap).await?;
                     }
                     if !stderr_done {
-                        read_capped(&mut stderr, &mut stderr_buf, MAX_OUTPUT_BYTES).await?;
+                        read_capped(&mut stderr, &mut stderr_buf, cap).await?;
                     }
                     return Ok((
                         status,
@@ -902,7 +1088,7 @@ async fn run_process_probe(
         }
     };
 
-    let result = tokio::time::timeout(PROBE_TIMEOUT, read_fut).await;
+    let result = tokio::time::timeout(timeout, read_fut).await;
     child.terminate().await;
     result.unwrap_or(Err(ProbeError::Timeout))
 }
@@ -932,7 +1118,13 @@ pub(crate) async fn claude_version(
 /// CLI does not advertise the permission mode and tool flags this crate sends.
 pub(crate) async fn claude_help(resolved: &ResolvedCommand, env: &PathEnv) -> Option<String> {
     let (status, stdout, _) = run_process_probe(resolved, &["--help"], env).await.ok()?;
-    status.success().then_some(stdout)
+    status.success().then(|| normalize_help(&stdout))
+}
+
+/// `--help` is word-wrapped at the terminal width (80 columns when piped), so a phrase such as
+/// "disable all tools" can be split over two lines. Every probe matches on single-spaced text.
+pub(crate) fn normalize_help(help: &str) -> String {
+    help.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Probe Codex version without opening login files or exposing raw diagnostics.
@@ -1002,61 +1194,109 @@ impl Detector {
         }
     }
 
+    #[must_use]
+    pub fn environment(&self) -> &PathEnv {
+        &self.env
+    }
+
     /// Detect installed, signed-in coding CLIs.
     ///
     /// Caches successful probes for 60 seconds unless `refresh` is true.
     pub async fn detect(&self, refresh: bool) -> Vec<DetectedCli> {
-        if !refresh {
-            let guard = self.cache.lock().await;
-            let valid_cache = guard
-                .as_ref()
-                .filter(|(t, _)| t.elapsed() < Duration::from_secs(60));
-            if let Some((_, cached)) = valid_cache {
-                return cached.clone();
-            }
-        }
-
-        let fresh = Box::pin(self.detect_fresh()).await;
-
         let mut guard = self.cache.lock().await;
+        if !refresh
+            && let Some((_, cached)) = guard
+                .as_ref()
+                .filter(|(t, _)| t.elapsed() < Duration::from_secs(60))
+        {
+            return cached.clone();
+        }
+        let fresh = Box::pin(self.detect_fresh()).await;
         *guard = Some((Instant::now(), fresh.clone()));
         fresh
     }
 
+    /// Last detection result at any age, so a route can answer at once; a stale one (older than
+    /// 60 s) is refreshed in the background. With nothing cached yet this waits for the probe.
+    pub async fn detect_cached(self: &Arc<Self>) -> Vec<DetectedCli> {
+        let cached = self.cache.lock().await.clone();
+        match cached {
+            Some((at, rows)) => {
+                if at.elapsed() >= Duration::from_secs(60) {
+                    let me = Arc::clone(self);
+                    tokio::spawn(async move {
+                        let _ = me.detect(true).await;
+                    });
+                }
+                rows
+            }
+            None => self.detect(false).await,
+        }
+    }
+
+    /// Ask the installed CLI for its models (fixed argv, 20 s, 4 MiB: codex prints its full prompts), else read the CLI's own
+    /// local cache file. `None` when neither gives a model: the caller uses the bundled list.
+    pub async fn fetch_models(&self, id: &str) -> Option<crate::models::ModelList> {
+        use crate::models::{CliModel, ModelList, ModelSource, now_ms};
+        let spec = engine_spec(id)?;
+        let mut found: Option<(ModelSource, Vec<CliModel>)> = None;
+        if let Some(args) = crate::models::list_args(id)
+            && let Some(candidate) = crate::search::find_engine(spec, &self.env)
+            && let Ok(resolved) = resolve_spawn(&candidate, &self.env)
+            && let Ok((status, stdout, _)) = run_process_probe_with(
+                &resolved,
+                args,
+                &self.env,
+                Duration::from_secs(20),
+                4 * 1024 * 1024,
+            )
+            .await
+            && status.success()
+        {
+            let models = crate::models::parse_list_output(id, &stdout);
+            if !models.is_empty() {
+                found = Some((ModelSource::Cli, models));
+            }
+        }
+        if found.is_none() {
+            let codex_home = self.env.env_vars.get("CODEX_HOME").map(PathBuf::from);
+            let models = crate::models::read_local_cache(
+                id,
+                self.env.home_dir.as_deref(),
+                codex_home.as_deref(),
+            );
+            if !models.is_empty() {
+                found = Some((ModelSource::LocalCache, models));
+            }
+        }
+        found.map(|(source, models)| ModelList {
+            models,
+            source,
+            fetched_at_ms: now_ms(),
+        })
+    }
+
     async fn detect_fresh(&self) -> Vec<DetectedCli> {
-        let (claude, codex, cursor, opencode, gemini) = tokio::join!(
+        let (claude, codex, cursor, opencode, gemini, agy) = tokio::join!(
             self.probe_claude(),
             self.probe_codex(),
             self.probe_cursor(),
             self.probe_opencode(),
             self.probe_gemini(),
+            self.probe_agy(),
         );
 
-        let chatgpt_plan = {
-            let spec = engine_spec("chatgpt-plan").expect("chatgpt-plan in CLI_ENGINES");
-            DetectedCli {
-                id: spec.id.to_owned(),
-                display_name: spec.display_name.to_owned(),
-                installed: codex.installed,
-                version: codex.version.clone(),
-                auth: AuthState::Unknown,
-                account_label: None,
-                runnable: spec.runnable,
-                detail: codex.detail.clone(),
-                message: codex.message.clone(),
-            }
-        };
-
-        vec![claude, codex, cursor, opencode, gemini, chatgpt_plan]
+        let mut rows = vec![claude, codex, cursor, opencode, gemini, agy];
+        // Gemini CLI is retired (Antigravity replaces it): never offered for install,
+        // listed only where it is already installed so that setup keeps working.
+        rows.retain(|r| r.id != "gemini" || r.installed);
+        rows
     }
 
     #[allow(clippy::too_many_lines)]
-    async fn probe_engine_version(
-        &self,
-        id: &str,
-        display_name: &str,
-        argv0: &str,
-    ) -> (DetectedCli, Option<ResolvedCommand>) {
+    async fn probe_engine_version(&self, id: &str) -> (DetectedCli, Option<ResolvedCommand>) {
+        let spec = engine_spec(id).expect("registered engine");
+        let display_name = spec.display_name;
         let not_found = DetectedCli {
             id: id.to_owned(),
             display_name: display_name.to_owned(),
@@ -1069,7 +1309,9 @@ impl Detector {
             message: None,
         };
 
-        let Some(candidate) = find_candidate(argv0, &self.env) else {
+        let Some(candidate) =
+            crate::search::find_engine(engine_spec(id).expect("registered engine"), &self.env)
+        else {
             return (not_found, None);
         };
 
@@ -1093,7 +1335,13 @@ impl Detector {
             }
         };
 
-        match run_process_probe(&resolved, &["--version"], &self.env).await {
+        match run_process_probe(
+            &resolved,
+            engine_spec(id).expect("registered").version_args,
+            &self.env,
+        )
+        .await
+        {
             Ok((status, stdout, _stderr)) => {
                 if status.success() {
                     let version = parse_version_string(&stdout);
@@ -1176,15 +1424,19 @@ impl Detector {
     }
 
     async fn probe_claude(&self) -> DetectedCli {
-        let (mut cli, resolved) = self
-            .probe_engine_version("claude", "Claude Code", "claude")
-            .await;
+        let (mut cli, resolved) = self.probe_engine_version("claude").await;
         if !cli.installed || resolved.is_none() || cli.detail.is_some() {
             return cli;
         }
         let resolved = resolved.unwrap();
 
-        match run_process_probe(&resolved, &["auth", "status", "--json"], &self.env).await {
+        match run_process_probe(
+            &resolved,
+            engine_spec("claude").unwrap().auth_args,
+            &self.env,
+        )
+        .await
+        {
             Ok((_status, stdout, _stderr)) => {
                 #[derive(Deserialize)]
                 struct ClaudeAuth {
@@ -1239,13 +1491,19 @@ impl Detector {
     }
 
     async fn probe_codex(&self) -> DetectedCli {
-        let (mut cli, resolved) = self.probe_engine_version("codex", "Codex", "codex").await;
+        let (mut cli, resolved) = self.probe_engine_version("codex").await;
         if !cli.installed || resolved.is_none() || cli.detail.is_some() {
             return cli;
         }
         let resolved = resolved.unwrap();
 
-        match run_process_probe(&resolved, &["login", "status"], &self.env).await {
+        match run_process_probe(
+            &resolved,
+            engine_spec("codex").unwrap().auth_args,
+            &self.env,
+        )
+        .await
+        {
             Ok((_status, stdout, stderr)) => {
                 let (auth, detail) = classify_codex_status(&stdout, &stderr);
                 cli.auth = auth;
@@ -1275,16 +1533,20 @@ impl Detector {
     }
 
     async fn probe_cursor(&self) -> DetectedCli {
-        let (mut cli, resolved) = self
-            .probe_engine_version("cursor", "Cursor", "cursor-agent")
-            .await;
+        let (mut cli, resolved) = self.probe_engine_version("cursor").await;
         if !cli.installed || resolved.is_none() || cli.detail.is_some() {
             return cli;
         }
         let resolved = resolved.unwrap();
 
         // 1. Try `status --format json`
-        match run_process_probe(&resolved, &["status", "--format", "json"], &self.env).await {
+        match run_process_probe(
+            &resolved,
+            engine_spec("cursor").unwrap().auth_args,
+            &self.env,
+        )
+        .await
+        {
             Ok((status, stdout, _stderr)) => {
                 if let Some(auth_bool) = parse_cursor_json(&stdout) {
                     let auth = if auth_bool {
@@ -1339,22 +1601,8 @@ impl Detector {
     }
 
     async fn probe_opencode(&self) -> DetectedCli {
-        let (mut cli, resolved) = self
-            .probe_engine_version("opencode", "OpenCode", "opencode")
-            .await;
+        let (mut cli, resolved) = self.probe_engine_version("opencode").await;
         if !cli.installed || resolved.is_none() || cli.detail.is_some() {
-            return cli;
-        }
-
-        // Check non-empty OPENCODE_API_KEY in probe env
-        if self
-            .env
-            .env_vars
-            .get("OPENCODE_API_KEY")
-            .is_some_and(|v| !v.trim().is_empty())
-        {
-            cli.auth = AuthState::SignedIn;
-            cli.detail = None;
             return cli;
         }
 
@@ -1391,39 +1639,32 @@ impl Detector {
             }
         }
 
-        cli.auth = if file_found {
-            AuthState::Unknown
-        } else {
-            AuthState::SignedOut
-        };
-        cli.detail = None;
+        cli.auth = AuthState::Unknown;
+        cli.detail = Some(
+            if file_found {
+                "auth_metadata_only"
+            } else {
+                "auth_unverified"
+            }
+            .to_owned(),
+        );
 
         cli
     }
 
-    async fn probe_gemini(&self) -> DetectedCli {
-        let (mut cli, resolved) = self
-            .probe_engine_version("gemini", "Gemini CLI", "gemini")
-            .await;
-        if !cli.installed || resolved.is_none() || cli.detail.is_some() {
-            return cli;
+    /// Antigravity CLI: version only. It has no auth-status command, and its login
+    /// files are never read, so sign-in stays unknown.
+    async fn probe_agy(&self) -> DetectedCli {
+        let (mut cli, resolved) = self.probe_engine_version("agy").await;
+        if cli.installed && resolved.is_some() && cli.detail.is_none() {
+            cli.detail = Some("auth_unverified".to_owned());
         }
+        cli
+    }
 
-        // Check non-empty GEMINI_API_KEY or GOOGLE_API_KEY in probe env
-        let has_key = self
-            .env
-            .env_vars
-            .get("GEMINI_API_KEY")
-            .is_some_and(|v| !v.trim().is_empty())
-            || self
-                .env
-                .env_vars
-                .get("GOOGLE_API_KEY")
-                .is_some_and(|v| !v.trim().is_empty());
-
-        if has_key {
-            cli.auth = AuthState::SignedIn;
-            cli.detail = None;
+    async fn probe_gemini(&self) -> DetectedCli {
+        let (mut cli, resolved) = self.probe_engine_version("gemini").await;
+        if !cli.installed || resolved.is_none() || cli.detail.is_some() {
             return cli;
         }
 
@@ -1435,12 +1676,15 @@ impl Detector {
             .map(|h| h.join(".gemini").join("oauth_creds.json"))
             .is_some_and(|p| std::fs::metadata(&p).is_ok_and(|m| m.is_file()));
 
-        cli.auth = if exists {
-            AuthState::Unknown
-        } else {
-            AuthState::SignedOut
-        };
-        cli.detail = None;
+        cli.auth = AuthState::Unknown;
+        cli.detail = Some(
+            if exists {
+                "auth_metadata_only"
+            } else {
+                "auth_unverified"
+            }
+            .to_owned(),
+        );
 
         cli
     }
@@ -1673,6 +1917,128 @@ fn parse_cursor_json(stdout: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_batch_launcher_resolves_only_literal_sibling_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = dir
+            .path()
+            .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        std::fs::create_dir_all(shell.parent().unwrap()).unwrap();
+        std::fs::write(&shell, "fixture").unwrap();
+        let shim = dir.path().join("cursor-agent.cmd");
+        std::fs::write(&shim, "fixture").unwrap();
+        let script = dir.path().join("cursor-agent.ps1");
+        std::fs::write(&script, "fixture").unwrap();
+        let env = PathEnv::for_test(dir.path().into())
+            .with_env_var("SYSTEMROOT", dir.path().to_string_lossy());
+        let text = r#"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%\cursor-agent.ps1" %*"#;
+        let resolved = cursor_file_shim(&shim, text, &env).unwrap();
+        assert_eq!(resolved.program, shell);
+        assert_eq!(
+            resolved.args.last().unwrap(),
+            &crate::search::plain_path(std::fs::canonicalize(script).unwrap()).to_string_lossy()
+        );
+        assert!(cursor_file_shim(&shim, &format!("{text} -Command evil"), &env).is_none());
+        assert!(
+            cursor_file_shim(
+                &shim,
+                &text.replace("cursor-agent.ps1", "../evil.ps1"),
+                &env
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn production_environment_is_an_allowlist_not_a_secret_name_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut env = PathEnv::for_test(dir.path().into());
+        env.sealed_fixture = false;
+        for key in [
+            "PRAXI_PASSWORD",
+            "DATABASE_URL",
+            "NODE_OPTIONS",
+            "BASH_ENV",
+            "LD_PRELOAD",
+            "HTTPS_PROXY",
+            "FAKE_MODE",
+        ] {
+            env.env_vars.insert(key.into(), "secret".into());
+        }
+        env.env_vars.insert("LANG".into(), "C.UTF-8".into());
+        let mut cmd = tokio::process::Command::new("unused");
+        apply_sanitized_env(&mut cmd, &env);
+        let vars: std::collections::HashMap<_, _> = cmd
+            .as_std()
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        assert!(!vars.values().flatten().any(|value| value == "secret"));
+        assert_eq!(vars.get("LANG"), Some(&Some("C.UTF-8".into())));
+    }
+
+    #[test]
+    fn credential_named_and_credential_valued_variables_are_not_inherited() {
+        for (name, value) in [
+            ("PGPASSWORD", "x"),
+            ("MYSQL_PWD", "x"),
+            ("SMTP_PASS", "x"),
+            ("NPM_CONFIG__AUTH", "x"),
+            ("DOCKER_AUTH_CONFIG", "{}"),
+            ("GH_PAT", "x"),
+            ("SENTRY_DSN", "x"),
+            ("SESSION_COOKIE", "x"),
+            ("SSH_PRIVATE", "x"),
+            ("GPG_PASSPHRASE", "x"),
+            (
+                "DATABASE_URL",
+                "postgres://app:hunter2@db.internal:5432/app",
+            ),
+            ("HTTPS_PROXY", "http://user:pw@proxy:3128"),
+            ("OPENAI_API_KEY", "x"),
+        ] {
+            assert!(is_secret_env(name, value), "{name} must be dropped");
+        }
+        for (name, value) in [
+            ("PWD", "/home/me"),
+            ("OLDPWD", "/tmp"),
+            ("GIT_AUTHOR_NAME", "Me"),
+            ("XAUTHORITY", "/run/user/1000/.Xauthority"),
+            ("HTTPS_PROXY", "http://proxy:3128"),
+            ("CODEX_HOME", "/home/me/.codex"),
+            ("LANG", "en_US.UTF-8"),
+            ("EDITOR", "vim://not-a-credential@host"),
+        ] {
+            assert!(!is_secret_env(name, value), "{name} must be kept");
+        }
+        let mut cmd = tokio::process::Command::new("unused");
+        let env = PathEnv::for_test(PathBuf::from("."))
+            .with_env_var("PGPASSWORD", "leak-sentinel")
+            .with_env_var("DATABASE_URL", "postgres://u:leak-sentinel@h/db")
+            .with_env_var("CODEX_HOME", "kept");
+        apply_sanitized_env(&mut cmd, &env);
+        let passed: Vec<String> = cmd
+            .as_std()
+            .get_envs()
+            .filter_map(|(k, v)| {
+                v.map(|v| format!("{}={}", k.to_string_lossy(), v.to_string_lossy()))
+            })
+            .collect();
+        assert!(
+            passed.iter().any(|kv| kv == "CODEX_HOME=kept"),
+            "{passed:?}"
+        );
+        assert!(
+            !passed.iter().any(|kv| kv.contains("leak-sentinel")),
+            "{passed:?}"
+        );
+    }
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::task::{Context, Poll};
@@ -1948,6 +2314,45 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn npm_shim_with_extensionless_node_launcher_runs_through_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let bin = root.join("node_modules").join("opencode-ai").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(
+            root.join("node_modules/opencode-ai/package.json"),
+            r#"{"name":"opencode-ai","bin":{"opencode":"./bin/opencode"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            bin.join("opencode"),
+            "#!/usr/bin/env node\nconsole.log(1)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("opencode.cmd"),
+            r#""%_prog%"  "%dp0%\node_modules\opencode-ai\bin\opencode" %*"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("node.exe"), "").unwrap();
+        let env = PathEnv::for_test(root.to_path_buf());
+        let candidate = find_candidate("opencode", &env).unwrap();
+        let resolved = resolve_spawn(&candidate, &env).unwrap();
+        assert_eq!(
+            resolved.program.file_name().and_then(|n| n.to_str()),
+            Some("node.exe")
+        );
+        assert!(resolved.args[0].ends_with("opencode"));
+        // A launcher that is not a node script is still refused.
+        std::fs::write(bin.join("opencode"), "MZ not a script").unwrap();
+        assert!(matches!(
+            resolve_spawn(&candidate, &env),
+            Err(ShimError::Refused)
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn executable_lock_denies_writes_and_renames_until_dropped() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("program.exe");
@@ -1958,7 +2363,10 @@ mod tests {
             args: vec![],
         };
         let (resolved, lease) = lock_executable(resolved).unwrap();
-        assert_eq!(resolved.program, std::fs::canonicalize(&path).unwrap());
+        assert_eq!(
+            resolved.program,
+            crate::search::plain_path(std::fs::canonicalize(&path).unwrap())
+        );
         assert!(std::fs::OpenOptions::new().write(true).open(&path).is_err());
         assert!(std::fs::rename(&path, &moved).is_err());
         assert!(std::fs::File::open(&path).is_ok());

@@ -32,7 +32,8 @@ language = "en"                   # optional preferred language code
 executor   = "gemini/gemini-2.5-flash-lite"   # required: the model that runs the loop
 planner    = "gemini/gemini-3.1-pro-preview"  # optional, informational for now
 classifier = "gemini/gemini-2.5-flash-lite"   # optional: fast routing model (K3)
-fallback   = ["ollama/llama3.2"]              # optional, informational for now
+fallback   = ["ollama/llama3.2"]              # optional: alternate models on failure
+# light    = "provider/your-light-model"     # optional: opt-in model tiering
 
 [permissions]
 preset = "approve-destructive"    # read-only | read-and-draft | approve-destructive | full
@@ -61,9 +62,11 @@ A model is written `provider/model`, where the provider is the id you configured
 (see [Providers and models](providers-and-models.md)), for example
 `gemini/gemini-2.5-flash-lite` or `anthropic/<model-id>`.
 
-The `planner` and `fallback` fields are parsed and stored but are
-informational in the current version: the loop runs on `executor`. The
-`classifier` is used by the decision ladder when `[router]` allows it.
+The `planner` field is informational. The `classifier` is used by the decision
+ladder when `[router]` allows it. The loop starts with `executor` and tries
+`fallback` models after retryable errors or missing capabilities. An optional
+`light` model enables [model tiering](model-tiering.md) for simple first turns;
+all setup presets leave it unset.
 
 ### Permissions in a profile
 
@@ -124,7 +127,8 @@ interface (`find_tool`, `get_tool_details`, `use_tool`) instead of the whole lis
 | --- | --- |
 | List bots | `bot bots list` |
 | Inspect one, including its effective policy | `GET /v1/bots/{id}` (API; desktop app) |
-| Replace a profile | `PUT /v1/bots/{id}` (API; desktop app) |
+| Replace a profile | `PUT /v1/bots/{id}` with the `expected_version` from the profile being replaced; missing precondition is `428 precondition_required`, stale is `409 version_conflict` with the current bot. Legacy callers must reload and explicitly retry; the server never upgrades a stale full document automatically |
+| Change single fields safely | `PATCH /v1/bots/{id}` with `expected_version` and `ops` (`set` / `unset` on JSON Pointer paths such as `/models/planner` or `/permissions/categories/fs/level`); a stale version is a `409` that returns the current bot. `GET` and list return profile + `version` in one storage snapshot. Successful profile writes and skill assignment changes advance the same bot revision in their write transaction. The edit modal saves with this. At most 128 operations, 32 path segments / resulting JSON levels, 4096 path bytes and a conservative 1 MiB escaped JSON budget; excessive input is refused before applying it |
 | Delete a bot | `DELETE /v1/bots/{id}`; only possible while it has no chats or runs |
 | See or revoke its "always allow" grants | `bot grants list <bot-id>`, `bot grants revoke ...` |
 

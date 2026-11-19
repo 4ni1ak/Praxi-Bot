@@ -26,6 +26,24 @@ If a turn is already running in the chat, `--mode` decides what happens:
 - `queue` (default): the message waits and runs as the next turn.
 - `steer`: the message is added to the running turn so you can redirect the bot.
 
+### Attaching files and images
+
+Upload a file with `POST /v1/chats/{id}/attachments` (raw body, `?name=` for the
+display name) and pass the returned ids as `attachment_ids` when you send the
+message; the text may then be empty. The file type is detected from its content,
+not its name:
+
+- Images (PNG, JPEG, GIF, WebP, up to 5 MB) go to the model as pictures. A model
+  without vision support is skipped or the turn reports that no model supports it.
+- PDF, Word (`docx`), Excel (`xlsx`) and PowerPoint (`pptx`) files and plain text
+  files (up to 15 MB) are read once, secrets are masked, and the text (at most
+  about 60 KB) is given to the model as data, never as instructions.
+- Audio, video, archives, legacy Office files and other binaries are refused with
+  a clear message; nothing speech-to-text is available yet.
+
+A message carries at most 6 files. Files are stored in the data directory under
+`attachments/`.
+
 ### Slash commands
 
 When the router is enabled, a few messages never reach the model at all:
@@ -66,6 +84,7 @@ else.
 | `this_chat` | This tool, for the rest of this chat |
 | `always` | This tool, for this bot, remembered permanently |
 | `always_category` | The tool's whole category (for example every `fs` tool) for this bot, remembered permanently |
+| `run_control` | Only on a desktop input card that offers "This task: <program>": typing, keys, values and dragging in that one program until the run ends (see [security](security.md)) |
 
 "Always" choices are stored as **grants**. Review and remove them:
 
@@ -130,10 +149,32 @@ These hold no matter what preset, grant or profile says:
 
 Grants ("always allow") cannot waive a floor.
 
+### Egress after a read
+
+Once a run has read untrusted or private content, a tool that can send data off
+the machine asks even if a grant or the read shortcut would have allowed it.
+Desktop typing, clicking, and launching, browser scrolling and tab changes, and
+mailbox reads, searches, and mark-read are in that set. The card says what was
+read and shows the exact outgoing query, URL, or body, including every
+recipient, with the tail reachable by scrolling, and the destination host.
+Approving that card allows that one send. It does not create a standing grant.
+A later message in the same chat still asks while the earlier answer is in the
+conversation the model sees. A click, scroll, or drag does not send data off
+the machine, so it stays allowed after a read; typing, pasting, launching, and
+filling a page still ask. Writing or moving a file does not count as reading
+private data. Search against the configured provider stays
+prompt-free when the run has only untrusted content and has not read private
+data. The bot form has an explicit, off-by-default setting that skips this ask
+for that bot. Deny rules and the floors above still win. A run that has not
+read anything behaves as before.
+
 ### Runs started by a schedule
 
 A scheduled run (see [Scheduled tasks](scheduled-tasks.md)) behaves like you
-unless its rule says otherwise. If it needs an approval and nobody answers
+unless its rule says otherwise. Each firing starts from its own prompt: earlier
+firings of that same schedule are not loaded back into the prompt, so
+yesterday's answer does not make today's run ask. A human conversation in that
+chat still does. If it needs an approval and nobody answers
 within **30 minutes**, the run **pauses** (it does not guess). Money and
 never-list actions are never auto-approved in scheduled runs.
 
@@ -156,6 +197,55 @@ change. The bot can list and restore checkpoints (`checkpoint_list`,
 `checkpoint_restore`); restoring first takes a checkpoint of the current state so
 the restore itself can be undone. Shell commands and desktop actions are not
 covered by checkpoints.
+
+Restoring a whole run (or a connected set of files) from the run's change
+review works in two phases. First the daemon writes an audit row
+(`checkpoint.restore_started`) and takes a safety checkpoint of the files as
+they are now. Only after that checkpoint is complete does it stage each file
+next to its target and swap the staged copies in with renames. If a step fails,
+the daemon tries to roll the swapped files back; that rollback is best effort
+and can itself fail, in which case the result reports it and the files may be
+in a mixed state. A graceful stop of the daemon waits for a running restore to
+finish. After a restore that completes cleanly, the files count as reviewed; if
+one of them is edited afterwards it shows up as "changed since" and asking to
+restore it again needs confirmation. A path whose restoration was skipped (for
+example a link that could not be recreated) is not marked as reviewed. After a
+restore that failed part way, nothing is marked as reviewed, so the next
+attempt shows "could not verify" and asks you to confirm.
+
+If the daemon process is killed hard (power loss, crash, `kill -9`) in the middle
+of a restore, no completion is recorded. What is left depends on the moment:
+
+- Killed while the safety checkpoint was still being copied: an audit row
+  `checkpoint.restore_started`, no usable safety checkpoint and no swapped
+  files. Run the undo again.
+- Killed after the swaps began: the audit row, a complete safety checkpoint
+  (operation label `pre-restore:...`, recovery id `cp-...`, listed in
+  `GET /v1/runs/{id}/changes` as `safety_checkpoint_ids`) holding the files as
+  they were just before the restore, possibly a mix of restored and not yet
+  restored files, and temporary files next to the targets named
+  `<filename>.praxi-restore-<uuid>`, `<filename>.praxi-restore-old-<uuid>` or
+  `<filename>.praxi-restore-aborted-<uuid>`.
+
+To recover in the second case, restore that safety checkpoint (from the run's
+change review, or `checkpoint_restore` with its `cp-...` id). Its preview can
+show "could not verify", and you then have to confirm the overwrite. Delete the
+leftover temporary files if any remain, then run the undo again. Nothing is
+repaired automatically on startup. The checkpoint manifest is synced to disk, but
+the copied file contents are not individually synced before the swaps, so a
+power loss can still lose a safety copy; a plain process kill cannot.
+
+Paths of other runs that are still active are compared before a restore, by
+path text only: the daemon touches no file or folder to do it, so it can never
+follow a link or reach a network share while checking. The comparison ignores
+case on Windows and macOS, collapses `.` and `..`, and treats a folder and
+everything inside it as overlapping. The refusal names the blocking run and the
+two overlapping paths. What it does NOT detect: a symlink, junction, Windows
+8.3 short name or mapped drive that points at the same file under a different
+spelling, hard links and bind mounts. The daemon's own file tools are still
+serialised by an exclusive lock, but shell commands and desktop actions of
+another running bot are outside this check, so avoid undoing files that another
+running bot is working on.
 
 ## Limits per turn
 

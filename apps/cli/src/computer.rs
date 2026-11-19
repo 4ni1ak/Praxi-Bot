@@ -9,9 +9,10 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use agent_core::{AgentLoop, ComputerProvider};
+use builtin_tools::pc::{PcError, PcLink};
 use computer_target::{ComputerDesktop, ComputerNode};
 use desktop_api::DesktopBackend;
 use parking_lot::RwLock;
@@ -23,6 +24,38 @@ const MONITOR_POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// that handshake, so the background monitor waits long enough for a relay
 /// path. Run start does not dial; it only reads this cache.
 const MONITOR_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+/// First wait after a failed dial of one peer; doubles per consecutive failure.
+const DIAL_BACKOFF_BASE: Duration = MONITOR_POLL_INTERVAL;
+/// A peer that never answers (for example a desktop app, which serves no RPC
+/// and closes the host's dial) is retried at most this often.
+const DIAL_BACKOFF_MAX: Duration = Duration::from_secs(5 * 60);
+
+/// Per-peer dial schedule. Without it the monitor redialled a peer that cannot
+/// answer on every 5 s poll and on every heartbeat event, forever.
+#[derive(Default)]
+struct DialBackoff {
+    peers: HashMap<String, (u32, Instant)>,
+}
+
+impl DialBackoff {
+    fn allowed(&self, id: &str, now: Instant) -> bool {
+        self.peers.get(id).is_none_or(|(_, next)| now >= *next)
+    }
+
+    /// Record a failed dial; returns how many in a row have failed.
+    fn failed(&mut self, id: &str, now: Instant) -> u32 {
+        let failures = self.peers.get(id).map_or(0, |(n, _)| *n).saturating_add(1);
+        let wait = DIAL_BACKOFF_BASE
+            .saturating_mul(1u32 << (failures - 1).min(16))
+            .min(DIAL_BACKOFF_MAX);
+        self.peers.insert(id.to_owned(), (failures, now + wait));
+        failures
+    }
+
+    fn clear(&mut self, id: &str) {
+        self.peers.remove(id);
+    }
+}
 
 enum MonitorConnectError {
     Failed(String),
@@ -49,6 +82,9 @@ struct CachedRemote {
     pairing_generation: String,
     capabilities: Vec<String>,
     backend: Arc<dyn DesktopBackend>,
+    /// The same connection, for the `pc.*` families (card 272). `None` in tests
+    /// that only exercise desktop placement.
+    remote: Option<Arc<RemoteDesktop>>,
 }
 
 /// Runtime computer availability exposed to [`AgentLoop`] by the daemon.
@@ -62,6 +98,7 @@ pub struct CliComputerProvider {
     net: Option<PeerNetwork>,
     remotes: RwLock<HashMap<String, CachedRemote>>,
     active_pc_id: RwLock<Option<String>>,
+    dial_backoff: parking_lot::Mutex<DialBackoff>,
 }
 
 impl CliComputerProvider {
@@ -85,6 +122,7 @@ impl CliComputerProvider {
             net,
             remotes: RwLock::new(HashMap::new()),
             active_pc_id: RwLock::new(None),
+            dial_backoff: parking_lot::Mutex::new(DialBackoff::default()),
         }
     }
 
@@ -130,6 +168,9 @@ impl CliComputerProvider {
             if self.remotes.read().contains_key(&device.id) {
                 continue;
             }
+            if !self.dial_backoff.lock().allowed(&device.id, Instant::now()) {
+                continue;
+            }
             match within_monitor_budget(async {
                 RemoteDesktop::connect(net, pk)
                     .await
@@ -138,19 +179,22 @@ impl CliComputerProvider {
             .await
             {
                 Err(MonitorConnectError::Failed(err)) => {
+                    let n = self.dial_backoff.lock().failed(&device.id, Instant::now());
                     eprintln!(
-                        "warning: remote desktop connect to {} failed: {err}",
+                        "warning: remote desktop connect to {} failed (attempt {n}, backing off): {err}",
                         device.id
                     );
                 }
                 Err(MonitorConnectError::TimedOut) => {
+                    let n = self.dial_backoff.lock().failed(&device.id, Instant::now());
                     eprintln!(
-                        "warning: remote desktop connect to {} timed out after {}s",
+                        "warning: remote desktop connect to {} timed out after {}s (attempt {n}, backing off)",
                         device.id,
                         MONITOR_CONNECT_TIMEOUT.as_secs()
                     );
                 }
                 Ok(remote) => {
+                    self.dial_backoff.lock().clear(&device.id);
                     // Pairing/capabilities may have changed while RPC was in flight.
                     if !net.device(pk).is_some_and(|d| {
                         d.pairing_generation == device.pairing_generation
@@ -159,7 +203,8 @@ impl CliComputerProvider {
                     }) {
                         continue;
                     }
-                    let backend: Arc<dyn DesktopBackend> = Arc::new(remote);
+                    let remote = Arc::new(remote);
+                    let backend: Arc<dyn DesktopBackend> = remote.clone();
                     self.remotes.write().insert(
                         device.id.clone(),
                         CachedRemote {
@@ -169,6 +214,7 @@ impl CliComputerProvider {
                             pairing_generation: device.pairing_generation.clone(),
                             capabilities: device.capabilities.clone(),
                             backend,
+                            remote: Some(remote),
                         },
                     );
                 }
@@ -232,7 +278,23 @@ impl CliComputerProvider {
         })
     }
 
+    /// The user's computer for a `pc_*` tool call: the connected paired desktop.
+    fn mypc_remote(&self) -> Result<Arc<RemoteDesktop>, PcError> {
+        let active = self.active_pc_id.read().clone();
+        if let Some(id) = active.filter(|id| self.cached_target(id).is_some())
+            && let Some(remote) = self.remotes.read().get(&id).and_then(|c| c.remote.clone())
+        {
+            return Ok(remote);
+        }
+        if self.mypc_node().is_some() {
+            Err(PcError::Offline)
+        } else {
+            Err(PcError::NotPaired)
+        }
+    }
+
     fn invalidate(&self, id: &str) {
+        self.dial_backoff.lock().clear(id);
         self.remotes.write().remove(id);
         self.select_active_pc();
     }
@@ -275,6 +337,25 @@ impl ComputerProvider for CliComputerProvider {
         (self.remotes.read().get(&active)?.role == Role::Desktop).then_some(target)
     }
 
+    fn mypc_node(&self) -> Option<ComputerNode> {
+        let net = self.net.as_ref()?;
+        let mut pcs: Vec<Device> = net
+            .devices()
+            .into_iter()
+            .filter(|d| d.role == Role::Desktop && is_remote_desktop_candidate(d))
+            .collect();
+        pcs.sort_by(|a, b| a.id.cmp(&b.id));
+        let active = self.active_pc_id.read().clone();
+        let chosen = pcs
+            .iter()
+            .find(|d| active.as_deref() == Some(d.id.as_str()))
+            .or_else(|| pcs.first())?;
+        Some(ComputerNode {
+            id: chosen.id.clone(),
+            name: chosen.name.clone(),
+        })
+    }
+
     fn pc_network_enabled(&self) -> bool {
         self.net.is_some()
     }
@@ -289,6 +370,17 @@ impl ComputerProvider for CliComputerProvider {
 
     fn has_display(&self) -> bool {
         self.has_display
+    }
+
+    fn display_name(&self) -> Option<String> {
+        // Only a display that really answered at start (`has_display`).
+        if cfg!(target_os = "linux") && self.has_display && self.local_desktop.is_some() {
+            std::env::var("DISPLAY")
+                .ok()
+                .filter(|d| !d.trim().is_empty())
+        } else {
+            None
+        }
     }
 
     fn node(&self, id: &str) -> Option<Arc<dyn DesktopBackend>> {
@@ -310,6 +402,56 @@ impl ComputerProvider for CliComputerProvider {
         Box::pin(async move {
             self.prune_cached_remotes();
         })
+    }
+}
+
+/// The `pc_*` tools' link to the user's computer: every call resolves the
+/// connected paired desktop when it runs, so a computer that went off or was
+/// unpaired between two calls is "off", never a stale session.
+pub struct CliPcLink {
+    provider: Arc<CliComputerProvider>,
+}
+
+impl CliPcLink {
+    #[must_use]
+    pub fn new(provider: Arc<CliComputerProvider>) -> Self {
+        Self { provider }
+    }
+}
+
+#[async_trait::async_trait]
+impl PcLink for CliPcLink {
+    async fn call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, PcError> {
+        let remote = self.provider.mypc_remote()?;
+        match remote.call_raw(method, params, timeout).await {
+            Ok(v) => Ok(v),
+            Err(peer_network::PeerError::Rpc { message, .. }) => Err(PcError::Refused(message)),
+            Err(peer_network::PeerError::Timeout) => Err(PcError::Failed(
+                "no answer in time (nobody approved it at the computer, or it is busy)".into(),
+            )),
+            Err(peer_network::PeerError::Connection(_) | peer_network::PeerError::NotPaired(_)) => {
+                Err(PcError::Offline)
+            }
+            Err(other) => Err(PcError::Failed(other.to_string())),
+        }
+    }
+
+    fn desktop(
+        &self,
+        caller: &builtin_tools::pc::PcCaller,
+    ) -> Result<Arc<dyn DesktopBackend>, PcError> {
+        let remote = self.provider.mypc_remote()?;
+        let mut extra = serde_json::Map::new();
+        extra.insert(
+            builtin_tools::pc::CALLER_KEY.into(),
+            serde_json::json!({"id": caller.id, "name": caller.name}),
+        );
+        Ok(Arc::new(remote.attributed(extra)))
     }
 }
 
@@ -389,6 +531,7 @@ pub fn spawn_peer_monitor(
                         }
                         Err(RecvError::Lagged(_)) => {
                             provider.remotes.write().clear();
+                            *provider.dial_backoff.lock() = DialBackoff::default();
                             if weak_state.upgrade().is_none() {
                                 break;
                             }
@@ -412,6 +555,33 @@ pub fn spawn_peer_monitor(
 
 #[cfg(test)]
 mod tests {
+    use super::{DIAL_BACKOFF_BASE, DIAL_BACKOFF_MAX, DialBackoff};
+    use std::time::Instant;
+
+    /// A peer that answers every dial with a close (the desktop app serves no
+    /// RPC) must be retried with growing gaps, not on every 5 s poll.
+    #[test]
+    fn failed_dials_back_off_exponentially_up_to_a_cap() {
+        let mut b = DialBackoff::default();
+        let t0 = Instant::now();
+        assert!(b.allowed("desktop", t0));
+        assert_eq!(b.failed("desktop", t0), 1);
+        assert!(!b.allowed("desktop", t0 + DIAL_BACKOFF_BASE / 2));
+        assert!(b.allowed("desktop", t0 + DIAL_BACKOFF_BASE));
+        let t1 = t0 + DIAL_BACKOFF_BASE;
+        b.failed("desktop", t1);
+        assert!(!b.allowed("desktop", t1 + DIAL_BACKOFF_BASE));
+        assert!(b.allowed("desktop", t1 + DIAL_BACKOFF_BASE * 2));
+        for _ in 0..40 {
+            b.failed("desktop", t1);
+        }
+        assert!(b.allowed("desktop", t1 + DIAL_BACKOFF_MAX));
+        assert!(!b.allowed("desktop", t1 + DIAL_BACKOFF_MAX / 2));
+        assert!(b.allowed("other", t1), "backoff is per peer");
+        b.clear("desktop");
+        assert!(b.allowed("desktop", t1));
+    }
+
     #[test]
     fn unreadable_identity_key_is_not_a_fingerprint_and_recovers_next_boot() {
         let dir = tempfile::tempdir().unwrap();
@@ -588,6 +758,7 @@ mod tests {
             addr: None,
             paired_at: 1,
             pairing_generation: "test".into(),
+            admin: false,
         };
 
         assert!(is_remote_desktop_candidate(&make_device(
@@ -657,6 +828,7 @@ mod tests {
             pairing_generation: "pair-1".into(),
             capabilities: vec!["desktop".into()],
             backend: FakePcDesktop::new("cached"),
+            remote: None,
         }
     }
 
@@ -697,6 +869,7 @@ mod tests {
             addr: None,
             paired_at: 1,
             pairing_generation: "pair-1".into(),
+            admin: false,
         };
         assert!(cached.matches(&device));
         device.pairing_generation = "pair-2".into();
@@ -961,6 +1134,67 @@ mod tests {
         hb.abort();
         b.shutdown().await;
         net.shutdown().await;
+    }
+
+    /// The 257-A topology: a paired Desktop-role peer (the desktop app) serves
+    /// no RPC. The host must dial it once, back off, and not redial per poll.
+    #[tokio::test]
+    async fn host_backs_off_from_a_desktop_peer_that_serves_no_rpc() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = PeerNetwork::start(
+            loopback_peer_cfg(&dir.path().join("host"), Role::Host, "host", vec![]),
+            None,
+        )
+        .await
+        .unwrap();
+        let app = PeerNetwork::start(
+            loopback_peer_cfg(
+                &dir.path().join("app"),
+                Role::Desktop,
+                "app",
+                vec!["desktop"],
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+        let invite = host.create_invite(Role::Desktop).await;
+        app.pair(&PairTicket::parse(&invite.ticket).unwrap())
+            .await
+            .unwrap();
+        let hb = app.spawn_heartbeat(
+            host.id(),
+            HeartbeatConfig {
+                interval: Duration::from_millis(80),
+                initial_backoff: Duration::from_millis(20),
+                max_backoff: Duration::from_millis(100),
+                connect_timeout: Duration::from_secs(1),
+            },
+            Arc::new(|_| {}),
+        );
+        let provider = CliComputerProvider::new(true, None, Some(host.clone()), test_machine_id());
+        let app_id = key_to_string(&app.id());
+        for _ in 0..200 {
+            if host.is_connected(&app.id()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        provider.refresh_all().await;
+        for _ in 0..5 {
+            provider.refresh_all().await;
+        }
+        assert!(provider.pc().is_none());
+        let failures = provider
+            .dial_backoff
+            .lock()
+            .peers
+            .get(&app_id)
+            .map(|(n, _)| *n);
+        assert_eq!(failures, Some(1));
+        hb.abort();
+        app.shutdown().await;
+        host.shutdown().await;
     }
 
     /// A cold dial of 3s fits the monitor budget and would have been dropped

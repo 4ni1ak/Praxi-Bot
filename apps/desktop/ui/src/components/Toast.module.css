@@ -21,6 +21,14 @@
   animation: toast-in var(--motion-duration-normal) var(--motion-easing-standard);
 }
 
+/* Toasts float over everything: they take the floating-surface tokens. */
+:global(:root[data-style="glass"]) .toast:not(.danger),
+:global(:root[data-style="tinted"]) .toast:not(.danger) {
+  background-color: var(--float-fill);
+  backdrop-filter: var(--float-filter);
+  box-shadow: var(--float-highlight), var(--shadow-card);
+}
+
 .success {
   border-color: var(--color-success);
 }

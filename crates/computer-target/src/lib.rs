@@ -220,6 +220,14 @@ pub trait ComputerProvider: Send + Sync {
         None
     }
 
+    /// The user's own paired computer as a per-request tool target (card 272),
+    /// connected or not. It is a different identity from every `local`, `host`
+    /// and `pc` placement of a run: a grant scoped to it never covers another
+    /// computer and no other computer's grant covers it. `None`: nothing paired.
+    fn mypc_node(&self) -> Option<ComputerNode> {
+        None
+    }
+
     /// Identity of an explicit node, matched by key only.
     fn node_target(&self, _id: &str) -> Option<ComputerDesktop> {
         None
@@ -252,6 +260,12 @@ pub trait ComputerProvider: Send + Sync {
     /// `$DISPLAY` on the host or a native desktop session).
     fn has_display(&self) -> bool {
         self.local().is_some()
+    }
+
+    /// Name of the X display the local desktop runs on (`:99`), when this
+    /// daemon really has one. Used only to tell the model the screen exists.
+    fn display_name(&self) -> Option<String> {
+        None
     }
 
     /// Optional async warm-up before [`resolve`] runs at turn start (e.g.
@@ -352,20 +366,25 @@ fn pc_resolution(desktop: Option<ComputerDesktop>, provider: &dyn ComputerProvid
 }
 
 fn resolve_auto(provider: &dyn ComputerProvider, browser: bool) -> Resolution {
+    // A bot that lives on an always-on host works on ITS OWN computer by
+    // default. The user's PC is a target for `pc` / `node:<id>` only, never a
+    // silent default: desktop_*, browser_* and shell_* then all act on the
+    // same machine.
+    if provider.is_host() {
+        return match provider.local() {
+            Some(d) => Resolution {
+                node: Some(provider.local_node()),
+                unavailable_reason: None,
+                desktop: Some(d),
+                browser,
+                label: ComputerLabel::Host,
+                wait_for_pc: false,
+            },
+            None => browser_or_off(browser, provider),
+        };
+    }
     if let Some(d) = pc_desktop(provider) {
         return pc_resolution(Some(d), provider);
-    }
-    if provider.is_host()
-        && let Some(d) = provider.local()
-    {
-        return Resolution {
-            node: Some(provider.local_node()),
-            unavailable_reason: None,
-            desktop: Some(d),
-            browser,
-            label: ComputerLabel::Host,
-            wait_for_pc: false,
-        };
     }
     browser_or_off(browser, provider)
 }
@@ -559,7 +578,16 @@ mod tests {
             is_host: true,
             browser: true,
         };
+        // A paired PC being online must NOT pull a host-homed bot onto the PC:
+        // the default is the bot's own computer (host desktop + browser).
         let r = resolve(&ComputerTarget::Auto, &all_online);
+        assert_eq!(r.label, ComputerLabel::Host);
+        assert_eq!(r.desktop.as_ref().unwrap().capabilities().platform, "host");
+        assert!(r.browser);
+        assert!(!r.wait_for_pc);
+
+        // The PC is used only when the bot's setting says so.
+        let r = resolve(&ComputerTarget::Pc, &all_online);
         assert_eq!(r.label, ComputerLabel::Pc);
         assert_eq!(r.desktop.as_ref().unwrap().capabilities().platform, "pc");
         assert!(!r.browser);

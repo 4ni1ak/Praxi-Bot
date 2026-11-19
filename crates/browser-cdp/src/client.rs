@@ -306,6 +306,8 @@ pub struct CdpClient {
     rejected_events: Arc<AtomicU64>,
     rejected_screencast_events: Arc<AtomicU64>,
     unsubscribed_screencast_events: Arc<AtomicU64>,
+    /// Destination policy of a served session (see [`crate::destination`]).
+    destination: StdMutex<Option<crate::destination::DestinationCheck>>,
 }
 
 #[derive(Default)]
@@ -319,6 +321,15 @@ impl CdpClient {
     /// Connect to a `ws://` debugging endpoint.
     pub async fn connect(url: &str) -> Result<Arc<Self>> {
         Self::connect_with_config(url, CdpClientConfig::default()).await
+    }
+
+    pub(crate) fn decode_view_jpeg(
+        &self,
+        data: &str,
+        burst_bytes: u32,
+    ) -> std::result::Result<(Arc<[u8]>, u32, u32), ScreencastFault> {
+        let budget = (burst_bytes as usize).saturating_sub(live_view::MAX_HEADER);
+        decode_screencast_jpeg(data, self.limits.max_screencast_image_bytes.min(budget))
     }
 
     /// Connect with explicit finite transport/message limits and deadlines.
@@ -425,7 +436,91 @@ impl CdpClient {
             rejected_events,
             rejected_screencast_events,
             unsubscribed_screencast_events,
+            destination: StdMutex::new(None),
         }))
+    }
+
+    /// Put a destination policy on every request this browser makes. Pages
+    /// attached afterwards enable `Fetch` interception; each paused request
+    /// (navigation, redirect hop, subresource) is continued only when `check`
+    /// allows its URL and failed otherwise. Fails closed: a request whose
+    /// decision never arrives stays paused.
+    ///
+    /// Every NEW target (a popup or tab a page opens, a frame, a worker)
+    /// starts paused (`waitForDebuggerOnStart`) and is resumed only after
+    /// `Fetch` is enabled on it, so nothing it loads escapes the check. A
+    /// target on which that fails stays paused.
+    pub fn set_destination_check(self: &Arc<Self>, check: crate::destination::DestinationCheck) {
+        if let Ok(mut slot) = self.destination.lock() {
+            *slot = Some(check.clone());
+        }
+        let mut rx = self.subscribe();
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            // Subscribed above, so no attach event of a target created from
+            // here on is missed.
+            if let Some(client) = weak.upgrade() {
+                let _ = client
+                    .send(
+                        "Target.setAutoAttach",
+                        json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true}),
+                    )
+                    .await;
+            }
+            loop {
+                match rx.recv().await {
+                    Ok(ev)
+                        if ev.method == "Target.attachedToTarget"
+                            && ev.params["waitingForDebugger"].as_bool() == Some(true) =>
+                    {
+                        let Some(client) = weak.upgrade() else { break };
+                        if let Some(child) = ev.params["sessionId"].as_str().map(str::to_owned) {
+                            tokio::spawn(async move { guard_child(&client, &child).await });
+                        }
+                    }
+                    Ok(ev) if ev.method == "Fetch.requestPaused" => {
+                        let Some(client) = weak.upgrade() else { break };
+                        let check = check.clone();
+                        tokio::spawn(async move {
+                            let id = ev.params["requestId"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_owned();
+                            let url = ev.params["request"]["url"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_owned();
+                            let session = ev.session_id.as_deref();
+                            if check.check(url).await.is_ok() {
+                                let _ = client
+                                    .send_on(
+                                        session,
+                                        "Fetch.continueRequest",
+                                        json!({"requestId": id}),
+                                    )
+                                    .await;
+                            } else {
+                                let _ = client
+                                    .send_on(
+                                        session,
+                                        "Fetch.failRequest",
+                                        json!({"requestId": id, "errorReason": "BlockedByClient"}),
+                                    )
+                                    .await;
+                            }
+                        });
+                    }
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+
+    /// Whether a destination policy is installed on this client.
+    #[must_use]
+    pub fn has_destination_check(&self) -> bool {
+        self.destination.lock().is_ok_and(|s| s.is_some())
     }
 
     /// Subscribe to all events (every session). Subscribe *before* sending the command that triggers them.
@@ -927,6 +1022,34 @@ fn parse_reply(message: &Envelope<'_>) -> Result<Value> {
     message.result.map_or(Ok(Value::Null), |raw| {
         serde_json::from_str(raw.get()).map_err(Error::from)
     })
+}
+
+/// A target that started paused: check its requests, then let it run. If the
+/// check cannot be put on it, it is never resumed (fails closed).
+async fn guard_child(client: &Arc<CdpClient>, session: &str) {
+    if client
+        .send_on(
+            Some(session),
+            "Fetch.enable",
+            json!({"patterns": [{"urlPattern": "*"}]}),
+        )
+        .await
+        .is_err()
+    {
+        tracing::warn!("a new browser target could not be guarded; it stays paused");
+        return;
+    }
+    // Its own children start paused too.
+    let _ = client
+        .send_on(
+            Some(session),
+            "Target.setAutoAttach",
+            json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true}),
+        )
+        .await;
+    let _ = client
+        .send_on(Some(session), "Runtime.runIfWaitingForDebugger", json!({}))
+        .await;
 }
 
 #[cfg(test)]
@@ -1510,5 +1633,68 @@ mod tests {
         drop(reg);
         assert_eq!(client.send("Batch", json!({})).await.unwrap()["step"], 1);
         assert_eq!(client.unsubscribed_screencast_event_count(), 1);
+    }
+
+    /// Review blocker 2: a popup (or frame, or worker) a guarded page opens
+    /// starts paused and runs only after the request check is on it; one
+    /// that cannot be guarded never runs.
+    #[tokio::test]
+    async fn a_popup_stays_paused_until_the_request_check_is_on() {
+        for fetch_fails in [false, true] {
+            type Log = StdMutex<Vec<(String, Option<String>)>>;
+            let seen: Arc<Log> = Arc::default();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("ws://{}", listener.local_addr().unwrap());
+            let log = Arc::clone(&seen);
+            tokio::spawn(async move {
+                let (s, _) = listener.accept().await.unwrap();
+                let mut ws = tokio_tungstenite::accept_async(s).await.unwrap();
+                while let Some(Ok(Message::Text(t))) = ws.next().await {
+                    let req: Value = serde_json::from_str(t.as_str()).unwrap();
+                    let method = req["method"].as_str().unwrap_or_default().to_owned();
+                    let session = req["sessionId"].as_str().map(str::to_owned);
+                    log.lock().unwrap().push((method.clone(), session.clone()));
+                    let reply = if fetch_fails && method == "Fetch.enable" {
+                        json!({"id": req["id"], "error": {"code": -32000, "message": "no"}})
+                    } else {
+                        json!({"id": req["id"], "result": {}})
+                    };
+                    ws.send(Message::text(reply.to_string())).await.unwrap();
+                    // The browser-level auto-attach is on: a page opens a popup.
+                    if method == "Target.setAutoAttach" && session.is_none() {
+                        let ev = json!({"method": "Target.attachedToTarget", "params": {
+                            "sessionId": "POP",
+                            "targetInfo": {"targetId": "T2", "type": "page", "url": "http://127.0.0.1:9/"},
+                            "waitingForDebugger": true}});
+                        ws.send(Message::text(ev.to_string())).await.unwrap();
+                    }
+                }
+            });
+            let c = CdpClient::connect(&url).await.unwrap();
+            c.set_destination_check(crate::destination::DestinationCheck::new(|_| async {
+                Err("blocked".into())
+            }));
+            let on_pop = |m: &str| {
+                seen.lock()
+                    .unwrap()
+                    .iter()
+                    .position(|(method, s)| method == m && s.as_deref() == Some("POP"))
+            };
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+            while on_pop("Fetch.enable").is_none() && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let fetch = on_pop("Fetch.enable").expect("the check was put on the popup");
+            let resumed = on_pop("Runtime.runIfWaitingForDebugger");
+            if fetch_fails {
+                assert!(resumed.is_none(), "an unguarded popup never runs");
+            } else {
+                assert!(
+                    resumed.is_some_and(|r| r > fetch),
+                    "resumed only after the check"
+                );
+            }
+        }
     }
 }

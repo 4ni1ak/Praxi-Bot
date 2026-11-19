@@ -20,11 +20,20 @@ pub mod checkpoint;
 pub mod control;
 pub mod desktop;
 pub mod files;
+pub mod fill_secret;
+#[cfg(test)]
+mod fill_secret_tests;
+pub mod knowledge;
+pub mod knowledge_brain;
 pub mod meta;
+pub mod pc;
+pub mod provenance;
 pub mod schedule;
 pub mod script;
 pub mod shell;
 mod util;
+
+pub use util::classify;
 
 /// Windows drive letters (DOS devices) live in the logon session, not in one
 /// test, and PowerShell enumerates all of them while it starts. A test that
@@ -44,18 +53,24 @@ use desktop_api::DesktopBackend;
 use tool_registry::{Tool, ToolRegistry};
 
 pub use browser::{BrowserDriver, BrowserSettings, CdpDriver, Wait};
-pub use checkpoint::{Checkpoint, CheckpointEntry, CheckpointStore};
+pub use checkpoint::{
+    ChangeKind, Checkpoint, CheckpointEntry, CheckpointStore, DiffOmittedReason, FileChange,
+    MAX_DIFF_FILE_BYTES, MAX_DIFF_RUN_BYTES, RestoreAction, RestorePreviewEntry, RestoreReport,
+    UnifiedDiff, Verification,
+};
 pub use control::{
     ActionPermit, ControlRequest, DesktopControlGate, OBSERVATION_DISCARDED, PermitValidator,
 };
-pub use desktop::{DesktopSettings, SharedOcr};
+pub use desktop::{DesktopSettings, SharedOcr, resolve_input_target};
+pub use files::{try_with_exclusive_file_access, with_checkpoint_access, workspace_refusal};
+pub use fill_secret::{SECRETS_LIST, secrets_list_tool};
 pub use meta::{META_TOOL_NAMES, QUESTION_CARD_KIND, TODO_LIST_KIND, TodoItem, TodoStatus};
 pub use schedule::{
     PreviousSchedule, SCHEDULE_TOOL_NAMES, ScheduleCaller, ScheduleChange, ScheduleHost,
     SchedulePreview, ScheduleRequest, ScheduleView,
 };
 pub use script::{
-    GateHost, GateRequest, ResolverGate, SCRIPT_TOOL_NAME, ToolGate, raw_command_for,
+    GateHost, GateRequest, ResolverGate, SCRIPT_TOOL_NAME, ToolGate, cwd_for, raw_command_for,
 };
 
 pub use connector_email;
@@ -94,6 +109,8 @@ pub struct BuiltinConfig {
     pub email: Option<Arc<connector_email::EmailConnector>>,
     /// Web tools (search, fetch, feeds, sitemaps, metadata). `None` = web tools skipped.
     pub web: Option<web_tools::WebToolsConfig>,
+    /// Bot-scoped knowledge search. No model-facing source-management methods.
+    pub knowledge: Option<Arc<dyn knowledge::KnowledgeBackend>>,
     /// Directories `fs_*` may read and write. Empty does not add a root limit.
     /// A non-empty list that cannot be resolved denies every `fs_*` call.
     /// UNC paths, device paths, and credential files are still refused.
@@ -101,6 +118,44 @@ pub struct BuiltinConfig {
     /// Credential paths the host explicitly grants to `fs_*`. A grant does not
     /// permit UNC, device, or out-of-root paths.
     pub fs_granted_paths: Vec<PathBuf>,
+    /// Per-bot file access mode. With `Some`, `fs_allowed_roots` is ignored:
+    /// each call asks the provider for the calling bot's scope.
+    pub fs_access: Option<Arc<dyn FsAccessProvider>>,
+    /// Base for relative `fs_*` paths and anchor of the sensitive-location
+    /// denylist when `fs_access` is set. Defaults to the user's home.
+    pub fs_home: Option<PathBuf>,
+    /// Owner-stored fill secrets. With `Some`, `browser_fill`, `desktop_type`
+    /// and `desktop_set_value` accept `secret: "<name>"` and the model gets
+    /// `secrets_list`; with `None` a `secret` parameter is refused.
+    pub fill_secrets: Option<Arc<secret_store::FillSecrets>>,
+    /// Ledger of files with an untrusted origin (see [`provenance`]); `None` = rules only.
+    pub provenance: Option<Arc<dyn provenance::Provenance>>,
+}
+
+/// What the built-in file tools may reach for one bot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FsScope {
+    /// "This computer": anywhere the user can read; credential, CLI-config,
+    /// Praxi data and OS-critical locations stay refused.
+    Computer,
+    /// "Folder only": these folders and nothing else (empty denies everything).
+    Folders(Vec<PathBuf>),
+}
+
+/// Looks up the file access scope of the bot making a call.
+pub trait FsAccessProvider: Send + Sync {
+    /// Scope for `bot_id` (`None` = not a bot: the narrowest sensible default
+    /// is the provider's choice).
+    fn scope(&self, bot_id: Option<&str>) -> FsScope;
+}
+
+/// The user's home directory from the environment.
+#[must_use]
+pub fn user_home() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute() && p.is_dir())
 }
 
 impl BuiltinConfig {
@@ -123,8 +178,13 @@ impl BuiltinConfig {
             control: None,
             email: None,
             web: None,
+            knowledge: None,
             fs_allowed_roots: Vec::new(),
             fs_granted_paths: Vec::new(),
+            fs_access: None,
+            fs_home: None,
+            fill_secrets: None,
+            provenance: None,
         }
     }
 
@@ -148,29 +208,50 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
     }
     let mut all: Vec<Arc<dyn Tool>> = Vec::new();
     if cfg.desktop.is_some() || cfg.dynamic_desktop {
-        all.extend(desktop::tools_dynamic(
+        all.extend(desktop::tools_dynamic_with_secrets(
             cfg.desktop,
             cfg.ocr,
             &cfg.data_dir,
             cfg.desktop_settings,
             cfg.control.clone(),
+            cfg.fill_secrets.clone(),
         ));
     }
     if let Some(driver) = cfg.browser {
-        all.extend(browser::tools(driver, &cfg.data_dir, cfg.control.clone()));
+        all.extend(browser::tools_with_secrets(
+            driver,
+            &cfg.data_dir,
+            cfg.control.clone(),
+            cfg.fill_secrets.clone(),
+        ));
     } else {
-        all.extend(browser::managed_tools(
+        all.extend(browser::managed_tools_with_secrets(
             cfg.browser_settings,
             &cfg.data_dir,
             cfg.control.clone(),
+            cfg.view_registry.clone(),
+            cfg.fill_secrets.clone(),
         ));
     }
-    all.extend(files::tools_bounded(
+    if let Some(secrets) = &cfg.fill_secrets {
+        all.push(fill_secret::secrets_list_tool(Arc::clone(secrets)));
+    }
+    let fs_home = cfg
+        .fs_access
+        .as_ref()
+        .and_then(|_| cfg.fs_home.clone().or_else(user_home));
+    all.extend(files::tools_scoped(
         &cfg.data_dir,
         &cfg.fs_allowed_roots,
         &cfg.fs_granted_paths,
+        cfg.fs_access.clone(),
+        fs_home,
+        cfg.provenance.clone(),
     ));
-    all.push(shell::tool(&cfg.data_dir));
+    all.push(shell::tool_with_provenance(
+        &cfg.data_dir,
+        cfg.provenance.clone(),
+    ));
     all.push(script::tool_with_control(
         registry.clone(),
         cfg.gate,
@@ -178,6 +259,9 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
         cfg.control,
     ));
     all.extend(meta::tools());
+    if let Some(backend) = cfg.knowledge {
+        all.push(knowledge::tool(backend));
+    }
     if let Some(email) = &cfg.email {
         all.extend(connector_email::tools(email));
     }
@@ -232,6 +316,111 @@ mod tests {
         async fn authorize(&self, _req: &GateRequest) -> Result<(), String> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn only_program_starters_and_desktop_input_are_registered_as_executing() {
+        // Read off the specs the registered tools carry, desktop and browser
+        // tools included, not off `classify` alone. A new tool that starts a
+        // program or drives input must be added here and in `classify`.
+        let executors = [
+            "shell_run",
+            "script_run",
+            "desktop_launch",
+            "desktop_type",
+            "desktop_set_value",
+            "desktop_key",
+            "desktop_drag",
+        ];
+        let (_d, reg) = registry();
+        let specs = reg.list();
+        for name in executors {
+            assert!(specs.iter().any(|spec| spec.name == name), "{name} missing");
+        }
+        assert!(specs.iter().any(|spec| spec.name == "desktop_click"));
+        for spec in &specs {
+            assert_eq!(
+                spec.content.executes,
+                executors.contains(&spec.name.as_str()),
+                "{}",
+                spec.name
+            );
+            assert!(
+                !spec.content.executes || spec.content.egress,
+                "{} must show its arguments on a card",
+                spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn every_builtin_declares_its_classification() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ToolRegistry::new();
+        let cfg = BuiltinConfig::new(dir.path().into(), Arc::new(AllowAll));
+        let tools = build_builtin_tools(cfg, &registry);
+        assert!(tools.len() > 10);
+        for tool in &tools {
+            let spec = tool.spec();
+            let expected = crate::util::classify(&spec.name)
+                .unwrap_or_else(|| panic!("{} has no classification", spec.name));
+            assert_eq!(spec.content, expected, "{}", spec.name);
+            assert!(spec.content.is_declared(), "{} is not declared", spec.name);
+            assert!(
+                registry.register(Arc::clone(tool)),
+                "{} was rejected by the registry",
+                spec.name
+            );
+        }
+        for name in [
+            "desktop_list_apps",
+            "desktop_launch",
+            "desktop_get_state",
+            "desktop_click",
+            "desktop_type",
+            "desktop_set_value",
+            "desktop_key",
+            "desktop_scroll",
+            "desktop_drag",
+        ] {
+            assert!(
+                crate::util::classify(name).is_some_and(tool_registry::ContentClass::is_declared),
+                "{name}"
+            );
+        }
+        assert!(crate::util::classify("not_a_builtin").is_none());
+        for name in [
+            "desktop_launch",
+            "desktop_type",
+            "desktop_set_value",
+            "desktop_key",
+            "desktop_drag",
+            "browser_tabs",
+        ] {
+            assert!(
+                crate::util::classify(name).unwrap().egress,
+                "{name} sends data off the machine"
+            );
+        }
+        for name in ["desktop_click", "desktop_scroll", "browser_scroll"] {
+            let class = crate::util::classify(name).unwrap();
+            assert!(!class.egress, "{name} cannot carry data off the machine");
+        }
+        for name in [
+            "fs_write",
+            "fs_move",
+            "fs_delete",
+            "checkpoint_list",
+            "checkpoint_restore",
+            "schedule_list",
+        ] {
+            let class = crate::util::classify(name).unwrap();
+            assert!(!class.reads_private, "{name} is not a private read");
+            assert!(!class.ingests_untrusted, "{name} does not ingest content");
+        }
+        assert!(!crate::util::classify("desktop_list_apps").unwrap().egress);
+        assert!(!crate::util::classify("desktop_get_state").unwrap().egress);
+        assert!(!crate::util::classify("browser_snapshot").unwrap().egress);
     }
 
     fn registry() -> (tempfile::TempDir, ToolRegistry) {
@@ -539,6 +728,8 @@ mod tests {
                 effect: tool_registry::Effect::Read,
                 category: permission_engine::PermissionCategory::Meta,
                 platforms: vec![tool_registry::Platform::All],
+
+                content: tool_registry::ContentClass::none(),
             },
         }));
         // A refusal either is caught by the script or ends it with the gate's
@@ -792,8 +983,9 @@ mod tests {
 
     #[tokio::test]
     async fn script_can_call_registered_tools_through_the_registry() {
-        let (d, reg) = registry();
-        let file = d
+        let (_data, reg) = registry();
+        let work = tempfile::tempdir().unwrap();
+        let file = work
             .path()
             .join("s.txt")
             .display()

@@ -235,6 +235,42 @@ where
     Ok(())
 }
 
+/// Cells of every sheet as `## sheet` sections of ` | `-separated rows (reading only).
+pub(crate) fn plain_text(bytes: Vec<u8>, max_bytes: usize) -> Result<String, ToolError> {
+    const MAX_TEXT_CELLS: usize = 200_000;
+    let mut wb: Book = open_workbook_auto_from_rs(Cursor::new(bytes))
+        .map_err(|e| exec(format!("cannot open spreadsheet: {e}")))?;
+    let mut out = String::new();
+    for name in wb.sheet_names() {
+        if out.len() >= max_bytes {
+            break;
+        }
+        let mut cells: std::collections::BTreeMap<(u32, u32), String> =
+            std::collections::BTreeMap::new();
+        scan_sheet(&mut wb, &name, false, |pos, v, _| {
+            if !matches!(v, Data::Empty) && cells.len() < MAX_TEXT_CELLS {
+                cells.insert(pos, cell_value(&v).2);
+            }
+        })?;
+        let _ = writeln!(out, "## {name}\n");
+        let mut row = None;
+        for ((r, _), text) in &cells {
+            match row {
+                Some(prev) if prev == *r => out.push_str(" | "),
+                Some(_) => out.push('\n'),
+                None => {}
+            }
+            row = Some(*r);
+            out.push_str(&text.replace(['\r', '\n'], " "));
+            if out.len() >= max_bytes {
+                break;
+            }
+        }
+        out.push_str("\n\n");
+    }
+    Ok(out)
+}
+
 fn to_u32(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }

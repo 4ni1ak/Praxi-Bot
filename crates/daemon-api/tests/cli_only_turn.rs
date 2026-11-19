@@ -21,6 +21,23 @@ use tool_registry::{
 use tower::ServiceExt as _;
 
 const TOKEN: &str = "cli-only-test-token-0123456789abcdef";
+const OWNER_KEY: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
+
+fn fixture_process(root: &std::path::Path) -> std::process::Command {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .env_clear()
+        .env("HOME", root)
+        .env("USERPROFILE", root)
+        .env("APPDATA", root.join("roaming"))
+        .env("LOCALAPPDATA", root.join("local"));
+    for key in ["SYSTEMROOT", "WINDIR", "TEMP", "TMP"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    command
+}
 
 struct FixtureReadTool {
     spec: ToolSpec,
@@ -50,6 +67,7 @@ async fn request(
         .header("host", "127.0.0.1:47821")
         .header("content-type", "application/json")
         .header("authorization", format!("Bearer {TOKEN}"))
+        .header("x-praxi-owner-key", OWNER_KEY)
         .body(Body::from(bytes))
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -73,6 +91,8 @@ fn build_cli_only_app(root: &std::path::Path) -> Router {
             effect: Effect::Read,
             category: PermissionCategory::Fs,
             platforms: vec![Platform::All],
+
+            content: tool_registry::ContentClass::none(),
         },
     }));
 
@@ -83,6 +103,7 @@ fn build_cli_only_app(root: &std::path::Path) -> Router {
         LoopConfig::default(),
     );
     let state = AppState::new(agent, storage, DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key(OWNER_KEY.into());
     let reload_dir = data_dir;
     state.set_provider_host(ProviderHost {
         catalog: Catalog::default(),
@@ -125,6 +146,10 @@ async fn run_child_turn() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(providers["active"], json!(["cli:claude"]));
     assert_eq!(providers["default_provider"], "cli:claude");
+    assert_eq!(
+        providers["configured"][0]["models"],
+        json!(["default", "sonnet", "opus", "haiku", "fable"])
+    );
 
     let profile_toml = "\
 [bot]
@@ -217,7 +242,12 @@ fn cli_only_enable_and_chat_turn_end_to_end() {
     )
     .unwrap();
 
-    let out = std::process::Command::new(std::env::current_exe().unwrap())
+    std::fs::write(
+        bin_dir.join("fixture-config.json"),
+        serde_json::to_vec(&json!({"FAKE_LOG": dir.path()})).unwrap(),
+    )
+    .unwrap();
+    let out = fixture_process(dir.path())
         .args([
             "--exact",
             "cli_only_enable_and_chat_turn_end_to_end",
@@ -226,7 +256,6 @@ fn cli_only_enable_and_chat_turn_end_to_end() {
         .env("DAEMON_CLI_TURN_CHILD", "1")
         .env("DAEMON_CLI_ROOT", dir.path())
         .env("PATH", &bin_dir)
-        .env("FAKE_LOG", dir.path())
         .output()
         .unwrap();
     assert!(
@@ -248,6 +277,19 @@ async fn run_failing_turn(root: &std::path::Path) -> Value {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{enabled}");
+
+    if std::env::var("DAEMON_CLI_FAIL_CHILD").as_deref() == Ok("missing") {
+        // GUI fallback directories may contain a real Claude installation.
+        // A unique absent fixture command proves the missing-binary path
+        // without ever looking up or prompting an installed vendor CLI.
+        let path = provider_catalog::config_path(&root.join("data"));
+        let mut config = provider_catalog::ProviderConfig::load(&path).unwrap();
+        config.providers[0].cli = Some(provider_catalog::config::CliSettings::Cli {
+            engine: provider_catalog::config::CliEngine::Claude,
+            command: "praxi-c250-missing-cli-fixture".into(),
+        });
+        config.save(&path).unwrap();
+    }
 
     let profile_toml = "\
 [bot]
@@ -331,7 +373,7 @@ fn cli_only_missing_and_signed_out_surface_actionable_errors() {
     let missing_dir = tempfile::tempdir().unwrap();
     let empty_bin = missing_dir.path().join("empty-bin");
     std::fs::create_dir_all(&empty_bin).unwrap();
-    let out = std::process::Command::new(std::env::current_exe().unwrap())
+    let out = fixture_process(missing_dir.path())
         .args([
             "--exact",
             "cli_only_missing_and_signed_out_surface_actionable_errors",
@@ -358,7 +400,16 @@ fn cli_only_missing_and_signed_out_surface_actionable_errors() {
         bin_dir.join(format!("claude{}", std::env::consts::EXE_SUFFIX)),
     )
     .unwrap();
-    let out = std::process::Command::new(std::env::current_exe().unwrap())
+    std::fs::write(
+        bin_dir.join("fixture-config.json"),
+        serde_json::to_vec(&json!({
+            "FAKE_MODE": "signed-out",
+            "FAKE_LOG": signed_out_dir.path()
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let out = fixture_process(signed_out_dir.path())
         .args([
             "--exact",
             "cli_only_missing_and_signed_out_surface_actionable_errors",
@@ -367,8 +418,6 @@ fn cli_only_missing_and_signed_out_surface_actionable_errors() {
         .env("DAEMON_CLI_FAIL_CHILD", "signed-out")
         .env("DAEMON_CLI_ROOT", signed_out_dir.path())
         .env("PATH", &bin_dir)
-        .env("FAKE_MODE", "signed-out")
-        .env("FAKE_LOG", signed_out_dir.path())
         .output()
         .unwrap();
     assert!(

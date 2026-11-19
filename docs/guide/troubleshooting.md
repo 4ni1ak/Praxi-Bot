@@ -3,6 +3,42 @@
 Start with `bot status`. It checks that the daemon is up and that your token is
 accepted, and shows how many approvals are waiting.
 
+## Diagnostics (Settings → Diagnostics, `bot doctor`)
+
+The desktop app has a **Diagnostics** page in Settings. It lists the same
+checks as `bot doctor`: provider keys and coding-CLI sign-in, loaded
+providers, data folder (including a file name with Turkish letters),
+browser, desktop automation, peer / VPS link, disk space and clock.
+Something the platform does not offer is shown as *not available*, not as an
+error.
+
+- **Reading the page changes nothing.** A few problems have a repair button
+  (create the data folder, reload the providers). A repair runs only when you
+  press its button, and every attempt is written to the audit log. Nothing
+  else is offered as a one-click fix; the API token is never regenerated.
+- **Copy support report** copies a Markdown summary (versions, platform,
+  check results, config file *names*). Your user folder is shown as `~`;
+  secrets the daemon knows (also URL-encoded, base64 or JSON-escaped), the
+  API token, key-like strings, credentials and host names in URLs, the lines
+  a config parse error quotes, your user and computer names and e-mail
+  addresses are masked. If the secrets cannot be read, no report is made.
+  Read it before you share it.
+- **Peer / VPS link** is checked against the daemon's live connection: a
+  configured host that is offline, unpaired, or a daemon without peer
+  networking is reported as a problem. A coding CLI whose sign-in could not
+  be confirmed is a warning, never "ready".
+- The daemon routes behind the page are `GET /v1/doctor`, `POST
+  /v1/doctor/repair/{id}` and `GET /v1/doctor/report` (bearer token
+  required). They are local to the computer: paired phones and desktops
+  cannot call them.
+  `bot doctor` runs more checks that need a terminal (port probe, browser
+  launch, `--online` connection tests).
+
+## The always-on host
+
+Logs, restart, upgrade, backup and the host-offline / slow-start / peer table
+are in [Host operations](host-operations.md).
+
 ## `daemon not reachable at http://127.0.0.1:47821` (exit code 3)
 
 The daemon is not running, or it listens on another port.

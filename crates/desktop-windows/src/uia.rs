@@ -3,8 +3,9 @@
 #![allow(unsafe_code)]
 
 use desktop_api::{
-    DesktopError,
+    ActGuard, DesktopError, InputTarget, Refusal,
     action::{Action, ActionResult, ClickMethod, CoordinateSpace, Target},
+    guarded,
     snapshot::{Fingerprint, Rect, Snapshot, TreeQuality, UiNode},
 };
 use windows::{
@@ -36,7 +37,8 @@ use windows::{
 };
 
 use crate::{
-    input,
+    guard_glue::{self as glue, ElementRaw},
+    identity, input,
     pure::{self, MAX_NODES, RawNode},
     winlist,
 };
@@ -341,6 +343,23 @@ impl Worker {
         Ok(Some(verify_value(value, actual.as_deref())))
     }
 
+    /// `ValuePattern.SetValue` only, no typing fallback: the guarded path sends
+    /// nothing through the keyboard for a value it cannot set directly.
+    fn set_value_pattern_only(el: &IUIAutomationElement, value: &str) -> Result<bool, String> {
+        // SAFETY: pattern queries and calls on a live element.
+        unsafe {
+            let p = el
+                .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                .map_err(|e| format!("this element has no value pattern: {e}"))?;
+            if p.CurrentIsReadOnly().map_err(|e| e.to_string())?.as_bool() {
+                return Err("this element is read-only".into());
+            }
+            p.SetValue(&BSTR::from(value)).map_err(|e| e.to_string())?;
+            let actual = p.CurrentValue().ok().map(|b| b.to_string());
+            Ok(verify_value(value, actual.as_deref()))
+        }
+    }
+
     /// Fallback when `SendInput` is blocked (e.g. UIPI / non-interactive desktop):
     /// append `text` to the focused element's `ValuePattern`.
     fn uia_type_fallback(&self, text: &str) -> Res<()> {
@@ -506,6 +525,75 @@ impl Worker {
     }
 
     pub fn act(&mut self, action: &Action) -> Res<ActionResult> {
+        self.act_with(action, None)
+    }
+
+    // ── run-scoped control grant: facts about the real receiver ──────────────
+
+    /// The raw live properties of one UIA element (never the snapshot cache).
+    fn element_raw(el: &IUIAutomationElement) -> ElementRaw<HWND> {
+        // SAFETY: live COM property reads on an element owned by this thread.
+        unsafe {
+            ElementRaw {
+                pid: el.CurrentProcessId().map_err(|_| Refusal::NoIdentity),
+                password: el
+                    .CurrentIsPassword()
+                    .map(BOOL::as_bool)
+                    .map_err(|_| Refusal::PasswordField),
+                native: el
+                    .CurrentNativeWindowHandle()
+                    .map(|h| (!h.0.is_null()).then_some(h))
+                    .map_err(|_| Refusal::NoIdentity),
+            }
+        }
+    }
+
+    /// The live focused element, raw.
+    fn focused_raw(&self) -> Result<ElementRaw<HWND>, Refusal> {
+        // SAFETY: COM call on the STA thread's IUIAutomation instance.
+        let focused = unsafe { self.uia.GetFocusedElement() }.map_err(|_| Refusal::NoIdentity)?;
+        Ok(Self::element_raw(&focused))
+    }
+
+    /// The facts that must all pass the guard before keyboard input: the
+    /// foreground window and the live focused element.
+    fn keyboard_facts(&self) -> Result<Vec<InputTarget>, Refusal> {
+        glue::keyboard_facts(&RealOs, self.focused_raw())
+    }
+
+    /// The window and program keyboard input would reach now. Mirrors
+    /// [`Self::focus_target`]: another program's foreground is replaced by the
+    /// last snapshot's window, the same program's own dialog keeps it. When the
+    /// foreground is the target, the live focused element must be the same
+    /// program too, otherwise no identity is reported (no grant is offered).
+    pub fn input_target(&self) -> Option<InputTarget> {
+        let fg = winlist::foreground_hwnd();
+        let (hwnd, is_fg) = match (fg, self.hwnd) {
+            (Some(f), Some(s)) if f == s || winlist::window_pid(f) == winlist::window_pid(s) => {
+                (f, true)
+            }
+            (Some(_), Some(s)) => (s, false),
+            (Some(f), None) => (f, true),
+            // No foreground to read: no identity, no grant offered.
+            (None, _) => return None,
+        };
+        let mut t = identity::top_level_facts(hwnd)?;
+        if is_fg {
+            let facts = self.keyboard_facts().ok()?;
+            let element = facts.into_iter().nth(1)?;
+            if !t.identity.same_program(&element.identity) || element.owned != t.owned {
+                return None;
+            }
+            t.password_focus = element.password_focus;
+        }
+        Some(t)
+    }
+
+    #[allow(clippy::too_many_lines)] // one arm per action kind
+    pub fn act_with(&mut self, action: &Action, guard: Option<&ActGuard>) -> Res<ActionResult> {
+        if let Some(g) = guard {
+            return self.act_guarded_flow(action, g);
+        }
         let mut verified = None;
         match action {
             Action::Click { target, method } => {
@@ -567,6 +655,122 @@ impl Worker {
             verified,
             new_snapshot: None,
         })
+    }
+
+    /// The run-scoped control grant's path: type, keys, the focusing click and
+    /// `SetValue` only, each through the platform-neutral guarded flow with the
+    /// real receivers and the real sink. No UIA fallback exists on this path.
+    fn act_guarded_flow(&mut self, action: &Action, g: &ActGuard) -> Res<ActionResult> {
+        let mut verified = None;
+        let plan = glue::plan(action)?;
+        match plan {
+            glue::Plan::Click(target) => {
+                let p = self.point(target)?;
+                self.with_probe(|probe| {
+                    guarded::guarded_click(g, p, probe, &mut glue::Sink(Win32Input))
+                })
+                .map_err(|f| glue::to_error(&f))?;
+            }
+            glue::Plan::Type(text) => {
+                self.focus_target();
+                self.with_probe(|probe| {
+                    guarded::guarded_type(g, text, probe, &mut glue::Sink(Win32Input))
+                })
+                .map_err(|f| glue::to_error(&f))?;
+            }
+            glue::Plan::Key(keys) => {
+                self.focus_target();
+                self.with_probe(|probe| {
+                    guarded::guarded_key(g, keys, probe, &mut glue::Sink(Win32Input))
+                })
+                .map_err(|f| glue::to_error(&f))?;
+            }
+            glue::Plan::SetValue {
+                index,
+                generation,
+                value,
+            } => {
+                let el = self.resolve(index, generation)?.element.clone();
+                // Live facts of the very element, plus the foreground and focus
+                // facts the keyboard path uses, read right before the write.
+                let facts = glue::write_facts(&RealOs, Self::element_raw(&el), self.focused_raw());
+                guarded::guarded_write(g, facts, || {
+                    Self::set_value_pattern_only(&el, value).map(|v| verified = Some(v))
+                })
+                .map_err(|f| glue::to_error(&f))?;
+                self.last_focused = Some(el);
+            }
+        }
+        Ok(ActionResult {
+            dispatched: true,
+            verified,
+            new_snapshot: None,
+        })
+    }
+
+    fn with_probe<R>(&self, f: impl FnOnce(&mut glue::Probe<'_, RealOs>) -> R) -> R {
+        let focused = || self.focused_raw();
+        f(&mut glue::Probe {
+            os: &RealOs,
+            focused: &focused,
+            modifiers_down: &input::modifiers_down,
+        })
+    }
+}
+
+/// The real window and process queries.
+struct RealOs;
+
+impl glue::WinFacts for RealOs {
+    type Window = HWND;
+
+    fn foreground(&self) -> Option<HWND> {
+        winlist::foreground_hwnd()
+    }
+
+    fn root_of(&self, w: HWND) -> Option<HWND> {
+        identity::root_of(w)
+    }
+
+    fn top_level_facts(&self, w: HWND) -> Option<InputTarget> {
+        identity::top_level_facts(w)
+    }
+
+    fn child_facts(&self, w: HWND) -> Option<InputTarget> {
+        identity::child_facts(w)
+    }
+
+    fn process_identity(&self, pid: u32) -> Option<desktop_api::ProcessIdentity> {
+        identity::process_identity(pid)
+    }
+
+    fn process_elevated(&self, pid: u32) -> Option<bool> {
+        identity::process_elevated(pid)
+    }
+
+    fn point_hit(&self, x: f64, y: f64) -> Option<(HWND, HWND)> {
+        identity::point_hit(x, y)
+    }
+}
+
+/// The real `SendInput` calls.
+struct Win32Input;
+
+impl glue::InputApi for Win32Input {
+    fn type_units(&mut self, units: &[u16]) -> Result<(), DesktopError> {
+        input::type_units(units)
+    }
+
+    fn key_chord(&mut self, keys: &[String]) -> Result<(), DesktopError> {
+        input::key_chord(keys)
+    }
+
+    fn click_at(&mut self, x: f64, y: f64) -> Result<(), DesktopError> {
+        input::click_at(x, y)
+    }
+
+    fn release_all(&mut self) -> bool {
+        input::release_all()
     }
 }
 

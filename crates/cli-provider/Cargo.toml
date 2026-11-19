@@ -23,8 +23,15 @@ thiserror.workspace = true
 tempfile.workspace = true
 uuid.workspace = true
 axum = "0.8"
+regex = "1"
+url.workspace = true
+secret-store.workspace = true
 tool-registry = { path = "../tool-registry", version = "0.1.0" }
 process-wrap = { version = "10.0.1", features = ["tokio1"] }
+reqwest.workspace = true
+sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [
@@ -46,3 +53,7 @@ path = "tests/fixtures/fake_cli.rs"
 [[bin]]
 name = "runtime-cli-fixture"
 path = "tests/fixtures/runtime_cli.rs"
+
+[[bin]]
+name = "native-cli-fixture"
+path = "tests/fixtures/native_cli.rs"

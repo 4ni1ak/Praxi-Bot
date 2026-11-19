@@ -95,13 +95,46 @@ test("the mock client serves the same typed calls in memory", async () => {
   });
   assert.equal(s.status, "connected");
   assert.equal((await m.listMcpServers()).length, before + 1);
-  assert.equal((await m.mcpCatalog()).length, 21);
+  assert.equal((await m.mcpCatalog()).length, 24);
   assert.ok((await m.listMcpTools("demo")).length > 0);
   await m.deleteMcpServer("demo");
   assert.equal((await m.listMcpServers()).length, before);
   await assert.rejects(m.reconnectMcpServer("demo"), ApiError);
   await m.setSecret("a", "b");
   assert.equal(m.secrets.size, 1);
+});
+
+test("view quota retries cleanup only for abandoned sessions owned by the client", async () => {
+  const replies = [
+    [503, { error: { code: "unavailable" } }],
+    [429, { error: { code: "view_quota" } }],
+    [204, null],
+    [201, { session_id: "fresh" }]
+  ] as const;
+  const calls: string[] = [];
+  globalThis.fetch = (async (url: URL | string, init?: RequestInit) => {
+    const [status, body] = replies[calls.length];
+    calls.push(`${init?.method} ${new URL(url).pathname}`);
+    return new Response(body ? JSON.stringify(body) : null, { status });
+  }) as typeof fetch;
+
+  const c = client();
+  await assert.rejects(c.deleteViewSession("abandoned"), ApiError);
+  const session = await c.createViewSession({
+    client_id: "client",
+    target_id: "target",
+    profile: "watch",
+    codecs: ["jpeg"],
+    max_width: 960,
+    max_height: 600
+  });
+  assert.equal(session.session_id, "fresh");
+  assert.deepEqual(calls, [
+    "DELETE /v1/view/sessions/abandoned",
+    "POST /v1/view/sessions",
+    "DELETE /v1/view/sessions/abandoned",
+    "POST /v1/view/sessions"
+  ]);
 });
 
 test("live-view and control routes send Bearer header, Accept media type, no query tokens", async () => {
@@ -126,6 +159,7 @@ test("live-view and control routes send Bearer header, Accept media type, no que
   await c.openViewFrameStream("s 1");
   await c.heartbeatViewSession("s 1", { takeover_id: "to-1", control_epoch: 2 });
   await c.updateViewSession("s 1", { last_rendered_frame_seq: 5, decode_ms: 8 });
+  await c.ackViewFrame("s 1", 6);
   await c.requestTakeover({ session_id: "s 1", request_id: "r-1" });
   await c.sendViewInput("s 1", {
     v: 1,
@@ -154,6 +188,7 @@ test("live-view and control routes send Bearer header, Accept media type, no que
       "GET /v1/view/sessions/s%201/frames",
       "PUT /v1/view/sessions/s%201/heartbeat",
       "PATCH /v1/view/sessions/s%201",
+      "POST /v1/view/sessions/s%201/ack",
       "POST /v1/control/takeover",
       "POST /v1/view/sessions/s%201/input",
       "POST /v1/control/release",

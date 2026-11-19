@@ -1,5 +1,5 @@
 /**
- * Folds a run's timeline into "thinking chains" (card 198 D).
+ * Folds a run's timeline into "thinking chains".
  *
  * A chain is a maximal stretch of ordinary tool calls plus the short thoughts
  * the bot wrote right before a tool call. Everything else keeps its own row:
@@ -12,6 +12,7 @@ import {
   type TimelineItem,
   type ToolItem
 } from "../state/timeline.ts";
+import { isDiscoveryTool } from "./toolLabels.ts";
 
 export type ChainStep =
   | { kind: "thought"; key: string; text: string; ts: number }
@@ -60,6 +61,10 @@ function spanStart(
     return runStartedMs;
   }
   return first;
+}
+
+function isHiddenDiscovery(item: TimelineItem): boolean {
+  return item.kind === "tool" && isDiscoveryTool(item.name) && item.status !== "awaiting_approval";
 }
 
 /** A tool call the chain may absorb. */
@@ -130,6 +135,10 @@ export function groupRunItems(
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i] as TimelineItem;
+    if (item.kind === "tool" && isDiscoveryTool(item.name) && item.status !== "awaiting_approval") {
+      // find_tool / get_tool_details are plumbing: no step, and they do not split a chain
+      continue;
+    }
     if (chainable(item)) {
       steps.push({ kind: "tool", key: item.key, tool: item });
       continue;
@@ -137,7 +146,10 @@ export function groupRunItems(
     if (item.kind === "text") {
       // a thought only when the next non-text item is a chainable tool call
       let j = i + 1;
-      while (j < items.length && (items[j] as TimelineItem).kind === "text") {
+      while (
+        j < items.length &&
+        ((items[j] as TimelineItem).kind === "text" || isHiddenDiscovery(items[j] as TimelineItem))
+      ) {
         j++;
       }
       const next = items[j];

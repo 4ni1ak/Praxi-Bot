@@ -6,24 +6,20 @@ import type {
   ControlVerdict,
   DaemonEvent,
   GlobalEnvelope,
-  ReleaseRequest,
-  Run
+  ReleaseRequest
 } from "../api/types.ts";
-import { BridgeSession } from "./bridgeSession.ts";
 import {
   type BotMeta,
-  type BridgeDeps,
   ControlBridge,
   createBridgeRegistry,
   type PanelActionHighlight,
-  planNativeReplay,
   type Rect,
-  StopLedger,
   refusalReason,
   resolveTargetScope,
-  type TargetScope,
-  waitBounded
+  SCOPE_UNKNOWN_REASON,
+  type ScopeAnswer
 } from "./controlBridge.ts";
+import { FakeDaemon, flush, makeLedger } from "./ledgerFakes.ts";
 
 const NOW = 1_000_000;
 
@@ -34,18 +30,38 @@ interface Calls {
   override: number;
   recover: number;
   decide: { id: string; decision: ControlVerdict; reason?: string }[];
-  cancel: string[];
   begin: { rect: Rect | null; label: string; action: string }[];
   start: { bot: BotMeta; step: string }[];
-  stop: number;
+  finish: number[];
   clicks: { x: number; y: number }[];
   panelOverlay: PanelActionHighlight[];
 }
 
+function idleDto(): ControlStateDto {
+  return {
+    app_connected: true,
+    expires_in_ms: 15_000,
+    latched: null,
+    mode: "idle",
+    release: null,
+    takeover: null
+  };
+}
+
+/**
+ * A bridge over the REAL run ledger (fake daemon + fake native), so the tests
+ * exercise the bridge <-> ledger wiring, not a stub of it.
+ */
 function setup(
   beginResult: boolean | (() => boolean) = true,
-  scopeResolver?: (info: { runId?: string; botId?: string }) => TargetScope,
-  extra: Partial<BridgeDeps> = {}
+  scopeResolver?: () => ScopeAnswer,
+  overrides: {
+    startRun?: (bot: BotMeta, step: string) => Promise<number | void>;
+    beginAction?: () => Promise<boolean>;
+    click?: () => Promise<void>;
+    confirmDriving?: () => Promise<boolean>;
+    client?: Partial<ConstructorParameters<typeof ControlBridge>[0]["client"]>;
+  } = {}
 ) {
   const calls: Calls = {
     put: [],
@@ -54,41 +70,25 @@ function setup(
     override: 0,
     recover: 0,
     decide: [],
-    cancel: [],
     begin: [],
     start: [],
-    stop: 0,
+    finish: [],
     clicks: [],
     panelOverlay: []
   };
   let now = NOW;
-  const hold: { current: Promise<void> } = { current: Promise.resolve() };
-  const cancelFail = { current: false };
-  let listRuns: () => Promise<Pick<Run, "id" | "bot_id" | "state">[]> = async () => [];
-  const idleDto = (): ControlStateDto => ({
-    app_connected: true,
-    expires_in_ms: 15_000,
-    latched: null,
-    mode: "idle",
-    release: null,
-    takeover: null
-  });
+  const w = makeLedger();
+  w.ledger.onNativeSnapshot(w.native.snapshot());
+  const daemon = new FakeDaemon();
+  const handle = w.ledger.attachClient(daemon.transport());
   const bridge = new ControlBridge({
     client: {
-      listRuns: () => listRuns(),
       putControlState: async (m, release) => {
         calls.put.push(m);
         calls.release.push(release === true);
-        await hold.current;
       },
       decideControl: async (id, decision, reason) =>
         void calls.decide.push({ id, decision, reason }),
-      cancelRun: async (id) => {
-        if (cancelFail.current) {
-          throw new Error("cancel failed");
-        }
-        calls.cancel.push(id);
-      },
       releaseControl: async (req) => {
         if (req) {
           calls.releaseTakeover.push(req);
@@ -97,34 +97,52 @@ function setup(
       },
       overrideControl: async () => {
         calls.override += 1;
-        return {
-          ...idleDto(),
-          latched: "paused",
-          mode: "paused"
-        };
+        return { ...idleDto(), latched: "paused", mode: "paused" };
       },
       recoverControl: async () => {
         calls.recover += 1;
         return idleDto();
-      }
+      },
+      ...overrides.client
     },
     native: {
       beginAction: async (rect, label, action) => {
         calls.begin.push({ rect, label, action });
+        if (overrides.beginAction) {
+          return overrides.beginAction();
+        }
         return typeof beginResult === "function" ? beginResult() : beginResult;
       },
-      startRun: async (bot, step) => void calls.start.push({ bot, step }),
-      stopRun: async () => ++calls.stop,
-      click: async (x, y) => void calls.clicks.push({ x, y })
+      startRun: async (bot, step) => {
+        calls.start.push({ bot, step });
+        if (overrides.startRun) {
+          return overrides.startRun(bot, step);
+        }
+        w.native.mode = "bot_driving";
+        w.native.runGeneration += 1;
+        return w.native.runGeneration;
+      },
+      finishRun: async (generation) => {
+        calls.finish.push(generation);
+        w.native.finish(generation);
+      },
+      click: async (x, y) => {
+        calls.clicks.push({ x, y });
+        await overrides.click?.();
+      },
+      confirmDriving: overrides.confirmDriving
     },
+    ledger: w.ledger,
     resolveTargetScope: scopeResolver,
-    ...extra,
     panelOverlay: {
       showAction: (h) => calls.panelOverlay.push(h)
     },
     botMeta: (id) => ({ botId: id, botName: `Bot ${id}` }),
     startingStep: "Working…",
-    now: () => now
+    now: () => now,
+    sleep: async () => {
+      now += 250;
+    }
   });
   let gseq = 0;
   const feed = (event: DaemonEvent, ts = now) => {
@@ -136,62 +154,68 @@ function setup(
     bridge,
     calls,
     feed,
-    snapshot: (read: typeof listRuns) => { listRuns = read; },
-    hold,
-    cancelFail,
+    ledger: w.ledger,
+    native: w.native,
+    daemon,
+    handle,
     advance: (ms: number) => {
       now += ms;
     }
   };
 }
 
-const request = (id: string, rect: Rect | null = null, action = "click") =>
+const request = (id: string, rect: Rect | null = null, action = "click", runId = "run-1") =>
   ({
     type: "control_requested",
     request_id: id,
-    run_id: "run-1",
+    run_id: runId,
     bot_id: "b1",
     rect,
     label: "Save",
     action
   }) satisfies DaemonEvent;
 
-test("a started run makes the bot drive; the last finished run ends it", async () => {
+const started = (runId: string): DaemonEvent => ({
+  type: "run_started",
+  run_id: runId,
+  chat_id: "c",
+  bot_id: "b1"
+});
+
+test("a started run makes the bot drive; the last finished run ends it with finish_bot_run, never a Stop", async () => {
   const t = setup();
-  await t.feed({
-    type: "run_started",
-    run_id: "run-1",
-    chat_id: "c",
-    bot_id: "b1"
-  });
+  await t.feed(started("run-1"));
   assert.equal(t.calls.start.length, 1);
   assert.equal(t.calls.start[0].bot.botName, "Bot b1");
   assert.equal(t.calls.start[0].step, "Working…");
   assert.equal(t.bridge.mode, "bot_driving");
-  // a second run does not restart it
-  await t.feed({
-    type: "run_started",
-    run_id: "run-2",
-    chat_id: "c",
-    bot_id: "b1"
-  });
-  assert.equal(t.calls.start.length, 1);
+  await t.feed(started("run-2"));
+  assert.equal(t.calls.start.length, 1, "a second run does not restart it");
   await t.feed({ type: "run_finished", run_id: "run-1", error: null });
-  assert.equal(t.calls.stop, 0, "run-2 is still live");
+  assert.deepEqual(t.calls.finish, [], "run-2 is still live");
   await t.feed({ type: "run_finished", run_id: "run-2", error: null });
-  assert.equal(t.calls.stop, 1);
+  assert.deepEqual(t.calls.finish, [1], "finished with the generation it started");
   assert.equal(t.bridge.mode, "idle");
-  assert.deepEqual(t.bridge.liveRuns(), []);
+  assert.deepEqual(t.native.tokens, [], "no user stop was issued");
+  assert.equal(t.native.stopSeq, 0);
+  assert.equal(t.ledger.stopRecords().length, 0);
+});
+
+test("finish with a stale generation keeps a newer native run driving", async () => {
+  const t = setup();
+  await t.feed(started("run-1"));
+  t.native.runGeneration += 1; // another native run (e.g. dev simulate) took over
+  t.native.mode = "bot_driving";
+  await t.feed({ type: "run_finished", run_id: "run-1", error: null });
+  assert.deepEqual(t.calls.finish, [1]);
+  assert.equal(t.native.mode, "bot_driving", "finish_bot_run(1) was a no-op natively");
 });
 
 test("events from before the bridge existed (history replay) are ignored", async () => {
   const t = setup();
-  await t.feed(
-    { type: "run_started", run_id: "old", chat_id: "c", bot_id: "b1" },
-    NOW - 60_000
-  );
+  await t.feed(started("old"), NOW - 60_000);
   assert.equal(t.calls.start.length, 0);
-  assert.deepEqual(t.bridge.liveRuns(), []);
+  assert.equal(t.ledger.run("old"), undefined);
 });
 
 test("control_requested shows the target, posts proceed and ripples a click", async () => {
@@ -199,12 +223,9 @@ test("control_requested shows the target, posts proceed and ripples a click", as
   const rect = { x: 100, y: 200, width: 40, height: 20 };
   await t.feed(request("r1", rect));
   assert.deepEqual(t.calls.begin, [{ rect, label: "Save", action: "click" }]);
-  assert.deepEqual(t.calls.decide, [
-    { id: "r1", decision: "proceed", reason: undefined }
-  ]);
+  assert.deepEqual(t.calls.decide, [{ id: "r1", decision: "proceed", reason: undefined }]);
   assert.deepEqual(t.calls.clicks, [{ x: 120, y: 210 }]);
-  // The request arrived while idle: the bridge started the run state first.
-  assert.equal(t.calls.start.length, 1);
+  assert.equal(t.calls.start.length, 1, "the request arrived while idle: the run state starts first");
 });
 
 test("a refusal from the state machine is posted with a reason for the model", async () => {
@@ -234,69 +255,180 @@ test("every native state change is reported to the daemon, and so is the heartbe
   await t.bridge.onNativeState("bot_driving");
   await t.bridge.onNativeState("human_driving");
   await t.bridge.heartbeat();
-  assert.deepEqual(t.calls.put, [
-    "bot_driving",
-    "human_driving",
-    "human_driving"
-  ]);
+  assert.deepEqual(t.calls.put, ["bot_driving", "human_driving", "human_driving"]);
 });
 
 test("only the user's explicit resume sends release:true, never a heartbeat or reopen", async () => {
   const t = setup();
-  // Reopened UI: starts idle and heartbeats.
   await t.bridge.heartbeat();
   await t.bridge.onNativeState("human_driving");
   await t.bridge.heartbeat();
   await t.bridge.heartbeat();
   assert.deepEqual(t.calls.release, [false, false, false, false]);
-  // The user hands the wheel back ("Bitirdim"): native state leaves human_driving.
   await t.bridge.onNativeState("idle");
   assert.equal(t.calls.release.at(-1), true);
   await t.bridge.heartbeat();
   assert.equal(t.calls.release.at(-1), false, "later heartbeats do not release");
-  // Pause then resume to bot_driving.
   await t.bridge.onNativeState("paused");
   assert.equal(t.calls.release.at(-1), false);
   await t.bridge.onNativeState("bot_driving");
   assert.equal(t.calls.release.at(-1), true);
 });
 
-test("Stop (state goes idle while runs are live) cancels those runs", async () => {
+test("the bridge never cancels: native idle (Stop, finish or hand-back) sends no cancel by itself", async () => {
   const t = setup();
-  await t.feed({
-    type: "run_started",
-    run_id: "run-1",
-    chat_id: "c",
-    bot_id: "b1"
-  });
-  await t.feed({
-    type: "run_started",
-    run_id: "run-2",
-    chat_id: "c",
-    bot_id: "b1"
-  });
+  await t.feed(started("run-1"));
   await t.bridge.onNativeState("bot_driving");
   await t.bridge.onNativeState("idle");
-  assert.deepEqual(t.calls.cancel.sort(), ["run-1", "run-2"]);
-  assert.deepEqual(t.bridge.liveRuns(), []);
-  assert.equal(t.calls.put.at(-1), "idle");
-  // idle again with nothing live cancels nothing more
+  await t.bridge.onNativeState("human_driving");
   await t.bridge.onNativeState("idle");
-  assert.equal(t.calls.cancel.length, 2);
+  assert.equal(t.daemon.requests.length, 0, "only Stop records (the ledger) cancel");
+  assert.equal(t.ledger.mayAct("run-1"), true);
 });
 
-test("a normal finish is not mistaken for Stop", async () => {
+test("a Stop-held run cannot act again: its next control_requested is refused without touching native", async () => {
   const t = setup();
-  await t.feed({
-    type: "run_started",
-    run_id: "run-1",
-    chat_id: "c",
-    bot_id: "b1"
+  await t.feed(started("run-1"));
+  await t.bridge.onNativeState("idle"); // the Stop's native echo
+  t.ledger.stopAll("banner");
+  await t.feed(started("run-1")); // another event for the same run
+  await t.feed(request("after-stop", { x: 0, y: 0, width: 10, height: 10 }));
+  assert.equal(t.calls.start.length, 1, "no restart of the overlay");
+  assert.equal(t.calls.begin.length, 0);
+  assert.equal(t.calls.clicks.length, 0);
+  assert.deepEqual(t.calls.decide.map((d) => d.decision), ["refuse"]);
+  assert.match(t.calls.decide[0].reason ?? "", /stopped/);
+});
+
+test("a failed cancel keeps the run stop-held and its next control request is refused", async () => {
+  const t = setup();
+  t.daemon.start("run-1", "paused");
+  t.daemon.failCancel.add("run-1");
+  await t.feed(started("run-1"));
+  t.ledger.stopAll("hotkey");
+  t.daemon.deliver(0);
+  await flush();
+  assert.equal(t.ledger.run("run-1")?.phase, "failed");
+  await t.feed(request("again"));
+  assert.equal(t.calls.begin.length, 0);
+  assert.equal(t.calls.decide.at(-1)?.decision, "refuse");
+});
+
+test("a Stop pressed between beginAction and the decision turns the decision into a refusal", async () => {
+  let ledgerRef: ReturnType<typeof setup>["ledger"] | null = null;
+  const t = setup(true, undefined, {
+    beginAction: async () => {
+      ledgerRef?.stopAll("hotkey");
+      return true;
+    }
   });
-  await t.bridge.onNativeState("bot_driving");
-  await t.feed({ type: "run_finished", run_id: "run-1", error: null });
-  await t.bridge.onNativeState("idle"); // the event stopRun caused
-  assert.deepEqual(t.calls.cancel, []);
+  ledgerRef = t.ledger;
+  await t.feed(request("racy", { x: 0, y: 0, width: 4, height: 4 }));
+  assert.equal(t.calls.clicks.length, 0, "no click after the Stop");
+  assert.equal(t.calls.decide[0]?.decision, "refuse");
+});
+
+test("revoke during the ensureDriving await prevents beginAction and proceed", async () => {
+  let resume: () => void = () => {};
+  const t = setup(true, undefined, {
+    startRun: () => new Promise((resolve) => {
+      resume = () => resolve(1);
+    })
+  });
+  const answered = t.feed(request("r-revoke"));
+  await flush();
+  assert.equal(t.calls.start.length, 1);
+  t.bridge.revoke();
+  resume();
+  await answered;
+  assert.equal(t.calls.begin.length, 0);
+  assert.equal(t.calls.decide.length, 0, "a revoked bridge writes nothing");
+});
+
+test("revoke is immediate even with a hung native call: nothing of the old session acts afterwards", async () => {
+  const t = setup(true, undefined, { startRun: () => new Promise(() => {}) });
+  void t.feed(request("hung"));
+  await flush();
+  t.bridge.revoke();
+  assert.equal(t.bridge.live, false);
+  await t.bridge.heartbeat();
+  void t.bridge.onNativeState("bot_driving");
+  await flush();
+  assert.deepEqual(t.calls.put, [], "no heartbeat after revoke");
+});
+
+test("Stop is sent while a hand-back is pending, and the late release reply is harmless", async () => {
+  let finishRelease: (dto: ControlStateDto) => void = () => {};
+  const t = setup(true, undefined, {
+    client: {
+      releaseControl: () => new Promise((resolve) => {
+        finishRelease = resolve;
+      })
+    }
+  });
+  t.daemon.start("run-1", "paused");
+  await t.feed(started("run-1"));
+  const release = t.bridge.releaseOwnedTakeover({
+    takeover_id: "to-1",
+    control_epoch: 1,
+    request_id: "rel",
+    outcome: "completed"
+  });
+  await flush(); // the release is now in flight on the bridge queue
+  t.ledger.stopAll("banner");
+  assert.equal(t.daemon.requests.length, 1, "not queued behind the hand-back");
+  finishRelease(idleDto());
+  await release;
+  t.daemon.deliver(0);
+  await flush();
+  assert.equal(t.ledger.mayAct("run-1"), false);
+});
+
+test("Stop is sent while a getControlState poll never resolves; the hung poll does not hold the bridge", async () => {
+  const t = setup(true, undefined, {
+    client: { getControlState: () => new Promise(() => {}) }
+  });
+  (t.bridge as unknown as { deps: { callBoundMs: number } }).deps.callBoundMs = 10;
+  void t.bridge.refreshControlState();
+  t.ledger.stopAll("hotkey");
+  assert.equal(t.daemon.requests.length, 1);
+  await t.bridge.onNativeState("bot_driving"); // queued behind the hung poll, freed by the bound
+  assert.deepEqual(t.calls.put, ["bot_driving"]);
+});
+
+test("unknown target scope never opens the local overlay; the action is refused with 'retry in a moment'", async () => {
+  let scope: ScopeAnswer = "unknown";
+  const t = setup(true, () => scope);
+  await t.feed(started("run-x"));
+  assert.equal(t.calls.start.length, 0, "run_started with unknown scope does not drive native");
+  await t.feed(request("r-unknown", { x: 1, y: 1, width: 2, height: 2 }, "click", "run-x"));
+  assert.equal(t.calls.start.length, 0);
+  assert.equal(t.calls.begin.length, 0);
+  assert.deepEqual(t.calls.decide, [{ id: "r-unknown", decision: "refuse", reason: SCOPE_UNKNOWN_REASON }]);
+  // once this client's targets have loaded the scope is known and actions proceed
+  scope = "local_desktop";
+  await t.feed(request("r-known", null, "click", "run-x"));
+  assert.equal(t.calls.decide.at(-1)?.decision, "proceed");
+});
+
+test("restore drives restored local processing runs only (never held, paused or unknown-scope runs)", async () => {
+  let scope: ScopeAnswer = "local_desktop";
+  const t = setup(true, () => scope);
+  t.daemon.start("live", "running");
+  t.daemon.start("parked", "paused");
+  t.ledger.applyList(t.ledger.beginList(t.handle)!, t.daemon.list());
+  scope = "unknown";
+  await t.bridge.restoreDriving();
+  assert.equal(t.calls.start.length, 0, "unknown scope: wait");
+  scope = "local_desktop";
+  await t.bridge.restoreDriving();
+  assert.equal(t.calls.start.length, 1);
+  assert.deepEqual(t.bridge.drivingRuns(), ["live"]);
+  // a Stop then a new restore: nothing restarts
+  t.ledger.stopAll("hotkey");
+  await t.bridge.onNativeState("idle");
+  await t.bridge.restoreDriving();
+  assert.equal(t.calls.start.length, 1);
 });
 
 test("refusal reasons name the state", () => {
@@ -305,28 +437,9 @@ test("refusal reasons name the state", () => {
   assert.match(refusalReason("bot_driving"), /stopped/);
 });
 
-test("human_driving -> idle is a real Stop (stop_all) and cancels; give_back (-> bot_driving) does not", async () => {
+test("owned takeover: Bitirdim uses releaseControl, heartbeats never release, a local Pause overrides", async () => {
   const t = setup();
-  await t.feed({ type: "run_started", run_id: "run-live", chat_id: "c", bot_id: "b1" });
-  await t.bridge.initializeNativeState("idle", 1);
-  await t.bridge.onNativeState("human_driving", 1);
-  await t.bridge.onNativeState("bot_driving", 1); // give_back: a hand-back
-  assert.deepEqual(t.calls.cancel, []);
-  assert.deepEqual(t.bridge.liveRuns(), ["run-live"]);
-  await t.bridge.onNativeState("human_driving", 1);
-  await t.bridge.onNativeState("idle", 2); // global Stop while the user drives
-  assert.deepEqual(t.calls.cancel, ["run-live"]);
-  assert.deepEqual(t.bridge.liveRuns(), []);
-});
-
-test("owned takeover: Bitirdim uses releaseControl, heartbeats never release, Stop uses override", async () => {
-  const t = setup();
-  await t.feed({
-    type: "run_started",
-    run_id: "run-1",
-    chat_id: "c",
-    bot_id: "b1"
-  });
+  await t.feed(started("run-1"));
   await t.bridge.syncControlState({
     app_connected: true,
     expires_in_ms: 15_000,
@@ -348,7 +461,6 @@ test("owned takeover: Bitirdim uses releaseControl, heartbeats never release, St
   await t.bridge.heartbeat();
   assert.equal(t.calls.release.some(Boolean), false);
 
-  // Explicit Bitirdim release goes through releaseControl and keeps runs alive.
   const relReq: ReleaseRequest = {
     takeover_id: "to-1",
     control_epoch: 3,
@@ -359,10 +471,9 @@ test("owned takeover: Bitirdim uses releaseControl, heartbeats never release, St
   await t.bridge.releaseOwnedTakeover(relReq);
   assert.equal(t.calls.releaseTakeover.length, 1);
   assert.equal(t.calls.releaseTakeover[0].request_id, "req-rel-1");
-  assert.deepEqual(t.calls.cancel, []);
+  assert.equal(t.daemon.requests.length, 0, "a hand-back never stops runs");
   assert.equal(t.bridge.takeover(), null);
 
-  // A peer's takeover is not ours: a local Pause does not override on its behalf.
   await t.feed({
     type: "control_state_changed",
     state: "active",
@@ -371,9 +482,8 @@ test("owned takeover: Bitirdim uses releaseControl, heartbeats never release, St
     reason: null
   });
   await t.bridge.onNativeState("paused");
-  assert.equal(t.calls.override, 0);
+  assert.equal(t.calls.override, 0, "a peer's takeover is not ours");
 
-  // Our own live takeover: a local Pause overrides instead of fighting the latch.
   await t.bridge.syncControlState({
     app_connected: true,
     expires_in_ms: 15_000,
@@ -394,23 +504,13 @@ test("owned takeover: Bitirdim uses releaseControl, heartbeats never release, St
   await t.bridge.onNativeState("idle");
   await t.bridge.onNativeState("paused");
   assert.equal(t.calls.override, 1);
-
-  // Explicit emergencyStop interrupts takeover and cancels live runs.
-  await t.bridge.emergencyStop();
-  assert.equal(t.calls.override, 2);
-  assert.deepEqual(t.calls.cancel, ["run-1"]);
 });
 
 test("browser and remote targets NEVER touch local PC overlay/clicks and use panel overlay", async () => {
-  let scope: TargetScope = "remote";
+  let scope: ScopeAnswer = "remote";
   const t = setup(true, () => scope);
   const rect = { x: 400, y: 300, width: 120, height: 44 };
-  await t.feed({
-    type: "run_started",
-    run_id: "run-remote",
-    chat_id: "c",
-    bot_id: "b1"
-  });
+  await t.feed(started("run-remote"));
   await t.feed({
     type: "control_requested",
     request_id: "req-remote-1",
@@ -425,11 +525,8 @@ test("browser and remote targets NEVER touch local PC overlay/clicks and use pan
   assert.equal(t.calls.clicks.length, 0, "never clicks local PC desktop");
   assert.equal(t.calls.panelOverlay.length, 1);
   assert.deepEqual(t.calls.panelOverlay[0].rect, rect);
-  assert.deepEqual(t.calls.decide, [
-    { id: "req-remote-1", decision: "proceed", reason: undefined }
-  ]);
+  assert.deepEqual(t.calls.decide, [{ id: "req-remote-1", decision: "proceed", reason: undefined }]);
 
-  // Browser target while an owned takeover is paused refuses without touching native PC.
   scope = "browser";
   await t.feed({
     type: "control_state_changed",
@@ -450,6 +547,22 @@ test("browser and remote targets NEVER touch local PC overlay/clicks and use pan
   assert.equal(t.calls.begin.length, 0);
   assert.equal(t.calls.clicks.length, 0);
   assert.equal(t.calls.decide[1].decision, "refuse");
+
+  // a stop-held browser run is refused too, with no panel highlight
+  scope = "browser";
+  await t.feed({ type: "control_state_changed", state: "released", owner: "local-ui:1", target_id: "target-browser", reason: null });
+  t.ledger.stopAll("viewer");
+  await t.feed({
+    type: "control_requested",
+    request_id: "req-browser-3",
+    run_id: "run-remote",
+    bot_id: "b1",
+    rect,
+    label: "Next",
+    action: "click"
+  });
+  assert.equal(t.calls.panelOverlay.length, 1);
+  assert.equal(t.calls.decide.at(-1)?.decision, "refuse");
 });
 
 test("resolveTargetScope distinguishes local_desktop from browser and remote targets", () => {
@@ -512,19 +625,19 @@ test("resolveTargetScope distinguishes local_desktop from browser and remote tar
 
 test("startRun preserves explicit botShape even when it differs from ID hash fallback", async () => {
   const calls: { bot: BotMeta; step: string }[] = [];
+  const { ledger } = makeLedger();
   const bridge = new ControlBridge({
     client: {
-      listRuns: async () => [],
       putControlState: async () => undefined,
-      decideControl: async () => undefined,
-      cancelRun: async () => undefined
+      decideControl: async () => undefined
     },
     native: {
       beginAction: async () => true,
       startRun: async (bot, step) => void calls.push({ bot, step }),
-      stopRun: async () => 1,
+      finishRun: async () => undefined,
       click: async () => undefined
     },
+    ledger,
     botMeta: (id) => ({
       botId: id,
       botName: "HeartBot",
@@ -539,200 +652,18 @@ test("startRun preserves explicit botShape even when it differs from ID hash fal
     seq: 1,
     ts_ms: NOW,
     gseq: 1,
-    event: {
-      type: "run_started",
-      run_id: "run-shape",
-      chat_id: "c",
-      bot_id: "bot-cube-0"
-    }
+    event: { type: "run_started", run_id: "run-shape", chat_id: "c", bot_id: "bot-cube-0" }
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].bot.botId, "bot-cube-0");
   assert.equal(calls[0].bot.botShape, "heart");
 });
 
-test("reopening the app restores existing daemon runs so Stop cancels them", async () => {
-  const t = setup();
-  t.snapshot(async () => [{ id: "existing", bot_id: "b1", state: "running" }]);
-  await t.feed({ type: "run_started", run_id: "existing", chat_id: "c", bot_id: "b1" }, NOW - 60_000);
-  await t.bridge.restoreRuns();
-  assert.deepEqual(t.bridge.liveRuns(), ["existing"]);
-  assert.equal(t.calls.start.length, 1);
-  await t.bridge.onNativeState("idle");
-  assert.deepEqual(t.calls.cancel, ["existing"]);
-});
-
-test("restoration uses actual daemon states and does not release an existing human hold", async () => {
-  const t = setup();
-  await t.bridge.onNativeState("human_driving");
-  t.snapshot(async () => [
-    { id: "queued", bot_id: "b1", state: "queued" },
-    { id: "waiting", bot_id: "b1", state: "waiting_approval" },
-    { id: "paused", bot_id: "b1", state: "paused" },
-    { id: "done", bot_id: "b1", state: "succeeded" },
-    { id: "failed", bot_id: "b1", state: "failed" },
-    { id: "cancelled", bot_id: "b1", state: "cancelled" }
-  ]);
-  await t.bridge.restoreRuns();
-  assert.deepEqual(t.bridge.liveRuns().sort(), ["paused", "queued", "waiting"]);
-  assert.equal(t.calls.start.length, 0);
-  assert.equal(t.bridge.mode, "human_driving");
-  assert.ok(t.calls.release.every((release) => !release));
-});
-
-test("a terminal event arriving during the initial snapshot wins over its stale row", async () => {
-  const t = setup();
-  let resolve!: (runs: Pick<Run, "id" | "bot_id" | "state">[]) => void;
-  t.snapshot(() => new Promise((done) => { resolve = done; }));
-  const restoring = t.bridge.restoreRuns();
-  await t.feed({ type: "run_finished", run_id: "finished-during-read", error: null });
-  resolve?.([{ id: "finished-during-read", bot_id: "b1", state: "running" }]);
-  await restoring;
-  assert.deepEqual(t.bridge.liveRuns(), []);
-  assert.equal(t.calls.start.length, 0);
-});
-
-test("fresh starts received while the snapshot is pending stay live even when absent from it", async () => {
-  const t = setup();
-  let resolve!: (runs: Pick<Run, "id" | "bot_id" | "state">[]) => void;
-  t.snapshot(() => new Promise((done) => { resolve = done; }));
-  const restoring = t.bridge.restoreRuns();
-  await t.feed({ type: "run_started", run_id: "new", bot_id: "b1", chat_id: "c" });
-  resolve?.([]);
-  await restoring;
-  assert.deepEqual(t.bridge.liveRuns(), ["new"]);
-  await t.bridge.onNativeState("idle");
-  assert.deepEqual(t.calls.cancel, ["new"]);
-});
-
-test("Stop during restoration cancels snapshot runs without starting the native widget again", async () => {
-  const t = setup();
-  let resolve!: (runs: Pick<Run, "id" | "bot_id" | "state">[]) => void;
-  t.snapshot(() => new Promise((done) => { resolve = done; }));
-  const restoring = t.bridge.restoreRuns();
-  await t.feed({ type: "run_started", run_id: "new", bot_id: "b1", chat_id: "c" });
-  await t.bridge.onNativeState("idle");
-  resolve?.([{ id: "existing", bot_id: "b1", state: "running" }]);
-  await restoring;
-  assert.deepEqual(t.calls.cancel.sort(), ["existing", "new"]);
-  assert.deepEqual(t.bridge.liveRuns(), []);
-  assert.equal(t.calls.start.length, 1);
-});
-
-test("disposing the old connection drops its active runs and prevents late cancellation", async () => {
-  const old = setup();
-  await old.feed({ type: "run_started", run_id: "old-daemon", bot_id: "b1", chat_id: "c" });
-  old.bridge.dispose();
-  const current = setup();
-  current.snapshot(async () => [{ id: "current-daemon", bot_id: "b1", state: "running" }]);
-  await current.bridge.restoreRuns();
-  await old.bridge.onNativeState("idle");
-  await current.bridge.onNativeState("idle");
-  assert.deepEqual(old.bridge.liveRuns(), []);
-  assert.deepEqual(old.calls.cancel, []);
-  assert.deepEqual(current.calls.cancel, ["current-daemon"]);
-});
-
-test("a delayed snapshot cannot revive an already disposed daemon connection", async () => {
-  const old = setup();
-  let resolve!: (runs: Pick<Run, "id" | "bot_id" | "state">[]) => void;
-  old.snapshot(() => new Promise((done) => { resolve = done; }));
-  const restoring = old.bridge.restoreRuns();
-  old.bridge.dispose();
-  resolve?.([{ id: "old-daemon", bot_id: "b1", state: "running" }]);
-  await restoring;
-  assert.deepEqual(old.bridge.liveRuns(), []);
-  assert.equal(old.calls.start.length, 0);
-  assert.deepEqual(old.calls.cancel, []);
-});
-
-test("a failed initial run snapshot can be retried", async () => {
-  const t = setup();
-  t.snapshot(async () => { throw new Error("temporarily offline"); });
-  await t.bridge.restoreRuns();
-  t.snapshot(async () => [{ id: "existing", bot_id: "b1", state: "running" }]);
-  await t.bridge.restoreRuns();
-  assert.deepEqual(t.bridge.liveRuns(), ["existing"]);
-});
-
-test("a stale initial idle snapshot does not stop a freshly started run", async () => {
-  const t = setup();
-  await t.feed({ type: "run_started", run_id: "new", chat_id: "c", bot_id: "b1" });
-  await t.bridge.initializeNativeState("idle");
-  assert.equal(t.bridge.mode, "bot_driving");
-  assert.deepEqual(t.bridge.liveRuns(), ["new"]);
-  assert.deepEqual(t.calls.cancel, []);
-  assert.ok(t.calls.release.every((release) => !release));
-});
-
-test("restoring only paused runs does not make the bot start processing", async () => {
-  const t = setup();
-  t.snapshot(async () => [{ id: "paused", bot_id: "b1", state: "paused" }]);
-  await t.bridge.restoreRuns();
-  assert.deepEqual(t.bridge.liveRuns(), ["paused"]);
-  assert.equal(t.bridge.mode, "idle");
-  assert.equal(t.calls.start.length, 0);
-});
-
-test("explicit Stop from native idle wins over the first in-flight snapshot", async () => {
-  const t = setup();
-  let resolve!: (runs: Pick<Run, "id" | "bot_id" | "state">[]) => void;
-  t.snapshot(() => new Promise((done) => { resolve = done; }));
-  const restoring = t.bridge.restoreRuns();
-  await t.bridge.onNativeState("idle");
-  resolve([{ id: "existing", bot_id: "b1", state: "running" }]);
-  await restoring;
-  assert.deepEqual(t.calls.cancel, ["existing"]);
-  assert.equal(t.calls.start.length, 0);
-  assert.deepEqual(t.bridge.liveRuns(), []);
-});
-
-test("Stop intent survives a failed first snapshot until a successful retry", async () => {
-  const t = setup();
-  let reject!: (error: Error) => void;
-  t.snapshot(() => new Promise((_, fail) => { reject = fail; }));
-  const restoring = t.bridge.restoreRuns();
-  await t.bridge.onNativeState("idle");
-  reject(new Error("offline"));
-  await restoring;
-  t.snapshot(async () => [{ id: "existing", bot_id: "b1", state: "running" }]);
-  await t.bridge.restoreRuns();
-  assert.deepEqual(t.calls.cancel, ["existing"]);
-  assert.equal(t.calls.start.length, 0);
-  assert.deepEqual(t.bridge.liveRuns(), []);
-});
-
-test("an automatic finish-to-idle event cannot cancel other runs in the pending snapshot", async () => {
-  const t = setup();
-  let resolve!: (runs: Pick<Run, "id" | "bot_id" | "state">[]) => void;
-  t.snapshot(() => new Promise((done) => { resolve = done; }));
-  const restoring = t.bridge.restoreRuns();
-  await t.feed({ type: "run_started", run_id: "new", bot_id: "b1", chat_id: "c" });
-  await t.feed({ type: "run_finished", run_id: "new", error: null });
-  await t.bridge.onNativeState("idle", t.calls.stop);
-  resolve([{ id: "other", bot_id: "b1", state: "running" }]);
-  await restoring;
-  assert.deepEqual(t.bridge.liveRuns(), ["other"]);
-  assert.deepEqual(t.calls.cancel, []);
-  assert.equal(t.calls.start.length, 2);
-});
-
 // ---- review of PR 56: bridge lifecycle, release failure, ownership by id ----
-
-function idle(): ControlStateDto {
-  return {
-    app_connected: true,
-    expires_in_ms: 15_000,
-    latched: null,
-    mode: "idle",
-    release: null,
-    takeover: null
-  };
-}
 
 function owned(id: string, state = "active"): ControlStateDto {
   return {
-    ...idle(),
+    ...idleDto(),
     latched: "human_driving",
     mode: "human_driving",
     takeover: {
@@ -748,54 +679,50 @@ function owned(id: string, state = "active"): ControlStateDto {
 }
 
 function bareBridge(client: Partial<ConstructorParameters<typeof ControlBridge>[0]["client"]> = {}) {
-  const log = { cancel: [] as string[], put: [] as boolean[], override: 0 };
+  const log = { put: [] as boolean[], override: 0 };
+  const { ledger } = makeLedger();
   const bridge = new ControlBridge({
     client: {
-      listRuns: async () => [],
       putControlState: async (_m, release) => void log.put.push(release === true),
       decideControl: async () => undefined,
-      cancelRun: async (id) => void log.cancel.push(id),
       overrideControl: async () => {
         log.override += 1;
-        return idle();
+        return idleDto();
       },
       ...client
     },
     native: {
       beginAction: async () => true,
-      startRun: async () => undefined,
-      stopRun: async () => 0,
+      startRun: async () => 1,
+      finishRun: async () => undefined,
       click: async () => undefined
     },
+    ledger,
     botMeta: (id) => ({ botId: id, botName: id }),
     startingStep: "x",
     now: () => NOW
   });
   const feed = (event: DaemonEvent) =>
     bridge.handleEvent({ v: 1, seq: 1, ts_ms: NOW, gseq: 1, event });
-  return { bridge, log, feed };
+  return { bridge, log, feed, ledger };
 }
 
-test("control-state refreshes keep the same bridge: its live runs survive and Stop still cancels them", async () => {
-  const { bridge, log, feed } = bareBridge();
+test("control-state refreshes keep the same bridge: its driving run and mode survive them", async () => {
+  const { bridge, feed } = bareBridge();
   let latest: ControlStateDto | null = null;
   const registry = createBridgeRegistry(() => latest);
   registry.register(bridge);
   await feed({ type: "run_started", run_id: "run-1", chat_id: "c", bot_id: "b1" });
-  assert.deepEqual(bridge.liveRuns(), ["run-1"]);
-
-  // many refreshes (viewer open, control_state_changed, takeover, release ...)
+  assert.deepEqual(bridge.drivingRuns(), ["run-1"]);
   for (let i = 0; i < 4; i += 1) {
-    latest = i % 2 ? idle() : owned("to-1");
+    latest = i % 2 ? idleDto() : owned("to-1");
     registry.syncControlState(latest);
     registry.setOwnedTakeoverId(i % 2 ? null : "to-1");
   }
-  await bridge.syncControlState(idle());
+  await bridge.syncControlState(idleDto());
   assert.equal(registry.current(), bridge, "same bridge instance");
-  assert.deepEqual(bridge.liveRuns(), ["run-1"], "live runs not reset");
-
-  await registry.current()?.emergencyStop();
-  assert.deepEqual(log.cancel, ["run-1"], "Stop cancels the run");
+  assert.deepEqual(bridge.drivingRuns(), ["run-1"], "not reset");
+  assert.equal(bridge.mode, "bot_driving");
 });
 
 test("registering a bridge hands it the current snapshot and owned takeover id", async () => {
@@ -815,7 +742,7 @@ test("a failed release rejects (not null) and leaves the bridge usable", async (
       if (fail) {
         throw new Error("409");
       }
-      return idle();
+      return idleDto();
     }
   });
   const req: ReleaseRequest = {
@@ -833,15 +760,12 @@ test("a failed release rejects (not null) and leaves the bridge usable", async (
 test("legacy release is blocked only for OUR live takeover, not a peer's or a paused one", async () => {
   const { bridge, log } = bareBridge();
   bridge.setOwnedTakeoverId("to-mine");
-
   await bridge.syncControlState(owned("to-peer"));
   await bridge.heartbeat(true);
   assert.deepEqual(log.put.at(-1), true, "a peer's takeover does not block");
-
   await bridge.syncControlState(owned("to-mine", "paused"));
   await bridge.heartbeat(true);
   assert.deepEqual(log.put.at(-1), true, "a paused takeover does not block");
-
   await bridge.syncControlState(owned("to-mine"));
   await bridge.heartbeat(true);
   assert.deepEqual(log.put.at(-1), false, "our live takeover blocks");
@@ -849,25 +773,19 @@ test("legacy release is blocked only for OUR live takeover, not a peer's or a pa
 
 test("a missed control_state_changed 'released' event is healed from GET /control/state", async () => {
   let snapshot: ControlStateDto = owned("to-mine");
-  const { bridge, log } = bareBridge({
-    getControlState: async () => snapshot
-  });
+  const { bridge, log } = bareBridge({ getControlState: async () => snapshot });
   bridge.setOwnedTakeoverId("to-mine");
   await bridge.refreshControlState();
   await bridge.heartbeat(true);
   assert.equal(log.put.at(-1), false);
-
-  // the release event was never delivered; the daemon snapshot says it is gone
-  snapshot = idle();
+  snapshot = idleDto();
   await bridge.refreshControlState();
   await bridge.heartbeat(true);
   assert.equal(log.put.at(-1), true, "no stale tracker blocks Resume");
 });
 
 test("control_state_changed events re-read the snapshot (events carry no takeover id)", async () => {
-  const { bridge, log, feed } = bareBridge({
-    getControlState: async () => owned("to-mine")
-  });
+  const { bridge, log, feed } = bareBridge({ getControlState: async () => owned("to-mine") });
   bridge.setOwnedTakeoverId("to-mine");
   await feed({
     type: "control_state_changed",
@@ -881,429 +799,69 @@ test("control_state_changed events re-read the snapshot (events carry no takeove
   assert.equal(log.put.at(-1), false);
 });
 
-// ---- reconciled with PR 56: restored runs + Stop invariants meet takeover semantics ----
-
-test("a give_back during a pending restore is not a Stop for the restored runs; a stop_all from human_driving is", async () => {
-  const t = setup();
-  await t.bridge.initializeNativeState("human_driving", 1);
-  let resolve!: (rows: { id: string; bot_id: string; state: string }[]) => void;
-  t.snapshot(() => new Promise((r) => { resolve = r; }));
-  const restoring = t.bridge.restoreRuns();
-  await t.bridge.onNativeState("bot_driving", 1); // give_back while the run list loads
-  resolve([{ id: "live", bot_id: "b1", state: "running" }]);
-  await restoring;
-  assert.deepEqual(t.calls.cancel, [], "hand-back never cancels");
-  assert.deepEqual(t.bridge.liveRuns(), ["live"]);
-
-  const u = setup();
-  await u.bridge.initializeNativeState("human_driving", 1);
-  let resolve2!: (rows: { id: string; bot_id: string; state: string }[]) => void;
-  u.snapshot(() => new Promise((r) => { resolve2 = r; }));
-  const restoring2 = u.bridge.restoreRuns();
-  await u.bridge.onNativeState("idle", 2); // Stop hotkey while the user drives
-  resolve2([{ id: "live", bot_id: "b1", state: "running" }]);
-  await restoring2;
-  assert.deepEqual(u.calls.cancel, ["live"]);
-});
-
-test("an explicit emergency Stop covers runs a pending restore finds later", async () => {
-  const t = setup();
-  let resolve!: (rows: { id: string; bot_id: string; state: string }[]) => void;
-  t.snapshot(() => new Promise((r) => { resolve = r; }));
-  const restoring = t.bridge.restoreRuns();
-  await t.bridge.emergencyStop();
-  resolve([{ id: "late", bot_id: "b1", state: "running" }]);
-  await restoring;
-  assert.deepEqual(t.calls.cancel, ["late"]);
-});
-
-test("restored runs of a browser/remote target never open the local desktop overlay", async () => {
-  const t = setup(true, () => "browser");
-  t.snapshot(async () => [{ id: "web", bot_id: "b1", state: "running" }]);
-  await t.bridge.restoreRuns();
-  assert.deepEqual(t.bridge.liveRuns(), ["web"], "still cancellable by Stop");
-  assert.equal(t.calls.start.length, 0, "no local overlay for a browser target");
-});
-
-test("restored runs survive control-state refreshes through the stable registry and Stop still cancels them", async () => {
-  const t = setup();
-  t.snapshot(async () => [{ id: "existing", bot_id: "b1", state: "running" }]);
-  await t.bridge.restoreRuns();
-  const registry = createBridgeRegistry(() => null);
-  registry.register(t.bridge);
-  for (let i = 0; i < 3; i += 1) {
-    registry.syncControlState({
-      app_connected: true,
-      expires_in_ms: 15_000,
-      latched: null,
-      mode: "idle",
-      release: null,
-      takeover: null
-    });
-  }
-  assert.equal(registry.current(), t.bridge);
-  assert.deepEqual(t.bridge.liveRuns(), ["existing"]);
-  await t.bridge.emergencyStop();
-  assert.deepEqual(t.calls.cancel, ["existing"]);
-});
-
-// ---- review of #62 after #56: what native idle means ---------------------------
-
-const browserTarget = {
-  target_id: "tb",
-  bot_id: null,
-  run_id: "web",
-  host_id: "local",
-  kind: "browser" as const,
-  generation: 1,
-  capabilities: { codecs: ["jpeg" as const], view: true, input: true, reason: null },
-  unavailable_reason: null
-};
-
-test("a same-generation idle (hotkey applied/edited, step, overlay clear) is not a Stop, also while a restore is pending", async () => {
-  const t = setup();
-  await t.bridge.initializeNativeState("idle", 3);
-  let resolve!: (rows: { id: string; bot_id: string; state: string }[]) => void;
-  t.snapshot(() => new Promise((r) => { resolve = r; }));
-  const restoring = t.bridge.restoreRuns();
-  await t.bridge.onNativeState("idle", 3); // set_stop_hotkey at app launch
-  resolve([
-    { id: "queued", bot_id: "b1", state: "queued" },
-    { id: "running", bot_id: "b1", state: "running" },
-    { id: "paused", bot_id: "b1", state: "paused" }
-  ]);
-  await restoring;
-  assert.deepEqual(t.calls.cancel, [], "nothing cancelled");
-  assert.deepEqual(t.bridge.liveRuns().sort(), ["paused", "queued", "running"]);
-  // a later hotkey edit while runs are tracked: still not a Stop
-  await t.bridge.onNativeState("idle", 3);
-  assert.deepEqual(t.calls.cancel, []);
-  // stop_all raises the generation: now it is
-  await t.bridge.onNativeState("idle", 4);
-  assert.deepEqual(t.calls.cancel.sort(), ["paused", "queued", "running"]);
-});
-
-test("restored runs resolve their scope by run id; a browser run with no bot id never opens the local overlay", async () => {
-  const seen: { runId?: string; botId?: string }[] = [];
-  const t = setup(true, (info) => {
-    seen.push(info);
-    return resolveTargetScope({
-      ...info,
-      targets: [browserTarget],
-      selectedTarget: null,
-      computerTarget: "this-pc"
-    });
+test("a Stop during the click await turns the pending proceed into a refusal", async () => {
+  let finishClick: () => void = () => {};
+  const t = setup(true, undefined, {
+    click: () => new Promise<void>((resolve) => {
+      finishClick = resolve;
+    })
   });
-  t.snapshot(async () => [{ id: "web", bot_id: "other-bot", state: "running" }]);
-  await t.bridge.restoreRuns();
-  assert.ok(seen.some((i) => i.runId === "web"), "run id passed");
-  assert.equal(t.calls.start.length, 0);
-  assert.deepEqual(t.bridge.liveRuns(), ["web"]);
+  const answered = t.feed(request("click-race", { x: 0, y: 0, width: 4, height: 4 }));
+  await flush();
+  assert.equal(t.calls.clicks.length, 1, "the click is in flight");
+  t.ledger.stopAll("banner"); // pressed while native animates the click
+  finishClick();
+  await answered;
+  assert.deepEqual(t.calls.decide.map((d) => d.decision), ["refuse"]);
 });
 
-test("every restored local run is driven, not only the first processing row", async () => {
-  const t = setup(true, ({ runId }) => (runId === "web" ? "browser" : "local_desktop"));
-  t.snapshot(async () => [
-    { id: "web", bot_id: "b1", state: "running" },
-    { id: "loc", bot_id: "b2", state: "running" }
-  ]);
-  await t.bridge.restoreRuns();
-  assert.equal(t.calls.start.length, 1);
-  assert.equal(t.calls.start[0].bot.botId, "b2");
-});
-
-test("a restored run waits for the targets instead of defaulting to the local overlay", async () => {
-  let loaded = false;
-  const t = setup(true, () => "local_desktop", { targetsLoaded: () => loaded });
-  t.snapshot(async () => [{ id: "x", bot_id: "b1", state: "running" }]);
-  await t.bridge.restoreRuns();
-  assert.equal(t.calls.start.length, 0, "targets not loaded yet");
-  assert.deepEqual(t.bridge.liveRuns(), ["x"], "still cancellable");
-  loaded = true;
-  await t.bridge.retryDeferredStarts();
-  assert.equal(t.calls.start.length, 1);
-});
-
-// ---- the table: every way native state becomes idle -> are runs cancelled? ----
-
-interface IdleRow {
-  name: string;
-  act: (t: ReturnType<typeof setup>) => Promise<void>;
-  cancelled: boolean;
-}
-const idleRows: IdleRow[] = [
-  { name: "global/widget/banner Stop hotkey from bot_driving", act: async (t) => { await t.bridge.onNativeState("bot_driving", 1); await t.bridge.onNativeState("idle", 2); }, cancelled: true },
-  { name: "Stop while the user drives (human_driving -> idle)", act: async (t) => { await t.bridge.onNativeState("human_driving", 1); await t.bridge.onNativeState("idle", 2); }, cancelled: true },
-  { name: "Stop from paused", act: async (t) => { await t.bridge.onNativeState("paused", 1); await t.bridge.onNativeState("idle", 2); }, cancelled: true },
-  { name: "Stop while already idle (stop_all, new generation)", act: async (t) => { await t.bridge.onNativeState("idle", 2); }, cancelled: true },
-  { name: "emergency Stop (viewer / banner with a takeover)", act: async (t) => { await t.bridge.emergencyStop(); }, cancelled: true },
-  { name: "hotkey applied at app launch / edited (same generation)", act: async (t) => { await t.bridge.initializeNativeState("idle", 1); await t.bridge.onNativeState("idle", 1); }, cancelled: false },
-  { name: "step text / overlay clear / refused action (same generation)", act: async (t) => { await t.bridge.initializeNativeState("idle", 1); await t.bridge.onNativeState("idle", 1); await t.bridge.onNativeState("idle", 1); }, cancelled: false },
-  { name: "app start: initial idle snapshot", act: async (t) => { await t.bridge.initializeNativeState("idle", 1); }, cancelled: false },
-  { name: "startup race: buffered same-generation idle replayed after the snapshot", act: async (t) => { await t.bridge.initializeNativeState("idle", 1); await t.bridge.onNativeState("idle", 1); }, cancelled: false },
-  { name: "Bitirdim: give_back (human_driving -> bot_driving)", act: async (t) => { await t.bridge.onNativeState("human_driving", 1); await t.bridge.onNativeState("bot_driving", 1); }, cancelled: false },
-  { name: "Bitirdim: release in flight / failed (releaseOwnedTakeover)", act: async (t) => {
-      await t.bridge.releaseOwnedTakeover({ takeover_id: "to", control_epoch: 1, request_id: "r", outcome: "completed" }).catch(() => undefined);
-    }, cancelled: false },
-  { name: "takeover expired / daemon pause (snapshot only, no native idle)", act: async (t) => {
-      await t.bridge.syncControlState({ app_connected: true, expires_in_ms: 1, latched: "paused", mode: "paused", release: null, takeover: null });
-    }, cancelled: false },
-  { name: "daemon restart / client replaced: the new bridge restores", act: async (t) => {
-      t.snapshot(async () => [{ id: "r", bot_id: "b1", state: "running" }]);
-      await t.bridge.restoreRuns();
-    }, cancelled: false }
-];
-// Tray Stop All is not a native idle: `cancelAllRuns` (runState.test.ts) cancels
-// every cancellable daemon run. The echo of a bridge-caused finish is pinned by
-// "a normal finish is not mistaken for Stop" and the generation test above.
-
-for (const row of idleRows) {
-  test(`idle table: ${row.name} -> runs ${row.cancelled ? "cancelled" : "kept"}`, async () => {
-    const t = setup();
-    await t.feed({ type: "run_started", run_id: "r", chat_id: "c", bot_id: "b1" });
-    await row.act(t);
-    assert.deepEqual(t.calls.cancel, row.cancelled ? ["r"] : []);
+test("a Stop that has reached native but not the ledger yet is caught by the last-moment native read", async () => {
+  let routed: (() => void) | null = null;
+  const t = setup(true, undefined, {
+    confirmDriving: async () => {
+      routed?.();
+      return false; // native says Idle: the global hotkey fired
+    }
   });
-}
-
-// ---- second look at #62: startup buffer, unknown scope, hung client / failed cancel ----
-
-test("a Stop already contained in the initial snapshot is recognised via the buffered earlier generation", async () => {
-  // opening against a live daemon (bot_driving, gen 5); the user hits Stop (idle, gen 6)
-  // while getControlState is in flight, and the snapshot already carries gen 6
-  const plan = planNativeReplay(
-    { mode: "idle", generation: 6 },
-    [
-      { mode: "bot_driving", generation: 5 },
-      { mode: "idle", generation: 6 }
-    ]
-  );
-  assert.equal(plan.baseline, 5, "walk from the lower buffered generation");
-  assert.deepEqual(plan.replay, [{ mode: "idle", generation: 6 }], "older event not applied");
-
-  const t = setup();
-  await t.feed({ type: "run_started", run_id: "r", chat_id: "c", bot_id: "b1" });
-  await t.bridge.initializeNativeState("idle", plan.baseline);
-  for (const ev of plan.replay) await t.bridge.onNativeState(ev.mode, ev.generation);
-  assert.deepEqual(t.calls.cancel, ["r"], "the Stop cancels");
-  assert.equal(t.bridge.mode, "idle", "the older bot_driving was not re-applied");
-
-  // no lower generation buffered: indistinguishable from "already idle" (not a Stop)
-  const plain = planNativeReplay({ mode: "idle", generation: 6 }, [{ mode: "idle", generation: 6 }]);
-  assert.equal(plain.baseline, 6);
+  routed = () => {
+    t.ledger.onNativeSnapshot(t.native.userStop(null));
+  };
+  await t.feed(request("hotkey-race", { x: 0, y: 0, width: 4, height: 4 }));
+  assert.deepEqual(t.calls.decide.map((d) => d.decision), ["refuse"]);
+  assert.equal(t.ledger.stopRecords().length, 1, "and the Stop is recorded");
 });
 
-test("unknown scope never becomes the local overlay: no startRun before targets and settings settled", async () => {
-  let settled = false;
-  const t = setup(true, () => "local_desktop", { targetsLoaded: () => settled });
-  t.snapshot(async () => [{ id: "web", bot_id: "other", state: "running" }]);
-  await t.bridge.restoreRuns();
-  for (let i = 0; i < 6; i += 1) await t.bridge.retryDeferredStarts(); // far past the old 3-try give-up
-  assert.equal(t.calls.start.length, 0, "still waiting");
-  assert.deepEqual(t.bridge.liveRuns(), ["web"], "but cancellable");
-
-  // a settled fetch that lacks the run keeps the resolver's fallback
-  settled = true;
-  await t.bridge.retryDeferredStarts();
-  assert.equal(t.calls.start.length, 1);
-});
-
-test("a settled fetch with the browser target present still keeps the local overlay closed", async () => {
-  const t = setup(
-    true,
-    (info) =>
-      resolveTargetScope({
-        ...info,
-        targets: [browserTarget],
-        selectedTarget: null,
-        computerTarget: "this-pc"
-      }),
-    { targetsLoaded: () => true }
-  );
-  t.snapshot(async () => [{ id: "web", bot_id: "other", state: "running" }]);
-  await t.bridge.restoreRuns();
-  await t.bridge.retryDeferredStarts();
-  assert.equal(t.calls.start.length, 0);
-});
-
-test("a bounded wait lets the next bridge restore although the retired client hangs", async () => {
-  const never = new Promise<void>(() => undefined);
-  const started = Date.now();
-  await waitBounded(never, 20);
-  assert.ok(Date.now() - started < 1000);
-  await waitBounded(Promise.reject(new Error("x")), 1000); // a rejection also releases the wait
-});
-
-
-// ---- invariants (third look at #62) -------------------------------------------
-// I1 a Stop applies to exactly the runs that existed when it was decided
-// I2 the local overlay / input is never started for a run whose scope is unknown
-// I3 after a Stop every targeted run is confirmed cancelled or tracked by the CURRENT bridge
-// I4 no native event is ever dropped (applied in order or provably superseded)
-
-test("I3: a Stop survives a bridge swap: the cancel is sent, the new bridge does not re-track a confirmed run", async () => {
-  const ledger = new StopLedger();
-  const old = setup(true, undefined, { ledger });
-  await old.feed({ type: "run_started", run_id: "r1", chat_id: "c", bot_id: "b1" });
-  await old.bridge.initializeNativeState("bot_driving", 1);
-  void old.bridge.onNativeState("idle", 2); // Stop, queued on the old bridge
-  old.bridge.dispose(); // the daemon client is replaced before it runs
-  await old.bridge.drain();
-  assert.deepEqual(old.calls.cancel, ["r1"], "the Stop still cancels");
-
-  const fresh = setup(true, undefined, { ledger });
-  fresh.snapshot(async () => [{ id: "r1", bot_id: "b1", state: "running" }]);
-  await fresh.bridge.restoreRuns();
-  assert.deepEqual(fresh.bridge.liveRuns(), [], "confirmed cancelled: not re-tracked");
-  assert.deepEqual(fresh.calls.cancel, []);
-});
-
-test("I1: a Stop decided before the restore sweep applies only to runs created before it, on any later bridge", async () => {
-  const ledger = new StopLedger();
-  const old = setup(true, undefined, { ledger });
-  const plan = planNativeReplay(
-    { mode: "idle", generation: 6 },
-    [{ mode: "bot_driving", generation: 5 }, { mode: "idle", generation: 6 }]
-  );
-  await old.bridge.initializeNativeState("idle", plan.baseline);
-  for (const ev of plan.replay) void old.bridge.onNativeState(ev.mode, ev.generation);
-  old.bridge.dispose();
-  await old.bridge.drain();
-  assert.notEqual(ledger.pendingCutoff, null, "carried until a sweep applies it");
-
-  const fresh = setup(true, undefined, { ledger });
-  fresh.snapshot(async () => [
-    { id: "before", bot_id: "b1", state: "running", created_at_ms: NOW - 1000 },
-    { id: "after", bot_id: "b1", state: "running", created_at_ms: NOW + 1000 }
-  ]);
-  await fresh.bridge.restoreRuns();
-  assert.deepEqual(fresh.calls.cancel, ["before"], "only the run that existed at the Stop");
-  assert.deepEqual(fresh.bridge.liveRuns(), ["after"], "a later run is left alone and tracked");
-  assert.equal(ledger.pendingCutoff, null, "cleared once the sweep ran");
-});
-
-test("I1: a Stop decided after the restore sweep is not carried to a later bridge", async () => {
-  const ledger = new StopLedger();
-  const a = setup(true, undefined, { ledger });
-  a.snapshot(async () => []);
-  await a.bridge.restoreRuns();
-  await a.feed({ type: "run_started", run_id: "r1", chat_id: "c", bot_id: "b1" });
-  await a.bridge.onNativeState("idle", 2);
-  assert.deepEqual(a.calls.cancel, ["r1"]);
-  assert.equal(ledger.pendingCutoff, null);
-  const b = setup(true, undefined, { ledger });
-  b.snapshot(async () => [{ id: "new", bot_id: "b1", state: "running", created_at_ms: NOW + 500 }]);
-  await b.bridge.restoreRuns();
-  assert.deepEqual(b.calls.cancel, [], "a run started after the Stop survives the swap");
-});
-
-test("I3: the cancel is sent before a hung heartbeat, and a hung heartbeat does not hold the chain", async () => {
-  const t = setup(true, undefined, { heartbeatBoundMs: 20 });
-  await t.feed({ type: "run_started", run_id: "r1", chat_id: "c", bot_id: "b1" });
-  t.hold.current = new Promise<void>(() => undefined); // PUT /control/state never answers
-  const stopping = t.bridge.onNativeState("idle", 2);
-  await new Promise((r) => setTimeout(r, 5));
-  assert.deepEqual(t.calls.cancel, ["r1"], "sent while the heartbeat is still pending");
-  await stopping; // bounded: the chain is not stuck behind the hang
-});
-
-test("I3: a cancel that fails after the swap re-tracks the run on the CURRENT bridge; one that succeeds untracks it", async () => {
-  const ledger = new StopLedger();
-  const old = setup(true, undefined, { ledger });
-  await old.feed({ type: "run_started", run_id: "r1", chat_id: "c", bot_id: "b1" });
-  await old.feed({ type: "run_started", run_id: "r2", chat_id: "c", bot_id: "b1" });
-  const fresh = setup(true, undefined, { ledger }); // now the current bridge
-  old.bridge.dispose();
-  fresh.snapshot(async () => [
-    { id: "r1", bot_id: "b1", state: "running" },
-    { id: "r2", bot_id: "b1", state: "running" }
-  ]);
-  await fresh.bridge.restoreRuns();
-  assert.deepEqual(fresh.bridge.liveRuns().sort(), ["r1", "r2"], "tracked while no cancel has settled");
-  ledger.settle("r1", true); // a retired cancel confirms
-  ledger.settle("r2", false); // another one fails
-  assert.deepEqual(fresh.bridge.liveRuns(), ["r2"], "confirmed run dropped, failed run stays cancellable");
-  assert.ok(ledger.done.has("r1") && !ledger.done.has("r2"));
-});
-
-test("I2: a control request for a run whose scope is unknown never reaches the local overlay or input", async () => {
-  const t = setup(true, () => "local_desktop", { targetsLoaded: () => false, scopeWaitMs: 20 });
-  await t.feed(request("req-unknown", { x: 10, y: 10, width: 4, height: 4 }));
-  assert.equal(t.calls.start.length, 0, "no startRun");
-  assert.equal(t.calls.begin.length, 0, "no beginAction");
-  assert.equal(t.calls.clicks.length, 0, "no click on this PC");
-  assert.equal(t.calls.decide.at(-1)?.decision, "refuse");
-
-  // a run that starts before the scope is known is deferred, not started locally
-  await t.feed({ type: "run_started", run_id: "run-x", chat_id: "c", bot_id: "b1" });
-  assert.equal(t.calls.start.length, 0);
-});
-
-test("I2: once the scope is known the same request is handled by its scope", async () => {
-  let known = false;
-  const t = setup(true, () => "browser", { targetsLoaded: () => known, scopeWaitMs: 500 });
-  const pending = t.feed(request("req-late", { x: 1, y: 1, width: 2, height: 2 }));
-  setTimeout(() => { known = true; }, 30);
-  await pending;
-  assert.equal(t.calls.begin.length, 0, "browser scope: never the local overlay");
-  assert.equal(t.calls.panelOverlay.length, 1);
-});
-
-function sessionFor(
-  t: ReturnType<typeof setup>,
-  ledger: StopLedger,
-  snapshot: () => Promise<{ mode: ControlModeName; runGeneration: number }>
-) {
-  return new BridgeSession(t.bridge, {
-    getNativeSnapshot: snapshot,
-    retiring: Promise.resolve(),
-    ledger
+test("any Stop decided after the action began refuses it, even one whose run set does not include it", async () => {
+  let ledgerRef: ReturnType<typeof setup>["ledger"] | null = null;
+  const t = setup(true, undefined, {
+    beginAction: async () => {
+      // the run is unknown to that Stop (seen only now), yet nothing local may proceed
+      ledgerRef?.stopAll("hotkey");
+      return true;
+    }
   });
-}
-
-test("I4: a Stop arriving after the snapshot is planned and before init resolves is queued, not dropped", async () => {
-  const ledger = new StopLedger();
-  const t = setup(true, undefined, { ledger, heartbeatBoundMs: 40 });
-  await t.feed({ type: "run_started", run_id: "r", chat_id: "c", bot_id: "b1" });
-  t.hold.current = new Promise<void>(() => undefined); // the first PUT is slow
-  const session = sessionFor(t, ledger, async () => ({ mode: "bot_driving", runGeneration: 5 }));
-  const ticking = session.tick();
-  await new Promise((r) => setTimeout(r, 10)); // snapshot planned, init heartbeat pending
-  session.onNativeEvent("idle", 6); // the user presses Stop right now
-  await ticking;
-  await t.bridge.drain();
-  assert.deepEqual(t.calls.cancel, ["r"], "the Stop was applied");
+  ledgerRef = t.ledger;
+  await t.feed(request("epoch", null, "key", "run-new"));
+  assert.equal(t.calls.decide[0]?.decision, "refuse");
 });
 
-test("I4: a session torn down while the snapshot is in flight flushes its buffer before retiring", async () => {
-  const ledger = new StopLedger();
-  const t = setup(true, undefined, { ledger });
-  await t.feed({ type: "run_started", run_id: "r", chat_id: "c", bot_id: "b1" });
-  let resolve!: (s: { mode: ControlModeName; runGeneration: number }) => void;
-  const session = sessionFor(t, ledger, () => new Promise((r) => { resolve = r; }));
-  const ticking = session.tick();
-  session.onNativeEvent("bot_driving", 5);
-  session.onNativeEvent("idle", 6);
-  session.dispose(); // client replaced mid-init
-  resolve({ mode: "idle", runGeneration: 6 });
-  await ticking;
-  await session.retiredDone;
-  assert.deepEqual(t.calls.cancel, ["r"], "the Stop reached the cancel before the bridge retired");
-});
-
-test("I4: a buffer that never met a snapshot carries a generation rise as a pending Stop", async () => {
-  const ledger = new StopLedger();
-  const t = setup(true, undefined, { ledger });
-  const session = sessionFor(t, ledger, () => new Promise(() => undefined));
-  session.onNativeEvent("bot_driving", 5);
-  session.onNativeEvent("idle", 6);
-  session.dispose();
-  await session.retiredDone;
-  assert.notEqual(ledger.pendingCutoff, null);
-  const lone = new StopLedger();
-  const s2 = sessionFor(setup(true, undefined, { ledger: lone }), lone, () => new Promise(() => undefined));
-  s2.onNativeEvent("idle", 6); // a lone sample is not a provable Stop
-  s2.dispose();
-  await s2.retiredDone;
-  assert.equal(lone.pendingCutoff, null);
+test("the same key press reaching native again during an action (a joined Stop) still refuses it", async () => {
+  let pressAgain: (() => void) | null = null;
+  const t = setup(true, undefined, {
+    beginAction: async () => {
+      pressAgain?.();
+      return true;
+    }
+  });
+  t.ledger.stopAll("hotkey");
+  t.daemon.deliver(0); // answered: nothing was running
+  await flush();
+  // a run that started after that Stop may act ...
+  pressAgain = () => {
+    // ... but the global listener's copy of the same press arrives now (joins the Stop)
+    t.ledger.onNativeSnapshot(t.native.userStop(null));
+  };
+  await t.feed(request("joined", null, "key", "run-after"));
+  assert.equal(t.ledger.stopRecords().length, 1, "still one decision");
+  assert.equal(t.calls.decide.at(-1)?.decision, "refuse", "nothing local proceeds after a Stop press");
 });

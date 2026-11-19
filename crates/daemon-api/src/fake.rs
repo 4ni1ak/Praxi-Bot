@@ -48,16 +48,26 @@ impl ChatProvider for FakeProvider {
         &self,
         req: ChatRequest,
     ) -> Result<BoxStream<'static, Result<ChatChunk, ProviderError>>, ProviderError> {
-        let user_at = req
+        // The loop's own action-ledger note is a trailing user-role message; it is
+        // not the task and not a tool result, so this script ignores it.
+        let msgs: Vec<&provider_catalog::Message> = req
             .messages
+            .iter()
+            .filter(|m| {
+                !m.content
+                    .as_str()
+                    .is_some_and(|t| t.starts_with("[action ledger"))
+            })
+            .collect();
+        let user_at = msgs
             .iter()
             .rposition(|m| matches!(m.role, MessageRole::User));
         let user_text = user_at
-            .and_then(|i| req.messages[i].content.as_str())
+            .and_then(|i| msgs[i].content.as_str())
             .unwrap_or_default();
         let calls = scripted_calls(user_text);
         let done = user_at.map_or(0, |i| {
-            req.messages[i + 1..]
+            msgs[i + 1..]
                 .iter()
                 .filter(|m| matches!(m.role, MessageRole::Tool))
                 .count()
@@ -69,8 +79,7 @@ impl ChatProvider for FakeProvider {
             let args = if done == 0 {
                 args.to_owned()
             } else {
-                let prev = req
-                    .messages
+                let prev = msgs
                     .iter()
                     .rev()
                     .find(|m| matches!(m.role, MessageRole::Tool))
@@ -91,13 +100,11 @@ impl ChatProvider for FakeProvider {
                     finish_reason: FinishReason::ToolCalls,
                 },
             ]
-        } else if req
-            .messages
+        } else if msgs
             .last()
             .is_some_and(|m| matches!(m.role, MessageRole::Tool))
         {
-            let text = req
-                .messages
+            let text = msgs
                 .last()
                 .and_then(|m| m.content.as_str())
                 .unwrap_or_default();

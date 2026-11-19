@@ -45,8 +45,18 @@ export interface BotDraft {
   fallback: string;
   preset: PresetChoice;
   categories: Record<PermissionCategoryName, PermissionLevel>;
+  /** Per-bot waiver of the egress gate. Default off. */
+  allowEgressAfterReads: boolean;
   computer: "local";
   browser: "local";
+  /** File access: "This computer" (default) or "Folder only". */
+  files: BotFilesDraft;
+}
+
+export interface BotFilesDraft {
+  mode: "computer" | "folder";
+  /** Absolute folders; only used in "folder" mode. */
+  folders: string[];
 }
 
 export const BOT_COLORS = CHARACTER_COLORS;
@@ -65,11 +75,11 @@ export const AUTONOMY_LEVELS: readonly AutonomyLevel[] = ["ask", "balanced", "au
 /**
  * Map simple 3-way autonomy to an existing daemon permission preset.
  *
- * Note: `read-and-draft` and `approve-destructive` both set `Ask` on every
- * category in `permission-engine` (`read_tools_skip_ask` lets `Effect::Read`
- * tools run without prompting, while all writes/fetches/drafts/sends/commands
- * ask). `full` sets `Allow` on every category except `Money`, never-list
- * commands, and `always_ask` schedule actions.
+ * The daemon derives the bot's autonomy mode from the preset (see
+ * `docs/design/permissions-ux.md`): `read-and-draft` is Ask (every change asks),
+ * `approve-destructive` is Balanced (reads, browsing, workspace edits and the bot's
+ * own computer run freely; deletes, sends, money and the user's PC ask), `full` is
+ * Full (only hard stops and the untrusted-content gate remain).
  */
 export function autonomyToPreset(level: AutonomyLevel): PermissionPreset {
   switch (level) {
@@ -181,9 +191,18 @@ export function draftFromBot(bot?: Bot): BotDraft {
     fallback: fallback.join(", "),
     preset,
     categories,
+    allowEgressAfterReads: perms.allow_egress_after_reads === true,
     computer: "local",
-    browser: "local"
+    browser: "local",
+    files: filesFromConfig(obj(cfg.files))
   };
+}
+
+function filesFromConfig(f: Json): BotFilesDraft {
+  const folders = Array.isArray(f.folders)
+    ? f.folders.filter((x): x is string => typeof x === "string")
+    : [];
+  return { mode: f.mode === "folder" ? "folder" : "computer", folders };
 }
 
 function slug(name: string): string {
@@ -249,7 +268,7 @@ export function configFromDraft(draft: BotDraft, existing?: Bot): Json {
   // PUT replaces the whole profile. Identity/model edits must retain the exact
   // policy, including inheritance, limits and per-initiator overrides that the
   // simple form cannot edit. Only an explicit preset choice resets the policy.
-  let permissions = old.permissions;
+  let permissions: unknown = old.permissions;
   if (!initial || draft.preset !== initial.preset || changedCategories.length > 0) {
     if (draft.preset === "custom") {
       const previous = obj(old.permissions);
@@ -262,18 +281,59 @@ export function configFromDraft(draft: BotDraft, existing?: Bot): Json {
       permissions = { preset: draft.preset };
     }
   }
+  // The checkbox is not part of the preset. Write it when it is on, or when
+  // the stored profile already has the key, so turning it off sticks. Leaving
+  // it off an inherited profile does not invent a permissions object.
+  const hadEgressFlag = Object.hasOwn(obj(old.permissions), "allow_egress_after_reads");
+  const permissionsOut: Json | undefined =
+    permissions === undefined && !draft.allowEgressAfterReads && !hadEgressFlag
+      ? undefined
+      : {
+          ...obj(permissions),
+          ...(draft.allowEgressAfterReads || hadEgressFlag
+            ? { allow_egress_after_reads: draft.allowEgressAfterReads }
+            : {})
+        };
+
+  // `files` is written only when the form changed it: the daemon validates the
+  // folders, and an untouched value keeps the stored one.
+  const folders = draft.files.folders.map((f) => f.trim()).filter(Boolean);
+  const filesChanged =
+    initial !== undefined &&
+    JSON.stringify({ ...draft.files, folders }) !== JSON.stringify(initial.files);
+  const files =
+    filesChanged || (!initial && draft.files.mode === "folder")
+      ? draft.files.mode === "folder"
+        ? { mode: "folder", folders }
+        : { mode: "computer" }
+      : undefined;
+  // `runtime` (computer / browser target) is not edited by this form.  An existing bot keeps it
+  // exactly as stored (any target: off, browser, host, auto, a node id ...); only a new bot gets
+  // the form's default.
+  const runtime = existing
+    ? old.runtime
+    : { ...obj(old.runtime), computer: draft.computer, browser: draft.browser };
 
   return {
     ...old,
     bot: botSection,
     models,
-    ...(permissions === undefined ? {} : { permissions }),
-    runtime: {
-      ...obj(old.runtime),
-      computer: draft.computer,
-      browser: draft.browser
-    }
+    ...(permissionsOut === undefined ? {} : { permissions: permissionsOut }),
+    ...(files === undefined ? {} : { files }),
+    ...(runtime === undefined ? {} : { runtime })
   };
+}
+
+/** How a stored `runtime` target reads in the UI (read-only): the value as stored, or `auto`. */
+export function runtimeTargetLabel(config: unknown, key: "computer" | "browser"): string {
+  const v = obj(obj(config).runtime)[key];
+  if (typeof v === "string" && v.trim()) return v.trim();
+  if (v && typeof v === "object") {
+    const o = v as Json;
+    const named = str(o.node) || str(o.id) || str(o.name) || str(o.kind);
+    return named || JSON.stringify(v);
+  }
+  return "auto";
 }
 
 export interface BotView {
@@ -322,39 +382,5 @@ export function botView(bot: Bot): BotView {
     color: d.color,
     avatar: d.avatar ?? undefined,
     executor: formatModelRef(d.executor)
-  };
-}
-
-/** Fields edited in Onboarding Step 4; shared by the preview and save path. */
-export interface OnboardingBotFields {
-  name: string;
-  color: string;
-  avatar?: string;
-  persona: string;
-  executor: ModelRef;
-  planner: ModelRef;
-  classifier: ModelRef;
-  preset: PermissionPreset;
-}
-
-/**
- * Build the `BotDraft` used by Onboarding Step 4 so the preview `<BotAvatar>`
- * and `configFromDraft` agree on `shape` and `color`.
- */
-export function onboardingBotDraft(
-  existing: Bot | undefined,
-  fields: OnboardingBotFields
-): BotDraft {
-  const base = draftFromBot(existing);
-  return {
-    ...base,
-    name: fields.name.trim(),
-    color: fields.color,
-    avatar: fields.avatar ?? null,
-    persona: fields.persona,
-    executor: fields.executor,
-    planner: fields.planner,
-    classifier: fields.classifier,
-    preset: fields.preset
   };
 }

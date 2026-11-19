@@ -8,14 +8,18 @@ import {
   useRef,
   useState
 } from "react";
+import { useTranslation } from "react-i18next";
+import { useToast } from "../components/Toast";
 import type {
   ControlStateDto,
   HumanAction,
   InputEvent,
+  ScreenStatus,
   SessionInfo,
-  TargetInfo
+  TargetInfo,
+  TargetUnavailable
 } from "../api/types.ts";
-import { ApiError } from "../api/client.ts";
+import { type ApiClient, ApiError } from "../api/client.ts";
 import { isMockMode } from "../api/mockMode.ts";
 import {
   applyControlStateDto,
@@ -49,10 +53,12 @@ import {
   needsPauseRecovery,
   pickDefaultTarget,
   planViewerClose,
+  sessionProfile,
   type RecoveryPrompt,
   shouldOverrideOnStop,
   type LiveViewControllerState
 } from "../lib/liveViewState.ts";
+import type { TargetsStatus } from "../lib/computerLabel.ts";
 import {
   type ClearTarget,
   runClearPause,
@@ -60,6 +66,8 @@ import {
 } from "../lib/liveViewRelease.ts";
 import { admitSnapshot, createSnapshotSequencer } from "../lib/snapshotOrder.ts";
 import { runReconnectLoop } from "../lib/liveViewReconnect.ts";
+import { liveViewErrorCode } from "../lib/liveViewError.ts";
+import { SCREEN_START_TIMEOUT_MS } from "../lib/computerView.ts";
 import {
   consumeLiveViewStream,
   type DecodedFrameRecord,
@@ -72,6 +80,9 @@ import {
   type PanelActionHighlight
 } from "./controlBridge.ts";
 import { useDaemon } from "./DaemonContext.tsx";
+import { TakeoverStop } from "./takeoverStop.ts";
+import { sessionRequest } from "./liveViewRequest.ts";
+import { humanLine } from "../lib/humanError";
 
 const SESSION_HEARTBEAT_MS = 5000;
 const CONTROL_POLL_MS = 5000;
@@ -81,14 +92,19 @@ const OVERLAY_ACTION_TTL_MS = 1400;
 
 interface LiveViewContextValue {
   targets: TargetInfo[];
-  /** A target fetch has succeeded at least once. */
-  targetsSettled: boolean;
   selectedTarget: TargetInfo | null;
   controlState: ControlStateDto | null;
   state: LiveViewControllerState;
   frameUrl: string | null;
+  frameBlob: Blob | null;
+  streamFailure: string | null;
+  retryStream: () => void;
+  streamPaused: boolean;
   viewerOpen: boolean;
   loadingTargets: boolean;
+  targetsStatus: TargetsStatus;
+  targetsError: string | null;
+  availability: TargetUnavailable[];
   panelAction: PanelActionHighlight | null;
   recoveryPrompt: RecoveryPrompt | null;
   openViewer: (targetId?: string) => void;
@@ -96,13 +112,15 @@ interface LiveViewContextValue {
   closeViewer: () => Promise<void>;
   selectTarget: (targetId: string) => void;
   refreshTargets: () => Promise<void>;
-  setThumbnailDemand: (active: boolean, botId: string | null) => void;
+  setCardDemand: (active: boolean, botId: string | null) => void;
   requestTakeover: () => Promise<void>;
   releaseTakeover: (humanAction?: HumanAction | null) => Promise<void>;
   retryRelease: () => Promise<void>;
   recoverTakeover: () => Promise<void>;
   /** `POST /v1/control/recover`: clear a paused latch (no view session needed). */
   clearPause: (kind?: "own" | "foreign" | "latch") => Promise<void>;
+  /** A clear-pause request is in flight: the banner and buttons hide at once (optimistic). */
+  pauseClearing: boolean;
   /** This client is the local user (loopback daemon), not a paired peer. */
   isLocalClient: boolean;
   /**
@@ -111,6 +129,11 @@ interface LiveViewContextValue {
    * Stop never latches the whole daemon paused.
    */
   overrideStop: (opts?: { onlyIfControlled?: boolean }) => Promise<void>;
+  /**
+   * The view targets of the CURRENT daemon client, or `null` while that client's
+   * list has not loaded (an older client's list never counts).
+   */
+  currentTargets: () => { client: ApiClient; targets: readonly TargetInfo[] } | null;
   enqueueInput: (event: InputEvent, flushNow?: boolean) => void;
   resetInputState: (flushNow?: boolean) => void;
   setComposing: (composing: boolean) => void;
@@ -123,6 +146,11 @@ interface LiveViewContextValue {
 }
 
 const LiveViewContext = createContext<LiveViewContextValue | null>(null);
+/**
+ * THIS computer's live view, whichever computer the views show. While a server is home the nearest
+ * `LiveViewContext` is the server's; the "my computer" screen of the right panel reads this one.
+ */
+const LocalLiveViewContext = createContext<LiveViewContextValue | null>(null);
 
 function initialMockViewerOpen(): boolean {
   if (!isMockMode() || typeof window === "undefined") {
@@ -131,11 +159,20 @@ function initialMockViewerOpen(): boolean {
   return new URLSearchParams(window.location.search).get("lv") === "open";
 }
 
-export function LiveViewProvider({ children }: { children: ReactNode }) {
+export function LiveViewProvider({
+  children,
+  scope = "home"
+}: {
+  children: ReactNode;
+  /** `local`: this computer's own provider (the outer one), also published as the local view. */
+  scope?: "home" | "local";
+}) {
   const { client, onDaemonEvent, bots } = useDaemon();
 
   const clientIdRef = useRef<string>(crypto.randomUUID());
   const controlStateRef = useRef<ControlStateDto | null>(null);
+  /** The client whose snapshot `controlStateRef` holds (the Stop override decides from it). */
+  const controlClientRef = useRef<unknown>(null);
   // One registry for the provider's lifetime: `registerBridge` keeps its identity
   // across control-state refreshes, so the bridge (and its live runs) survives them.
   const registry = useMemo(
@@ -145,14 +182,28 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   const inputQueueRef = useRef<LiveInputQueue>(new LiveInputQueue());
   const activeUrlsRef = useRef<Set<string>>(new Set());
   const lastFeedbackAtRef = useRef<number>(0);
+  const ackRef = useRef<{ busy: boolean; pending: number | null }>({
+    busy: false,
+    pending: null
+  });
   const lastGeometrySentRef = useRef<number | null>(null);
   const flushingInputRef = useRef<boolean>(false);
   const flushAgainRef = useRef<boolean>(false);
 
   const [targets, setTargets] = useState<TargetInfo[]>([]);
+  const clientRef = useRef(client);
+  clientRef.current = client;
+  // Targets together with the client that listed them (N7: a stale client's list
+  // can never make an unknown scope look local for the new client).
+  const targetsForRef = useRef<{ client: ApiClient; targets: TargetInfo[] } | null>(null);
+  const currentTargets = useCallback(() => {
+    const t = targetsForRef.current;
+    return t && t.client === clientRef.current ? t : null;
+  }, []);
   const [loadingTargets, setLoadingTargets] = useState(false);
-  // True once a target fetch has succeeded: scope decisions never guess before that.
-  const [targetsSettled, setTargetsSettled] = useState(false);
+  const [targetsStatus, setTargetsStatus] = useState<TargetsStatus>("unknown");
+  const [targetsError, setTargetsError] = useState<string | null>(null);
+  const [availability, setAvailability] = useState<TargetUnavailable[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [controlState, setControlStateRaw] = useState<ControlStateDto | null>(
     null
@@ -164,19 +215,43 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     (dto: ControlStateDto | null) => {
       sequencer.markFresh();
       controlStateRef.current = dto;
+      controlClientRef.current = clientRef.current;
       setControlStateRaw(dto);
+      // No pump here: every caller updates `stateRef` next and then pumps, so the
+      // owed override never decides from a stale state.
     },
     [sequencer]
   );
+  // The takeover half of every Stop: input halts synchronously, the override is owed
+  // until delivered through the current client.
+  const takeoverStopRef = useRef<TakeoverStop<ApiClient> | null>(null);
+  const applyOverrideRef = useRef<(dto: ControlStateDto) => void>(() => {});
+  const [pauseClearing, setPauseClearing] = useState(false);
+  const pauseClearingRef = useRef(false);
+  const toast = useToast();
+  const { t } = useTranslation();
   const [viewerOpen, setViewerOpen] = useState<boolean>(initialMockViewerOpen);
-  const [thumbDemand, setThumbDemand] = useState<{
+  const [cardDemand, setCardDemandState] = useState<{
     active: boolean;
     botId: string | null;
   }>({ active: false, botId: null });
   const [documentHidden, setDocumentHidden] = useState<boolean>(() =>
     typeof document !== "undefined" ? document.visibilityState === "hidden" : false
   );
-  const [frameUrl, setFrameUrl] = useState<string | null>(null);
+  const [presentedFrame, setPresentedFrame] = useState<{ url: string; blob: Blob } | null>(null);
+  const frameUrl = presentedFrame?.url ?? null;
+  const frameBlob = presentedFrame?.blob ?? null;
+  const [streamPaused, setStreamPaused] = useState(false);
+  const [streamFailure, setStreamFailure] = useState<string | null>(null);
+  const [viewerTimedOut, setViewerTimedOut] = useState(false);
+  const [streamAttempt, setStreamAttempt] = useState(0);
+  const retryStream = useCallback(() => {
+    if (!isControlBusy(stateRef.current)) {
+      setStreamFailure(null);
+      setViewerTimedOut(false);
+      setStreamAttempt((attempt) => attempt + 1);
+    }
+  }, []);
   const [panelAction, setPanelAction] = useState<PanelActionHighlight | null>(
     null
   );
@@ -185,6 +260,22 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     createInitialLiveViewState(null)
   );
   const stateRef = useRef(state);
+  if (!takeoverStopRef.current) {
+    takeoverStopRef.current = new TakeoverStop<ApiClient>({
+      client: () => clientRef.current,
+      // Decided only from a snapshot of the CURRENT client; unknown otherwise.
+      controlled: () =>
+        clientRef.current !== null &&
+        controlClientRef.current === clientRef.current &&
+        controlStateRef.current !== null
+          ? shouldOverrideOnStop(stateRef.current, controlStateRef.current)
+          : null,
+      post: (c, signal) => c.overrideControl(signal),
+      apply: (_c, dto) => applyOverrideRef.current(dto),
+      schedule: (fn, ms) => window.setTimeout(fn, ms),
+      cancel: (handle) => window.clearTimeout(handle as number)
+    });
+  }
   const updateState = useCallback(
     (
       updater:
@@ -257,10 +348,13 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         controlStateRef.current === null ||
         controlSnapshotKey(controlStateRef.current) !== controlSnapshotKey(dto);
       controlStateRef.current = dto;
+      controlClientRef.current = clientRef.current;
       if (changed) {
         setControlStateRaw(dto);
         updateState((prev) => applyControlStateDto(prev, dto));
       }
+      // After the state ref is current: the owed override decides from the new snapshot.
+      takeoverStopRef.current?.pump();
     },
     [sequencer, updateState]
   );
@@ -281,35 +375,60 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         client.listViewTargets(),
         client.getControlState().catch(() => null)
       ]);
+      if (clientRef.current !== client) {
+        return; // a replaced client's answer changes nothing
+      }
+      targetsForRef.current = { client, targets: nextTargets };
       setTargets(nextTargets);
-      setTargetsSettled(true);
+      setTargetsStatus("ok");
+      setTargetsError(null);
+      // Why a screen is missing is optional context: its failure never hides the targets.
+      client
+        .listViewAvailability()
+        .then(setAvailability)
+        .catch(() => setAvailability([]));
       if (nextCtrl && sequencer.accept(ticket)) {
         controlStateRef.current = nextCtrl;
+        controlClientRef.current = clientRef.current;
         setControlStateRaw(nextCtrl);
         registry.syncControlState(nextCtrl);
         updateState((prev) => applyControlStateDto(prev, nextCtrl));
+        takeoverStopRef.current?.pump();
       }
-    } catch {
-      // keep existing snapshot; next poll/action retries
+    } catch (err) {
+      if (clientRef.current === client) {
+        setTargetsStatus("failed");
+        setTargetsError(err instanceof ApiError ? liveViewErrorCode(err) : "network");
+      }
     } finally {
-      setLoadingTargets(false);
+      if (clientRef.current === client) {
+        setLoadingTargets(false);
+      }
     }
   }, [client, registry, sequencer, updateState]);
 
   // Refresh targets & control snapshot on client connect and when panel/viewer opens.
   useEffect(() => {
-    // Targets are per daemon client: until THIS client's fetch settles the scope
-    // of a run is unknown (a replacement bridge must not reuse the old answer).
-    setTargetsSettled(false);
+    targetsForRef.current = null;
+    // A new client: the owed override waits for THIS client's snapshot (or goes now if forced).
+    controlClientRef.current = null;
+    takeoverStopRef.current?.pump();
     if (!client) {
       setTargets([]);
+      setTargetsStatus("unknown");
+      setTargetsError(null);
       setControlState(null);
       updateState(createInitialLiveViewState(null));
       return undefined;
     }
     void refreshTargets();
     return onDaemonEvent((env) => {
-      if (env.event.type === "control_state_changed") {
+      // A takeover changed, or a screen appeared / went idle / attached / closed
+      // (the bot's first browser call): refetch without reopening the panel.
+      if (
+        env.event.type === "control_state_changed" ||
+        env.event.type === "view_targets_changed"
+      ) {
         void refreshTargets();
       }
     });
@@ -329,27 +448,34 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       const ticket = sequencer.issue();
       void client
         .getControlState()
-        .then((dto) => ingestControlSnapshot(dto, ticket))
+        .then((dto) => {
+          if (clientRef.current === client) {
+            ingestControlSnapshot(dto, ticket);
+          }
+        })
         .catch(() => undefined);
     }, CONTROL_POLL_MS);
     return () => window.clearInterval(id);
   }, [client, ingestControlSnapshot, registry, sequencer]);
 
   useEffect(() => {
-    if (client && (viewerOpen || thumbDemand.active)) {
+    if (client && (viewerOpen || cardDemand.active)) {
       void refreshTargets();
     }
-  }, [client, viewerOpen, thumbDemand.active, refreshTargets]);
+  }, [client, viewerOpen, cardDemand.active, refreshTargets]);
 
-  const selectedTarget = useMemo(() => {
-    const botFocus =
-      thumbDemand.botId ??
-      (bots.length > 0 ? bots[0].id : null);
-    return pickDefaultTarget(targets, {
-      preferredTargetId: selectedTargetId,
-      botId: botFocus
-    });
-  }, [targets, selectedTargetId, thumbDemand.botId, bots]);
+  const botFocus = cardDemand.botId ?? (bots.length > 0 ? bots[0].id : null);
+  const preferDesktop = cardDemand.active && !viewerOpen && !isControlBusy(state);
+  const preferredTargetId = preferDesktop ? null : selectedTargetId;
+  const selectedTarget = useMemo(
+    () =>
+      pickDefaultTarget(targets, {
+        preferredTargetId,
+        botId: botFocus,
+        preferDesktop
+      }),
+    [targets, preferredTargetId, botFocus, preferDesktop]
+  );
 
   // While holding/acquiring control the target must not follow chat/bot focus.
   useEffect(() => {
@@ -389,24 +515,53 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     hasClient: Boolean(client),
     documentHidden,
     target: selectedTarget,
-    viewerOpen,
-    panelActive: thumbDemand.active
+    viewerOpen: viewerOpen && !viewerTimedOut,
+    cardRequested: cardDemand.active
   });
 
+  const refreshStatus = useCallback(async (): Promise<ScreenStatus | null> => {
+    if (!client) {
+      return null;
+    }
+    try {
+      const status = await client.viewStatus();
+      return status;
+    } catch {
+      return null;
+    }
+  }, [client]);
+
   const owning = isActivelyOwningTakeover(state);
-  const desiredProfile = owning ? "live" : "watch";
-  const desiredMaxWidth = viewerOpen ? 1600 : 960;
-  const desiredMaxHeight = viewerOpen ? 1000 : 600;
-  const desiredQuality = owning ? 78 : viewerOpen ? 72 : 55;
+  const desiredProfile = sessionProfile(state);
+  const {
+    maxWidth: desiredMaxWidth,
+    maxHeight: desiredMaxHeight,
+    quality: desiredQuality
+  } = sessionRequest({ viewerOpen, owning });
 
   const activeSessionRef = useRef<SessionInfo | null>(null);
+
+  useEffect(() => {
+    if (!viewerOpen) {
+      setViewerTimedOut(false);
+      return undefined;
+    }
+    if (frameUrl || viewerTimedOut || isControlBusy(stateRef.current)) return undefined;
+    const id = window.setTimeout(() => {
+      if (!isControlBusy(stateRef.current)) {
+        setViewerTimedOut(true);
+        setStreamFailure((failure) => failure ?? "timeout");
+      }
+    }, SCREEN_START_TIMEOUT_MS);
+    return () => window.clearTimeout(id);
+  }, [viewerOpen, frameUrl, streamAttempt, viewerTimedOut]);
 
   // Create/delete view session strictly based on panel/viewer demand and target identity.
   useEffect(() => {
     if (!wantSession || !client || !selectedTarget) {
       const stale = activeSessionRef.current;
       activeSessionRef.current = null;
-      setFrameUrl(null);
+      setPresentedFrame(null);
       if (stale && client) {
         void client.deleteViewSession(stale.session_id).catch(() => undefined);
       }
@@ -418,6 +573,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       return undefined;
     }
 
+    setStreamPaused(false);
     const abort = new AbortController();
     const inputQueue = inputQueueRef.current;
     let mountedSessionId: string | null = null;
@@ -445,7 +601,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const presenter: FramePresenter<string> = {
+      const presenter: FramePresenter<{ url: string; blob: Blob }> = {
         decodeAndBind: async (frame: DecodedFrameRecord) => {
           const mime =
             frame.header.codec === "webp" ? "image/webp" : "image/jpeg";
@@ -457,15 +613,15 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
           try {
             const img = new Image();
             img.src = url;
-            await img.decode().catch(() => undefined);
-            return url;
+            await img.decode();
+            return { url, blob };
           } catch (err) {
             activeUrlsRef.current.delete(url);
             URL.revokeObjectURL(url);
             throw err;
           }
         },
-        release: (url: string) => {
+        release: ({ url }) => {
           const revoke = () => {
             if (activeUrlsRef.current.has(url)) {
               activeUrlsRef.current.delete(url);
@@ -492,10 +648,30 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
             applyStatusRecord(prev, statusHeader, Date.now())
           );
         },
-        onFramePresented: (frame, url, metrics) => {
-          setFrameUrl(url);
+        onFramePresented: (frame, presentation, metrics) => {
+          setStreamFailure(null);
+          setPresentedFrame(presentation);
           const nowMs = Date.now();
           updateState((prev) => applyFrameRendered(prev, frame.header, nowMs));
+
+          // Ack every frame at once (one request in flight, the newest wins): the host
+          // sends the next frame only after this and measures the link from it.
+          if (!signal.aborted) {
+            const ack = ackRef.current;
+            ack.pending = frame.header.frame_seq;
+            if (!ack.busy) {
+              ack.busy = true;
+              const drain = async (): Promise<void> => {
+                while (ack.pending !== null && !signal.aborted) {
+                  const seq = ack.pending;
+                  ack.pending = null;
+                  await client.ackViewFrame(sessionId, seq).catch(() => undefined);
+                }
+                ack.busy = false;
+              };
+              void drain();
+            }
+          }
 
           const geometryChanged =
             lastGeometrySentRef.current !== frame.header.geometry_revision;
@@ -527,10 +703,13 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
           client.createViewSession({
             client_id: clientIdRef.current,
             target_id: selectedTarget.target_id,
-            profile: isActivelyOwningTakeover(stateRef.current) ? "live" : "watch",
+            profile: sessionProfile(stateRef.current),
             codecs: selectedTarget.capabilities.codecs,
-            max_width: viewerOpen ? 1600 : 960,
-            max_height: viewerOpen ? 1000 : 600
+            max_width: sessionRequest({ viewerOpen, owning: false }).maxWidth,
+            max_height: sessionRequest({ viewerOpen, owning: false }).maxHeight,
+            // An automatically chosen screen is bound to the focused bot: the
+            // daemon refuses another bot's browser. An explicit pick is not.
+            ...(preferredTargetId === null && botFocus ? { bot_id: botFocus } : {})
           }),
         openStream,
         deleteSession: (id) => client.deleteViewSession(id)
@@ -541,11 +720,29 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
           activeSessionRef.current = session;
           lastFeedbackAtRef.current = 0;
           lastGeometrySentRef.current = null;
+          ackRef.current = { busy: false, pending: null };
           updateState((prev) => applySessionCreated(prev, selectedTarget, session));
         },
-        onDisconnected: () => {
+        onDisconnected: (err) => {
+          if (err instanceof ApiError) {
+            setStreamFailure(liveViewErrorCode(err));
+          }
           inputQueueRef.current.clear();
           updateState((prev) => applyStreamDisconnected(prev));
+        },
+        shouldReplaceSession: async () => {
+          if (!mountedSessionId) {
+            return true;
+          }
+          const status = await refreshStatus();
+          if (abort.signal.aborted || status?.state !== "paused_idle") {
+            return !abort.signal.aborted;
+          }
+          setStreamPaused(true);
+          if (!isActivelyOwningTakeover(stateRef.current)) {
+            setViewerOpen(false);
+          }
+          return false;
         },
         beforeRetry: () => {
           void refreshTargets();
@@ -557,7 +754,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     return () => {
       abort.abort();
       activeSessionRef.current = null;
-      setFrameUrl(null);
+      setPresentedFrame(null);
       inputQueue.clear();
       if (mountedSessionId) {
         void client.deleteViewSession(mountedSessionId).catch(() => undefined);
@@ -568,6 +765,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   }, [
     wantSession,
     client,
+    streamAttempt,
     selectedTarget?.target_id,
     selectedTarget?.generation
   ]);
@@ -619,13 +817,26 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       if (!cur.session) {
         return;
       }
-      const body = buildSessionHeartbeat(cur);
+      // After a Stop this app no longer renews its input lease.
+      const body = takeoverStopRef.current?.inputAllowed() === false ? {} : buildSessionHeartbeat(cur);
+      // "Someone is looking": the host ends a session whose viewer reports hidden/unfocused for
+      // its idle limit, and stops producing images.
+      const looking = document.visibilityState === "visible" && document.hasFocus();
       void client
-        .heartbeatViewSession(cur.session.session_id, body)
-        .catch(() => undefined);
+        .heartbeatViewSession(cur.session.session_id, { ...body, active: looking })
+        .catch((e: unknown) => {
+          // The host ended the session (idle or time limit): say so instead of showing a frozen frame.
+          if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
+            void refreshStatus().then((status) => {
+              if (status?.state === "paused_idle" && !isActivelyOwningTakeover(stateRef.current)) {
+                setViewerOpen(false);
+              }
+            });
+          }
+        });
     }, SESSION_HEARTBEAT_MS);
     return () => window.clearInterval(id);
-  }, [client, wantSession, state.session]);
+  }, [client, wantSession, state.session, refreshStatus]);
 
   // Periodic stream staleness watchdog so silent drops disable interactive input safely.
   useEffect(() => {
@@ -651,7 +862,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       while (inputQueueRef.current.length > 0) {
         const cur = stateRef.current;
         const gate = canSendLiveInput(cur, Date.now());
-        if (!gate.ok) {
+        if (!gate.ok || takeoverStopRef.current?.inputAllowed() === false) {
           inputQueueRef.current.clear();
           break;
         }
@@ -701,7 +912,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   const enqueueInput = useCallback(
     (event: InputEvent, flushNow = true) => {
       const gate = canSendLiveInput(stateRef.current, Date.now());
-      if (!gate.ok) {
+      if (!gate.ok || takeoverStopRef.current?.inputAllowed() === false) {
         return;
       }
       inputQueueRef.current.enqueue(event);
@@ -720,7 +931,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         return;
       }
       const gate = canSendLiveInput(stateRef.current, Date.now());
-      if (gate.ok && flushNow) {
+      if (gate.ok && flushNow && takeoverStopRef.current?.inputAllowed() !== false) {
         inputQueueRef.current.enqueue({ type: "reset" });
         void flushInputQueue();
       }
@@ -736,6 +947,8 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     if (!client) {
       return;
     }
+    // Taking control again is a new user decision: input may flow again.
+    takeoverStopRef.current?.resume();
     // A takeover whose response was lost is retried with the SAME request id
     // (the daemon treats it idempotently); a definitive error starts afresh.
     const requestId =
@@ -751,7 +964,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       void refreshTargets();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "takeover_failed";
-      const message = err instanceof Error ? err.message : String(err);
+      const message = humanLine(err);
       updateState((prev) =>
         applyTakeoverFailed(prev, code, message, {
           retainRequestId: !(err instanceof ApiError)
@@ -779,6 +992,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       if (!payload) {
         return false;
       }
+      takeoverStopRef.current?.retire(); // the user's newer decision: no stale override
       inputQueueRef.current.clear();
       updateState((prev) =>
         applyReleaseStarted(prev, payload.request_id, payload.human_action ?? null)
@@ -799,6 +1013,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         setControlState(outcome.dto);
         registry.syncControlState(outcome.dto);
         updateState((prev) => applyReleaseConfirmed(prev, outcome.dto));
+        takeoverStopRef.current?.pump();
         void refreshTargets();
         return true;
       }
@@ -809,6 +1024,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
         setControlState(dto);
         registry.syncControlState(dto);
         updateState((prev) => applyControlStateDto(prev, dto));
+        takeoverStopRef.current?.pump();
       }
       updateState((prev) =>
         prev.pendingRequest?.kind === "release"
@@ -841,11 +1057,12 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   // (local user only, labelled with the owner) or a plain owner-less latch.
   // `POST /v1/control/recover` needs no view session, so it works with the
   // viewer and the panel closed.
-  const clearPause = useCallback(
-    async (kind: ClearTarget["kind"] = "own") => {
+  const clearPauseInner = useCallback(
+    async (kind: ClearTarget["kind"]) => {
       if (!client) {
         return;
       }
+      takeoverStopRef.current?.retire(); // the user's newer decision: no stale override
       const cur = stateRef.current;
       const ctl = controlStateRef.current;
       let target: ClearTarget | null = null;
@@ -873,6 +1090,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
           ...applyControlStateDto(prev, outcome.dto),
           lastError: null
         }));
+        takeoverStopRef.current?.pump();
         void refreshTargets();
         return;
       }
@@ -887,13 +1105,33 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
             "the control state changed; not cleared"
           )
         );
+        toast.show(t("liveView.errors.pause_changed"), "danger");
         return;
       }
       updateState((prev) =>
         applyTakeoverFailed(prev, outcome.code, outcome.message)
       );
+      // Never silent: the refusal (owner key, local-only, busy executor, ...) in plain words.
+      toast.show(outcome.message || t("liveView.errors.recover_failed"), "danger");
     },
-    [client, ingestControlSnapshot, refreshTargets, registry, setControlState, updateState]
+    [client, ingestControlSnapshot, refreshTargets, registry, setControlState, t, toast, updateState]
+  );
+
+  const clearPause = useCallback(
+    async (kind: ClearTarget["kind"] = "own") => {
+      if (!client || pauseClearingRef.current) {
+        return;
+      }
+      pauseClearingRef.current = true;
+      setPauseClearing(true);
+      try {
+        await clearPauseInner(kind);
+      } finally {
+        pauseClearingRef.current = false;
+        setPauseClearing(false);
+      }
+    },
+    [client, clearPauseInner]
   );
 
   // Reacquire a takeover the stream drop paused. Every other paused case
@@ -912,6 +1150,7 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       return;
     }
     const requestId = crypto.randomUUID();
+    takeoverStopRef.current?.resume();
     const req = buildTakeoverRequest(stateRef.current, requestId, {
       reacquireTakeoverId: prompt.takeoverId
     });
@@ -927,41 +1166,33 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
       void refreshTargets();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "recover_failed";
-      const message = err instanceof Error ? err.message : String(err);
+      const message = humanLine(err);
       updateState((prev) => applyTakeoverFailed(prev, code, message));
     }
   }, [client, clearPause, controlState, refreshTargets, updateState]);
 
+  // A Stop pauses a held takeover. Input halts synchronously here; the override is
+  // owed until delivered through the CURRENT client (see takeoverStop.ts). With
+  // `onlyIfControlled` (every entry point but the viewer button) it is sent only if
+  // the current client's snapshot shows an acquiring / active takeover.
   const overrideStop = useCallback(
     async (opts: { onlyIfControlled?: boolean } = {}) => {
-      if (!client) {
-        return;
-      }
-      if (
-        opts.onlyIfControlled &&
-        !shouldOverrideOnStop(stateRef.current, controlStateRef.current)
-      ) {
-        return;
-      }
       inputQueueRef.current.clear();
-      try {
-        const bridge = registry.current();
-        const dto = bridge
-          ? await bridge.emergencyStop()
-          : await client.overrideControl();
-        if (dto) {
-          setControlState(dto);
-          updateState((prev) => applyControlStateDto(prev, dto));
-        }
-        void refreshTargets();
-      } catch {
-        void refreshTargets();
-      }
+      takeoverStopRef.current?.stop(!opts.onlyIfControlled);
     },
-    [client, refreshTargets, registry, setControlState, updateState]
+    []
   );
+  applyOverrideRef.current = (dto: ControlStateDto) => {
+    registry.syncControlState(dto);
+    setControlState(dto);
+    updateState((prev) => applyControlStateDto(prev, dto));
+    takeoverStopRef.current?.pump();
+    void refreshTargets();
+  };
 
   const openViewer = useCallback((targetId?: string) => {
+    setStreamFailure(null);
+    setViewerTimedOut(false);
     // Never retarget while holding/acquiring control.
     if (targetId && !isControlBusy(stateRef.current)) {
       setSelectedTargetId(targetId);
@@ -998,9 +1229,9 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     setSelectedTargetId(targetId);
   }, []);
 
-  const setThumbnailDemand = useCallback(
+  const setCardDemand = useCallback(
     (active: boolean, botId: string | null) => {
-      setThumbDemand((prev) =>
+      setCardDemandState((prev) =>
         prev.active === active && prev.botId === botId
           ? prev
           : { active, botId }
@@ -1019,27 +1250,35 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
   const value = useMemo<LiveViewContextValue>(
     () => ({
       targets,
-      targetsSettled,
       selectedTarget,
       controlState,
       state,
       frameUrl,
+      frameBlob,
+      streamFailure,
+      retryStream,
+      streamPaused,
       viewerOpen,
       loadingTargets,
+      targetsStatus,
+      targetsError,
+      availability,
       panelAction,
       recoveryPrompt,
       openViewer,
       closeViewer,
       selectTarget,
       refreshTargets,
-      setThumbnailDemand,
+      setCardDemand,
       requestTakeover,
       releaseTakeover,
       retryRelease,
       recoverTakeover,
       clearPause,
+      pauseClearing,
       isLocalClient,
       overrideStop,
+      currentTargets,
       enqueueInput,
       resetInputState,
       setComposing,
@@ -1050,27 +1289,35 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
     }),
     [
       targets,
-      targetsSettled,
       selectedTarget,
       controlState,
       state,
       frameUrl,
+      frameBlob,
+      streamFailure,
+      retryStream,
+      streamPaused,
       viewerOpen,
       loadingTargets,
+      targetsStatus,
+      targetsError,
+      availability,
       panelAction,
       recoveryPrompt,
       openViewer,
       closeViewer,
       selectTarget,
       refreshTargets,
-      setThumbnailDemand,
+      setCardDemand,
       requestTakeover,
       releaseTakeover,
       retryRelease,
       recoverTakeover,
       clearPause,
+      pauseClearing,
       isLocalClient,
       overrideStop,
+      currentTargets,
       enqueueInput,
       resetInputState,
       setComposing,
@@ -1083,9 +1330,24 @@ export function LiveViewProvider({ children }: { children: ReactNode }) {
 
   return (
     <LiveViewContext.Provider value={value}>
-      {children}
+      {scope === "local" ? (
+        <LocalLiveViewContext.Provider value={value}>{children}</LocalLiveViewContext.Provider>
+      ) : (
+        children
+      )}
     </LiveViewContext.Provider>
   );
+}
+
+/** This computer's live view (the same as `useLiveView()` while no server is selected). */
+export function useLocalLiveView(): LiveViewContextValue {
+  const local = useContext(LocalLiveViewContext);
+  const home = useContext(LiveViewContext);
+  const ctx = local ?? home;
+  if (!ctx) {
+    throw new Error("useLocalLiveView must be used inside LiveViewProvider");
+  }
+  return ctx;
 }
 
 export function useLiveView(): LiveViewContextValue {

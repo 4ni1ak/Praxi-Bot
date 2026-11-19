@@ -18,7 +18,6 @@ import {
 } from "../lib/shell";
 import { useDaemon } from "./DaemonContext";
 import type { RunState } from "./timeline";
-import { cancelAllRuns } from "../lib/runState";
 
 export interface ShellBridgeSettings extends NotifyPrefs {
   notifyPrivate: boolean;
@@ -39,7 +38,7 @@ export function ShellBridgeHost({
   onOpenNeeds: () => void;
 }) {
   const { t, i18n } = useTranslation();
-  const { client, bots, needs, onDaemonEvent, refreshRuns } = useDaemon();
+  const { bots, needs, onDaemonEvent, refreshRuns } = useDaemon();
 
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -47,8 +46,6 @@ export function ShellBridgeHost({
   botsRef.current = bots;
   const tRef = useRef(t);
   tRef.current = t;
-  const clientRef = useRef(client);
-  clientRef.current = client;
   const openChatRef = useRef(onOpenChat);
   openChatRef.current = onOpenChat;
   const openNeedsRef = useRef(onOpenNeeds);
@@ -168,14 +165,10 @@ export function ShellBridgeHost({
       onShellEvent<null>(SHELL_EVENT_TRAY_OPEN_NEEDS, () =>
         openNeedsRef.current()
       ),
+      // Tray "Stop all" is a native user Stop (`stop_all` raises `stopSeq`); the
+      // Stop ledger turns it into ONE Stop decision. Here we only refresh the list.
       onShellEvent<null>(SHELL_EVENT_TRAY_STOP_ALL, () => {
-        const c = clientRef.current;
-        if (!c) {
-          return;
-        }
-        void cancelAllRuns(c)
-          .then(() => refreshRuns())
-          .catch(() => {});
+        void refreshRuns().catch(() => {});
       })
     ];
     return () => {

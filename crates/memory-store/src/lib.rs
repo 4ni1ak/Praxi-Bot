@@ -23,7 +23,9 @@ mod types;
 mod vec;
 
 pub mod embed;
+pub mod knowledge;
 pub mod prompts;
+pub mod tools;
 
 #[cfg(feature = "fastembed")]
 pub use embed::FastEmbedder;
@@ -38,4 +40,5 @@ pub use render::{prepend_to_user_message, render_recall_block};
 pub use secrets::{contains_secret, redact};
 pub use sessions::SessionHit;
 pub use store::MemoryStore;
+pub use tools::MEMORY_TOOL_NAMES;
 pub use types::{JournalEntry, JournalOp, Kind, ListFilter, Memory, MemoryPatch, NewMemory, Trust};

@@ -100,3 +100,198 @@ async fn browser_target_loss_reset_retry_and_local_recover_clear_the_latch() {
         server.abort();
     }
 }
+
+#[tokio::test]
+async fn browser_target_positional_input_continues_working_through_daemon() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let commands = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let recorded = commands.clone();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let mut ack_id = 1u64;
+        while let Some(Ok(Message::Text(text))) = ws.next().await {
+            let command: Value = serde_json::from_str(&text).unwrap();
+            recorded.lock().push(command.clone());
+            let reply = if command["method"] == "Page.getLayoutMetrics" {
+                json!({
+                    "id": command["id"],
+                    "result": {
+                        "cssVisualViewport": {
+                            "clientWidth": 800,
+                            "clientHeight": 600,
+                            "scale": 1,
+                            "pageX": 0,
+                            "pageY": 0
+                        }
+                    }
+                })
+            } else {
+                json!({"id": command["id"], "result": {"sessionId": "browser-session"}})
+            };
+            if ws.send(Message::text(reply.to_string())).await.is_err() {
+                break;
+            }
+            if command["method"] == "Page.startScreencast" {
+                let frame_evt = json!({
+                    "method": "Page.screencastFrame",
+                    "sessionId": "browser-session",
+                    "params": {
+                        "data": "/9j/wAALCAGQAoABAREA/9k=",
+                        "metadata": {
+                            "offsetTop": 0,
+                            "pageScaleFactor": 1,
+                            "deviceWidth": 800,
+                            "deviceHeight": 600,
+                            "scrollOffsetX": 0,
+                            "scrollOffsetY": 0
+                        },
+                        "sessionId": ack_id
+                    }
+                });
+                ack_id += 1;
+                if ws.send(Message::text(frame_evt.to_string())).await.is_err() {
+                    break;
+                }
+            }
+        }
+    });
+
+    let client = CdpClient::connect(&format!("ws://{addr}")).await.unwrap();
+    let page = Page::attach(client.clone(), "browser-target")
+        .await
+        .unwrap();
+    let target = BrowserViewTarget::new_idle(BrowserViewConfig::default());
+    target.attach_page(&page).unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(storage::Storage::open(dir.path()).unwrap());
+    let agent = agent_core::AgentLoop::new(
+        storage.clone(),
+        tool_registry::ToolRegistry::new(),
+        agent_core::Providers::single(Arc::new(crate::fake::FakeProvider)),
+        agent_core::LoopConfig::default(),
+    );
+    let state = AppState::new(agent, storage, crate::DaemonConfig::new(TOKEN)).unwrap();
+    state.set_owner_key("ownerkey0123456789abcdef0123456789abcdef0123456789abcdef".into());
+    state.live_view().registry.register(target.clone());
+    let t = Test {
+        state,
+        target: Arc::new(Target::new()),
+        dir: Arc::new(dir),
+        auto_grant: AtomicBool::new(true),
+    };
+
+    let target_id = target.info().target_id;
+    let generation = target.info().generation;
+    let (status, val) = t
+        .call(
+            None,
+            Method::POST,
+            "/v1/view/sessions",
+            Some(json!({
+                "target_id": target_id,
+                "profile": "watch",
+                "max_width": 960,
+                "max_height": 600,
+                "codecs": ["jpeg"],
+                "client_id": Uuid::now_v7()
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{val}");
+    let session_id = Uuid::parse_str(val["session_id"].as_str().unwrap()).unwrap();
+
+    let response = t
+        .response(
+            None,
+            Method::GET,
+            &format!("/v1/view/sessions/{session_id}/frames"),
+            None,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+    for _ in 0..8 {
+        if t.state
+            .live_view()
+            .sessions
+            .lock()
+            .get(&session_id)
+            .is_some_and(|s| s.geometry.is_some())
+        {
+            break;
+        }
+        let _ = tokio::time::timeout(Duration::from_millis(250), body.frame()).await;
+    }
+    let revision = t
+        .state
+        .live_view()
+        .sessions
+        .lock()
+        .get(&session_id)
+        .and_then(|s| s.geometry)
+        .map(|(r, _, _)| r)
+        .expect("browser frame geometry must be recorded");
+
+    let (status, v) = t
+        .call(
+            None,
+            Method::POST,
+            "/v1/control/takeover",
+            Some(json!({"session_id": session_id, "request_id": Uuid::now_v7()})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{v}");
+    for _ in 0..100 {
+        if t.state
+            .hub()
+            .takeover()
+            .is_some_and(|tk| tk.info.state == ViewState::Active)
+        {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let takeover = t.state.hub().takeover().unwrap().info;
+    assert_eq!(takeover.state, ViewState::Active);
+
+    let batch = json!({
+        "v": 1,
+        "takeover_id": takeover.id,
+        "control_epoch": takeover.control_epoch,
+        "generation": generation,
+        "geometry_revision": revision,
+        "first_seq": 1,
+        "events": [{
+            "type": "pointer",
+            "phase": "down",
+            "x": 0.5,
+            "y": 0.5,
+            "button": "left",
+            "buttons": 1,
+            "modifiers": []
+        }]
+    });
+    let (status, res) = t
+        .call(
+            None,
+            Method::POST,
+            &format!("/v1/view/sessions/{session_id}/input"),
+            Some(batch),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["applied_through"], 1);
+    assert_eq!(res["state"], "active");
+    assert!(
+        commands
+            .lock()
+            .iter()
+            .any(|c| c["method"] == "Input.dispatchMouseEvent"
+                && c["params"]["type"] == "mousePressed"),
+        "browser target must still receive mousePressed through daemon input path"
+    );
+    server.abort();
+}

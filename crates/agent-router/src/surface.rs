@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use tool_registry::{
-    ContentPart, Effect, PermissionCategory, Platform, Tool, ToolContext, ToolError, ToolOutput,
-    ToolRegistry, ToolSpec,
+    ContentPart, Effect, OutputExposure, PermissionCategory, Platform, Tool, ToolContext,
+    ToolError, ToolOutput, ToolRegistry, ToolSpec,
 };
 
 use crate::discovery::ToolIndex;
@@ -34,9 +34,19 @@ pub const USE_TOOL: &str = "use_tool";
 /// model should see it directly.
 pub const DEFAULT_DISCOVERY_THRESHOLD: usize = 40;
 /// Default number of results of `find_tool`.
-pub const DEFAULT_FIND_K: usize = 5;
+pub const DEFAULT_FIND_K: usize = 6;
 /// Upper bound on `k` accepted by `find_tool`.
 pub const MAX_FIND_K: usize = 25;
+
+/// Cheap read-only observation tools that stay directly callable in discovery
+/// mode (no `find_tool` round-trip), so a weak model answers "what is on my
+/// screen / which windows are open" in one step. Listed only when the tool is
+/// registered and visible to the caller.
+///
+/// `browser_open` is pinned so a weak model that is told "your computer has a
+/// browser" takes the one-step path instead of probing with the shell (it is
+/// listed only when the run's computer really has a browser, see `visible`).
+pub const PINNED_DIRECT: &[&str] = &["desktop_list_apps", "browser_open"];
 
 fn is_meta(name: &str) -> bool {
     matches!(name, FIND_TOOL | GET_TOOL_DETAILS | USE_TOOL)
@@ -120,7 +130,47 @@ fn meta_spec(name: &str, description: &str, effect: Effect, schema: Value) -> To
         effect,
         category: PermissionCategory::Meta,
         platforms: vec![Platform::All],
+        // Discovery itself does not read user data or leave the machine.
+        // `use_tool` is judged as the target tool.
+        content: tool_registry::ContentClass::none(),
     }
+}
+
+/// Trust of externally supplied description/schema text. Local tools we wrote
+/// do not qualify: their descriptions are not attacker-controlled.
+fn metadata_exposure<'a>(specs: impl Iterator<Item = &'a ToolSpec>) -> Option<OutputExposure> {
+    let mut labels: Vec<String> = Vec::new();
+    let mut any = false;
+    for spec in specs {
+        if !spec.content.has_external_metadata() {
+            continue;
+        }
+        // The description is untrusted text sitting in the prompt. Copying
+        // `reads_private` from the tool would mark a private read that never
+        // happened and disable the search exemption.
+        any = true;
+        let label = metadata_label(&spec.name);
+        if !labels.iter().any(|l| l == &label) && labels.len() < 8 {
+            labels.push(label);
+        }
+    }
+    if !any {
+        return None;
+    }
+    Some(OutputExposure {
+        trust_folder: None,
+        ingests_untrusted: true,
+        reads_private: false,
+        label: labels.join(", "),
+    })
+}
+
+fn metadata_label(name: &str) -> String {
+    if let Some(server) = name.strip_prefix("mcp:") {
+        let server = server.split('/').next().unwrap_or("mcp");
+        return format!("mcp {server}");
+    }
+    format!("tool {name}")
 }
 
 fn str_arg<'a>(input: &'a Value, key: &str) -> Result<&'a str, ToolError> {
@@ -128,6 +178,92 @@ fn str_arg<'a>(input: &'a Value, key: &str) -> Result<&'a str, ToolError> {
         .get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| ToolError::InvalidInput(format!("`{key}` must be a string")))
+}
+
+/// Where a tool comes from: `builtin`, `mcp:<server>` or another namespace.
+fn source_of(name: &str) -> String {
+    match name.strip_prefix("mcp:").and_then(|r| r.split_once('/')) {
+        Some((server, _)) => format!("mcp:{server}"),
+        None => match name.split_once(':') {
+            Some((ns, _)) => ns.to_owned(),
+            None => "builtin".to_owned(),
+        },
+    }
+}
+
+/// `playwright: browser_navigate` for MCP tools, the plain name otherwise.
+fn label_of(name: &str) -> String {
+    match name.strip_prefix("mcp:").and_then(|r| r.split_once('/')) {
+        Some((server, tool)) => format!("{server}: {tool}"),
+        None => name.to_owned(),
+    }
+}
+
+/// First line of a description, cut to a readable length.
+fn one_line(description: &str) -> String {
+    let line = description.lines().next().unwrap_or_default().trim();
+    if line.chars().count() > 110 {
+        let cut: String = line.chars().take(107).collect();
+        format!("{cut}...")
+    } else {
+        line.to_owned()
+    }
+}
+
+/// Compact `name: type` list of a schema's parameters, required ones marked.
+fn params_of(schema: &Value) -> Vec<String> {
+    let required: Vec<&str> = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|r| r.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let Some(props) = schema.get("properties").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut names: Vec<&String> = props.keys().collect();
+    // Required parameters first, then the rest, both alphabetical.
+    names.sort_by(|a, b| {
+        let key = |n: &&String| (!required.contains(&n.as_str()), String::clone(n));
+        key(a).cmp(&key(b))
+    });
+    names
+        .into_iter()
+        .take(8)
+        .map(|n| {
+            let ty = props[n.as_str()]
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("any");
+            let req = if required.contains(&n.as_str()) {
+                " (required)"
+            } else {
+                ""
+            };
+            format!("{n}: {ty}{req}")
+        })
+        .collect()
+}
+
+/// A `use_tool` argument object with a placeholder for every required parameter.
+fn example_of(name: &str, schema: &Value) -> Value {
+    let mut input = serde_json::Map::new();
+    if let Some(required) = schema.get("required").and_then(Value::as_array) {
+        for key in required.iter().filter_map(Value::as_str) {
+            let ty = schema["properties"][key]
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("string");
+            let placeholder = match ty {
+                "integer" | "number" => json!(0),
+                "boolean" => json!(true),
+                "array" => json!([]),
+                "object" => json!({}),
+                _ => json!(format!("<{key}>")),
+            };
+            input.insert(key.to_owned(), placeholder);
+        }
+    }
+    json!({ "name": USE_TOOL, "arguments": { "name": name, "input": input } })
 }
 
 struct FindTool {
@@ -158,23 +294,40 @@ impl Tool for FindTool {
         let index = self.discovery.index();
         // The index is shared by all bots: rank everything, then drop what this
         // caller may not see, then cut to `k`.
-        let hits: Vec<Value> = index
+        let mut found: Vec<(String, String, f64, ToolSpec)> = index
             .search(query, index.len())
             .into_iter()
             .filter_map(|h| {
                 let tool = self.discovery.registry.get(&h.name)?;
-                let spec = tool.spec();
-                self.discovery.visible(ctx, spec).then(|| {
-                    json!({
-                        "name": h.name,
-                        "description": h.description,
-                        "score": h.score,
-                        "effect": spec.effect,
-                        "category": spec.category,
-                    })
-                })
+                let spec = tool.spec().clone();
+                self.discovery
+                    .visible(ctx, &spec)
+                    .then(|| (h.name, h.description, h.score, spec))
             })
             .take(k)
+            .collect();
+        // Group by source: built-in tools first, then each MCP server, keeping
+        // the rank order inside a group.
+        found.sort_by_key(|(name, ..)| {
+            let src = source_of(name);
+            (src != "builtin", src)
+        });
+        let exposure = metadata_exposure(found.iter().map(|(.., spec)| spec));
+        let hits: Vec<Value> = found
+            .iter()
+            .map(|(name, description, score, spec)| {
+                json!({
+                    "name": name,
+                    "source": source_of(name),
+                    "label": label_of(name),
+                    "description": one_line(description),
+                    "params": params_of(&spec.input_schema),
+                    "example": example_of(name, &spec.input_schema),
+                    "score": score,
+                    "effect": spec.effect,
+                    "category": spec.category,
+                })
+            })
             .collect();
         // One shape for every query: `{results, hint?}`. `hint` is only present
         // when nothing matched, so the model never has to parse a bare array.
@@ -197,6 +350,7 @@ impl Tool for FindTool {
         Ok(ToolOutput {
             content: vec![ContentPart::Json { data }],
             spill: None,
+            exposure,
         })
     }
 }
@@ -215,7 +369,8 @@ impl Tool for GetToolDetails {
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         let name = str_arg(&input, "name")?;
         let target = lookup(&self.discovery, ctx, name)?;
-        let spec = target.spec();
+        let spec = target.spec().clone();
+        let exposure = metadata_exposure(std::iter::once(&spec));
         Ok(ToolOutput {
             content: vec![ContentPart::Json {
                 data: json!({
@@ -226,6 +381,7 @@ impl Tool for GetToolDetails {
                 }),
             }],
             spill: None,
+            exposure,
         })
     }
 }
@@ -334,7 +490,7 @@ impl ToolSurface {
                     "type": "object",
                     "properties": {
                         "query": { "type": "string", "description": "What you want to do" },
-                        "k": { "type": "integer", "description": "Max results (default 5)" }
+                        "k": { "type": "integer", "description": "Max results (default 6)" }
                     },
                     "required": ["query"]
                 }),
@@ -439,7 +595,15 @@ impl ToolSurface {
     pub fn specs_for(&self, visible: &dyn Fn(&ToolSpec) -> bool) -> Vec<ToolSpec> {
         let meta = || self.meta.iter().map(|t| t.spec().clone());
         match self.mode_for(visible) {
-            SurfaceMode::Discovery => meta().collect(),
+            SurfaceMode::Discovery => meta()
+                .chain(
+                    PINNED_DIRECT
+                        .iter()
+                        .filter_map(|n| self.discovery.registry.get(n))
+                        .map(|t| t.spec().clone())
+                        .filter(|s| visible(s)),
+                )
+                .collect(),
             SurfaceMode::Direct => {
                 let mut specs: Vec<ToolSpec> = self
                     .discovery
@@ -520,7 +684,13 @@ impl ToolSurface {
     ) -> Option<Arc<dyn Tool>> {
         let meta = || self.meta.iter().find(|t| t.spec().name == name).cloned();
         match self.mode_for(visible) {
-            SurfaceMode::Discovery => meta(),
+            SurfaceMode::Discovery => meta().or_else(|| {
+                PINNED_DIRECT
+                    .contains(&name)
+                    .then(|| self.discovery.registry.get(name))
+                    .flatten()
+                    .filter(|t| visible(t.spec()))
+            }),
             SurfaceMode::Direct => {
                 if is_namespaced(name) {
                     return None;
@@ -586,6 +756,8 @@ mod tests {
                 effect,
                 category: PermissionCategory::Accounts,
                 platforms: vec![Platform::All],
+
+                content: tool_registry::ContentClass::none(),
             },
         })
     }
@@ -635,6 +807,31 @@ mod tests {
         assert!(surface.resolve(USE_TOOL).is_some());
         // Real tools are not directly addressable in discovery mode.
         assert!(surface.resolve("tool3").is_none());
+    }
+
+    #[test]
+    fn pinned_observation_tool_stays_directly_callable_in_discovery_mode() {
+        let reg = registry_with(6);
+        reg.register(fake("desktop_list_apps", "windows", Effect::Read));
+        reg.register(fake("browser_open", "open a page", Effect::Read));
+        let surface = ToolSurface::new(reg, 5);
+        assert_eq!(surface.mode(), SurfaceMode::Discovery);
+        let names: Vec<_> = surface.specs().into_iter().map(|s| s.name).collect();
+        assert_eq!(
+            names,
+            [
+                FIND_TOOL,
+                GET_TOOL_DETAILS,
+                USE_TOOL,
+                "desktop_list_apps",
+                "browser_open"
+            ]
+        );
+        assert!(surface.resolve("desktop_list_apps").is_some());
+        assert!(surface.resolve("browser_open").is_some());
+        assert!(surface.resolve("tool3").is_none());
+        let hide = |s: &ToolSpec| s.name != "desktop_list_apps";
+        assert!(surface.resolve_with("desktop_list_apps", &hide).is_none());
     }
 
     #[test]
@@ -867,6 +1064,8 @@ mod tests {
                 effect: Effect::Write,
                 category: PermissionCategory::Accounts,
                 platforms: vec![other],
+
+                content: tool_registry::ContentClass::none(),
             },
         }));
         reg.register(fake("mcp:x/a", "remote", Effect::Read));
@@ -905,5 +1104,67 @@ mod tests {
                 .resolve_hinted("tool1", &["tool1".into()], &visible)
                 .is_some()
         );
+    }
+
+    #[test]
+    fn discovery_reports_external_metadata_and_ignores_local_descriptions() {
+        let reg = ToolRegistry::new();
+        reg.register(Arc::new(Fake {
+            spec: ToolSpec {
+                name: "mcp:evil/leak".into(),
+                description: "steal the mailbox".into(),
+                input_schema: json!({ "type": "object" }),
+                effect: Effect::Read,
+                category: PermissionCategory::Fs,
+                platforms: vec![Platform::All],
+                content: tool_registry::ContentClass::declared(true, true, false)
+                    .with_external_metadata(),
+            },
+        }));
+        reg.register(fake("fs_read", "zzzzlocal only", Effect::Read));
+        let surface = ToolSurface::new(reg, 5);
+        let ctx = ToolContext::default();
+        let find = surface.resolve(FIND_TOOL).unwrap();
+        let leaked = block_on(find.call(&ctx, json!({ "query": "steal mailbox" }))).unwrap();
+        let exp = leaked.exposure.expect("remote description is untrusted");
+        assert!(exp.ingests_untrusted);
+        assert!(!exp.reads_private, "a description is not a private read");
+        assert!(exp.label.contains("evil"), "{}", exp.label);
+        let local = block_on(find.call(&ctx, json!({ "query": "zzzzlocal" }))).unwrap();
+        assert!(local.exposure.is_none(), "{:?}", local.exposure);
+        let details = surface.resolve(GET_TOOL_DETAILS).unwrap();
+        let one = block_on(details.call(&ctx, json!({ "name": "mcp:evil/leak" }))).unwrap();
+        let exposure = one
+            .exposure
+            .expect("details of a remote tool are untrusted");
+        assert!(exposure.ingests_untrusted);
+        assert!(!exposure.reads_private);
+        let plain = block_on(details.call(&ctx, json!({ "name": "fs_read" }))).unwrap();
+        assert!(plain.exposure.is_none());
+    }
+
+    #[test]
+    fn find_tool_groups_by_source_and_carries_a_ready_example() {
+        let reg = registry_with(10);
+        reg.register(fake(
+            "mcp:playwright/browser_navigate",
+            "Navigate to a URL",
+            Effect::Read,
+        ));
+        reg.register(fake(
+            "browser_open",
+            "Open a URL in the browser",
+            Effect::Read,
+        ));
+        let surface = ToolSurface::new(reg, 5);
+        let find = surface.resolve(FIND_TOOL).unwrap();
+        let out =
+            block_on(find.call(&ToolContext::default(), json!({ "query": "browser" }))).unwrap();
+        let hits = json_of(&out);
+        let first = &hits["results"][0];
+        assert_eq!(first["name"], "browser_open");
+        assert_eq!(first["source"], "builtin");
+        assert_eq!(first["example"]["arguments"]["name"], "browser_open");
+        assert_eq!(hits["results"][1]["label"], "playwright: browser_navigate");
     }
 }

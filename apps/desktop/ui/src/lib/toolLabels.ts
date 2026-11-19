@@ -133,6 +133,11 @@ const TABLE: Record<string, Entry> = {
   skill_write: { id: "skill_write", icon: "skill" },
   skill_read: { id: "skill_look", icon: "skill" },
   skill_list: { id: "skill_look", icon: "skill" },
+  memory_search: { id: "memory_search", icon: "memory", chips: queryChip },
+  session_search: { id: "session_search", icon: "memory", chips: queryChip },
+  memory_save: { id: "memory_save", icon: "memory" },
+  memory_forget: { id: "memory_forget", icon: "memory", chips: queryChip },
+  knowledge_search: { id: "knowledge_search", icon: "search", chips: queryChip },
   workflow_run: { id: "workflow", icon: "workflow" },
   todo_write: { id: "todo", icon: "list" },
   todo_list: { id: "todo", icon: "list" },
@@ -199,6 +204,87 @@ function appName(
   return h ? h.charAt(0).toUpperCase() + h.slice(1) : server;
 }
 
+/** Discovery plumbing (`find_tool`, `get_tool_details`): never shown as a step. */
+export function isDiscoveryTool(name: string): boolean {
+  return name === "find_tool" || name === "get_tool_details";
+}
+
+/**
+ * `use_tool` runs another tool: the chain shows the real one.
+ * `{ name: "mcp:github/search_repositories", input }` -> `github.search_repositories`.
+ */
+export function resolveToolCall(
+  name: string,
+  input: unknown
+): { name: string; input: unknown } {
+  if (name !== "use_tool") {
+    return { name, input };
+  }
+  const rec = asRecord(input);
+  const target = str(rec.name);
+  if (!target) {
+    return { name, input };
+  }
+  const mcp = /^mcp:([^/]+)\/(.+)$/.exec(target);
+  return {
+    name: mcp ? `${mcp[1]}.${mcp[2]}` : target,
+    input: rec.input ?? rec.arguments ?? {}
+  };
+}
+
+const TR_FRONT = /[eiöü]/;
+const TR_BACK = /[aıou]/;
+/** Hand-written pronunciations the vowel rule gets wrong (English names). */
+const TR_LOCATIVE_OVERRIDE: Record<string, string> = {
+  gmail: "de",
+  drive: "da",
+  slack: "ta",
+  github: "da"
+};
+
+/**
+ * Turkish locative for an app name: `GitHub` -> `GitHub'da`, `Gmail` ->
+ * `Gmail'de`, `Slack` -> `Slack'ta`. Used by the Turkish step wording only.
+ */
+export function trLocative(app: string): string {
+  const lower = app.toLowerCase().replace(/[^a-zçğıöşü0-9]/g, "");
+  const forced = TR_LOCATIVE_OVERRIDE[lower];
+  if (forced) {
+    return `${app}'${forced}`;
+  }
+  const vowels = [...lower].filter((c) => TR_FRONT.test(c) || TR_BACK.test(c));
+  const last = vowels[vowels.length - 1];
+  const back = last ? TR_BACK.test(last) : true;
+  const hard = /[çfhkpsşt]$/.test(lower);
+  return `${app}'${hard ? "t" : "d"}${back ? "a" : "e"}`;
+}
+
+type McpVerb = "search" | "read" | "draft" | "send";
+
+/** Coarse effect of an MCP action name; `null` keeps the generic wording. */
+export function mcpVerb(action: string): McpVerb | null {
+  const words = action.toLowerCase().split(/\s+/);
+  if (words.includes("draft") || words.includes("drafts")) {
+    return "draft";
+  }
+  if (words.some((w) => ["send", "post", "reply", "publish", "tweet"].includes(w))) {
+    return "send";
+  }
+  if (words.some((w) => ["search", "find", "query"].includes(w))) {
+    return "search";
+  }
+  if (words.some((w) => ["get", "read", "fetch", "list", "view", "show"].includes(w))) {
+    return "read";
+  }
+  return null;
+}
+
+const repoChip = (i: Record<string, unknown>): StepChip[] => {
+  const owner = str(i.owner);
+  const repo = str(i.repo) ?? str(i.repository);
+  return repo ? [{ text: clip(owner ? `${owner}/${repo}` : repo) }] : [];
+};
+
 function asRecord(input: unknown): Record<string, unknown> {
   return input !== null && typeof input === "object" && !Array.isArray(input)
     ? (input as Record<string, unknown>)
@@ -216,6 +302,7 @@ export function describeTool(
   input: unknown,
   brandName?: (name: string) => string | null
 ): StepLabel {
+  ({ name, input } = resolveToolCall(name, input));
   const rec = asRecord(input);
   const exact = TABLE[name];
   const entry = exact ?? null;
@@ -232,10 +319,12 @@ export function describeTool(
   if (split) {
     const server = split[1] ?? name;
     const action = humanizeName(split[2] ?? "");
-    const chips = queryChip(rec).concat(urlChip(rec));
+    const chips = queryChip(rec).concat(urlChip(rec), repoChip(rec));
+    const app = appName(server, brandName);
+    const verb = mcpVerb(action);
     return {
-      key: "chat.step.mcp",
-      values: { app: appName(server, brandName), action },
+      key: verb ? `chat.step.mcp_${verb}` : "chat.step.mcp",
+      values: { app, appAt: trLocative(app), action },
       icon: "tool",
       brand: server,
       chips: chips.slice(0, 2)

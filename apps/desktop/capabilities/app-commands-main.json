@@ -1,0 +1,35 @@
+{
+  "identifier": "app-commands-main",
+  "description": "Custom app commands the main window calls today, plus finish_bot_run and ack_stop (reserved for a later change)",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "allow-open-composio-link",
+    "allow-get-control-state",
+    "allow-begin-action",
+    "allow-start-bot-run",
+    "allow-pause-bot-run",
+    "allow-resume-bot-run",
+    "allow-take-the-wheel",
+    "allow-give-back-control",
+    "allow-stop-bot-run",
+    "allow-dismiss-stop-widget",
+    "allow-finish-bot-run",
+    "allow-ack-stop",
+    "allow-set-stop-hotkey",
+    "allow-overlay-click",
+    "allow-simulate-bot-run",
+    "allow-daemon-connect",
+    "allow-owner-key",
+    "allow-daemon-restart",
+    "allow-daemon-diagnostics",
+    "allow-open-log-folder",
+    "allow-providers-cli",
+    "allow-get-autostart",
+    "allow-set-autostart",
+    "allow-notify-show",
+    "allow-set-needs-count",
+    "allow-set-tray-labels"
+  ]
+}

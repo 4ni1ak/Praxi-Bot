@@ -172,6 +172,9 @@ pub struct RouteDecided {
     pub latency_ms: u64,
     /// Why (for the "why did it do that" panel).
     pub reason: String,
+    /// Optional first-turn model tier (`light` or `standard`). Absent when disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
 }
 
 // ── Workflow replay ───────────────────────────────────────────────────────────
@@ -279,6 +282,23 @@ pub struct RunError {
     pub recoverable: bool,
 }
 
+// ── File checkpoints ──────────────────────────────────────────────────────────
+
+/// The user restored a file checkpoint of this run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CheckpointRestored {
+    /// Restore attempt failed; inspect warnings and safety snapshots.
+    #[serde(default)]
+    pub partial: bool,
+    pub run_id: RunId,
+    /// Restored checkpoint id, or `"all"` when undoing the whole run.
+    pub checkpoint_id: String,
+    /// Safety snapshot created of the overwritten state before restoring.
+    pub safety_checkpoint_id: String,
+    /// Paths restored (in restore order).
+    pub restored: Vec<String>,
+}
+
 // ── Top-level event enum ──────────────────────────────────────────────────────
 
 /// All events that can appear in the client event stream.
@@ -303,6 +323,7 @@ pub enum Event {
     ControlRequested(ControlRequested),
     SubagentStarted(SubagentStarted),
     SubagentFinished(SubagentFinished),
+    CheckpointRestored(CheckpointRestored),
     Error(RunError),
 }
 
@@ -331,5 +352,20 @@ mod tests {
         });
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["type"], "message_delta");
+    }
+
+    #[test]
+    fn route_tier_is_optional_and_old_event_round_trips_unchanged() {
+        let old = serde_json::json!({
+            "type": "route_decided", "run_id": RunId::new(), "level": "K4",
+            "route": {"kind":"agent"}, "confidence": 0.0,
+            "latency_ms": 0, "reason": "no route",
+        });
+        let event: Event = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&event).unwrap(), old);
+        let mut selected = old;
+        selected["tier"] = serde_json::json!("light");
+        let event: Event = serde_json::from_value(selected.clone()).unwrap();
+        assert_eq!(serde_json::to_value(event).unwrap(), selected);
     }
 }

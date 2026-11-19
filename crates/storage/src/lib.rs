@@ -13,9 +13,12 @@ pub mod migrate;
 pub mod paths;
 pub mod records;
 
-pub use db::{Storage, now_ms};
+pub use db::{SkillAssignmentLookup, Storage, is_valid_skill_name, now_ms};
 pub use error::{Result, StorageError};
 pub use event_log::{EventLogWriter, event_log_path, read_event_log};
 pub use journal::{EventJournal, FsJournalSink, JournalRecord, JournalSink};
-pub use paths::{DATA_DIR_ENV, data_dir, resolve_data_dir};
-pub use records::{Approval, AuditEntry, Bot, Chat, EventIndexRow, Message, Run, RunStep, User};
+pub use paths::{DATA_DIR_ENV, data_dir, resolve_data_dir, without_verbatim_prefix};
+pub use records::{
+    Approval, AuditEntry, Bot, BotPatch, BotSkillAssignment, Chat, ChatFlags, EventIndexRow,
+    Message, Run, RunStep, SkillAssignmentMode, User,
+};

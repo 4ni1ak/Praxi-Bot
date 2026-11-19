@@ -24,6 +24,8 @@ pub enum McpTransportKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum McpStatus {
+    /// Waiting for an explicit user sign-in; not a server failure.
+    AuthRequired,
     /// Session is up.
     Connected,
     /// A (re)connect is in progress.
@@ -37,11 +39,38 @@ pub enum McpStatus {
     Quarantined,
 }
 
+/// Class of the last connect error of an MCP server, so a UI can show a
+/// localized "what to do" next to the raw `error` text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpErrorKind {
+    /// The launcher program (`npx`, `uvx`, ...) is not installed or not on PATH.
+    RuntimeMissing,
+    /// The process could not be started for another reason.
+    Spawn,
+    /// The process exited or closed its pipes before the handshake finished
+    /// (`stderr_tail` usually says why).
+    Closed,
+    /// No answer within the timeout.
+    Timeout,
+    /// The configuration or a referenced secret is invalid or missing.
+    Config,
+    /// A filesystem server needs a folder chosen by the user.
+    NeedsFolder,
+    /// Anything else.
+    Other,
+}
+
 /// A configured MCP server (`GET /v1/mcp/servers`).  The full stored config,
 /// except secret *values*: `secret_env` / `secret_headers` carry secret
-/// **names** only.
+/// **names** only. `enabled`, `trust_hints`, `public_content` and `local_only`
+/// are independent switches.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct McpServerDto {
+    /// Public OAuth identity and secret names only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<McpOAuthConfig>,
     /// Server name (the `<server>` of `mcp:<server>/<tool>`).
     pub name: String,
     /// Transport.
@@ -83,12 +112,25 @@ pub struct McpServerDto {
     /// Most recent error, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Class of `error`, for a localized hint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<McpErrorKind>,
+    /// Last lines the server wrote to stderr (secret-redacted, bounded) while
+    /// it is in an error state; empty otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stderr_tail: Vec<String>,
     /// Number of tools currently registered.
     pub tool_count: u32,
     /// Permission category of every tool of the server.
     pub category: String,
     /// Whether the readOnlyHint annotations of the server are believed.
     pub trust_hints: bool,
+    /// Tool results are public data. Default `false`: a result is a private read.
+    #[serde(default)]
+    pub public_content: bool,
+    /// Tools cannot send data off the machine. Default `false`: every tool is egress.
+    #[serde(default)]
+    pub local_only: bool,
     /// Bots that may use the server; `null` = all bots.
     pub bots: Option<Vec<String>>,
 }
@@ -138,6 +180,9 @@ pub enum McpTransportInput {
 /// `POST /v1/secrets/{name}`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct McpServerInput {
+    /// HTTP OAuth identity; client secrets are secret-store references.
+    #[serde(default)]
+    pub oauth: Option<McpOAuthConfig>,
     /// Server name; `id` is accepted as an alias.  Required on POST; on PUT the
     /// path wins (a different name in the body is rejected).
     #[serde(default, alias = "id")]
@@ -174,6 +219,12 @@ pub struct McpServerInput {
     /// Believe the readOnlyHint annotations of the server.  Default `false`.
     #[serde(default)]
     pub trust_hints: bool,
+    /// Tool results are public data. Default `false` (a result is a private read).
+    #[serde(default)]
+    pub public_content: bool,
+    /// Tools cannot send data off the machine. Default `false` (every tool is egress).
+    #[serde(default)]
+    pub local_only: bool,
     /// Permission category of the tools; default `accounts`; `meta` is rejected.
     #[serde(default)]
     pub category: Option<String>,
@@ -193,6 +244,9 @@ pub struct McpServerInput {
 /// reads the raw JSON so an omitted field is not the same as `null`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
 pub struct McpServerPatch {
+    /// HTTP OAuth identity; null clears it.
+    #[serde(default)]
+    pub oauth: Option<McpOAuthConfig>,
     /// Server name; `id` is accepted as an alias.  The path wins (a different
     /// name in the body is rejected).
     #[serde(default, alias = "id")]
@@ -231,6 +285,12 @@ pub struct McpServerPatch {
     /// Believe the readOnlyHint annotations of the server.
     #[serde(default)]
     pub trust_hints: Option<bool>,
+    /// Tool results are public data. Omit to keep the stored value.
+    #[serde(default)]
+    pub public_content: Option<bool>,
+    /// Tools cannot send data off the machine. Omit to keep the stored value.
+    #[serde(default)]
+    pub local_only: Option<bool>,
     /// Permission category of the tools; `null` clears it; `meta` is rejected.
     #[serde(default)]
     #[schema(nullable = true)]
@@ -279,6 +339,17 @@ pub struct McpRequiredSecretDto {
     pub help_url: Option<String>,
 }
 
+/// A folder the user must choose when adding a catalog entry; the app appends
+/// it as the last argument.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct McpFolderDto {
+    /// Label of the folder field.
+    pub label: String,
+    /// A safe default offered to the user (their Documents folder), if there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
+}
+
 /// How to install a catalog entry: send it (plus `name` and `category`) to
 /// `POST /v1/mcp/servers` after storing the `required_secrets`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -305,6 +376,9 @@ pub struct McpCatalogInstallDto {
     pub secret_headers: BTreeMap<String, String>,
     /// Secrets to collect first.
     pub required_secrets: Vec<McpRequiredSecretDto>,
+    /// A folder to collect first (filesystem servers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<McpFolderDto>,
 }
 
 /// An entry of the curated MCP catalog (`GET /v1/mcp/catalog`).
@@ -378,10 +452,91 @@ pub enum McpControlError {
     Internal(String),
 }
 
+/// OAuth configuration contains no credential values.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct McpOAuthConfig {
+    pub client_id: Option<String>,
+    pub client_secret_ref: Option<String>,
+    pub client_metadata_url: Option<String>,
+    #[serde(default)]
+    pub allow_loopback_http: bool,
+    /// The authorization server a pre-registered client is bound to;
+    /// required with `client_id` / `client_secret_ref`.
+    #[serde(default)]
+    pub issuer: Option<String>,
+}
+
+/// Authentication state, independent of transport errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpAuthState {
+    SignedOut,
+    SigningIn,
+    SignedIn,
+    AuthRequired,
+}
+
+/// Body of `POST /v1/mcp/servers/{name}/auth/callback`.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct McpAuthCallback {
+    /// The full address the browser was redirected to (`http://127.0.0.1:<port>/callback?...`).
+    pub redirect_url: String,
+}
+
+/// Browser destination for a user-started, five-minute sign-in.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct McpAuthStart {
+    pub authorization_url: String,
+    pub expires_in: u64,
+}
+
 /// What `/v1/mcp/*` needs from the embedder: the managed MCP servers, their
 /// persistence (`<data dir>/mcp.toml`, written atomically) and the catalog.
 #[async_trait]
 pub trait McpControl: Send + Sync {
+    /// Start sign-in only for an explicit user action. Never exposed as a tool.
+    /// # Errors
+    /// Unknown server, unsupported transport or discovery/policy failure.
+    async fn auth_start(&self, _name: &str) -> Result<McpAuthStart, McpControlError> {
+        Err(McpControlError::Invalid("OAuth is unavailable".into()))
+    }
+    /// Finish a pending sign-in with the redirect URL the user pasted (a host
+    /// without a browser); same `state` check and one-shot rule as the
+    /// loopback redirect.
+    /// # Errors
+    /// No sign-in waiting, a wrong redirect, or a refused exchange.
+    async fn auth_callback(
+        &self,
+        _name: &str,
+        _redirect_url: &str,
+    ) -> Result<McpAuthState, McpControlError> {
+        Err(McpControlError::Invalid("OAuth is unavailable".into()))
+    }
+    /// Cancel and join the pending flow before returning.
+    /// # Errors
+    /// Unknown server or unsupported transport.
+    async fn auth_cancel(&self, _name: &str) -> Result<McpAuthState, McpControlError> {
+        Err(McpControlError::Invalid("OAuth is unavailable".into()))
+    }
+    /// Read state without returning credentials or contacting an authorization server.
+    /// # Errors
+    /// Unknown server or secret-store failure.
+    async fn auth_status(&self, _name: &str) -> Result<McpAuthState, McpControlError> {
+        Err(McpControlError::Invalid("OAuth is unavailable".into()))
+    }
+    /// Cancel pending sign-in, delete credentials and disconnect.
+    /// # Errors
+    /// Unknown server or secret-store failure.
+    async fn auth_logout(&self, _name: &str) -> Result<McpAuthState, McpControlError> {
+        Err(McpControlError::Invalid("OAuth is unavailable".into()))
+    }
+    /// Mask secrets in `text` with the daemon's production redactor before it
+    /// goes into an audit row.  The default leaves text unchanged.
+    fn redact(&self, text: &str) -> String {
+        text.to_owned()
+    }
     /// All servers, ordered by name.
     fn list(&self) -> Vec<McpServerDto>;
     /// Add and (if enabled) connect a server, then persist.
