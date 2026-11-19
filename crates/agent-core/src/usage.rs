@@ -314,6 +314,13 @@ impl CallGuard {
         })
     }
 
+    /// The model tier this call ran on, when tiering is active for the step.
+    pub(crate) fn tier(&mut self, tier: Option<&str>) {
+        if let Some(tier) = tier {
+            self.detail["tier"] = json!(tier);
+        }
+    }
+
     pub(crate) fn usage(&mut self, usage: &Usage) {
         self.detail["tokens"] = json!(usage);
         self.detail["prompt_tokens"] = json!(usage.prompt_tokens);

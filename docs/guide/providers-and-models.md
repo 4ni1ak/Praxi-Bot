@@ -55,9 +55,11 @@ A bot's profile names models by **role** (see
 [Bots and profiles](bots-and-profiles.md)):
 
 - `executor`: runs the agent loop (required).
+- `light`: optional model for simple first turns; see [model tiering](model-tiering.md).
 - `classifier`: an optional small, fast model used by the decision ladder.
-- `planner` and `fallback` are recorded for the future and not used by the loop
-  yet.
+- `fallback`: alternate models after retryable errors or missing capabilities.
+- `planner`: recorded for the future; it does not split the loop into a planner
+  and executor.
 
 A good pairing is a capable model as `executor` and a cheap one as `classifier`.
 

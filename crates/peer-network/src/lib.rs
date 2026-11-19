@@ -30,7 +30,8 @@ pub mod rpc;
 pub mod store;
 
 pub use desktop::{
-    ACTION_RPC_TIMEOUT, DesktopRpcHandler, NodeInfo, RemoteDesktop, desktop_error_to_rpc,
+    ACTION_RPC_TIMEOUT, AttributedDesktop, DesktopRpcHandler, NodeInfo, RemoteDesktop,
+    desktop_error_to_rpc,
 };
 pub use error::{PeerError, Result};
 pub use identity::{key_from_string, key_to_string, load_or_create_secret_key};

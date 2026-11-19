@@ -19,6 +19,14 @@ export const MAX_HEADER_BYTES = 8192;
 export const MAX_PAYLOAD_BYTES = 2 * 1024 * 1024;
 export const MAX_FRAME_WIDTH = 1920;
 export const MAX_FRAME_HEIGHT = 1080;
+export const MAX_FRAME_LONG_EDGE = 1920;
+/** Landscape 1920x1080 or portrait 1080x1920 (the wire cap in either orientation). */
+export function frameSizeAllowed(width: number, height: number): boolean {
+  return (
+    (width <= MAX_FRAME_WIDTH && height <= MAX_FRAME_HEIGHT) ||
+    (width <= MAX_FRAME_HEIGHT && height <= MAX_FRAME_WIDTH)
+  );
+}
 
 export type WireErrorCode =
   | "invalid_prefix"
@@ -154,11 +162,12 @@ export function validateRecordHeader(
       typeof f.width !== "number" ||
       !Number.isSafeInteger(f.width) ||
       f.width < 1 ||
-      f.width > MAX_FRAME_WIDTH ||
+      f.width > MAX_FRAME_LONG_EDGE ||
       typeof f.height !== "number" ||
       !Number.isSafeInteger(f.height) ||
       f.height < 1 ||
-      f.height > MAX_FRAME_HEIGHT ||
+      f.height > MAX_FRAME_LONG_EDGE ||
+      !frameSizeAllowed(f.width, f.height) ||
       !isNonNegativeInt(f.generation) ||
       !isNonNegativeInt(f.frame_seq) ||
       !isNonNegativeInt(f.geometry_revision) ||

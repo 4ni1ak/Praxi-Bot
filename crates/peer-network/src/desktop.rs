@@ -365,6 +365,21 @@ impl RemoteDesktop {
         &self.client
     }
 
+    /// One RPC to the paired computer (`pc.*` families), with the deadline of
+    /// a call that may wait for the person at that computer.
+    ///
+    /// # Errors
+    /// [`PeerError::Rpc`] carries the remote refusal text; other variants are
+    /// transport failures.
+    pub async fn call_raw(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: std::time::Duration,
+    ) -> Result<Value> {
+        self.client.call_with_timeout(method, params, timeout).await
+    }
+
     async fn call<T: DeserializeOwned>(
         &self,
         method: &str,
@@ -440,5 +455,105 @@ impl DesktopBackend for RemoteDesktop {
 
     fn capabilities(&self) -> Capabilities {
         self.caps.clone()
+    }
+}
+
+/// A [`RemoteDesktop`] whose every request also carries `extra` (for the
+/// user's own computer: which bot of the server is asking, so the computer
+/// keys its allowances and its cards on that bot).
+pub struct AttributedDesktop {
+    remote: std::sync::Arc<RemoteDesktop>,
+    extra: serde_json::Map<String, Value>,
+}
+
+impl RemoteDesktop {
+    /// The same connection, every request naming `extra`.
+    #[must_use]
+    pub fn attributed(
+        self: &std::sync::Arc<Self>,
+        extra: serde_json::Map<String, Value>,
+    ) -> AttributedDesktop {
+        AttributedDesktop {
+            remote: std::sync::Arc::clone(self),
+            extra,
+        }
+    }
+}
+
+impl AttributedDesktop {
+    fn with_extra(&self, params: Value) -> Value {
+        let mut obj = match params {
+            Value::Object(o) => o,
+            _ => serde_json::Map::new(),
+        };
+        for (k, v) in &self.extra {
+            obj.insert(k.clone(), v.clone());
+        }
+        Value::Object(obj)
+    }
+}
+
+#[async_trait]
+impl DesktopBackend for AttributedDesktop {
+    async fn snapshot(&self, scope: Option<u64>) -> std::result::Result<Snapshot, DesktopError> {
+        self.remote
+            .call(
+                "desktop.snapshot",
+                self.with_extra(enc(&SnapshotParams { scope })?),
+            )
+            .await
+    }
+
+    async fn act(&self, action: Action) -> std::result::Result<ActionResult, DesktopError> {
+        self.remote
+            .call("desktop.act", self.with_extra(enc(&ActParams { action })?))
+            .await
+    }
+
+    async fn screenshot(
+        &self,
+        region: Region,
+        quality: Quality,
+    ) -> std::result::Result<Image, DesktopError> {
+        let w: ImageWire = self
+            .remote
+            .call(
+                "desktop.screenshot",
+                self.with_extra(enc(&ScreenshotParams { region, quality })?),
+            )
+            .await?;
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(w.data_base64)
+            .map_err(|e| DesktopError::Screenshot(format!("bad image data from node: {e}")))?;
+        Ok(Image {
+            data,
+            width: w.width,
+            height: w.height,
+            mime_type: w.mime_type,
+        })
+    }
+
+    async fn windows(&self) -> std::result::Result<Vec<WindowInfo>, DesktopError> {
+        self.remote
+            .call("desktop.windows", self.with_extra(Value::Null))
+            .await
+    }
+
+    async fn launch(&self, app: AppSpec) -> std::result::Result<Pid, DesktopError> {
+        let v: Value = self
+            .remote
+            .call(
+                "desktop.launch",
+                self.with_extra(enc(&LaunchParams { app })?),
+            )
+            .await?;
+        v.get("pid")
+            .and_then(Value::as_u64)
+            .and_then(|p| Pid::try_from(p).ok())
+            .ok_or_else(|| DesktopError::Internal("launch result lacks pid".into()))
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        self.remote.caps.clone()
     }
 }

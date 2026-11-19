@@ -23,6 +23,7 @@
 pub mod actions;
 pub mod browser;
 pub mod client;
+pub mod destination;
 pub mod diff;
 pub mod dom;
 pub mod error;
@@ -30,6 +31,7 @@ pub mod host;
 pub mod launch;
 pub mod live_view;
 pub mod page;
+pub mod proxy;
 pub mod snapshot;
 
 pub use actions::{
@@ -41,6 +43,9 @@ pub use client::{
     CdpClient, CdpClientConfig, CdpEvent, DEFAULT_MAX_SCREENCAST_EVENT_BYTES,
     DEFAULT_MAX_SCREENCAST_IMAGE_BYTES, ScreencastMetadata,
 };
+pub use destination::{
+    AddrClass, DestinationCheck, ServedNetwork, Verdict, classify_ip, classify_url,
+};
 pub use diff::{SnapshotDiff, diff, diff_text};
 pub use error::{Error, Result};
 pub use launch::{LaunchOptions, find_browser};
@@ -50,4 +55,5 @@ pub use live_view::{
     ViewportGeometry,
 };
 pub use page::{DialogAction, DialogInfo, DialogOptions, Page};
+pub use proxy::FilterProxy;
 pub use snapshot::{RefEntry, RefMap, SnapNode, Snapshot, SnapshotOptions, build_snapshot};

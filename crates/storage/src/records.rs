@@ -56,6 +56,15 @@ pub enum BotPatch {
     Rejected(String),
 }
 
+/// Owner-set organisation flags of a chat (separate from [`Chat`] so the record stays stable).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ChatFlags {
+    /// Sorted first in chat lists.
+    pub pinned: bool,
+    /// Hidden from the default chat list.
+    pub archived: bool,
+}
+
 /// A chat thread.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chat {

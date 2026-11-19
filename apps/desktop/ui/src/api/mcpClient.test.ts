@@ -159,6 +159,7 @@ test("live-view and control routes send Bearer header, Accept media type, no que
   await c.openViewFrameStream("s 1");
   await c.heartbeatViewSession("s 1", { takeover_id: "to-1", control_epoch: 2 });
   await c.updateViewSession("s 1", { last_rendered_frame_seq: 5, decode_ms: 8 });
+  await c.ackViewFrame("s 1", 6);
   await c.requestTakeover({ session_id: "s 1", request_id: "r-1" });
   await c.sendViewInput("s 1", {
     v: 1,
@@ -187,6 +188,7 @@ test("live-view and control routes send Bearer header, Accept media type, no que
       "GET /v1/view/sessions/s%201/frames",
       "PUT /v1/view/sessions/s%201/heartbeat",
       "PATCH /v1/view/sessions/s%201",
+      "POST /v1/view/sessions/s%201/ack",
       "POST /v1/control/takeover",
       "POST /v1/view/sessions/s%201/input",
       "POST /v1/control/release",

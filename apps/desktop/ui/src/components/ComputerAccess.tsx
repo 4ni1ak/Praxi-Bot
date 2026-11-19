@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
-import type { ApiClient } from "../api/client";
+import { switchesOf, type ApiClient, type ComputerSwitches } from "../api/client";
 import type { PcRequestInfo } from "../api/types";
+import { SwitchQueue } from "../lib/computerSwitchQueue";
 import { humanLine } from "../lib/humanError";
 import { useDaemon } from "../state/DaemonContext";
 import { Modal } from "./Modal";
@@ -14,59 +15,77 @@ import styles from "./ComputerAccess.module.css";
 export const ownerKey = () => invoke<string>("owner_key");
 
 /**
- * Turn "let this server's bots use this computer" on or off through the same owner-key route as the
- * Settings switch (`setComputerAccess`). Keeps the "don't ask before reading" choice as it was.
+ * Turn "let this server's bots use this computer" (screen and input) on or off through the same
+ * owner-key route as the Settings switch (`setComputerAccess`). The other families keep their state.
  */
 export async function setHostComputerAccess(
   api: Pick<ApiClient, "setComputerAccess"> | null,
-  host: { id: string; computer_access_always?: boolean | null },
+  host: Parameters<typeof switchesOf>[0] & { id: string },
   enabled: boolean
 ): Promise<void> {
   if (!api) {
     throw new Error("local_daemon_unavailable");
   }
-  await api.setComputerAccess(host.id, enabled, enabled && host.computer_access_always === true, await ownerKey());
+  const now = switchesOf(host);
+  await api.setComputerAccess(host.id, { ...now, screen: enabled, alwaysRead: enabled && now.alwaysRead }, await ownerKey());
 }
 
+type Family = "screen" | "browser" | "commands" | "files";
+const FAMILIES: Family[] = ["screen", "browser", "commands", "files"];
+
 /**
- * Settings > Computer: "Let my bots use this computer", one switch per paired server. Off by
- * default; only the person at this computer can turn it on (the daemon refuses every paired
- * device on these routes).
+ * Settings > Computer: what each paired server's bots may do on this computer, one switch per
+ * family (screen and input, browser, commands, files). All off by default; only the person at
+ * this computer can turn them on (the daemon refuses every paired device on these routes).
  */
 export function ComputerAccessCard() {
   const { t } = useTranslation();
   const { hostList, localApi, refreshHosts } = useDaemon();
   const [error, setError] = useState<string | null>(null);
+  const [, redraw] = useState(0);
+  // Changes go out one after the other, each built from the last state sent, so two quick
+  // toggles never resend a stale switch set (the latest props lag behind).
+  const io = useRef({ localApi, refreshHosts });
+  io.current = { localApi, refreshHosts };
+  const queue = useRef<SwitchQueue | null>(null);
+  queue.current ??= new SwitchQueue(
+    async (id, next) => {
+      const key = await ownerKey();
+      await io.current.localApi?.setComputerAccess(id, next, key);
+      await io.current.refreshHosts();
+    },
+    (e: unknown) => setError(humanLine(e)),
+    () => redraw((n) => n + 1)
+  );
   const hosts = hostList?.hosts ?? [];
   if (hosts.length === 0) {
     return <p className={styles.hint}>{t("computerAccess.noServer")}</p>;
   }
+  const change = (h: (typeof hosts)[number], patch: Partial<ComputerSwitches>) => {
+    setError(null);
+    void queue.current?.change(h.id, switchesOf(h), patch);
+  };
   return (
     <div className={styles.stack}>
       <p className={styles.hint}>{t("computerAccess.explain")}</p>
-      {hosts.map((h) => (
-        <SettingRow
-          key={h.id}
-          title={t("computerAccess.allow", { name: h.name })}
-          description={t("computerAccess.askNote")}
-        >
-          <Switch
-            checked={h.computer_access === true}
-            label={t("computerAccess.allow", { name: h.name })}
-            onChange={(enabled) => {
-              setError(null);
-              void ownerKey()
-                .then((key) =>
-                  localApi?.setComputerAccess(h.id, enabled, enabled && h.computer_access_always === true, key)
-                )
-                .then(() => refreshHosts())
-                .catch((e: unknown) =>
-                  setError(humanLine(e))
-                );
-            }}
-          />
-        </SettingRow>
-      ))}
+      {hosts.map((h) => {
+        const now = queue.current?.view(h.id, switchesOf(h)) ?? switchesOf(h);
+        return FAMILIES.map((family) => (
+          <SettingRow
+            key={`${h.id}-${family}`}
+            title={t(`computerAccess.family.${family}`, { name: h.name })}
+            description={t(`computerAccess.familyNote.${family}`)}
+          >
+            <Switch
+              checked={now[family]}
+              label={t(`computerAccess.family.${family}`, { name: h.name })}
+              onChange={(on) =>
+                change(h, family === "screen" ? { screen: on, ...(on ? {} : { alwaysRead: false }) } : { [family]: on })
+              }
+            />
+          </SettingRow>
+        ));
+      })}
       {hosts
         .filter((h) => h.computer_access === true)
         .map((h) => (
@@ -76,17 +95,9 @@ export function ComputerAccessCard() {
             description={t("computerAccess.alwaysReadNote")}
           >
             <Switch
-              checked={h.computer_access_always === true}
+              checked={(queue.current?.view(h.id, switchesOf(h)) ?? switchesOf(h)).alwaysRead}
               label={t("computerAccess.alwaysRead", { name: h.name })}
-              onChange={(always) => {
-                setError(null);
-                void ownerKey()
-                  .then((key) => localApi?.setComputerAccess(h.id, true, always, key))
-                  .then(() => refreshHosts())
-                  .catch((e: unknown) =>
-                    setError(humanLine(e))
-                  );
-              }}
+              onChange={(always) => change(h, { alwaysRead: always })}
             />
           </SettingRow>
         ))}
@@ -105,7 +116,9 @@ export function ComputerRequestModal() {
   const { hostList, localApi } = useDaemon();
   const [pending, setPending] = useState<PcRequestInfo[]>([]);
   const [reading, setReading] = useState<string[]>([]);
-  const watching = (hostList?.hosts ?? []).some((h) => h.computer_access);
+  const watching = (hostList?.hosts ?? []).some(
+    (h) => h.computer_access || h.computer_browser || h.computer_commands || h.computer_files
+  );
   useEffect(() => {
     if (!watching || !localApi) {
       setPending([]);
@@ -164,6 +177,14 @@ export function ComputerRequestModal() {
               <span className={styles.untrusted} title={t("computerAccess.fromServer")}>
                 {t("computerAccess.fromServerName", { name: current.host_name })}
               </span>
+              {current.bot_name ? (
+                <>
+                  {" "}
+                  <span className={styles.untrusted} title={t("computerAccess.fromServer")} data-testid="computer-request-bot">
+                    {t("computerAccess.fromBotName", { name: current.bot_name })}
+                  </span>
+                </>
+              ) : null}
             </p>
             <dl className={styles.facts}>
               <dt>{t("computerAccess.what")}</dt>

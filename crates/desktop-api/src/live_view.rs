@@ -606,8 +606,19 @@ pub fn compute_target_dimensions(
     if src_w == 0 || src_h == 0 || max_w == 0 || max_h == 0 {
         return Err(ViewError::InvalidRecord);
     }
-    let cap_w = u64::from(max_w.min(MAX_OUTPUT_WIDTH));
-    let cap_h = u64::from(max_h.min(MAX_OUTPUT_HEIGHT));
+    // A portrait screen uses the box turned on its side (1080x1920), so its long edge is
+    // not cut to the short side of the landscape box.
+    let (cap_w, cap_h) = if src_h > src_w {
+        (
+            u64::from(max_h.min(MAX_OUTPUT_HEIGHT)),
+            u64::from(max_w.min(MAX_OUTPUT_WIDTH)),
+        )
+    } else {
+        (
+            u64::from(max_w.min(MAX_OUTPUT_WIDTH)),
+            u64::from(max_h.min(MAX_OUTPUT_HEIGHT)),
+        )
+    };
     let sw = u64::from(src_w);
     let sh = u64::from(src_h);
     let (out_w, out_h) = if sw <= cap_w && sh <= cap_h {
@@ -3339,6 +3350,19 @@ mod tests {
             compute_target_dimensions(3840, 2160, 1920, 1080).unwrap(),
             (1920, 1080)
         );
+        // A portrait screen keeps its long edge: the box is turned on its side.
+        assert_eq!(
+            compute_target_dimensions(1080, 1920, 1920, 1080).unwrap(),
+            (1080, 1920)
+        );
+        assert_eq!(
+            compute_target_dimensions(2160, 3840, 1920, 1080).unwrap(),
+            (1080, 1920)
+        );
+        assert_eq!(
+            compute_target_dimensions(1440, 2560, 1920, 1080).unwrap(),
+            (1080, 1920)
+        );
         assert!(EffectiveProfile::watch().max_width >= 1920);
         assert!(EffectiveProfile::live().max_width >= 1920);
     }
@@ -4483,10 +4507,13 @@ mod tests {
         // `Reason::FrameBudgetExceeded`, and NOT spin in a tight CPU loop.
         let mut tight = EffectiveProfile::live();
         tight.burst_bytes = u32::try_from(MAX_HEADER + 32).unwrap();
+        let started = std::time::Instant::now();
         let err = src.subscribe(tight).await.err();
         assert_eq!(err, Some(ViewError::LimitExceeded));
-        // One capture; a slow debug build may just reach the 500 ms retry, never a tight loop.
-        assert!(calls.load(Ordering::SeqCst) <= 2);
+        // Never a tight loop: at most one capture per retry interval that really elapsed (plus
+        // the first one and one in flight), however slow or loaded the machine is.
+        let allowed = 2 + started.elapsed().as_millis() / UNAVAILABLE_RETRY_INTERVAL.as_millis();
+        assert!(u128::from(calls.load(Ordering::SeqCst)) <= allowed);
         assert_eq!(
             target.stats().last_unavailable_reason,
             Some(Reason::FrameBudgetExceeded)

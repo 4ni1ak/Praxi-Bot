@@ -416,6 +416,13 @@
           "type": "string",
           "format": "uuid"
         },
+        "tier": {
+          "description": "Optional first-turn model tier (`light` or `standard`). Absent when disabled.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "type": {
           "type": "string",
           "enum": [

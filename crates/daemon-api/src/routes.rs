@@ -31,7 +31,8 @@ use crate::dto::{
     EnableCliProviderInput, GrantDto, GrantTargetDto, Health, LatestCursor, MessageDto, Mode,
     ParseSchedule, ParsedSchedule, PolicyDto, PolicyInput, ProvidersDto, ReloadResponse,
     RememberResponse, RevokeGrant, RunDto, RunUsageDto, RuntimeConfigDto, ScheduleChangeKind,
-    ScheduleDto, ScheduleInput, Scope, SendMessage, SendResponse, UsageSummary, UsageTotals,
+    ScheduleDto, ScheduleInput, Scope, SendMessage, SendResponse, UpdateChat, UsageSummary,
+    UsageTotals,
 };
 use crate::error::{ApiError, ErrorBody};
 
@@ -157,8 +158,10 @@ fn effective_policy_dto(e: EffectivePolicy) -> EffectivePolicyDto {
     }
 }
 
-fn chat_dto(c: Chat) -> ChatDto {
+fn chat_dto(c: Chat, flags: storage::ChatFlags) -> ChatDto {
     ChatDto {
+        pinned: flags.pinned,
+        archived: flags.archived,
         id: c.id.0,
         chat_id: c.id.0,
         bot_id: c.bot_id.0,
@@ -910,11 +913,15 @@ pub(crate) async fn delete_bot(
 #[utoipa::path(get, path = "/v1/chats", tag = "chats", security(("bearer" = [])),
     responses((status = 200, body = Vec<ChatDto>)))]
 pub(crate) async fn list_chats(State(s): State<AppState>) -> Result<Json<Vec<ChatDto>>, ApiError> {
+    let flags = s.storage().list_chat_flags(s.user_id())?;
     Ok(Json(
         s.storage()
             .list_chats(s.user_id())?
             .into_iter()
-            .map(chat_dto)
+            .map(|c| {
+                let f = flags.get(&c.id).copied().unwrap_or_default();
+                chat_dto(c, f)
+            })
             .collect(),
     ))
 }
@@ -936,7 +943,54 @@ pub(crate) async fn create_chat(
         created_at_ms: now_ms(),
     };
     s.storage().insert_chat(&chat)?;
-    Ok((StatusCode::CREATED, Json(chat_dto(chat))))
+    Ok((
+        StatusCode::CREATED,
+        Json(chat_dto(chat, storage::ChatFlags::default())),
+    ))
+}
+
+/// Rename, pin or archive a chat.
+#[utoipa::path(patch, path = "/v1/chats/{id}", tag = "chats", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Chat id")),
+    request_body = UpdateChat,
+    responses((status = 200, body = ChatDto), (status = 400, body = ErrorBody), (status = 404, body = ErrorBody)))]
+pub(crate) async fn update_chat(
+    State(s): State<AppState>,
+    Path(cid): Path<String>,
+    ApiJson(input): ApiJson<UpdateChat>,
+) -> Result<Json<ChatDto>, ApiError> {
+    let chat = s.chat_of_user(ChatId(id(&cid)?))?;
+    let title = match input.title.as_deref().map(str::trim) {
+        Some(t) if t.is_empty() || t.chars().count() > 120 => {
+            return Err(ApiError::bad_request("title must be 1 to 120 characters"));
+        }
+        other => other,
+    };
+    s.storage()
+        .update_chat(chat.id, title, input.pinned, input.archived)?;
+    let chat = s.chat_of_user(chat.id)?;
+    let flags = s.storage().chat_flags(chat.id)?;
+    Ok(Json(chat_dto(chat, flags)))
+}
+
+/// Delete a chat and its messages (its runs stay for the audit trail). Refused while a run of
+/// the chat is active.
+#[utoipa::path(delete, path = "/v1/chats/{id}", tag = "chats", security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Chat id")),
+    responses((status = 204), (status = 404, body = ErrorBody), (status = 409, body = ErrorBody)))]
+pub(crate) async fn delete_chat(
+    State(s): State<AppState>,
+    Path(cid): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let chat = s.chat_of_user(ChatId(id(&cid)?))?;
+    s.storage().delete_chat(chat.id).map_err(|e| match e {
+        storage::StorageError::Conflict(_) => {
+            ApiError::conflict("the chat has a run in progress: stop it first")
+        }
+        other => other.into(),
+    })?;
+    agent_core::attachments::remove_chat(&s.data_dir(), chat.id);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// List a chat's messages, oldest first.
@@ -1028,7 +1082,10 @@ pub(crate) async fn send_message(
         .get("x-praxi-message-source")
         .and_then(|v| v.to_str().ok());
     let source = if !actor.local {
-        "peer"
+        // The owner's admin desktop of this host is told apart from any other
+        // paired device: only its messages may start work on the user's own
+        // computer (`pc_*`).
+        if actor.admin { "peer_admin" } else { "peer" }
     } else if hint == Some("telegram") {
         "telegram"
     } else if hint == Some("local_ui") && s.owner_ok(&headers) {

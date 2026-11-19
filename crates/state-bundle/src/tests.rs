@@ -46,7 +46,7 @@ pub(super) fn database(dir: &Path, populated: bool) {
         Connection::open(dir.join("bot.db")).unwrap().execute_batch(
             "INSERT INTO users VALUES ('00000000-0000-0000-0000-000000000001', 'owner', 1);
              INSERT INTO bots (id, user_id, name, config_json, created_at_ms) VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'assistant', '{\"model\":\"fake\"}', 2);
-             INSERT INTO chats VALUES ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', 'hello', 3);"
+             INSERT INTO chats (id, user_id, bot_id, title, created_at_ms) VALUES ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', 'hello', 3);"
         ).unwrap();
     }
 }

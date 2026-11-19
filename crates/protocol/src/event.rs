@@ -172,6 +172,9 @@ pub struct RouteDecided {
     pub latency_ms: u64,
     /// Why (for the "why did it do that" panel).
     pub reason: String,
+    /// Optional first-turn model tier (`light` or `standard`). Absent when disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
 }
 
 // ── Workflow replay ───────────────────────────────────────────────────────────
@@ -349,5 +352,20 @@ mod tests {
         });
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["type"], "message_delta");
+    }
+
+    #[test]
+    fn route_tier_is_optional_and_old_event_round_trips_unchanged() {
+        let old = serde_json::json!({
+            "type": "route_decided", "run_id": RunId::new(), "level": "K4",
+            "route": {"kind":"agent"}, "confidence": 0.0,
+            "latency_ms": 0, "reason": "no route",
+        });
+        let event: Event = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&event).unwrap(), old);
+        let mut selected = old;
+        selected["tier"] = serde_json::json!("light");
+        let event: Event = serde_json::from_value(selected.clone()).unwrap();
+        assert_eq!(serde_json::to_value(event).unwrap(), selected);
     }
 }

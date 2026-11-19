@@ -50,6 +50,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0016_trusted_folders",
         include_str!("../migrations/0016_trusted_folders.sql"),
     ),
+    (
+        "0017_chat_flags",
+        include_str!("../migrations/0017_chat_flags.sql"),
+    ),
 ];
 
 /// Highest schema version this build supports.
@@ -162,9 +166,9 @@ mod tests {
     fn migrates_empty_db_and_is_idempotent() {
         let mut conn = Connection::open_in_memory().unwrap();
         assert_eq!(current_version(&conn).unwrap(), 0);
-        assert_eq!(latest_version(), 16);
-        assert_eq!(migrate(&mut conn).unwrap(), 11);
-        assert_eq!(current_version(&conn).unwrap(), 16);
+        assert_eq!(latest_version(), 17);
+        assert_eq!(migrate(&mut conn).unwrap(), 12);
+        assert_eq!(current_version(&conn).unwrap(), 17);
         assert_eq!(migrate(&mut conn).unwrap(), 0);
         assert_eq!(
             tables(&conn),
@@ -216,8 +220,8 @@ mod tests {
     fn fresh_database_ends_at_latest_version() {
         let mut conn = Connection::open_in_memory().unwrap();
         migrate(&mut conn).unwrap();
-        assert_eq!(latest_version(), 16);
-        assert_eq!(current_version(&conn).unwrap(), 16);
+        assert_eq!(latest_version(), 17);
+        assert_eq!(current_version(&conn).unwrap(), 17);
         assert_eq!(MIGRATIONS[5].0, "0006_bot_skill_assignment");
         assert_eq!(MIGRATIONS[6].0, "0007_message_exposure");
         assert_eq!(MIGRATIONS[7].0, "0013_bot_version");
@@ -249,8 +253,8 @@ mod tests {
                 .iter()
                 .any(|t| t.starts_with("bot_skill_assignment"))
         );
-        assert_eq!(migrate(&mut conn).unwrap(), 6);
-        assert_eq!(current_version(&conn).unwrap(), 16);
+        assert_eq!(migrate(&mut conn).unwrap(), 7);
+        assert_eq!(current_version(&conn).unwrap(), 17);
         // An existing bot starts at version 1.
         let v: i64 = conn
             .query_row("SELECT version FROM bots WHERE id='bot'", [], |r| r.get(0))
@@ -294,7 +298,7 @@ mod tests {
         without_exposure.push(MIGRATIONS[7]);
         assert_eq!(migrate_list(&mut conn, &without_exposure).unwrap(), 7);
         assert_eq!(current_version(&conn).unwrap(), 13);
-        assert_eq!(migrate(&mut conn).unwrap(), 4);
+        assert_eq!(migrate(&mut conn).unwrap(), 5);
         conn.prepare("SELECT exposure_untrusted,exposure_private,exposure_sources FROM messages")
             .unwrap();
         assert_eq!(migrate(&mut conn).unwrap(), 0);

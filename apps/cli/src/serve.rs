@@ -1013,6 +1013,29 @@ pub fn serve(
     step("agent built");
     // Same registry the loop calls tools from: MCP servers, email and web tools register into it.
     let mcp_tools = agent.tool_registry();
+    // The user's own computer as a per-request target of the bots living on this
+    // server (card 272): a separate `pc_*` family, bound to the paired desktop
+    // once the peer stack below exists. Only a host has bots to serve.
+    let pc_slot = Arc::new(builtin_tools::pc::PcLinkSlot::new());
+    if host_is_host {
+        // The bot's name goes on the computer's cards.
+        let names_storage = Arc::clone(&storage);
+        let names: builtin_tools::pc::BotNames = Arc::new(move |id: &str| {
+            let id = uuid::Uuid::parse_str(id).ok()?;
+            names_storage
+                .get_bot(protocol::BotId(id))
+                .ok()
+                .flatten()
+                .map(|b| b.name)
+        });
+        for tool in builtin_tools::pc::pc_tools(
+            &(pc_slot.clone() as Arc<dyn builtin_tools::pc::PcLink>),
+            data_dir,
+            &names,
+        ) {
+            let _ = mcp_tools.register(tool);
+        }
+    }
     let composio_tools = mcp_tools.clone();
     let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
         .map(|(host, _)| host);
@@ -1101,6 +1124,20 @@ pub fn serve(
                         audit: Arc::new(move |action, detail| audit(action, &detail)),
                         redact: Arc::new(move |text| masker.redact(text)),
                         own_pid: std::process::id(),
+                        tools: builtin_tools::pc::local_tools(data_dir),
+                        browser: Some({
+                            // This computer's managed browser, one per bot of
+                            // the server: a window, a fresh isolated profile
+                            // each, never the owner's own.
+                            let data_dir = data_dir.to_path_buf();
+                            Arc::new(move || {
+                                let mut settings =
+                                    builtin_tools::BrowserSettings::isolated(&data_dir);
+                                settings.headless = false;
+                                Arc::new(builtin_tools::CdpDriver::new(settings))
+                                    as Arc<dyn builtin_tools::BrowserDriver>
+                            })
+                        }),
                     },
                 ))
             });
@@ -1110,15 +1147,19 @@ pub fn serve(
                 handler,
             }
         });
+        // What this daemon serves over RPC: a computer serves its desktop (and,
+        // behind the owner's switches, commands, files and browser) to its
+        // paired server.
+        let rpc_handler: Option<Arc<dyn peer_network::RpcHandler>> = pc_target
+            .as_ref()
+            .and_then(|pc| pc.handler.clone())
+            .map(|h| h as Arc<dyn peer_network::RpcHandler>);
         let peer = crate::peer::start_server(
             data_dir,
             host_is_host,
             effective_peer_enabled,
             state.clone(),
-            pc_target
-                .as_ref()
-                .and_then(|pc| pc.handler.clone())
-                .map(|h| h as Arc<dyn peer_network::RpcHandler>),
+            rpc_handler,
         )
         .await?;
         step("peer stack handled");
@@ -1153,6 +1194,9 @@ pub fn serve(
             local_id.clone(),
         ));
         agent.set_computer_provider(Arc::clone(&computer) as Arc<dyn agent_core::ComputerProvider>);
+        pc_slot.set(Arc::new(crate::computer::CliPcLink::new(Arc::clone(
+            &computer,
+        ))));
         if crate::computer::is_machine_fingerprint(&local_id) {
             // Without a running peer stack the paired list is unknown, not empty.
             let paired_computers: Option<Vec<String>> = peer.as_ref().map(|net| {
