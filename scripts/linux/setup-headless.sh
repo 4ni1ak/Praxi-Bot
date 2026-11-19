@@ -32,11 +32,6 @@
 
 set -euo pipefail
 
-# Never let apt's needrestart hook restart services (including praxi.service)
-# behind our back: list-only mode, no interactive prompts. Restarts happen only
-# where this script restarts them on purpose.
-export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1
-
 MODE="user"
 SESSION_MODE="xfce"
 WITHOUT_DESKTOP=0
@@ -232,9 +227,10 @@ install_desktop_packages() {
   fi
 
   if command -v apt-get >/dev/null 2>&1; then
-    local SUDO=""
+    # Set the variables after sudo so its environment policy cannot strip them.
+    local -a apt_cmd=(env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 apt-get)
     if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-      SUDO="sudo"
+      apt_cmd=(sudo "${apt_cmd[@]}")
     fi
     local pkgs_apt=(
       xvfb
@@ -266,7 +262,7 @@ install_desktop_packages() {
     fi
 
     log "updating apt package index..."
-    ${SUDO} env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 apt-get update -y
+    "${apt_cmd[@]}" update -y
 
     local pkg missing_pkgs=()
     for pkg in "${pkgs_apt[@]}"; do
@@ -300,7 +296,7 @@ install_desktop_packages() {
     fi
 
     log "installing packages: ${pkgs_apt[*]}"
-    ${SUDO} env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 apt-get install -y --no-install-recommends "${pkgs_apt[@]}"
+    "${apt_cmd[@]}" install -y --no-install-recommends "${pkgs_apt[@]}"
   elif command -v dnf >/dev/null 2>&1 && [[ "${MODE}" == "system" ]]; then
     local pkgs_dnf=(xorg-x11-server-Xvfb xauth dbus-daemon dbus-x11 at-spi2-core xdpyinfo xset xdg-utils liberation-fonts)
     if [[ "${need_xfce}" -eq 1 ]]; then

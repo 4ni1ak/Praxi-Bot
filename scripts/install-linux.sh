@@ -7,11 +7,6 @@
 # bootstrap from a reviewed copy of this repository; replace the example tag:
 #   (
 #     set -euo pipefail
-
-# Never let apt's needrestart hook restart services (including praxi.service)
-# behind our back: list-only mode, no interactive prompts. Restarts happen only
-# where this script restarts them on purpose.
-export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1
 #     version=v0.1.0
 #     work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 #     base="https://github.com/emreocell/Praxi-Bot/releases/download/$version"
@@ -345,6 +340,11 @@ log "architecture: ${ARCH}"
 ASSET="praxi-linux-${ARCH}.tar.gz"
 
 # --------------------------------------------------------------- packages
+# Keep needrestart from restarting the live installation during package setup.
+apt_without_restarts() {
+  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 apt-get "$@"
+}
+
 # Test actual candidate data, not apt-cache's success status on empty output.
 apt_candidate() {
   local candidate
@@ -371,7 +371,7 @@ install_cft() {
     for pkg in libasound2 libatspi2.0-0; do
       if apt_candidate "${pkg}t64"; then libs+=("${pkg}t64"); else libs+=("${pkg}"); fi
     done
-    apt-get install -y --no-install-recommends unzip "${libs[@]}"
+    apt_without_restarts install -y --no-install-recommends unzip "${libs[@]}"
   else
     dnf install -y --setopt=install_weak_deps=False unzip nss atk at-spi2-atk cups-libs \
       libdrm libxkbcommon libXcomposite libXdamage libXfixes libXrandr mesa-libgbm pango \
@@ -440,7 +440,7 @@ install_desktop_fonts() {
       if apt_candidate "${pkg}"; then fonts+=("${pkg}"); else warn "font package '${pkg}' has no candidate on ${ARCH}; skipping"; fi
     done
     if [[ "${#fonts[@]}" -gt 0 ]]; then
-      apt-get install -y --no-install-recommends "${fonts[@]}" \
+      apt_without_restarts install -y --no-install-recommends "${fonts[@]}" \
         || warn "could not install ${fonts[*]}; emoji or CJK text in the browser may show empty boxes. Install them later with apt-get install ${fonts[*]}"
     fi
   elif command -v dnf >/dev/null 2>&1; then
@@ -489,8 +489,7 @@ install_packages() {
     pkgs_dnf+=(xfce4-terminal thunar)
   fi
   if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y
+    apt_without_restarts update -y
     if [[ "${WITH_DESKTOP_SESSION}" -eq 1 || "${SESSION_APPS_ACTIVE}" -eq 1 ]]; then
       local pkg missing_pkgs=()
       for pkg in "${pkgs_apt[@]}"; do
@@ -509,12 +508,12 @@ install_packages() {
         fi
       done
     fi
-    apt-get install -y --no-install-recommends "${pkgs_apt[@]}"
+    apt_without_restarts install -y --no-install-recommends "${pkgs_apt[@]}"
     # Debian 12 / Ubuntu: libssl3. Debian 13 renamed it to libssl3t64.
     if apt_candidate libssl3; then
-      apt-get install -y --no-install-recommends libssl3
+      apt_without_restarts install -y --no-install-recommends libssl3
     elif apt_candidate libssl3t64; then
-      apt-get install -y --no-install-recommends libssl3t64
+      apt_without_restarts install -y --no-install-recommends libssl3t64
     else
       warn "no libssl3 package found; the binaries need libssl.so.3"
     fi
@@ -525,7 +524,7 @@ install_packages() {
       # shellcheck source=/dev/null
       distro_id="$(. /etc/os-release; printf '%s' "${ID}")"
       if [[ "${distro_id}" == "debian" ]] && apt_candidate chromium; then
-        apt-get install -y --no-install-recommends chromium
+        apt_without_restarts install -y --no-install-recommends chromium
       else
         install_cft
       fi
@@ -911,6 +910,9 @@ fi
 NODE_WAS_ACTIVE="${WAS_ACTIVE_NODE}"
 UPGRADE_STOPPED=1
 
+if (( WAS_ACTIVE_NODE || WAS_ACTIVE_XVFB || WAS_ACTIVE_DESKTOP || WAS_ACTIVE_PRAXI )); then
+  log "stopping active Praxi services for installation"
+fi
 if [[ "${WAS_ACTIVE_NODE}" -eq 1 ]]; then
   systemctl stop praxi-node.service
 fi
@@ -1818,15 +1820,14 @@ fi
 
 START_FAILED=0
 if [[ "${NO_START}" -eq 0 ]]; then
+  log "starting Praxi services after installation"
   if [[ "${DESKTOP_ACTIVE}" -eq 1 ]]; then
-    systemctl restart praxi-xvfb.service || START_FAILED=1
+    systemctl start praxi-xvfb.service || START_FAILED=1
     if [[ "${DESKTOP_SESSION_ACTIVE}" -eq 1 ]]; then
       systemctl start praxi-desktop.service || START_FAILED=1
     fi
-    systemctl start praxi.service || START_FAILED=1
-  else
-    systemctl restart praxi.service || START_FAILED=1
   fi
+  systemctl start praxi.service || START_FAILED=1
   if [[ "${START_FAILED}" -eq 0 ]]; then
     ready=0
     consecutive=0
@@ -1851,7 +1852,7 @@ if [[ "${NO_START}" -eq 0 ]]; then
       systemctl is-active --quiet praxi-desktop.service || START_FAILED=1
     fi
     if [[ "${NODE_WAS_ACTIVE}" -eq 1 ]]; then
-      systemctl restart praxi-node.service || START_FAILED=1
+      systemctl start praxi-node.service || START_FAILED=1
       systemctl is-active --quiet praxi-node.service || START_FAILED=1
     fi
   fi
