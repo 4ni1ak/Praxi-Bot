@@ -92,6 +92,8 @@ pub struct EffectivePolicyDto {
     /// What a human-initiated call of each category resolves to, grants
     /// included (`meta` is always allowed and omitted).
     pub categories: BTreeMap<String, CategoryDecisionDto>,
+    /// The bot's autonomy mode, derived from its preset: `ask`, `balanced` or `full`.
+    pub mode: String,
     /// The persisted "always allow" rules.  Tool-level grants only widen that
     /// one tool and are not reflected in `categories`.
     pub grants: Vec<GrantDto>,
@@ -124,6 +126,15 @@ pub enum GrantTargetDto {
         /// `fs`, `shell`, `desktop`, `browser`, `accounts`, `messaging`,
         /// `money`, `system`, `remote` or `script`.
         name: String,
+    },
+    /// One tool on one target: a site, a folder or a command prefix.
+    Scoped {
+        /// Tool name.
+        tool: String,
+        /// `origin`, `folder` or `command`.
+        scope: String,
+        /// The one target the rule covers (see `scope`).
+        pattern: String,
     },
 }
 
@@ -391,6 +402,13 @@ pub struct ApprovalDto {
     pub tool_name: String,
     /// Human-readable summary.
     pub summary: String,
+    /// The call's input, as the `approval_needed` event carried it (so a client that missed the
+    /// event can still show the full card).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<Value>,
+    /// The tool's card facts from the `approval_needed` event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
     /// `null` while pending, else `approved` / `denied` / `expired`.
     pub decision: Option<String>,
     /// Request time.

@@ -332,6 +332,22 @@ impl AgentLoop {
         names
     }
 
+    /// Configured memory store, if the memory hook is attached to this loop.
+    #[must_use]
+    pub fn memory_store(&self) -> Option<Arc<memory_store::MemoryStore>> {
+        self.sh.cfg.memory.as_ref().map(|m| Arc::clone(&m.store))
+    }
+
+    /// Recall token budget configured on this loop (defaults to 800).
+    #[must_use]
+    pub fn memory_recall_budget_tokens(&self) -> usize {
+        self.sh
+            .cfg
+            .memory
+            .as_ref()
+            .map_or(800, |m| m.recall_budget_tokens)
+    }
+
     /// Mask registered secrets in external data before an authorized source
     /// adapter persists or embeds it. Source adapters refresh the secret
     /// snapshot once per admitted batch with [`Self::refresh_external_redactor`].
@@ -1203,6 +1219,13 @@ impl AgentLoop {
             .map_err(|_| LoopError::NoPendingApproval(call_id))
     }
 
+    /// Whether a card (approval or question) with this call id is waiting for the user right
+    /// now. The approval list reads this, so a card whose wait is gone never shows as pending.
+    #[must_use]
+    pub fn is_pending(&self, call_id: ToolCallId) -> bool {
+        self.sh.pending.lock().contains_key(&call_id)
+    }
+
     /// The pending card is a taint-gate card whose "always for this chat" choice is a grant.
     /// Channels that carry owner authority (the desktop app) may give it; a bare API token or a
     /// peer may not (the HTTP route checks this before calling [`Self::approve`]).
@@ -1912,6 +1935,7 @@ impl AgentLoop {
         })
         .collect();
         Ok(EffectivePolicy {
+            mode: profile.permissions.mode(),
             policy,
             categories,
             grants: self.list_grants(bot_id),
@@ -2606,7 +2630,9 @@ fn legacy_unscoped_computer(g: &Grant) -> bool {
             category,
             PermissionCategory::Desktop | PermissionCategory::Browser
         ),
-        GrantTarget::Tool(name) => name.starts_with("desktop_") || name.starts_with("browser_"),
+        GrantTarget::Tool(name) | GrantTarget::Scoped { tool: name, .. } => {
+            name.starts_with("desktop_") || name.starts_with("browser_")
+        }
     }
 }
 

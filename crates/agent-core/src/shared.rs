@@ -108,6 +108,14 @@ pub enum GrantTarget {
     Tool(String),
     /// Every tool of a permission category.
     Category(PermissionCategory),
+    /// One tool on one target (a site, a folder, a command prefix): approval
+    /// memory that never covers another target.
+    Scoped {
+        /// The tool.
+        tool: String,
+        /// The one target the rule covers.
+        scope: crate::scoped_grant::Scope,
+    },
 }
 
 /// A persisted "always allow" rule of a bot (ADR-0012), created by approving
@@ -154,6 +162,8 @@ pub enum Delivery {
 /// persisted grants (what actually happens for a human-initiated call).
 #[derive(Debug, Clone)]
 pub struct EffectivePolicy {
+    /// The bot's autonomy mode (derived from its preset).
+    pub mode: permission_engine::AutonomyMode,
     /// The bot profile's own policy; `None` = the workspace policy applies.
     pub policy: Option<Policy>,
     /// Effective decision per permission category (`Meta` is always allowed and
@@ -586,6 +596,15 @@ pub(crate) struct Grants {
     /// taint-gate card on a Full bot (see `Shared::gate_key`). Never covers a send, a payment,
     /// a never-list command or a secret fill: those are not grantable.
     pub gate_chat: HashSet<(ChatId, BotId, &'static str, String)>,
+    /// `(chat, bot, tool, target, computer)`: "allow for this chat" on a tool that is
+    /// remembered per target. Covers only that target (see `scoped_grant`).
+    pub this_chat_scoped: HashSet<(
+        ChatId,
+        BotId,
+        String,
+        crate::scoped_grant::Scope,
+        Option<String>,
+    )>,
     /// Persisted rules, in creation order.
     pub always: Vec<Grant>,
 }
@@ -605,7 +624,25 @@ impl Grants {
                 && match &g.target {
                     GrantTarget::Tool(t) => t == tool,
                     GrantTarget::Category(c) => *c == category,
+                    GrantTarget::Scoped { .. } => false,
                 }
+        })
+    }
+
+    /// A persisted rule for this tool whose target covers `call`.
+    pub fn covers_scoped(
+        &self,
+        bot: BotId,
+        tool: &str,
+        call: &crate::scoped_grant::Scope,
+        computer: Option<&str>,
+    ) -> bool {
+        self.always.iter().any(|g| {
+            !g.inert
+                && g.bot_id == bot
+                && g.computer.as_deref() == computer
+                && matches!(&g.target, GrantTarget::Scoped { tool: t, scope }
+                    if t == tool && scope.covers(call))
         })
     }
 }
@@ -713,6 +750,12 @@ pub(crate) fn control_kind_of(name: &str) -> Option<tool_registry::ControlKind> 
 }
 
 impl RunCtx {
+    /// Own per-run state key for tools that keep any (the browser tab): a subagent
+    /// run is its own lane, a top-level run shares the bot's default.
+    pub(crate) fn lane(&self) -> Option<String> {
+        self.parent_run_id.map(|_| self.run_id.to_string())
+    }
+
     /// A run-scoped control grant covers this call: same computer, same
     /// running program (path, pid and start time), a covered kind, and a target
     /// the deny rules did not refuse.

@@ -14,12 +14,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use connector_email::{
     AccountConfig, AccountKind, AgentMailEndpoint, CreateInbox, EmailConnector, EmailError,
-    ImapSettings, ProbeReport, ProbeStatus, ProviderError, SmtpSecurity, SmtpSettings,
-    normalize_sender, validate_account_name,
+    ImapSettings, OutgoingMail, ProbeReport, ProbeStatus, ProviderError, SearchQuery, SmtpSecurity,
+    SmtpSettings, normalize_sender, validate_account_name,
 };
 use daemon_api::email::{
-    EmailAccountDto, EmailAccountInput, EmailAccountPatch, EmailImapServer, EmailProbeStatus,
-    EmailProviderKind, EmailSecurity, EmailSmtpServer, EmailTestReport,
+    EmailAccountDto, EmailAccountInput, EmailAccountPatch, EmailImapServer, EmailMessageDto,
+    EmailProbeStatus, EmailProviderKind, EmailSecurity, EmailSmtpServer, EmailTestReport,
 };
 use daemon_api::{EmailControl, EmailControlError};
 use secret_store::{SecretRef, SecretStore};
@@ -84,6 +84,26 @@ fn upstream(e: &EmailError) -> EmailControlError {
         other => EmailControlError::Upstream(other.to_string()),
     }
 }
+
+/// A mailbox failure while listing or sending, as coarse text: what a server
+/// or provider said is never passed on (it can echo mail or request data).
+fn mailbox_error(e: &EmailError, name: &str) -> EmailControlError {
+    match e {
+        EmailError::Input(_) => EmailControlError::NotFound(format!("email account {name}")),
+        EmailError::Credential(_) => invalid("no password or API key is stored for this account"),
+        EmailError::Unsupported(_) => invalid("this mailbox does not support that"),
+        EmailError::Tls(_) => EmailControlError::Upstream("the secure connection failed".into()),
+        EmailError::Timeout(_) => {
+            EmailControlError::Upstream("the mail server did not answer in time".into())
+        }
+        EmailError::Provider(p) => EmailControlError::Upstream(p.to_string()),
+        _ => EmailControlError::Upstream("the mail server refused or failed the request".into()),
+    }
+}
+
+/// What a test message says. Fixed: the API takes no text from the caller.
+const TEST_SUBJECT: &str = "Praxi-Bot test message";
+const TEST_BODY: &str = "This message was sent by Praxi-Bot to check that this mailbox can send mail. You can delete it.";
 
 fn probe_status_of(e: &EmailError) -> EmailProbeStatus {
     match e {
@@ -849,6 +869,62 @@ impl EmailControl for EmailHost {
         Ok(report_out(
             connector_email::probe(&account, &password).await,
         ))
+    }
+
+    async fn recent_messages(
+        &self,
+        name: &str,
+        limit: usize,
+    ) -> Result<Vec<EmailMessageDto>, EmailControlError> {
+        let account = self
+            .connector
+            .accounts()
+            .into_iter()
+            .find(|a| a.name == name)
+            .ok_or_else(|| EmailControlError::NotFound(format!("email account {name}")))?;
+        // As the account's own bot: a bound account is invisible to any other caller.
+        let found = self
+            .connector
+            .scoped(account.bot.as_deref())
+            .search(Some(name), "INBOX", &SearchQuery::default(), limit)
+            .await
+            .map_err(|e| mailbox_error(&e, name))?;
+        Ok(found
+            .messages
+            .into_iter()
+            .map(|m| EmailMessageDto {
+                id: m.id.unwrap_or_else(|| m.uid.to_string()),
+                subject: m.subject,
+                from: m.from,
+                date: m.date,
+                unread: m.unread,
+            })
+            .collect())
+    }
+
+    async fn send_test(&self, name: &str) -> Result<String, EmailControlError> {
+        let account = self
+            .connector
+            .accounts()
+            .into_iter()
+            .find(|a| a.name == name)
+            .ok_or_else(|| EmailControlError::NotFound(format!("email account {name}")))?;
+        let own = account.address.trim().to_owned();
+        if own.is_empty() {
+            return Err(invalid("this account has no address to send a test to"));
+        }
+        let mail = OutgoingMail {
+            to: vec![own.clone()],
+            subject: TEST_SUBJECT.to_owned(),
+            body: TEST_BODY.to_owned(),
+            ..OutgoingMail::default()
+        };
+        self.connector
+            .scoped(account.bot.as_deref())
+            .send(Some(name), &mail)
+            .await
+            .map_err(|e| mailbox_error(&e, name))?;
+        Ok(own)
     }
 
     async fn forget_bot(&self, bot_id: &str) -> Result<usize, EmailControlError> {

@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 use crate::AUDIT_GRANT_ALWAYS;
 use crate::history::truncate_utf8;
+use crate::scoped_grant::{self, Derived, Scope, ScopeKind};
 use crate::shared::{
     ApprovalScope, ControlGrant, Grant, GrantTarget, Pending, RunCtx, Shared, Verdict,
     control_kind_of,
@@ -61,10 +62,24 @@ impl Drop for ClosedGuard {
     }
 }
 
+/// What a call's card says when nobody decided it in time (the model sees it as the denial reason).
+pub(crate) const EXPIRED_REASON: &str = "expired: nobody answered in time";
+
+/// How a wait for the user ended.
+enum Waited {
+    Verdict(Result<Verdict, oneshot::error::RecvError>),
+    /// A schedule-started run: nobody answered, the run is asked to pause.
+    Paused,
+    /// Nobody answered within the approval timeout: the call is denied as expired.
+    Expired,
+}
+
 struct PendingGuard {
     sh: Arc<Shared>,
     id: ToolCallId,
     run_id: RunId,
+    /// The persisted approval row of this park (expired when the wait is abandoned).
+    approval_id: Uuid,
     released: bool,
 }
 
@@ -100,9 +115,15 @@ impl Drop for PendingGuard {
     fn drop(&mut self) {
         self.sh.pending.lock().remove(&self.id);
         forget_parked(&self.sh, self.id);
-        // A dropped (cancelled) wait only releases its slot; the run's own
-        // state is settled by whoever cancelled it.
-        self.release();
+        let abandoned = !self.released;
+        let last = self.release();
+        if abandoned {
+            // The wait was dropped without a verdict (the tool around it timed out, or the run
+            // was stopped): the card is dead, so it must not stay pending and the run must not
+            // stay in `waiting_approval`.
+            self.sh
+                .expire_abandoned(self.run_id, self.id, self.approval_id, last);
+        }
     }
 }
 
@@ -141,6 +162,12 @@ pub(crate) fn grant_detail(g: &Grant) -> Value {
     let mut detail = match &g.target {
         GrantTarget::Tool(t) => json!({ "bot_id": g.bot_id.to_string(), "tool": t }),
         GrantTarget::Category(c) => json!({ "bot_id": g.bot_id.to_string(), "category": c }),
+        GrantTarget::Scoped { tool, scope } => json!({
+            "bot_id": g.bot_id.to_string(),
+            "tool": tool,
+            "scope_kind": scope.kind.as_str(),
+            "scope_pattern": scope.pattern,
+        }),
     };
     detail["computer"] = json!(g.computer);
     detail
@@ -148,6 +175,15 @@ pub(crate) fn grant_detail(g: &Grant) -> Value {
 
 /// Inverse of [`grant_detail`].
 pub(crate) fn grant_target(detail: &Value) -> Option<GrantTarget> {
+    if let Some(kind) = detail["scope_kind"].as_str() {
+        return Some(GrantTarget::Scoped {
+            tool: detail["tool"].as_str()?.to_owned(),
+            scope: Scope {
+                kind: ScopeKind::parse(kind)?,
+                pattern: detail["scope_pattern"].as_str()?.to_owned(),
+            },
+        });
+    }
     if let Some(t) = detail["tool"].as_str() {
         return Some(GrantTarget::Tool(t.to_owned()));
     }
@@ -320,7 +356,12 @@ impl Shared {
         // skipped for every other call.
         let control_covered =
             must_ask && target.is_some_and(|t| ctx.control_covers(name, category, t));
-        let must_ask = must_ask && !control_covered;
+        // A site the user remembered for this bot (owner-confirmed) satisfies the egress
+        // gate for a plain navigation to exactly that origin, like a URL they typed.
+        let remembered = must_ask
+            && ctx.initiator == InitiatorKind::Human
+            && self.remembered_origin(ctx, name, category, input);
+        let must_ask = must_ask && !control_covered && !remembered;
         // A tool that delegates future authority is confirmed every time:
         // an allow becomes a plain ask, and no grant waives it (a deny stays).
         // The same holds for a call that types an owner-stored secret
@@ -365,7 +406,7 @@ impl Shared {
         if must_ask {
             return (d, None);
         }
-        let granted = control_covered || {
+        let granted = control_covered || self.scoped_covers(ctx, name, category, input) || {
             let g = self.grants.lock();
             g.this_chat.contains(&(
                 ctx.chat_id,
@@ -404,6 +445,54 @@ impl Shared {
                 "mode": ctx.profile.permissions.mode().as_str(),
             }),
         );
+    }
+
+    /// A remembered rule (this chat, or persisted for this bot) covers this call's one target.
+    /// Never wider than the rule: a site, a folder or a command prefix, compared strictly.
+    fn scoped_covers(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        category: PermissionCategory,
+        input: &Value,
+    ) -> bool {
+        let Derived::Scope(call) = scoped_grant::derive(name, input) else {
+            return false;
+        };
+        let computer = ctx.tool_grant_scope(name, category);
+        let g = self.grants.lock();
+        g.this_chat_scoped
+            .iter()
+            .any(|(chat, bot, tool, rule, comp)| {
+                *chat == ctx.chat_id
+                    && *bot == ctx.bot_id
+                    && tool == name
+                    && *comp == computer
+                    && rule.covers(&call)
+            })
+            || g.covers_scoped(ctx.bot_id, name, &call, computer.as_deref())
+    }
+
+    /// A persisted rule names this navigation's origin.
+    fn remembered_origin(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        category: PermissionCategory,
+        input: &Value,
+    ) -> bool {
+        if name != "browser_open" || input.as_object().is_none_or(|o| o.len() != 1) {
+            return false;
+        }
+        let Derived::Scope(call) = scoped_grant::derive(name, input) else {
+            return false;
+        };
+        self.grants.lock().covers_scoped(
+            ctx.bot_id,
+            name,
+            &call,
+            ctx.tool_grant_scope(name, category).as_deref(),
+        )
     }
 
     /// The Balanced lane for this call, `None` in every other mode.
@@ -448,16 +537,7 @@ impl Shared {
     /// The site of a URL as a grant boundary: `scheme://host:port`, lower case, no trailing dot,
     /// default port made explicit. Only `http` / `https` with a host qualify.
     fn origin_of(url: &str) -> Option<String> {
-        let url = url::Url::parse(url).ok()?;
-        if !matches!(url.scheme(), "http" | "https") {
-            return None;
-        }
-        let host = url.host_str()?.trim_end_matches('.').to_ascii_lowercase();
-        Some(format!(
-            "{}://{host}:{}",
-            url.scheme(),
-            url.port_or_known_default()?
-        ))
+        scoped_grant::origin_of(url)
     }
 
     /// Tool class and destination a taint-gate grant is keyed on: web (`browser_open`, per
@@ -981,13 +1061,14 @@ impl Shared {
             },
         );
         *self.parked.lock().entry(ctx.run_id).or_insert(0) += 1;
+        let approval_id = Uuid::now_v7();
         let guard = PendingGuard {
             sh: Arc::clone(self),
             id: call_id,
             run_id: ctx.run_id,
+            approval_id,
             released: false,
         };
-        let approval_id = Uuid::now_v7();
         let _ = self.storage.insert_approval(&Approval {
             id: approval_id,
             user_id: ctx.user_id,
@@ -1004,21 +1085,32 @@ impl Shared {
 
     /// Wait for the user's verdict.  A schedule-started run only waits
     /// [`LoopConfig::schedule_approval_timeout`](crate::LoopConfig); then the
-    /// run is asked to pause (resumable) and `None` is returned.
-    async fn wait_verdict(
-        &self,
-        ctx: &RunCtx,
-        rx: oneshot::Receiver<Verdict>,
-    ) -> Option<Result<Verdict, oneshot::error::RecvError>> {
+    /// run is asked to pause (resumable).  Any other run waits at most
+    /// [`LoopConfig::approval_timeout`](crate::LoopConfig) (zero = no limit);
+    /// then the call is denied as expired and the run carries on.
+    async fn wait_verdict(&self, ctx: &RunCtx, rx: oneshot::Receiver<Verdict>) -> Waited {
         if !matches!(
             ctx.initiator,
             InitiatorKind::Schedule | InitiatorKind::ExternalSchedule
         ) {
-            return Some(rx.await);
+            let limit = self.cfg.approval_timeout;
+            if limit.is_zero() {
+                return Waited::Verdict(rx.await);
+            }
+            if let Ok(v) = tokio::time::timeout(limit, rx).await {
+                return Waited::Verdict(v);
+            }
+            self.audit(
+                ctx,
+                "system",
+                "approval.expired",
+                &json!({ "timeout_secs": limit.as_secs() }),
+            );
+            return Waited::Expired;
         }
         let limit = self.cfg.schedule_approval_timeout;
         if let Ok(v) = tokio::time::timeout(limit, rx).await {
-            return Some(v);
+            return Waited::Verdict(v);
         }
         self.approval_paused.lock().insert(ctx.run_id);
         self.audit(
@@ -1030,7 +1122,46 @@ impl Shared {
         if let Some(rt) = self.rt.get().and_then(Weak::upgrade) {
             rt.request_pause(ctx.run_id, true);
         }
-        None
+        Waited::Paused
+    }
+
+    /// A wait that ended without a verdict (the tool around it timed out, the run was stopped):
+    /// the approval row expires, every client's card closes (`tool_call_denied` with the expired
+    /// reason) and a run that is still alive leaves `waiting_approval` when this was its last
+    /// parked call.
+    pub(crate) fn expire_abandoned(
+        &self,
+        run_id: RunId,
+        call_id: ToolCallId,
+        approval_id: Uuid,
+        last_parked: bool,
+    ) {
+        let _ = self.storage.decide_approval(approval_id, "expired");
+        let alive = self
+            .storage
+            .get_run(run_id)
+            .ok()
+            .flatten()
+            .and_then(|r| RunState::parse(&r.state))
+            .is_some_and(|s| matches!(s, RunState::Running | RunState::WaitingApproval));
+        if !alive {
+            return;
+        }
+        if last_parked {
+            self.set_state(run_id, RunState::Running);
+        }
+        let ctx = self.runs.lock().get(&run_id).cloned();
+        if let Some(ctx) = ctx {
+            self.emit(
+                &ctx,
+                Event::ToolCallDenied(ToolCallDenied {
+                    run_id,
+                    call_id,
+                    denied_by: ctx.user_id,
+                    reason: Some(EXPIRED_REASON.into()),
+                }),
+            );
+        }
     }
 
     /// True when redaction would change the card or the input that would run.
@@ -1207,13 +1338,31 @@ impl Shared {
         // disclosure in `details` is not tool-specific data.
         let page_origin = ctx.page_origin.lock().clone();
         let gate_grant = self.gate_grantable(ctx, name, category, input, page_origin.as_deref());
+        // Approval memory: a tool remembered per target offers "this chat" / "always for this
+        // bot" for that ONE target. A gate card (tainted run) offers it only for a site, where the
+        // chat choice is keyed on the origin too; a call whose target cannot be named safely is
+        // approved once.
+        let derived = scoped_grant::derive(name, input);
+        let memory = match &derived {
+            Derived::Scope(sc)
+                if !must_ask
+                    && ctx.initiator == InitiatorKind::Human
+                    && (!gate_grant || sc.kind == ScopeKind::Origin) =>
+            {
+                Some(sc.clone())
+            }
+            _ => None,
+        };
+        let unscopable = matches!(derived, Derived::Unscopable);
         let once_only = !gate_grant
-            && (details.is_some()
-                || must_ask
-                || matches!(
-                    ctx.initiator,
-                    InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
-                ));
+            && (unscopable
+                || (memory.is_none()
+                    && (details.is_some()
+                        || must_ask
+                        || matches!(
+                            ctx.initiator,
+                            InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
+                        ))));
         let (target, grantable) =
             self.control_offer(ctx, name, category, input, &mut details, target);
         let closed = self.closed_guard(ctx, name, input, token);
@@ -1229,10 +1378,16 @@ impl Shared {
         if let Some(obj) = details.get_or_insert_with(|| json!({})).as_object_mut() {
             obj.insert("why".into(), json!(why));
             obj.insert("once_only".into(), json!(once_only));
+            if let Some(sc) = memory.as_ref().filter(|_| !once_only) {
+                obj.insert(
+                    "memory".into(),
+                    json!({ "kind": sc.kind.as_str(), "pattern": sc.pattern }),
+                );
+            }
         }
         let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only, grantable);
         if let Some(p) = self.pending.lock().get_mut(&call_id) {
-            p.gate_grant = gate_grant;
+            p.gate_grant = gate_grant || (memory.is_some() && !once_only);
         }
         let parked_at = policy_revision(self);
         self.remember_parked(call_id, ctx, name, effect, category, input);
@@ -1247,11 +1402,27 @@ impl Shared {
                 details,
             }),
         );
-        let verdict = self.wait_verdict(ctx, rx).await;
+        let waited = self.wait_verdict(ctx, rx).await;
         guard.resume();
-        let Some(verdict) = verdict else {
-            let _ = self.storage.decide_approval(approval_id, "expired");
-            return Err(Some("nobody approved in time; the run is paused".into()));
+        let verdict = match waited {
+            Waited::Verdict(v) => v,
+            Waited::Paused => {
+                let _ = self.storage.decide_approval(approval_id, "expired");
+                return Err(Some("nobody approved in time; the run is paused".into()));
+            }
+            Waited::Expired => {
+                let _ = self.storage.decide_approval(approval_id, "expired");
+                self.emit(
+                    ctx,
+                    Event::ToolCallDenied(ToolCallDenied {
+                        run_id: ctx.run_id,
+                        call_id,
+                        denied_by: ctx.user_id,
+                        reason: Some(EXPIRED_REASON.into()),
+                    }),
+                );
+                return Err(Some(EXPIRED_REASON.into()));
+            }
         };
 
         match verdict {
@@ -1420,11 +1591,19 @@ impl Shared {
                 options,
             }),
         );
-        let verdict = self.wait_verdict(ctx, rx).await;
+        let waited = self.wait_verdict(ctx, rx).await;
         guard.resume();
-        let Some(verdict) = verdict else {
-            let _ = self.storage.decide_approval(approval_id, "expired");
-            return Err(Some("nobody answered in time; the run is paused".into()));
+        let verdict = match waited {
+            Waited::Verdict(v) => v,
+            Waited::Paused => {
+                let _ = self.storage.decide_approval(approval_id, "expired");
+                return Err(Some("nobody answered in time; the run is paused".into()));
+            }
+            Waited::Expired => {
+                // The question card closes with its call: the tool completes with this reason.
+                let _ = self.storage.decide_approval(approval_id, "expired");
+                return Err(Some(EXPIRED_REASON.into()));
+            }
         };
         match verdict {
             Ok(Verdict::Answered { answer, .. }) => {
@@ -1550,13 +1729,54 @@ impl ExecPermit {
                 ));
             }
         }
+        // "Always" on a site's gate card remembers that origin for the bot (owner-confirmed).
+        if gate_grant
+            && scope == ApprovalScope::Always
+            && self.name == "browser_open"
+            && let Derived::Scope(target) = scoped_grant::derive(&self.name, &self.input)
+        {
+            self.sh.add_grant(
+                &self.ctx,
+                GrantTarget::Scoped {
+                    tool: self.name.clone(),
+                    scope: target,
+                },
+                self.category,
+                &self.name,
+            );
+        }
         let scope = if gate_grant {
             ApprovalScope::Once
         } else {
             scope
         };
+        // A tool remembered per target remembers that one target and nothing wider.
+        let derived = scoped_grant::derive(&self.name, &self.input);
         match scope {
             ApprovalScope::Once => {}
+            ApprovalScope::ThisChat | ApprovalScope::Always if derived != Derived::NotScoped => {
+                if let Derived::Scope(target) = derived {
+                    if scope == ApprovalScope::ThisChat {
+                        self.sh.grants.lock().this_chat_scoped.insert((
+                            self.ctx.chat_id,
+                            self.ctx.bot_id,
+                            self.name.clone(),
+                            target,
+                            self.ctx.tool_grant_scope(&self.name, self.category),
+                        ));
+                    } else {
+                        self.sh.add_grant(
+                            &self.ctx,
+                            GrantTarget::Scoped {
+                                tool: self.name.clone(),
+                                scope: target,
+                            },
+                            self.category,
+                            &self.name,
+                        );
+                    }
+                }
+            }
             ApprovalScope::ThisChat => {
                 self.sh.grants.lock().this_chat.insert((
                     self.ctx.chat_id,
