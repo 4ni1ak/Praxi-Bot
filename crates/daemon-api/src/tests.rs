@@ -986,6 +986,41 @@ async fn create_chat_returns_chat_id_next_to_id() {
     assert_ne!(v["chat_id"].as_str().unwrap(), chat);
 }
 
+#[tokio::test]
+async fn chat_can_be_renamed_pinned_archived_and_deleted() {
+    let t = setup();
+    let (_bot, chat) = make_chat(&t).await;
+    let path = format!("/v1/chats/{chat}");
+    let r = call(
+        &t,
+        Method::PATCH,
+        &path,
+        Some(json!({ "title": "  Trip plan  ", "pinned": true, "archived": true })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+    assert_eq!(r.json()["title"], "Trip plan");
+    let r = call(&t, Method::GET, "/v1/chats", None).await;
+    let row = r
+        .json()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == chat.as_str())
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        (row["pinned"].clone(), row["archived"].clone()),
+        (json!(true), json!(true))
+    );
+    let r = call(&t, Method::PATCH, &path, Some(json!({ "title": "   " }))).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    let r = call(&t, Method::DELETE, &path, None).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let r = call(&t, Method::GET, &format!("{path}/messages"), None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
 struct FakeChannel {
     running: bool,
 }

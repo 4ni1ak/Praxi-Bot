@@ -751,6 +751,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/chats/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a chat and its messages (its runs stay for the audit trail). Refused while a run of
+         *     the chat is active.
+         */
+        delete: operations["delete_chat"];
+        options?: never;
+        head?: never;
+        /** Rename, pin or archive a chat. */
+        patch: operations["update_chat"];
+        trace?: never;
+    };
     "/v1/chats/{id}/attachments": {
         parameters: {
             query?: never;
@@ -3642,6 +3663,8 @@ export interface components {
         };
         /** @description A chat thread. */
         ChatDto: {
+            /** @description Archived chats are hidden from the default list. */
+            archived?: boolean;
             /**
              * Format: uuid
              * @description Bot the chat talks to.
@@ -3663,6 +3686,8 @@ export interface components {
              * @description Chat id.
              */
             id: string;
+            /** @description Pinned chats sort first. */
+            pinned?: boolean;
             /** @description Title. */
             title: string;
         };
@@ -6864,6 +6889,15 @@ export interface components {
         };
         /** @enum {string} */
         Units: "physical_px" | "css_px";
+        /** @description `PATCH /v1/chats/{id}`: every field is optional, absent ones stay unchanged. */
+        UpdateChat: {
+            /** @description Archive or restore. */
+            archived?: boolean | null;
+            /** @description Pin or unpin. */
+            pinned?: boolean | null;
+            /** @description New title (1 to 120 characters after trimming). */
+            title?: string | null;
+        };
         /**
          * @description Body of `PUT /v1/fill-secrets/{name}`. Every field is optional; a value,
          *     when given, replaces the stored one.
@@ -9066,6 +9100,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChatDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_chat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Chat id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update_chat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Chat id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateChat"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
             404: {

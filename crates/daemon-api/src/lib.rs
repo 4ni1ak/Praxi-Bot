@@ -1230,6 +1230,10 @@ fn api_routes() -> Router<AppState> {
         )
         .route("/v1/chats", get(r::list_chats).post(r::create_chat))
         .route(
+            "/v1/chats/{id}",
+            axum::routing::patch(r::update_chat).delete(r::delete_chat),
+        )
+        .route(
             "/v1/chats/{id}/messages",
             get(r::list_messages).post(r::send_message),
         )

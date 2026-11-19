@@ -3128,6 +3128,123 @@
         ]
       }
     },
+    "/v1/chats/{id}": {
+      "delete": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Delete a chat and its messages (its runs stay for the audit trail). Refused while a run of\nthe chat is active.",
+        "operationId": "delete_chat",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Chat id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Rename, pin or archive a chat.",
+        "operationId": "update_chat",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Chat id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateChat"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/chats/{id}/attachments": {
       "post": {
         "tags": [
@@ -12150,6 +12267,10 @@
           "created_at_ms"
         ],
         "properties": {
+          "archived": {
+            "type": "boolean",
+            "description": "Archived chats are hidden from the default list."
+          },
           "bot_id": {
             "type": "string",
             "format": "uuid",
@@ -12169,6 +12290,10 @@
             "type": "string",
             "format": "uuid",
             "description": "Chat id."
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "Pinned chats sort first."
           },
           "title": {
             "type": "string",
@@ -20753,6 +20878,33 @@
           "physical_px",
           "css_px"
         ]
+      },
+      "UpdateChat": {
+        "type": "object",
+        "description": "`PATCH /v1/chats/{id}`: every field is optional, absent ones stay unchanged.",
+        "properties": {
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Archive or restore."
+          },
+          "pinned": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Pin or unpin."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New title (1 to 120 characters after trimming)."
+          }
+        }
       },
       "UpdateFillSecret": {
         "type": "object",
