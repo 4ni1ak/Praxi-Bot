@@ -1420,6 +1420,8 @@ export function ChatView({
                   </div>
                 );
               }
+              case "workflow":
+                return client ? <div key={e.key} className={styles.rememberRow}><WorkflowReview client={client} runId={e.run.id} canRemember={true} /></div> : null;
               case "changes": {
                 const restoreSignal = e.run.items.filter(
                   (item) =>
@@ -1437,8 +1439,6 @@ export function ChatView({
                   </div>
                 );
               }
-              case "workflow":
-                return client ? <div key={e.key} className={styles.rememberRow}><WorkflowReview client={client} runId={e.run.id} canRemember={true} /></div> : null;
               case "remember": {
                 const st = remember[e.run.id] ?? "idle";
                 return (

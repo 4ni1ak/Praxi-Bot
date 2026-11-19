@@ -55,8 +55,6 @@ impl ChatProvider for Provider {
     }
 }
 
-const OWNER_KEY: &str = "ownerkey0123456789abcdef0123456789abcdef0123456789abcdef";
-
 struct TestTool {
     spec: ToolSpec,
     calls: Arc<AtomicUsize>,
@@ -75,11 +73,6 @@ impl Tool for TestTool {
   [e1] textbox "Search"
   [e2] button "Go"
 "#
-        } else if self.spec.name == "mutate" {
-            // Empty output keeps a recording of this tool clean: any non-empty
-            // tool text taints a recording, and a tainted replay cannot carry
-            // a runtime secret (approval cards must not show registered secrets).
-            ""
         } else {
             "done"
         }))
@@ -116,11 +109,12 @@ fn setup() -> Env {
                 effect,
                 category: PermissionCategory::Fs,
                 platforms: vec![Platform::All],
-                content: tool_registry::ContentClass::declared(
-                    effect == Effect::Read,
-                    effect == Effect::Read,
-                    false,
-                ),
+                // Same classes as the built-ins these doubles stand for.
+                content: match name {
+                    "fs_read" => tool_registry::ContentClass::private_read(),
+                    "browser_snapshot" => tool_registry::ContentClass::untrusted_private(),
+                    _ => tool_registry::ContentClass::all(),
+                },
             },
             calls: calls.clone(),
             inputs: inputs.clone(),
@@ -155,7 +149,7 @@ fn setup() -> Env {
         crate::DaemonConfig::new("test-token"),
     )
     .unwrap();
-    state.set_owner_key(OWNER_KEY.into());
+    state.set_owner_key(crate::tests::OWNER_KEY.into());
     let profile = agent_core::BotProfile::from_toml_str("[bot]\nid='test'\nname='test'\n[models]\nexecutor='fake/echo'\nclassifier='fake/classifier'\n").unwrap();
     let bot = storage::Bot {
         id: protocol::BotId::new(),
@@ -213,7 +207,7 @@ async fn request(
     if authenticated {
         req = req
             .header("authorization", "Bearer test-token")
-            .header(crate::owner::OWNER_HEADER, OWNER_KEY);
+            .header("x-praxi-owner-key", crate::tests::OWNER_KEY);
     }
     let req = req
         .header("content-type", "application/json")
@@ -248,11 +242,15 @@ fn approve_replays(env: &Env) -> tokio::task::JoinHandle<()> {
 }
 
 async fn source(env: &Env) -> RunId {
+    // Writes after a read ask since main's tainted-egress rule: the source run is
+    // approved here and the approver stops before any replay under test.
+    let approver = approve_replays(env);
     let run = env.state.agent().run_turn(env.chat, "call:fs_read {}\ncall:mutate {}\ncall:browser_snapshot {}\ncall:mutate {}\ncall:mutate {}").unwrap();
     assert_eq!(
         env.state.agent().wait(run).await.unwrap(),
         task_runtime::RunState::Succeeded
     );
+    approver.abort();
     run
 }
 
@@ -388,6 +386,31 @@ async fn propose_review_save_list_replay_and_delete() {
 #[tokio::test]
 async fn runtime_secrets_never_reach_history_steps_journal_or_provider() {
     let env = setup();
+    // A step that needs approval cannot show a runtime secret on its card (the
+    // approval layer refuses it), so this bot has the egress waiver and the
+    // replayed tool runs without asking; the test is about where the value goes.
+    let bot_id = env
+        .state
+        .storage()
+        .get_chat(env.chat)
+        .unwrap()
+        .unwrap()
+        .bot_id;
+    env.state.agent().add_profile(
+        bot_id,
+        agent_core::BotProfile::from_toml_str(
+            "[bot]
+id='test'
+name='test'
+[models]
+executor='fake/echo'
+classifier='fake/classifier'
+[permissions]
+allow_egress_after_reads=true
+",
+        )
+        .unwrap(),
+    );
     let id = env
         .state
         .agent()
@@ -524,6 +547,7 @@ async fn runtime_secrets_never_reach_history_steps_journal_or_provider() {
 #[tokio::test]
 async fn short_passwords_do_not_corrupt_tool_correlation_ids() {
     let env = setup();
+    let _approver = approve_replays(&env); // a write after a read asks (tainted egress)
     let id = env
         .state
         .agent()
@@ -674,6 +698,7 @@ async fn phone_peers_cannot_read_propose_save_delete_or_run_workflows() {
 #[tokio::test]
 async fn dropped_mutating_call_refuses_both_proposal_and_save() {
     let env = setup();
+    let _approver = approve_replays(&env); // the drag taints the run, so the last write asks
     let id = env
         .state
         .agent()
@@ -774,26 +799,30 @@ async fn tainted_proposal_requires_each_step_confirmation_and_persists_source() 
     .await;
     let run = RunId(replay["run_id"].as_str().unwrap().parse().unwrap());
     for index in 0..3 {
-        let waited = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let call_id = tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
                 if let Event::ApprovalNeeded(a) = events.recv().await.unwrap().envelope.event {
                     break a.call_id;
                 }
             }
         })
-        .await;
-        let Ok(call_id) = waited else {
-            let state = env.state.agent().wait(run).await;
-            let steps = env.state.storage().list_steps(run).unwrap();
-            panic!("no approval for replay step {index}: {state:?} {steps:?}");
-        };
+        .await
+        .unwrap();
         assert_eq!(env.calls.load(Ordering::SeqCst), before + index);
-        // Even an always grant cannot waive the following tainted step.
+        // An always grant is refused for an egress approval, so it cannot waive the following tainted step.
         env.state
             .agent()
             .approve(
                 call_id,
                 agent_core::ApprovalScope::Always,
+                env.state.user_id(),
+            )
+            .unwrap_err();
+        env.state
+            .agent()
+            .approve(
+                call_id,
+                agent_core::ApprovalScope::Once,
                 env.state.user_id(),
             )
             .unwrap();
@@ -807,6 +836,7 @@ async fn tainted_proposal_requires_each_step_confirmation_and_persists_source() 
 #[tokio::test]
 async fn real_browser_fill_short_text_does_not_change_other_step_locators() {
     let env = setup();
+    let _approver = approve_replays(&env); // a write after a read asks (tainted egress)
     let id = env.state.agent().run_turn(env.chat, "call:browser_snapshot {}\ncall:browser_fill {\"ref\":\"e1\",\"text\":\"e\"}\ncall:browser_click {\"ref\":\"e2\"}").unwrap();
     assert_eq!(
         env.state.agent().wait(id).await.unwrap(),

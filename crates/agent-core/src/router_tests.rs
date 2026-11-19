@@ -1130,6 +1130,75 @@ async fn replay_started_through_the_agent_is_refused_during_human_takeover() {
     );
 }
 
+#[tokio::test]
+async fn similar_requests_cannot_route_recorded_recipients_urls_paths_or_commands() {
+    for (description, changed) in [
+        (
+            "send report to bob@example.test",
+            "send report to carol@example.test",
+        ),
+        (
+            "open https://trusted.test/invoice",
+            "open https://different.test/invoice",
+        ),
+        (
+            "write report to /private/bob.txt",
+            "write report to /private/carol.txt",
+        ),
+        (
+            "run curl https://trusted.test",
+            "run curl https://different.test",
+        ),
+    ] {
+        let env = setup();
+        let log = Arc::new(tool("t_log", Effect::Write, "sent"));
+        let script = Script::new(vec![
+            (
+                "fake/c",
+                vec![Rep::Text(
+                    r#"{"route":"workflow","name":"recorded","confidence":1.0,"params":{"recorded_secret_1":"different"}}"#,
+                )],
+            ),
+            ("fake/m", vec![Rep::Text("ask the user")]),
+        ]);
+        let (lp, store) = with_store(&env, make(&env, &script, &[as_tool(&log)], CLASSIFIER));
+        let mut wf = wf_tool_step("recorded", "t_log", description);
+        wf.params.push(workflow_replay::Param {
+            name: "recorded_secret_1".into(),
+            ty: workflow_replay::ParamType::String,
+            default: None,
+            description: "fresh human input".into(),
+        });
+        wf.steps = vec![Step::Tool(ToolStep {
+            tool: "t_log".into(),
+            input: json!({"value":"{recorded_secret_1}"}),
+        })];
+        store.save(&wf).unwrap();
+        let mut events = lp.subscribe();
+        let (_, state) = turn(&lp, env.chat, changed).await;
+        assert_eq!(state, RunState::Succeeded);
+        assert_eq!(log.count.load(Ordering::SeqCst), 0, "{changed}");
+        assert!(
+            decided(&drain(&mut events))
+                .iter()
+                .all(|d| d.route["kind"] != "workflow")
+        );
+        let output = lp
+            .tool_registry()
+            .get("workflow_run")
+            .unwrap()
+            .call(
+                &tool_registry::ToolContext {
+                    bot_id: Some(env.bot.to_string()),
+                    ..Default::default()
+                },
+                json!({"name":"recorded","params":{"recorded_secret_1":"different"}}),
+            )
+            .await;
+        assert!(output.is_err(), "model tool must require human entry");
+    }
+}
+
 struct SelectedSkillAssignment {
     bot: String,
     allowed: &'static str,
@@ -1270,17 +1339,15 @@ async fn workflow_replay_enforces_selected_bot_skill_assignment() {
         }));
 
     let store = WorkflowStore::new(env.dir.path());
+    // Workflows are bot-scoped: save into this bot's folder.
+    let bot_store = store.for_bot(&env.bot.to_string()).unwrap();
     let mut denied_wf = Workflow::new("read_unassigned");
     denied_wf.description = "read an unassigned skill".into();
     denied_wf.steps = vec![Step::Tool(ToolStep {
         tool: "skill_read".into(),
         input: json!({ "name": "unassigned-skill" }),
     })];
-    store
-        .for_bot(&env.bot.to_string())
-        .unwrap()
-        .save(&denied_wf)
-        .unwrap();
+    bot_store.save(&denied_wf).unwrap();
 
     let mut allowed_wf = Workflow::new("read_assigned");
     allowed_wf.description = "read an assigned skill".into();
@@ -1288,11 +1355,7 @@ async fn workflow_replay_enforces_selected_bot_skill_assignment() {
         tool: "skill_read".into(),
         input: json!({ "name": "assigned-skill" }),
     })];
-    store
-        .for_bot(&env.bot.to_string())
-        .unwrap()
-        .save(&allowed_wf)
-        .unwrap();
+    bot_store.save(&allowed_wf).unwrap();
 
     let script = Script::new(vec![("fake/m", vec![Rep::Text("fallback")])]);
     let lp = make(&env, &script, &[], "")
@@ -1373,72 +1436,27 @@ impl Embedder for SmallBatchEmbedder {
 }
 
 #[tokio::test]
-async fn similar_requests_cannot_route_recorded_recipients_urls_paths_or_commands() {
-    for (description, changed) in [
-        (
-            "send report to bob@example.test",
-            "send report to carol@example.test",
-        ),
-        (
-            "open https://trusted.test/invoice",
-            "open https://different.test/invoice",
-        ),
-        (
-            "write report to /private/bob.txt",
-            "write report to /private/carol.txt",
-        ),
-        (
-            "run curl https://trusted.test",
-            "run curl https://different.test",
-        ),
-    ] {
-        let env = setup();
-        let log = Arc::new(tool("t_log", Effect::Write, "sent"));
-        let script = Script::new(vec![
-            (
-                "fake/c",
-                vec![Rep::Text(
-                    r#"{"route":"workflow","name":"recorded","confidence":1.0,"params":{"recorded_secret_1":"different"}}"#,
-                )],
-            ),
-            ("fake/m", vec![Rep::Text("ask the user")]),
-        ]);
-        let (lp, store) = with_store(&env, make(&env, &script, &[as_tool(&log)], CLASSIFIER));
-        let mut wf = wf_tool_step("recorded", "t_log", description);
-        wf.params.push(workflow_replay::Param {
-            name: "recorded_secret_1".into(),
-            ty: workflow_replay::ParamType::String,
-            default: None,
-            description: "fresh human input".into(),
-        });
-        wf.steps = vec![Step::Tool(ToolStep {
-            tool: "t_log".into(),
-            input: json!({"value":"{recorded_secret_1}"}),
-        })];
-        store.save(&wf).unwrap();
-        let mut events = lp.subscribe();
-        let (_, state) = turn(&lp, env.chat, changed).await;
-        assert_eq!(state, RunState::Succeeded);
-        assert_eq!(log.count.load(Ordering::SeqCst), 0, "{changed}");
-        assert!(
-            decided(&drain(&mut events))
-                .iter()
-                .all(|d| d.route["kind"] != "workflow")
-        );
-        let output = lp
-            .tool_registry()
-            .get("workflow_run")
-            .unwrap()
-            .call(
-                &tool_registry::ToolContext {
-                    bot_id: Some(env.bot.to_string()),
-                    ..Default::default()
-                },
-                json!({"name":"recorded","params":{"recorded_secret_1":"different"}}),
-            )
-            .await;
-        assert!(output.is_err(), "model tool must require human entry");
-    }
+async fn workflows_from_one_bot_are_not_candidates_for_another_bot() {
+    let env = setup();
+    let script = Script::new(vec![]);
+    let (lp, store) = with_store(&env, make(&env, &script, &[], ""));
+    store
+        .save(&wf_tool_step("private", "hidden", "private automation"))
+        .unwrap();
+    let profile = profile("");
+    let other = protocol::BotId::new();
+    assert!(
+        lp.sh
+            .router_candidates(&profile, other)
+            .iter()
+            .all(|c| c.name != "private")
+    );
+    assert!(
+        lp.sh
+            .router_candidates(&profile, env.bot)
+            .iter()
+            .any(|c| c.name == "private")
+    );
 }
 
 #[tokio::test]
@@ -1482,28 +1500,4 @@ async fn ledger_embeddings_count_transport_batches_and_query_calls() {
             .unwrap();
         assert_eq!(summary.detail["embedding"]["calls"], count);
     }
-}
-
-#[tokio::test]
-async fn workflows_from_one_bot_are_not_candidates_for_another_bot() {
-    let env = setup();
-    let script = Script::new(vec![]);
-    let (lp, store) = with_store(&env, make(&env, &script, &[], ""));
-    store
-        .save(&wf_tool_step("private", "hidden", "private automation"))
-        .unwrap();
-    let profile = profile("");
-    let other = protocol::BotId::new();
-    assert!(
-        lp.sh
-            .router_candidates(&profile, other)
-            .iter()
-            .all(|c| c.name != "private")
-    );
-    assert!(
-        lp.sh
-            .router_candidates(&profile, env.bot)
-            .iter()
-            .any(|c| c.name == "private")
-    );
 }

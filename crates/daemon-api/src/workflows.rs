@@ -220,7 +220,7 @@ fn recording(s: &AppState, id: RunId) -> Result<ReviewedRecording, ApiError> {
     })
 }
 
-#[utoipa::path(post, path = "/v1/runs/{id}/workflow-proposal", operation_id = "propose_workflow", tag = "workflows", security(("bearer" = [])),
+#[utoipa::path(post, operation_id = "propose_workflow", path = "/v1/runs/{id}/workflow-proposal", tag = "workflows", security(("bearer" = [])),
     params(("id" = Uuid, Path)),
     responses((status = 200, body = WorkflowProposal), (status = 409, body = ErrorBody), (status = 404, body = ErrorBody)))]
 pub(crate) async fn propose(
@@ -247,7 +247,7 @@ pub(crate) async fn propose(
     .map_err(ApiError::internal)?
 }
 
-#[utoipa::path(get, path = "/v1/workflows", operation_id = "list_workflows", tag = "workflows", security(("bearer" = [])),
+#[utoipa::path(get, operation_id = "list_workflows", path = "/v1/workflows", tag = "workflows", security(("bearer" = [])),
     params(("bot_id" = Uuid, Query)), responses((status = 200, body = Vec<WorkflowDto>)))]
 pub(crate) async fn list(
     State(s): State<AppState>,
@@ -266,7 +266,7 @@ pub(crate) async fn list(
     .map_err(ApiError::internal)?
 }
 
-#[utoipa::path(get, path = "/v1/workflows/{name}", operation_id = "show_workflow", tag = "workflows", security(("bearer" = [])),
+#[utoipa::path(get, operation_id = "show_workflow", path = "/v1/workflows/{name}", tag = "workflows", security(("bearer" = [])),
     params(("name" = String, Path), ("bot_id" = Uuid, Query)), responses((status = 200, body = WorkflowDto), (status = 404, body = ErrorBody)))]
 pub(crate) async fn show(
     State(s): State<AppState>,
@@ -285,7 +285,7 @@ pub(crate) async fn show(
     .map_err(ApiError::internal)?
 }
 
-#[utoipa::path(post, path = "/v1/workflows", operation_id = "save_workflow", tag = "workflows", security(("bearer" = [])), request_body = SaveWorkflow,
+#[utoipa::path(post, operation_id = "save_workflow", path = "/v1/workflows", tag = "workflows", security(("bearer" = [])), request_body = SaveWorkflow,
     responses((status = 201, body = WorkflowDto), (status = 409, body = ErrorBody), (status = 400, body = ErrorBody)))]
 pub(crate) async fn save(
     State(s): State<AppState>,
@@ -322,7 +322,7 @@ pub(crate) async fn save(
     }).await.map_err(ApiError::internal)?
 }
 
-#[utoipa::path(delete, path = "/v1/workflows/{name}", operation_id = "delete_workflow", tag = "workflows", security(("bearer" = [])),
+#[utoipa::path(delete, operation_id = "delete_workflow", path = "/v1/workflows/{name}", tag = "workflows", security(("bearer" = [])),
     params(("name" = String, Path), ("bot_id" = Uuid, Query)), responses((status = 204), (status = 404, body = ErrorBody)))]
 pub(crate) async fn delete(
     State(s): State<AppState>,
@@ -343,7 +343,7 @@ pub(crate) async fn delete(
     .map_err(ApiError::internal)?
 }
 
-#[utoipa::path(post, path = "/v1/workflows/{name}/run", operation_id = "run_workflow", tag = "workflows", security(("bearer" = [])),
+#[utoipa::path(post, operation_id = "run_workflow", path = "/v1/workflows/{name}/run", tag = "workflows", security(("bearer" = [])),
     params(("name" = String, Path)), request_body = RunWorkflow,
     responses((status = 202, body = WorkflowRun), (status = 400, body = ErrorBody), (status = 404, body = ErrorBody), (status = 409, body = ErrorBody)))]
 pub(crate) async fn run(

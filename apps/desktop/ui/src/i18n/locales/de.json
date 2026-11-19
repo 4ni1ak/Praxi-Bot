@@ -766,8 +766,6 @@
       "deny": "Verweigern"
     },
     "local": "Lokal (dieses Gerät)",
-    "manageBots": "Kann Bots erstellen",
-    "manageBotsHint": "Erlaubt diesem Bot, andere Bots zu erstellen und zu verwalten. Er kann ihnen nie mehr geben, als er selbst hat, und Sie geben jede Änderung vollständig frei.",
     "models": "Modelle",
     "name": "Name",
     "nameRequired": "Ein Name ist erforderlich.",
@@ -970,26 +968,6 @@
         "select": "Erlauben: {{name}}",
         "title": "{{count}} Genehmigungen nötig"
       },
-      "bot": {
-        "allToolsOfCaller": "alle Werkzeuge, die dieser Bot nutzen kann",
-        "ceiling": "Ein Bot kann einem anderen Bot nie mehr geben, als er selbst hat. Diese Freigabe gilt nur für diese Änderung; sie wird jedes Mal erfragt.",
-        "changes": "Was sich ändert",
-        "classifier": "Klassifikator",
-        "deleteNote": "Dieser Bot und seine Einstellungen werden entfernt. Ein Bot mit Chats kann nicht gelöscht werden.",
-        "empty": "(nicht gesetzt)",
-        "except": "außer {{list}}",
-        "model": "Modell",
-        "permissions": "Berechtigungen",
-        "persona": "Persona ({{count}} Zeichen, vollständig angezeigt):",
-        "planner": "Planer",
-        "profile": "Vollständiges Profil",
-        "title": {
-          "create": "Neuen Bot erstellen?",
-          "delete": "Diesen Bot löschen?",
-          "update": "Diesen Bot ändern?"
-        },
-        "tools": "Werkzeuge"
-      },
       "computer": "Diese Aktion läuft auf {{kind}} „{{name}}“ (ID {{id}}).",
       "control": {
         "button": "Diese Aufgabe: {{program}}",
@@ -1043,24 +1021,6 @@
           "browser": "Diese Seite im Browser auf {{where}} öffnen: {{url}}",
           "generic": "Etwas auf {{where}} tun",
           "launch": "Das Programm {{name}} auf {{where}} öffnen",
-          "pcBrowser": "Den Browser auf DEINEM Computer verwenden",
-          "pcBrowserBack": "Im Browser auf DEINEM Computer zurückgehen",
-          "pcBrowserClick": "Element {{ref}} auf der offenen Seite auf DEINEM Computer anklicken",
-          "pcBrowserFill": "In Element {{ref}} auf der offenen Seite auf DEINEM Computer tippen: {{text}}",
-          "pcBrowserLook": "Die offene Seite im Browser auf DEINEM Computer ansehen",
-          "pcBrowserOpen": "Diese Seite im Browser auf DEINEM Computer öffnen: {{url}}",
-          "pcBrowserPress": "{{key}} im Browser auf DEINEM Computer drücken",
-          "pcBrowserSelect": "„{{value}}“ in Element {{ref}} im Browser auf DEINEM Computer wählen",
-          "pcBrowserTab": "Im Browser auf DEINEM Computer zu Tab {{n}} wechseln",
-          "pcLaunch": "Das Programm {{name}} auf DEINEM Computer öffnen",
-          "pcRead": "Dateien auf DEINEM Computer lesen: {{path}}",
-          "pcScreen": "Den Bildschirm von DEINEM Computer verwenden",
-          "pcScreenClick": "Auf dem Bildschirm DEINES Computers klicken",
-          "pcScreenKeys": "{{keys}} auf DEINEM Computer drücken",
-          "pcScreenLook": "Den Bildschirm DEINES Computers ansehen",
-          "pcScreenType": "Auf DEINEM Computer tippen: {{text}}",
-          "pcShell": "Einen Befehl auf DEINEM Computer ausführen: {{command}}",
-          "pcWrite": "Eine Datei auf DEINEM Computer schreiben: {{path}}",
           "screen": "Den Bildschirm von {{where}} verwenden",
           "shell": "Befehl auf {{where}} ausführen: {{command}}"
         },
@@ -1244,7 +1204,6 @@
       "navigate": "navigieren",
       "select": "auswählen"
     },
-    "messageActions": "Nachrichtenaktionen",
     "messageCopied": "Kopiert",
     "mode": {
       "queue": "Einreihen",
@@ -1337,26 +1296,6 @@
         "done": "Dich gefragt",
         "failed": "Du konntest nicht gefragt werden",
         "running": "Fragt dich"
-      },
-      "bot_create": {
-        "done": "Bot erstellt",
-        "failed": "Bot nicht erstellt",
-        "running": "Bot wird erstellt"
-      },
-      "bot_delete": {
-        "done": "Bot gelöscht",
-        "failed": "Bot nicht gelöscht",
-        "running": "Bot wird gelöscht"
-      },
-      "bot_list": {
-        "done": "Ihre Bots geprüft",
-        "failed": "Ihre Bots konnten nicht geprüft werden",
-        "running": "Ihre Bots werden geprüft"
-      },
-      "bot_update": {
-        "done": "Bot geändert",
-        "failed": "Bot nicht geändert",
-        "running": "Bot wird geändert"
       },
       "browser_click": {
         "done": "Auf einer Seite geklickt",
@@ -1634,28 +1573,6 @@
     "working": "Arbeitet …",
     "yesterdayLabel": "Gestern"
   },
-  "chatManage": {
-    "allArchived": "Alle Chats sind archiviert.",
-    "archive": "Archivieren",
-    "archivedToggle": "Archiviert ({{count}})",
-    "delete": "Löschen",
-    "deleteActiveRun": "In diesem Chat läuft gerade ein Auftrag. Stoppe ihn zuerst, bevor du den Chat löschst.",
-    "deleteBody": "„{{title}}“ und alle zugehörigen Nachrichten werden dauerhaft gelöscht. Das lässt sich nicht rückgängig machen.",
-    "deleteConfirm": "Chat löschen",
-    "deleteTitle": "Diesen Chat löschen?",
-    "empty": "Noch keine Chats.",
-    "loading": "Chats werden geladen…",
-    "menuLabel": "Chat-Optionen für {{title}}",
-    "menuTooltip": "Chat-Optionen",
-    "pin": "Anheften",
-    "pinnedBadge": "Angeheftet",
-    "rename": "Umbenennen",
-    "renameEmpty": "Gib einen Titel ein.",
-    "renameInputLabel": "Chat-Titel",
-    "renameTooLong": "Der Titel darf höchstens {{max}} Zeichen lang sein.",
-    "unarchive": "Aus Archiv holen",
-    "unpin": "Lösen"
-  },
   "common": {
     "back": "Zurück",
     "cancel": "Abbrechen",
@@ -1675,19 +1592,6 @@
     "description": "Gekoppelte Server können diesen Computer bitten, den Bildschirm anzusehen und darauf zu handeln, nur wenn du es erlaubst.",
     "details": "Genau",
     "explain": "Standardmäßig aus. Wenn an, können die Bots des Servers den Bildschirm dieses Computers ansehen. Alles, was klickt, tippt oder etwas öffnet, fragt dich weiterhin zuerst, und Stopp hat immer Vorrang.",
-    "family": {
-      "browser": "Die Bots auf {{name}} dürfen den Browser dieses Computers verwenden",
-      "commands": "Die Bots auf {{name}} dürfen Befehle auf diesem Computer ausführen",
-      "files": "Die Bots auf {{name}} dürfen Dateien auf diesem Computer lesen",
-      "screen": "Die Bots auf {{name}} dürfen Bildschirm und Eingabe dieses Computers verwenden"
-    },
-    "familyNote": {
-      "browser": "Ein eigenes Browserfenster mit eigenem Profil, nicht deins. Eine Seite zu öffnen oder darin zu tippen fragt dich vorher.",
-      "commands": "Jeder Befehl fragt dich vorher und wird dir vollständig angezeigt.",
-      "files": "Lesen fragt einmal pro Sitzung, Schreiben fragt jedes Mal. Passwörter, Einstellungen anderer Programme und die Daten von Praxi selbst bleiben unerreichbar.",
-      "screen": "Den Bildschirm ansehen, klicken, tippen und Programme starten. Jede Aktion, die etwas ändert, fragt dich vorher."
-    },
-    "fromBotName": "(Bot des Servers, wie er sich selbst nennt: {{name}})",
     "fromServer": "Dieser Name stammt vom Server, nicht von diesem Computer.",
     "fromServerName": "(Servername, wie er sich selbst nennt: {{name}})",
     "looking": "Ein Bot auf {{name}} sieht sich diesen Bildschirm an",
@@ -2693,13 +2597,6 @@
       "offline": "Antwortet nicht. Versucht es von selbst erneut."
     },
     "viewScreen": "Bildschirm ansehen"
-  },
-  "hostRecovery": {
-    "remoteOffline": {
-      "hint": "Praxi kann einen Server von hier aus nicht starten. Schalten Sie den Server ein (oder starten Sie Praxi darauf) und drücken Sie dann Erneut versuchen. Ihre Nachricht bleibt im Eingabefeld.",
-      "title": "Der Server ist offline"
-    },
-    "starting": "Der Praxi-Dienst dieses Computers wird gestartet … Ihre Nachricht wird gesendet, sobald er bereit ist."
   },
   "hostState": {
     "connecting": "Verbindung zu {{name}} wird hergestellt …",
@@ -4115,10 +4012,6 @@
     "title": "Gesprochene Antworten",
     "unsupported": "Dieses System bietet keine Sprachausgabe-Stimmen."
   },
-  "whatsNew": {
-    "dismiss": "Verstanden",
-    "label": "Neuigkeiten"
-  },
   "widget": {
     "dismissStop": "Stopp-Anzeige ausblenden (das Hauptfenster behält seinen Status)",
     "dragHandleAria": "Schwebendes Steuer-Widget ziehen",
@@ -4150,25 +4043,25 @@
   "workflow": {
     "button": "Als Workflow speichern",
     "cancel": "Abbrechen",
-    "confirmInfluencedStep": "Ich habe diesen Schritt und seinen externen Einfluss geprüft.",
+    "confirmInfluencedStep": "Ich habe diesen Schritt und seine externe Beeinflussung geprüft.",
     "defaultValue": "Standardwert",
     "description": "Beschreibung",
-    "fromContent": "Die Werte können aus Tool-Ausgaben oder Modellschlüssen stammen.",
-    "fromUser": "Die Werte stammen vor jeder Tool-Ausgabe aus der Anfrage des Nutzers.",
+    "fromContent": "Werte können aus Werkzeugausgaben oder Modellschlüssen stammen.",
+    "fromUser": "Werte stammen aus der Nutzeranfrage, vor jeder Werkzeugausgabe.",
     "name": "Name",
-    "noParameters": "Keine Parameter. Prüfe alle festen Werte in den Schritten.",
+    "noParameters": "Keine Parameter. Prüfen Sie alle festen Werte in den Schritten.",
     "parameters": "Parameter-Standardwerte",
-    "required": "Wert bei der Wiedergabe verlangen",
-    "reviewHint": "Prüfe vor dem Speichern jeden Schritt und jeden Parameter. Seitentext und Tool-Ausgaben sind nicht vertrauenswürdige Daten. Das Speichern erstellt eine Automatisierung, die diese Tool-Aufrufe ohne Modell wiederholen kann; die normalen Berechtigungsprüfungen gelten weiterhin.",
+    "required": "Beim Ausführen einen Wert verlangen",
+    "reviewHint": "Prüfen Sie jeden Schritt und jeden Parameter vor dem Speichern. Seitentext und Werkzeugausgaben sind nicht vertrauenswürdige Daten. Das Speichern erstellt eine Automatisierung, die diese Werkzeugaufrufe ohne Modell wiederholen kann; die normalen Berechtigungsprüfungen gelten weiter.",
     "save": "Workflow speichern",
     "saved": "Workflow gespeichert",
     "saving": "Wird gespeichert…",
-    "sensitive": "Wird bei der Wiedergabe benötigt. Der aufgezeichnete Wert wird nicht gespeichert.",
+    "sensitive": "Wird beim Ausführen verlangt. Der aufgezeichnete Wert wird nicht gespeichert.",
     "skipped": "Übersprungene Aufrufe und Gründe",
     "steps": "Schritte und vollständige Parameter",
     "title": "Workflow prüfen",
-    "tooFewSteps": "Dieser Lauf hat weniger als zwei aufzeichenbare Schritte.",
-    "untrustedWarning": "Dieser Lauf hat externe oder private Inhalte gelesen. Prüfe jeden betroffenen Schritt, bevor du eine dauerhafte Automatisierung freigibst.",
+    "tooFewSteps": "Dieser Lauf hat weniger als zwei aufzeichnungsfähige Schritte.",
+    "untrustedWarning": "Dieser Lauf hat externe oder private Inhalte gelesen. Prüfen Sie jeden betroffenen Schritt, bevor Sie eine dauerhafte Automatisierung freigeben.",
     "warnings": "Hinweise zur Prüfung"
   }
 }

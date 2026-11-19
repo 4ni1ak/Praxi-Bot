@@ -275,15 +275,6 @@ pub(crate) fn routed_final_text(last: &RunStep) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn workflow_failure(name: &str, level: &str, why: &str) -> Value {
-    json!({
-        "completed": false, "workflow": name, "level": level,
-        "note": "The saved workflow could not be replayed.",
-        "summary": format!("The saved workflow could not be replayed: {why}"),
-        "exposure": { "ran": false },
-    })
-}
-
 fn route_json(decision: &Decision) -> Value {
     serde_json::to_value(&decision.route).unwrap_or(Value::Null)
 }
@@ -754,6 +745,7 @@ impl TurnExecutor {
 
     /// Replay the routed workflow through the loop's permission gate.  Never
     /// fails the run: a replay that cannot start or stops early hands over to
+    #[allow(clippy::too_many_lines)] // one ordered replay pass: exposure is recorded before every exit
     /// K4 with a note.
     #[allow(clippy::too_many_lines)] // one linear replay sequence
     pub(crate) async fn exec_workflow(
@@ -769,7 +761,16 @@ impl TurnExecutor {
             .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
         let human = self.sh.router.take_human_params(run, &name, &mut params)?;
-        let fail = |why: String| workflow_failure(&name, &level, &why);
+        let fail = |why: String| {
+            json!({
+                "completed": false,
+                "workflow": name,
+                "level": level,
+                "note": "The saved workflow could not be replayed.",
+                "summary": format!("The saved workflow could not be replayed: {why}"),
+                "exposure": { "ran": false },
+            })
+        };
         let Some(w) = self.sh.router.workflows.get() else {
             return if human {
                 Err(xe("workflows are not available"))
@@ -777,10 +778,6 @@ impl TurnExecutor {
                 Ok(fail("workflows are not available".into()))
             };
         };
-        let store = w
-            .store
-            .for_bot(&run.bot_id.to_string())
-            .map_err(|_| xe("invalid bot scope"))?;
         // Loading/parsing can itself return file content in an error. Record
         // exposure before touching the store and persist it on failure too.
         ctx.taint.lock().note(
@@ -793,6 +790,10 @@ impl TurnExecutor {
                 "reads_private": true, "label": "saved workflow"});
             failed
         };
+        let store = w
+            .store
+            .for_bot(&run.bot_id.to_string())
+            .map_err(|_| xe("invalid bot scope"))?;
         let wf = match store.get(&name) {
             Ok(wf) => wf,
             Err(e) => {
