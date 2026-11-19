@@ -4115,6 +4115,10 @@
     "title": "Spoken replies",
     "unsupported": "This system offers no speech voices."
   },
+  "whatsNew": {
+    "dismiss": "Got it",
+    "label": "What's new"
+  },
   "widget": {
     "dismissStop": "Hide the Stop indicator (the main window keeps its status)",
     "dragHandleAria": "Drag floating control widget",

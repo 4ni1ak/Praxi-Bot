@@ -48,6 +48,10 @@ import { AccountMenu, type AccountAction } from "./components/AccountMenu";
 import { Popover } from "./components/Popover";
 import { HealthIndicator } from "./components/HealthIndicator";
 import { HelpModal } from "./components/HelpModal";
+import { WhatsNewModal } from "./components/WhatsNewModal";
+import { notesFor, whatsNewAction, type WhatsNewFile } from "./lib/whatsNew";
+import whatsNewFile from "./whats-new.json";
+import { getVersion } from "@tauri-apps/api/app";
 import { chatTitleLabel } from "./lib/chatTitle";
 import { APP_COMMAND_EVENT, type AppCommandTarget } from "./lib/slash";
 import { editorSection } from "./lib/botEditor";
@@ -249,6 +253,9 @@ function AppShell() {
   const [botSearch, setBotSearch] = useState<string | null>(null);
   const { servers: appServers } = useMcp(true);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
+  const [whatsNewDone, setWhatsNewDone] = useState(false);
   const [layout, setLayout] = useState<ShellLayout>(loadShellLayout);
   const [panelOpen, setPanelOpen] = useState(() => {
     if (!isMockMode() || typeof window === "undefined") {
@@ -328,6 +335,7 @@ function AppShell() {
         if (screen === "home" || screen === "offline") setRoute({ kind: "home" });
       }
       setSettings(merged);
+      setSettingsLoaded(true);
       if (shouldOpenOnboardingOnStart(merged)) {
         setRoute({ kind: "onboarding" });
       }
@@ -644,6 +652,30 @@ function AppShell() {
   useEffect(() => {
     if (dialogOpen) setBotSearch(null);
   }, [dialogOpen]);
+
+  // "What's new": bundled notes of the installed version, shown once per version (never blocks, no network).
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    void getVersion().then(setAppVersion).catch(() => undefined);
+  }, []);
+  const whatsNewNotes = notesFor(whatsNewFile as WhatsNewFile, appVersion, i18n.language);
+  const whatsNewStep = settingsLoaded
+    ? whatsNewAction({
+        version: appVersion,
+        lastSeen: settings.lastSeenVersion,
+        onboardingCompleted: settings.onboardingCompleted,
+        hasNotes: whatsNewNotes !== null
+      })
+    : "none";
+  const recordWhatsNew = () => {
+    setWhatsNewDone(true);
+    updateSettings({ lastSeenVersion: appVersion });
+  };
+  useEffect(() => {
+    if (whatsNewStep === "record") recordWhatsNew();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [whatsNewStep]);
+  const showWhatsNew = whatsNewStep === "show" && !whatsNewDone && route.kind !== "onboarding" && !dialogOpen;
   const mini = isMiniRail(railWidth);
 
   // The computer card asks for the screen itself, only when the owner presses "show screen".
@@ -1143,6 +1175,7 @@ function AppShell() {
         initialStep={review.installStep ? "install" : undefined}
         onClose={() => setAddSkillOpen(false)}
       />
+      <WhatsNewModal notes={showWhatsNew ? whatsNewNotes : null} onClose={recordWhatsNew} />
       <HelpModal
         open={helpOpen}
         onClose={() => setHelpOpen(false)}
