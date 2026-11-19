@@ -7,6 +7,7 @@ mod composio_approvals;
 mod external_agent;
 mod fill_secret;
 mod planning_pause;
+mod tiering;
 mod usage;
 
 use std::collections::VecDeque;

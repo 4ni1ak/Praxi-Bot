@@ -32,6 +32,7 @@ mod scoped_grant;
 mod shared;
 mod subagent;
 mod taint;
+mod tiering;
 mod tool_guidance;
 pub mod usage;
 

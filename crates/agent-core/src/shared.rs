@@ -2111,6 +2111,12 @@ pub(crate) struct ResultRec {
     /// before the field existed; those rows are not classified from their text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fact: Option<crate::taint::ExecFact>,
+    /// Light-tier steps only: host facts about whether the call ran and whether
+    /// it was valid. A tool cannot label its own output clean.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier_executed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier_invalid: Option<bool>,
     /// How the call ended (ok, error, timed out, denied, ...). Absent on rows
     /// written before the field existed; the ledger classifies those itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
