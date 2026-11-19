@@ -58,6 +58,7 @@ impl Modify for Security {
         live_view::thumbnail,
         live_view::create_session,
         live_view::update_session,
+        live_view::ack_frame,
         live_view::heartbeat,
         live_view::delete_session,
         live_view::takeover,

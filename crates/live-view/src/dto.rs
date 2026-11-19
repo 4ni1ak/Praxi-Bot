@@ -288,6 +288,16 @@ pub struct SessionUpdate {
     pub buffered_frames: Option<u32>,
 }
 
+/// `POST /v1/view/sessions/{id}/ack`: the newest frame this viewer has put on screen. Unlike
+/// `SessionUpdate` it changes nothing else and never forces a refresh, so a viewer can send
+/// it after every frame; the host paces its frames by it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(deny_unknown_fields)]
+pub struct FrameAck {
+    pub last_rendered_frame_seq: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]

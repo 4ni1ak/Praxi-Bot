@@ -216,6 +216,7 @@ pub const TOKEN_OK_ROUTES: &[(&str, &str)] = &[
     ("PATCH", "/v1/view/sessions/{}"),
     ("DELETE", "/v1/view/sessions/{}"),
     ("PUT", "/v1/view/sessions/{}/heartbeat"),
+    ("POST", "/v1/view/sessions/{}/ack"),
     ("POST", "/v1/view/sessions/{}/input"),
     ("POST", "/v1/email/accounts/{}/test"),
     ("POST", "/v1/email/test"),
