@@ -67,6 +67,11 @@ test("every daemon error code has a title and a hint in both languages", async (
   }
 });
 
+test("daemon error codes stay sorted and unique (keeps parallel branches from conflicting)", () => {
+  const codes = [...layer.DAEMON_ERROR_CODES];
+  assert.deepEqual(codes, [...new Set(codes)].sort());
+});
+
 test("first-run provider failures distinguish credentials, network, endpoint and model", async () => {
   assert.equal(firstRun.classifyConnectError("authentication failed: test credential rejected", "openai"), "badKey");
   assert.equal(firstRun.classifyConnectError("connection error: error sending request", "openai"), "offline");
