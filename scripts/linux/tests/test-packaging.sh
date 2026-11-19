@@ -243,6 +243,10 @@ if [[ "${1:-}" == "--version" ]]; then
   echo "systemd ${FAKE_SYSTEMD_VERSION:-255} (255.4-1ubuntu8.18)"
   exit 0
 fi
+if [[ "$*" == "show --property=ExecStart --value praxi.service" ]]; then
+  printf '%s\n' "${FAKE_PRAXI_EXEC_START:-}"
+  exit 0
+fi
 verb=""
 has_now=0
 units=()
@@ -1141,5 +1145,16 @@ if command -v systemd-analyze >/dev/null 2>&1; then
 else
   echo "SKIP: systemd-analyze not available on this platform (run on Linux target VM)"
 fi
+
+# 12. The systemd manager reports the replacement command from the loaded drop-in.
+SB_PROVISION="${TMP_ROOT}/provision.sh"
+make_sandboxed_script "${REPO_ROOT}/crates/host-provision/scripts/provision.sh" "${SB_PROVISION}"
+FAKE_PRAXI_EXEC_START='{ path=/opt/praxi/bin/bot ; argv[]=/opt/praxi/bin/bot serve --peer --host ; ignore_errors=no ; pid=123 }' \
+  run_ok "${TMP_ROOT}/provision-host-mode.log" bash "${SB_PROVISION}" status
+assert_file_contains "${TMP_ROOT}/provision-host-mode.log" "unit_hostmode=1"
+FAKE_PRAXI_EXEC_START='{ path=/opt/praxi/bin/bot ; argv[]=/opt/praxi/bin/bot serve --peer ; ignore_errors=no ; pid=123 }' \
+  run_ok "${TMP_ROOT}/provision-standalone-mode.log" bash "${SB_PROVISION}" status
+assert_file_contains "${TMP_ROOT}/provision-standalone-mode.log" "unit_hostmode=0"
+pass "provisioning detects host mode from the effective systemd command"
 
 echo "ALL PACKAGING HERMETIC TESTS PASSED"
