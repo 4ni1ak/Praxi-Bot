@@ -1117,12 +1117,20 @@ impl HostDesktopHandler {
                 complete_text(&t).map_err(|why| self.refuse(peer, method, &why))?;
                 // Same rule as desktop typing: a password / one-time-code /
                 // card field is never filled by a bot.
-                if driver
-                    .field_target(&arg("ref"))
-                    .await
-                    .is_ok_and(|f| f.sensitive)
-                {
-                    return Err(self.refuse(peer, method, "the element is a password field"));
+                // Fails closed: when the browser cannot say what the field is,
+                // the fill is refused.
+                match driver.field_target(&arg("ref")).await {
+                    Ok(f) if !f.sensitive => {}
+                    Ok(_) => {
+                        return Err(self.refuse(peer, method, "the element is a password field"));
+                    }
+                    Err(_) => {
+                        return Err(self.refuse(
+                            peer,
+                            method,
+                            "cannot tell whether the element is a password field",
+                        ));
+                    }
                 }
                 Some((
                     format!(
@@ -1146,8 +1154,28 @@ impl HostDesktopHandler {
             "press" => {
                 let k = arg("key");
                 complete_text(&k).map_err(|why| self.refuse(peer, method, &why))?;
+                let focused = driver.focused_target().await;
+                // A secret field must not be typed into key by key.
+                if !is_navigation_key(&k) && focused.as_ref().map_or(true, |f| f.sensitive) {
+                    return Err(self.refuse(
+                        peer,
+                        method,
+                        "the focused element is, or may be, a password field; only Tab, Enter, Escape and arrow keys are allowed there",
+                    ));
+                }
+                let on = match &focused {
+                    Ok(t) => format!(
+                        "focused element ({} the page calls \"{}\")",
+                        plain_line(&t.role, 40),
+                        plain_line(&t.name, 120)
+                    ),
+                    Err(_) => "an unknown focused element".to_owned(),
+                };
                 Some((
-                    format!("press a key in the open page: {}", page_of(&driver).await),
+                    format!(
+                        "press a key in the open page ({on}): {}",
+                        page_of(&driver).await
+                    ),
                     format!("press {k}"),
                 ))
             }
@@ -1487,6 +1515,26 @@ fn plain_line(text: &str, max: usize) -> String {
     } else {
         clean
     }
+}
+
+/// Keys that move or confirm without typing a character (no modifiers).
+fn is_navigation_key(spec: &str) -> bool {
+    matches!(
+        spec.to_ascii_lowercase().as_str(),
+        "tab"
+            | "enter"
+            | "return"
+            | "escape"
+            | "esc"
+            | "arrowup"
+            | "arrowdown"
+            | "arrowleft"
+            | "arrowright"
+            | "up"
+            | "down"
+            | "left"
+            | "right"
+    )
 }
 
 /// The page the browser is on, for a card.
@@ -2172,6 +2220,8 @@ mod tests {
         bump: Mutex<Option<Arc<AtomicU64>>>,
         /// Every field reports itself as a password field.
         secret_fields: std::sync::atomic::AtomicBool,
+        /// The browser cannot say what a field is.
+        target_unknown: std::sync::atomic::AtomicBool,
         check: Mutex<Option<browser_cdp::DestinationCheck>>,
         /// Every policy installed, in order (one per bot's browser).
         checks: Mutex<Vec<browser_cdp::DestinationCheck>>,
@@ -2204,6 +2254,9 @@ mod tests {
             Ok("filled".into())
         }
         async fn field_target(&self, _: &str) -> Result<browser_cdp::FieldTarget, String> {
+            if self.target_unknown.load(Ordering::SeqCst) {
+                return Err("cannot tell".into());
+            }
             Ok(browser_cdp::FieldTarget {
                 name: "Password".into(),
                 role: "textbox".into(),
@@ -2211,6 +2264,9 @@ mod tests {
                 top_origin: None,
                 sensitive: self.secret_fields.load(Ordering::SeqCst),
             })
+        }
+        async fn focused_target(&self) -> Result<browser_cdp::FieldTarget, String> {
+            self.field_target("").await
         }
         async fn select(&self, _: &str, _: &str) -> Result<String, String> {
             Ok("selected".into())
@@ -2507,6 +2563,26 @@ mod tests {
             )
             .await;
         assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
+    }
+
+    /// Follow-up: an unknown field fails closed, and a focused password field
+    /// takes no typed characters (navigation keys still work).
+    #[tokio::test]
+    async fn fill_and_press_fail_closed_around_secret_fields() {
+        let r = rig(false, true);
+        r.access.set_switches("host1", all_families()).unwrap();
+        let host = device(Role::Host);
+        let call = |params: serde_json::Value| r.h.handle(&host, RPC_BROWSER, params);
+        let bot = serde_json::json!({"id": "bot-a", "name": "Ayla"});
+        r.browser.target_unknown.store(true, Ordering::SeqCst);
+        let res =
+            call(serde_json::json!({"op": "fill", "ref": "e1", "text": "x", "bot": bot})).await;
+        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
+        r.browser.target_unknown.store(false, Ordering::SeqCst);
+        r.browser.secret_fields.store(true, Ordering::SeqCst);
+        let res = call(serde_json::json!({"op": "press", "key": "a", "bot": bot})).await;
+        assert_eq!(res.unwrap_err().code, ERR_FORBIDDEN);
+        assert!(is_navigation_key("Tab") && !is_navigation_key("Control+a"));
     }
 
     /// Blocker 1: the card shows the complete REAL destination; what cannot be
