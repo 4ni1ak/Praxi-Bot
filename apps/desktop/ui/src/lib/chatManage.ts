@@ -70,8 +70,41 @@ export function applyChatPatch(
   return { next, previous };
 }
 
-export function rollbackChatPatch(chats: readonly Chat[], previous: Chat | null): Chat[] {
-  return previous ? chats.map((c) => (c.id === previous.id ? previous : c)) : [...chats];
+/**
+ * Undo a failed patch by restoring only the fields it touched, so a concurrent change to
+ * another field (or a newer value from elsewhere) is not overwritten by a whole-chat snapshot.
+ */
+export function rollbackChatPatch(
+  chats: readonly Chat[],
+  previous: Chat | null,
+  patch: UpdateChatInput
+): Chat[] {
+  if (!previous) return [...chats];
+  return chats.map((c) => {
+    if (c.id !== previous.id) return c;
+    return {
+      ...c,
+      ...(patch.title != null ? { title: previous.title } : {}),
+      ...(patch.pinned != null ? { pinned: previous.pinned } : {}),
+      ...(patch.archived != null ? { archived: previous.archived } : {})
+    };
+  });
+}
+
+/**
+ * Merge a freshly listed set of chats with local state: chats with a delete in flight (or
+ * already deleted) stay out, and chats with a patch in flight keep their optimistic copy.
+ */
+export function mergeChatRefresh(
+  fresh: readonly Chat[],
+  current: readonly Chat[],
+  deletingOrDeleted: ReadonlySet<string>,
+  patching: ReadonlySet<string>
+): Chat[] {
+  const local = new Map(current.map((c) => [c.id, c]));
+  return fresh
+    .filter((c) => !deletingOrDeleted.has(c.id))
+    .map((c) => (patching.has(c.id) ? (local.get(c.id) ?? c) : c));
 }
 
 export function applyChatDelete(

@@ -9,6 +9,7 @@ import {
   applyChatPatch,
   CHAT_TITLE_MAX_LEN,
   chatHasActiveRun,
+  mergeChatRefresh,
   nextRouteAfterChatDelete,
   orderChats,
   partitionChats,
@@ -48,7 +49,7 @@ test("rename validation trims whitespace, rejects empty/oversized titles, and op
   const { next, previous } = applyChatPatch(before, "c1", { title: "New title" });
   assert.equal(next[0]?.title, "New title");
   assert.equal(before[0]?.title, "Old title");
-  assert.deepEqual(rollbackChatPatch(next, previous), before);
+  assert.deepEqual(rollbackChatPatch(next, previous, { title: "New title" }), before);
 });
 
 test("pin ordering floats pinned chats above newer unpinned ones and archive splits them out", () => {
@@ -156,4 +157,30 @@ test("left rail and bot panel both mount ChatList, and deletion is gated behind 
   assert.match(list, /<ConfirmDialog[\s\S]*confirmDisabled=\{deleteActiveRun\}/);
   assert.match(list, /chatHasActiveRun\(/);
   assert.match(list, /setDeleteTarget\(menuChat\)/);
+});
+
+test("a refresh skips chats being deleted and keeps optimistic patches", () => {
+  const current = [makeChat("c1", 10, { pinned: true }), makeChat("c2", 20)];
+  const fresh = [makeChat("c1", 10), makeChat("c2", 20), makeChat("c3", 30)];
+  const merged = mergeChatRefresh(fresh, current, new Set(["c2"]), new Set(["c1"]));
+  assert.deepEqual(
+    merged.map((c) => c.id),
+    ["c1", "c3"]
+  );
+  assert.equal(merged[0]?.pinned, true);
+});
+
+test("rolling back a failed patch restores only the patched fields", () => {
+  const previous = makeChat("c1", 10, { title: "Old", pinned: false });
+  // Pin failed, but the title was renamed concurrently.
+  const current = [makeChat("c1", 10, { title: "New", pinned: true })];
+  const [c] = rollbackChatPatch(current, previous, { pinned: true });
+  assert.equal(c?.pinned, false);
+  assert.equal(c?.title, "New");
+});
+
+test("handleDeleteChat navigates only after the delete succeeded", () => {
+  const src = read("../App.tsx");
+  const body = src.slice(src.indexOf("const handleDeleteChat"));
+  assert.ok(body.indexOf("await deleteChat(chatId)") < body.indexOf("go(next)"));
 });

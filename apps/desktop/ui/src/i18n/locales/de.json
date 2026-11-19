@@ -4117,6 +4117,10 @@
     "title": "Gesprochene Antworten",
     "unsupported": "Dieses System bietet keine Sprachausgabe-Stimmen."
   },
+  "whatsNew": {
+    "dismiss": "Verstanden",
+    "label": "Neuigkeiten"
+  },
   "widget": {
     "dismissStop": "Stopp-Anzeige ausblenden (das Hauptfenster behält seinen Status)",
     "dragHandleAria": "Schwebendes Steuer-Widget ziehen",

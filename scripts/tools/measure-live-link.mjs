@@ -3,11 +3,23 @@
 // direct or relayed, round-trip time, frame throughput and capture-to-receive latency.
 // No dependencies (Node 18+). Read docs/design/live-view-link-measurement.md first.
 //
-//   node scripts/tools/measure-live-link.mjs --url http://127.0.0.1:PORT --token TOKEN [--seconds 20] [--target ID]
+//   BOT_API_TOKEN=<token> node scripts/tools/measure-live-link.mjs --url http://127.0.0.1:PORT [--seconds 20] [--target ID]
 //
-// --url/--token: the loopback proxy printed by `bot --remote <ENDPOINT> proxy`, so the
-// requests really travel through the tunnel. Against a local daemon /v1/peer/link is null
-// and only the HTTP round trip is measured.
+// --url: the loopback proxy printed by `bot --remote <ENDPOINT> proxy`, so the requests really
+// travel through the tunnel. Only loopback URLs are accepted (the token is sent in clear over
+// HTTP). Pass the token in BOT_API_TOKEN, not on the command line (visible in `ps`/history);
+// --token exists but is discouraged. Against a local daemon /v1/peer/link is null and only the
+// HTTP round trip is measured.
+import { Buffer } from "node:buffer";
+import console from "node:console";
+import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
+import process from "node:process";
+import { clearInterval, clearTimeout, setInterval, setTimeout } from "node:timers";
+import { URL } from "node:url";
+
+// fetch and AbortController have no node: module; take them from globalThis (Node 18+).
+const { AbortController, fetch } = globalThis;
 const MEDIA = "application/vnd.praxi.live-view.v1";
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((acc, a, i, all) => {
@@ -19,7 +31,18 @@ const base = (args.url ?? "").replace(/\/$/, "");
 const token = args.token ?? process.env.BOT_API_TOKEN ?? "";
 const seconds = Number(args.seconds ?? 20);
 if (!base || !token || !Number.isFinite(seconds) || seconds <= 0) {
-  console.error("usage: measure-live-link.mjs --url <base> --token <token> [--seconds 20] [--target <id>]");
+  console.error("usage: BOT_API_TOKEN=<token> measure-live-link.mjs --url <loopback base> [--seconds 20] [--target <id>]");
+  process.exit(2);
+}
+let host = "";
+try {
+  const u = new URL(base);
+  host = u.protocol === "http:" ? u.hostname : "";
+} catch {
+  host = ""; // unparsable URL: refused below
+}
+if (!["127.0.0.1", "localhost", "[::1]"].includes(host)) {
+  console.error(`refusing --url ${base}: only a loopback http URL (127.0.0.1, localhost, [::1]) is allowed, because the bearer token would otherwise cross the network in clear text. Use the url printed by \`bot --remote <ENDPOINT> proxy\`.`);
   process.exit(2);
 }
 const auth = { authorization: `Bearer ${token}` };
@@ -74,7 +97,7 @@ if (!target) {
   process.exit(0);
 }
 const created = await api("POST", "/v1/view/sessions", {
-  client_id: crypto.randomUUID(),
+  client_id: randomUUID(),
   target_id: target.target_id,
   profile: "watch",
   codecs: ["jpeg"],
