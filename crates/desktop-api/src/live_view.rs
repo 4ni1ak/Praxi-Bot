@@ -3559,7 +3559,7 @@ mod tests {
         let mut scratch = Vec::new();
         let mut out = Vec::new();
 
-        // New default: native 1920x1080, watch profile, 4:4:4, quality 70.
+        // New default: native 1920x1080, watch profile, 4:4:4, quality 80.
         let watch = EffectiveProfile::watch();
         let (nw, nh) = encode_jpeg_within_budget(
             &page,
