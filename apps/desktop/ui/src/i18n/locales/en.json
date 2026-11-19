@@ -1222,6 +1222,7 @@
       "navigate": "navigate",
       "select": "select"
     },
+    "messageActions": "Message actions",
     "messageCopied": "Copied",
     "mode": {
       "queue": "Queue",
