@@ -2,9 +2,12 @@
 // Generates the README artwork into docs/assets/readme/. Deterministic and offline.
 //   node scripts/readme-assets/build.mjs            build everything
 //   node scripts/readme-assets/build.mjs hero       build only files whose name contains "hero"
+import { Buffer } from 'node:buffer';
+import console from 'node:console';
+import process from 'node:process';
 import { mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, URL } from 'node:url';
 import { themes } from './lib/core.mjs';
 import { hero } from './scenes/hero.mjs';
 import { featuresScene } from './scenes/features.mjs';
