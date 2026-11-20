@@ -597,7 +597,8 @@ impl Page {
             role: e.role.clone(),
             frame_origin: frame.origin,
             top_origin: self.top_origin().await,
-            sensitive: e.sensitive,
+            // Live check (as `focused_target`): the snapshot flag can be stale, and fails closed on error.
+            sensitive: self.entry_is_sensitive(&e).await.unwrap_or(true),
         })
     }
 
@@ -637,15 +638,39 @@ impl Page {
                     .into(),
             ))
         };
-        let Ok(r) = self
+        // Evaluate in an isolated world: the page's own scripts cannot patch `document.activeElement`
+        // there, so a hostile page cannot make it report null or a decoy field.
+        let Ok(tree) = self.cmd("Page.getFrameTree", json!({})).await else {
+            return refuse();
+        };
+        let Some(frame_id) = tree["frameTree"]["frame"]["id"].as_str() else {
+            return refuse();
+        };
+        let Ok(world) = self
             .cmd(
-                "Runtime.evaluate",
-                json!({"expression": "document.activeElement", "returnByValue": false}),
+                "Page.createIsolatedWorld",
+                json!({"frameId": frame_id, "worldName": "praxi-focus-check"}),
             )
             .await
         else {
             return refuse();
         };
+        let Some(context_id) = world["executionContextId"].as_i64() else {
+            return refuse();
+        };
+        let Ok(r) = self
+            .cmd(
+                "Runtime.evaluate",
+                json!({"expression": "document.activeElement", "returnByValue": false,
+                       "contextId": context_id}),
+            )
+            .await
+        else {
+            return refuse();
+        };
+        if r.get("exceptionDetails").is_some() {
+            return refuse();
+        }
         let Some(object_id) = r["result"]["objectId"].as_str() else {
             return Ok(()); // null: nothing is focused
         };

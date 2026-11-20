@@ -345,3 +345,51 @@ async fn field_that_turns_into_a_password_after_the_check_is_refused() {
     // Navigation keys stay allowed.
     p.press_key("Tab").await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "needs Chrome/Edge"]
+async fn contenteditable_editor_and_select_are_plain_fields() {
+    let b = Browser::launch(LaunchOptions::default()).await.unwrap();
+    let p = open(
+        &b,
+        r#"<html><body><div id=ed contenteditable=true role=textbox aria-label="Message"></div>
+<label>Country <select id=c><option>Turkey</option><option>Germany</option></select></label></body></html>"#,
+    )
+    .await;
+    let snap = p.snapshot(&SnapshotOptions::default()).await.unwrap();
+    let ed = ref_of(&snap, "textbox", "Message");
+    assert!(!p.field_target(&ed).await.unwrap().sensitive);
+    let sel = ref_of(&snap, "combobox", "Country");
+    assert!(!p.field_target(&sel).await.unwrap().sensitive);
+    let r = p.fill(&ed, "hello").await.unwrap();
+    assert!(r.ok, "{:?}", r.error);
+    let typed = p
+        .evaluate("document.getElementById('ed').textContent")
+        .await
+        .unwrap();
+    assert_eq!(typed.as_str(), Some("hello"));
+    b.close().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "needs Chrome/Edge"]
+async fn a_page_cannot_hide_the_focused_password_field_from_the_key_check() {
+    let b = Browser::launch(LaunchOptions::default()).await.unwrap();
+    let p = open(
+        &b,
+        r#"<html><body><input id=pw type=password aria-label="Secret">
+<script>Object.defineProperty(Document.prototype,'activeElement',{get(){return null}});
+Object.defineProperty(document,'activeElement',{get(){return null}});
+document.getElementById('pw').focus();</script></body></html>"#,
+    )
+    .await;
+    let res = p.press_key("a").await;
+    let err = res.map_or_else(|e| e.to_string(), |a| a.error.unwrap_or_default());
+    assert!(err.contains("refused"), "{err}");
+    let typed = p
+        .evaluate("document.getElementById('pw').value")
+        .await
+        .unwrap();
+    assert_eq!(typed.as_str(), Some(""), "nothing may have been typed");
+    b.close().await.unwrap();
+}

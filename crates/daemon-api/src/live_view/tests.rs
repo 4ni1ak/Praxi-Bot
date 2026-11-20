@@ -4861,6 +4861,20 @@ async fn host_admin_recover_audits_the_cleared_reason_and_owner_and_revokes_anot
     grant(&t, "alice", true, true).await;
     let alice = view_actor("alice", false);
     assert!(t.state.live_view().allowed(&alice, true));
+    // The app pauses during the peer's takeover: the latch now carries a reason.
+    let (status, state) = t
+        .call(
+            None,
+            Method::PUT,
+            "/v1/control/state",
+            Some(json!({"mode":"paused","release":false})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{state}");
+    assert_eq!(
+        t.state.hub().takeover().unwrap().info.reason,
+        Some(Reason::LocalOverride)
+    );
     // The admin desktop clears ANOTHER peer's takeover: that peer loses input.
     let _ = local_recover(
         State(t.state.clone()),
@@ -4885,5 +4899,5 @@ async fn host_admin_recover_audits_the_cleared_reason_and_owner_and_revokes_anot
     let d = &rows[0].detail;
     assert_eq!(d["by"], json!("host_admin"));
     assert_eq!(d["previous_owner"], json!("peer:alice"));
-    assert!(d.get("cleared_reason").is_some(), "{d:?}");
+    assert_eq!(d["cleared_reason"], json!("local_override"), "{d:?}");
 }
