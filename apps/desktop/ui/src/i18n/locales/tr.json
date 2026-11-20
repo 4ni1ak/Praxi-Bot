@@ -1285,6 +1285,16 @@
       "notEligible": "Bu çalışma hatırlanamaz.",
       "saved": "Hatırlandı"
     },
+    "resend": {
+      "acted": "Bu çalışma sohbetin dışında iş yapan araçlar kullandı. Yeniden yapmak onların yaptıklarını geri almaz.",
+      "cancel": "Vazgeç",
+      "earlier": "Önceki sürüm",
+      "edit": "Mesajı düzenle",
+      "editLabel": "Mesajınızı düzenleyin",
+      "regenerate": "Yeniden oluştur",
+      "regenerateAnyway": "Yine de yeniden oluştur",
+      "save": "Kaydet ve yeniden gönder"
+    },
     "resume": "Devam et",
     "route": {
       "agent": "Ajan ({{level}})",
@@ -2073,6 +2083,14 @@
         "hint": "Biraz bekleyip yeniden dene.",
         "title": "Bu uygulamaya çok sık istek gidiyor"
       },
+      "message_not_editable": {
+        "hint": "Yalnızca kendi son mesajınız düzenlenebilir veya yeniden oluşturulabilir, o da bot işini bitirdikten sonra.",
+        "title": "Bu mesaj düzenlenemez"
+      },
+      "message_not_last": {
+        "hint": "Sohbet ilerledi. Yeniden yükleyin, sonra en yeni mesajı düzenleyin ya da yeniden oluşturun.",
+        "title": "Bu artık son mesaj değil"
+      },
       "modified_since": {
         "hint": "Geri yüklemek daha yeni değişikliklerinin üzerine yazar. Önce bak.",
         "title": "Bazı dosyalar bot dokunduktan sonra değişti"
@@ -2180,6 +2198,10 @@
       "spend_limit_reached": {
         "hint": "Model çağrılmadı. Kullanım sayfasında limiti yükselt veya kaldır, sonra yeniden çalıştır.",
         "title": "Aylık harcama limitine ulaşıldı"
+      },
+      "spend_limit_unreadable": {
+        "hint": "Kayıtlı aylık limit okunamadığı için ücretli model çağrıları engellendi. Limiti Kullanım sayfasından yeniden belirleyin.",
+        "title": "Harcama limiti okunamadı"
       },
       "starting": {
         "hint": "Uygulama hâlâ başlıyor. Birkaç saniye sonra yeniden dene.",
@@ -4123,6 +4145,7 @@
       },
       "placeholder": "örn. 25",
       "remaining": "Kalan",
+      "remote": "Bu bir uzak ana bilgisayar. Harcama sınırı yalnızca o bilgisayarda değiştirilebilir; sahip anahtarın hiçbir zaman bir ana bilgisayara gönderilmez.",
       "save": "Limiti ayarla",
       "spent": "Bu ay harcanan",
       "title": "Aylık harcama limiti",
@@ -4156,7 +4179,9 @@
     "description": "Sesli oku düğmesinin sesi ve hızı. Sistemin konuşma motorunu kullanır.",
     "dictate": "Sesle yaz",
     "dictateStop": "Durdur ve yazıya çevir",
+    "micBusy": "Mikrofon başka bir uygulama tarafından kullanılıyor. Onu kapatıp tekrar dene.",
     "micDenied": "Mikrofon kullanılamıyor. Mikrofon erişimine izin verip yeniden dene.",
+    "micMissing": "Mikrofon bulunamadı. Bir mikrofon bağlayıp tekrar dene.",
     "notConfigured": "Sesle yazma henüz kurulu değil. Ayarlar > Genel bölümünden bir yazıya çevirme servisi ekle.",
     "online": "çevrimiçi",
     "speak": "Sesli oku",

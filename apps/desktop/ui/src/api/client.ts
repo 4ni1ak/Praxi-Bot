@@ -104,6 +104,7 @@ import type {
   ScreenPrivilegesInput,
   RunUsage,
   SendMode,
+  ResendResponse,
   SendResponse,
   SessionInfo,
   SessionUpdate,
@@ -675,6 +676,17 @@ export class ApiClient {
     return this.request("POST", `/chats/${chatId}/messages`, {
       body: { text, mode, ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}) },
       ...(ownerKey ? { headers: { "x-praxi-owner-key": ownerKey, "x-praxi-message-source": "local_ui" } } : {})
+    });
+  }
+
+  /**
+   * Regenerate the last answer (no `text`) or edit the last user message and resend it.
+   * Owner only; the old turn is kept as superseded, a new run starts.
+   */
+  resendLastTurn(chatId: string, messageId: string, ownerKey: string | undefined, text?: string): Promise<ResendResponse> {
+    return this.request("POST", `/chats/${chatId}/resend`, {
+      body: { message_id: messageId, ...(text === undefined ? {} : { text }) },
+      ...(ownerKey ? { headers: { "x-praxi-owner-key": ownerKey } } : {})
     });
   }
 

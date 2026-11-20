@@ -365,8 +365,17 @@ impl AppState {
         hub.set_refresh_hook(Arc::new(move |seq| {
             refresh_tx.send_replace(seq);
         }));
-        if let Some(limit) = spend_routes::load_limit(storage.data_dir()) {
-            agent.set_spend_limit(Some(limit));
+        match spend_routes::load_limit(storage.data_dir()) {
+            Ok(Some(limit)) => agent.set_spend_limit(Some(limit)),
+            Ok(None) => {}
+            Err(e) => {
+                // Fail closed: a damaged limit file must not silently turn the
+                // limit off. Paid calls stay blocked until the owner sets it again.
+                eprintln!(
+                    "daemon-api: WARNING: {e}; paid model calls are blocked until the monthly spending limit is set again on the Usage page"
+                );
+                agent.set_spend_limit(Some(spend_routes::FAIL_CLOSED_LIMIT_USD));
+            }
         }
         let policy_load_error = match policy::load_policy(storage.data_dir()) {
             Ok(Some(p)) => {
@@ -1265,6 +1274,7 @@ fn api_routes() -> Router<AppState> {
             "/v1/chats/{id}/messages",
             get(r::list_messages).post(r::send_message),
         )
+        .route("/v1/chats/{id}/resend", post(r::resend_last_turn))
         .route(
             "/v1/chats/{id}/attachments",
             post(attachment_routes::upload).layer(axum::extract::DefaultBodyLimit::max(

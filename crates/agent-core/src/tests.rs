@@ -3,6 +3,7 @@
 #![allow(clippy::assert_is_empty)]
 
 mod c225;
+mod c382;
 mod composio_approvals;
 mod external_agent;
 mod fill_secret;
@@ -7546,6 +7547,7 @@ async fn pre_058_paused_run_with_unknown_origin_fails_closed_after_migration() {
             ALTER TABLE messages DROP COLUMN exposure_private;
             ALTER TABLE messages DROP COLUMN exposure_sources;
             ALTER TABLE messages DROP COLUMN source;
+            ALTER TABLE messages DROP COLUMN superseded;
             PRAGMA user_version = 3;",
         )
         .unwrap();

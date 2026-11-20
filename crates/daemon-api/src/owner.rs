@@ -80,6 +80,8 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     // approvals and questions: a token must not approve its own tool calls
     ("POST", "/v1/approvals/{}"),
     ("POST", "/v1/questions/{}"),
+    // edit & resend / regenerate: stored as the owner's own message
+    ("POST", "/v1/chats/{}/resend"),
     ("POST", "/v1/control/{}"),
     ("POST", "/v1/control/takeover"),
     ("POST", "/v1/control/override"),

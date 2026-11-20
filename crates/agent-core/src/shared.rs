@@ -61,6 +61,13 @@ pub enum LoopError {
     /// The chat already has a running turn; use `send_user_message`.
     #[error("chat {0} already has an active turn")]
     Busy(ChatId),
+    /// The message the client named is no longer the chat's last user message.
+    #[error("that message is not the last message of the chat")]
+    NotLastMessage,
+    /// The last turn cannot be edited or regenerated (foreign source, still
+    /// running, or not a plain user/assistant exchange).
+    #[error("this turn cannot be edited or regenerated: {0}")]
+    NotResendable(&'static str),
     /// A previous drive task for this run has not released its handle yet.
     /// Resume would detach that task or drop the new one; retry once it finishes.
     #[error("run {0} is still finishing; retry resume")]

@@ -274,14 +274,19 @@ impl Shared {
 /// Refuse a call that would take month-to-date spend past the monthly limit;
 /// warn once per month at 80%. No limit, or a model without a known price,
 /// means no check (an unpriced call adds no known cost and is never guessed).
-fn check_spend_limit(sh: &Arc<Shared>, ctx: &RunCtx, model: &str) -> Result<(), String> {
+///
+/// On success returns the estimate reserved for this call (USD); the caller
+/// must release it with [`release_reservation`] when the call ends.
+fn check_spend_limit(sh: &Arc<Shared>, ctx: &RunCtx, model: &str) -> Result<f64, String> {
     use crate::spend::{SPEND_LIMIT_REACHED, estimate_usd, month_bounds_ms, spend_status};
     let Some(limit) = *sh.spend.limit.read() else {
-        return Ok(());
+        return Ok(0.0);
     };
     let Some(price) = sh.price_for(model) else {
-        return Ok(());
+        return Ok(0.0);
     };
+    // Held across check and reservation so parallel calls cannot all pass.
+    let mut reserved = sh.spend.reserved.lock();
     // Fail closed: with a limit set, an unreadable ledger must not allow spending.
     let status = spend_status(&sh.storage, ctx.user_id, storage::now_ms())
         .map_err(|_| "usage ledger unavailable".to_owned())?;
@@ -292,7 +297,7 @@ fn check_spend_limit(sh: &Arc<Shared>, ctx: &RunCtx, model: &str) -> Result<(), 
         price,
         sh.cfg.max_tokens,
     );
-    if status.spent_usd + estimate > limit {
+    if status.spent_usd + reserved.usd + estimate > limit {
         let _ = sh.audit_usage_record(
             ctx.user_id,
             ctx.run_id,
@@ -302,16 +307,24 @@ fn check_spend_limit(sh: &Arc<Shared>, ctx: &RunCtx, model: &str) -> Result<(), 
                 "estimate_usd": estimate, "model": model,
             }),
         );
+        let blocked_at = status.spent_usd + reserved.usd;
+        drop(reserved);
+        let hint = if limit <= 0.0 {
+            " The saved limit could not be read, so spending is blocked until you set it again."
+        } else {
+            ""
+        };
         return Err(format!(
-            "[{SPEND_LIMIT_REACHED}] Monthly spending limit reached: ${:.2} spent of ${limit:.2} \
-             this month (the next call could exceed it). The model was not called. Raise or \
-             remove the limit on the Usage page, then run again.",
-            status.spent_usd
+            "[{SPEND_LIMIT_REACHED}] Monthly spending limit reached: ${blocked_at:.2} spent or \
+             in flight of ${limit:.2} this month (the next call could exceed it). The model was \
+             not called. Raise or remove the limit on the Usage page, then run again.{hint}",
         ));
     }
+    reserved.add(estimate);
+    drop(reserved);
     if status.spent_usd >= 0.8 * limit {
         let month = month_bounds_ms(storage::now_ms()).0;
-        let first = sh.spend.warned_month.lock().replace(month) != Some(month);
+        let first = warn_is_new(sh, ctx, month, limit);
         if first {
             let message = format!(
                 "Monthly spending limit: 80% used (${:.2} of ${limit:.2}). New model calls stop \
@@ -334,7 +347,30 @@ fn check_spend_limit(sh: &Arc<Shared>, ctx: &RunCtx, model: &str) -> Result<(), 
             );
         }
     }
-    Ok(())
+    Ok(estimate)
+}
+
+/// Whether the 80% warning for this month and limit has not been issued yet.
+/// The in-memory marker is the fast path; the durable one is the
+/// `spend.limit_warning` audit row, so a restart does not repeat the warning.
+fn warn_is_new(sh: &Arc<Shared>, ctx: &RunCtx, month: i64, limit: f64) -> bool {
+    let mut marker = sh.spend.warned_month.lock();
+    if *marker == Some(month) {
+        return false;
+    }
+    let already = sh
+        .storage
+        .list_audit_action_since(ctx.user_id, "spend.limit_warning", month)
+        .is_ok_and(|rows| {
+            rows.iter()
+                .any(|r| r.detail["limit_usd"].as_f64() == Some(limit))
+        });
+    *marker = Some(month);
+    !already
+}
+
+fn release_reservation(sh: &Shared, amount: f64) {
+    sh.spend.reserved.lock().release(amount);
 }
 
 /// One actual provider invocation (not one model step containing retries).
@@ -344,6 +380,8 @@ pub(crate) struct CallGuard {
     user: UserId,
     detail: Value,
     started: Instant,
+    /// Spend-limit estimate held while the call is in flight.
+    reserved_usd: f64,
 }
 
 impl CallGuard {
@@ -370,15 +408,21 @@ impl CallGuard {
             "tokens": null, "prompt_tokens": null, "completion_tokens": null,
             "cached_tokens": null, "cost_usd": null,
         });
-        check_spend_limit(sh, ctx, model)?;
-        sh.audit_usage_record(ctx.user_id, ctx.run_id, "llm.call_started", &detail)
-            .map_err(|_| "usage ledger unavailable".to_owned())?;
+        let reserved_usd = check_spend_limit(sh, ctx, model)?;
+        if sh
+            .audit_usage_record(ctx.user_id, ctx.run_id, "llm.call_started", &detail)
+            .is_err()
+        {
+            release_reservation(sh, reserved_usd);
+            return Err("usage ledger unavailable".to_owned());
+        }
         Ok(Self {
             sh: Arc::clone(sh),
             run: ctx.run_id,
             user: ctx.user_id,
             detail,
             started: Instant::now(),
+            reserved_usd,
         })
     }
 
@@ -420,6 +464,9 @@ impl Drop for CallGuard {
         let _ = self
             .sh
             .audit_usage_record(self.user, self.run, "usage", &self.detail);
+        // Settled: the ledger row now carries the real cost (released after the
+        // write, so the estimate is never missing from both).
+        release_reservation(&self.sh, self.reserved_usd);
     }
 }
 

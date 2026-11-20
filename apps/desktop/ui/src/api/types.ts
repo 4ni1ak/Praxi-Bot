@@ -76,6 +76,7 @@ export type Scope = S["Scope"];
 export type Decision = S["Decision"];
 export type SendMode = S["Mode"];
 export type SendResponse = S["SendResponse"];
+export type ResendResponse = S["ResendResponse"];
 export type DeliveryKind = S["DeliveryKind"];
 export type RememberResponse = S["RememberResponse"];
 export type Schedule = S["ScheduleDto"];

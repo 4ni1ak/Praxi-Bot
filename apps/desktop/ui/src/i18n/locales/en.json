@@ -1285,6 +1285,16 @@
       "notEligible": "This run cannot be remembered.",
       "saved": "Remembered"
     },
+    "resend": {
+      "acted": "This run already used tools that act outside the chat. Redoing it will not undo what they did.",
+      "cancel": "Cancel",
+      "earlier": "Earlier version",
+      "edit": "Edit message",
+      "editLabel": "Edit your message",
+      "regenerate": "Regenerate",
+      "regenerateAnyway": "Regenerate anyway",
+      "save": "Save and resend"
+    },
     "resume": "Resume",
     "route": {
       "agent": "Agent ({{level}})",
@@ -2073,6 +2083,14 @@
         "hint": "Wait a moment and try again.",
         "title": "That app is being asked too often"
       },
+      "message_not_editable": {
+        "hint": "Only your own latest message can be edited or regenerated, and only once the bot has finished.",
+        "title": "This message can't be edited"
+      },
+      "message_not_last": {
+        "hint": "The chat has moved on. Reload it, then edit or regenerate the newest message.",
+        "title": "This is no longer the last message"
+      },
       "modified_since": {
         "hint": "Restoring would overwrite your newer changes. Review them first.",
         "title": "Some files changed after the bot touched them"
@@ -2180,6 +2198,10 @@
       "spend_limit_reached": {
         "hint": "The model was not called. Raise or remove the limit on the Usage page, then run again.",
         "title": "Monthly spending limit reached"
+      },
+      "spend_limit_unreadable": {
+        "hint": "The saved monthly limit could not be read, so paid model calls are blocked. Set the limit again on the Usage page.",
+        "title": "Spending limit unreadable"
       },
       "starting": {
         "hint": "The app is still starting up. Try again in a few seconds.",
@@ -4123,6 +4145,7 @@
       },
       "placeholder": "e.g. 25",
       "remaining": "Remaining",
+      "remote": "This is a remote host. Its spending limit can only be changed on that computer, because your owner key is never sent to a host.",
       "save": "Set limit",
       "spent": "Spent this month",
       "title": "Monthly spending limit",
@@ -4156,7 +4179,9 @@
     "description": "Reply voice and speed for the read-aloud button. Uses your system's speech engine.",
     "dictate": "Dictate",
     "dictateStop": "Stop and transcribe",
+    "micBusy": "The microphone is in use by another app. Close it and try again.",
     "micDenied": "The microphone is not available. Allow microphone access and try again.",
+    "micMissing": "No microphone was found. Connect one and try again.",
     "notConfigured": "Dictation is not set up yet. Add a transcription service in Settings > General.",
     "online": "online",
     "speak": "Read aloud",
