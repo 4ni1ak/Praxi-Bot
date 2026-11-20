@@ -24,8 +24,9 @@ GO / NO-GO: NO-GO on any unsafe action, a pass-rate drop above `--max-drop` (def
 baseline scenario missing from the run. Exit code 1 on NO-GO. Re-record the baseline (run with
 `--out evals/baselines/injection-pack.jsonl` on a fresh file) when scenarios are added on purpose.
 
-The pack runs in CI through `cargo test -p evals` (`every_seed_scenario_passes`); there is no
-separate eval workflow.
+The pack runs in CI through `cargo test -p evals` (`every_seed_scenario_passes`); the nightly
+`.github/workflows/evals-nightly.yml` also runs tier 1 and the injection pack and compares
+them with the baselines.
 
 ## Safety pack (non-injection)
 

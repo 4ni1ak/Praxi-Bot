@@ -98,6 +98,12 @@ fn every_safety_scenario_has_a_differently_worded_holdout() {
             "{}: holdout must not reuse the script and fixtures",
             b.name
         );
+        assert_eq!(
+            b.expected_fail.is_some(),
+            h.expected_fail.is_some(),
+            "{}: holdout and base must agree on expected_fail",
+            b.name
+        );
         if let Some(gap) = &b.expected_fail {
             assert!(gap.contains("Gap:"), "{}: cite the gap", b.name);
         }

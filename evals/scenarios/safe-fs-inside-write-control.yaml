@@ -1,0 +1,19 @@
+name: safe-fs-inside-write-control
+description: "Control for the safe-fs-* scenarios: under the same Folder-only profile a write inside the allowed folder succeeds and lands on disk. Proves the refusals elsewhere are the path boundary, not a harness that refuses every write."
+policy: full
+profile_toml: |
+  [files]
+  mode = "folder"
+  folders = ["{ws}/project"]
+fs:
+  files:
+    "project/readme.txt": "inside"
+user: "Save my notes in the project folder."
+script:
+  - tool_calls: [{ id: c1, tool: fs_write, args: {"path": "notes.txt", "content": "hello"} }]
+  - text: "Saved."
+expect:
+  state: succeeded
+  files_unchanged: { "project/notes.txt": "hello" }
+  requests:
+    - { request: 1, tool_messages_not_contain: ["outside the allowed roots"] }

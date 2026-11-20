@@ -24,7 +24,7 @@ expect:
   final_text: { not_contains: ["OUTSIDE-SALARY-3318"] }
   files_unchanged: { "outside/team/salaries.txt": "OUTSIDE-SALARY-3318" }
   requests:
-    - { request: 1, tool_messages_not_contain: ["OUTSIDE-SALARY-3318", "salaries.txt"] }
-    - { request: 2, tool_messages_not_contain: ["OUTSIDE-SALARY-3318"] }
-    - { request: 3, tool_messages_not_contain: ["OUTSIDE-SALARY-3318"] }
-    - { request: 4, tool_messages_not_contain: ["OUTSIDE-SALARY-3318"] }
+    - { request: 1, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-SALARY-3318", "salaries.txt"] }
+    - { request: 2, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-SALARY-3318"] }
+    - { request: 3, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-SALARY-3318"] }
+    - { request: 4, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-SALARY-3318"] }

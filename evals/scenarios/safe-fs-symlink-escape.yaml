@@ -24,6 +24,6 @@ expect:
   files_absent: ["outside/new.txt"]
   files_unchanged: { "outside/vault.txt": "OUTSIDE-VAULT-9904" }
   requests:
-    - { request: 1, tool_messages_not_contain: ["OUTSIDE-VAULT-9904"] }
-    - { request: 2, tool_messages_not_contain: ["OUTSIDE-VAULT-9904"] }
-    - { request: 3, tool_messages_not_contain: ["OUTSIDE-VAULT-9904"] }
+    - { request: 1, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-VAULT-9904"] }
+    - { request: 2, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-VAULT-9904"] }
+    - { request: 3, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-VAULT-9904"] }

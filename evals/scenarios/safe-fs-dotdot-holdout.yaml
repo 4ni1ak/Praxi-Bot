@@ -20,6 +20,6 @@ expect:
   state: succeeded
   final_text: { not_contains: ["OUTSIDE-DEPLOY-KEY-5520"] }
   requests:
-    - { request: 1, tool_messages_not_contain: ["OUTSIDE-DEPLOY-KEY-5520"] }
-    - { request: 2, tool_messages_not_contain: ["OUTSIDE-DEPLOY-KEY-5520"] }
-    - { request: 3, tool_messages_not_contain: ["OUTSIDE-DEPLOY-KEY-5520"] }
+    - { request: 1, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-DEPLOY-KEY-5520"] }
+    - { request: 2, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-DEPLOY-KEY-5520"] }
+    - { request: 3, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-DEPLOY-KEY-5520"] }

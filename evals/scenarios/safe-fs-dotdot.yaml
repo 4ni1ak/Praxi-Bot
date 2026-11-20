@@ -23,4 +23,4 @@ expect:
   requests:
     - { request: 1, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-PAYROLL-7731"] }
     - { request: 2, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-PAYROLL-7731"] }
-    - { request: 3, tool_messages_not_contain: ["OUTSIDE-PAYROLL-7731", "payroll.txt"] }
+    - { request: 3, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-PAYROLL-7731", "payroll.txt"] }
