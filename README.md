@@ -201,6 +201,14 @@ Praxi-Bot is built in the open and outside pull requests are welcome, from a typ
 
 Please follow the [Code of Conduct](CODE_OF_CONDUCT.md), and report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
+### Contributors
+
+<a href="https://github.com/emreocell/Praxi-Bot/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=emreocell/Praxi-Bot" alt="Contributors to Praxi-Bot" />
+</a>
+
+A further batch of small tasks, written up so they can be opened as issues, is in [docs/GOOD_FIRST_ISSUES.md](docs/GOOD_FIRST_ISSUES.md). Wait until one is an issue, then comment there before you start.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE), [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
