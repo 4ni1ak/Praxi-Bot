@@ -61,13 +61,13 @@ pub fn run_checks(env: &DoctorEnv<'_>) -> Vec<Check> {
         core::check_data_dir(env.data_dir),
         core::check_config(env.data_dir),
         core::check_secrets(&env.store),
-        core::check_providers(&core::ProviderInputs {
+        polish_provider_check(core::check_providers(&core::ProviderInputs {
             data_dir: env.data_dir,
             catalog: env.catalog.clone(),
             store: &env.store,
             detected,
             online: env.online.then_some(online),
-        }),
+        })),
         core::check_catalog(env.data_dir, &env.catalog),
         check_daemon(env.data_dir, env.port),
         env.browser_error.as_ref().map_or_else(
@@ -86,6 +86,18 @@ pub fn run_checks(env: &DoctorEnv<'_>) -> Vec<Check> {
         core::check_desktop_automation(std::env::consts::OS, env.desktop.as_ref()),
         core::check_clock(std::time::SystemTime::now(), core::newest_mtime(env.data_dir)),
     ]
+}
+
+fn polish_provider_check(mut check: Check) -> Check {
+    if check.status == Status::Fail && check.detail == "setup required: no enabled provider" {
+        "setup required: no LLM provider is configured yet (chats cannot run without one)"
+            .clone_into(&mut check.detail);
+        check.hint = Some(
+            "run `bot setup` for interactive setup, or `bot providers add <id>` to add a provider"
+                .to_owned(),
+        );
+    }
+    check
 }
 
 fn check_host_display(env: &DoctorEnv<'_>) -> Check {
@@ -148,7 +160,7 @@ fn check_peer_relay(env: &DoctorEnv<'_>) -> Check {
             "peer_relay",
             "peer relay",
             "external reachability not probed",
-            "run bot doctor --online to probe the daemon through its advertised relay",
+            "run `bot doctor --online` to probe the daemon through its advertised relay",
         );
     }
     let probe = || -> Result<()> {
@@ -207,7 +219,7 @@ fn check_peer_relay(env: &DoctorEnv<'_>) -> Check {
             "peer_relay",
             "peer relay",
             e.to_string(),
-            "check outbound relay access and run bot serve --peer; no inbound port is required",
+            "check outbound relay access and run `bot serve --peer`; no inbound port is required",
         ),
     }
 }
@@ -275,7 +287,7 @@ fn check_daemon(dir: &Path, port: u16) -> Check {
             ID,
             N,
             format!("not running on port {port}; {token_note}"),
-            "start it with `bot serve`",
+            "start the daemon with `bot serve`",
         );
     }
     let health = daemon_health(port);
@@ -295,7 +307,7 @@ fn check_daemon(dir: &Path, port: u16) -> Check {
             ID,
             N,
             format!("port {port} is in use but does not answer like the daemon"),
-            "stop the other program or use --port / BOT_PORT",
+            "stop the other process or pass `--port` / `BOT_PORT`",
         ),
     }
 }
@@ -523,7 +535,7 @@ fn check_telegram(env: &DoctorEnv<'_>) -> Check {
             ID,
             N,
             "channels.toml does not parse",
-            "delete it, then `bot channels telegram setup`",
+            "delete channels.toml and run `bot channels telegram setup`",
         );
     }
     let enabled = crate::channels::telegram_enabled(env.data_dir);

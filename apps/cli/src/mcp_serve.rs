@@ -32,30 +32,36 @@ pub enum Layer {
 
 #[derive(Args)]
 pub struct ServeArgs {
+    /// Bot UUID to expose over stdio (see `bot bots list`).
     #[arg(long)]
     pub bot: Uuid,
-    /// Enabled layers. Computer access must be explicitly requested.
+    /// Enabled MCP layers (computer access must be requested explicitly).
     #[arg(long, value_enum, value_delimiter = ',', default_value = "tasks")]
     pub allow: Vec<Layer>,
-    /// Public id printed by `bot token create` (never a bearer token).
+    /// Public credential ID printed by `bot token create` (never a bearer token).
     #[arg(long)]
     pub token_id: Option<Uuid>,
 }
 
 #[derive(Subcommand)]
 pub enum TokenCmd {
-    /// Create a scoped credential in the daemon's secret store; prints its id.
+    /// Create a scoped credential in the daemon's secret store and print its public ID.
     Create {
+        /// Bot UUID(s) this credential may access (comma-separated).
         #[arg(long, value_delimiter = ',', required = true)]
         bot: Vec<Uuid>,
+        /// Scopes granted to the credential (comma-separated).
         #[arg(long, value_delimiter = ',', default_value = "mcp:tasks", value_parser = ["mcp:tasks", "mcp:computer"])]
         scope: Vec<String>,
-        /// Lifetime, e.g. 30d, 12h or 600s (maximum 30 days).
+        /// Credential lifetime, e.g. `30d`, `12h`, or `600s` (60 seconds to 30 days).
         #[arg(long, default_value = "30d")]
         ttl: String,
     },
     /// Revoke a credential and cancel its running tasks.
-    Revoke { id: Uuid },
+    Revoke {
+        /// Public credential ID to revoke.
+        id: Uuid,
+    },
 }
 
 /// Execute an owner-only credential operation, returning public metadata.
