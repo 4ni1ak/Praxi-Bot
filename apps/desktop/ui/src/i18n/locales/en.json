@@ -4121,6 +4121,7 @@
       },
       "placeholder": "e.g. 25",
       "remaining": "Remaining",
+      "remote": "This is a remote host. Its spending limit can only be changed on that computer, because your owner key is never sent to a host.",
       "save": "Set limit",
       "spent": "Spent this month",
       "title": "Monthly spending limit",

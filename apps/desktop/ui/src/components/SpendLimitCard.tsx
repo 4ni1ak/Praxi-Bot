@@ -21,7 +21,9 @@ const PACE_ICON: Record<Pace, typeof Gauge> = {
 /** Monthly spending limit: month-to-date, remaining, linear pace forecast, and the owner's set/clear field. */
 export function SpendLimitCard({ refreshKey }: { refreshKey: number }) {
   const { t, i18n } = useTranslation();
-  const { client } = useDaemon();
+  const { client, activeComputerId } = useDaemon();
+  // The owner key only goes to this computer's daemon: a remote host's limit cannot be changed from here.
+  const remote = activeComputerId !== "local";
   const [state, setState] = useState<SpendLimit | null>(null);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -110,36 +112,44 @@ export function SpendLimitCard({ refreshKey }: { refreshKey: number }) {
           </p>
         </>
       ) : null}
-      <form
-        className={styles.form}
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (parsed !== null) {
-            void save(parsed);
-          }
-        }}
-      >
-        <label className={`${formStyles.field} ${styles.amount}`}>
-          <span className={formStyles.label}>{t("usage.limit.label")}</span>
-          <input
-            className={formStyles.input}
-            inputMode="decimal"
-            value={draft}
-            placeholder={t("usage.limit.placeholder")}
-            aria-invalid={draft !== "" && parsed === null}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-        </label>
-        <Button type="submit" size="sm" disabled={busy || parsed === null}>
-          {t("usage.limit.save")}
-        </Button>
-        {hasLimit ? (
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void save(null)}>
-            {t("usage.limit.clear")}
-          </Button>
-        ) : null}
-      </form>
-      {draft !== "" && parsed === null ? <p className={formStyles.error}>{t("usage.limit.invalid")}</p> : null}
+      {remote ? (
+        <p className={formStyles.hint} data-testid="spend-limit-remote">
+          {t("usage.limit.remote")}
+        </p>
+      ) : (
+        <>
+          <form
+            className={styles.form}
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (parsed !== null) {
+                void save(parsed);
+              }
+            }}
+          >
+            <label className={`${formStyles.field} ${styles.amount}`}>
+              <span className={formStyles.label}>{t("usage.limit.label")}</span>
+              <input
+                className={formStyles.input}
+                inputMode="decimal"
+                value={draft}
+                placeholder={t("usage.limit.placeholder")}
+                aria-invalid={draft !== "" && parsed === null}
+                onChange={(e) => setDraft(e.target.value)}
+              />
+            </label>
+            <Button type="submit" size="sm" disabled={busy || parsed === null}>
+              {t("usage.limit.save")}
+            </Button>
+            {hasLimit ? (
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void save(null)}>
+                {t("usage.limit.clear")}
+              </Button>
+            ) : null}
+          </form>
+          {draft !== "" && parsed === null ? <p className={formStyles.error}>{t("usage.limit.invalid")}</p> : null}
+        </>
+      )}
       {error ? (
         <p className={formStyles.error} role="alert">
           {error}

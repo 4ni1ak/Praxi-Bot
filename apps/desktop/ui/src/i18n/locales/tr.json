@@ -4121,6 +4121,7 @@
       },
       "placeholder": "örn. 25",
       "remaining": "Kalan",
+      "remote": "Bu bir uzak ana bilgisayar. Harcama sınırı yalnızca o bilgisayarda değiştirilebilir; sahip anahtarın hiçbir zaman bir ana bilgisayara gönderilmez.",
       "save": "Limiti ayarla",
       "spent": "Bu ay harcanan",
       "title": "Aylık harcama limiti",

@@ -4121,6 +4121,7 @@
       },
       "placeholder": "z. B. 25",
       "remaining": "Verbleibend",
+      "remote": "Dies ist ein entfernter Host. Sein Ausgabenlimit lässt sich nur an diesem Computer ändern, weil dein Besitzerschlüssel nie an einen Host gesendet wird.",
       "save": "Limit setzen",
       "spent": "Diesen Monat ausgegeben",
       "title": "Monatliches Ausgabenlimit",
