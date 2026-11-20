@@ -576,4 +576,61 @@ mod tests {
                 .is_ok()
         );
     }
+
+    #[test]
+    fn host_matches_normalizes_wildcards_trailing_dots_and_case() {
+        let long_sub = format!("{}.example.com", "a".repeat(60));
+        let cases = [
+            ("example.com", "example.com", true),
+            ("API.Example.COM.", "example.com.", true),
+            ("sub.example.com", "  *.example.com  ", true),
+            ("a.b.example.com", "*.example.com", true),
+            ("example.com", "*.example.com", true),
+            ("xn--bcher-kva.example.", "XN--BCHER-KVA.EXAMPLE", true),
+            (long_sub.as_str(), "*.example.com", true),
+            ("", "*.", true),
+        ];
+        for (host, pattern, want) in cases {
+            assert_eq!(
+                host_matches(host, pattern),
+                want,
+                "host={host:?} pattern={pattern:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn host_matches_rejects_label_suffix_bypasses_and_empty_mismatches() {
+        let cases = [
+            ("notexample.com", "example.com"),
+            ("evil-example.com", "*.example.com"),
+            ("example.com.evil.org", "example.com"),
+            ("", "example.com"),
+            ("example.com", ""),
+            ("example.com", "*."),
+        ];
+        for (host, pattern) in cases {
+            assert!(
+                !host_matches(host, pattern),
+                "host={host:?} pattern={pattern:?} must not match"
+            );
+        }
+    }
+
+    #[test]
+    fn is_loopback_name_recognizes_localhost_variants_only() {
+        let cases = [
+            ("localhost", true),
+            ("api.localhost", true),
+            ("a.b.localhost", true),
+            ("ip6-localhost", true),
+            ("", false),
+            ("notlocalhost", false),
+            ("localhost.example.com", false),
+            ("ip6-localhost.local", false),
+        ];
+        for (host, want) in cases {
+            assert_eq!(is_loopback_name(host), want, "host={host:?}");
+        }
+    }
 }

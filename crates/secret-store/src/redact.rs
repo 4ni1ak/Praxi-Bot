@@ -259,4 +259,40 @@ mod tests {
         let r = Redactor::from_store(&s).unwrap();
         assert_eq!(r.redact("v=value-one-123 x"), format!("v={REDACTED} x"));
     }
+
+    #[test]
+    fn percent_encode_respects_strict_form_and_hex_case_flags() {
+        let cases = [
+            ("", false, false, false, ""),
+            ("", true, true, true, ""),
+            ("a.b~c-d_e", false, false, false, "a.b~c-d_e"),
+            ("a.b~c-d_e", true, false, false, "a%2Eb%7Ec-d_e"),
+            ("a.b~c-d_e", true, false, true, "a%2eb%7ec-d_e"),
+            ("a b/c", false, false, false, "a%20b%2Fc"),
+            ("a b/c", false, true, false, "a+b%2Fc"),
+            ("a b/c", false, true, true, "a+b%2fc"),
+        ];
+        for (input, strict, form, lower, expected) in cases {
+            assert_eq!(
+                percent_encode(input, strict, form, lower),
+                expected,
+                "input={input:?} strict={strict} form={form} lower={lower}"
+            );
+        }
+    }
+
+    #[test]
+    fn percent_encode_handles_unicode_and_long_inputs() {
+        assert_eq!(
+            percent_encode("ü🔑", false, false, false),
+            "%C3%BC%F0%9F%94%91"
+        );
+        assert_eq!(
+            percent_encode("ü🔑", false, false, true),
+            "%c3%bc%f0%9f%94%91"
+        );
+        let long_raw = "a/b ".repeat(150);
+        let encoded = percent_encode(&long_raw, false, false, false);
+        assert_eq!(encoded, "a%2Fb%20".repeat(150));
+    }
 }

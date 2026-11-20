@@ -1438,4 +1438,51 @@ mod tests {
     fn invalid_custom_pattern_is_rejected() {
         assert!(NeverList::from_patterns(&["[unclosed"]).is_err());
     }
+
+    #[test]
+    fn norm_path_normalizes_separators_case_dots_and_unicode() {
+        let long_tail = "segment/".repeat(40);
+        let long_in = format!("C:\\Root\\{long_tail}File.TXT");
+        let long_expected = format!("c:/root/{long_tail}file.txt");
+        let cases = [
+            ("", "/"),
+            ("/", "/"),
+            ("\\", "/"),
+            ("C:\\", "c:/"),
+            ("C:", "c:/"),
+            (r"C:\Users\Alice\..\Bob\.\Notes", "c:/users/bob/notes"),
+            ("/var/lib/../log/./praxi/", "/var/log/praxi"),
+            ("/../../etc", "/etc"),
+            (r"C:\..\..\Windows", "c:/windows"),
+            (r"\\server\share\dir\", "/server/share/dir"),
+            (r"C:\Kullanıcı\Ödev\", "c:/kullanıcı/ödev"),
+            (long_in.as_str(), long_expected.as_str()),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(norm_path(raw), expected, "raw={raw:?}");
+        }
+    }
+
+    #[test]
+    fn is_absolute_distinguishes_unix_windows_unc_and_relative_paths() {
+        let cases = [
+            ("", false),
+            (".", false),
+            ("./rel/path", false),
+            ("../up", false),
+            ("relative\\win", false),
+            ("C:", false),
+            ("c:relative", false),
+            ("/", true),
+            ("/etc/passwd", true),
+            ("\\", true),
+            (r"\\server\share", true),
+            ("C:\\", true),
+            ("C:/Users/me", true),
+            (r"d:\data", true),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(is_absolute(raw), expected, "raw={raw:?}");
+        }
+    }
 }
