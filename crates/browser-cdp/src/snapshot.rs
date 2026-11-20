@@ -174,8 +174,6 @@ const SECRET_NORMALISED_WORDS: &[&str] = &[
     "cardnum",
     "securitycode",
     "verificationcode",
-    "2fa",
-    "mfa",
     "passcode",
 ];
 
@@ -232,7 +230,43 @@ fn has_otp_inside(n: &str) -> bool {
     })
 }
 
+/// `mfa` / `2fa` as a whole segment (split on non-alphanumerics and camelCase), optionally glued to
+/// a code-ish suffix (`mfa-token`, `2fa_code`, `mfaOtp`). Never as a substring of the stripped text:
+/// `Confirm family name` would otherwise contain `mfa`, and a short hex id can contain `2fa`.
+fn has_mfa_word(h: &str) -> bool {
+    let mut segs: Vec<String> = Vec::new();
+    let mut seg = String::new();
+    let mut prev: Option<char> = None;
+    for c in h.chars() {
+        if !c.is_ascii_alphanumeric() {
+            if !seg.is_empty() {
+                segs.push(std::mem::take(&mut seg));
+            }
+            prev = None;
+            continue;
+        }
+        if c.is_ascii_uppercase() && prev.is_some_and(|p| p.is_ascii_lowercase()) && !seg.is_empty()
+        {
+            segs.push(std::mem::take(&mut seg));
+        }
+        seg.push(c.to_ascii_lowercase());
+        prev = Some(c);
+    }
+    if !seg.is_empty() {
+        segs.push(seg);
+    }
+    segs.iter().any(|s| {
+        ["mfa", "2fa"].iter().any(|w| {
+            s == w
+                || s.strip_prefix(w).is_some_and(|rest| {
+                    matches!(rest, "code" | "token" | "input" | "field" | "pin")
+                })
+        })
+    })
+}
+
 /// `pin` as a word of its own (`pin`, `user-pin`, `cardPin`) or `pin` + code/number/input/field.
+/// A standalone `pin` also catches postal PIN code and map pin fields: accepted, it fails closed.
 fn has_pin_word(h: &str, n: &str) -> bool {
     let mut seg = String::new();
     let mut prev: Option<char> = None;
@@ -283,6 +317,7 @@ pub fn name_hint_is_secret(h: &str) -> bool {
     SECRET_NAME_WORDS.iter().any(|w| l.contains(w))
         || SECRET_NORMALISED_WORDS.iter().any(|w| n.contains(w))
         || has_otp_word(h)
+        || has_mfa_word(h)
         || has_otp_inside(&n)
         || has_pin_word(h, &n)
 }
@@ -1212,6 +1247,18 @@ mod tests {
             "spinner",
             "mapping",
             "username",
+            "email",
+            "address",
+            "search",
+            "zip",
+            "phone",
+            "first name",
+            "last name",
+            "Confirm family name",
+            "Team fabric",
+            "Room facility",
+            "shipping address",
+            "a1b2fa3c",
         ] {
             assert!(!name_hint_is_secret(no), "{no}");
         }

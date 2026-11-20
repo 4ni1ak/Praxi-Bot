@@ -227,39 +227,25 @@ mod tests {
 
     #[tokio::test]
     async fn oversized_body_is_not_detected() {
-        let big = format!(
-            r#"{{"data":[],"pad":"{}"}}"#,
-            "a".repeat(MAX_BODY_BYTES + 10)
-        );
+        let pad = |n: usize| format!(r#"{{"data":[{{"id":"m"}}],"pad":"{}"}}"#, "a".repeat(n));
+        let big = pad(MAX_BODY_BYTES + 10);
         let hdr = format!(
-            "HTTP/1.1 200 OK
-content-length: {}
-connection: close
-
-",
+            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
             big.len()
         );
         let declared = raw_server(hdr, big.clone()).await;
-        // Chunked: no content-length to check up front.
-        let chunked = raw_server(
-            "HTTP/1.1 200 OK
-transfer-encoding: chunked
-connection: close
-
-"
-            .into(),
-            format!(
-                "{:x}
-{big}
-0
-
-",
-                big.len()
-            ),
-        )
-        .await;
+        // Chunked: no content-length to check up front, so the byte-counting loop must stop it.
+        let chunked_hdr =
+            "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n";
+        let chunk = |b: &str| format!("{:x}\r\n{b}\r\n0\r\n\r\n", b.len());
+        let chunked = raw_server(chunked_hdr.into(), chunk(&big)).await;
+        // Positive control: the same framing just under the cap IS detected, so the test above
+        // cannot pass merely because the chunked framing is broken.
+        let small = pad(MAX_BODY_BYTES - 1000);
+        let chunked_ok = raw_server(chunked_hdr.into(), chunk(&small)).await;
         assert_eq!(detect_on(&rt("ollama", declared)).await.len(), 0);
         assert_eq!(detect_on(&rt("ollama", chunked)).await.len(), 0);
+        assert_eq!(detect_on(&rt("ollama", chunked_ok)).await.len(), 1);
     }
 
     #[tokio::test]
