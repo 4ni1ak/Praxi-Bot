@@ -30,7 +30,7 @@ pub struct SpendLimitDto {
     pub spent_usd: f64,
     /// `limit_usd - spent_usd`, never negative; `null` without a limit.
     pub remaining_usd: Option<f64>,
-    /// Linear projection of month-end spend (USD); `null` until something was spent.
+    /// Linear projection of month-end spend (USD); `null` until spend exists and a day of the month has passed.
     pub forecast_usd: Option<f64>,
     /// Finished calls this month whose model has no known price (not counted).
     pub unpriced_calls: u64,
@@ -49,12 +49,28 @@ struct Stored {
     limit_usd: f64,
 }
 
-/// The saved limit, if any. A missing or unreadable file means no limit.
-pub(crate) fn load_limit(data_dir: &Path) -> Option<f64> {
-    let raw = std::fs::read(data_dir.join(LIMIT_FILE)).ok()?;
-    let s: Stored = serde_json::from_slice(&raw).ok()?;
-    valid(s.limit_usd).then_some(s.limit_usd)
+/// The saved limit. `Ok(None)` only when there is no file (never set / removed).
+///
+/// # Errors
+/// A file that exists but cannot be read, parsed or is out of range is an
+/// error: the caller must fail closed, never treat it as "no limit".
+pub(crate) fn load_limit(data_dir: &Path) -> Result<Option<f64>, String> {
+    let raw = match std::fs::read(data_dir.join(LIMIT_FILE)) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("cannot read {LIMIT_FILE}: {e}")),
+    };
+    let s: Stored =
+        serde_json::from_slice(&raw).map_err(|e| format!("cannot parse {LIMIT_FILE}: {e}"))?;
+    if valid(s.limit_usd) {
+        Ok(Some(s.limit_usd))
+    } else {
+        Err(format!("{LIMIT_FILE} holds an out-of-range limit"))
+    }
 }
+
+/// Limit applied when the saved file is unusable: nothing priced can run.
+pub(crate) const FAIL_CLOSED_LIMIT_USD: f64 = 0.0;
 
 fn valid(v: f64) -> bool {
     v.is_finite() && (MIN_LIMIT_USD..=MAX_LIMIT_USD).contains(&v)

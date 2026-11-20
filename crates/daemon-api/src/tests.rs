@@ -4520,7 +4520,7 @@ async fn spend_limit_is_owner_only_validated_live_and_persisted() {
     assert_eq!(t.agent.spend_limit(), Some(50.0));
     assert_eq!(
         crate::spend_routes::load_limit(t._dir.path()),
-        Some(50.0),
+        Ok(Some(50.0)),
         "survives a restart"
     );
 
@@ -4533,5 +4533,45 @@ async fn spend_limit_is_owner_only_validated_live_and_persisted() {
     .await;
     assert_eq!(r.status, StatusCode::OK);
     assert_eq!(t.agent.spend_limit(), None);
-    assert_eq!(crate::spend_routes::load_limit(t._dir.path()), None);
+    assert_eq!(crate::spend_routes::load_limit(t._dir.path()), Ok(None));
+
+    // A damaged file is an error (the daemon then fails closed), not "no limit".
+    std::fs::write(t._dir.path().join("spend-limit.json"), b"{not json").unwrap();
+    assert!(crate::spend_routes::load_limit(t._dir.path()).is_err());
+}
+
+/// The shared readiness fixture (`tests/fixtures/health-contract.json`, also read by the desktop
+/// Rust and UI tests) must stay a faithful picture of what the daemon sends.
+#[tokio::test]
+async fn health_contract_fixture_matches_the_real_reply() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../tests/fixtures/health-contract.json")).unwrap();
+    let accepted: Vec<&str> = fixture["accepted_status"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+
+    let t = setup();
+    let real = call(&t, Method::GET, "/v1/health", None).await.json();
+    let status = real["status"].as_str().unwrap();
+    assert!(
+        accepted.contains(&status),
+        "daemon sent status {status}, fixture accepts {accepted:?}"
+    );
+
+    for case in fixture["cases"].as_array().unwrap() {
+        if !case["up"].as_bool().unwrap() || case["body"].is_null() {
+            continue;
+        }
+        let name = case["name"].as_str().unwrap();
+        // The fixture bodies omit `host`; add the real one and the whole body must parse
+        // as the daemon's own DTO with a status / startup the daemon can emit.
+        let mut body = case["body"].clone();
+        body["host"] = real["host"].clone();
+        let dto: crate::dto::Health =
+            serde_json::from_value(body).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(accepted.contains(&dto.status.as_str()), "{name}");
+    }
 }

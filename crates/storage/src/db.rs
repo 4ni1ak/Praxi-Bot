@@ -911,7 +911,7 @@ impl Storage {
     ) -> Result<(bool, bool, Vec<String>)> {
         let conn = self.conn();
         let mut st = conn.prepare(
-            "SELECT exposure_untrusted, exposure_private, exposure_sources FROM messages              WHERE chat_id = ?1 AND created_at_ms <= ?3 AND (run_id IS NULL OR run_id <> ?2)",
+            "SELECT exposure_untrusted, exposure_private, exposure_sources FROM messages WHERE chat_id = ?1 AND created_at_ms <= ?3 AND (run_id IS NULL OR run_id <> ?2)",
         )?;
         let mut rows = st.query(params![
             chat_id.to_string(),
@@ -1564,6 +1564,35 @@ impl Storage {
         Ok(st
             .query_map(params![user_id.to_string(), action, since_ms], audit_row)?
             .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Month-to-date usage ledger totals computed in SQL: the sum of recorded
+    /// `cost_usd` (never negative per row) and the count of calls that reported
+    /// tokens but have no price. Only `ledger_version` 1 rows count.
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    #[allow(clippy::cast_sign_loss)]
+    pub fn usage_totals_since(&self, user_id: UserId, since_ms: i64) -> Result<(f64, u64)> {
+        Ok(self.conn().query_row(
+            "SELECT COALESCE(SUM(CASE WHEN json_type(detail_json, '$.cost_usd') IN ('real','integer') THEN MAX(json_extract(detail_json, '$.cost_usd'), 0.0) END), 0.0), COALESCE(SUM(CASE WHEN COALESCE(json_type(detail_json, '$.cost_usd'), 'null') NOT IN ('real','integer') AND json_type(detail_json, '$.tokens') = 'object' THEN 1 END), 0) FROM audit_log WHERE user_id = ?1 AND action = 'usage' AND ts_ms >= ?2 AND json_extract(detail_json, '$.ledger_version') = 1",
+            params![user_id.to_string(), since_ms],
+            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, i64>(1)?.max(0) as u64)),
+        )?)
+    }
+
+    /// Largest `prompt_tokens` any usage row of one run recorded.
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    #[allow(clippy::cast_sign_loss)]
+    pub fn max_run_prompt_tokens(&self, user_id: UserId, run_id: RunId) -> Result<Option<u64>> {
+        let v: Option<i64> = self.conn().query_row(
+            "SELECT MAX(json_extract(detail_json, '$.prompt_tokens')) FROM audit_log WHERE user_id = ?1 AND run_id = ?2 AND action = 'usage'",
+            params![user_id.to_string(), run_id.to_string()],
+            |row| row.get(0),
+        )?;
+        Ok(v.filter(|n| *n >= 0).map(|n| n as u64))
     }
 
     /// Whether one run has an audit fact, without loading other runs' details.

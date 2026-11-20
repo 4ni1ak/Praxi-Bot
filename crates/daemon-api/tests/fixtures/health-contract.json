@@ -1,0 +1,69 @@
+{
+  "contract": "GET /v1/health readiness. The service is UP iff the reply is HTTP 200 and body.status is one of accepted_status. Anything else (no reply, other HTTP status, unknown status, unparsable body) is unreachable. For an UP service the state is: startup=degraded -> degraded; startup=starting -> starting; status=setup_required -> setup_required; otherwise ok. setup_required is a healthy first-run state, never a failure. Used by the daemon-api, desktop (Rust) and desktop UI (TypeScript) tests so the three cannot drift.",
+  "accepted_status": ["ok", "setup_required"],
+  "cases": [
+    {
+      "name": "fresh install",
+      "http_status": 200,
+      "body": { "status": "setup_required", "version": "0.1.0", "api_version": "1", "uptime_secs": 1, "startup": "ready", "components_ready": true },
+      "up": true,
+      "state": "setup_required"
+    },
+    {
+      "name": "setup required",
+      "http_status": 200,
+      "body": { "status": "setup_required", "version": "0.1.0", "api_version": "1", "uptime_secs": 600, "startup": "ready", "components_ready": true },
+      "up": true,
+      "state": "setup_required"
+    },
+    {
+      "name": "starting",
+      "http_status": 200,
+      "body": { "status": "ok", "version": "0.1.0", "api_version": "1", "uptime_secs": 0, "startup": "starting", "components_ready": false },
+      "up": true,
+      "state": "starting"
+    },
+    {
+      "name": "degraded",
+      "http_status": 200,
+      "body": { "status": "ok", "version": "0.1.0", "api_version": "1", "uptime_secs": 30, "startup": "degraded", "components_ready": false, "startup_reason": "a component failed to start" },
+      "up": true,
+      "state": "degraded"
+    },
+    {
+      "name": "ok",
+      "http_status": 200,
+      "body": { "status": "ok", "version": "0.1.0", "api_version": "1", "uptime_secs": 3600, "startup": "ready", "components_ready": true },
+      "up": true,
+      "state": "ok"
+    },
+    {
+      "name": "old daemon without startup fields",
+      "http_status": 200,
+      "body": { "status": "ok", "version": "0.1.0", "api_version": "1", "uptime_secs": 5 },
+      "up": true,
+      "state": "ok"
+    },
+    {
+      "name": "unreachable",
+      "http_status": null,
+      "body": null,
+      "up": false,
+      "state": "unreachable"
+    },
+    {
+      "name": "other program answering",
+      "http_status": 200,
+      "body": { "status": "broken" },
+      "up": false,
+      "state": "unreachable"
+    },
+    {
+      "name": "error status",
+      "http_status": 503,
+      "body": { "status": "ok" },
+      "up": false,
+      "state": "unreachable"
+    }
+  ]
+}

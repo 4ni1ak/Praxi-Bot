@@ -2181,6 +2181,10 @@
         "hint": "The model was not called. Raise or remove the limit on the Usage page, then run again.",
         "title": "Monthly spending limit reached"
       },
+      "spend_limit_unreadable": {
+        "hint": "The saved monthly limit could not be read, so paid model calls are blocked. Set the limit again on the Usage page.",
+        "title": "Spending limit unreadable"
+      },
       "starting": {
         "hint": "The app is still starting up. Try again in a few seconds.",
         "title": "Still starting"
@@ -4131,6 +4135,7 @@
       },
       "placeholder": "e.g. 25",
       "remaining": "Remaining",
+      "remote": "This is a remote host. Its spending limit can only be changed on that computer, because your owner key is never sent to a host.",
       "save": "Set limit",
       "spent": "Spent this month",
       "title": "Monthly spending limit",
@@ -4164,7 +4169,9 @@
     "description": "Reply voice and speed for the read-aloud button. Uses your system's speech engine.",
     "dictate": "Dictate",
     "dictateStop": "Stop and transcribe",
+    "micBusy": "The microphone is in use by another app. Close it and try again.",
     "micDenied": "The microphone is not available. Allow microphone access and try again.",
+    "micMissing": "No microphone was found. Connect one and try again.",
     "notConfigured": "Dictation is not set up yet. Add a transcription service in Settings > General.",
     "online": "online",
     "speak": "Read aloud",

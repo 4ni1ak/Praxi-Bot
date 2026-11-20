@@ -6798,7 +6798,7 @@ export interface components {
         SpendLimitDto: {
             /**
              * Format: double
-             * @description Linear projection of month-end spend (USD); `null` until something was spent.
+             * @description Linear projection of month-end spend (USD); `null` until spend exists and a day of the month has passed.
              */
             forecast_usd?: number | null;
             /**

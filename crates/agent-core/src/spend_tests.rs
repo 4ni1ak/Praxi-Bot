@@ -79,3 +79,51 @@ async fn unset_limit_changes_nothing() {
     assert_eq!(requests, 1);
     assert!(!actions.iter().any(|a| a.starts_with("spend.")));
 }
+
+#[tokio::test]
+async fn parallel_runs_cannot_all_pass_just_under_the_limit() {
+    // Limit fits ONE first-call estimate ($4010) but not two.
+    let env = setup();
+    let chat2 = protocol::ChatId::new();
+    env.storage
+        .insert_chat(&storage::Chat {
+            id: chat2,
+            user_id: env.user,
+            bot_id: env.bot,
+            title: "c2".into(),
+            created_at_ms: storage::now_ms(),
+        })
+        .unwrap();
+    let fake = Fake::new(vec![crate::tests::Reply::Hang, text("never")]);
+    let lp = make_loop(&env.storage, env.bot, &fake, &[], profile(""), priced());
+    lp.set_spend_limit(Some(5_000.0));
+    let first = lp.run_turn(env.chat, "one").unwrap();
+    for _ in 0..200 {
+        if fake.n_requests() == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert_eq!(fake.n_requests(), 1, "first call is in flight");
+    let second = lp.run_turn(chat2, "two").unwrap();
+    let state = lp.wait(second).await.unwrap();
+    assert_eq!(state, RunState::Failed, "in-flight estimate must count");
+    assert_eq!(
+        fake.n_requests(),
+        1,
+        "second call never reached the provider"
+    );
+    lp.cancel(first).unwrap();
+}
+
+#[test]
+fn reservation_sum_snaps_to_zero_when_no_call_is_in_flight() {
+    let mut r = spend::Reserved::default();
+    // 0.1 + 0.2 - 0.1 - 0.2 leaves a tiny positive float remainder.
+    r.add(0.1);
+    r.add(0.2);
+    r.release(0.1);
+    r.release(0.2);
+    assert_eq!(r.calls, 0);
+    assert!(r.usd == 0.0, "drift left over: {}", r.usd);
+}
