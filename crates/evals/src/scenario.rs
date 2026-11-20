@@ -524,7 +524,11 @@ pub struct Expect {
 }
 
 impl Scenario {
-    /// A copy with `{ws}` replaced by `ws` in every string a scenario can script.
+    /// A copy with `{ws}` replaced by `ws` in the places that need an absolute workspace path:
+    /// `user`, `profile_toml`, scripted text and tool-call args, tool outputs, and the
+    /// `final_text` / `error` / per-request message expectations. Not substituted: `fs` (its
+    /// paths are relative to the workspace by design), `reactions`, `tools[].error`, `secrets`
+    /// and `expect.files_unchanged`.
     #[must_use]
     pub fn with_workspace(&self, ws: &str) -> Self {
         let r = |s: &mut String| *s = s.replace("{ws}", ws);
