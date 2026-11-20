@@ -993,6 +993,7 @@
         },
         "tools": "Araçlar"
       },
+      "commandShortened": "Komut kısaltıldı: yalnızca ilk {{shown}} karakter gösteriliyor.",
       "computer": "Bu işlem {{kind}} “{{name}}” üzerinde çalışır (kimlik {{id}}).",
       "control": {
         "button": "Bu görev: {{program}}",
@@ -1030,6 +1031,10 @@
         },
         "read": "Bu çalışma şunu okudu: {{list}}",
         "reviewFull": "İçeriğin tamamını incele"
+      },
+      "input": {
+        "label": "{{name}} aracının alacağı tam veri",
+        "shortened": "Kısaltıldı: yalnızca ilk {{shown}} karakter gösteriliyor."
       },
       "memory": {
         "always": "{{target}} için bu botta her zaman izin ver",

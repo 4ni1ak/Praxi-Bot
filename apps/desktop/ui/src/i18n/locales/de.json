@@ -993,6 +993,7 @@
         },
         "tools": "Werkzeuge"
       },
+      "commandShortened": "Befehl gekürzt: Es werden nur die ersten {{shown}} Zeichen angezeigt.",
       "computer": "Diese Aktion läuft auf {{kind}} „{{name}}“ (ID {{id}}).",
       "control": {
         "button": "Diese Aufgabe: {{program}}",
@@ -1030,6 +1031,10 @@
         },
         "read": "Dieser Lauf hat gelesen: {{list}}",
         "reviewFull": "Vollständigen Inhalt prüfen"
+      },
+      "input": {
+        "label": "Genau das erhält {{name}}",
+        "shortened": "Gekürzt: Es werden nur die ersten {{shown}} Zeichen angezeigt."
       },
       "memory": {
         "always": "{{target}} für diesen Bot immer erlauben",

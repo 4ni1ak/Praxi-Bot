@@ -993,6 +993,7 @@
         },
         "tools": "Tools"
       },
+      "commandShortened": "Command shortened: only the first {{shown}} characters are shown.",
       "computer": "This action runs on {{kind}} \"{{name}}\" (id {{id}}).",
       "control": {
         "button": "This task: {{program}}",
@@ -1030,6 +1031,10 @@
         },
         "read": "This run read: {{list}}",
         "reviewFull": "Review full payload"
+      },
+      "input": {
+        "label": "Exactly what {{name}} will receive",
+        "shortened": "Shortened: only the first {{shown}} characters are shown."
       },
       "memory": {
         "always": "Always allow {{target}} for this bot",

@@ -55,7 +55,7 @@ test("the approval reason and action render as short Turkish sentences, never th
     t
   )!;
   assert.equal(action, "Praxi host sunucusu üzerinde şu komutu çalıştır:");
-  assert.equal(plain.actionCommand("shell_run", { command: "which chromium || which google-chrome" }), "which chromium || which google-chrome");
+  assert.equal(plain.actionCommand("shell_run", { command: "which chromium || which google-chrome" })?.text, "which chromium || which google-chrome");
   await i18n.changeLanguage("en");
   assert.match(plain.actionText("shell_run", { command: "ls" }, { computer: null, serverName: "Praxi host" }, t)!, /^Run this command on the Praxi host server:$/);
 });
@@ -97,17 +97,19 @@ test("every pc_* tool reads as a sentence about YOUR computer, in both languages
   await i18n.changeLanguage("en");
   const t = ((k: string, v?: Record<string, unknown>) => i18n.t(k, v)) as import("./approvalPlain.ts").T;
   assert.equal(plain.actionText("pc_shell_run", { command: "dir" }, w, t), "Run this command on YOUR computer:");
-  assert.equal(plain.actionCommand("pc_shell_run", { command: "dir" }), "dir");
+  assert.equal(plain.actionCommand("pc_shell_run", { command: "dir" })?.text, "dir");
 });
 
 test("a multi-line command is shown whole and pc_* page and screen actions are specific", async () => {
   await i18n.changeLanguage("en");
   const t = ((k: string, v?: Record<string, unknown>) => i18n.t(k, v)) as import("./approvalPlain.ts").T;
   const w = { computer: null, serverName: "Praxi host" };
-  const shell = plain.actionCommand("pc_shell_run", { command: "dir\nRemove-Item C:/work -Recurse" })!;
+  const shell = plain.actionCommand("pc_shell_run", { command: "dir\nRemove-Item C:/work -Recurse" })!.text;
   assert.equal(shell, "dir\nRemove-Item C:/work -Recurse", "every line stays visible");
   const long = plain.actionCommand("pc_shell_run", { command: "x".repeat(2500) })!;
-  assert.ok(long.endsWith("…"), long.slice(-5));
+  assert.ok(long.text.endsWith("…"), long.text.slice(-5));
+  assert.equal(long.shortened, true);
+  assert.equal(plain.actionCommand("pc_shell_run", { command: "x".repeat(2000) })!.shortened, false);
   assert.equal(plain.actionCommand("browser_open", { command: "x" }), null);
   assert.match(plain.actionText("pc_browser_click", { ref: "e12" }, w, t)!, /Click element e12/);
   assert.match(plain.actionText("pc_browser_fill", { ref: "e3", text: "hello" }, w, t)!, /e3.*hello/);

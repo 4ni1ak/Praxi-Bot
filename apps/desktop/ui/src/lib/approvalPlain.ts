@@ -176,15 +176,69 @@ export function actionText(tool: string, input: unknown, w: WhereInput, t: T): s
   return null;
 }
 
+/** Characters of a shell command shown before the card says it was cut. */
+export const COMMAND_LIMIT = 2000;
+/** Characters of the full tool input shown before the card says it was cut. */
+export const INPUT_LIMIT = 4000;
+
+/**
+ * Control, bidi-override and zero-width characters written as `<U+XXXX>`, so a command or an
+ * argument cannot hide text or reorder what the owner reads. Tabs and line breaks stay as they are.
+ */
+export function escapeInvisible(text: string): string {
+  let out = "";
+  for (const ch of text.replace(/\r\n/g, "\n")) {
+    const c = ch.codePointAt(0) ?? 0;
+    const hidden =
+      (c < 0x20 && c !== 0x09 && c !== 0x0a) ||
+      (c >= 0x7f && c <= 0x9f) ||
+      c === 0xad || c === 0x61c || c === 0x180e ||
+      (c >= 0x200b && c <= 0x200f) ||
+      (c >= 0x2028 && c <= 0x202e) ||
+      (c >= 0x2060 && c <= 0x206f) ||
+      c === 0xfeff ||
+      (c >= 0xfff9 && c <= 0xfffb);
+    out += hidden ? "<U+" + c.toString(16).toUpperCase().padStart(4, "0") + ">" : ch;
+  }
+  return out;
+}
+
+/** `text` cut to `max` characters (ending in "…") and escaped; `shortened` says whether it was cut. */
+function cutAndEscape(text: string, max: number): { text: string; shortened: boolean } {
+  const chars = [...text];
+  if (chars.length > max) return { text: `${escapeInvisible(chars.slice(0, max).join(""))}…`, shortened: true };
+  return { text: escapeInvisible(text), shortened: false };
+}
+
 /**
  * The command of a shell call, whole and on its own lines, for the code box under the sentence;
- * `null` for any other call. Only a very long one is cut, and then it ends in "…".
+ * `null` for any other call. Only a very long one is cut (`shortened`, text ends in "…").
  */
-export function actionCommand(tool: string, input: unknown): string | null {
+export function actionCommand(tool: string, input: unknown): { text: string; shortened: boolean } | null {
   if (tool !== "shell_run" && tool !== "pc_shell_run") return null;
   const rec = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const text = typeof rec.command === "string" ? rec.command.trim() : "";
   if (!text) return null;
-  const chars = [...text];
-  return chars.length > 2000 ? `${chars.slice(0, 2000).join("")}…` : text;
+  return cutAndEscape(text, COMMAND_LIMIT);
+}
+
+/**
+ * The whole input of a call as readable text (pretty JSON), so the owner sees every argument
+ * (path, recipient, body, url, typed text) before approving. `null` when there is no input.
+ */
+export function actionArguments(input: unknown): { text: string; shortened: boolean } | null {
+  if (input === null || input === undefined || input === "") return null;
+  if (typeof input === "object" && Object.keys(input as object).length === 0) return null;
+  let text: string;
+  if (typeof input === "string") {
+    text = input;
+  } else {
+    try {
+      text = JSON.stringify(input, null, 2) ?? "";
+    } catch {
+      text = String(input);
+    }
+  }
+  if (!text) return null;
+  return cutAndEscape(text, INPUT_LIMIT);
 }

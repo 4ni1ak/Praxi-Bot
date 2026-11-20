@@ -44,7 +44,7 @@ import { StepIcon } from "./StepIcon";
 import formStyles from "./Form.module.css";
 import styles from "./ChatCards.module.css";
 import { humanLine, humanToolError } from "../lib/humanError";
-import { actionCommand, actionText, hostText, reasonLine, sourceText, type T } from "../lib/approvalPlain";
+import { COMMAND_LIMIT, INPUT_LIMIT, actionArguments, actionCommand, actionText, hostText, reasonLine, sourceText, type T } from "../lib/approvalPlain";
 import { ErrorNotice } from "./ErrorNotice";
 
 const brandName = (name: string): string | null => {
@@ -502,7 +502,9 @@ export function ApprovalCard({
   // `use_tool` wraps the real call: the card words (and the glyph shows) the call that would run.
   const call = resolveToolCall(tool.name, tool.input);
   const plainAction = actionText(call.name, call.input, { computer, serverName }, tt);
-  const commandText = actionCommand(call.name, call.input);
+  const command = actionCommand(call.name, call.input);
+  // Without a command box the owner still sees the real tool and EVERY argument (path, recipient, body).
+  const args = command ? null : actionArguments(call.input);
   const stepLabel = describeTool(call.name, call.input, brandName);
   const headline = plainAction ?? t(`${stepLabel.key}.running`, stepLabel.values);
   const plainReason = egress ? reasonLine(egress, tt) : null;
@@ -586,8 +588,29 @@ export function ApprovalCard({
             <p className={styles.approvalSummary}>
               {headline}
             </p>
-            {commandText ? (
-              <pre className={styles.code} tabIndex={0} data-testid="approval-command">{commandText}</pre>
+            {command ? (
+              <>
+                <pre className={styles.code} tabIndex={0} data-testid="approval-command">{command.text}</pre>
+                {command.shortened ? (
+                  <p className={styles.bodyLabel} data-testid="approval-command-shortened">
+                    {t("chat.approval.commandShortened", { shown: COMMAND_LIMIT })}
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+            {args ? (
+              <>
+                <p className={styles.bodyLabel}>
+                  <span className={styles.approvalTool}>{call.name}</span>{" "}
+                  {t("chat.approval.input.label", { name: call.name })}
+                </p>
+                <pre className={styles.code} tabIndex={0} data-testid="approval-input">{args.text}</pre>
+                {args.shortened ? (
+                  <p className={styles.bodyLabel} data-testid="approval-input-shortened">
+                    {t("chat.approval.input.shortened", { shown: INPUT_LIMIT })}
+                  </p>
+                ) : null}
+              </>
             ) : null}
             {plainReason ? (
               <p className={styles.bodyLabel} data-testid="approval-reason">{plainReason}</p>
