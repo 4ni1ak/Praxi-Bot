@@ -391,8 +391,8 @@ nothing links to. `Trigger::FileWatch` is a real variant in `crates/scheduler/sr
 ## How to do it
 
 1. Add a pointer from the guide page. Do not paste the whole reference into the guide.
-2. The reference's example path is `/home/me/projects/...`. If you touch that file, change it to a
-   placeholder such as `/srv/invoices`. Do not otherwise rewrite it.
+2. The reference's example uses a personal directory. If you touch that file, replace that
+   directory with a placeholder such as `<watch-root>/invoices`. Do not otherwise rewrite it.
 3. Relative links. From `docs/guide/scheduled-tasks.md` the path is `../schedule-triggers-prechecks.md`.
 
 ## Acceptance criteria
@@ -943,14 +943,19 @@ the encoding IMAP mailbox names use.
 ## How to do it
 
 1. Encode and decode modified UTF-7. Verify these against RFC 3501 before committing them:
-   - ASCII, including `INBOX`, is unchanged.
-   - A literal `&` becomes `&-`.
+   - Printable ASCII other than `&`, including `INBOX` and `Drafts`, is unchanged.
+   - A literal `&` that is not already a shift becomes `&-`, so `R&D` becomes `R&-D`.
    - `Entwürfe` becomes `Entw&APw-rfe`.
    - Decode is the inverse, and a bad `&` sequence returns the existing `EmailError::Input` style
      of error rather than panicking.
-2. Encode a folder name after `check_folder` and before it is sent. Decode names in the list that
-   is returned to the tool. An already-ASCII name must stay byte-for-byte the same, so current
-   tests that expect `"INBOX"` and `"Drafts"` keep passing.
+2. Callers can already pass a server-encoded name, because that is what the crate does today.
+   Do not encode those a second time: `Entw&APw-rfe` sent again would become `Entw&-APw-rfe` and
+   select a different mailbox. After `check_folder`, if the name is already valid modified UTF-7
+   (ASCII with well-formed `&...-` shifts, or no `&` at all), send it unchanged. Otherwise treat
+   it as a Unicode name and encode it. Decode names in the list returned to the tool. Add a test
+   that `Entw&APw-rfe` and `Drafts` are not rewritten. A name with no `&` and no non-ASCII
+   character stays byte-for-byte the same, so current tests that expect `"INBOX"` and `"Drafts"`
+   keep passing.
 3. Do not change TLS, login, or the message-size cap.
 
 ## Acceptance criteria
