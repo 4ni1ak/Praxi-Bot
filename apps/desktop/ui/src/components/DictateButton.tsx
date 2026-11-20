@@ -5,6 +5,8 @@ import { Button } from "ui";
 import { ApiError } from "../api/client";
 import { blobToBase64, dictationSupported, pickRecordingMime } from "../lib/dictation";
 import { humanLine } from "../lib/humanError";
+import { micErrorKey } from "../lib/micError";
+import { stopSpeaking } from "../lib/speaker";
 import { useDaemon } from "../state/DaemonContext";
 import { useToast } from "./Toast";
 
@@ -45,6 +47,8 @@ export function DictateButton({ onText, className }: { onText: (text: string) =>
   }
 
   const start = async () => {
+    // Barge-in: stop reading a reply aloud so the microphone does not record the speaker.
+    stopSpeaking();
     try {
       const s = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.current = s;
@@ -61,9 +65,9 @@ export function DictateButton({ onText, className }: { onText: (text: string) =>
       rec.start();
       timer.current = window.setTimeout(() => rec.state === "recording" && rec.stop(), MAX_RECORD_MS);
       setPhase("recording");
-    } catch {
+    } catch (e) {
       release();
-      toast.show(t("voice.micDenied"), "danger");
+      toast.show(t(micErrorKey(e)), "danger");
       setPhase("idle");
     }
   };
