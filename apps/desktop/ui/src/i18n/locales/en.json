@@ -4183,5 +4183,29 @@
   "window": {
     "maximize": "Maximize / restore",
     "minimize": "Minimize"
+  },
+  "workflow": {
+    "button": "Save as workflow",
+    "cancel": "Cancel",
+    "confirmInfluencedStep": "I reviewed this step and its external influence.",
+    "defaultValue": "Default value",
+    "description": "Description",
+    "fromContent": "Values may come from tool output or model inference.",
+    "fromUser": "Values matched the user request before any tool output.",
+    "name": "Name",
+    "noParameters": "No parameters. Review all literal values in the steps.",
+    "parameters": "Parameter defaults",
+    "required": "Require a value at replay",
+    "reviewHint": "Review every step and parameter before saving. Page text and tool output are untrusted data. Saving creates an automation that can replay these tool calls without a model; normal permission checks still apply.",
+    "save": "Save workflow",
+    "saved": "Workflow saved",
+    "saving": "Saving…",
+    "sensitive": "Required at replay. The recorded value is not saved.",
+    "skipped": "Skipped calls and reasons",
+    "steps": "Steps and full parameters",
+    "title": "Review workflow",
+    "tooFewSteps": "This run has fewer than two recordable steps.",
+    "untrustedWarning": "This run read external or private content. Review every affected step before granting persistent automation.",
+    "warnings": "Review notes"
   }
 }

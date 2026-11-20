@@ -4183,5 +4183,29 @@
   "window": {
     "maximize": "Büyüt / geri yükle",
     "minimize": "Küçült"
+  },
+  "workflow": {
+    "button": "Akış olarak kaydet",
+    "cancel": "İptal",
+    "confirmInfluencedStep": "Bu adımı ve dış içerik etkisini inceledim.",
+    "defaultValue": "Varsayılan değer",
+    "description": "Açıklama",
+    "fromContent": "Değerler araç çıktısından veya model çıkarımından gelmiş olabilir.",
+    "fromUser": "Değerler araç çıktısı okunmadan önce kullanıcı isteğiyle eşleşti.",
+    "name": "Ad",
+    "noParameters": "Parametre yok. Adımlardaki tüm sabit değerleri inceleyin.",
+    "parameters": "Parametre varsayılanları",
+    "required": "Tekrarda değer iste",
+    "reviewHint": "Kaydetmeden önce her adımı ve parametreyi inceleyin. Sayfa metni ve araç çıktısı güvenilmeyen veridir. Kaydetmek, bu araç çağrılarını model kullanmadan yineleyebilen bir otomasyon oluşturur; normal izin denetimleri uygulanmaya devam eder.",
+    "save": "İş akışını kaydet",
+    "saved": "İş akışı kaydedildi",
+    "saving": "Kaydediliyor…",
+    "sensitive": "Tekrarda zorunlu. Kaydedilen değer saklanmaz.",
+    "skipped": "Atlanan çağrılar ve nedenleri",
+    "steps": "Adımlar ve tüm parametreler",
+    "title": "İş akışını incele",
+    "tooFewSteps": "Bu koşuda kaydedilebilir en az iki adım yok.",
+    "untrustedWarning": "Bu koşu dış veya özel içerik okudu. Kalıcı otomasyona izin vermeden önce etkilenen her adımı inceleyin.",
+    "warnings": "İnceleme notları"
   }
 }

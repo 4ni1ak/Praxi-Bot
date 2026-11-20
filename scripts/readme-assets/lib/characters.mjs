@@ -10,8 +10,8 @@
 // CSS animations. Only transform and opacity are animated; every animated
 // element is a plain group, never a filtered one.
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { g, tag, rect, ellipse, circle, path, radial } from './core.mjs';
+import { fileURLToPath, URL } from 'node:url';
+import { g, tag, rect, ellipse, path, radial } from './core.mjs';
 
 const ui = fileURLToPath(new URL('../../../packages/ui/src/', import.meta.url));
 

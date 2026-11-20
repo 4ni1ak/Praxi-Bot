@@ -340,6 +340,14 @@ fn host_port(url: &str) -> Option<String> {
     Some(rest.split('/').next()?.to_owned())
 }
 
+/// Whether an HTTP reply to `GET /v1/health` comes from a live Praxi daemon.  A fresh install
+/// has no provider yet and the daemon then reports `setup_required`: that is a running daemon
+/// (the app opens its setup screen), not a dead one.
+fn health_reply_is_alive(text: &str) -> bool {
+    text.starts_with("HTTP/1.1 200")
+        && (text.contains("\"status\":\"ok\"") || text.contains("\"status\":\"setup_required\""))
+}
+
 /// Plain HTTP/1.1 `GET /v1/health` over loopback (no HTTP client needed).
 async fn healthy(url: &str) -> bool {
     let Some(hp) = host_port(url) else {
@@ -352,7 +360,7 @@ async fn healthy(url: &str) -> bool {
         let mut buf = Vec::new();
         s.read_to_end(&mut buf).await.ok()?;
         let text = String::from_utf8_lossy(&buf);
-        (text.starts_with("HTTP/1.1 200") && text.contains("\"status\":\"ok\"")).then_some(())
+        health_reply_is_alive(&text).then_some(())
     };
     matches!(
         tokio::time::timeout(PROBE_TIMEOUT, probe).await,
@@ -980,6 +988,19 @@ mod tests {
         assert!(valid_token(&"a".repeat(64)));
         assert!(!valid_token("short"));
         assert!(!valid_token(&"g".repeat(64)));
+    }
+
+    #[test]
+    fn health_reply_of_a_fresh_install_counts_as_alive() {
+        let reply = |body: &str| format!("HTTP/1.1 200 OK\r\n\r\n{body}");
+        assert!(health_reply_is_alive(&reply(
+            r#"{"status":"setup_required","version":"0"}"#
+        )));
+        assert!(health_reply_is_alive(&reply(r#"{"status":"ok"}"#)));
+        assert!(!health_reply_is_alive(&reply(r#"{"status":"broken"}"#)));
+        assert!(!health_reply_is_alive(
+            "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"status\":\"ok\"}"
+        ));
     }
 
     #[tokio::test]

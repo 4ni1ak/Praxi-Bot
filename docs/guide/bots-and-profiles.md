@@ -135,6 +135,23 @@ interface (`find_tool`, `get_tool_details`, `use_tool`) instead of the whole lis
 The CLI has no command for editing or deleting bots yet; use the desktop app or
 the HTTP API (see `docs/api/openapi.json`).
 
+### Main bot and bot order (desktop app)
+
+On a fresh desktop setup, the first-run wizard defaults to creating a bot named
+**Praxi** with the white ghost avatar. It starts first in the left rail as your
+**main bot** (the default bot when the app opens or starts a new chat).
+
+When you have more than one bot:
+
+- The first bot in the left rail carries a **Main** badge.
+- To make another bot the main bot in one click, open its right-hand **bot
+  panel** (click the bot chip in the title bar) and press the star button
+  (**Make main bot**) in the panel header. It moves to the top of the list and
+  keeps every other bot in order.
+- You can also drag a bot's grip handle in the left rail (or focus the handle
+  and press the Up/Down arrow keys) to reorder the list. Bot order is stored in
+  the desktop app's local settings.
+
 ## Subagents
 
 A bot can start a **subagent** (`spawn_subagent`) for a focused sub-task. A

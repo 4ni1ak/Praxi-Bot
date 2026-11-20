@@ -687,6 +687,151 @@ impl AgentLoop {
         self.start_turn(chat_id, user_message, &kind_for(initiator), None, None)
     }
 
+    /// Human-only replay entry: parameter values never enter persisted turn
+    /// text, route inputs or model context. Lost memory (restart) fails closed.
+    ///
+    /// # Errors
+    /// Invalid parameters, missing redaction, or the usual turn-start errors.
+    pub fn run_workflow(
+        &self,
+        chat_id: ChatId,
+        name: &str,
+        params: BTreeMap<String, String>,
+    ) -> Result<RunId> {
+        let chat = self
+            .sh
+            .storage
+            .get_chat(chat_id)?
+            .ok_or_else(|| LoopError::NotFound("chat".into()))?;
+        if !self
+            .sh
+            .profile_for(chat.bot_id)
+            .map_err(LoopError::Profile)?
+            .router
+            .enabled
+        {
+            return Err(LoopError::Router(
+                "workflow commands require the bot router".into(),
+            ));
+        }
+        let wiring = self
+            .sh
+            .router
+            .workflows
+            .get()
+            .ok_or_else(|| LoopError::Router("workflows unavailable".into()))?;
+        let wf = wiring
+            .store
+            .for_bot(&chat.bot_id.to_string())
+            .and_then(|store| store.get(name))
+            .map_err(|_| LoopError::Router("workflow unavailable for this bot".into()))?;
+        wf.bind_params(
+            &params
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect(),
+        )
+        .map_err(|_| LoopError::Router("invalid workflow parameters".into()))?;
+        let redactor = self
+            .sh
+            .cfg
+            .redactor
+            .as_ref()
+            .ok_or_else(|| LoopError::Router("redaction unavailable".into()))?;
+        // The shared redactor deliberately ignores short strings. Refuse them
+        // here instead of allowing credentials in echoed errors or approvals.
+        if params.values().any(|v| v.len() < 6) {
+            return Err(LoopError::Router(
+                "runtime values must contain at least six bytes for safe redaction".into(),
+            ));
+        }
+        for value in params.values() {
+            redactor.register(value);
+        }
+        let ticket = Uuid::now_v7().to_string();
+        self.sh.router.human_replays.lock().insert(
+            ticket.clone(),
+            crate::router::HumanReplay {
+                bot: chat.bot_id,
+                run: None,
+                name: name.to_owned(),
+                params,
+            },
+        );
+        let result = self.start_turn(
+            chat_id,
+            &format!("Run workflow {name}"),
+            &kind_for(InitiatorKind::Human),
+            Some(ScheduleWork::Workflow {
+                name: name.to_owned(),
+                params: BTreeMap::from([("__human_replay".into(), ticket.clone())]),
+            }),
+            None,
+        );
+        if result.is_err() {
+            self.sh.router.human_replays.lock().remove(&ticket);
+        }
+        result
+    }
+
+    /// Registry restricted to the tools visible to this bot.
+    ///
+    /// # Errors
+    /// The bot profile is missing or invalid.
+    pub fn workflow_recording_tools(&self, bot: BotId) -> Result<ToolRegistry> {
+        let profile = self.sh.profile_for(bot).map_err(LoopError::Profile)?;
+        let registry = ToolRegistry::new();
+        for spec in self.sh.visible_specs(&profile, bot) {
+            if let Some(tool) = self.sh.tools.get(&spec.name) {
+                registry.register(tool);
+            }
+        }
+        Ok(registry)
+    }
+
+    /// Whether every user message of this top-level run came from the owner
+    /// (desktop app or the paired admin desktop). Token-only clients,
+    /// Telegram and peers do not count. Fails closed.
+    #[must_use]
+    pub fn workflow_run_owner_started(&self, run: &storage::Run) -> bool {
+        crate::approval::owner_started_run(&self.sh.storage, run.id, run.parent_run_id)
+    }
+
+    /// Whether this run carried untrusted or private content before or while
+    /// it ran, rebuilt from storage (parent chain, child runs, prior chat
+    /// provenance, persisted exposure facts). The in-memory taint set is lost
+    /// on restart and is not shared with subagents, so a recording must not
+    /// rely on it. Fails closed when the run has no chat.
+    #[must_use]
+    pub fn workflow_run_carried_exposure(&self, run: &storage::Run) -> bool {
+        let Some(chat_id) = run.chat_id else {
+            return true;
+        };
+        let mut taint = self.sh.initial_taint(run, chat_id);
+        // `initial_taint` only sees the bounded model-context window; a
+        // tainted earlier message may have scrolled out of it. Recording
+        // looks at every earlier message and fails closed on a storage error.
+        match self
+            .sh
+            .storage
+            .chat_exposure_until(chat_id, run.id, run.created_at_ms)
+        {
+            Ok((untrusted, private, _)) => taint.exposure.observe(untrusted, private),
+            Err(_) => return true,
+        }
+        taint.exposure != permission_engine::ContentExposure::clean()
+    }
+
+    /// Test strings with the loop's current known-value and pattern redactor.
+    #[must_use]
+    pub fn workflow_contains_secret(&self, value: &str) -> bool {
+        self.sh
+            .cfg
+            .redactor
+            .as_ref()
+            .is_some_and(|r| r.contains_secret(value))
+    }
+
     /// Start an external MCP task in a fresh, isolated chat. The credential id
     /// is public attribution, never the bearer. Every tool requires one-time
     /// owner approval, including reads and inherited child calls.
@@ -962,6 +1107,12 @@ impl AgentLoop {
                 )?;
             }
             if let Some(d) = directive {
+                if let ScheduleWork::Workflow { params, .. } = &d
+                    && let Some(ticket) = params.get("__human_replay")
+                    && let Some(replay) = self.sh.router.human_replays.lock().get_mut(ticket)
+                {
+                    replay.run = Some(run_id);
+                }
                 self.sh.directives.lock().insert(run_id, d);
             }
             active.insert(chat_id, run_id);
@@ -2169,6 +2320,11 @@ impl AgentLoop {
             self.conclude_child(run_id, parent, res);
             return;
         }
+        self.sh
+            .router
+            .human_replays
+            .lock()
+            .retain(|_, replay| replay.run != Some(run_id));
         let ctx = self.ctx_of(run_id);
         if matches!(res, Ok(RunState::Paused)) {
             // Paused by `shutdown`: no `run_finished` (the run is resumable and
@@ -2208,6 +2364,7 @@ impl AgentLoop {
             }
             return;
         }
+        self.sh.router.tainted_runs.lock().remove(&run_id);
         let error: Option<String> = match res {
             Ok(RunState::Succeeded) => None,
             Ok(RunState::Failed) => Some(
