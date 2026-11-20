@@ -56,6 +56,18 @@ pub struct TurnConfig {
     pub workflows: Vec<workflow_replay::Workflow>,
 }
 
+/// Optional extras of a turn; the default is a plain human turn with fake tools only.
+#[derive(Default)]
+pub struct TurnExtras {
+    /// Masks secrets in tool output and events, as the daemon's vault redactor does.
+    pub redactor: Option<agent_core::SharedRedactor>,
+    /// Register the real built-in tools; relative `fs_*` paths resolve against this
+    /// directory and the bot's `[files]` scope decides what they may reach.
+    pub fs_home: Option<std::path::PathBuf>,
+    /// Who starts the run.
+    pub initiator: Option<protocol::InitiatorKind>,
+}
+
 /// The permission outcome of one tool call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallRecord {
@@ -111,6 +123,10 @@ pub struct TurnTrace {
     pub tool_results: Vec<String>,
     /// Plain-text trajectory (for the judge).
     pub trajectory: String,
+    /// Every audit row of the run's user, as JSON text.
+    pub audit_text: String,
+    /// Every stored chat message, as text.
+    pub messages_text: String,
     /// Run directory holder; keeps spill files alive until the trace drops.
     pub storage: Arc<Storage>,
     _dir: tempfile::TempDir,
@@ -268,20 +284,57 @@ impl Reactor<'_> {
     }
 }
 
+/// Audit rows and chat messages of the run as plain text (for the leak scan).
+fn persisted_text(storage: &Storage, user: UserId, chat: ChatId) -> (String, String) {
+    let mut audit = String::new();
+    for a in storage.list_audit(user).unwrap_or_default() {
+        let _ = writeln!(audit, "{} {} {}", a.actor, a.action, a.detail);
+    }
+    let mut messages = String::new();
+    for m in storage.list_messages(chat).unwrap_or_default() {
+        let _ = writeln!(messages, "{}: {}", m.role, m.content);
+    }
+    (audit, messages)
+}
+
 /// Run one turn to completion (or until the wall-clock cap) and collect its trace.
 ///
 /// # Errors
 /// Harness failures: storage setup, an invalid profile, or the loop refusing to start.
 pub async fn run_turn(cfg: TurnConfig) -> Result<TurnTrace> {
+    run_turn_ext(cfg, TurnExtras::default()).await
+}
+
+/// [`run_turn`] with the optional [`TurnExtras`].
+///
+/// # Errors
+/// As [`run_turn`].
+#[allow(clippy::too_many_lines)] // one ordered setup, run and collect pass
+pub async fn run_turn_ext(cfg: TurnConfig, extras: TurnExtras) -> Result<TurnTrace> {
     let dir = tempfile::tempdir()?;
     let storage = Arc::new(Storage::open(dir.path())?);
     let (user, bot, chat) = seed(&storage)?;
+    let mut loop_cfg = build_config(&cfg);
+    loop_cfg.redactor.clone_from(&extras.redactor);
     let mut lp = AgentLoop::new(
         Arc::clone(&storage),
         cfg.registry.clone(),
         Providers::single(Arc::clone(&cfg.provider)),
-        build_config(&cfg),
+        loop_cfg,
     );
+    if let Some(home) = &extras.fs_home {
+        let mut b = builtin_tools::BuiltinConfig::new(
+            dir.path().to_path_buf(),
+            Arc::new(builtin_tools::ResolverGate::new(
+                permission_engine::PermissionResolver::new(),
+                Policy::read_only(),
+                None,
+                protocol::InitiatorKind::Human,
+            )),
+        );
+        b.fs_home = Some(home.clone());
+        lp = lp.with_builtin_tools(b);
+    }
     if cfg.subagents {
         lp = lp.with_subagents();
     }
@@ -311,7 +364,15 @@ pub async fn run_turn(cfg: TurnConfig) -> Result<TurnTrace> {
     let mut rx = lp.subscribe();
     let started_ms = now_ms();
     let t0 = Instant::now();
-    let run = lp.run_turn(chat, &cfg.prompt)?;
+    let run = match extras.initiator {
+        None | Some(protocol::InitiatorKind::Human) => lp.run_turn(chat, &cfg.prompt)?,
+        Some(protocol::InitiatorKind::Schedule) => lp.run_scheduled(
+            chat,
+            protocol::TaskId::new(),
+            agent_core::ScheduleWork::Prompt(cfg.prompt.clone()),
+        )?,
+        Some(other) => lp.run_turn_as(chat, &cfg.prompt, other)?,
+    };
 
     let mut events: Vec<Event> = Vec::new();
     let mut tool_of: HashMap<ToolCallId, String> = HashMap::new();
@@ -359,9 +420,13 @@ pub async fn run_turn(cfg: TurnConfig) -> Result<TurnTrace> {
     let wall = t0.elapsed();
     lp.flush_background().await;
 
-    Ok(collect(
+    let mut trace = collect(
         &storage, user, chat, run, state, events, timed_out, wall, started_ms, &cfg.model, dir,
-    ))
+    );
+    let (audit_text, messages_text) = persisted_text(&storage, user, chat);
+    trace.audit_text = audit_text;
+    trace.messages_text = messages_text;
+    Ok(trace)
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -544,6 +609,8 @@ fn collect(
         tool_durations,
         tool_results,
         trajectory,
+        audit_text: String::new(),
+        messages_text: String::new(),
         storage: Arc::clone(storage),
         _dir: dir,
     }

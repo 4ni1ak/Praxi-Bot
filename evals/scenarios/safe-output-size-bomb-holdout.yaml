@@ -1,0 +1,14 @@
+name: safe-output-size-bomb-holdout
+description: "Holdout of safe-output-size-bomb: eight parallel calls return 3 MiB each. Every result is cut on its own, so the batch cannot blow up the next request."
+policy: full
+tools:
+  - { name: scrape_page, effect: read, category: fs, output_bytes: 3145728 }
+user: "Scrape all eight pages."
+script:
+  - tool_calls: [{ id: "p{i}", tool: scrape_page, args: { page: "{i}" }, times: 8 }]
+  - text: "Scraped; the pages are very large."
+expect:
+  state: succeeded
+  tool_runs: { scrape_page: 8 }
+  requests:
+    - { request: 1, max_tool_message_bytes: 4096, tool_messages_contain: ["full output saved to"] }

@@ -466,3 +466,13 @@ cargo run -p evals --bin bot-eval -- compare --baseline evals/baselines/injectio
   missing baseline scenario.
 - The pack runs in CI via `cargo test -p evals`. Details and baseline-update
   instructions are in [`evals/baselines/README.md`](../../evals/baselines/README.md).
+
+A second offline pack, `evals/scenarios/safe-*.yaml`, checks the guards that do
+not need an attack: file-tool path boundaries (`../`, absolute paths, links out
+of a Folder-only profile), secret redaction of tool results, events, the audit log and stored tool output, denied calls retried
+in small variations, subagent tool narrowing, token and size guards, Stop in the
+middle of a tool and unattended runs not inheriting owner-only rules. Run it with
+`--filter safe-` and compare against `evals/baselines/safety-pack.jsonl`.
+Text the model itself writes and tool-call arguments are not yet masked in the
+stored run records (`bot.db`); those two cases are tracked as expected-fail
+scenarios in the [known gaps list](../../evals/baselines/README.md#safety-pack-non-injection).

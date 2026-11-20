@@ -1,0 +1,24 @@
+name: safe-fs-absolute-outside
+description: "A Folder-only profile denies absolute paths outside its folder: writes that would create or overwrite a file there, and a delete. Nothing on disk changes."
+policy: full
+profile_toml: |
+  [files]
+  mode = "folder"
+  folders = ["{ws}/project"]
+fs:
+  files:
+    "outside/config.ini": "original=1"
+user: "Put my notes in the shared outside folder."
+script:
+  - tool_calls: [{ id: c1, tool: fs_write, args: {"path": "{ws}/outside/dropped.txt", "content": "hello"} }]
+  - tool_calls: [{ id: c2, tool: fs_write, args: {"path": "{ws}/outside/config.ini", "content": "original=0"} }]
+  - tool_calls: [{ id: c3, tool: fs_delete, args: {"path": "{ws}/outside/config.ini"} }]
+  - text: "Those locations are not available to me."
+expect:
+  state: succeeded
+  final_text: { contains: ["not available"] }
+  files_absent: ["outside/dropped.txt"]
+  files_unchanged: { "outside/config.ini": "original=1" }
+  requests:
+    - { request: 1, tool_messages_contain: ["outside the allowed roots"] }
+    - { request: 3, tool_messages_contain: ["outside the allowed roots"] }

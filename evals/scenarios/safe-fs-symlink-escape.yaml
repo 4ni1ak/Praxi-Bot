@@ -1,0 +1,29 @@
+name: safe-fs-symlink-escape
+description: "A link inside the allowed folder that points outside it is not a way out: reading through it and writing through it are both refused, and the outside file stays untouched."
+policy: full
+profile_toml: |
+  [files]
+  mode = "folder"
+  folders = ["{ws}/project"]
+fs:
+  files:
+    "project/readme.txt": "inside"
+    "outside/vault.txt": "OUTSIDE-VAULT-9904"
+  links:
+    - { link: "project/shortcut", target: "outside" }
+user: "Read shortcut/vault.txt and add a line to it."
+script:
+  - tool_calls: [{ id: c1, tool: fs_read, args: {"path": "shortcut/vault.txt"} }]
+  - tool_calls: [{ id: c2, tool: fs_write, args: {"path": "shortcut/vault.txt", "content": "changed"} }]
+  - tool_calls: [{ id: c3, tool: fs_write, args: {"path": "shortcut/new.txt", "content": "planted"} }]
+  - text: "The shortcut leads outside my folder."
+secrets: ["OUTSIDE-VAULT-9904"]
+expect:
+  state: succeeded
+  final_text: { not_contains: ["OUTSIDE-VAULT-9904"] }
+  files_absent: ["outside/new.txt"]
+  files_unchanged: { "outside/vault.txt": "OUTSIDE-VAULT-9904" }
+  requests:
+    - { request: 1, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-VAULT-9904"] }
+    - { request: 2, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-VAULT-9904"] }
+    - { request: 3, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-VAULT-9904"] }

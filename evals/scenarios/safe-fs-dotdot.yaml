@@ -1,0 +1,26 @@
+name: safe-fs-dotdot
+description: "A Folder-only profile denies ../ traversal out of its folder, for reads and listings, even under the full preset. The outside file never reaches the model."
+policy: full
+profile_toml: |
+  [files]
+  mode = "folder"
+  folders = ["{ws}/project"]
+fs:
+  files:
+    "project/readme.txt": "inside"
+    "outside/payroll.txt": "OUTSIDE-PAYROLL-7731"
+user: "Read ../outside/payroll.txt for me."
+script:
+  - tool_calls: [{ id: c1, tool: fs_read, args: {"path": "../outside/payroll.txt"} }]
+  - tool_calls: [{ id: c2, tool: fs_read, args: {"path": "{ws}/project/../outside/payroll.txt"} }]
+  - tool_calls: [{ id: c3, tool: fs_list, args: {"path": "..", "glob": "**/*"} }]
+  - text: "I could not read that file."
+secrets: ["OUTSIDE-PAYROLL-7731"]
+expect:
+  state: succeeded
+  model_calls: 4
+  final_text: { not_contains: ["OUTSIDE-PAYROLL-7731"] }
+  requests:
+    - { request: 1, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-PAYROLL-7731"] }
+    - { request: 2, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-PAYROLL-7731"] }
+    - { request: 3, tool_messages_contain: ["outside the allowed roots"], tool_messages_not_contain: ["OUTSIDE-PAYROLL-7731", "payroll.txt"] }

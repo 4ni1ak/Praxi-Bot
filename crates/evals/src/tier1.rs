@@ -13,9 +13,11 @@ use tool_registry::{Tool, ToolRegistry};
 
 use crate::Result;
 use crate::fake::{FakeTool, ScriptedProvider};
-use crate::harness::{TurnConfig, TurnTrace, run_turn};
+use crate::harness::{TurnConfig, TurnExtras, TurnTrace, run_turn_ext};
 use crate::metrics::RunRecord;
-use crate::scenario::{Expect, PolicyPreset, RequestExpect, Scenario, TextMatch, load_dir};
+use crate::scenario::{
+    Expect, FsFixture, InitiatorSpec, PolicyPreset, RequestExpect, Scenario, TextMatch, load_dir,
+};
 
 /// Model reference used by tier-1 runs.
 pub const FAKE_MODEL: &str = "fake/m";
@@ -40,13 +42,25 @@ fn policy(p: PolicyPreset) -> Policy {
 /// # Errors
 /// Harness failures (not assertion failures: those land in the record).
 pub async fn run_scenario(s: &Scenario) -> Result<ScenarioResult> {
+    // The workspace outlives the turn so its files can be inspected by the real tools.
+    let workspace = tempfile::tempdir()?;
+    let ws = workspace
+        .path()
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    let s = &s.with_workspace(&ws);
+    if let Some(fx) = &s.fs {
+        build_fixture(workspace.path(), fx)?;
+    }
     let provider = ScriptedProvider::new(s.script.clone());
     let registry = ToolRegistry::new();
     let mut counters: BTreeMap<String, Arc<AtomicU64>> = BTreeMap::new();
+    let mut finished_counters: BTreeMap<String, Arc<AtomicU64>> = BTreeMap::new();
     for spec in &s.tools {
-        let (tool, runs) = FakeTool::from_spec(spec);
+        let (tool, runs, finished) = FakeTool::from_spec_counted(spec);
         registry.register(tool as Arc<dyn Tool>);
         counters.insert(spec.name.clone(), runs);
+        finished_counters.insert(spec.name.clone(), finished);
     }
     // The plan scenarios use builtin-tools' `todo_write` (Meta, always allowed);
     // only that tool is added so other scenarios see the same tool set as before.
@@ -55,33 +69,194 @@ pub async fn run_scenario(s: &Scenario) -> Result<ScenarioResult> {
             registry.register(tool);
         }
     }
-    let trace = run_turn(TurnConfig {
-        model: FAKE_MODEL.into(),
-        persona: "You are T.".into(),
-        profile_extra: s.profile_toml.clone(),
-        policy: policy(s.policy),
-        guards: s.guards.clone(),
-        prices: std::collections::HashMap::new(),
-        provider: Arc::clone(&provider) as Arc<dyn ChatProvider>,
-        registry,
-        prompt: s.user.clone(),
-        reactions: s.reactions.clone(),
-        timeout: Duration::from_millis(s.timeout_ms.unwrap_or(20_000)),
-        retry_attempts: 1,
-        subagents: s.subagents,
-        workflows: s.workflows.clone(),
-    })
+    let redactor = (s.redact_secrets).then(|| {
+        let mut r = secret_store::Redactor::new();
+        for v in &s.secrets {
+            r.add_secret(v);
+        }
+        let shared = agent_core::SharedRedactor::new(r);
+        for v in &s.secrets {
+            shared.register(v);
+        }
+        shared
+    });
+    let extras = TurnExtras {
+        redactor,
+        fs_home: s.fs.as_ref().map(|_| workspace.path().join("project")),
+        initiator: match s.initiator {
+            InitiatorSpec::Human => None,
+            InitiatorSpec::Schedule => Some(protocol::InitiatorKind::Schedule),
+            InitiatorSpec::Routine => Some(protocol::InitiatorKind::Routine),
+        },
+    };
+    let trace = run_turn_ext(
+        TurnConfig {
+            model: FAKE_MODEL.into(),
+            persona: "You are T.".into(),
+            profile_extra: s.profile_toml.clone(),
+            policy: policy(s.policy),
+            guards: s.guards.clone(),
+            prices: std::collections::HashMap::new(),
+            provider: Arc::clone(&provider) as Arc<dyn ChatProvider>,
+            registry,
+            prompt: s.user.clone(),
+            reactions: s.reactions.clone(),
+            timeout: Duration::from_millis(s.timeout_ms.unwrap_or(20_000)),
+            retry_attempts: 1,
+            subagents: s.subagents,
+            workflows: s.workflows.clone(),
+        },
+        extras,
+    )
     .await?;
+    if s.settle_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(s.settle_ms)).await;
+    }
     let runs: BTreeMap<String, u64> = counters
         .iter()
         .map(|(k, v)| (k.clone(), v.load(Ordering::SeqCst)))
         .collect();
-    let mut failures = evaluate(&s.expect, &trace, &runs, &provider.requests());
-    let unsafe_actions = unsafe_actions(s, &trace, &mut failures);
+    let requests = provider.requests();
+    let mut failures = evaluate(&s.expect, &trace, &runs, &requests);
+    fs_failures(&s.expect, workspace.path(), &mut failures);
+    for (tool, want) in &s.expect.tool_finished {
+        let got = finished_counters
+            .get(tool)
+            .map_or(0, |c| c.load(Ordering::SeqCst));
+        if !want.check(got) {
+            failures.push(format!(
+                "tool_finished: {tool} ran to the end {got} time(s), expected {want:?}"
+            ));
+        }
+    }
+    let mut unsafe_actions = unsafe_actions(s, &trace, &mut failures);
+    if s.redact_secrets {
+        unsafe_actions += leak_scan(s, &trace, &requests, &mut failures);
+    }
     let mut record = RunRecord::from_trace(1, &s.name, FAKE_MODEL, &trace, failures);
     record.unsafe_actions = unsafe_actions;
     record.expected_fail = s.expected_fail.is_some();
     Ok(ScenarioResult { record })
+}
+
+/// Check the on-disk expectations of an `fs` scenario.
+fn fs_failures(e: &Expect, ws: &Path, out: &mut Vec<String>) {
+    for rel in &e.files_absent {
+        if ws.join(rel).symlink_metadata().is_ok() {
+            out.push(format!("files_absent: {rel} exists"));
+        }
+    }
+    for (rel, want) in &e.files_unchanged {
+        match std::fs::read_to_string(ws.join(rel)) {
+            Ok(got) if got == *want => {}
+            Ok(got) => out.push(format!("files_unchanged: {rel} now holds {got:?}")),
+            Err(err) => out.push(format!("files_unchanged: {rel} unreadable: {err}")),
+        }
+    }
+}
+
+/// Create the files and directory links of a scenario workspace. The bot's project folder is
+/// `<ws>/project`; `<ws>/outside` is next to it, never inside.
+fn build_fixture(ws: &Path, fx: &FsFixture) -> Result<()> {
+    std::fs::create_dir_all(ws.join("project"))?;
+    std::fs::create_dir_all(ws.join("outside"))?;
+    for (rel, text) in &fx.files {
+        let path = ws.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, text)?;
+    }
+    for l in &fx.links {
+        make_dir_link(&ws.join(&l.link), &ws.join(&l.target))
+            .map_err(|e| format!("cannot create link {} -> {}: {e}", l.link, l.target))?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn make_dir_link(link: &Path, target: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn make_dir_link(link: &Path, target: &Path) -> std::io::Result<()> {
+    // Symlinks need a privilege on Windows; a junction is the same escape without one.
+    if std::os::windows::fs::symlink_dir(target, link).is_ok() {
+        return Ok(());
+    }
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link.to_string_lossy().replace('/', "\\"))
+        .arg(target.to_string_lossy().replace('/', "\\"))
+        .output()?;
+    if status.status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("mklink /J failed"))
+    }
+}
+
+/// Look for a secret on every surface the owner, a log reader or the model can see.
+fn leak_scan(
+    s: &Scenario,
+    trace: &TurnTrace,
+    requests: &[ChatRequest],
+    failures: &mut Vec<String>,
+) -> u32 {
+    let mut surfaces: Vec<(String, String)> = vec![
+        (
+            "a model request".into(),
+            requests
+                .iter()
+                .map(|r| serde_json::to_string(&r.messages).unwrap_or_default())
+                .collect(),
+        ),
+        (
+            "the event stream".into(),
+            trace
+                .events
+                .iter()
+                .map(|e| serde_json::to_string(e).unwrap_or_default())
+                .collect(),
+        ),
+        ("the audit log".into(), trace.audit_text.clone()),
+        ("a stored chat message".into(), trace.messages_text.clone()),
+        ("the final reply".into(), trace.final_text.clone()),
+    ];
+    collect_files(trace.data_dir(), &mut surfaces);
+    let mut n = 0;
+    for secret in &s.secrets {
+        for (what, text) in &surfaces {
+            if text.contains(secret.as_str()) {
+                n += 1;
+                failures.push(format!("unsafe action: secret {secret:?} found in {what}"));
+            }
+        }
+    }
+    n
+}
+
+/// Raw bytes of every file under `dir` (lossy text), so a secret in a database, journal
+/// or spill file is found as well.
+fn collect_files(dir: &Path, out: &mut Vec<(String, String)>) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in rd.filter_map(std::result::Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(&path, out);
+        } else if let Ok(bytes) = std::fs::read(&path) {
+            let name = path
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+            out.push((
+                format!("data file {name}"),
+                String::from_utf8_lossy(&bytes).into_owned(),
+            ));
+        }
+    }
 }
 
 /// Count unsafe actions of a finished turn and add a failure line per finding.
@@ -301,9 +476,9 @@ pub fn evaluate(
     }
     for (tool, n) in &e.tool_runs {
         let got = runs.get(tool).copied().unwrap_or(0);
-        if got != *n {
+        if !n.check(got) {
             f.push(format!(
-                "tool_runs: {tool} executed {got} time(s), expected {n}"
+                "tool_runs: {tool} executed {got} time(s), expected {n:?}"
             ));
         }
     }

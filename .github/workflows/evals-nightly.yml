@@ -65,17 +65,27 @@ jobs:
           ./target/debug/bot-eval compare --baseline evals/baselines/injection-pack.jsonl --run out/run.jsonl 2>&1 | tee out/compare.txt || status=$?
           echo "compare_status=$status" >> "$GITHUB_OUTPUT"
 
+      - name: Compare with the safety-pack baseline
+        id: compare_safety
+        run: |
+          set -euo pipefail
+          status=0
+          ./target/debug/bot-eval compare --baseline evals/baselines/safety-pack.jsonl --run out/run.jsonl 2>&1 | tee out/compare-safety.txt || status=$?
+          echo "compare_safety_status=$status" >> "$GITHUB_OUTPUT"
+
       - name: Job summary
         if: always()
         env:
           RUN_STATUS: ${{ steps.run.outputs.run_status }}
           COMPARE_STATUS: ${{ steps.compare.outputs.compare_status }}
+          COMPARE_SAFETY_STATUS: ${{ steps.compare_safety.outputs.compare_safety_status }}
         run: |
           {
             echo "## Nightly evals"
             echo
             echo "run exit code: ${RUN_STATUS:-not run}"
             echo "compare exit code: ${COMPARE_STATUS:-not run}"
+            echo "safety-pack compare exit code: ${COMPARE_SAFETY_STATUS:-not run}"
             echo
             echo "### compare (GO / NO-GO)"
             echo '```'
@@ -97,6 +107,7 @@ jobs:
             out/run.jsonl
             out/run.txt
             out/compare.txt
+            out/compare-safety.txt
           if-no-files-found: warn
           retention-days: 30
 
@@ -104,9 +115,10 @@ jobs:
         env:
           RUN_STATUS: ${{ steps.run.outputs.run_status }}
           COMPARE_STATUS: ${{ steps.compare.outputs.compare_status }}
+          COMPARE_SAFETY_STATUS: ${{ steps.compare_safety.outputs.compare_safety_status }}
         run: |
-          if [ "${RUN_STATUS:-1}" != "0" ] || [ "${COMPARE_STATUS:-1}" != "0" ]; then
-            echo "Evals failed: run=${RUN_STATUS:-unset} compare=${COMPARE_STATUS:-unset} (see the job summary)"
+          if [ "${RUN_STATUS:-1}" != "0" ] || [ "${COMPARE_STATUS:-1}" != "0" ] || [ "${COMPARE_SAFETY_STATUS:-1}" != "0" ]; then
+            echo "Evals failed: run=${RUN_STATUS:-unset} compare=${COMPARE_STATUS:-unset} safety=${COMPARE_SAFETY_STATUS:-unset} (see the job summary)"
             exit 1
           fi
           echo "GO"

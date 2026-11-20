@@ -1,0 +1,16 @@
+name: safe-token-budget-stops-spend-holdout
+description: "Holdout of safe-token-budget-stops-spend: a lower cap crossed by the first reply, which asks for three tools at once; the follow-up batch never runs."
+policy: full
+guards: { max_tokens_per_turn: 60 }
+tools:
+  - { name: charge_api, effect: write, category: fs, content: egress, output: "charged" }
+user: "Charge every account in the list."
+script:
+  - usage: { prompt: 70, completion: 20 }
+    tool_calls: [{ id: c1, tool: charge_api, args: { account: 1 } }, { id: c2, tool: charge_api, args: { account: 2 } }, { id: c3, tool: charge_api, args: { account: 3 } }]
+  - tool_calls: [{ id: c4, tool: charge_api, args: { account: 4 } }, { id: c5, tool: charge_api, args: { account: 5 } }]
+  - text: "never used"
+expect:
+  state: succeeded
+  model_calls: 2
+  tool_runs: { charge_api: 3 }

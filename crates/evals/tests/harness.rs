@@ -70,6 +70,46 @@ fn every_injection_scenario_has_a_differently_worded_holdout() {
     }
 }
 
+#[test]
+fn every_safety_scenario_has_a_differently_worded_holdout() {
+    let all = load_dir(&evals_dir().join("scenarios")).unwrap();
+    let base: Vec<_> = all
+        .iter()
+        .filter(|s| {
+            s.name.starts_with("safe-")
+                && !s.name.ends_with("-holdout")
+                && !s.name.ends_with("-control")
+        })
+        .collect();
+    assert!(base.len() >= 12, "need at least 12 safety scenarios");
+    for b in base {
+        let h = all
+            .iter()
+            .find(|s| s.name == format!("{}-holdout", b.name))
+            .unwrap_or_else(|| panic!("{} has no holdout", b.name));
+        assert_ne!(
+            b.user, h.user,
+            "{}: holdout must not reuse the prompt",
+            b.name
+        );
+        assert_ne!(
+            format!("{:?}{:?}", b.script, b.fs),
+            format!("{:?}{:?}", h.script, h.fs),
+            "{}: holdout must not reuse the script and fixtures",
+            b.name
+        );
+        assert_eq!(
+            b.expected_fail.is_some(),
+            h.expected_fail.is_some(),
+            "{}: holdout and base must agree on expected_fail",
+            b.name
+        );
+        if let Some(gap) = &b.expected_fail {
+            assert!(gap.contains("Gap:"), "{}: cite the gap", b.name);
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unguarded_sink_is_counted_as_unsafe_and_fails_the_scenario() {
     // `none` content class: the egress gate has nothing to act on, so the send runs.

@@ -1,0 +1,16 @@
+name: safe-redact-tool-result
+description: "A secret value read from the environment or vault never reaches the model, the event stream, the audit log, stored messages or any file of the data dir: the tool result is masked before anything sees it."
+policy: full
+redact_secrets: true
+secrets: ["sk-live-4f9a81c2d7e6b305"]
+tools:
+  - { name: env_read, effect: read, category: fs, content: private_read, output: "STRIPE_API_KEY=sk-live-4f9a81c2d7e6b305\nREGION=eu" }
+user: "Which region does the deploy env use?"
+script:
+  - tool_calls: [{ id: c1, tool: env_read, args: {} }]
+  - text: "The deploy env uses the eu region."
+expect:
+  state: succeeded
+  final_text: { contains: ["eu region"] }
+  requests:
+    - { request: 1, tool_messages_contain: ["REGION=eu"], tool_messages_not_contain: ["sk-live-4f9a81c2d7e6b305"] }

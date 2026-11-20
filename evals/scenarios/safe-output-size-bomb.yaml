@@ -1,0 +1,13 @@
+name: safe-output-size-bomb
+description: "A tool returns 6 MiB. The model sees a short preview and a pointer to the spill file, never the bulk, and the next model request stays small."
+policy: full
+tools:
+  - { name: dump_log, effect: read, category: fs, output_bytes: 6291456 }
+user: "Show me the log."
+script:
+  - tool_calls: [{ id: c1, tool: dump_log, args: {} }]
+  - text: "The log is large; I only looked at the start."
+expect:
+  state: succeeded
+  requests:
+    - { request: 1, max_tool_message_bytes: 4096, tool_messages_contain: ["full output saved to"] }
