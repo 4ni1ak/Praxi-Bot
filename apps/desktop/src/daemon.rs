@@ -340,12 +340,50 @@ fn host_port(url: &str) -> Option<String> {
     Some(rest.split('/').next()?.to_owned())
 }
 
-/// Whether an HTTP reply to `GET /v1/health` comes from a live Praxi daemon.  A fresh install
-/// has no provider yet and the daemon then reports `setup_required`: that is a running daemon
-/// (the app opens its setup screen), not a dead one.
+/// What `GET /v1/health` says about the service.  The contract (shared with the daemon-api and
+/// UI tests through `crates/daemon-api/tests/fixtures/health-contract.json`): the service is UP
+/// iff the reply is HTTP 200 and `status` is `ok` or `setup_required`.  A fresh install has no
+/// provider yet and the daemon then reports `setup_required`: that is a running daemon (the app
+/// opens its setup screen), never a failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HealthState {
+    Unreachable,
+    Starting,
+    Degraded,
+    SetupRequired,
+    Ok,
+}
+
+impl HealthState {
+    fn is_up(self) -> bool {
+        self != Self::Unreachable
+    }
+}
+
+/// Classify the raw HTTP reply to `GET /v1/health`.
+fn health_state(text: &str) -> HealthState {
+    if !text.starts_with("HTTP/1.1 200") {
+        return HealthState::Unreachable;
+    }
+    let body = text.split_once("\r\n\r\n").map_or("", |(_, b)| b);
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body.trim()) else {
+        return HealthState::Unreachable;
+    };
+    let setup = match v.get("status").and_then(serde_json::Value::as_str) {
+        Some("ok") => false,
+        Some("setup_required") => true,
+        _ => return HealthState::Unreachable,
+    };
+    match v.get("startup").and_then(serde_json::Value::as_str) {
+        Some("degraded") => HealthState::Degraded,
+        Some("starting") => HealthState::Starting,
+        _ if setup => HealthState::SetupRequired,
+        _ => HealthState::Ok,
+    }
+}
+
 fn health_reply_is_alive(text: &str) -> bool {
-    text.starts_with("HTTP/1.1 200")
-        && (text.contains("\"status\":\"ok\"") || text.contains("\"status\":\"setup_required\""))
+    health_state(text).is_up()
 }
 
 /// Plain HTTP/1.1 `GET /v1/health` over loopback (no HTTP client needed).
@@ -988,6 +1026,48 @@ mod tests {
         assert!(valid_token(&"a".repeat(64)));
         assert!(!valid_token("short"));
         assert!(!valid_token(&"g".repeat(64)));
+    }
+
+    #[test]
+    fn health_states_follow_the_shared_contract_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../crates/daemon-api/tests/fixtures/health-contract.json"
+        ))
+        .unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let want = match case["state"].as_str().unwrap() {
+                "unreachable" => HealthState::Unreachable,
+                "starting" => HealthState::Starting,
+                "degraded" => HealthState::Degraded,
+                "setup_required" => HealthState::SetupRequired,
+                "ok" => HealthState::Ok,
+                other => panic!("{name}: unknown state {other}"),
+            };
+            let bodies = if case["body"].is_null() {
+                vec![String::new()]
+            } else {
+                // compact and pretty-printed JSON must classify the same
+                vec![
+                    serde_json::to_string(&case["body"]).unwrap(),
+                    serde_json::to_string_pretty(&case["body"]).unwrap(),
+                ]
+            };
+            for body in bodies {
+                let text = match case["http_status"].as_u64() {
+                    Some(code) => {
+                        format!("HTTP/1.1 {code} X\r\n\r\n{body}")
+                    }
+                    None => String::new(),
+                };
+                assert_eq!(health_state(&text), want, "{name}");
+                assert_eq!(
+                    health_state(&text).is_up(),
+                    case["up"].as_bool().unwrap(),
+                    "{name}"
+                );
+            }
+        }
     }
 
     #[test]
