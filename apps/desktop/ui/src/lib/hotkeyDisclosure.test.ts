@@ -50,7 +50,8 @@ after(async () => { await server?.close(); });
 
 for (const [language, focus, widgetScope, stopButton] of [
   ["en", /focus/i, /Stop in app:/, /“Stop”/],
-  ["tr", /odak/i, /Uygulamada durdur:/, /“Durdur”/]
+  ["tr", /odak/i, /Uygulamada durdur:/, /“Durdur”/],
+  ["de", /fokus/i, /In der App stoppen:/, /„Stopp“/]
 ] as const) {
   test(`${language} shortcut settings disclose the Windows-only global scope`, async () => {
     await i18n.changeLanguage(language);
