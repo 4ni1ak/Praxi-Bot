@@ -387,6 +387,7 @@ export function BrainStep({
                 <span className={styles.cardText}>
                   <span className={styles.cardTitle}>{t("firstRun.brain.useCli", { name: t(`firstRun.brain.local.${s.id}`) })}</span>
                   <span className={styles.cardSub}>{t(s.models.length === 1 ? "firstRun.brain.localSubOne" : "firstRun.brain.localSubMany", { count: s.models.length })}</span>
+                  <span className={styles.cardSub} data-testid={`fr-local-url-${s.id}`}>{s.baseUrl}</span>
                 </span>
               </button>
             ))}
