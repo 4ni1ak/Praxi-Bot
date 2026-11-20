@@ -1072,9 +1072,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * `POST /v1/control/recover`: the local user clears a takeover latch (also one
-         *     restored after a restart) without a registered target or view session. The
-         *     bot resumes with a fresh observation.
+         * `POST /v1/control/recover`: the local user, or the paired admin desktop of this host
+         *     (never a phone or a non-admin peer), clears a takeover latch (also one restored after a
+         *     restart) without a registered target or view session. The bot resumes with a fresh
+         *     observation. The audit row names who cleared it, the latch's reason and the previous owner.
          */
         post: operations["local_recover"];
         delete?: never;

@@ -672,3 +672,118 @@ async fn read_and_draft_cannot_make_an_approve_destructive_bot() {
         .unwrap();
     assert_eq!(v.permission_preset, "read-and-draft");
 }
+
+#[tokio::test]
+async fn a_caller_with_custom_policy_categories_counts_as_ask() {
+    let t = setup();
+    let mut cfg = caller_config("approve-destructive", &["fs_read", "bot_*"], true);
+    // A hand-made (even stricter) rule: the preset's lane is gone for what it makes.
+    cfg["permissions"]["categories"] = json!({"fs": {"level": {"level": "ask"}}});
+    let b = add_bot(&t, "Boss", cfg);
+    let host = DaemonBotHost::new(&t.state);
+    let c = who(&b);
+    let e = make(
+        &host,
+        &c,
+        json!({"name":"Loose","persona":"p","permission_preset":"approve-destructive"}),
+    )
+    .await
+    .unwrap_err();
+    assert!(e.contains("autonomy"), "{e}");
+    let v = make(&host, &c, json!({"name":"Tame","persona":"p"}))
+        .await
+        .unwrap();
+    assert_ne!(v.permission_preset, "approve-destructive");
+}
+
+#[tokio::test]
+async fn an_update_cannot_raise_autonomy_above_the_callers() {
+    let t = setup();
+    let (b, host) = boss(&t, "read-and-draft");
+    let c = who(&b);
+    let v = make(
+        &host,
+        &c,
+        json!({"name":"W","persona":"p","permission_preset":"read-only"}),
+    )
+    .await
+    .unwrap();
+    let e = host
+        .preview(
+            &c,
+            &BotChange::Update {
+                id: v.id.clone(),
+                req: req(json!({"permission_preset":"approve-destructive"})),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(e.contains("autonomy"), "{e}");
+    assert_eq!(
+        stored(&t, &v.id).config["permissions"]["preset"],
+        "read-only"
+    );
+}
+
+async fn touch(host: &DaemonBotHost, c: &BotCaller, id: &str) -> Result<(), String> {
+    host.preview(
+        c,
+        &BotChange::Update {
+            id: id.to_owned(),
+            req: req(json!({"persona": "q"})),
+        },
+    )
+    .await
+    .map(|_| ())
+}
+
+#[tokio::test]
+async fn a_child_with_wider_folders_or_a_caller_without_files_is_read_only_to_its_maker() {
+    let t = setup();
+    let widen = |id: &str, files: Value| {
+        let mut cfg = stored(&t, id).config;
+        cfg["files"] = files;
+        t.state
+            .storage()
+            .modify_bot(bid(id), |_, _| Ok(("Kid".to_owned(), cfg.clone())))
+            .unwrap();
+    };
+    // Caller limited to one folder: a longer list, or a `..` escape, is wider.
+    let mut cfg = caller_config("approve-destructive", &["fs_read", "bot_*"], true);
+    cfg["files"] = json!({"mode": "folder", "folders": ["/work/a"]});
+    let b = add_bot(&t, "Boss", cfg);
+    let host = DaemonBotHost::new(&t.state);
+    let c = who(&b);
+    let v = make(&host, &c, json!({"name":"Kid","persona":"p"}))
+        .await
+        .unwrap();
+    touch(&host, &c, &v.id).await.unwrap();
+    for folders in [json!(["/work/a", "/work/b"]), json!(["/work/a/../b"])] {
+        widen(&v.id, json!({"mode": "folder", "folders": folders}));
+        let e = touch(&host, &c, &v.id).await.unwrap_err();
+        assert!(e.contains("files"), "{folders}: {e}");
+    }
+    // Caller with `files` unset: any folder or whole-computer target is wider.
+    let (b2, host2) = {
+        let b2 = add_bot(
+            &t,
+            "Boss2",
+            caller_config("approve-destructive", &["fs_read", "bot_*"], true),
+        );
+        (b2, DaemonBotHost::new(&t.state))
+    };
+    let c2 = who(&b2);
+    let k2 = make(&host2, &c2, json!({"name":"Kid2","persona":"p"}))
+        .await
+        .unwrap();
+    assert!(stored(&t, &k2.id).config.get("files").is_none());
+    touch(&host2, &c2, &k2.id).await.unwrap();
+    for files in [
+        json!({"mode": "folder", "folders": ["/x"]}),
+        json!({"mode": "computer"}),
+    ] {
+        widen(&k2.id, files.clone());
+        let e = touch(&host2, &c2, &k2.id).await.unwrap_err();
+        assert!(e.contains("files"), "{files}: {e}");
+    }
+}
