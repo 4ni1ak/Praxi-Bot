@@ -373,6 +373,31 @@ async fn contenteditable_editor_and_select_are_plain_fields() {
 
 #[tokio::test]
 #[ignore = "needs Chrome/Edge"]
+async fn editable_div_named_password_and_type_text_are_refused() {
+    let b = Browser::launch(LaunchOptions::default()).await.unwrap();
+    let p = open(
+        &b,
+        r#"<html><body><div id=ed contenteditable=true role=textbox aria-label="Password"></div>
+<label>Note <input id=n type=password></label></body></html>"#,
+    )
+    .await;
+    let snap = p.snapshot(&SnapshotOptions::default()).await.unwrap();
+    let ed = ref_of(&snap, "textbox", "Password");
+    assert!(p.field_target(&ed).await.unwrap().sensitive);
+    let note = ref_of(&snap, "textbox", "Note");
+    let res = p.type_text(&note, "hunter2").await;
+    let err = res.map_or_else(|e| e.to_string(), |a| a.error.unwrap_or_default());
+    assert!(err.contains("refused"), "{err}");
+    let typed = p
+        .evaluate("document.getElementById('n').value")
+        .await
+        .unwrap();
+    assert_eq!(typed.as_str(), Some(""), "nothing may have been typed");
+    b.close().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "needs Chrome/Edge"]
 async fn a_page_cannot_hide_the_focused_password_field_from_the_key_check() {
     let b = Browser::launch(LaunchOptions::default()).await.unwrap();
     let p = open(
