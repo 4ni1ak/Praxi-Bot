@@ -1,5 +1,5 @@
 // Reusable canvas background (ink + blurred mesh blobs + grain) and glass cards.
-import { g, rect, ellipse, tag, linear, grain, meshDefs, svgDoc } from './core.mjs';
+import { g, rect, ellipse, tag, linear, grain, svgDoc } from './core.mjs';
 
 // blobs: [gradientName, cx, cy, rx, ry, rotate, opacity]
 export function canvasBackground(W, H, T, blobs, { floor = true } = {}) {
