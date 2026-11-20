@@ -1095,9 +1095,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * `POST /v1/control/recover`: the local user clears a takeover latch (also one
-         *     restored after a restart) without a registered target or view session. The
-         *     bot resumes with a fresh observation.
+         * `POST /v1/control/recover`: the local user, or the paired admin desktop of this host
+         *     (never a phone or a non-admin peer), clears a takeover latch (also one restored after a
+         *     restart) without a registered target or view session. The bot resumes with a fresh
+         *     observation. The audit row names who cleared it, the latch's reason and the previous owner.
          */
         post: operations["local_recover"];
         delete?: never;
@@ -4886,7 +4887,16 @@ export interface components {
         Health: {
             /** @description HTTP API compatibility version. */
             api_version: string;
-            /** @description `true` once startup finished without a failure (standby runs no components). */
+            /**
+             * @description `true` only when this daemon is the active leader and its automatic
+             *     components (scheduler, channels) are running. `false` on standby.
+             */
+            channels_active?: boolean;
+            /**
+             * @description `true` when startup finished without a failure: this daemon's own automatic
+             *     components are running, or it is standby/client by design and runs none.
+             *     It does NOT mean channels are active; use `channels_active` for that.
+             */
             components_ready?: boolean;
             /** @description Capabilities of this host; probes never launch a browser. */
             host: components["schemas"]["HostInfo"];
@@ -6842,7 +6852,7 @@ export interface components {
         SpendLimitDto: {
             /**
              * Format: double
-             * @description Linear projection of month-end spend (USD); `null` until something was spent.
+             * @description Linear projection of month-end spend (USD); `null` until spend exists and a day of the month has passed.
              */
             forecast_usd?: number | null;
             /**

@@ -2199,6 +2199,10 @@
         "hint": "Das Modell wurde nicht aufgerufen. Erhöhe oder entferne das Limit auf der Nutzungsseite und starte dann erneut.",
         "title": "Monatliches Ausgabenlimit erreicht"
       },
+      "spend_limit_unreadable": {
+        "hint": "Das gespeicherte Monatslimit konnte nicht gelesen werden, daher sind kostenpflichtige Modellaufrufe gesperrt. Legen Sie das Limit auf der Seite „Nutzung“ erneut fest.",
+        "title": "Ausgabenlimit nicht lesbar"
+      },
       "starting": {
         "hint": "Die App startet noch. Versuche es in ein paar Sekunden erneut.",
         "title": "Startet noch"
@@ -2642,9 +2646,11 @@
     },
     "chip": {
       "connecting": "{{name}} · verbindet",
+      "degraded": "{{name}} · eingeschränkt",
       "local": "Dieser Computer",
       "offline": "{{name}} · offline",
       "online": "{{name}} · online",
+      "starting": "{{name}} · startet",
       "temporary": "Dieser Computer · vorerst"
     },
     "copy": "Kopieren",
@@ -4139,6 +4145,7 @@
       },
       "placeholder": "z. B. 25",
       "remaining": "Verbleibend",
+      "remote": "Dies ist ein entfernter Host. Sein Ausgabenlimit lässt sich nur an diesem Computer ändern, weil dein Besitzerschlüssel nie an einen Host gesendet wird.",
       "save": "Limit setzen",
       "spent": "Diesen Monat ausgegeben",
       "title": "Monatliches Ausgabenlimit",
@@ -4172,7 +4179,9 @@
     "description": "Stimme und Tempo für die Vorlesen-Schaltfläche. Nutzt die Sprachausgabe deines Systems.",
     "dictate": "Diktieren",
     "dictateStop": "Stoppen und umschreiben",
+    "micBusy": "Das Mikrofon wird von einer anderen App verwendet. Schließe sie und versuche es erneut.",
     "micDenied": "Das Mikrofon ist nicht verfügbar. Erlaube den Mikrofonzugriff und versuche es erneut.",
+    "micMissing": "Es wurde kein Mikrofon gefunden. Schließe eines an und versuche es erneut.",
     "notConfigured": "Diktieren ist noch nicht eingerichtet. Füge unter Einstellungen > Allgemein einen Transkriptionsdienst hinzu.",
     "online": "online",
     "speak": "Vorlesen",

@@ -2199,6 +2199,10 @@
         "hint": "Model çağrılmadı. Kullanım sayfasında limiti yükseltin veya kaldırın, sonra yeniden çalıştırın.",
         "title": "Aylık harcama limitine ulaşıldı"
       },
+      "spend_limit_unreadable": {
+        "hint": "Kayıtlı aylık limit okunamadığı için ücretli model çağrıları engellendi. Limiti Kullanım sayfasından yeniden belirleyin.",
+        "title": "Harcama limiti okunamadı"
+      },
       "starting": {
         "hint": "Uygulama hâlâ başlıyor. Birkaç saniye sonra tekrar dene.",
         "title": "Hâlâ başlatılıyor"
@@ -2642,9 +2646,11 @@
     },
     "chip": {
       "connecting": "{{name}} · bağlanıyor",
+      "degraded": "{{name}} · kısıtlı",
       "local": "Bu bilgisayar",
       "offline": "{{name}} · çevrimdışı",
       "online": "{{name}} · çevrimiçi",
+      "starting": "{{name}} · başlıyor",
       "temporary": "Bu bilgisayar · şimdilik"
     },
     "copy": "Kopyala",
@@ -4139,6 +4145,7 @@
       },
       "placeholder": "örn. 25",
       "remaining": "Kalan",
+      "remote": "Bu bir uzak ana bilgisayar. Harcama sınırı yalnızca o bilgisayarda değiştirilebilir; sahip anahtarın hiçbir zaman bir ana bilgisayara gönderilmez.",
       "save": "Limiti ayarla",
       "spent": "Bu ay harcanan",
       "title": "Aylık harcama limiti",
@@ -4172,7 +4179,9 @@
     "description": "Sesli oku düğmesinin sesi ve hızı. Sistemin konuşma motorunu kullanır.",
     "dictate": "Sesle yaz",
     "dictateStop": "Durdur ve yazıya çevir",
+    "micBusy": "Mikrofon başka bir uygulama tarafından kullanılıyor. Onu kapatıp tekrar dene.",
     "micDenied": "Mikrofon kullanılamıyor. Mikrofon erişimine izin verip tekrar dene.",
+    "micMissing": "Mikrofon bulunamadı. Bir mikrofon bağlayıp tekrar dene.",
     "notConfigured": "Sesle yazma henüz kurulu değil. Ayarlar > Genel bölümünden bir yazıya çevirme servisi ekle.",
     "online": "çevrimiçi",
     "speak": "Sesli oku",

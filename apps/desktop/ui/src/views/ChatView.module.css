@@ -543,6 +543,11 @@
   flex: 1;
 }
 
+/* Lets the model chip shrink (and ellipsize) in a narrow chat column instead of pushing Send out. */
+.modelSlot {
+  min-width: var(--space-0);
+}
+
 .dockWrap {
   width: 100%;
   max-width: var(--size-content-max);

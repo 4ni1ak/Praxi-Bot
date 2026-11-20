@@ -72,14 +72,21 @@ pub async fn start_client(
     data: &Path,
     endpoint: &str,
 ) -> Result<(PeerNetwork, remote_api::ApiProxy)> {
-    let peer = peer_network::key_from_string(endpoint)?;
+    let peer = peer_network::key_from_string(endpoint).map_err(|e| {
+        format!(
+            "invalid remote endpoint ID `{endpoint}`: {e}; copy the endpoint ID from `bot host status` on the host"
+        )
+    })?;
     let (cfg, _) = config(data, false)?;
     let net = PeerNetwork::start(cfg, None).await?;
     let proxy = match remote_api::ApiProxy::start(net.clone(), peer).await {
         Ok(proxy) => proxy,
         Err(e) => {
             net.shutdown().await;
-            return Err(e.into());
+            return Err(format!(
+                "cannot open remote tunnel to `{endpoint}`: {e}; pair this machine with the host first (`bot host add` or `bot host join`)"
+            )
+            .into());
         }
     };
     Ok((net, proxy))

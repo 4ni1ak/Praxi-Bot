@@ -55,6 +55,9 @@ export function HostStateBanner() {
         host: hostState.host || versions.host || "?"
       });
       break;
+    case "starting":
+    case "degraded":
+      return null;
     case "no_model_key":
       tone = "warn";
       text = t("hostState.noModelKey", { name });

@@ -6,15 +6,20 @@ use std::{io::Write, path::Path};
 pub enum SkillsCmd {
     /// Print every file in full (JSON-quoted whitespace) and its review fingerprint.
     Review {
+        /// Skill name to review.
         name: String,
+        /// Limit review to a specific bot's skill directory.
         #[arg(long)]
         bot_id: Option<String>,
     },
-    /// Trust exactly the content printed by `skills review`; changes require re-review.
+    /// Trust exactly the content printed by `bot skills review`; changes require re-review.
     Trust {
+        /// Skill name to trust.
         name: String,
+        /// Limit trust to a specific bot's skill directory.
         #[arg(long)]
         bot_id: Option<String>,
+        /// Review fingerprint printed by `bot skills review`.
         #[arg(long)]
         reviewed: String,
     },
@@ -30,7 +35,9 @@ pub fn run(data: &Path, action: &SkillsCmd, out: &mut dyn Write) -> crate::Resul
     let index = root.for_bot(bot.as_deref())?;
     match action {
         SkillsCmd::Review { .. } => {
-            let review = index.review_for_trust(name)?;
+            let review = index
+                .review_for_trust(name)
+                .map_err(|e| format!("cannot review skill `{name}`: {e}"))?;
             for (file, text) in review.files {
                 let text = serde_json::to_string(&text)?;
                 writeln!(
@@ -41,14 +48,22 @@ pub fn run(data: &Path, action: &SkillsCmd, out: &mut dyn Write) -> crate::Resul
                 )?;
             }
             writeln!(out, "Reviewed fingerprint: {}", review.fingerprint)?;
+            let bot_flag = bot
+                .as_deref()
+                .map_or_else(String::new, |id| format!(" --bot-id {id}"));
             writeln!(
                 out,
-                "To trust this exact content, run skills trust with --reviewed and this fingerprint."
+                "To trust this exact content, run `bot skills trust {name}{bot_flag} --reviewed {}`.",
+                review.fingerprint
             )?;
         }
         SkillsCmd::Trust { reviewed, .. } => {
-            index.trust_reviewed(name, reviewed)?;
-            writeln!(out, "Trusted skill {name} after explicit review.")?;
+            index.trust_reviewed(name, reviewed).map_err(|e| {
+                format!(
+                    "cannot trust skill `{name}`: {e}; re-run `bot skills review {name}` to inspect the current content and fingerprint"
+                )
+            })?;
+            writeln!(out, "Trusted skill `{name}` after explicit review.")?;
         }
     }
     Ok(())

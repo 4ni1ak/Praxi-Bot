@@ -211,6 +211,13 @@ mod tests {
         };
         assert!(mk("user_PassWd").is_sensitive() && mk("Card number").is_sensitive());
         assert!(!mk("username").is_sensitive());
+        // `otp` only counts as a word of its own.
+        for yes in ["otp", "user_otp", "totp", "mfaOtp", "otp-code"] {
+            assert!(mk(yes).is_sensitive(), "{yes}");
+        }
+        for no in ["footpath", "hotpot", "spotpicker", "protocol"] {
+            assert!(!mk(no).is_sensitive(), "{no}");
+        }
     }
 
     #[test]

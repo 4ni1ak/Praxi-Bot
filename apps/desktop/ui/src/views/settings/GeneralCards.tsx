@@ -161,7 +161,7 @@ export function generalCards(b: SettingsBridge, t: TFunction): CardDef[] {
           onChange={() => b.onToggleAutostart()}
         />
         {b.autostartError ? (
-          <span className={formStyles.error}>{b.autostartError}</span>
+          <span className={formStyles.error} role="alert">{b.autostartError}</span>
         ) : null}
       </SettingRow>,
       { keywords: "startup baslangic" }
