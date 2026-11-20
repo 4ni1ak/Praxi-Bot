@@ -16,23 +16,24 @@ Running `bot` with no command prints a hint to run `bot setup`.
 | --- | --- | --- | --- |
 | `--data-dir <PATH>` | `BOT_DATA_DIR` | OS app-data dir | Data directory |
 | `--catalog-dir <PATH>` | `BOT_CATALOG_DIR` | built-in set | Directory of provider catalog `*.toml` files |
-| `--secrets-backend <auto\|keyring\|file>` | `BOT_SECRETS_BACKEND` | `auto` | `auto` = an existing encrypted file, else the OS keychain, else an encrypted file. The file passphrase comes from `BOT_SECRETS_PASSPHRASE` or a prompt |
-| `--json` | | off | Machine-readable output (JSON, or NDJSON for `chat`) for `status`, `chat`, `bots`, `answer`, `approve`, `grants`, `schedules`, `email`, `mcp add`, `doctor`, `serve`, and `channels telegram pair` / `status`. `host status`, `devices`, `revoke`, `standby` and `activate` already print JSON; `--json` makes `host invite` print JSON instead of a QR. Errors always go to stderr as text |
+| `--secrets-backend <auto\|keyring\|file>` | `BOT_SECRETS_BACKEND` | `auto` | `auto` = an existing encrypted file, else the OS keychain (the file backend is chosen automatically only if `BOT_SECRETS_PASSPHRASE` is set; otherwise pass `--secrets-backend file`). The file passphrase comes from `BOT_SECRETS_PASSPHRASE` or a prompt |
+| `--json` | | off | Machine-readable output (JSON, or NDJSON for `chat`) for `status`, `chat`, `bots`, `answer`, `approve`, `grants`, `schedules`, `email`, `mcp add`, `doctor`, `serve`, and `channels telegram pair` / `status`. `host status`, `devices`, `revoke`, `standby`, `activate`, and `workflow` already print JSON; `--json` makes `host invite` print JSON instead of a QR. Errors always go to stderr as text |
 | `--port <PORT>` | `BOT_PORT` | `47821` | Port `serve` binds on `127.0.0.1`; clients connect to it |
 | `--url <URL>` | `BOT_URL` | | Full daemon URL for client commands (overrides `--port`) |
-| `--remote <ENDPOINT>` | | | Peer id of a paired daemon (iroh). Conflicts with `--url` |
+| `--remote <ENDPOINT>` | | | Peer endpoint ID of a paired daemon (iroh). Conflicts with `--url` |
 | `--version`, `--help` | | | |
 
 `keychain` is accepted as an alias of `keyring` for `--secrets-backend`.
 
 Commands that talk to a running daemon (`status`, `chat`, `bots`, `answer`,
-`approve`, `grants`, `schedules`, `email`, `mcp add`, `token`,
+`approve`, `grants`, `schedules`, `workflow`, `email`, `mcp add`, `token`,
 `channels telegram pair`, and every `host` command except `join`) read the
 API token from `BOT_API_TOKEN` when that variable is set, otherwise from
 `<data dir>/api-token`. Use the same data directory as `bot serve`.
-`--remote` reaches a paired daemon for `status`, `chat`, `bots`, `answer`,
-`approve`, `grants`, `schedules`, `email`, `channels telegram pair`, and
-`host invite`, `status`, `devices`, `revoke`, `standby` and `activate`.
+`--remote` reaches a paired daemon for `status`, `proxy`, `chat`, `bots`,
+`answer`, `approve`, `grants`, `schedules`, `workflow`, `email`,
+`channels telegram pair`, and `host invite`, `status`, `devices`, `revoke`,
+`standby` and `activate`.
 `bot --remote <ENDPOINT> proxy` opens the tunnel, prints its loopback `url` and `token` and keeps it
 open until Ctrl-C (used by the [link measurement guide](../design/live-view-link-measurement.md)).
 `host join`, `screen`, `admin`, `add`, `repair`, `upgrade` and `remove`,
@@ -41,17 +42,17 @@ plus `token`, `mcp`, `doctor` and `setup`, stay on this machine.
 
 ## Exit codes
 
-For the client commands:
+Documented in `bot --help` and stable across client commands:
 
 | Code | Meaning |
 | --- | --- |
 | 0 | OK |
-| 1 | Error |
+| 1 | General error (also returned by `bot doctor` when any check fails) |
 | 2 | Usage error |
 | 3 | Daemon unreachable |
-| 4 | Authentication rejected (or Host/Origin refused) |
+| 4 | Authentication rejected (or missing API token, or Host/Origin refused) |
 | 5 | Not found |
-| 6 | Request rejected (invalid input, conflict) |
+| 6 | Request rejected (invalid input, conflict, `setup_required`, or a failing `bot email test`) |
 | 7 | The run ended with an error or was cancelled |
 
 ## Commands
@@ -75,8 +76,9 @@ permission preset), or scripted when `--provider` is given.
 
 ### `bot serve`
 
-Run the local daemon API on `127.0.0.1` until Ctrl-C or SIGTERM. Needs a usable
-provider.
+Run the local daemon API on `127.0.0.1` until Ctrl-C or SIGTERM. Starts even
+before a provider is configured, reporting `setup_required` until you run
+`bot setup` or `bot providers add <ID>`.
 
 | Option | Meaning |
 | --- | --- |
@@ -88,12 +90,12 @@ provider.
 
 ### `bot doctor`
 
-Check the installation (data dir, config, providers, daemon, browser, and so on).
-Never prompts. Exit 1 when any check fails.
+Check installation health (data dir, config, providers, daemon, browser, and more).
+Never prompts. Exits 1 when any check fails.
 
 | Option | Meaning |
 | --- | --- |
-| `--online` | Also test provider connections over the network |
+| `--online` | Also test provider connections and peer relay reachability over the network |
 | `--report <FILE>` | Write a redacted diagnostic bundle (JSON, no secrets) to this file |
 
 `--json` prints the checks as JSON.
@@ -106,7 +108,7 @@ never contains API keys or tokens: enter those again after a restore. It is
 safe while the app runs, but a backup taken with the app closed is consistent
 across all files.
 
-`restore` unpacks such a file into this installation. Close the app first (it
+`restore` unpacks such a file into this installation. Stop the daemon first (it
 refuses while a daemon answers on `--port`). An installation that already has
 bots or chats is refused unless you pass `--replace`; the state it replaces is
 kept in a `backup-*` folder inside the data directory.
@@ -118,8 +120,10 @@ kept in a `backup-*` folder inside the data directory.
 
 ### `bot status`
 
-Daemon health and version, uptime, and the number of pending approvals. Also
-verifies the API token.
+Show daemon health and version, uptime, and the number of pending approvals, and
+verify the API token. Before a provider is configured, `bot status` reports
+`setup required` and prints the next command to run (`bot setup` or
+`bot providers add <id>`).
 
 ### `bot proxy`
 
@@ -204,9 +208,9 @@ Manage the e-mail accounts of the running daemon (see [email](email.md)). Change
 | Subcommand | Meaning |
 | --- | --- |
 | `bot providers list` | List configured providers (`*` = global default) |
-| `bot providers add <ID>` | Add or update a provider. Options: `--base-url <URL>` (custom OpenAI-compatible), `--key-env <VAR>`, `--model <MODEL>`, `--no-test` |
-| `bot providers test [ID]` | Test a connection (the default provider when omitted) |
-| `bot providers default <ID>` | Choose the global default. Option: `--model <MODEL>` |
+| `bot providers add <ID>` | Add or update a provider. Built-in catalog IDs: `anthropic`, `deepseek`, `gemini`, `gemini-openai-compat`, `lmstudio`, `ollama`, `openrouter`. Options: `--base-url <URL>` (custom OpenAI-compatible provider), `--key-env <VAR>`, `--model <MODEL>`, `--no-test` |
+| `bot providers test [ID]` | Test a provider's connection (the default provider when omitted) |
+| `bot providers default <ID>` | Set the global default provider. Option: `--model <MODEL>` |
 
 ### `bot secrets`
 
@@ -378,11 +382,25 @@ and [host operations](host-operations.md)).
 `add`, `repair`, `upgrade` and `remove` run in this terminal over SSH. They are
 not daemon subcommands of their own, and `--remote` does not apply to them.
 
+### `bot workflow`
+
+Record, review, save, and replay workflows from successful runs (see
+[workflows](workflows.md)). Prints JSON.
+
+| Subcommand | Meaning |
+| --- | --- |
+| `bot workflow list --bot <BOT_ID>` | List saved workflows for a bot |
+| `bot workflow show <NAME> --bot <BOT_ID>` | Show every step and parameter of a saved workflow |
+| `bot workflow propose <RUN_ID>` | Print an unsaved workflow proposal from a completed run for review |
+| `bot workflow save <FILE>` | Save a reviewed proposal JSON file (`--name <NAME>`, `--description <TEXT>`) |
+| `bot workflow delete <NAME> --bot <BOT_ID>` | Delete a saved workflow |
+| `bot workflow run <NAME> --chat <CHAT_ID>` | Replay a saved workflow in an existing chat (`--params-stdin` reads a JSON parameter object from stdin) |
+
 ### `bot self-update`
 
 Update the Linux installation. Restart is separate; this command does not
-restart a service. On other operating systems it prints `use the installer`
-and exits 0.
+restart a service. On other operating systems it prints a note to use the
+platform installer and exits 0.
 
 | Option | Meaning |
 | --- | --- |

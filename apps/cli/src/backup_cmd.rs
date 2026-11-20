@@ -15,20 +15,18 @@ use state_bundle::{ExportOptions, ImportError, ImportOptions};
 
 #[derive(Args)]
 pub struct BackupCmd {
-    /// File to write (must not exist yet), for example `praxi-backup.tar`.
+    /// Destination backup file path (must not exist yet), e.g. `praxi-backup.tar`.
     pub file: PathBuf,
 }
 
 #[derive(Args)]
 pub struct RestoreCmd {
-    /// Backup file written by `bot backup`.
+    /// Backup file previously created by `bot backup`.
     pub file: PathBuf,
-    /// Replace the bots and chats that are already here. The previous state is
-    /// kept in a `backup-*` folder inside the data directory.
+    /// Replace existing bots and chats (previous state is kept in a `backup-*` folder inside the data directory).
     #[arg(long)]
     pub replace: bool,
-    /// Accept a backup whose permission policy is more permissive than the
-    /// current one.
+    /// Allow restoring a backup whose permission policy is more permissive than the current one.
     #[arg(long)]
     pub allow_policy_relaxation: bool,
 }
@@ -39,7 +37,7 @@ pub struct RestoreCmd {
 pub fn backup(data_dir: &Path, cmd: &BackupCmd, out: &mut dyn Write) -> crate::Result<()> {
     if !data_dir.join("bot.db").is_file() {
         return Err(format!(
-            "nothing to back up: no Praxi data found in {} (use --data-dir if it lives elsewhere)",
+            "nothing to back up: no Praxi data found in {}; run `bot setup` first or pass `--data-dir <PATH>` if your data lives elsewhere",
             data_dir.display()
         )
         .into());
@@ -51,7 +49,16 @@ pub fn backup(data_dir: &Path, cmd: &BackupCmd, out: &mut dyn Write) -> crate::R
         .write(true)
         .create_new(true)
         .open(&cmd.file)
-        .map_err(|e| format!("cannot create {}: {e}", cmd.file.display()))?;
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                format!(
+                    "backup file {} already exists; choose a new path (existing files are never overwritten)",
+                    cmd.file.display()
+                )
+            } else {
+                format!("cannot create backup file {}: {e}", cmd.file.display())
+            }
+        })?;
     drop(file);
     let result = (|| -> crate::Result<state_bundle::Manifest> {
         let file = std::fs::OpenOptions::new()
@@ -110,12 +117,20 @@ pub fn restore(
 ) -> crate::Result<()> {
     if daemon_listening(port) {
         return Err(format!(
-            "a Praxi daemon is answering on port {port}; close the app (or stop `bot serve`) before restoring"
+            "cannot restore while a daemon is running on port {port}; stop `bot serve` (or close the desktop app) and retry"
         )
         .into());
     }
-    let source = std::fs::File::open(&cmd.file)
-        .map_err(|e| format!("cannot open {}: {e}", cmd.file.display()))?;
+    let source = std::fs::File::open(&cmd.file).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "backup file {} not found; check the path and try again",
+                cmd.file.display()
+            )
+        } else {
+            format!("cannot open backup file {}: {e}", cmd.file.display())
+        }
+    })?;
     let opts = ImportOptions {
         replace: cmd.replace,
         allow_policy_relaxation: cmd.allow_policy_relaxation,
@@ -130,10 +145,10 @@ pub fn restore(
         ))
         .map_err(|e| match e {
             ImportError::TargetNotEmpty => {
-                "this installation already has bots or chats; run again with --replace to swap them for the backup (the current state is kept in a backup-* folder)".to_owned()
+                "this installation already has bots or chats; re-run with `--replace` to swap them for the backup (the current state is kept in a `backup-*` folder)".to_owned()
             }
             ImportError::PolicyRelaxation => {
-                "the backup's permission policy is more permissive than the current one; run again with --allow-policy-relaxation if that is what you want".to_owned()
+                "the backup's permission policy is more permissive than the current one; re-run with `--allow-policy-relaxation` to accept it".to_owned()
             }
             other => other.to_string(),
         })?;
