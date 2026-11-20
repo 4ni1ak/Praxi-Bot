@@ -10,6 +10,8 @@ export interface LocalServer {
 /** Small model suggested when a local server has nothing installed. */
 export const SUGGESTED_LOCAL_MODEL = "llama3.2:3b";
 
+/** The URL is passed to `providers add --base-url`, so only loopback is accepted. */
+const LOOPBACK = "http://127.0.0.1:";
 const KNOWN = new Set(["ollama", "lmstudio", "llamacpp"]);
 
 /** Parses the CLI's JSON array; anything malformed or unknown is dropped, never thrown. */
@@ -26,7 +28,7 @@ export function parseLocalServers(stdout: string): LocalServer[] {
   const out: LocalServer[] = [];
   for (const item of raw) {
     const o = item as { id?: unknown; base_url?: unknown; models?: unknown };
-    if (typeof o?.id === "string" && KNOWN.has(o.id) && typeof o.base_url === "string" && Array.isArray(o.models)) {
+    if (typeof o?.id === "string" && KNOWN.has(o.id) && typeof o.base_url === "string" && o.base_url.startsWith(LOOPBACK) && Array.isArray(o.models)) {
       out.push({ id: o.id, baseUrl: o.base_url, models: o.models.filter((m): m is string => typeof m === "string") });
     }
   }
