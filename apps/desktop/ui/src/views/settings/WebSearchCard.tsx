@@ -239,7 +239,7 @@ export function WebSearchCard() {
       </p>
 
       {loadError ? (
-        <p className={formStyles.error}>
+        <p className={formStyles.error} role="alert">
           {t("settingsModal.webSearch.loadError", { message: loadError })}
         </p>
       ) : null}

@@ -320,7 +320,7 @@ export function RunChangesSection({
             <p className={styles.statusMessage}>{t("chat.changes.loading")}</p>
           ) : null}
           {error ? (
-            <p className={styles.errorMessage}>
+            <p className={styles.errorMessage} role="alert">
               {t("chat.changes.loadError", { message: error })}
             </p>
           ) : null}
@@ -508,7 +508,7 @@ export function RunChangesSection({
           ) : null}
 
           {previewError ? (
-            <p className={styles.errorMessage}>{previewError}</p>
+            <p className={styles.errorMessage} role="alert">{previewError}</p>
           ) : null}
 
           <div className={styles.modalActions}>

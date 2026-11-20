@@ -95,7 +95,7 @@ export function ApprovalBatchCard({ rows, onDecide }: Props) {
             {t("chat.approval.batch.denyAll")}
           </Button>
         </div>
-        {error ? <p className={formStyles.error}>{error}</p> : null}
+        {error ? <p className={formStyles.error} role="alert">{error}</p> : null}
       </div>
     </div>
   );
