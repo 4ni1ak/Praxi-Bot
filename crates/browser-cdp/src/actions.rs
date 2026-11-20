@@ -723,20 +723,23 @@ impl Page {
             .as_array()
             .map(|a| a.iter().map(|v| v.as_str().unwrap_or("")).collect())
             .unwrap_or_default();
-        let attr = |k: &str| {
+        let attr_str = |k: &str| {
             flat.chunks(2)
                 .find(|p| p.len() == 2 && p[0].eq_ignore_ascii_case(k))
-                .map(|p| p[1].to_string())
+                .map(|p| p[1])
         };
+        let attr = |k: &str| attr_str(k).map(str::to_string);
         let is_input = matches!(tag.as_str(), "input" | "textarea");
+        let editable = !is_input && crate::dom::is_editable_attrs(attr_str);
         let extra = DomExtra {
             tag,
             input_type: is_input.then(|| attr("type").unwrap_or_else(|| "text".into())),
             autocomplete: attr("autocomplete"),
-            name_hints: ["name", "id", "aria-label"]
+            name_hints: crate::dom::NAME_HINT_ATTRS
                 .iter()
                 .filter_map(|k| attr(k))
                 .collect(),
+            editable,
             ..Default::default()
         };
         Ok(extra.is_sensitive())
@@ -961,6 +964,8 @@ impl Page {
         let before = self.baseline().await?;
         let res = async {
             let e = self.locate(r).await?;
+            // Live check, so no caller can type into a secret field through this path.
+            self.refuse_if_sensitive_now(&e, "typing").await?;
             self.focus_entry(&e).await?;
             for ch in text.chars() {
                 if ch == '\n' {

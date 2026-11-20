@@ -99,8 +99,11 @@ pub struct DomExtra {
     pub autocomplete: Option<String>,
     /// Visible text / label for clickable candidates.
     pub text: String,
-    /// `name`, `id` and `aria-label` attributes (page-chosen names that often reveal a secret field).
+    /// `name`, `id`, `aria-label` and `placeholder` attributes (page-chosen names that often reveal a secret field).
     pub name_hints: Vec<String>,
+    /// The element takes text without being an `<input>` / `<textarea>`: `contenteditable` or a
+    /// `textbox` / `searchbox` / `combobox` role. Its name hints count like an input's.
+    pub editable: bool,
 }
 
 /// Words in a field's name / id / aria-label that mark it as holding a secret.
@@ -163,10 +166,125 @@ fn has_otp_word(h: &str) -> bool {
     })
 }
 
-/// Whether a name / id / aria-label hint marks a field as holding a secret.
+/// Secret-field words matched on the normalised hint (lower-case, `-`, `_` and spaces removed),
+/// so `card-number`, `Card_Number` and `cardnumber` are the same.
+const SECRET_NORMALISED_WORDS: &[&str] = &[
+    "cardnumber",
+    "ccnumber",
+    "cardnum",
+    "securitycode",
+    "verificationcode",
+    "2fa",
+    "mfa",
+    "passcode",
+];
+
+/// Words that, glued to either side of `otp`, make it a one-time-code name (`emailotpcode`,
+/// `verifyotpcode`, `enterotp`).
+const OTP_NEIGHBOURS: &[&str] = &[
+    "code",
+    "pin",
+    "token",
+    "input",
+    "number",
+    "num",
+    "digit",
+    "field",
+    "value",
+    "key",
+    "sms",
+    "email",
+    "mail",
+    "verify",
+    "verification",
+    "enter",
+    "mfa",
+    "2fa",
+    "auth",
+    "login",
+    "phone",
+    "user",
+    "confirm",
+    "security",
+];
+
+/// Strip everything but ASCII letters and digits, lower-cased.
+fn normalise_hint(h: &str) -> String {
+    h.chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// `otp` somewhere inside the normalised identifier with a one-time-code neighbour: at either end,
+/// before a digit, or next to a word from [`OTP_NEIGHBOURS`]. Catches names with `otp` in the
+/// middle (`emailotpcode`, `enterotp1`) while `footprint`, `hotpot` and `spotpicker` stay plain.
+fn has_otp_inside(n: &str) -> bool {
+    n.match_indices("otp").any(|(i, _)| {
+        let left = &n[..i];
+        let right = &n[i + 3..];
+        left.is_empty()
+            || right.is_empty()
+            || right.starts_with(|c: char| c.is_ascii_digit())
+            || OTP_NEIGHBOURS
+                .iter()
+                .any(|w| left.ends_with(w) || right.starts_with(w))
+    })
+}
+
+/// `pin` as a word of its own (`pin`, `user-pin`, `cardPin`) or `pin` + code/number/input/field.
+fn has_pin_word(h: &str, n: &str) -> bool {
+    let mut seg = String::new();
+    let mut prev: Option<char> = None;
+    let mut segs: Vec<String> = Vec::new();
+    for c in h.chars() {
+        if !c.is_ascii_alphanumeric() {
+            if !seg.is_empty() {
+                segs.push(std::mem::take(&mut seg));
+            }
+            prev = None;
+            continue;
+        }
+        if c.is_ascii_uppercase() && prev.is_some_and(|p| p.is_ascii_lowercase()) && !seg.is_empty()
+        {
+            segs.push(std::mem::take(&mut seg));
+        }
+        seg.push(c.to_ascii_lowercase());
+        prev = Some(c);
+    }
+    if !seg.is_empty() {
+        segs.push(seg);
+    }
+    segs.iter().any(|s| s == "pin")
+        || ["pincode", "pinnumber", "pininput", "pinfield", "pinentry"]
+            .iter()
+            .any(|w| n == *w || n.starts_with(w))
+        || [
+            "userpin",
+            "cardpin",
+            "bankpin",
+            "simpin",
+            "atmpin",
+            "mypin",
+            "newpin",
+            "oldpin",
+            "confirmpin",
+            "securitypin",
+            "accountpin",
+        ]
+        .iter()
+        .any(|w| n.ends_with(w))
+}
+
+/// Whether a name / id / aria-label / placeholder hint marks a field as holding a secret.
 pub fn name_hint_is_secret(h: &str) -> bool {
     let l = h.to_ascii_lowercase();
-    SECRET_NAME_WORDS.iter().any(|w| l.contains(w)) || has_otp_word(h)
+    let n = normalise_hint(h);
+    SECRET_NAME_WORDS.iter().any(|w| l.contains(w))
+        || SECRET_NORMALISED_WORDS.iter().any(|w| n.contains(w))
+        || has_otp_word(h)
+        || has_otp_inside(&n)
+        || has_pin_word(h, &n)
 }
 
 impl DomExtra {
@@ -185,7 +303,8 @@ impl DomExtra {
                 let a = a.to_ascii_lowercase();
                 a.contains("password") || a.contains("cc-") || a.contains("one-time-code")
             })
-            || (self.input_type.is_some() && self.name_hints.iter().any(|h| name_hint_is_secret(h)))
+            || ((self.input_type.is_some() || self.editable)
+                && self.name_hints.iter().any(|h| name_hint_is_secret(h)))
     }
 }
 
@@ -1057,6 +1176,43 @@ mod tests {
             assert!(name_hint_is_secret(yes), "{yes}");
         }
         for no in ["footprint", "hotpot", "footpath", "email", "notpad"] {
+            assert!(!name_hint_is_secret(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn otp_in_the_middle_and_more_secret_hints() {
+        for yes in [
+            "emailotpcode",
+            "verifyotpcode",
+            "enterotp1",
+            "emailOtpCode",
+            "cardnumber",
+            "card-number",
+            "Card_Number",
+            "cc-number",
+            "securitycode",
+            "verification-code",
+            "2fa",
+            "mfa-token",
+            "passcode",
+            "pin",
+            "user_pin",
+            "cardPin",
+            "pincode",
+        ] {
+            assert!(name_hint_is_secret(yes), "{yes}");
+        }
+        for no in [
+            "footprint",
+            "hotpot",
+            "spotpicker",
+            "shipping",
+            "pinterest",
+            "spinner",
+            "mapping",
+            "username",
+        ] {
             assert!(!name_hint_is_secret(no), "{no}");
         }
     }

@@ -15,6 +15,23 @@ fn ints(v: Option<&Value>) -> Vec<i64> {
         .unwrap_or_default()
 }
 
+/// Attributes whose value is a page-chosen name that can reveal a secret field.
+pub const NAME_HINT_ATTRS: &[&str] = &["name", "id", "aria-label", "placeholder"];
+
+/// Whether an element that is not an `<input>` / `<textarea>` still takes text:
+/// `contenteditable` (anything but `false`) or a text-entry ARIA role.
+pub fn is_editable_attrs<'a>(attr: impl Fn(&str) -> Option<&'a str>) -> bool {
+    attr("contenteditable").is_some_and(|v| !v.trim().eq_ignore_ascii_case("false"))
+        || attr("role").is_some_and(|r| {
+            r.split_whitespace().any(|w| {
+                matches!(
+                    w.to_ascii_lowercase().as_str(),
+                    "textbox" | "searchbox" | "combobox"
+                )
+            })
+        })
+}
+
 /// Computed styles requested from `DOMSnapshot.captureSnapshot`.
 pub const COMPUTED_STYLES: &[&str] = &["cursor"];
 
@@ -108,7 +125,8 @@ pub fn parse_dom_snapshot(resp: &Value) -> Vec<DomExtra> {
                     || attr.contains_key("onclick")
                     || tabindex.is_some());
             let is_input = matches!(tag.as_str(), "input" | "textarea");
-            if !candidate && !is_input {
+            let editable = !is_input && is_editable_attrs(|k| attr.get(k).copied());
+            if !candidate && !is_input && !editable {
                 continue;
             }
             let fallback = ["aria-label", "title", "alt"]
@@ -127,10 +145,11 @@ pub fn parse_dom_snapshot(resp: &Value) -> Vec<DomExtra> {
                     .then(|| attr.get("type").copied().unwrap_or("text").to_string()),
                 autocomplete: attr.get("autocomplete").map(|a| (*a).to_string()),
                 text: fallback,
-                name_hints: ["name", "id", "aria-label"]
+                name_hints: NAME_HINT_ATTRS
                     .iter()
                     .filter_map(|k| attr.get(k).map(|v| (*v).to_string()))
                     .collect(),
+                editable,
             });
         }
 
@@ -218,6 +237,52 @@ mod tests {
         for no in ["footpath", "hotpot", "spotpicker", "protocol"] {
             assert!(!mk(no).is_sensitive(), "{no}");
         }
+    }
+
+    #[test]
+    fn editable_non_input_with_secret_name_is_sensitive() {
+        // strings: 0 "main" 1 "HTML" 2 "BODY" 3 "DIV" 4 "contenteditable" 5 "true" 6 "aria-label"
+        // 7 "Password" 8 "placeholder" 9 "Message" 10 "Verification code"
+        let resp = |attrs: Value| {
+            json!({
+                "strings": ["main","HTML","BODY","DIV","contenteditable","true","aria-label",
+                            "Password","placeholder","Message","Verification code"],
+                "documents": [{
+                    "frameId": 0,
+                    "nodes": {
+                        "parentIndex": [-1,0,1],
+                        "nodeType": [1,1,1],
+                        "nodeName": [1,2,3],
+                        "nodeValue": [-1,-1,-1],
+                        "backendNodeId": [1,2,50],
+                        "attributes": [[],[],attrs]
+                    },
+                    "layout": {"nodeIndex": [0,1,2], "styles": [[0],[0],[0]]}
+                }]
+            })
+        };
+        let extras = parse_dom_snapshot(&resp(json!([4, 5, 6, 7])));
+        let div = extras
+            .iter()
+            .find(|e| e.backend_id == 50)
+            .expect("editable div kept");
+        assert!(div.editable && div.is_sensitive(), "{div:?}");
+        let extras = parse_dom_snapshot(&resp(json!([4, 5, 8, 10])));
+        assert!(
+            extras
+                .iter()
+                .find(|e| e.backend_id == 50)
+                .unwrap()
+                .is_sensitive()
+        );
+        let extras = parse_dom_snapshot(&resp(json!([4, 5, 6, 9])));
+        assert!(
+            !extras
+                .iter()
+                .find(|e| e.backend_id == 50)
+                .unwrap()
+                .is_sensitive()
+        );
     }
 
     #[test]
