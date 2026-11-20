@@ -62,6 +62,31 @@ impl MemoryStore {
         Ok(n == 1)
     }
 
+    /// Drop messages from the search index (their text must not be recalled,
+    /// e.g. after an edit superseded them). Unknown ids are ignored.
+    ///
+    /// # Errors
+    /// SQLite failure.
+    pub fn unindex_messages(&self, ids: &[Uuid]) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        for id in ids {
+            let rowid: Option<i64> = tx
+                .query_row(
+                    "SELECT rowid FROM session_msgs WHERE message_id = ?1",
+                    params![id.to_string()],
+                    |r| r.get(0),
+                )
+                .ok();
+            if let Some(rowid) = rowid {
+                tx.execute("DELETE FROM session_fts WHERE rowid = ?1", params![rowid])?;
+                tx.execute("DELETE FROM session_msgs WHERE rowid = ?1", params![rowid])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Index all not-yet-indexed messages of a chat from `bot.db`.  Returns
     /// the number newly indexed.
     ///

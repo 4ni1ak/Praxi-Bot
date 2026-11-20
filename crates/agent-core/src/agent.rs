@@ -29,9 +29,9 @@ use crate::profile::BotProfile;
 use crate::shared::{
     ApprovalScope, COMPUTER_IDENTITY_UNBOUND_NOTICE, COMPUTER_PREPARE_TIMEOUT_NOTICE,
     CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, Grants, LoopError,
-    MessageMode, ModelOut, Pending, Providers, STEP_MODEL, STEP_TOOLS, ScheduleWork, Shared,
-    StreamItem, Verdict, initiator_of, kind_for, kind_for_mention, kind_for_schedule,
-    mention_message_id,
+    MessageMode, ModelOut, Pending, Providers, STEP_MODEL, STEP_NUDGE, STEP_TOOLS, STEP_USER,
+    ScheduleWork, Shared, StreamItem, Verdict, initiator_of, kind_for, kind_for_mention,
+    kind_for_schedule, mention_message_id,
 };
 use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_INERT, AUDIT_GRANT_REVOKED};
 
@@ -1297,6 +1297,10 @@ impl AgentLoop {
         };
         let ids: Vec<Uuid> = turn.iter().map(|m| m.id).collect();
         self.sh.storage.set_messages_superseded(&ids, true)?;
+        // Keep the replaced text out of memory recall / session search too.
+        if let Some(m) = self.sh.cfg.memory.as_ref().filter(|m| m.enabled) {
+            let _ = m.store.unindex_messages(&ids);
+        }
         match self.start_turn_from(
             chat_id,
             &text,
@@ -1315,7 +1319,9 @@ impl AgentLoop {
 
     /// Whether a finished run executed any tool that is not read-only, i.e.
     /// whether redoing its turn could repeat an effect on the outside world.
-    /// Conservative: any tool batch not marked replay-safe counts.
+    /// Conservative: any step not marked replay-safe counts except the user
+    /// message and the nudge, so tool batches, CLI-engine model steps (the CLI
+    /// runs its own shell/file tools inside them), workflows and commands.
     ///
     /// # Errors
     /// Fails on storage errors.
@@ -1325,7 +1331,7 @@ impl AgentLoop {
             .storage
             .list_steps(run_id)?
             .iter()
-            .any(|s| s.name == STEP_TOOLS && !s.idempotent))
+            .any(|s| !s.idempotent && s.name != STEP_USER && s.name != STEP_NUDGE))
     }
 
     /// The running turn of `chat_id` when `text` is the `/stop` command and

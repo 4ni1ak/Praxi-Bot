@@ -948,7 +948,8 @@ impl Storage {
     }
 
     /// Exposure bits and source labels of every message of `chat` created at or
-    /// before `until_ms`, other than those delivered into `exclude_run`.
+    /// before `until_ms`, other than those delivered into `exclude_run` and
+    /// those superseded by an edit or regenerate (they are not in the context).
     /// Unbounded: unlike the model-context window, nothing scrolls out.
     ///
     /// # Errors
@@ -961,7 +962,7 @@ impl Storage {
     ) -> Result<(bool, bool, Vec<String>)> {
         let conn = self.conn();
         let mut st = conn.prepare(
-            "SELECT exposure_untrusted, exposure_private, exposure_sources FROM messages              WHERE chat_id = ?1 AND created_at_ms <= ?3 AND (run_id IS NULL OR run_id <> ?2)",
+            "SELECT exposure_untrusted, exposure_private, exposure_sources FROM messages              WHERE chat_id = ?1 AND superseded = 0 AND created_at_ms <= ?3 AND (run_id IS NULL OR run_id <> ?2)",
         )?;
         let mut rows = st.query(params![
             chat_id.to_string(),
@@ -2201,6 +2202,30 @@ mod tests {
             f.st.chat_exposure_until(f.chat.id, r.id, 1000).unwrap();
         assert!(untrusted && !private);
         assert_eq!(sources, vec!["web".to_string()]);
+    }
+
+    #[test]
+    fn chat_exposure_until_ignores_superseded_messages() {
+        let f = fx();
+        let r = run(&f);
+        let id = Uuid::from_u128(77);
+        f.st.insert_message(&Message {
+            id,
+            user_id: f.user.id,
+            chat_id: f.chat.id,
+            run_id: None,
+            role: "user".into(),
+            content: "m".into(),
+            created_at_ms: 1,
+            exposure_untrusted: true,
+            exposure_private: true,
+            exposure_sources: vec!["web".into()],
+        })
+        .unwrap();
+        assert!(f.st.chat_exposure_until(f.chat.id, r.id, 1000).unwrap().0);
+        f.st.set_messages_superseded(&[id], true).unwrap();
+        let (u, p, src) = f.st.chat_exposure_until(f.chat.id, r.id, 1000).unwrap();
+        assert!(!u && !p && src.is_empty());
     }
 
     #[test]
