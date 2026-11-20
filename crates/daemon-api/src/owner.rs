@@ -97,6 +97,8 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("GET", "/v1/workflows/{}"),
     // policy, bot authority
     ("PUT", "/v1/policy"),
+    // monthly spending limit: a token holder must not lift its own cap
+    ("PUT", "/v1/spend-limit"),
     ("POST", "/v1/trusted-folders"),
     ("DELETE", "/v1/trusted-folders"),
     ("PUT", "/v1/bots/{}/files"),

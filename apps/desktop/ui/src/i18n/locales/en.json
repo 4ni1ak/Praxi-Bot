@@ -2177,6 +2177,10 @@
         "hint": "Remove big files from it and try again.",
         "title": "That skill is too large"
       },
+      "spend_limit_reached": {
+        "hint": "The model was not called. Raise or remove the limit on the Usage page, then run again.",
+        "title": "Monthly spending limit reached"
+      },
       "starting": {
         "hint": "The app is still starting up. Try again in a few seconds.",
         "title": "Still starting"
@@ -4098,6 +4102,30 @@
     "costNote": "Cost is shown only for models with a known price; “—” means unknown.",
     "deletedBot": "Deleted bot",
     "empty": "No usage yet. Send a message to a bot and its token use shows up here.",
+    "limit": {
+      "clear": "Remove limit",
+      "forecast": "Forecast for month end",
+      "hint": "When a call could take the month past the limit, Praxi stops before calling the model. Background and scheduled runs stop too and show up as failed runs.",
+      "invalid": "Enter an amount from $1 to $1,000,000.",
+      "label": "Limit in USD per month",
+      "limitLabel": "Limit",
+      "notCounted": "Calls to models with an unknown price are not counted and never estimated.",
+      "off": "No limit set",
+      "pace": {
+        "noForecast": "Not enough spending yet to forecast.",
+        "off": "Set a limit to get a forecast and a safety stop.",
+        "over": "At this pace you will pass the limit before the month ends.",
+        "reached": "Limit reached: new model calls are stopped until you raise or remove it.",
+        "under": "At this pace you stay under the limit.",
+        "warn": "80% of the limit is used."
+      },
+      "placeholder": "e.g. 25",
+      "remaining": "Remaining",
+      "save": "Set limit",
+      "spent": "Spent this month",
+      "title": "Monthly spending limit",
+      "unpriced": "{{count}} calls this month had no known price and are not counted."
+    },
     "modelCalls": "Model calls",
     "prompt": "Prompt",
     "range": "Time range",

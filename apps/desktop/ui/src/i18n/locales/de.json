@@ -2177,6 +2177,10 @@
         "hint": "Entferne große Dateien daraus und versuche es erneut.",
         "title": "Dieser Skill ist zu groß"
       },
+      "spend_limit_reached": {
+        "hint": "Das Modell wurde nicht aufgerufen. Erhöhe oder entferne das Limit auf der Nutzungsseite und starte dann erneut.",
+        "title": "Monatliches Ausgabenlimit erreicht"
+      },
       "starting": {
         "hint": "Die App startet noch. Versuche es in ein paar Sekunden erneut.",
         "title": "Startet noch"
@@ -4098,6 +4102,30 @@
     "costNote": "Kosten werden nur für Modelle mit bekanntem Preis angezeigt; „—“ bedeutet unbekannt.",
     "deletedBot": "Gelöschter Bot",
     "empty": "Noch keine Nutzung. Sobald du einem Bot schreibst, erscheint der Token-Verbrauch hier.",
+    "limit": {
+      "clear": "Limit entfernen",
+      "forecast": "Prognose zum Monatsende",
+      "hint": "Könnte ein Aufruf den Monat über das Limit bringen, stoppt Praxi vor dem Modellaufruf. Auch Hintergrund- und geplante Läufe stoppen und erscheinen als fehlgeschlagene Läufe.",
+      "invalid": "Gib einen Betrag von 1 bis 1.000.000 $ ein.",
+      "label": "Limit in USD pro Monat",
+      "limitLabel": "Limit",
+      "notCounted": "Aufrufe von Modellen mit unbekanntem Preis werden nicht gezählt und nie geschätzt.",
+      "off": "Kein Limit gesetzt",
+      "pace": {
+        "noForecast": "Noch zu wenig Ausgaben für eine Prognose.",
+        "off": "Setze ein Limit für eine Prognose und einen Sicherheitsstopp.",
+        "over": "In diesem Tempo überschreitest du das Limit vor Monatsende.",
+        "reached": "Limit erreicht: Neue Modellaufrufe sind gestoppt, bis du es erhöhst oder entfernst.",
+        "under": "In diesem Tempo bleibst du unter dem Limit.",
+        "warn": "80 % des Limits sind verbraucht."
+      },
+      "placeholder": "z. B. 25",
+      "remaining": "Verbleibend",
+      "save": "Limit setzen",
+      "spent": "Diesen Monat ausgegeben",
+      "title": "Monatliches Ausgabenlimit",
+      "unpriced": "{{count}} Aufrufe diesen Monat hatten keinen bekannten Preis und sind nicht gezählt."
+    },
     "modelCalls": "Modellaufrufe",
     "prompt": "Prompt",
     "range": "Zeitraum",

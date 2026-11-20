@@ -39,6 +39,7 @@ use crate::routes;
 use crate::skill_hub;
 use crate::skill_management;
 use crate::skills;
+use crate::spend_routes;
 use crate::sse;
 use crate::terminal;
 use crate::trusted_folders;
@@ -297,6 +298,8 @@ impl Modify for Security {
         voice_routes::get_voice,
         voice_routes::transcribe,
         voice_routes::update_voice,
+        spend_routes::get_spend_limit,
+        spend_routes::put_spend_limit,
         web_routes::get_web_search,
         web_routes::test_web_search,
         web_routes::update_web_search,
@@ -561,6 +564,8 @@ impl Modify for Security {
         voice::TranscribeOutput,
         voice::VoiceConfigDto,
         voice::VoiceConfigInput,
+        spend_routes::SpendLimitDto,
+        spend_routes::SpendLimitInput,
         web::WebSearchConfigDto,
         web::WebSearchConfigInput,
         web::WebSearchTestInput,

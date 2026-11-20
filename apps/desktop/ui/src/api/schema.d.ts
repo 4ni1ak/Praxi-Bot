@@ -2916,6 +2916,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/spend-limit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The monthly spending limit and this month's spend. */
+        get: operations["get_spend_limit"];
+        /**
+         * Set or remove the monthly spending limit (owner only). Effective for the
+         *     next model call of every run, including background and scheduled runs.
+         */
+        put: operations["put_spend_limit"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/trusted-folders": {
         parameters: {
             query?: never;
@@ -6762,6 +6783,57 @@ export interface components {
             x: number;
             /** Format: double */
             y: number;
+        };
+        /** @description Month-to-date spend against the monthly limit. */
+        SpendLimitDto: {
+            /**
+             * Format: double
+             * @description Linear projection of month-end spend (USD); `null` until something was spent.
+             */
+            forecast_usd?: number | null;
+            /**
+             * Format: double
+             * @description Monthly limit in USD; `null` = no limit.
+             */
+            limit_usd?: number | null;
+            /**
+             * Format: int64
+             * @description Start of the next month (ms since epoch).
+             */
+            month_end_ms: number;
+            /**
+             * Format: int64
+             * @description Start of the current local calendar month (ms since epoch).
+             */
+            month_start_ms: number;
+            /**
+             * Format: int64
+             * @description Now, as the daemon sees it (ms since epoch).
+             */
+            now_ms: number;
+            /**
+             * Format: double
+             * @description `limit_usd - spent_usd`, never negative; `null` without a limit.
+             */
+            remaining_usd?: number | null;
+            /**
+             * Format: double
+             * @description Recorded cost this month (USD). Calls with unknown pricing are not counted.
+             */
+            spent_usd: number;
+            /**
+             * Format: int64
+             * @description Finished calls this month whose model has no known price (not counted).
+             */
+            unpriced_calls: number;
+        };
+        /** @description `PUT /v1/spend-limit`. */
+        SpendLimitInput: {
+            /**
+             * Format: double
+             * @description New monthly limit in USD (1 to 1,000,000); `null` removes the limit.
+             */
+            limit_usd?: number | null;
         };
         /** @description Counters of the SSE machinery (authenticated, unlike `/v1/health`). */
         SseStatus: {
@@ -14047,6 +14119,56 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_spend_limit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpendLimitDto"];
+                };
+            };
+        };
+    };
+    put_spend_limit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpendLimitInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpendLimitDto"];
+                };
+            };
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

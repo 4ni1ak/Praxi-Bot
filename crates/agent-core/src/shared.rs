@@ -867,6 +867,8 @@ pub(crate) struct Shared {
     /// Locked deny-all mode (unusable persisted policy): every decision except
     /// `Meta` is `Deny`, whatever a bot's own policy says.
     pub policy_locked: std::sync::atomic::AtomicBool,
+    /// Monthly spending limit (default off); see `spend.rs`.
+    pub spend: crate::spend::SpendState,
     /// Desktop control bridge (see `control.rs`); `None` = no gate.
     pub control: RwLock<Option<Arc<dyn crate::control::ControlGate>>>,
     /// Dynamic computer availability provider installed by the daemon (`serve`).

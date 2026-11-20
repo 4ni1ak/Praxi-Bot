@@ -115,6 +115,7 @@ import type {
   ScreenStatus,
   TerminalInfo,
   TerminalOutput,
+  SpendLimit,
   UsageSummary,
   ViewHeartbeat,
   TranscribeInput,
@@ -798,6 +799,15 @@ export class ApiClient {
   /** Turn an English / Turkish phrase into a schedule spec. */
   parseSchedule(text: string, tz?: string): Promise<ParsedSchedule> {
     return this.request("POST", "/schedules/parse", { body: { text, tz } });
+  }
+
+  /** Monthly spending limit and month-to-date spend. */
+  getSpendLimit(): Promise<SpendLimit> {
+    return this.request("GET", "/spend-limit");
+  }
+  /** Set (USD, at least 1) or clear (`null`) the monthly limit; owner only. */
+  setSpendLimit(limitUsd: number | null): Promise<SpendLimit> {
+    return this.request("PUT", "/spend-limit", { body: { limit_usd: limitUsd } });
   }
 
   usage(sinceMs?: number): Promise<UsageSummary> {

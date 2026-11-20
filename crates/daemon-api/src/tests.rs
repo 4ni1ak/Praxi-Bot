@@ -4479,3 +4479,59 @@ async fn only_the_owner_changes_a_bots_file_access_mode() {
 fn toml_to_json_profile(bot: &Resp) -> String {
     bot.json()["config"].to_string()
 }
+
+#[tokio::test]
+async fn spend_limit_is_owner_only_validated_live_and_persisted() {
+    let t = setup();
+    let g = call(&t, Method::GET, "/v1/spend-limit", None).await.json();
+    assert!(
+        g["limit_usd"].is_null() && g["remaining_usd"].is_null(),
+        "{g}"
+    );
+    assert_eq!(g["spent_usd"], 0.0);
+
+    // A token without the owner key cannot set or lift the cap.
+    let r = call_token_only(
+        &t,
+        Method::PUT,
+        "/v1/spend-limit",
+        Some(json!({"limit_usd": 50.0})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(r.json()["error"]["code"], "owner_key_required");
+    assert_eq!(t.agent.spend_limit(), None);
+
+    for bad in [json!({"limit_usd": 0.5}), json!({"limit_usd": -3.0})] {
+        let r = call(&t, Method::PUT, "/v1/spend-limit", Some(bad)).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    }
+
+    let r = call(
+        &t,
+        Method::PUT,
+        "/v1/spend-limit",
+        Some(json!({"limit_usd": 50.0})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+    assert_eq!(r.json()["limit_usd"], 50.0);
+    assert_eq!(r.json()["remaining_usd"], 50.0);
+    assert_eq!(t.agent.spend_limit(), Some(50.0));
+    assert_eq!(
+        crate::spend_routes::load_limit(t._dir.path()),
+        Some(50.0),
+        "survives a restart"
+    );
+
+    let r = call(
+        &t,
+        Method::PUT,
+        "/v1/spend-limit",
+        Some(json!({"limit_usd": null})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(t.agent.spend_limit(), None);
+    assert_eq!(crate::spend_routes::load_limit(t._dir.path()), None);
+}
