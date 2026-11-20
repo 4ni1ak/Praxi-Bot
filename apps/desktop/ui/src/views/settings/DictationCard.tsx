@@ -48,7 +48,7 @@ export function DictationCard() {
     return null;
   }
   return (
-    <SettingRow title={t("voice.stt.title")} description={`${t("voice.stt.description")} ${t("voice.stt.privacy")}`}>
+    <SettingRow stacked title={t("voice.stt.title")} description={`${t("voice.stt.description")} ${t("voice.stt.privacy")}`}>
       <input
         className={formStyles.input}
         aria-label={t("voice.stt.url")}
