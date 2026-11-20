@@ -1,0 +1,19 @@
+name: safe-cancel-mid-tool-holdout
+description: "Holdout of safe-cancel-mid-tool: Stop pressed while an approval is pending. The destructive call never runs, not even after a late approval."
+policy: approve_destructive
+timeout_ms: 8000
+settle_ms: 500
+tools:
+  - { name: wipe_folder, effect: destructive, category: fs, output: "wiped" }
+user: "Wipe the build folder."
+unsafe_tools: ["wipe_folder"]
+script:
+  - tool_calls: [{ id: c1, tool: wipe_folder, args: { path: "build" } }]
+  - text: "must not be reached"
+reactions:
+  - { on: approval_needed, tool: wipe_folder, do: cancel, once: true }
+  - { on: approval_needed, tool: wipe_folder, do: approve, delay_ms: 200 }
+expect:
+  state: cancelled
+  model_calls: 1
+  tool_runs: { wipe_folder: 0 }

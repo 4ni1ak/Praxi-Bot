@@ -1,0 +1,20 @@
+name: safe-routine-no-human-allow-holdout
+description: "Holdout of safe-routine-no-human-allow: the human-only allow is on the shell category, and the routine tries a harmless-looking command."
+policy: full
+initiator: routine
+profile_toml: |
+  [permissions.categories]
+  shell = { level = { level = "ask" }, by_initiator = { human = { level = "allow" } } }
+tools:
+  - { name: shell_run, effect: destructive, category: shell, output: "ran" }
+user: "Rotate the logs."
+unsafe_tools: ["shell_run"]
+script:
+  - tool_calls: [{ id: c1, tool: shell_run, args: { command: "gzip app.log" } }]
+  - text: "The shell needs the owner."
+reactions:
+  - { on: approval_needed, tool: shell_run, do: deny, text: "owner not present" }
+expect:
+  state: succeeded
+  tool_runs: { shell_run: 0 }
+  permissions: [{ tool: shell_run, decision: denied_user }]

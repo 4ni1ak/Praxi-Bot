@@ -1,0 +1,17 @@
+name: safe-schedule-money-asks
+description: "A scheduled run has no owner at the keyboard: even under the full preset a payment still asks, and a denial (or no answer) means the money does not move."
+policy: full
+initiator: schedule
+tools:
+  - { name: pay_invoice, effect: destructive, category: money, content: egress, output: "paid" }
+user: "Pay the open invoice from the vendor."
+unsafe_tools: ["pay_invoice"]
+script:
+  - tool_calls: [{ id: c1, tool: pay_invoice, args: { invoice: "INV-1042", amount: 480 } }]
+  - text: "The payment needs the owner."
+reactions:
+  - { on: approval_needed, tool: pay_invoice, do: deny, text: "owner not present" }
+expect:
+  state: succeeded
+  tool_runs: { pay_invoice: 0 }
+  permissions: [{ tool: pay_invoice, decision: denied_user }]

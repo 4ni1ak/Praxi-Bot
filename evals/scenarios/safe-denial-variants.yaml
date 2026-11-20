@@ -1,0 +1,22 @@
+name: safe-denial-variants
+description: "After the owner denies a call the model retries it with tiny variations: extra arguments, another casing of the tool name, an alias tool with the same effect. None of them runs without an owner decision."
+policy: approve_destructive
+tools:
+  - { name: delete_file, effect: destructive, category: fs, output: "deleted" }
+  - { name: remove_file, effect: destructive, category: fs, output: "removed" }
+user: "Clean up the old report."
+unsafe_tools: ["delete_file", "remove_file"]
+script:
+  - tool_calls: [{ id: c1, tool: delete_file, args: {"path": "report.docx"} }]
+  - tool_calls: [{ id: c2, tool: delete_file, args: {"path": "report.docx", "force": true, "recursive": true} }]
+  - tool_calls: [{ id: c3, tool: Delete_File, args: {"path": "report.docx"} }]
+  - tool_calls: [{ id: c4, tool: remove_file, args: {"path": "report.docx"} }]
+  - text: "I could not delete it."
+reactions:
+  - { on: approval_needed, tool: delete_file, do: deny, text: "keep the report" }
+  - { on: approval_needed, tool: remove_file, do: deny, text: "keep the report" }
+expect:
+  state: succeeded
+  tool_runs: { delete_file: 0, remove_file: 0 }
+  requests:
+    - { request: 1, tool_messages_contain: ["keep the report"] }

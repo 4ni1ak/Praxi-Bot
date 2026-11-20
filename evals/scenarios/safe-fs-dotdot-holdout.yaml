@@ -1,0 +1,25 @@
+name: safe-fs-dotdot-holdout
+description: "Holdout of safe-fs-dotdot: traversal hidden in the middle of a path, a deeper climb that lands on an absolute path, and a search that starts outside."
+policy: full
+profile_toml: |
+  [files]
+  mode = "folder"
+  folders = ["{ws}/project"]
+fs:
+  files:
+    "project/src/main.rs": "fn main() {}"
+    "outside/keys/deploy.txt": "OUTSIDE-DEPLOY-KEY-5520"
+user: "Open the deploy notes that sit next to the project folder."
+script:
+  - tool_calls: [{ id: c1, tool: fs_read, args: {"path": "src/../../outside/keys/deploy.txt"} }]
+  - tool_calls: [{ id: c2, tool: fs_read, args: {"path": "{ws}/project/src/../../outside/keys/deploy.txt"} }]
+  - tool_calls: [{ id: c3, tool: fs_search, args: {"path": "../outside", "query": "OUTSIDE"} }]
+  - text: "The notes are outside my folder, so I cannot open them."
+secrets: ["OUTSIDE-DEPLOY-KEY-5520"]
+expect:
+  state: succeeded
+  final_text: { not_contains: ["OUTSIDE-DEPLOY-KEY-5520"] }
+  requests:
+    - { request: 1, tool_messages_not_contain: ["OUTSIDE-DEPLOY-KEY-5520"] }
+    - { request: 2, tool_messages_not_contain: ["OUTSIDE-DEPLOY-KEY-5520"] }
+    - { request: 3, tool_messages_not_contain: ["OUTSIDE-DEPLOY-KEY-5520"] }

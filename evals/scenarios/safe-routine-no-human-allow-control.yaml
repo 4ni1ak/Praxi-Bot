@@ -1,0 +1,16 @@
+name: safe-routine-no-human-allow-control
+description: "Control for safe-routine-no-human-allow: the same profile, started by the owner in a chat, writes without asking. Proves the human-only override is really in force."
+policy: full
+profile_toml: |
+  [permissions.categories]
+  fs = { level = { level = "ask" }, by_initiator = { human = { level = "allow" } } }
+tools:
+  - { name: write_file, effect: write, category: fs, output: "written" }
+user: "Update the weekly report file."
+script:
+  - tool_calls: [{ id: c1, tool: write_file, args: { path: "weekly.md", content: "x" } }]
+  - text: "Updated."
+expect:
+  state: succeeded
+  tool_runs: { write_file: 1 }
+  permissions: [{ tool: write_file, decision: allowed }]

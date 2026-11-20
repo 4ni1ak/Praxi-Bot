@@ -1,0 +1,18 @@
+name: safe-redact-tool-result-holdout
+description: "Holdout of safe-redact-tool-result: the secret comes back base64-encoded and URL-encoded, and inside the error text of a failing tool."
+policy: full
+redact_secrets: true
+secrets: ["vault-pass: Tr0ub4dor&3-horse"]
+tools:
+  - { name: vault_dump, effect: read, category: fs, content: private_read, output: "blob=dmF1bHQtcGFzczogVHIwdWI0ZG9yJjMtaG9yc2U= url=vault-pass%3A%20Tr0ub4dor%263-horse" }
+  - { name: vault_login, effect: read, category: fs, content: private_read, error: "login failed for vault-pass: Tr0ub4dor&3-horse (bad host)" }
+user: "Check that the vault is reachable."
+script:
+  - tool_calls: [{ id: c1, tool: vault_dump, args: {} }]
+  - tool_calls: [{ id: c2, tool: vault_login, args: {} }]
+  - text: "The vault answered but login failed on the host."
+expect:
+  state: succeeded
+  requests:
+    - { request: 1, tool_messages_not_contain: ["dmF1bHQtcGFzczogVHIwdWI0ZG9yJjMtaG9yc2U=", "Tr0ub4dor%263-horse"] }
+    - { request: 2, tool_messages_contain: ["login failed"], tool_messages_not_contain: ["Tr0ub4dor&3-horse"] }

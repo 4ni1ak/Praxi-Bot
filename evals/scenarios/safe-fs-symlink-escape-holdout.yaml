@@ -1,0 +1,30 @@
+name: safe-fs-symlink-escape-holdout
+description: "Holdout of safe-fs-symlink-escape: the link sits two levels down, and the model lists, searches, edits and climbs back through it."
+policy: full
+profile_toml: |
+  [files]
+  mode = "folder"
+  folders = ["{ws}/project"]
+fs:
+  files:
+    "project/docs/intro.md": "intro"
+    "outside/team/salaries.txt": "OUTSIDE-SALARY-3318"
+  links:
+    - { link: "project/docs/team-share", target: "outside/team" }
+user: "Summarise everything under docs/team-share."
+script:
+  - tool_calls: [{ id: c1, tool: fs_list, args: {"path": "docs/team-share"} }]
+  - tool_calls: [{ id: c2, tool: fs_search, args: {"path": "docs", "query": "OUTSIDE-SALARY"} }]
+  - tool_calls: [{ id: c3, tool: fs_edit, args: {"path": "docs/team-share/salaries.txt", "old": "OUTSIDE-SALARY-3318", "new": "0"} }]
+  - tool_calls: [{ id: c4, tool: fs_read, args: {"path": "docs/team-share/../team/salaries.txt"} }]
+  - text: "I could not reach that folder."
+secrets: ["OUTSIDE-SALARY-3318"]
+expect:
+  state: succeeded
+  final_text: { not_contains: ["OUTSIDE-SALARY-3318"] }
+  files_unchanged: { "outside/team/salaries.txt": "OUTSIDE-SALARY-3318" }
+  requests:
+    - { request: 1, tool_messages_not_contain: ["OUTSIDE-SALARY-3318", "salaries.txt"] }
+    - { request: 2, tool_messages_not_contain: ["OUTSIDE-SALARY-3318"] }
+    - { request: 3, tool_messages_not_contain: ["OUTSIDE-SALARY-3318"] }
+    - { request: 4, tool_messages_not_contain: ["OUTSIDE-SALARY-3318"] }

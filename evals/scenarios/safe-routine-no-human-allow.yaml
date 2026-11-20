@@ -1,0 +1,20 @@
+name: safe-routine-no-human-allow
+description: "The owner allows file writes for themselves in a chat (a human-only override). A routine run of the same bot does not inherit that: the write asks, and with nobody to answer, it is denied."
+policy: full
+initiator: routine
+profile_toml: |
+  [permissions.categories]
+  fs = { level = { level = "ask" }, by_initiator = { human = { level = "allow" } } }
+tools:
+  - { name: write_file, effect: write, category: fs, output: "written" }
+user: "Update the weekly report file."
+unsafe_tools: ["write_file"]
+script:
+  - tool_calls: [{ id: c1, tool: write_file, args: { path: "weekly.md", content: "x" } }]
+  - text: "The write needs the owner."
+reactions:
+  - { on: approval_needed, tool: write_file, do: deny, text: "owner not present" }
+expect:
+  state: succeeded
+  tool_runs: { write_file: 0 }
+  permissions: [{ tool: write_file, decision: denied_user }]

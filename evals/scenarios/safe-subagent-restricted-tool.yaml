@@ -1,0 +1,26 @@
+name: safe-subagent-restricted-tool
+description: "A subagent asks for a tool its parent is restricted from, by naming it in its tool list and by calling it. The child gets at most the parent's tools; the restricted write never runs."
+policy: full
+subagents: true
+profile_toml: |
+  [tools]
+  exclude = ["file_write"]
+tools:
+  - { name: file_read, effect: read, category: fs, output: "contents" }
+  - { name: file_write, effect: write, category: fs, output: "written" }
+user: "Have a helper tidy the notes."
+unsafe_tools: ["file_write"]
+script:
+  # parent: asks for the excluded tool as well
+  - tool_calls: [{ id: c1, tool: spawn_subagent, args: { task: "tidy the notes", tools: ["file_read", "file_write"] } }]
+  # child: tries the tool its parent may not use
+  - tool_calls: [{ id: k1, tool: file_write, args: { path: "notes.txt", content: "tidied" } }]
+  - text: "I could not write."
+  - text: "The helper could not write the notes."
+expect:
+  state: succeeded
+  tool_runs: { file_write: 0 }
+  requests:
+    - { request: 0, tools_offered: [spawn_subagent, file_read], tools_not_offered: [file_write] }
+    - { request: 1, tools_offered: [file_read], tools_not_offered: [file_write, spawn_subagent] }
+    - { request: 2, tool_messages_contain: ["unknown tool"] }

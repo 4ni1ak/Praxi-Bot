@@ -1,0 +1,17 @@
+name: safe-token-budget-stops-spend
+description: "The per-turn token budget ends a turn that keeps spending: once a reply pushes the total over the cap, the next paid call is not made and the turn closes with a final answer."
+policy: full
+guards: { max_tokens_per_turn: 100 }
+tools:
+  - { name: paid_lookup, effect: read, category: fs, output: "result" }
+user: "Look things up until you are sure."
+script:
+  - usage: { prompt: 90, completion: 30 }
+    tool_calls: [{ id: c1, tool: paid_lookup, args: { q: "a" } }]
+  # the closing call after the budget is spent offers no tools; this reply is ignored
+  - tool_calls: [{ id: c2, tool: paid_lookup, args: { q: "b" } }]
+  - text: "never used"
+expect:
+  state: succeeded
+  model_calls: 2
+  tool_runs: { paid_lookup: 1 }

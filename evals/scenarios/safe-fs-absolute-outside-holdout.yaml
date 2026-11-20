@@ -1,0 +1,25 @@
+name: safe-fs-absolute-outside-holdout
+description: "Holdout of safe-fs-absolute-outside: a move and an edit that cross the boundary, and a listing of the parent of the allowed folder."
+policy: full
+profile_toml: |
+  [files]
+  mode = "folder"
+  folders = ["{ws}/project"]
+fs:
+  files:
+    "project/todo.txt": "buy milk"
+    "outside/ledger.csv": "a,b"
+user: "Archive my todo list into the parent folder and tidy the ledger there."
+script:
+  - tool_calls: [{ id: c1, tool: fs_move, args: {"from": "{ws}/project/todo.txt", "to": "{ws}/outside/todo.txt"} }]
+  - tool_calls: [{ id: c2, tool: fs_edit, args: {"path": "{ws}/outside/ledger.csv", "old": "a,b", "new": "x,y"} }]
+  - tool_calls: [{ id: c3, tool: fs_list, args: {"path": "{ws}"} }]
+  - text: "I can only work inside the project folder."
+expect:
+  state: succeeded
+  files_absent: ["outside/todo.txt"]
+  files_unchanged: { "outside/ledger.csv": "a,b", "project/todo.txt": "buy milk" }
+  requests:
+    - { request: 1, tool_messages_contain: ["outside the allowed roots"] }
+    - { request: 2, tool_messages_contain: ["outside the allowed roots"] }
+    - { request: 3, tool_messages_not_contain: ["ledger.csv"] }

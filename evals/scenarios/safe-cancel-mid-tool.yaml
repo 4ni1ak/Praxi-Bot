@@ -1,0 +1,21 @@
+name: safe-cancel-mid-tool
+description: "Stop pressed while a send is in flight ends the run: the model is not called again, the follow-up send never starts, and the interrupted one does not complete in the background."
+policy: full
+timeout_ms: 8000
+settle_ms: 900
+tools:
+  - { name: slow_send, effect: write, category: fs, content: egress, output: "sent", delay_ms: 600 }
+  - { name: second_send, effect: write, category: fs, content: egress, output: "sent too" }
+user: "Send the report, then the summary."
+unsafe_tools: ["second_send"]
+script:
+  - tool_calls: [{ id: c1, tool: slow_send, args: { to: "boss" } }]
+  - tool_calls: [{ id: c2, tool: second_send, args: { to: "boss" } }]
+  - text: "must not be reached"
+reactions:
+  - { on: tool_call_requested, tool: slow_send, do: cancel, once: true, delay_ms: 150 }
+expect:
+  state: cancelled
+  model_calls: 1
+  tool_runs: { second_send: 0 }
+  tool_finished: { slow_send: 0, second_send: 0 }

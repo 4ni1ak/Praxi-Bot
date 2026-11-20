@@ -86,6 +86,60 @@ pub struct Scenario {
     /// marker gets removed.
     #[serde(default)]
     pub expected_fail: Option<String>,
+    /// Who starts the run (default `human`). A `schedule` or `routine` run must not inherit
+    /// what the owner granted in a chat.
+    #[serde(default)]
+    pub initiator: InitiatorSpec,
+    /// Run the REAL `fs_*` tools (profile `[files]` scope applies) against a throw-away
+    /// workspace. `{ws}` in strings (user, script, profile, expectations, fixtures) is the
+    /// workspace directory, spelled with `/`.
+    #[serde(default)]
+    pub fs: Option<FsFixture>,
+    /// Wait this long after the run ended before counting side effects, so work that keeps
+    /// going after a cancel is seen.
+    #[serde(default)]
+    pub settle_ms: u64,
+    /// Register `secrets` with the loop's redactor (what the daemon does with vault and
+    /// environment values) and scan every surface for them afterwards: the model's requests,
+    /// the event stream, the audit log, stored messages and every file of the data dir.
+    #[serde(default)]
+    pub redact_secrets: bool,
+}
+
+/// Who starts the run.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InitiatorSpec {
+    /// The owner, in a chat.
+    #[default]
+    Human,
+    /// A schedule.
+    Schedule,
+    /// A routine.
+    Routine,
+}
+
+/// Files of the throw-away workspace behind the real file tools.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FsFixture {
+    /// Relative path to text content.
+    #[serde(default)]
+    pub files: BTreeMap<String, String>,
+    /// Links: `link` is created pointing at `target` (both relative to the workspace).
+    /// A directory symlink; on Windows a junction when symlinks are not permitted.
+    #[serde(default)]
+    pub links: Vec<LinkSpec>,
+}
+
+/// One directory link of an [`FsFixture`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LinkSpec {
+    /// Where the link is created.
+    pub link: String,
+    /// What it points at.
+    pub target: String,
 }
 
 /// Global policy preset.
@@ -235,6 +289,39 @@ pub struct ScriptCall {
     /// Raw argument text, to script malformed JSON (overrides `args`).
     #[serde(default)]
     pub raw_args: Option<String>,
+    /// Expand into this many calls in one reply. `{i}` (0-based) in `id` and in string
+    /// arguments becomes the call's index, so every copy is distinct.
+    #[serde(default)]
+    pub times: Option<u32>,
+}
+
+/// Replace `from` by `to` in every string of a JSON value.
+fn substitute(v: &mut Value, from: &str, to: &str) {
+    match v {
+        Value::String(s) => *s = s.replace(from, to),
+        Value::Array(a) => a.iter_mut().for_each(|x| substitute(x, from, to)),
+        Value::Object(o) => o.values_mut().for_each(|x| substitute(x, from, to)),
+        _ => {}
+    }
+}
+
+impl ScriptCall {
+    /// The calls this entry stands for (`times` copies, or itself).
+    fn expand(self) -> Vec<Self> {
+        let Some(n) = self.times else {
+            return vec![self];
+        };
+        (0..n)
+            .map(|k| {
+                let i = k.to_string();
+                let mut c = self.clone();
+                c.times = None;
+                c.id = c.id.replace("{i}", &i);
+                substitute(&mut c.args, "{i}", &i);
+                c
+            })
+            .collect()
+    }
 }
 
 /// One scripted model response.
@@ -409,9 +496,13 @@ pub struct Expect {
     /// Requested tool-call sequence (names).
     #[serde(default)]
     pub tool_calls: Option<Vec<String>>,
-    /// Executions per fake tool.
+    /// Executions per fake tool (exact, or a `{min, max}` range).
     #[serde(default)]
-    pub tool_runs: BTreeMap<String, u64>,
+    pub tool_runs: BTreeMap<String, IntMatch>,
+    /// Executions per fake tool that ran to the end (not cut short by a cancel); checked
+    /// after `settle_ms`.
+    #[serde(default)]
+    pub tool_finished: BTreeMap<String, IntMatch>,
     /// Permission decisions, in call order.
     #[serde(default)]
     pub permissions: Option<Vec<ExpectedPermission>>,
@@ -424,15 +515,59 @@ pub struct Expect {
     /// Per-request assertions.
     #[serde(default)]
     pub requests: Vec<RequestExpect>,
+    /// Workspace paths (relative) that must not exist after the run (`fs` scenarios).
+    #[serde(default)]
+    pub files_absent: Vec<String>,
+    /// Workspace files (relative) that must still hold exactly this text after the run.
+    #[serde(default)]
+    pub files_unchanged: BTreeMap<String, String>,
 }
 
 impl Scenario {
+    /// A copy with `{ws}` replaced by `ws` in every string a scenario can script.
+    #[must_use]
+    pub fn with_workspace(&self, ws: &str) -> Self {
+        let r = |s: &mut String| *s = s.replace("{ws}", ws);
+        let mut c = self.clone();
+        r(&mut c.user);
+        r(&mut c.profile_toml);
+        for step in &mut c.script {
+            step.text.iter_mut().for_each(r);
+            for call in &mut step.tool_calls {
+                substitute(&mut call.args, "{ws}", ws);
+                call.raw_args.iter_mut().for_each(r);
+            }
+        }
+        for tool in &mut c.tools {
+            r(&mut tool.output);
+        }
+        let text_match = |m: &mut TextMatch| {
+            m.contains.iter_mut().for_each(r);
+            m.not_contains.iter_mut().for_each(r);
+        };
+        c.expect.final_text.iter_mut().for_each(text_match);
+        c.expect.error.iter_mut().for_each(text_match);
+        for req in &mut c.expect.requests {
+            req.tool_messages_contain.iter_mut().for_each(r);
+            req.tool_messages_not_contain.iter_mut().for_each(r);
+        }
+        c
+    }
+
     /// Parse a scenario from YAML text.
     ///
     /// # Errors
     /// Malformed YAML or unknown fields.
     pub fn from_yaml(s: &str) -> Result<Self> {
-        Ok(serde_yaml::from_str(s)?)
+        let mut sc: Self = serde_yaml::from_str(s)?;
+        for step in &mut sc.script {
+            step.tool_calls = step
+                .tool_calls
+                .drain(..)
+                .flat_map(ScriptCall::expand)
+                .collect();
+        }
+        Ok(sc)
     }
 }
 

@@ -26,3 +26,33 @@ baseline scenario missing from the run. Exit code 1 on NO-GO. Re-record the base
 
 The pack runs in CI through `cargo test -p evals` (`every_seed_scenario_passes`); there is no
 separate eval workflow.
+
+## Safety pack (non-injection)
+
+`evals/scenarios/safe-*.yaml` cover the guards that do not depend on an attack: path
+boundaries of the file tools, secret redaction, denied calls retried in variations, subagent
+tool narrowing, spend and size guards, Stop mid-tool, and unattended runs not inheriting
+owner-only rules. Every scenario has a `-holdout` twin (a `-control` file shows the opposite
+case so a rule is proven to be in force). Baseline: `evals/baselines/safety-pack.jsonl`.
+
+```
+cargo run -p evals --bin bot-eval -- run --tier 1 --filter safe- --repeat 3 --out run.jsonl
+cargo run -p evals --bin bot-eval -- compare --baseline evals/baselines/safety-pack.jsonl --run run.jsonl
+```
+
+Scenario keys added for this pack: `fs` (a throw-away workspace with files and directory links
+behind the REAL `fs_*` tools; `{ws}` in strings is its path, the bot's folder is `{ws}/project`,
+`{ws}/outside` is next to it), `initiator` (`human`, `schedule`, `routine`), `redact_secrets`
+(register `secrets` with the loop redactor, then scan the model requests, events, audit log,
+stored messages and every file of the data dir), `settle_ms` (wait before counting side
+effects), `times` on a scripted call (expand into N distinct calls in one reply), and the
+expectations `files_absent`, `files_unchanged`, `tool_finished` and range values for `tool_runs`.
+
+Known gaps (expected-fail, each cites the gap in its `expected_fail` text):
+
+- `safe-redact-model-echo*`: text and tool-call arguments the model produced are stored raw in
+  the run step records.
+- `safe-denial-sticks-identical-retry*`: the loop keeps no memory of a denied call, so an
+  identical retry asks the owner again.
+- `safe-tool-call-flood*`: nothing caps the tool calls in one model reply or per turn.
+

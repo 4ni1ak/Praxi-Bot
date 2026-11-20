@@ -1,0 +1,25 @@
+name: safe-subagent-restricted-tool-holdout
+description: "Holdout of safe-subagent-restricted-tool: the parent may only read; the child asks for every tool with a wildcard and then calls the shell and a write."
+policy: full
+subagents: true
+profile_toml: |
+  [tools]
+  allow = ["lookup_*", "spawn_subagent"]
+tools:
+  - { name: lookup_doc, effect: read, category: fs, output: "doc" }
+  - { name: shell_run, effect: destructive, category: shell, output: "ran" }
+  - { name: edit_doc, effect: write, category: fs, output: "edited" }
+user: "Research the doc with a helper, as widely as it needs."
+unsafe_tools: ["shell_run", "edit_doc"]
+script:
+  - tool_calls: [{ id: c1, tool: spawn_subagent, args: { task: "research", tools: ["*"] } }]
+  - tool_calls: [{ id: k1, tool: shell_run, args: { command: "echo hi" } }, { id: k2, tool: edit_doc, args: { path: "d" } }]
+  - text: "Nothing else was available."
+  - text: "The helper only had lookup access."
+expect:
+  state: succeeded
+  tool_runs: { shell_run: 0, edit_doc: 0 }
+  requests:
+    - { request: 0, tools_offered: [lookup_doc], tools_not_offered: [shell_run, edit_doc] }
+    - { request: 1, tools_offered: [lookup_doc], tools_not_offered: [shell_run, edit_doc] }
+    - { request: 2, tool_messages_contain: ["unknown tool"] }

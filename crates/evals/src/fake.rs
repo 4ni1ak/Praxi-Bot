@@ -168,6 +168,7 @@ impl ChatProvider for ScriptedProvider {
 pub struct FakeTool {
     spec: ToolSpec,
     runs: Arc<AtomicU64>,
+    finished: Arc<AtomicU64>,
     output: String,
     delay: Duration,
     error: Option<String>,
@@ -177,7 +178,15 @@ impl FakeTool {
     /// Build a fake tool from its scenario spec; the returned counter tracks executions.
     #[must_use]
     pub fn from_spec(s: &FakeToolSpec) -> (Arc<Self>, Arc<AtomicU64>) {
+        let (tool, runs, _) = Self::from_spec_counted(s);
+        (tool, runs)
+    }
+
+    /// Like [`Self::from_spec`], plus a counter of executions that ran to the end.
+    #[must_use]
+    pub fn from_spec_counted(s: &FakeToolSpec) -> (Arc<Self>, Arc<AtomicU64>, Arc<AtomicU64>) {
         let runs = Arc::new(AtomicU64::new(0));
+        let finished = Arc::new(AtomicU64::new(0));
         let output = s
             .output_bytes
             .map_or_else(|| s.output.clone(), |n| "x".repeat(n));
@@ -203,11 +212,12 @@ impl FakeTool {
                 content: content_class(s),
             },
             runs: Arc::clone(&runs),
+            finished: Arc::clone(&finished),
             output,
             delay: Duration::from_millis(s.delay_ms),
             error: s.error.clone(),
         });
-        (tool, runs)
+        (tool, runs, finished)
     }
 }
 
@@ -222,6 +232,7 @@ impl Tool for FakeTool {
         if !self.delay.is_zero() {
             tokio::time::sleep(self.delay).await;
         }
+        self.finished.fetch_add(1, Ordering::SeqCst);
         match &self.error {
             Some(e) => Err(ToolError::Execution(e.clone())),
             None => Ok(ToolOutput::text(self.output.clone())),

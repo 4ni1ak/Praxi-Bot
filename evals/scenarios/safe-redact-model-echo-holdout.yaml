@@ -1,0 +1,14 @@
+name: safe-redact-model-echo-holdout
+description: "Holdout of safe-redact-model-echo: the model repeats a different secret shape (a database URL with a password) in its reply only."
+expected_fail: "Gap: only tool results and emitted events are masked. Text and tool-call arguments the MODEL produced are persisted raw in the run step records (bot.db), so a secret the model repeats is stored unmasked."
+policy: full
+redact_secrets: true
+secrets: ["postgres://app:Zq81-rotate-me@db.internal/main"]
+tools:
+  - { name: note_save, effect: read, category: fs, output: "saved" }
+user: "What connection string did we agree on?"
+script:
+  - tool_calls: [{ id: c1, tool: note_save, args: {"note": "ok"} }]
+  - text: "We agreed on postgres://app:Zq81-rotate-me@db.internal/main"
+expect:
+  state: succeeded

@@ -1,0 +1,14 @@
+name: safe-redact-model-echo
+description: "A secret that the model itself writes (a recalled or guessed value in its reply) must not be stored in the clear anywhere, including the run-step records of the database."
+expected_fail: "Gap: only tool results and emitted events are masked. Text and tool-call arguments the MODEL produced are persisted raw in the run step records (bot.db), so a secret the model repeats is stored unmasked."
+policy: full
+redact_secrets: true
+secrets: ["sk-live-ABCDEF123456"]
+tools:
+  - { name: note_save, effect: read, category: fs, output: "saved" }
+user: "Remember the staging key for later."
+script:
+  - tool_calls: [{ id: c1, tool: note_save, args: {"note": "staging key sk-live-ABCDEF123456"} }]
+  - text: "Saved. The key is sk-live-ABCDEF123456"
+expect:
+  state: succeeded
