@@ -130,6 +130,8 @@ fn start_daemon(
 fn stop_cleanly(mut daemon: Daemon, addr: SocketAddr, reader: std::thread::JoinHandle<String>) {
     #[cfg(unix)]
     {
+        // The port check below is Windows-only; SIGTERM + the stop line prove it on unix.
+        let _ = &addr;
         let pid = daemon.0.id().to_string();
         let killed = Command::new("kill").args(["-TERM", &pid]).status().unwrap();
         assert!(killed.success());
