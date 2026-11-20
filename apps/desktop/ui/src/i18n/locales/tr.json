@@ -2456,6 +2456,13 @@
       "keyHint": "Sistem anahtarlığına kaydedilir. Bir daha gösterilmez.",
       "keyLabel": "{{name}} API anahtarı",
       "keyPlaceholder": "Anahtarını buraya yapıştır",
+      "local": {
+        "llamacpp": "llama.cpp sunucusu",
+        "lmstudio": "LM Studio"
+      },
+      "localSubMany": "{{count}} model yüklü",
+      "localSubOne": "{{count}} model yüklü",
+      "localTitle": "Bu bilgisayarda ayrıca çalışıyor",
       "looking": "Bu bilgisayarda hazır olanlar aranıyor…",
       "model": "Model",
       "paste": "Yapıştır",
@@ -2493,7 +2500,8 @@
       "badKey": "{{name}} bu anahtarı kabul etmedi. Tamamını kopyaladığından emin ol, sonra yeniden yapıştır.",
       "noModels": "{{name}} anahtarı kabul etti ama hiç model listelemedi. Biraz sonra yeniden dene.",
       "offline": "{{name}} servisine ulaşılamadı. İnternet bağlantını kontrol edip yeniden dene.",
-      "ollamaDown": "Ollama çalışıyor gibi görünmüyor. Ollama'yı bu bilgisayarda başlat, sonra yeniden seç.",
+      "ollamaDown": "Ollama çalışmıyor gibi görünüyor. Ollama uygulamasını açın (veya bir terminalde `ollama serve` çalıştırın), sonra yeniden seçin.",
+      "ollamaNoModels": "Ollama çalışıyor ama yüklü model yok. Bir terminalde `ollama pull {{model}}` (küçük bir model) çalıştırın, sonra Ollama'yı yeniden seçin.",
       "unavailable": "Anahtarlar yalnızca bu bilgisayardaki masaüstü uygulamasından kaydedilebilir.",
       "unknown": "{{name}} bağlanırken bir sorun çıktı. Yeniden dene ya da anahtarı sonra Ayarlar → Yapay zekâ bölümünden ekle."
     },

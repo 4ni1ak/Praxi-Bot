@@ -521,6 +521,9 @@ enum ProvidersCmd {
         /// Provider id.
         id: Option<String>,
     },
+    /// Look for a local model server (Ollama, LM Studio, llama.cpp) on loopback
+    /// and print what it found as JSON. Contacts only 127.0.0.1.
+    DetectLocal,
     /// Choose the global default provider.
     Default {
         /// Provider id.
@@ -788,6 +791,7 @@ fn run() -> Result<()> {
                 .map(|_| ())
             }
             ProvidersCmd::Test { id } => commands::providers_test(&env, id.as_deref(), &mut say),
+            ProvidersCmd::DetectLocal => commands::providers_detect_local(&mut say),
             ProvidersCmd::List | ProvidersCmd::Default { .. } => Ok(()),
         },
     }

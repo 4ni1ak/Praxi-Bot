@@ -2456,6 +2456,13 @@
       "keyHint": "Im Schlüsselbund deines Systems gespeichert. Er wird nie wieder angezeigt.",
       "keyLabel": "{{name}}-API-Schlüssel",
       "keyPlaceholder": "Füge deinen Schlüssel hier ein",
+      "local": {
+        "llamacpp": "llama.cpp-Server",
+        "lmstudio": "LM Studio"
+      },
+      "localSubMany": "{{count}} Modelle installiert",
+      "localSubOne": "{{count}} Modell installiert",
+      "localTitle": "Läuft außerdem auf diesem Computer",
       "looking": "Suche nach dem, was schon auf diesem Computer vorhanden ist …",
       "model": "Modell",
       "paste": "Einfügen",
@@ -2493,7 +2500,8 @@
       "badKey": "{{name}} hat diesen Schlüssel nicht akzeptiert. Prüfe, ob du ihn vollständig kopiert hast, und füge ihn erneut ein.",
       "noModels": "{{name}} hat den Schlüssel akzeptiert, aber keine Modelle aufgelistet. Versuche es gleich noch einmal.",
       "offline": "{{name}} konnte nicht erreicht werden. Prüfe deine Internetverbindung und versuche es erneut.",
-      "ollamaDown": "Ollama scheint nicht zu laufen. Starte Ollama auf diesem Computer und wähle es dann erneut.",
+      "ollamaDown": "Ollama scheint nicht zu laufen. Öffne die Ollama-App (oder führe `ollama serve` in einem Terminal aus) und wähle es dann erneut.",
+      "ollamaNoModels": "Ollama läuft, aber es ist kein Modell installiert. Führe in einem Terminal `ollama pull {{model}}` (ein kleines Modell) aus und wähle Ollama dann erneut.",
       "unavailable": "Schlüssel können nur über die Desktop-App auf diesem Computer gespeichert werden.",
       "unknown": "Beim Verbinden von {{name}} ist etwas schiefgelaufen. Versuche es erneut oder füge den Schlüssel später unter Einstellungen → KI hinzu."
     },
