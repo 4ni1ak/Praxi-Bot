@@ -28,3 +28,15 @@ test("usage: big stat numbers and the seven-column table shrink in a narrow pane
 test("trusted folders list is styled with design tokens, not bare paragraphs", () => {
   assert.match(read("../components/TrustedFolders.tsx"), /className=\{formStyles\.hint\}/);
 });
+
+test("composer toolbar: the model chip and computer chip can shrink so Send stays visible in a narrow chat column", () => {
+  assert.match(read("../views/ChatView.module.css"), /\.modelSlot \{[^}]*min-width:\s*var\(--space-0\)/);
+  assert.match(read("../views/ChatView.tsx"), /className=\{styles\.modelSlot\}/);
+  assert.match(read("../components/ModelPicker.module.css"), /max-width:\s*min\(100%,/);
+  assert.match(read("../components/ComputerTargetChip.module.css"), /\.chip \{[^}]*white-space:\s*nowrap/);
+});
+
+test("shortcut keys never wrap inside their pill; the spending-limit 'off' value stays on one line height", () => {
+  assert.match(read("../components/HelpModal.module.css"), /\.kbd \{[^}]*white-space:\s*nowrap/);
+  assert.match(read("../components/SpendLimitCard.module.css"), /\.statOff \{/);
+});

@@ -277,9 +277,13 @@ export function humanError(err: unknown): HumanError {
       details
     };
   }
-  for (const [re, key] of REASONS) {
-    if (re.test(raw)) {
-      return pack(key, key, details);
+  // The concrete-reason table only describes daemon refusals: a host refusal, or a conflict /
+  // unavailable answer. A tool result or plain error that merely contains these words is not one.
+  if (host || code === "conflict" || code === "unavailable") {
+    for (const [re, key] of REASONS) {
+      if (re.test(raw)) {
+        return pack(key, key, details);
+      }
     }
   }
   if (code === "network") {

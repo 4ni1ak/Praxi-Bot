@@ -271,7 +271,7 @@ export function DetectedAccountsBlock({ local = false }: { local?: boolean } = {
 
       <div className={styles.card}>
         {!client ? (
-          <p className={styles.errorRow}>{t("settingsModal.ai.detected.offline")}</p>
+          <p className={styles.errorRow} role="alert">{t("settingsModal.ai.detected.offline")}</p>
         ) : loadError ? (
           <div className={styles.errorRow} role="alert">
             <span>{t("settingsModal.ai.detected.detectError")}</span>

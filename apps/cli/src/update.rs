@@ -28,7 +28,9 @@ pub fn run(args: &UpdateArgs) -> crate::Result<()> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = args;
-        println!("use the installer");
+        println!(
+            "Self-update is only supported on Linux. On this platform, update Praxi using the installer."
+        );
         Ok(())
     }
 }

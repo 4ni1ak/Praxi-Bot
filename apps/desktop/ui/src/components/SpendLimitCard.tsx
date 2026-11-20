@@ -75,7 +75,7 @@ export function SpendLimitCard({ refreshKey }: { refreshKey: number }) {
           <div className={styles.stats}>
             <div className={styles.stat}>
               <span className={styles.statLabel}>{t("usage.limit.limitLabel")}</span>
-              <span className={styles.statValue}>{hasLimit ? money(state.limit_usd) : t("usage.limit.off")}</span>
+              <span className={`${styles.statValue} ${hasLimit ? "" : styles.statOff}`}>{hasLimit ? money(state.limit_usd) : t("usage.limit.off")}</span>
             </div>
             <div className={styles.stat}>
               <span className={styles.statLabel}>{t("usage.limit.spent")}</span>
@@ -130,16 +130,16 @@ export function SpendLimitCard({ refreshKey }: { refreshKey: number }) {
             onChange={(e) => setDraft(e.target.value)}
           />
         </label>
-        <Button type="submit" size="sm" disabled={busy || parsed === null}>
+        <Button type="submit" disabled={busy || parsed === null}>
           {t("usage.limit.save")}
         </Button>
         {hasLimit ? (
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void save(null)}>
+          <Button variant="ghost" disabled={busy} onClick={() => void save(null)}>
             {t("usage.limit.clear")}
           </Button>
         ) : null}
       </form>
-      {draft !== "" && parsed === null ? <p className={formStyles.error}>{t("usage.limit.invalid")}</p> : null}
+      {draft !== "" && parsed === null ? <p className={formStyles.error} role="alert">{t("usage.limit.invalid")}</p> : null}
       {error ? (
         <p className={formStyles.error} role="alert">
           {error}

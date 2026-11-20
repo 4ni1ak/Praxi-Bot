@@ -4198,7 +4198,7 @@
         "tags": [
           "control"
         ],
-        "summary": "`POST /v1/control/recover`: the local user clears a takeover latch (also one\nrestored after a restart) without a registered target or view session. The\nbot resumes with a fresh observation.",
+        "summary": "`POST /v1/control/recover`: the local user, or the paired admin desktop of this host\n(never a phone or a non-admin peer), clears a takeover latch (also one restored after a\nrestart) without a registered target or view session. The bot resumes with a fresh\nobservation. The audit row names who cleared it, the latch's reason and the previous owner.",
         "operationId": "local_recover",
         "responses": {
           "200": {

@@ -10,6 +10,9 @@
   color: var(--color-text-secondary);
   font-family: inherit;
   font-size: var(--font-size-ui);
+  white-space: nowrap;
+  min-width: var(--space-0);
+  max-width: 100%;
   cursor: pointer;
 }
 
@@ -34,10 +37,13 @@
 }
 
 .label {
+  flex: none;
   color: var(--color-text-faint);
 }
 
 .chip b {
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-weight: var(--font-weight-semibold);
   color: var(--color-text);
 }
