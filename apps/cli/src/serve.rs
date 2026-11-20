@@ -36,7 +36,21 @@ pub fn build_providers(
     store: &dyn SecretStore,
     warn: &mut dyn FnMut(&str),
 ) -> Result<Providers> {
-    Ok(agent_core::build_providers(data_dir, catalog, store, warn)?)
+    let mut wrapped = |msg: &str| {
+        if msg.starts_with("setup required") {
+            warn(
+                "setup required: no LLM provider is configured yet; chats will fail until you run `bot setup` or `bot providers add <id>`",
+            );
+        } else {
+            warn(msg);
+        }
+    };
+    Ok(agent_core::build_providers(
+        data_dir,
+        catalog,
+        store,
+        &mut wrapped,
+    )?)
 }
 
 /// How often the daemon re-reads the secret store into the redactor, so a

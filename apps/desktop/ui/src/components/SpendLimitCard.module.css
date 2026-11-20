@@ -5,6 +5,7 @@
 .stat { display: flex; flex-direction: column; gap: var(--space-1); }
 .statLabel { font-size: var(--font-size-xs); color: var(--color-text-muted); }
 .statValue { font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); color: var(--color-text); font-variant-numeric: tabular-nums; }
+.statOff { font-size: var(--font-size-md); color: var(--color-text-muted); line-height: var(--line-height-tight); }
 .bar { margin-top: var(--space-3); height: var(--space-2); border-radius: var(--radius-pill); background-color: var(--color-surface-active); overflow: hidden; }
 .fill { height: 100%; border-radius: var(--radius-pill); background-color: var(--color-accent); transition: width var(--motion-duration-slow) var(--motion-easing-standard); }
 .bar[data-pace="warn"] .fill, .bar[data-pace="over"] .fill { background-color: var(--color-warning); }
