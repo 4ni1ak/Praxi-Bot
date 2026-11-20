@@ -11,7 +11,8 @@ All paths are under `apps/desktop/ui/src/`.
 1. **Copy the English file.** `cp i18n/locales/en.json i18n/locales/<code>.json` (use the
    [ISO 639-1](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) code, for example `fr`).
    Translate the *values*, never the keys. Keep placeholders such as `{{name}}` and `{{count}}`
-   exactly as they are; you may move them inside the sentence.
+   exactly as they are; you may move them inside the sentence. Follow the
+   [translation glossary](translation-glossary.md) for consistent terminology and tone.
 2. **Register it** in `i18n/index.ts`: import the file, add it to `resources`, and extend
    `SupportedLanguage` (`"en" | "tr" | "de" | "<code>"`).
 3. **Offer it in the pickers.**

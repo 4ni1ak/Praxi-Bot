@@ -75,7 +75,7 @@
         "msg": "Praxi konnte diesen Computer nicht mit dem Server koppeln."
       },
       "preflight": {
-        "fix": "Kopiere die Details, um zu sehen, welche. Praxi braucht Ubuntu 22.04 oder neuer, ausreichend Speicher und Plattenplatz sowie systemd.",
+        "fix": "Kopiere die Details, um zu sehen, welche. Praxi braucht Ubuntu 22.04 oder neuer, ausreichend Arbeitsspeicher und Speicherplatz sowie systemd.",
         "msg": "Der Server erfüllt eine Anforderung nicht."
       },
       "service_down": {
@@ -93,9 +93,9 @@
     "hostKeyNo": "Nein, stoppen",
     "hostKeyTitle": "Ist das dein Server?",
     "hostKeyYes": "Ja, diesem Server vertrauen",
-    "keyFile": "Datei mit privatem Schlüssel",
+    "keyFile": "Private Schlüsseldatei",
     "keyHint": "Nur der Pfad wird verwendet. Praxi kopiert oder speichert den Schlüssel selbst nie.",
-    "keyMissing": "Wähle eine Datei mit privatem Schlüssel oder wechsle zum SSH-Agent.",
+    "keyMissing": "Wähle eine private Schlüsseldatei oder wechsle zum SSH-Agent.",
     "lead": "Verbinde einen Server, den du mietest. Kein Ticket zu kopieren.",
     "manual": "Ich habe stattdessen ein Kopplungsticket",
     "noDaemon": "Der lokale Praxi-Dienst läuft nicht. Starte die App neu und versuche es erneut.",
@@ -166,7 +166,7 @@
       "descriptionLines": "Die Beschreibung muss eine einzelne Zeile sein.",
       "descriptionLong": "Die Beschreibung darf höchstens 200 Zeichen lang sein.",
       "nameChars": "Verwende nur Kleinbuchstaben, Ziffern, - _ und .",
-      "nameDots": "Der Name darf nicht „..“ enthalten oder mit einem Punkt enden.",
+      "nameDots": "Der Name darf kein „..“ enthalten und nicht mit einem Punkt enden.",
       "nameEmpty": "Ein Name ist erforderlich.",
       "nameLength": "Der Name darf höchstens 64 Zeichen lang sein.",
       "nameStart": "Der Name muss mit einem Buchstaben oder einer Ziffer beginnen.",
@@ -177,22 +177,22 @@
     "keywords": "Stichwörter",
     "keywordsPlaceholder": "rechnung, zahlung",
     "name": "Name",
-    "nameHint": "Kleinbuchstaben, Ziffern, - _ und . — das ist auch der Ordnername.",
+    "nameHint": "Kleinbuchstaben, Ziffern, - _ und . – das ist auch der Ordnername.",
     "namePlaceholder": "rechnungspruefung",
     "notFound": "Noch nicht gefunden",
     "notFoundBody": "Stelle sicher, dass die Datei SKILL.md heißt und im oben gezeigten Ordner liegt, und prüfe dann erneut.",
     "open": "Skill hinzufügen",
     "parse": {
-      "badLine": "Diese Zeile hat nicht die Form Schlüssel: Wert — {{detail}}",
+      "badLine": "Diese Zeile hat nicht die Form Schlüssel: Wert – {{detail}}",
       "badWhen": "Der „when“-Block ist bei „{{detail}}“ ungültig. Verwende domains, apps oder keywords mit einer Liste [a, b].",
       "duplicateKey": "Der Schlüssel „{{detail}}“ kommt zweimal vor.",
       "emptyVersion": "`version` ist vorhanden, aber leer.",
-      "noFrontmatter": "Sie muss mit einer ----Zeile beginnen, gefolgt von name und description.",
+      "noFrontmatter": "Die Datei muss mit einer „---“-Zeile beginnen, gefolgt von name und description.",
       "title": "Diese Datei ist kein gültiger Skill",
       "tooLarge": "Die Datei ist größer als 64 KB.",
       "unknownKey": "Unbekannter Schlüssel „{{detail}}“. Erlaubt sind nur name, description, version und when.",
       "unreadable": "Die Datei konnte nicht als Text gelesen werden.",
-      "unterminated": "Der öffnende ----Block wird nie mit einer zweiten ----Zeile geschlossen."
+      "unterminated": "Der öffnende „---“-Block wird nie mit einer zweiten „---“-Zeile geschlossen."
     },
     "pathHint": "Erstelle den Ordner, falls er nicht existiert.",
     "pathHintRelative": "Innerhalb des Datenordners von Praxi-Bot. Erstelle den Ordner, falls er nicht existiert.",
@@ -270,7 +270,7 @@
       "blurStrong": "Stark",
       "clear": "Klar",
       "description": "Wie Seitenleiste, Chat-Bereich und rechtes Panel gezeichnet werden. „Deckend“ ist am besten lesbar und belastet die GPU am wenigsten.",
-      "fallback": "Dieses System kann hinter Fenstern nicht verwischen; Glas wird als getönt angezeigt.",
+      "fallback": "Dieses System unterstützt keine Hintergrundunschärfe; Glas wird getönt angezeigt.",
       "followSystem": "Windows folgen",
       "glass": "Glas",
       "line": "Linie",
@@ -282,7 +282,7 @@
       "tinted": "Getönt",
       "title": "Panel-Stil",
       "transparency": "Transparenz",
-      "transparencyHint": "Über hellen Hintergründen bleiben Panels so deckend, wie nötig, damit der Text lesbar bleibt."
+      "transparencyHint": "Über hellen Hintergründen bleiben Panels so deckend wie nötig, damit der Text lesbar bleibt."
     },
     "theme": {
       "all": "Alle Designs",
@@ -382,7 +382,7 @@
           "none": "Noch nicht verknüpft. Beim ersten „Verbinden“ einer App wirst du einmal zur Anmeldung aufgefordert.",
           "project_key": "Verwendet deinen eigenen Composio-Projektschlüssel."
         },
-        "ownKey": "Meinen eigenen Projektschlüssel verwenden",
+        "ownKey": "Eigenen Projektschlüssel verwenden",
         "signOut": "Von Composio abmelden",
         "title": "Composio"
       },
@@ -455,7 +455,7 @@
       "hideDetails": "Details ausblenden",
       "hint": {
         "closed": "Der Server wurde beim Start beendet. Öffne die Details, um zu sehen, was er ausgegeben hat (zum Beispiel Docker installiert, aber nicht gestartet), behebe das und drücke dann „Neu verbinden“.",
-        "config": "Die Servereinstellungen oder ein erforderliches Geheimnis fehlen oder sind ungültig. Behebe das und drücke „Neu verbinden“.",
+        "config": "Die Servereinstellungen oder erforderliche Zugangsdaten fehlen oder sind ungültig. Behebe das und drücke „Neu verbinden“.",
         "needs_folder": "Wähle den einen Ordner, den diese App lesen und beschreiben darf, und drücke dann „Speichern und verbinden“.",
         "runtime_docker": "Der Befehl docker wurde im PATH nicht gefunden. Installiere Docker (oder füge seinen Ordner zum PATH hinzu), starte Praxi-Bot neu und drücke dann „Neu verbinden“.",
         "runtime_node": "Node.js wurde im PATH nicht gefunden. Installiere es über die Schaltfläche oben oder von https://nodejs.org und drücke dann „Neu verbinden“.",
@@ -480,7 +480,7 @@
     "getKey": "API-Schlüssel holen",
     "group": {
       "all": "Alle",
-      "business": "Business",
+      "business": "Geschäft",
       "communication": "Kommunikation",
       "dev": "Entwicklung",
       "finance": "Finanzen",
@@ -493,11 +493,11 @@
     "localSection": "Auf diesem Computer",
     "manage": "Verwalten",
     "mcpServers": "Erweitert",
-    "missingSecret": "Gib jedes erforderliche Geheimnis ein.",
+    "missingSecret": "Gib alle erforderlichen Zugangsdaten ein.",
     "noResults": "Keine passenden Server.",
     "reconnect": "Neu verbinden",
     "search": "Apps suchen",
-    "secretHint": "Geheimnisse werden im Schlüsselbund deines Betriebssystems gespeichert und nie wieder angezeigt.",
+    "secretHint": "Zugangsdaten werden im Schlüsselbund deines Betriebssystems gespeichert und nie wieder angezeigt.",
     "sheet": {
       "app": "Die eigene Seite von {{name}} wird geöffnet …",
       "cancelled": "Abgebrochen.",
@@ -508,9 +508,9 @@
         "login_open": "Die Anmeldeseite konnte nicht geöffnet werden."
       },
       "login": "Die Anmeldeseite wurde in deinem Browser geöffnet. Schließe die Anmeldung dort ab, danach öffnet sich {{name}} von selbst.",
-      "opened": "Die Seite von {{name}} ist in deinem Browser geöffnet. Erlaube dort den Zugriff; hier erscheint die App dann als Verbunden.",
+      "opened": "Die Seite von {{name}} ist in deinem Browser geöffnet. Erlaube dort den Zugriff; hier erscheint die App dann als „Verbunden“.",
       "progress": "Schritt {{current}} von {{total}}",
-      "timedOut": "Die Anmeldung wurde nicht rechtzeitig abgeschlossen. Klicke auf Verbinden, um neu zu starten.",
+      "timedOut": "Die Anmeldung wurde nicht rechtzeitig abgeschlossen. Klicke auf „Verbinden“, um neu zu starten.",
       "title": "{{name}} verbinden"
     },
     "status": {
@@ -530,7 +530,7 @@
         "write": "ändert Daten"
       },
       "label": "Werkzeuge, die Bots nutzen dürfen",
-      "restricted": "Die Werkzeuge sind durch eine eigene Erlaubnisliste eingeschränkt; bearbeiten Sie sie in den Servereinstellungen."
+      "restricted": "Einige Werkzeuge sind durch eine eigene Erlaubnisliste eingeschränkt; bearbeite sie in den Servereinstellungen."
     },
     "usedBy": "Genutzt von"
   },
@@ -593,7 +593,7 @@
     "dangerTitle": "Gefahrenzone",
     "delete": "Bot löschen",
     "deleteBlocked": "Dieser Bot hat noch Chats ({{count}}) und kann daher nicht gelöscht werden. Nur ein Bot ohne Chats oder Läufe kann entfernt werden.",
-    "deleteBlockedRuns": "Dieser Bot hat noch {{count}} aufbewahrte(n) Lauf/Läufe und kann daher nicht gelöscht werden. Nur ein Bot ohne Chats oder Läufe kann entfernt werden.",
+    "deleteBlockedRuns": "Dieser Bot hat noch gespeicherte Läufe ({{count}}) und kann daher nicht gelöscht werden. Nur ein Bot ohne Chats oder Läufe kann entfernt werden.",
     "deleteConfirmBody": "Der Bot, sein Zugriff auf Apps und seine E-Mail-Konten werden entfernt. Dies kann nicht rückgängig gemacht werden. Ein Bot, der noch Chats oder Läufe hat, kann nicht gelöscht werden: In diesem Fall wird nichts entfernt, und du siehst den Grund.",
     "deleteConfirmTitle": "{{name}} löschen?",
     "deleteHint": "Entfernt den Bot, seinen Zugriff auf Apps und seine E-Mail-Konten. Nur möglich, solange er keine Chats oder Läufe hat. Dies kann nicht rückgängig gemacht werden.",
@@ -611,7 +611,7 @@
     "needsAttention": "Braucht Aufmerksamkeit",
     "noProvidersBody": "Verbinde einen Anbieter unter Einstellungen → KI, um hier ein Modell zu wählen.",
     "noProvidersTitle": "Kein KI-Anbieter verbunden",
-    "personaHint": "Wird als Dauer-Anweisung des Bots an das Modell gesendet.",
+    "personaHint": "Wird als dauerhafte Anweisung des Bots an das Modell gesendet.",
     "pickModel": "Modell wählen",
     "problem": {
       "customInvalid": "Eine eigene Modell-ID ist noch nicht gültig (Erweitert).",
@@ -673,7 +673,7 @@
       "name": "Von Praxi gesteuert",
       "text": "Praxi führt Dateien und Shell mit seinen eigenen Werkzeugen aus und fragt dich pro Aktion. Die eigenen Werkzeuge der CLI sind aus."
     },
-    "hint": "Wer die Dateien und Shell-Befehle dieses Bots ausführt. Die eigenen Werkzeuge von Praxi (Browser, Apps, Geheimnisse, Gedächtnis) behalten immer die Genehmigungen von Praxi.",
+    "hint": "Wer die Dateien und Shell-Befehle dieses Bots ausführt. Die eigenen Werkzeuge von Praxi (Browser, Apps, Zugangsdaten, Gedächtnis) behalten immer die Genehmigungen von Praxi.",
     "kill": "Stoppen und ausschalten",
     "label": "Dateien und Shell: gesteuert von {{cli}}",
     "level": {
@@ -746,7 +746,7 @@
     "engine": {
       "title": "Engine"
     },
-    "executorRequired": "Das Executor-Modell ist erforderlich.",
+    "executorRequired": "Das Ausführungsmodell ist erforderlich.",
     "files": {
       "computer": {
         "hint": "Dateien überall lesen, wo du kannst. Geschützte Bereiche (Praxi-Daten, Passwörter, CLI-Einstellungen, Systemordner) bleiben tabu. Änderungen fragen weiterhin gemäß der Berechtigungsstufe nach.",
@@ -767,7 +767,7 @@
     },
     "local": "Lokal (dieses Gerät)",
     "manageBots": "Kann Bots erstellen",
-    "manageBotsHint": "Erlaubt diesem Bot, andere Bots zu erstellen und zu verwalten. Er kann ihnen nie mehr geben, als er selbst hat, und Sie geben jede Änderung vollständig frei.",
+    "manageBotsHint": "Erlaubt diesem Bot, andere Bots zu erstellen und zu verwalten. Er kann ihnen nie mehr geben, als er selbst hat, und du gibst jede Änderung vollständig frei.",
     "models": "Modelle",
     "name": "Name",
     "nameRequired": "Ein Name ist erforderlich.",
@@ -777,14 +777,14 @@
     "preset": {
       "approve-destructive": {
         "hint": "Lesen, Surfen, Änderungen im Arbeitsbereich und der eigene Computer des Bots laufen frei; Löschen, Senden, Geld und dein eigener PC fragen zuerst.",
-        "name": "Zerstörerisches genehmigen"
+        "name": "Kritisches genehmigen"
       },
       "custom": {
         "hint": "Wähle eine Stufe für jede Kategorie.",
         "name": "Benutzerdefiniert"
       },
       "full": {
-        "hint": "Läuft ohne Nachfrage (auch Löschen und Senden), außer bei Geld, Aktivierung von Zeitplänen und katastrophalen Befehlen auf der Verbotsliste. Nach dem Lesen nicht vertrauenswürdiger Inhalte fragt es weiterhin vor dem Senden von Daten oder dem Start eines Programms.",
+        "hint": "Läuft ohne Nachfrage (auch Löschen und Senden), außer bei Geld, Aktivierung von Zeitplänen und katastrophalen Befehlen auf der Verbotsliste. Nach dem Lesen nicht vertrauenswürdiger Inhalte fragt der Bot weiterhin vor dem Senden von Daten oder dem Start eines Programms.",
         "name": "Voll"
       },
       "read-and-draft": {
@@ -797,10 +797,10 @@
       }
     },
     "role": {
-      "classifier": "Classifier",
-      "executor": "Executor",
+      "classifier": "Klassifikator",
+      "executor": "Ausführung",
       "fallback": "Fallback-Modelle",
-      "planner": "Planner"
+      "planner": "Planer"
     },
     "runtime": "Computer & Browser",
     "runtimeHint": "Vorerst wird nur dieses Gerät unterstützt."
@@ -816,13 +816,13 @@
       "agentmail": "Eigene Adresse",
       "check": "Verbindung prüfen",
       "checked": "Geprüft um {{time}}",
-      "checking": "Wird geprüft…",
+      "checking": "Wird geprüft …",
       "connect": "Postfach verbinden",
       "empty": "{{name}} hat noch kein Postfach. Verbinde dein eigenes Postfach oder gib dem Bot eine eigene Adresse.",
       "heading": "E-Mail",
       "hideRecent": "Neueste Mails ausblenden",
       "loadError": "Die Postfächer konnten nicht geladen werden: {{message}}",
-      "loading": "Postfächer werden gesucht…",
+      "loading": "Postfächer werden gesucht …",
       "manage": "Postfächer verwalten",
       "noMessages": "Der Posteingang ist leer.",
       "noSubject": "(kein Betreff)",
@@ -831,7 +831,7 @@
       "recentError": "Der Posteingang konnte nicht gelesen werden: {{message}}",
       "sendTest": "Test-Mail senden",
       "sendTestHint": "Sendet eine kurze Testnachricht an {{address}} selbst, an niemanden sonst.",
-      "sendingTest": "Wird gesendet…",
+      "sendingTest": "Wird gesendet …",
       "shared": "Für alle Bots freigegeben",
       "testError": "Die Test-Mail konnte nicht gesendet werden: {{message}}",
       "testSent": "Test-Mail an {{address}} gesendet. Sie sollte gleich ankommen.",
@@ -853,12 +853,12 @@
       "thinking": "Denkt nach …",
       "waiting": "Wartet auf deine Genehmigung"
     },
-    "pausedIdle": "Zum Ressourcensparen pausiert - zum Fortsetzen klicken",
+    "pausedIdle": "Zum Ressourcensparen pausiert – zum Fortsetzen klicken",
     "profile": "Bot-Profil",
     "runsOnHost": "Läuft auf {{name}} (Host)",
     "runsOnLocal": "Läuft auf diesem Computer",
     "screenListFailed": "Die Bildschirmliste von {{name}} konnte nicht geladen werden. Es wird gleich noch einmal versucht.",
-    "searchChats": "Chats durchsuchen…",
+    "searchChats": "Chats durchsuchen …",
     "serverIssue": {
       "connecting": "Verbindung zu {{name}} wird hergestellt … sein Bildschirm erscheint, sobald er antwortet.",
       "notPaired": "{{name}} akzeptiert diesen Computer nicht mehr. Koppele ihn erneut mit einem neuen Ticket.",
@@ -923,7 +923,7 @@
     "noModel": "Kein Modell",
     "notFound": "Dieser Bot existiert nicht mehr.",
     "skills": {
-      "boundaryHint": "Das begrenzt, was dem Bot angeboten wird und was er mit seinen Skill-Werkzeugen laden kann. Es ist kein Geheimnisspeicher: Ein Bot mit Datei- oder Shell-Zugriff kann den Skills-Ordner auf dem Datenträger dennoch lesen.",
+      "boundaryHint": "Das begrenzt, was dem Bot angeboten wird und was er mit seinen Skill-Werkzeugen laden kann. Es ist kein Schlüsselspeicher: Ein Bot mit Datei- oder Shell-Zugriff kann den Skills-Ordner auf dem Datenträger dennoch lesen.",
       "conflict": "Die Skills haben sich geändert, seit du diesen Dialog geöffnet hast (ein anderes Fenster oder Gerät hat sie gespeichert). Die aktuelle Zuweisung wurde neu geladen; prüfe sie und versuche es erneut.",
       "emptyCatalog": "Es sind noch keine geteilten oder mitgelieferten Skills installiert.",
       "emptySearch": "Keine Skills passen zu deiner Suche.",
@@ -951,7 +951,7 @@
       "searchPlaceholder": "Skills nach Name oder Beschreibung filtern …",
       "summaryAll": "Nutzt alle geteilten Skills ({{count}})",
       "summaryLearned": "(+{{count}} gelernt)",
-      "summaryMissing": "{{count}} zugewiesener Skill auf dem Datenträger nicht verfügbar",
+      "summaryMissing": "Auf dem Datenträger fehlende Skills: {{count}}",
       "summarySelected": "{{count}} von {{total}} geteilten Skills",
       "tooMany": "Es können nur {{max}} Skills zugewiesen werden. Wähle weniger Skills oder verwende „Alle geteilten Skills“."
     },
@@ -974,7 +974,7 @@
       },
       "bot": {
         "allToolsOfCaller": "alle Werkzeuge, die dieser Bot nutzen kann",
-        "ceiling": "Ein Bot kann einem anderen Bot nie mehr geben, als er selbst hat. Diese Freigabe gilt nur für diese Änderung; sie wird jedes Mal erfragt.",
+        "ceiling": "Ein Bot kann einem anderen Bot nie mehr geben, als er selbst hat. Diese Genehmigung gilt nur für diese Änderung; sie wird jedes Mal abgefragt.",
         "changes": "Was sich ändert",
         "classifier": "Klassifikator",
         "deleteNote": "Dieser Bot und seine Einstellungen werden entfernt. Ein Bot mit Chats kann nicht gelöscht werden.",
@@ -1014,20 +1014,20 @@
         },
         "refused": "Keine aufgabenweite Berechtigung für {{program}}: Genehmige diesen Aufruf einmal.",
         "risk": "Praxi darf Dinge, die es gelesen hat, in diese App eintippen.",
-        "stillAsks": "Es fragt erneut bei anderen Programmen, beim Starten, bei Befehlen, Skripten, Ziehen, Dateidialogen, Passwortfeldern und jeder anderen Taste. Terminals, Browser, Launcher und Remote-Desktop-Viewer werden nur am Dateinamen erkannt, was eine Heuristik ist: Eine umbenannte Kopie wird nicht erkannt. Die Berechtigung endet mit der Aufgabe und wird nach jedem gestoppten oder fehlgeschlagenen Senden zurückgezogen."
+        "stillAsks": "Praxi fragt erneut bei anderen Programmen, beim Starten, bei Befehlen, Skripten, Ziehen, Dateidialogen, Passwortfeldern und jeder anderen Taste. Terminals, Browser, Launcher und Remote-Desktop-Viewer werden nur am Dateinamen erkannt, was eine Heuristik ist: Eine umbenannte Kopie wird nicht erkannt. Die Berechtigung endet mit der Aufgabe und wird nach jedem gestoppten oder fehlgeschlagenen Senden zurückgezogen."
       },
       "countdown": "Automatische Ablehnung in {{seconds}} s",
       "deny": "Ablehnen",
       "egress": {
         "host": "Ziel: {{host}}",
-        "large": "Diese Nutzlast ist zu groß für die kompakte Karte ({{bytes}} Byte). Öffne den vollständigen Text und scrolle vor der Genehmigung bis zum Ende.",
+        "large": "Dieser Inhalt ist zu groß für die kompakte Karte ({{bytes}} Byte). Öffne den vollständigen Text und scrolle vor der Genehmigung bis zum Ende.",
         "payload": {
           "body": "Ausgehende Daten (vollständig angezeigt):",
           "query": "Ausgehende Abfrage (vollständig angezeigt):",
           "url": "Ausgehende URL (vollständig angezeigt):"
         },
         "read": "Dieser Lauf hat gelesen: {{list}}",
-        "reviewFull": "Vollständige Nutzlast prüfen",
+        "reviewFull": "Vollständigen Inhalt prüfen",
         "size": "{{lines}} Zeilen, {{chars}} Zeichen, {{hidden}} nicht druckbare Zeichen als <U+XXXX> angezeigt"
       },
       "memory": {
@@ -1119,7 +1119,7 @@
       "thisChat": "Dieser Chat",
       "title": "Genehmigung erforderlich",
       "why": {
-        "always_ask": "Diese Aktion fragt immer nach, unabhängig von der Berechtigungsstufe (Apps, Geheimnisse).",
+        "always_ask": "Diese Aktion fragt immer nach, unabhängig von der Berechtigungsstufe (Apps, Zugangsdaten).",
         "egress": "In diesem Chat befinden sich nicht vertrauenswürdige Inhalte (eine Webseite, E-Mail, ein Download), daher wird vor dem Senden von Daten nachgefragt.",
         "executes": "In diesem Chat befinden sich nicht vertrauenswürdige Inhalte (eine Webseite, E-Mail, ein Download), daher wird vor Tippen, Shell-Befehlen und dem Starten von Programmen nachgefragt.",
         "floor": "Zahlungen und riskante Befehle fragen immer nach, unabhängig von der Berechtigungsstufe.",
@@ -1165,7 +1165,7 @@
       },
       "loadError": "Dateiänderungen konnten nicht geladen werden: {{message}}",
       "loadMore": "Weitere Dateien laden",
-      "loading": "Dateiänderungen werden geladen ...",
+      "loading": "Dateiänderungen werden geladen …",
       "modal": {
         "action": {
           "delete": "Erstellte Datei löschen",
@@ -1176,8 +1176,8 @@
         "confirm": "Wiederherstellen",
         "modifiedWarning": "Diese Dateien wurden nach diesem Lauf geändert. Ein anderer Lauf wird genannt, wenn bekannt; andere Änderungen können deine Bearbeitungen sein. Bestätige vor dem Überschreiben.",
         "overwriteLabel": "Meine neueren Änderungen überschreiben",
-        "previewLoading": "Aktuelle Dateien auf dem Datenträger werden geprüft ...",
-        "restoring": "Wird wiederhergestellt ...",
+        "previewLoading": "Aktuelle Dateien auf dem Datenträger werden geprüft …",
+        "restoring": "Wird wiederhergestellt …",
         "safetyNote": "Rückgängig machen betrifft jeden zugehörigen Dateivorgang; prüfe alle Pfade unten. Ein Sicherheits-Checkpoint speichert den aktuellen Zustand, damit dieses Rückgängigmachen selbst rückgängig gemacht werden kann.",
         "titleAll": "Alle Dateiänderungen dieses Laufs rückgängig machen?",
         "titleSingle": "Änderung an {{path}} rückgängig machen?",
@@ -1206,7 +1206,7 @@
       "title": "Dateiänderungen ({{count}})",
       "undoAll": "Alles rückgängig",
       "undoFile": "Rückgängig",
-      "undoUndo": "Dieses Rückgängigmachen rückgängig machen",
+      "undoUndo": "Rückgängigmachen aufheben",
       "viaLink": "Über Link {{path}}"
     },
     "conversationLabel": "Heute",
@@ -1232,7 +1232,7 @@
       "label": "In diesem Chat suchen",
       "next": "Nächster Treffer",
       "none": "Keine Treffer",
-      "placeholder": "Im Chat suchen…",
+      "placeholder": "Im Chat suchen …",
       "prev": "Vorheriger Treffer"
     },
     "jumpToLatest": "Zum Neuesten springen",
@@ -1250,9 +1250,9 @@
     "messageCopied": "Kopiert",
     "mode": {
       "queue": "Einreihen",
-      "queueHint": "Nach Ende des aktuellen Zugs zustellen",
+      "queueHint": "Nach dem aktuellen Durchgang zustellen",
       "steer": "Lenken",
-      "steerHint": "Sofort zustellen und den aktuellen Zug umlenken"
+      "steerHint": "Sofort zustellen und den aktuellen Durchgang umlenken"
     },
     "modeLabel": "Während der Bot arbeitet",
     "newChatStarted": "Neuer Chat gestartet.",
@@ -1362,9 +1362,9 @@
         "running": "Bot wird gelöscht"
       },
       "bot_list": {
-        "done": "Ihre Bots geprüft",
-        "failed": "Ihre Bots konnten nicht geprüft werden",
-        "running": "Ihre Bots werden geprüft"
+        "done": "Deine Bots geprüft",
+        "failed": "Deine Bots konnten nicht geprüft werden",
+        "running": "Prüft deine Bots"
       },
       "bot_update": {
         "done": "Bot geändert",
@@ -1603,7 +1603,7 @@
       }
     },
     "stop": "Stopp",
-    "stopped": "Laufender Zug gestoppt.",
+    "stopped": "Laufenden Durchgang gestoppt.",
     "subagent": {
       "cancel": "Abbrechen",
       "cancelLabel": "Subagent abbrechen: {{task}}",
@@ -1652,12 +1652,12 @@
     "archive": "Archivieren",
     "archivedToggle": "Archiviert ({{count}})",
     "delete": "Löschen",
-    "deleteActiveRun": "In diesem Chat läuft gerade ein Auftrag. Stoppe ihn zuerst, bevor du den Chat löschst.",
+    "deleteActiveRun": "In diesem Chat ist gerade ein Lauf aktiv. Stoppe ihn zuerst, bevor du den Chat löschst.",
     "deleteBody": "„{{title}}“ und alle zugehörigen Nachrichten werden dauerhaft gelöscht. Das lässt sich nicht rückgängig machen.",
     "deleteConfirm": "Chat löschen",
     "deleteTitle": "Diesen Chat löschen?",
     "empty": "Noch keine Chats.",
-    "loading": "Chats werden geladen…",
+    "loading": "Chats werden geladen …",
     "menuLabel": "Chat-Optionen für {{title}}",
     "menuTooltip": "Chat-Optionen",
     "pin": "Anheften",
@@ -1716,7 +1716,7 @@
     "big": "Vergrößern",
     "browser": "Browser",
     "close": "Schließen",
-    "connecting": "Verbindung wird hergestellt",
+    "connecting": "Verbindet …",
     "fps": "{{fps}} fps",
     "frameAlt": "Live-Bildschirm von {{name}}",
     "hint": {
@@ -1747,7 +1747,7 @@
       "serverOffline": "antwortet nicht · verbindet neu",
       "serverOnline": "Server · online"
     },
-    "take": "Steuerung übernehmen",
+    "take": "Kontrolle übernehmen",
     "terminal": "Terminal",
     "terminalSoon": "Demnächst verfügbar",
     "thisComputer": "Dieser Computer",
@@ -1771,7 +1771,7 @@
     "stopHost": "Alle Läufe auf dem Host stoppen",
     "stopHostHint": "Stoppt, was dort gerade läuft",
     "stopNone": "Auf dem Host läuft nichts.",
-    "stopped": "{{count}} Lauf/Läufe auf dem Host gestoppt."
+    "stopped": "Läufe auf dem Host gestoppt: {{count}}."
   },
   "control": {
     "starting": "Arbeitet …"
@@ -1782,7 +1782,7 @@
       "cli_engine": "Verwendet eine CLI-Engine, die auf diesem Computer bleibt",
       "no_export": "Noch nicht verschoben: Das Gedächtnis hat keinen Export"
     },
-    "cannotMove": "Noch nicht verschiebbar: Gedächtnis, App-Verbindungen und CLI-Anmeldungen (Claude Code, Codex, agy, OpenCode melden sich auf dem Server selbst an). Dateien und Anhänge, die Chats erwähnen, werden nicht kopiert; Webhook-Geheimnisse bleiben zurück.",
+    "cannotMove": "Noch nicht verschiebbar: Gedächtnis, App-Verbindungen und CLI-Anmeldungen (Claude Code, Codex, agy, OpenCode melden sich auf dem Server selbst an). Dateien und Anhänge, die Chats erwähnen, werden nicht kopiert; Webhook-Secrets bleiben zurück.",
     "choice": {
       "adopt": "Es ist derselbe Bot – verknüpfen",
       "adoptWhy": "Seine Zeitpläne und Chats werden zu diesem Bot auf {{server}} hinzugefügt.",
@@ -1993,7 +1993,7 @@
       },
       "host_admin_forbidden": {
         "hint": "Nur der gekoppelte Desktop des Besitzers kann die Einrichtung des Servers ändern.",
-        "title": "Dieser Computer darf diesen Server möglicherweise nicht verwalten"
+        "title": "Dieser Computer darf diesen Server nicht verwalten"
       },
       "host_admin_required": {
         "hint": "Führe den unten gezeigten Befehl einmal auf dem Server aus und versuche es dann erneut.",
@@ -2032,7 +2032,7 @@
         "title": "Dieser App-Zugriff ist ungültig"
       },
       "invalid_signature": {
-        "hint": "Prüfe das Geheimnis, das für diesen Trigger eingerichtet wurde.",
+        "hint": "Prüfe das Secret, das für diesen Trigger eingerichtet wurde.",
         "title": "Die Anfrage konnte nicht verifiziert werden"
       },
       "invalid_skill": {
@@ -2152,7 +2152,7 @@
         "title": "Dieser Zeitplan wurde auf einen Server verschoben"
       },
       "secret_store_failed": {
-        "hint": "Versuche es erneut. Wenn es weiter fehlschlägt, prüfe den Datenträger des Servers und seinen Geheimnisspeicher.",
+        "hint": "Versuche es erneut. Wenn es weiter fehlschlägt, prüfe den Datenträger des Servers und seinen Schlüsselspeicher.",
         "title": "Der Server konnte den Schlüssel nicht speichern"
       },
       "secrets_unavailable": {
@@ -2176,7 +2176,7 @@
         "title": "Ein Skill mit diesem Namen existiert bereits"
       },
       "skill_contains_secret": {
-        "hint": "Entferne das Geheimnis aus seinen Dateien und füge ihn dann erneut hinzu.",
+        "hint": "Entferne den geheimen Schlüssel aus seinen Dateien und füge den Skill dann erneut hinzu.",
         "title": "Der Skill scheint ein Passwort oder einen Schlüssel zu enthalten"
       },
       "skill_not_found": {
@@ -2599,7 +2599,7 @@
     "failed": "Lokaler Dienst gestoppt",
     "fakeProvider": "Fake-Anbieter",
     "offline": "Lokaler Dienst offline",
-    "reconnecting": "Verbindung wird wiederhergestellt …",
+    "reconnecting": "Verbindet neu …",
     "retry": "Erneut versuchen"
   },
   "help": {
@@ -2717,7 +2717,7 @@
     },
     "pcOff": "Deine Bots können diesen Computer nicht nutzen",
     "pcOn": "Jede Aktion fragt dich hier",
-    "sync": "Meine Einrichtung synchronisieren",
+    "sync": "Einrichtung synchronisieren",
     "today": "heute {{time}}"
   },
   "hostMode": {
@@ -2753,7 +2753,7 @@
       "policy": "Die Ausführungsrichtlinie wird auf {{name}} selbst festgelegt, nicht über diese App.",
       "role": "{{name}} erlaubt diesem Computer das nicht.",
       "screenInput": "{{name}} hat diesem Computer die Steuerung des Bildschirms nicht erlaubt. Erlaube sie in Praxi auf {{name}}.",
-      "secrets": "Schlüssel und Geheimnisse werden auf {{name}} selbst hinzugefügt, nicht über diese App.",
+      "secrets": "Schlüssel und Zugangsdaten werden auf {{name}} selbst hinzugefügt, nicht über diese App.",
       "tools": "Werkzeugserver und Skills werden auf {{name}} selbst verwaltet."
     },
     "state": {
@@ -2767,10 +2767,10 @@
   },
   "hostRecovery": {
     "remoteOffline": {
-      "hint": "Praxi kann einen Server von hier aus nicht starten. Schalten Sie den Server ein (oder starten Sie Praxi darauf) und drücken Sie dann Erneut versuchen. Ihre Nachricht bleibt im Eingabefeld.",
+      "hint": "Praxi kann einen Server von hier aus nicht starten. Schalte den Server ein (oder starte Praxi darauf) und drücke dann „Erneut versuchen“. Deine Nachricht bleibt im Eingabefeld.",
       "title": "Der Server ist offline"
     },
-    "starting": "Der Praxi-Dienst dieses Computers wird gestartet … Ihre Nachricht wird gesendet, sobald er bereit ist."
+    "starting": "Der Praxi-Dienst dieses Computers wird gestartet … deine Nachricht wird gesendet, sobald er bereit ist."
   },
   "hostState": {
     "connecting": "Verbindung zu {{name}} wird hergestellt …",
@@ -2791,7 +2791,7 @@
     "add": "Quelle hinzufügen",
     "approvalExpiry": "Diese Genehmigung läuft um {{time}} ab. Eine geänderte Quelle oder ein geändertes Ziel erfordert eine neue Prüfung.",
     "approvalTitle": "Embedding-Berechtigung prüfen",
-    "auto": "Relevantes Wissen für neue Züge automatisch abrufen",
+    "auto": "Relevantes Wissen für neue Durchgänge automatisch abrufen",
     "autoUnavailable": "Der automatische Abruf ist in diesem Build nicht verfügbar. Die explizite Wissenssuche bleibt verfügbar.",
     "bot": "Bot",
     "brainApproval": "Eine Notiz im gemeinsamen Gehirn veröffentlichen",
@@ -2803,7 +2803,7 @@
     "confirmPath": "Diesen Pfad verwenden",
     "confirmQuery": "Abrufanfragen erlauben",
     "confirmRemove": "Entfernen bestätigen",
-    "consentDescription": "Der gewählte Anbieter erhält Text aus dieser Quelle, einschließlich künftiger Aktualisierungen. Diese Freigabe gilt nur für das unten genannte Ziel und Modell. Abrufanfragen erfordern eine separate Berechtigung.",
+    "consentDescription": "Der gewählte Anbieter erhält Text aus dieser Quelle, einschließlich künftiger Aktualisierungen. Diese Berechtigung gilt nur für das unten genannte Ziel und Modell. Abrufanfragen erfordern eine separate Berechtigung.",
     "consentTitle": "„{{source}}“ für Embeddings senden?",
     "content": "Inhalt",
     "continue": "Indizierung fortsetzen",
@@ -2888,43 +2888,43 @@
     "url": "URL der gespeicherten Seite"
   },
   "liveView": {
-    "approvalsWaiting": "{{count}} Element(e) warten auf deine Entscheidung. Entscheide unten oder im Chat.",
+    "approvalsWaiting": "Offene Entscheidungen: {{count}}. Entscheide unten oder im Chat.",
     "backToChat": "Zurück",
     "captureTab": "Tab erfassen",
     "chat": {
       "approve": "Genehmigen",
       "collapse": "Chat einklappen",
       "reject": "Ablehnen",
-      "replying": "Bot antwortet…",
+      "replying": "Bot antwortet …",
       "title": "Mit dem Bot chatten",
-      "working": "Bot arbeitet…"
+      "working": "Bot arbeitet …"
     },
     "checkingTargets": "Bildschirme werden gesucht …",
     "clearForeignPause": "Pause von {{owner}} aufheben",
     "clearPauseAction": "Pause aufheben",
     "close": "Ansicht schließen",
     "connectionLost": "Verbindung zum Bildschirm verloren. Verbindung wird wiederhergestellt …",
-    "dismissKeepsControl": "Das Schließen blendet nur die Ansicht aus: Die Kontrolle bleibt bei dir. Verwende Bitirdim oder „Erneut versuchen“ im Panel.",
-    "doneAction": "Bitirdim",
+    "dismissKeepsControl": "Das Schließen blendet nur die Ansicht aus: Die Kontrolle bleibt bei dir. Verwende „Ich bin fertig“ oder „Erneut versuchen“ im Panel.",
+    "doneAction": "Ich bin fertig",
     "doneLabel": "Ich bin fertig",
     "emergencyStop": "Bots stoppen",
     "errors": {
       "generic": "Die Anfrage ist fehlgeschlagen. Prüfe die Verbindung und versuche es erneut.",
-      "network": "Die Bildschirmverbindung wurde unterbrochen. Prüfen Sie Ihr Netzwerk und versuchen Sie es erneut.",
+      "network": "Die Bildschirmverbindung wurde unterbrochen. Prüfe dein Netzwerk und versuche es erneut.",
       "pause_changed": "Der Kontrollstatus hat sich geändert. Prüfe den Bildschirm und versuche es erneut.",
       "recover_failed": "Die Kontrolle konnte nicht wiederhergestellt werden. Versuche es erneut.",
-      "release_failed": "Die Kontrolle konnte nicht zurückgegeben werden. Der Bot bleibt pausiert; versuche Bitirdim erneut.",
-      "release_interrupted": "Die Übernahme wurde unterbrochen, bevor Bitirdim abgeschlossen war, daher wurde die Rückgabe nicht beendet. Hebe die Pause auf, damit der Bot fortfahren kann, oder übernimm die Kontrolle erneut.",
-      "release_unconfirmed": "Der Daemon meldet deine Übernahme weiterhin als aktiv. Versuche Bitirdim erneut.",
-      "server_restarting": "Der Server wird möglicherweise neu gestartet. Versuchen Sie es erneut, sobald er wieder online ist.",
+      "release_failed": "Die Kontrolle konnte nicht zurückgegeben werden. Der Bot bleibt pausiert; versuche „Ich bin fertig“ erneut.",
+      "release_interrupted": "Die Übernahme wurde unterbrochen, bevor die Rückgabe abgeschlossen war. Hebe die Pause auf, damit der Bot fortfahren kann, oder übernimm die Kontrolle erneut.",
+      "release_unconfirmed": "Der Daemon meldet deine Übernahme weiterhin als aktiv. Versuche „Ich bin fertig“ erneut.",
+      "server_restarting": "Der Server wird möglicherweise neu gestartet. Versuche es erneut, sobald er wieder online ist.",
       "takeover_failed": "Die Kontrolle konnte nicht übernommen werden. Versuche es erneut.",
       "timeout": "Der Bildschirm konnte nicht rechtzeitig gestartet werden.",
-      "too_many_streams": "Auf dieser Verbindung sind zu viele Streams offen. Schließen Sie einen anderen Stream und versuchen Sie es erneut.",
-      "unauthorized": "Ihre Sitzung ist nicht mehr autorisiert. Verbinden Sie sich erneut mit diesem Computer.",
-      "view_quota": "Auf dem Server sind zu viele Bildschirm-Sitzungen offen. Schließen Sie eine unbenutzte Ansicht oder versuchen Sie es gleich erneut."
+      "too_many_streams": "Auf dieser Verbindung sind zu viele Streams offen. Schließe einen anderen Stream und versuche es erneut.",
+      "unauthorized": "Deine Sitzung ist nicht mehr autorisiert. Verbinde dich erneut mit diesem Computer.",
+      "view_quota": "Auf dem Server sind zu viele Bildschirmsitzungen offen. Schließe eine unbenutzte Ansicht oder versuche es gleich erneut."
     },
     "expand": "Große Ansicht öffnen",
-    "focusTrapHint": "Umschalt+Esc verlässt den Bildschirm-Tastaturfokus zum Bitirdim-Steuerelement.",
+    "focusTrapHint": "Umschalt+Esc verlässt den Bildschirm-Tastaturfokus zur Schaltfläche „Ich bin fertig“.",
     "globalPauseNotice": "Das Übernehmen der Kontrolle oder das Pausieren gilt global für alle Bots.",
     "handBackAction": "Zurückgeben",
     "hostLabel": "Host: {{host}}",
@@ -2952,7 +2952,7 @@
     "outcomes": {
       "application_opened": "App geöffnet",
       "login_completed": "Angemeldet",
-      "none": "Gerade fertig",
+      "none": "Einfach fertig",
       "other": "Anderer Schritt"
     },
     "panelSummary": {
@@ -2963,7 +2963,7 @@
       "paused": "Pausiert · Wartet auf dich",
       "ready": "Dieser Computer · bereit",
       "unavailable": "Leerlauf · Nicht aktiv",
-      "watch": "Wach · Live-Beobachtung"
+      "watch": "Aktiv · Live-Ansicht"
     },
     "pausedBanner": {
       "body": "Eine Bildschirmübernahme hat den Bot pausiert zurückgelassen. Hebe die Pause auf, damit er fortfahren kann, oder öffne den Bildschirm, um die Kontrolle erneut zu übernehmen.",
@@ -3000,7 +3000,7 @@
     "refresh": "Ziele aktualisieren",
     "releaseFocus": "Tastatur verlassen",
     "releaseOnClose": "Beim Schließen wird die Kontrolle zuerst an den Bot zurückgegeben.",
-    "retryDone": "Bitirdim erneut versuchen",
+    "retryDone": "Rückgabe erneut versuchen",
     "retryingDone": "Wird zurückgegeben …",
     "reviewApprovals": "Zurück zum Chat",
     "stageAlt": "Live-Bildschirmvorschau für {{target}}",
@@ -3017,9 +3017,9 @@
       "queryFailed": "Bildschirme konnten nicht geladen werden",
       "stale": "Keine aktuellen Bilder",
       "unavailable": "Nicht verfügbar",
-      "watch": "Beobachtet"
+      "watch": "Zusehen"
     },
-    "targetLocked": "Beende die Kontrolle (Bitirdim), bevor du das Bildschirmziel wechselst.",
+    "targetLocked": "Beende die Kontrolle („Ich bin fertig“), bevor du das Bildschirmziel wechselst.",
     "targetsLabel": "Zielbildschirm",
     "title": "Live-Ansicht des Computers",
     "viewOnly": "Nur ansehen",
@@ -3049,7 +3049,7 @@
     "botOnly": "Nur Erinnerungen dieses Bots",
     "content": "Was gemerkt werden soll",
     "contentPlaceholder": "Kurze Tatsache oder Präferenz eingeben …",
-    "description": "Sieh dir an, woran sich jeder Bot aus früheren Unterhaltungen erinnert, bearbeite oder vergiss Einträge, mache Änderungen rückgängig und prüfe in der Vorschau, was in die nächste Runde einfließt.",
+    "description": "Sieh dir an, woran sich jeder Bot aus früheren Unterhaltungen erinnert, bearbeite oder vergiss Einträge, mache Änderungen rückgängig und prüfe in der Vorschau, was in den nächsten Durchgang einfließt.",
     "edit": "Bearbeiten",
     "editLabel": "Erinnerungstext",
     "empty": "Keine Erinnerungen entsprechen diesem Filter.",
@@ -3068,7 +3068,7 @@
     },
     "noBot": "Erstelle einen Bot, um Erinnerungen anzusehen oder hinzuzufügen.",
     "previewEmpty": "Für diese Nachricht würden keine Erinnerungen abgerufen.",
-    "previewHint": "Gib eine Beispielnachricht ein, um den genauen Datenblock mit abgerufenen Erinnerungen zu sehen, der der Runde vorangestellt wird.",
+    "previewHint": "Gib eine Beispielnachricht ein, um den genauen Datenblock mit abgerufenen Erinnerungen zu sehen, der dem Durchgang vorangestellt wird.",
     "previewPlaceholder": "z. B. Wann erstellen wir die Versionshinweise?",
     "previewQuery": "Beispiel-Benutzernachricht",
     "previewRun": "Abruf testen",
@@ -3166,7 +3166,7 @@
     "title": "Modell"
   },
   "needs": {
-    "empty": "Nichts wartet auf dich. Wenn ein Bot eine Freigabe braucht oder eine Frage hat, erscheint sie hier.",
+    "empty": "Nichts wartet auf dich. Wenn ein Bot eine Genehmigung braucht oder eine Frage hat, erscheint sie hier.",
     "kind": {
       "approval": "Genehmigung",
       "question": "Frage"
@@ -3218,7 +3218,7 @@
       "blank": "Leer",
       "coder": "Programmierer",
       "researcher": "Recherche",
-      "social": "Social"
+      "social": "Social Media"
     },
     "templatesLabel": "Vorlagen",
     "title": "Neuer Bot"
@@ -3410,7 +3410,7 @@
   "serverSignIn": {
     "apiKey": {
       "label": "API-Schlüssel für {{provider}}",
-      "note": "Der Schlüssel wird im eigenen Geheimnisspeicher des Servers abgelegt und nie wieder angezeigt.",
+      "note": "Der Schlüssel wird im eigenen Schlüsselspeicher des Servers abgelegt und nie wieder angezeigt.",
       "open": "Stattdessen einen API-Schlüssel verwenden",
       "placeholder": "API-Schlüssel",
       "save": "Schlüssel speichern",
@@ -3529,7 +3529,7 @@
       "notifyPrivate": "Private Benachrichtigungen",
       "notifyPrivateHint": "Nur den Bot-Namen und einen kurzen allgemeinen Text zeigen, nie den Inhalt.",
       "showAgentRoute": "Jede Routing-Entscheidung anzeigen",
-      "showAgentRouteHint": "Auch einen Chip anzeigen, wenn der Bot den Zug einfach selbst bearbeitet hat (zur Fehlersuche).",
+      "showAgentRouteHint": "Auch einen Chip anzeigen, wenn der Bot den Durchgang einfach selbst bearbeitet hat (zur Fehlersuche).",
       "title": "Benachrichtigungen"
     },
     "onboarding": {
@@ -3539,7 +3539,7 @@
       "statusCompleted": "Abgeschlossen",
       "statusPending": "Noch nicht abgeschlossen",
       "statusSkipped": "Bei Schritt {{step}} von 5 pausiert",
-      "title": "Einrichtungsassistent beim ersten Start"
+      "title": "Ersteinrichtungs-Assistent"
     },
     "permissions": {
       "description": "Was jeder Bot gerade tun darf, einschließlich der „Immer erlauben“-Regeln, die du über Genehmigungskarten erteilt hast.",
@@ -3730,7 +3730,7 @@
         "providers": "KI-Anbieter",
         "providers_loaded": "Geladene Anbieter",
         "schedule_tools": "Zeitplan-Werkzeuge",
-        "secret_backend": "Geheimnisspeicher",
+        "secret_backend": "Schlüsselspeicher",
         "unicode_path": "Türkische Zeichen in Pfaden"
       },
       "copyReport": "Support-Bericht kopieren",
@@ -3749,7 +3749,7 @@
         "providers": "Füge den API-Schlüssel unter Einstellungen → KI hinzu oder melde dich bei der Coding-CLI an und schalte sie dort ein.",
         "providers_loaded": "Lade die Anbieter neu, damit der Bot die gespeicherten Einstellungen verwendet.",
         "schedule_tools": "schedule.toml ist ungültig; korrigiere oder lösche sie.",
-        "secret_backend": "Starte die App neu; wenn der Geheimnisspeicher gesperrt bleibt, richte ihn in den Einstellungen neu ein.",
+        "secret_backend": "Starte die App neu; wenn der Schlüsselspeicher gesperrt bleibt, richte ihn in den Einstellungen neu ein.",
         "unicode_path": "Verschiebe den Datenordner in einen Pfad ohne Sonderzeichen oder auf eine lokale NTFS-Platte."
       },
       "loadError": "Diagnose konnte nicht ausgeführt werden",
@@ -3976,11 +3976,11 @@
       "fallbackNotes": "Frühere Fallback-Fehler vor dem Erfolg: {{details}}",
       "keyEmptyPlaceholder": "API-Schlüssel eingeben …",
       "keyStoredPlaceholder": "Schlüssel gespeichert (zum Ersetzen neuen Schlüssel eingeben)",
-      "keyWriteOnlyHint": "Nur schreibend: im Geheimnisspeicher des Betriebssystems abgelegt und nie zurückgelesen.",
+      "keyWriteOnlyHint": "Nur schreibend: im Schlüsselspeicher des Betriebssystems abgelegt und nie zurückgelesen.",
       "loadError": "Websuche-Einstellungen konnten nicht geladen werden: {{message}}",
       "moveDown": "{{name}} nach unten",
       "moveUp": "{{name}} nach oben",
-      "note": "Die Websuche probiert aktive Backends in Prioritätsreihenfolge aus, bis eines Ergebnisse liefert. Änderungen gelten sofort beim nächsten Bot-Zug, ohne Neustart.",
+      "note": "Die Websuche probiert aktive Backends in Prioritätsreihenfolge aus, bis eines Ergebnisse liefert. Änderungen gelten sofort beim nächsten Bot-Durchgang, ohne Neustart.",
       "orderHint": "Schiebe bevorzugte Backends nach oben. Fallbacks ohne Schlüssel funktionieren ohne API-Schlüssel, stoßen aber gelegentlich auf Ratenlimits des Anbieters.",
       "orderTitle": "Reihenfolge der Backends & Fallbacks",
       "save": "Änderungen speichern",
@@ -3992,7 +3992,7 @@
         "needsKey": "Braucht API-Schlüssel",
         "needsUrl": "Braucht URL"
       },
-      "tavilyHint": "Optionaler API-Schlüssel für Tavily Search (nur schreibend im Geheimnisspeicher abgelegt).",
+      "tavilyHint": "Optionaler API-Schlüssel für Tavily Search (nur schreibend im Schlüsselspeicher abgelegt).",
       "tavilyKeyLabel": "Tavily-Search-API-Schlüssel",
       "test": "Testen",
       "testFailed": "Such-Test fehlgeschlagen ({{ms}} ms): {{error}}",
@@ -4002,7 +4002,7 @@
       "testing": "Wird getestet …",
       "title": "Websuche",
       "toast": {
-        "keyCleared": "API-Schlüssel aus dem Geheimnisspeicher entfernt",
+        "keyCleared": "API-Schlüssel aus dem Schlüsselspeicher entfernt",
         "saved": "Websuche-Einstellungen gespeichert"
       },
       "toggleBackend": "{{name}} umschalten"
@@ -4045,8 +4045,8 @@
       "stoppingSweep": "Der Daemon wird gebeten zu stoppen. Dieser Stopp stoppt JEDEN Lauf, der offen ist, wenn der Daemon ihn erhält, auch zwischenzeitlich von einem anderen Gerät oder per Zeitplan gestartete Läufe (die App hatte beim Drücken auf Stopp keine aktuelle Laufliste).",
       "unconfirmable": "Ein Stopp von vor dem Neustart der App hat den Daemon nie erreicht. Drücke erneut auf Stopp, falls noch Bots laufen.",
       "unconfirmed": "Der Daemon hat diesen Stopp verloren, bevor er sagte, was er gestoppt hat. {{quarantined}} Läufe, die betroffen gewesen sein könnten, sind pausiert und können nicht handeln, bis du entscheidest.",
-      "unreachableListed_one": "Bot- und Übernahme-Eingaben sind hier angehalten. Der Daemon hat noch nicht bestätigt; sobald er erreicht wird, stoppt er nur den {{count}} Lauf, der beim Drücken auf Stopp bekannt war. Neuer Versuch …",
-      "unreachableListed_other": "Bot- und Übernahme-Eingaben sind hier angehalten. Der Daemon hat noch nicht bestätigt; sobald er erreicht wird, stoppt er nur die {{count}} Läufe, die beim Drücken auf Stopp bekannt waren. Neuer Versuch …",
+      "unreachableListed_one": "Bot- und Übernahme-Eingaben sind hier angehalten. Der Daemon hat noch nicht bestätigt; sobald er erreicht wird, stoppt er nur den {{count}} Lauf, der beim Drücken auf „Stopp“ bekannt war. Neuer Versuch …",
+      "unreachableListed_other": "Bot- und Übernahme-Eingaben sind hier angehalten. Der Daemon hat noch nicht bestätigt; sobald er erreicht wird, stoppt er nur die {{count}} Läufe, die beim Drücken auf „Stopp“ bekannt waren. Neuer Versuch …",
       "unreachableSweep": "Bot- und Übernahme-Eingaben sind hier angehalten. Der Daemon ist noch nicht erreichbar; sobald er es ist, stoppt dieser Stopp JEDEN in diesem Moment offenen Lauf, auch zwischenzeitlich von einem anderen Gerät oder per Zeitplan gestartete Läufe."
     },
     "dismiss": "Verwerfen",
@@ -4083,7 +4083,7 @@
   },
   "theme": {
     "names": {
-      "blush": "Erröten",
+      "blush": "Zartrosa",
       "chalk": "Kreide",
       "champagne": "Champagner",
       "clay": "Ton",
@@ -4106,7 +4106,7 @@
       "obsidian": "Obsidian",
       "plum": "Pflaume",
       "porcelain": "Porzellan",
-      "race": "Rennen",
+      "race": "Racing",
       "raven": "Rabe",
       "rose": "Rose",
       "sand": "Sand",
@@ -4129,7 +4129,7 @@
     "bot": "Bot",
     "cached": "Im Cache",
     "calls": "Aufrufe",
-    "completion": "Completion",
+    "completion": "Antwort",
     "cost": "Kosten",
     "costNote": "Kosten werden nur für Modelle mit bekanntem Preis angezeigt; „—“ bedeutet unbekannt.",
     "deletedBot": "Gelöschter Bot",
@@ -4157,7 +4157,7 @@
       "save": "Limit setzen",
       "spent": "Diesen Monat ausgegeben",
       "title": "Monatliches Ausgabenlimit",
-      "unpriced": "{{count}} Aufrufe diesen Monat hatten keinen bekannten Preis und sind nicht gezählt."
+      "unpriced": "{{count}} Aufrufe diesen Monat hatten keinen bekannten Preis und wurden nicht mitgezählt."
     },
     "modelCalls": "Modellaufrufe",
     "prompt": "Prompt",
@@ -4186,7 +4186,7 @@
     "codeOmitted": "(Code ausgelassen)",
     "description": "Stimme und Tempo für die Vorlesen-Schaltfläche. Nutzt die Sprachausgabe deines Systems.",
     "dictate": "Diktieren",
-    "dictateStop": "Stoppen und umschreiben",
+    "dictateStop": "Stoppen und transkribieren",
     "micBusy": "Das Mikrofon wird von einer anderen App verwendet. Schließe sie und versuche es erneut.",
     "micDenied": "Das Mikrofon ist nicht verfügbar. Erlaube den Mikrofonzugriff und versuche es erneut.",
     "micMissing": "Es wurde kein Mikrofon gefunden. Schließe eines an und versuche es erneut.",
@@ -4201,11 +4201,11 @@
     "stop": "Vorlesen beenden",
     "stt": {
       "clearKey": "Schlüssel entfernen",
-      "description": "Wo deine Aufnahmen umgeschrieben werden: ein OpenAI-kompatibler Dienst (Cloud-Anbieter oder lokaler Whisper-Server).",
+      "description": "Wo deine Aufnahmen transkribiert werden: ein OpenAI-kompatibler Dienst (Cloud-Anbieter oder lokaler Whisper-Server).",
       "key": "API-Schlüssel",
       "keyStored": "Schlüssel gespeichert (zum Ersetzen eintippen)",
       "model": "Modell",
-      "privacy": "Eine Aufnahme wird nur gesendet, wenn du das Mikrofon drückst, und nur an diese Adresse. Der Schlüssel bleibt im Geheimnisspeicher.",
+      "privacy": "Eine Aufnahme wird nur gesendet, wenn du das Mikrofon drückst, und nur an diese Adresse. Der Schlüssel bleibt im Schlüsselspeicher.",
       "save": "Speichern",
       "saved": "Diktiereinstellungen gespeichert",
       "title": "Diktierdienst",
@@ -4256,19 +4256,19 @@
     "fromContent": "Werte können aus Werkzeugausgaben oder Modellschlüssen stammen.",
     "fromUser": "Werte stammen aus der Nutzeranfrage, vor jeder Werkzeugausgabe.",
     "name": "Name",
-    "noParameters": "Keine Parameter. Prüfen Sie alle festen Werte in den Schritten.",
+    "noParameters": "Keine Parameter. Prüfe alle festen Werte in den Schritten.",
     "parameters": "Parameter-Standardwerte",
     "required": "Beim Ausführen einen Wert verlangen",
-    "reviewHint": "Prüfen Sie jeden Schritt und jeden Parameter vor dem Speichern. Seitentext und Werkzeugausgaben sind nicht vertrauenswürdige Daten. Das Speichern erstellt eine Automatisierung, die diese Werkzeugaufrufe ohne Modell wiederholen kann; die normalen Berechtigungsprüfungen gelten weiter.",
+    "reviewHint": "Prüfe jeden Schritt und jeden Parameter vor dem Speichern. Seitentext und Werkzeugausgaben sind nicht vertrauenswürdige Daten. Das Speichern erstellt eine Automatisierung, die diese Werkzeugaufrufe ohne Modell wiederholen kann; die normalen Berechtigungsprüfungen gelten weiter.",
     "save": "Workflow speichern",
     "saved": "Workflow gespeichert",
-    "saving": "Wird gespeichert…",
+    "saving": "Wird gespeichert …",
     "sensitive": "Wird beim Ausführen verlangt. Der aufgezeichnete Wert wird nicht gespeichert.",
     "skipped": "Übersprungene Aufrufe und Gründe",
     "steps": "Schritte und vollständige Parameter",
     "title": "Workflow prüfen",
     "tooFewSteps": "Dieser Lauf hat weniger als zwei aufzeichnungsfähige Schritte.",
-    "untrustedWarning": "Dieser Lauf hat externe oder private Inhalte gelesen. Prüfen Sie jeden betroffenen Schritt, bevor Sie eine dauerhafte Automatisierung freigeben.",
+    "untrustedWarning": "Dieser Lauf hat externe oder private Inhalte gelesen. Prüfe jeden betroffenen Schritt, bevor du eine dauerhafte Automatisierung freigibst.",
     "warnings": "Hinweise zur Prüfung"
   }
 }
