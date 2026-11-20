@@ -121,6 +121,23 @@ kept in a `backup-*` folder inside the data directory.
 Daemon health and version, uptime, and the number of pending approvals. Also
 verifies the API token.
 
+### `bot proxy`
+
+Open a loopback HTTP proxy tunnel to a paired remote daemon and keep it open
+until `Ctrl-C`. Requires `--remote <ENDPOINT>` (conflicts with `--url`):
+
+```sh
+bot --remote <ENDPOINT> proxy
+```
+
+`bot proxy` waits up to 20 seconds for the iroh tunnel to connect, then prints
+the loopback `url:` and `token:`. **Security:** the printed token grants
+desktop-role access to the paired host on every route (including `/v1/secrets`);
+do not share or log it, pass it to tools via `BOT_API_TOKEN` rather than a
+command-line argument, and press `Ctrl-C` as soon as you finish. Used by the
+[live-view link measurement guide](../design/live-view-link-measurement.md)
+(`BOT_API_TOKEN=<token> node scripts/tools/measure-live-link.mjs --url <url> --seconds 30`).
+
 ### `bot chat <BOT_ID> <MESSAGE>`
 
 Send a message and stream the answer.
@@ -381,6 +398,11 @@ and exits 0.
   global `--data-dir`, `--relay <default|none|URL>` (default `default`) and
   `--display <X11>` (for example `:99`).
 - `bot-desktop`: the Windows desktop app.
+- `bot-eval`: offline and live evaluation runner (`crates/evals`, subcommands
+  `run`, `compare`, `report`, `list`), including the
+  [prompt-injection evaluation pack](security.md#prompt-injection-evaluation-pack)
+  (`bot-eval run --tier 1 --filter inj- --repeat 3`; see
+  [`evals/baselines/README.md`](../../evals/baselines/README.md)).
 
 ## The HTTP API
 

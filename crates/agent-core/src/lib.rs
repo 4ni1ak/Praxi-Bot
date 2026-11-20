@@ -78,7 +78,7 @@ pub use scoped_grant::{Scope, ScopeKind};
 pub use shared::{
     ApprovalScope, CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, LoopError,
     MessageMode, Providers, ScheduleWork, SkillHintFn, SkillHints, StreamItem, build_providers,
-    schedule_id_of,
+    initiator_of, schedule_id_of,
 };
 pub use subagent::MAX_DEPTH as MAX_SUBAGENT_DEPTH;
 pub use usage::CallPurpose;

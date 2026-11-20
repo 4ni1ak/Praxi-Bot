@@ -23,7 +23,7 @@
 #   --without-desktop-session  Alias for --session none (--system mode)
 #   --without-desktop          Remove praxi-desktop.service and praxi-xvfb.service (--system mode)
 #   --display <:N>             X11 display number for Xvfb (default: :99)
-#   --screen <WxHxD>           Xvfb screen geometry (default: 1280x800x24)
+#   --screen <WxHxD>           Xvfb screen geometry (default: 1920x1080x24)
 #   --skip-packages            Skip apt/dnf package installation
 #   --no-start                 Write units/config and enable without starting services
 #   --dry-run                  Print planned actions without modifying the host
@@ -40,7 +40,7 @@ WITHOUT_SESSION_APPS=0
 KEEP_SESSION_APPS=0
 SESSION_APPS_ACTIVE=0
 DISPLAY_NUM=":99"
-SCREEN_SPEC="1280x800x24"
+SCREEN_SPEC="1920x1080x24"
 SKIP_PACKAGES=0
 NO_START=0
 DRY_RUN=0

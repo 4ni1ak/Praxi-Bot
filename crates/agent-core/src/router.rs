@@ -65,14 +65,46 @@ pub(crate) struct BotLadder {
     fingerprint: Mutex<Option<u64>>,
 }
 
+/// Values held only in memory; intentionally has no Debug/Serialize implementation.
+pub(crate) struct HumanReplay {
+    pub bot: BotId,
+    pub run: Option<RunId>,
+    pub name: String,
+    pub params: BTreeMap<String, String>,
+}
+
 /// Ladders per bot and the workflow wiring.
 #[derive(Default)]
 pub(crate) struct Router {
     pub(crate) ladders: Mutex<HashMap<BotId, Arc<BotLadder>>>,
     pub workflows: OnceLock<WorkflowWiring>,
+    pub human_replays: Mutex<HashMap<String, HumanReplay>>,
+    pub tainted_runs: Mutex<std::collections::HashSet<RunId>>,
 }
 
 impl Router {
+    fn take_human_params(
+        &self,
+        run: &Run,
+        name: &str,
+        params: &mut serde_json::Map<String, Value>,
+    ) -> Result<bool, ExecError> {
+        let Some(ticket) = params.remove("__human_replay") else {
+            return Ok(false);
+        };
+        let replay = ticket
+            .as_str()
+            .and_then(|ticket| self.human_replays.lock().remove(ticket))
+            .filter(|r| r.bot == run.bot_id && r.run == Some(run.id) && r.name == name)
+            .ok_or_else(|| xe("human replay values unavailable; start again"))?;
+        *params = replay
+            .params
+            .into_iter()
+            .map(|(k, v)| (k, Value::String(v)))
+            .collect();
+        Ok(true)
+    }
+
     /// Forget every ladder (providers reloaded: embedder / classifier changed).
     pub fn reset(&self) {
         self.ladders.lock().clear();
@@ -296,12 +328,22 @@ impl Shared {
     pub(crate) fn router_candidates(&self, profile: &BotProfile, bot: BotId) -> Vec<Candidate> {
         let mut out = Vec::new();
         if let Some(w) = self.router.workflows.get()
-            && let Ok(entries) = w.store.list()
+            && let Ok(store) = w.store.for_bot(&bot.to_string())
+            && let Ok(entries) = store.list()
         {
             for e in entries {
-                let Ok(wf) = w.store.get(&e.name) else {
+                let Ok(wf) = store.get(&e.name) else {
                     continue;
                 };
+                // Runtime values are accepted only by the explicit human entry.
+                // Excluding these candidates also closes K1/K2/K3 fuzzy replay.
+                if wf
+                    .params
+                    .iter()
+                    .any(|p| p.name.starts_with("recorded_secret_"))
+                {
+                    continue;
+                }
                 let version = wf.to_toml().map_or_else(
                     |_| e.updated_at_ms.to_string(),
                     |t| format!("{:016x}", fnv(t.as_bytes())),
@@ -704,6 +746,7 @@ impl TurnExecutor {
     /// Replay the routed workflow through the loop's permission gate.  Never
     /// fails the run: a replay that cannot start or stops early hands over to
     /// K4 with a note.
+    #[allow(clippy::too_many_lines)] // one ordered replay pass: exposure is recorded before every exit
     pub(crate) async fn exec_workflow(
         &self,
         run: &Run,
@@ -712,10 +755,11 @@ impl TurnExecutor {
         let ctx = self.sh.ctx(run)?;
         let name = step.input["name"].as_str().unwrap_or_default().to_owned();
         let level = step.input["level"].as_str().unwrap_or("K0").to_owned();
-        let params: serde_json::Map<String, Value> = step.input["params"]
+        let mut params: serde_json::Map<String, Value> = step.input["params"]
             .as_object()
             .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
+        let human = self.sh.router.take_human_params(run, &name, &mut params)?;
         let fail = |why: String| {
             json!({
                 "completed": false,
@@ -727,7 +771,11 @@ impl TurnExecutor {
             })
         };
         let Some(w) = self.sh.router.workflows.get() else {
-            return Ok(fail("workflows are not available".into()));
+            return if human {
+                Err(xe("workflows are not available"))
+            } else {
+                Ok(fail("workflows are not available".into()))
+            };
         };
         // Loading/parsing can itself return file content in an error. Record
         // exposure before touching the store and persist it on failure too.
@@ -735,19 +783,44 @@ impl TurnExecutor {
             tool_registry::ContentClass::untrusted_private(),
             "saved workflow",
         );
-        let fail_after_read = |why| {
+        let fail_after_read = |why: String| {
             let mut failed = fail(why);
             failed["exposure"] = json!({"ran": true, "ingests_untrusted": true,
                 "reads_private": true, "label": "saved workflow"});
             failed
         };
-        let wf = match w.store.get(&name) {
+        let store = w
+            .store
+            .for_bot(&run.bot_id.to_string())
+            .map_err(|_| xe("invalid bot scope"))?;
+        let wf = match store.get(&name) {
             Ok(wf) => wf,
-            Err(e) => return Ok(fail_after_read(e.to_string())),
+            Err(e) => {
+                return if human {
+                    Err(xe("workflow unavailable"))
+                } else {
+                    Ok(fail_after_read(e.to_string()))
+                };
+            }
         };
+        if !human
+            && wf
+                .params
+                .iter()
+                .any(|p| p.name.starts_with("recorded_secret_"))
+        {
+            return Err(xe("runtime parameters require the human replay endpoint"));
+        }
+        if wf
+            .source
+            .as_ref()
+            .is_some_and(|s| s.bot_id != run.bot_id.to_string())
+        {
+            return Err(xe("workflow belongs to another bot"));
+        }
         let mut opts = w.opts.clone();
-        opts.run_id = run.id.to_string();
         opts.bot_id = Some(run.bot_id.to_string());
+        opts.run_id = run.id.to_string();
         let gate = LoopGate {
             sh: Arc::downgrade(&self.sh),
         };
@@ -756,8 +829,19 @@ impl TurnExecutor {
             .await
         {
             Ok(r) => r,
-            Err(e) => return Ok(fail_after_read(e.to_string())),
+            Err(e) => {
+                return if human {
+                    Err(xe("human replay failed"))
+                } else {
+                    Ok(fail_after_read(e.to_string()))
+                };
+            }
         };
+        if human && !report.is_completed() {
+            return Err(xe(
+                "human replay stopped; review state before starting again",
+            ));
+        }
         let summary = summarize(&report);
         let exposure = json!({
             "ran": true,

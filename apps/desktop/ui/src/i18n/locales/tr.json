@@ -2266,13 +2266,25 @@
       "hint": "Yeniden dene. Sürerse ayrıntıları kopyalayıp bildir.",
       "title": "Bir sorun çıktı"
     },
+    "hostBusy": {
+      "hint": "Birkaç saniye bekleyip tekrar deneyin.",
+      "title": "Ana bilgisayar meşgul"
+    },
     "hostManaged": {
       "hint": "Botun çalıştığı bilgisayardaki Praxi'den değiştir.",
       "title": "Bu öbür bilgisayarda yönetiliyor"
     },
+    "hostSilent": {
+      "hint": "{{name}} açık ve ağa bağlı mı kontrol edin, sonra tekrar deneyin.",
+      "title": "{{name}} yanıt vermedi"
+    },
     "http_error": {
       "hint": "Yeniden dene. Sürerse ayrıntıları kopyalayıp bildir.",
       "title": "Servis bir sorunla yanıt verdi"
+    },
+    "localOnly": {
+      "hint": "Praxi'yi ana bilgisayarın kendisinde kullanın veya yönetici masaüstünden kaldırın.",
+      "title": "Bunu yalnızca ana bilgisayarın başındaki kişi yapabilir"
     },
     "modelFailed": {
       "hint": "Yeniden dene ya da başka bir model seç. Aşağıdaki ayrıntılar modelin ne bildirdiğini söyler.",
@@ -2282,6 +2294,10 @@
       "hint": "Servis hâlâ açılıyor olabilir. Praxi kendiliğinden yeniden dener; servisi yeniden de başlatabilirsin.",
       "title": "Praxi yerel servisine ulaşamıyor"
     },
+    "noInputBackend": {
+      "hint": "Ana bilgisayarda bu ekran için klavye ve fare erişimi yok (örneğin masaüstü oturumu olmayan bir sunucu). İzleyebilirsiniz ama devralamazsınız.",
+      "title": "Bu ekran denetlenemiyor"
+    },
     "openSettings": "Ayarları aç",
     "reload": "Yenile",
     "restartApp": "Praxi'yi yeniden başlat",
@@ -2289,6 +2305,14 @@
     "restarting": "Yeniden başlatılıyor…",
     "retry": "Yeniden dene",
     "retrying": "{{seconds}} sn sonra yeniden denenecek",
+    "screenInputDenied": {
+      "hint": "Ana bilgisayardaki Praxi'de bu bilgisayara ekran denetimi izni verin, sonra tekrar deneyin.",
+      "title": "Bu bilgisayara ekran denetimi izni verilmemiş"
+    },
+    "screenNoConfirm": {
+      "hint": "Ekran tuşların bırakıldığını onaylamadı, bu yüzden duraklatma korundu. Tekrar deneyin; sürerse ana bilgisayardaki Praxi'yi yeniden başlatın.",
+      "title": "Ekran onaylamadı"
+    },
     "sendFailed": {
       "hint": "Bağlantını kontrol edip yeniden dene.",
       "title": "Mesajın gönderilmedi"
@@ -2685,14 +2709,16 @@
       "botPermissions": "Bir botun izinleri ve araçları {{name}} üzerinde yönetilir. Ad, kişilik ve model buradan değiştirilebilir.",
       "composio": "Uygulama bağlantıları {{name}} üzerinde değil, bu bilgisayarın sahibi tarafında yönetilir.",
       "credentials": "E-posta ve arama hesapları {{name}} üzerinde bağlanır.",
-      "generic": "{{name}} buna izin vermedi. Bu yalnızca {{name}} üzerinde yapılabilir.",
+      "generic": "{{name}} buna izin vermedi: {{reason}}",
       "hostTransfer": "Sunucuyu taşıma ve kanal eşleştirme {{name}} üzerinde yapılır.",
       "knowledge": "Bilgi ayarları {{name}} üzerinde yönetilir.",
       "lifecycle": "Eşleştirme ve sunucu güncellemeleri {{name}} üzerinde yapılır.",
+      "localOnly": "Bunu yalnızca {{name}} başındaki kişi yapabilir, bu uygulama yapamaz.",
       "overlay": "Bu soruyu yalnızca {{name}} başındaki kişi yanıtlayabilir.",
       "ownerOnly": "Bu yalnızca {{name}} üzerinde yapılabilir.",
       "policy": "Çalıştırma politikası bu uygulamadan değil, {{name}} üzerinde ayarlanır.",
       "role": "{{name}} bu bilgisayarın bunu yapmasına izin vermiyor.",
+      "screenInput": "{{name}} bu bilgisayara ekranını denetleme izni vermedi. {{name}} üzerindeki Praxi'de izin verin.",
       "secrets": "Anahtarlar ve gizli bilgiler bu uygulamadan değil, {{name}} üzerinde eklenir.",
       "tools": "Araç sunucuları ve beceriler {{name}} üzerinde yönetilir."
     },
@@ -4159,5 +4185,29 @@
   "window": {
     "maximize": "Büyüt / geri yükle",
     "minimize": "Küçült"
+  },
+  "workflow": {
+    "button": "Akış olarak kaydet",
+    "cancel": "İptal",
+    "confirmInfluencedStep": "Bu adımı ve dış içerik etkisini inceledim.",
+    "defaultValue": "Varsayılan değer",
+    "description": "Açıklama",
+    "fromContent": "Değerler araç çıktısından veya model çıkarımından gelmiş olabilir.",
+    "fromUser": "Değerler araç çıktısı okunmadan önce kullanıcı isteğiyle eşleşti.",
+    "name": "Ad",
+    "noParameters": "Parametre yok. Adımlardaki tüm sabit değerleri inceleyin.",
+    "parameters": "Parametre varsayılanları",
+    "required": "Tekrarda değer iste",
+    "reviewHint": "Kaydetmeden önce her adımı ve parametreyi inceleyin. Sayfa metni ve araç çıktısı güvenilmeyen veridir. Kaydetmek, bu araç çağrılarını model kullanmadan yineleyebilen bir otomasyon oluşturur; normal izin denetimleri uygulanmaya devam eder.",
+    "save": "İş akışını kaydet",
+    "saved": "İş akışı kaydedildi",
+    "saving": "Kaydediliyor…",
+    "sensitive": "Tekrarda zorunlu. Kaydedilen değer saklanmaz.",
+    "skipped": "Atlanan çağrılar ve nedenleri",
+    "steps": "Adımlar ve tüm parametreler",
+    "title": "İş akışını incele",
+    "tooFewSteps": "Bu koşuda kaydedilebilir en az iki adım yok.",
+    "untrustedWarning": "Bu koşu dış veya özel içerik okudu. Kalıcı otomasyona izin vermeden önce etkilenen her adımı inceleyin.",
+    "warnings": "İnceleme notları"
   }
 }

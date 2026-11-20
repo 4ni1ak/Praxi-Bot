@@ -95,6 +95,14 @@ impl Recording {
     /// # Errors
     /// Name collision, invalid workflow, or a store error.
     pub fn save_new(&self, store: &WorkflowStore) -> Result<u64, SaveError> {
+        if !self.dropped.is_empty() {
+            return Err(
+                crate::error::StoreError::Workflow(crate::error::WorkflowError::Invalid(
+                    "incomplete recordings cannot be saved".into(),
+                ))
+                .into(),
+            );
+        }
         store.save_with_mode(&self.workflow, SaveMode::CreateNew)
     }
 }
@@ -993,6 +1001,26 @@ mod tests {
         let json = rec.workflow.to_json().unwrap();
         assert!(json.contains("login/github"));
         rec.workflow.validate().unwrap();
+    }
+
+    #[test]
+    fn incomplete_recording_cannot_be_persisted_even_by_direct_callers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut workflow = Workflow::new("incomplete");
+        workflow.steps.push(Step::Tool(ToolStep {
+            tool: "mutate".into(),
+            input: serde_json::json!({}),
+        }));
+        let recording = Recording {
+            workflow,
+            dropped: vec![DroppedStep {
+                tool: "desktop_drag".into(),
+                reason: "unsupported".into(),
+            }],
+            warnings: vec![],
+        };
+        assert!(recording.save_new(&WorkflowStore::new(dir.path())).is_err());
+        assert!(WorkflowStore::new(dir.path()).list().unwrap().is_empty());
     }
 
     #[test]

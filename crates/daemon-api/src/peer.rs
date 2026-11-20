@@ -461,6 +461,11 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     let denied = peer.role != PeerRole::Desktop
         && (host_file_review(&check_path)
             || peer.role != PeerRole::Phone
+            // Workflow definitions reveal commands and destinations. Phones
+            // have no read, proposal, mutation or replay access.
+            || check_path == "/v1/workflows"
+            || check_path.starts_with("/v1/workflows/")
+            || check_path.ends_with("/workflow-proposal")
             || (req.method() == Method::POST
                 && PHONE_DENIED_POST_PATHS.contains(&check_path.as_str()))
             || (matches!(*req.method(), Method::POST | Method::PUT)

@@ -2695,6 +2695,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{id}/workflow-proposal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["propose_workflow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/schedules": {
         parameters: {
             query?: never;
@@ -3235,6 +3251,54 @@ export interface paths {
          *     `202` once accepted (the run goes on in the background).
          */
         post: operations["webhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_workflows"];
+        put?: never;
+        post: operations["save_workflow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["show_workflow"];
+        put?: never;
+        post?: never;
+        delete: operations["delete_workflow"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{name}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["run_workflow"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5984,6 +6048,11 @@ export interface components {
             /** @description Pairing ticket printed by `bot host invite --role desktop` on the host. */
             ticket: string;
         };
+        ParameterOrigin: {
+            /** @description Exact user-request match before tool output, or conservatively unknown. */
+            origin: string;
+            pointer: string;
+        };
         /** @description Body of `POST /v1/schedules/parse`. */
         ParseSchedule: {
             /** @description English or Turkish phrase, e.g. `every weekday at 9`, `her gün 09:00`. */
@@ -6341,10 +6410,29 @@ export interface components {
              */
             prompt_tokens: number;
         };
+        RunWorkflow: {
+            /** Format: uuid */
+            chat_id: string;
+            /** @description Out-of-band values, kept only in replay memory and registered for redaction. */
+            params?: {
+                [key: string]: string;
+            };
+        };
         /** @description Bot `[runtime]` settings (ADR-0027 §7). */
         RuntimeConfigDto: {
             /** @description Configured computer target (`auto`, `pc`, `host`, `browser`, `off`, or `node:<id>`). */
             computer: string;
+        };
+        SaveWorkflow: {
+            /** @description Step indexes explicitly acknowledged after reviewing external influence. */
+            confirmed_steps?: number[];
+            description: string;
+            name: string;
+            params: components["schemas"]["WorkflowParam"][];
+            /** Format: uuid */
+            run_id: string;
+            /** @description The complete reviewed steps, which must equal the rebuilt proposal. */
+            steps: unknown[];
         };
         /**
          * @description What happened to a schedule (see [`ScheduleChanged`]).
@@ -6669,6 +6757,10 @@ export interface components {
             /** @description Shared and bundled catalog skills. */
             skills: components["schemas"]["CatalogSkillDto"][];
         };
+        SkippedCall: {
+            reason: string;
+            tool: string;
+        };
         SourceRect: {
             /** Format: int32 */
             height: number;
@@ -6735,6 +6827,13 @@ export interface components {
          * @enum {string}
          */
         Status: "ok" | "warn" | "fail" | "skipped";
+        StepProvenance: {
+            needs_confirmation: boolean;
+            origin: string;
+            parameters: components["schemas"]["ParameterOrigin"][];
+            step_index: number;
+            untrusted_read_before: boolean;
+        };
         /**
          * @description What happened to one run of a Stop's target set.
          *
@@ -7149,6 +7248,34 @@ export interface components {
             query: string;
             /** @description Number of search results returned. */
             result_count: number;
+        };
+        /** @description Complete step data is intentional: commands and parameters must be reviewable. */
+        WorkflowDto: {
+            description: string;
+            name: string;
+            params: components["schemas"]["WorkflowParam"][];
+            source?: unknown;
+            steps: unknown[];
+        };
+        WorkflowParam: {
+            default?: string | null;
+            description: string;
+            name: string;
+            type: string;
+        };
+        WorkflowProposal: {
+            /** @description These defaults must remain absent, including after user edits. */
+            required_params: string[];
+            /** Format: uuid */
+            run_id: string;
+            skipped: components["schemas"]["SkippedCall"][];
+            step_provenance: components["schemas"]["StepProvenance"][];
+            warnings: string[];
+            workflow: components["schemas"]["WorkflowDto"];
+        };
+        WorkflowRun: {
+            /** Format: uuid */
+            run_id: string;
         };
     };
     responses: never;
@@ -13243,6 +13370,43 @@ export interface operations {
             };
         };
     };
+    propose_workflow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowProposal"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     list_schedules: {
         parameters: {
             query?: never;
@@ -14643,6 +14807,175 @@ export interface operations {
             };
             /** @description the scheduler is not running */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_workflows: {
+        parameters: {
+            query: {
+                bot_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"][];
+                };
+            };
+        };
+    };
+    save_workflow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveWorkflow"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    show_workflow: {
+        parameters: {
+            query: {
+                bot_id: string;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_workflow: {
+        parameters: {
+            query: {
+                bot_id: string;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    run_workflow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunWorkflow"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRun"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

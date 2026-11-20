@@ -897,6 +897,43 @@ impl Storage {
         Ok((messages, omitted))
     }
 
+    /// Exposure bits and source labels of every message of `chat` created at or
+    /// before `until_ms`, other than those delivered into `exclude_run`.
+    /// Unbounded: unlike the model-context window, nothing scrolls out.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn chat_exposure_until(
+        &self,
+        chat_id: ChatId,
+        exclude_run: RunId,
+        until_ms: i64,
+    ) -> Result<(bool, bool, Vec<String>)> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
+            "SELECT exposure_untrusted, exposure_private, exposure_sources FROM messages              WHERE chat_id = ?1 AND created_at_ms <= ?3 AND (run_id IS NULL OR run_id <> ?2)",
+        )?;
+        let mut rows = st.query(params![
+            chat_id.to_string(),
+            exclude_run.to_string(),
+            until_ms
+        ])?;
+        let (mut untrusted, mut private) = (false, false);
+        let mut sources: Vec<String> = Vec::new();
+        while let Some(r) = rows.next()? {
+            untrusted |= r.get::<_, i64>(0)? != 0;
+            private |= r.get::<_, i64>(1)? != 0;
+            let labels: Vec<String> =
+                serde_json::from_str(&r.get::<_, String>(2)?).unwrap_or_default();
+            for l in labels {
+                if !l.is_empty() && !sources.contains(&l) {
+                    sources.push(l);
+                }
+            }
+        }
+        Ok((untrusted, private, sources))
+    }
+
     // ---- runs ----
 
     /// Insert a run.
@@ -2023,6 +2060,39 @@ mod tests {
         assert_eq!(f.st.list_chats(other.id).unwrap().len(), 0);
         run(&f);
         assert_eq!(f.st.list_runs(other.id).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn chat_exposure_until_sees_old_tainted_messages_the_bounded_window_drops() {
+        let f = fx();
+        let r = run(&f);
+        for i in 0..300u32 {
+            f.st.insert_message(&Message {
+                id: Uuid::from_u128(u128::from(i) + 1),
+                user_id: f.user.id,
+                chat_id: f.chat.id,
+                run_id: None,
+                role: "user".into(),
+                content: "m".into(),
+                created_at_ms: i64::from(i),
+                exposure_untrusted: i == 0,
+                exposure_private: false,
+                exposure_sources: if i == 0 {
+                    vec!["web".into()]
+                } else {
+                    Vec::new()
+                },
+            })
+            .unwrap();
+        }
+        let (window, omitted) =
+            f.st.list_messages_bounded(f.chat.id, Some(r.id), 256, usize::MAX)
+                .unwrap();
+        assert!(omitted && !window.iter().any(|m| m.exposure_untrusted));
+        let (untrusted, private, sources) =
+            f.st.chat_exposure_until(f.chat.id, r.id, 1000).unwrap();
+        assert!(untrusted && !private);
+        assert_eq!(sources, vec!["web".to_string()]);
     }
 
     #[test]

@@ -34,14 +34,14 @@
 #   --host-mode          Run the service as 'bot serve --host' (always-on host; still 127.0.0.1 only,
 #                        no inbound port; kept on re-install once set)
 #   --with-desktop       Also install Xvfb + Chromium and a praxi-xvfb.service virtual display
-#   --with-desktop-session  Also install minimal Xfce session on Xvfb (default 1280x800x24; implies --with-desktop)
+#   --with-desktop-session  Also install minimal Xfce session on Xvfb (default 1920x1080x24; implies --with-desktop)
 #   --with-session-apps  With --with-desktop-session: also install/expose xfce4-terminal and thunar (runs as praxi with read access to praxi.env)
 #   --without-session-apps  Hide xfce4-terminal and thunar menu entries (does not uninstall packages)
 #   --without-desktop-session  Remove praxi-desktop.service and session bus env (keeps praxi-xvfb unless --without-desktop)
 #   --desktop-session <none|xfce>  Explicit desktop session selector (xfce or none)
 #   --without-desktop    Remove praxi-xvfb.service, praxi-desktop.service and DISPLAY (updates keep both otherwise)
 #   --display <:N>       X display for --with-desktop (default: :99)
-#   --screen <WxHxD>     Xvfb screen (default: 1920x1080x24, or 1280x800x24 with --with-desktop-session)
+#   --screen <WxHxD>     Xvfb screen (default: 1920x1080x24)
 #   --skip-packages      Do not install OS packages (you provide curl, tar, libdbus, libssl, ...)
 #   --no-start           Install and enable, but do not start the services
 #   --uninstall          Remove the services and /opt/praxi (keeps data and the praxi user)
@@ -141,7 +141,7 @@ Options:
   --port <port>        Daemon port on 127.0.0.1 (default: 47821; kept on re-install unless given)
   --host-mode          Run the service as 'bot serve --host' (kept on re-install once set; opens no port)
   --with-desktop       Also install Xvfb + Chromium and a praxi-xvfb.service virtual display
-  --with-desktop-session  Also install minimal Xfce session on Xvfb (default 1280x800x24; implies --with-desktop)
+  --with-desktop-session  Also install minimal Xfce session on Xvfb (default 1920x1080x24; implies --with-desktop)
   --with-session-apps  With --with-desktop-session: also install/expose xfce4-terminal and thunar
                        (security note: menu apps run as praxi and can read praxi.env / data dir)
   --without-session-apps  Hide xfce4-terminal and thunar menu entries (does not uninstall packages)
@@ -149,7 +149,7 @@ Options:
   --desktop-session <none|xfce>  Explicit desktop session selector (xfce or none)
   --without-desktop    Remove praxi-xvfb.service, praxi-desktop.service and DISPLAY (updates keep both otherwise)
   --display <:N>       X display for --with-desktop (default: :99; kept on re-install unless given)
-  --screen <WxHxD>     Xvfb screen (default: 1920x1080x24, or 1280x800x24 with --with-desktop-session)
+  --screen <WxHxD>     Xvfb screen (default: 1920x1080x24)
   --skip-packages      Do not install OS packages (you provide curl, tar, libdbus, libssl, ...)
   --no-start           Install and enable, but do not start the services
   --uninstall          Remove the services and /opt/praxi (keeps data and the praxi user)
@@ -323,10 +323,10 @@ if [[ "${SCREEN_SET}" -eq 0 ]]; then
     if [[ "${xvfb_line}" =~ -screen[[:space:]]+0[[:space:]]+([0-9]+x[0-9]+x[0-9]+) ]]; then
       SCREEN_SPEC="${BASH_REMATCH[1]}"
     elif [[ "${WITH_DESKTOP_SESSION}" -eq 1 ]]; then
-      SCREEN_SPEC="1280x800x24"
+      SCREEN_SPEC="1920x1080x24"
     fi
   elif [[ "${WITH_DESKTOP_SESSION}" -eq 1 ]]; then
-    SCREEN_SPEC="1280x800x24"
+    SCREEN_SPEC="1920x1080x24"
   fi
 fi
 

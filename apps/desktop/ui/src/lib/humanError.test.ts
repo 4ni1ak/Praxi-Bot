@@ -157,3 +157,36 @@ test("a service that does not start is worded by its cause, with the exit code a
   }
   await i18n.changeLanguage("en");
 });
+
+test("takeover and pause failures name their real reason, never the generic sentence", async () => {
+  for (const lng of ["en", "tr", "de"]) {
+    await i18n.changeLanguage(lng);
+    const generic = i18n.t("liveView.errors.generic");
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ status: 403, code: "forbidden", host: "Praxi host", message: "only the local user may do this" }, "host_refusal"],
+      [{ status: 403, code: "forbidden", host: "Praxi host", message: "some brand new refusal" }, "host_refusal"],
+      [{ status: 409, code: "conflict", message: "this screen target has no input backend, so it cannot be taken over" }, "noInputBackend"],
+      [{ status: 503, code: "unavailable", message: "the executor is busy; try again" }, "hostBusy"],
+      [{ status: 503, code: "unavailable", message: "the display target did not confirm the key reset; the latch is kept, try again" }, "screenNoConfirm"],
+      [{ status: 504, code: "timeout", host: "Praxi host", message: "gateway timeout" }, "host_silent"],
+      [{ status: 0, code: "network", host: "Praxi host", message: "fetch failed" }, "host_silent"]
+    ];
+    for (const [err, code] of cases) {
+      const h = layer.humanLine(err);
+      assert.equal(layer.humanError(err).code, code, `${lng} ${JSON.stringify(err)}`);
+      assert.notEqual(h, generic);
+      assert.ok(h.length > 10);
+    }
+    // The unknown host refusal keeps the daemon's reason in the sentence.
+    assert.match(layer.humanLine(cases[1][0]), /some brand new refusal/);
+  }
+  await i18n.changeLanguage("en");
+});
+
+test("the live-view error line falls back to the humanized message, not the generic text", async () => {
+  const mod = (await server.ssrLoadModule("/src/lib/liveViewError.ts")) as typeof import("./liveViewError.ts");
+  await i18n.changeLanguage("en");
+  assert.equal(mod.liveViewErrorText({ code: "forbidden", message: "Praxi host did not allow this: x" }), "Praxi host did not allow this: x");
+  assert.equal(mod.liveViewErrorText({ code: "pause_changed" }), i18n.t("liveView.errors.pause_changed"));
+  assert.equal(mod.liveViewErrorText({ code: "zzz" }), i18n.t("liveView.errors.generic"));
+});
