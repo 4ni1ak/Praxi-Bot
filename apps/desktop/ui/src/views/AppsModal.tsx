@@ -571,7 +571,7 @@ function CustomServerForm({
           onChange={(e) => set({ name: e.target.value })}
         />
         {error === "name" ? (
-          <p className={formStyles.error}>{t("apps.custom.errName")}</p>
+          <p className={formStyles.error} role="alert">{t("apps.custom.errName")}</p>
         ) : null}
       </div>
       <Segmented
@@ -597,7 +597,7 @@ function CustomServerForm({
               onChange={(e) => set({ command: e.target.value })}
             />
             {error === "command" ? (
-              <p className={formStyles.error}>{t("apps.custom.errCommand")}</p>
+              <p className={formStyles.error} role="alert">{t("apps.custom.errCommand")}</p>
             ) : null}
           </div>
           <div className={formStyles.field}>
@@ -627,7 +627,7 @@ function CustomServerForm({
             onChange={(e) => set({ url: e.target.value })}
           />
           {error === "url" ? (
-            <p className={formStyles.error}>{t("apps.custom.errUrl")}</p>
+            <p className={formStyles.error} role="alert">{t("apps.custom.errUrl")}</p>
           ) : null}
         </div>
       )}

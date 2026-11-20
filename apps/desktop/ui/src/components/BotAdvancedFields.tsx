@@ -118,7 +118,7 @@ export function BotAvatarUploadField({
         )}
       </div>
       {avatarError ? (
-        <p className={formStyles.error}>{avatarError}</p>
+        <p className={formStyles.error} role="alert">{avatarError}</p>
       ) : (
         <p className={formStyles.hint}>{t("botForm.avatarHint")}</p>
       )}
