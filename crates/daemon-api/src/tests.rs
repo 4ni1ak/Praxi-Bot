@@ -4520,7 +4520,7 @@ async fn spend_limit_is_owner_only_validated_live_and_persisted() {
     assert_eq!(t.agent.spend_limit(), Some(50.0));
     assert_eq!(
         crate::spend_routes::load_limit(t._dir.path()),
-        Some(50.0),
+        Ok(Some(50.0)),
         "survives a restart"
     );
 
@@ -4533,5 +4533,9 @@ async fn spend_limit_is_owner_only_validated_live_and_persisted() {
     .await;
     assert_eq!(r.status, StatusCode::OK);
     assert_eq!(t.agent.spend_limit(), None);
-    assert_eq!(crate::spend_routes::load_limit(t._dir.path()), None);
+    assert_eq!(crate::spend_routes::load_limit(t._dir.path()), Ok(None));
+
+    // A damaged file is an error (the daemon then fails closed), not "no limit".
+    std::fs::write(t._dir.path().join("spend-limit.json"), b"{not json").unwrap();
+    assert!(crate::spend_routes::load_limit(t._dir.path()).is_err());
 }
