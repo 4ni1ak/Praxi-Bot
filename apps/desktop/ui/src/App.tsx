@@ -672,6 +672,8 @@ function AppShell() {
 
   // "What's new": bundled notes of the installed version, shown once per version (never blocks, no network).
   useEffect(() => {
+    // Review state `?mock=1&screen=whatsnew`: the card for the bundled notes (no Tauri runtime to ask).
+    if (isMockMode() && new URLSearchParams(window.location.search).get("screen") === "whatsnew") setAppVersion("0.1.0");
     if (!isTauriRuntime()) return;
     void getVersion().then(setAppVersion).catch(() => undefined);
   }, []);

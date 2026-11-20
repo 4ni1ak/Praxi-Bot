@@ -104,7 +104,7 @@ impl Fake {
     pub(crate) fn request(&self, i: usize) -> ChatRequest {
         self.requests.lock()[i].clone()
     }
-    fn n_requests(&self) -> usize {
+    pub(crate) fn n_requests(&self) -> usize {
         self.requests.lock().len()
     }
 }

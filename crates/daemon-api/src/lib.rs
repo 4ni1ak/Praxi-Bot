@@ -61,6 +61,7 @@ mod schedule_tools;
 pub mod skill_hub;
 pub mod skill_management;
 pub mod skills;
+mod spend_routes;
 mod sse;
 mod stop;
 pub mod terminal;
@@ -364,6 +365,9 @@ impl AppState {
         hub.set_refresh_hook(Arc::new(move |seq| {
             refresh_tx.send_replace(seq);
         }));
+        if let Some(limit) = spend_routes::load_limit(storage.data_dir()) {
+            agent.set_spend_limit(Some(limit));
+        }
         let policy_load_error = match policy::load_policy(storage.data_dir()) {
             Ok(Some(p)) => {
                 agent.set_global_policy(p);
@@ -1431,6 +1435,10 @@ fn api_routes() -> Router<AppState> {
             get(w::get_web_search).put(w::update_web_search),
         )
         .route("/v1/web/search/test", post(w::test_web_search))
+        .route(
+            "/v1/spend-limit",
+            get(spend_routes::get_spend_limit).put(spend_routes::put_spend_limit),
+        )
         .route("/v1/voice", get(vo::get_voice).put(vo::update_voice))
         .route(
             "/v1/voice/transcribe",

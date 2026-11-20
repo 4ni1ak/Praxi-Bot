@@ -1170,4 +1170,89 @@ mod tests {
         assert!((c.0 - 5.0).abs() < f64::EPSILON && (c.1 - 10.0).abs() < f64::EPSILON);
         assert!(quad_center(&[1.0]).is_none());
     }
+
+    #[test]
+    fn grant_origin_matches_canonicalizes_ports_trailing_dots_and_case() {
+        let cases = [
+            (Some("https://example.com"), "https://example.com", true),
+            (
+                Some("https://Example.COM."),
+                "https://example.com:443",
+                true,
+            ),
+            (Some("http://example.com:80"), "http://example.com", true),
+            (
+                Some("https://example.com/login?a=1"),
+                "https://example.com",
+                true,
+            ),
+            (Some("https://[::1]:8443"), "https://[::1]:8443", true),
+            (
+                Some("https://xn--bcher-kva.example"),
+                "https://XN--BCHER-KVA.EXAMPLE.",
+                true,
+            ),
+        ];
+        for (origin, expected, want) in cases {
+            assert_eq!(
+                grant_origin_matches(origin, expected),
+                want,
+                "origin={origin:?} expected={expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn grant_origin_matches_rejects_opaque_scheme_port_and_host_mismatches() {
+        let cases = [
+            (None, "https://example.com"),
+            (Some(""), "https://example.com"),
+            (Some("null"), "https://example.com"),
+            (Some("javascript:alert(1)"), "https://example.com"),
+            (Some("file:///etc/passwd"), "file:///etc/passwd"),
+            (Some("http://example.com"), "https://example.com"),
+            (Some("https://example.com:8443"), "https://example.com"),
+            (Some("https://sub.example.com"), "https://example.com"),
+            (Some("https://example.com"), "not-a-url"),
+        ];
+        for (origin, expected) in cases {
+            assert!(
+                !grant_origin_matches(origin, expected),
+                "origin={origin:?} expected={expected:?} must not match"
+            );
+        }
+    }
+
+    #[test]
+    fn web_origin_accepts_clean_http_origins_and_rejects_opaque_or_paths() {
+        let accept = [
+            (Some("https://example.com"), Some("https://example.com")),
+            (
+                Some("  http://localhost:8080  "),
+                Some("http://localhost:8080"),
+            ),
+            (Some("https://[::1]:8443"), Some("https://[::1]:8443")),
+        ];
+        for (raw, expected) in accept {
+            assert_eq!(web_origin(raw).as_deref(), expected, "raw={raw:?}");
+        }
+
+        let reject = [
+            None,
+            Some(""),
+            Some("null"),
+            Some("https://"),
+            Some("http://"),
+            Some("https://example.com/path"),
+            Some("https://example.com?q=1"),
+            Some("https://example.com#frag"),
+            Some("https://user@example.com"),
+            Some("https://example.com extra"),
+            Some("ws://example.com"),
+            Some("file:///etc/passwd"),
+        ];
+        for raw in reject {
+            assert_eq!(web_origin(raw), None, "raw={raw:?} must be rejected");
+        }
+    }
 }

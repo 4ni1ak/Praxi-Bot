@@ -2195,6 +2195,10 @@
         "hint": "İçinden büyük dosyaları çıkarıp yeniden dene.",
         "title": "Bu beceri çok büyük"
       },
+      "spend_limit_reached": {
+        "hint": "Model çağrılmadı. Kullanım sayfasında limiti yükseltin veya kaldırın, sonra yeniden çalıştırın.",
+        "title": "Aylık harcama limitine ulaşıldı"
+      },
       "starting": {
         "hint": "Uygulama hâlâ başlıyor. Birkaç saniye sonra tekrar dene.",
         "title": "Hâlâ başlatılıyor"
@@ -4116,6 +4120,30 @@
     "costNote": "Maliyet yalnızca fiyatı bilinen modeller için gösterilir; “—” bilinmiyor demektir.",
     "deletedBot": "Silinmiş bot",
     "empty": "Henüz kullanım yok. Bir bota mesaj gönderdiğinde token kullanımı burada görünür.",
+    "limit": {
+      "clear": "Limiti kaldır",
+      "forecast": "Ay sonu tahmini",
+      "hint": "Bir çağrı ayı limitin üzerine çıkarabilecekse Praxi modeli çağırmadan durur. Arka plan ve zamanlanmış çalıştırmalar da durur ve başarısız çalıştırma olarak görünür.",
+      "invalid": "1 ile 1.000.000 $ arasında bir tutar girin.",
+      "label": "Aylık limit (USD)",
+      "limitLabel": "Limit",
+      "notCounted": "Fiyatı bilinmeyen modellere yapılan çağrılar sayılmaz ve asla tahmin edilmez.",
+      "off": "Limit belirlenmedi",
+      "pace": {
+        "noForecast": "Tahmin için henüz yeterli harcama yok.",
+        "off": "Tahmin ve güvenlik freni için bir limit belirleyin.",
+        "over": "Bu hızla ay bitmeden limiti aşacaksınız.",
+        "reached": "Limite ulaşıldı: siz yükseltene veya kaldırana kadar yeni model çağrıları durdurulur.",
+        "under": "Bu hızla limitin altında kalırsınız.",
+        "warn": "Limitin %80'i kullanıldı."
+      },
+      "placeholder": "örn. 25",
+      "remaining": "Kalan",
+      "save": "Limiti ayarla",
+      "spent": "Bu ay harcanan",
+      "title": "Aylık harcama limiti",
+      "unpriced": "Bu ay {{count}} çağrının fiyatı bilinmiyor; sayılmadı."
+    },
     "modelCalls": "Model çağrıları",
     "prompt": "İstem",
     "range": "Zaman aralığı",

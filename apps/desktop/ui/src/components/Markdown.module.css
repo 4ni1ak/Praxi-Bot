@@ -123,6 +123,8 @@
   border: var(--size-border) solid var(--color-border);
   text-align: left;
   vertical-align: top;
+  /* A narrow chat scrolls the table sideways instead of breaking words mid-letter. */
+  overflow-wrap: normal;
 }
 
 .table th {

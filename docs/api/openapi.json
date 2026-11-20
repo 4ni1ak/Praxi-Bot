@@ -10327,6 +10327,76 @@
         ]
       }
     },
+    "/v1/spend-limit": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "The monthly spending limit and this month's spend.",
+        "operationId": "get_spend_limit",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendLimitDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "Set or remove the monthly spending limit (owner only). Effective for the\nnext model call of every run, including background and scheduled runs.",
+        "operationId": "put_spend_limit",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpendLimitInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendLimitDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/trusted-folders": {
       "get": {
         "tags": [
@@ -20893,6 +20963,84 @@
             "format": "double"
           }
         }
+      },
+      "SpendLimitDto": {
+        "type": "object",
+        "description": "Month-to-date spend against the monthly limit.",
+        "required": [
+          "month_start_ms",
+          "month_end_ms",
+          "now_ms",
+          "spent_usd",
+          "unpriced_calls"
+        ],
+        "properties": {
+          "forecast_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Linear projection of month-end spend (USD); `null` until something was spent."
+          },
+          "limit_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Monthly limit in USD; `null` = no limit."
+          },
+          "month_end_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Start of the next month (ms since epoch)."
+          },
+          "month_start_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Start of the current local calendar month (ms since epoch)."
+          },
+          "now_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Now, as the daemon sees it (ms since epoch)."
+          },
+          "remaining_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`limit_usd - spent_usd`, never negative; `null` without a limit."
+          },
+          "spent_usd": {
+            "type": "number",
+            "format": "double",
+            "description": "Recorded cost this month (USD). Calls with unknown pricing are not counted."
+          },
+          "unpriced_calls": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Finished calls this month whose model has no known price (not counted).",
+            "minimum": 0
+          }
+        }
+      },
+      "SpendLimitInput": {
+        "type": "object",
+        "description": "`PUT /v1/spend-limit`.",
+        "properties": {
+          "limit_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "New monthly limit in USD (1 to 1,000,000); `null` removes the limit."
+          }
+        },
+        "additionalProperties": false
       },
       "SseStatus": {
         "type": "object",

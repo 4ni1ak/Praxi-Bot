@@ -12,7 +12,8 @@ use std::time::Instant;
 use agent_router::ladder::{BackendError, EmbedTask, Embedder};
 use async_trait::async_trait;
 use parking_lot::Mutex;
-use protocol::{RunId, UserId};
+use protocol::event::RunError;
+use protocol::{Event, RunId, UserId};
 use provider_catalog::Usage;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -270,6 +271,72 @@ impl Shared {
     }
 }
 
+/// Refuse a call that would take month-to-date spend past the monthly limit;
+/// warn once per month at 80%. No limit, or a model without a known price,
+/// means no check (an unpriced call adds no known cost and is never guessed).
+fn check_spend_limit(sh: &Arc<Shared>, ctx: &RunCtx, model: &str) -> Result<(), String> {
+    use crate::spend::{SPEND_LIMIT_REACHED, estimate_usd, month_bounds_ms, spend_status};
+    let Some(limit) = *sh.spend.limit.read() else {
+        return Ok(());
+    };
+    let Some(price) = sh.price_for(model) else {
+        return Ok(());
+    };
+    // Fail closed: with a limit set, an unreadable ledger must not allow spending.
+    let status = spend_status(&sh.storage, ctx.user_id, storage::now_ms())
+        .map_err(|_| "usage ledger unavailable".to_owned())?;
+    let estimate = estimate_usd(
+        &sh.storage,
+        ctx.user_id,
+        ctx.run_id,
+        price,
+        sh.cfg.max_tokens,
+    );
+    if status.spent_usd + estimate > limit {
+        let _ = sh.audit_usage_record(
+            ctx.user_id,
+            ctx.run_id,
+            "spend.limit_blocked",
+            &json!({
+                "limit_usd": limit, "spent_usd": status.spent_usd,
+                "estimate_usd": estimate, "model": model,
+            }),
+        );
+        return Err(format!(
+            "[{SPEND_LIMIT_REACHED}] Monthly spending limit reached: ${:.2} spent of ${limit:.2} \
+             this month (the next call could exceed it). The model was not called. Raise or \
+             remove the limit on the Usage page, then run again.",
+            status.spent_usd
+        ));
+    }
+    if status.spent_usd >= 0.8 * limit {
+        let month = month_bounds_ms(storage::now_ms()).0;
+        let first = sh.spend.warned_month.lock().replace(month) != Some(month);
+        if first {
+            let message = format!(
+                "Monthly spending limit: 80% used (${:.2} of ${limit:.2}). New model calls stop \
+                 at the limit; raise it on the Usage page.",
+                status.spent_usd
+            );
+            let _ = sh.audit_usage_record(
+                ctx.user_id,
+                ctx.run_id,
+                "spend.limit_warning",
+                &json!({ "limit_usd": limit, "spent_usd": status.spent_usd }),
+            );
+            sh.emit(
+                ctx,
+                Event::Error(RunError {
+                    run_id: ctx.run_id,
+                    message,
+                    recoverable: true,
+                }),
+            );
+        }
+    }
+    Ok(())
+}
+
 /// One actual provider invocation (not one model step containing retries).
 pub(crate) struct CallGuard {
     sh: Arc<Shared>,
@@ -285,11 +352,11 @@ impl CallGuard {
         ctx: &RunCtx,
         model: &str,
         purpose: CallPurpose,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, String> {
         let steps = sh
             .storage
             .list_steps(ctx.run_id)
-            .map_err(|_| "usage ledger unavailable")?;
+            .map_err(|_| "usage ledger unavailable".to_owned())?;
         let purpose = if ctx.parent_run_id.is_some() {
             CallPurpose::Subagent
         } else {
@@ -303,8 +370,9 @@ impl CallGuard {
             "tokens": null, "prompt_tokens": null, "completion_tokens": null,
             "cached_tokens": null, "cost_usd": null,
         });
+        check_spend_limit(sh, ctx, model)?;
         sh.audit_usage_record(ctx.user_id, ctx.run_id, "llm.call_started", &detail)
-            .map_err(|_| "usage ledger unavailable")?;
+            .map_err(|_| "usage ledger unavailable".to_owned())?;
         Ok(Self {
             sh: Arc::clone(sh),
             run: ctx.run_id,
