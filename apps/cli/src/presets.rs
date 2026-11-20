@@ -140,13 +140,13 @@ impl BotPreset {
 /// Default permission presets (map onto `permission-engine` policies).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum PermissionPreset {
-    /// Deny everything.
+    /// Allow read-only tools; deny writes and external actions.
     ReadOnly,
-    /// Reads and drafts; sending asks.
+    /// Allow reads and drafts; ask before sending or changing state.
     ReadAndDraft,
-    /// Ask before writes / destructive actions (default).
+    /// Ask before writes or destructive actions (default).
     ApproveDestructive,
-    /// Allow everything without asking.
+    /// Allow all actions without asking.
     Full,
 }
 

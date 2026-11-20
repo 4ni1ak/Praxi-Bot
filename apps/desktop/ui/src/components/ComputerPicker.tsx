@@ -43,7 +43,7 @@ export function ComputerPicker() {
   const status = homeStatus(home, workLocalNow, hostState);
   const name = home.kind === "host" ? home.name || t("computerPicker.host") : "";
   const label = t(`home.chip.${status}`, { name });
-  const tone = status === "online" || status === "local" ? "ok" : status === "connecting" || status === "temporary" ? "wait" : "bad";
+  const tone = status === "online" || status === "local" ? "ok" : status === "connecting" || status === "starting" || status === "temporary" ? "wait" : "bad";
   const Icon = home.kind === "host" && status !== "temporary" ? Server : Monitor;
   const unadopted = (hostList?.hosts ?? []).filter((h) => h.id !== (home.kind === "host" ? home.hostId : ""));
 

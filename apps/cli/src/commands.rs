@@ -37,7 +37,9 @@ pub fn secrets_list(store: &dyn SecretStore, out: &mut dyn FnMut(&str)) -> Resul
 /// Invalid name, store errors.
 pub fn secrets_set(store: &dyn SecretStore, name: &str, value: &SecretValue) -> Result<()> {
     if secret_store::is_host_credential(name) {
-        return Err("host credentials must be managed with bot token".into());
+        return Err(
+            "host credentials cannot be modified with `bot secrets`; use `bot token create` or `bot token revoke`".into(),
+        );
     }
     store.set(name, value.expose())?;
     Ok(())
@@ -49,12 +51,17 @@ pub fn secrets_set(store: &dyn SecretStore, name: &str, value: &SecretValue) -> 
 /// Store errors; unknown name.
 pub fn secrets_delete(store: &dyn SecretStore, name: &str) -> Result<()> {
     if secret_store::is_host_credential(name) {
-        return Err("host credentials must be managed with bot token".into());
+        return Err(
+            "host credentials cannot be modified with `bot secrets`; use `bot token create` or `bot token revoke`".into(),
+        );
     }
     if store.delete(name)? {
         Ok(())
     } else {
-        Err(format!("secret {name:?} not found").into())
+        Err(
+            format!("secret `{name}` not found; run `bot secrets list` to see stored secret names")
+                .into(),
+        )
     }
 }
 
@@ -65,7 +72,7 @@ pub fn secrets_delete(store: &dyn SecretStore, name: &str) -> Result<()> {
 pub fn providers_list(data_dir: &std::path::Path, out: &mut dyn FnMut(&str)) -> Result<()> {
     let cfg = ProviderConfig::load(&config_path(data_dir))?;
     if cfg.providers.is_empty() {
-        out("(no providers configured; run `bot setup`)");
+        out("(no providers configured; run `bot setup` or `bot providers add <id>`)");
     }
     let default_id = cfg.effective_default().map(|d| d.id.clone());
     for p in &cfg.providers {
@@ -109,9 +116,11 @@ pub fn providers_add(
 ) -> Result<ProviderSettings> {
     if test {
         let entry = entry_for(choice, env.catalog)?;
-        env.connector
-            .test(&entry, key, None)
-            .map_err(|e| format!("connection test failed (use --no-test to skip): {e}"))?;
+        env.connector.test(&entry, key, None).map_err(|e| {
+            format!(
+                "provider connection test failed: {e}; verify your API key and network, or pass `--no-test` to save anyway"
+            )
+        })?;
         out("connection OK");
     }
     let (settings, cfg) = configure_provider(env, choice, key, model)?;
@@ -132,10 +141,13 @@ pub fn entry_of(settings: &ProviderSettings, env: &SetupEnv<'_>) -> Result<Provi
     if let Some(c) = &settings.custom {
         return Ok(c.clone());
     }
-    env.catalog
-        .get(&settings.id)
-        .cloned()
-        .ok_or_else(|| format!("provider {:?} is not in the catalog", settings.id).into())
+    env.catalog.get(&settings.id).cloned().ok_or_else(|| {
+        format!(
+            "provider `{}` is not in the catalog; re-add it with `bot providers add {} --base-url <URL>` if it is a custom provider",
+            settings.id, settings.id
+        )
+        .into()
+    })
 }
 
 /// `bot providers test [ID]` (default provider when omitted).
@@ -149,10 +161,15 @@ pub fn providers_test(
 ) -> Result<()> {
     let cfg = ProviderConfig::load(&config_path(env.data_dir))?;
     let settings = match id {
-        Some(i) => cfg.get(i),
-        None => cfg.effective_default(),
-    }
-    .ok_or("no such provider configured")?;
+        Some(i) => cfg.get(i).ok_or_else(|| {
+            format!(
+                "provider `{i}` is not configured; run `bot providers list` to see configured providers or `bot providers add {i}` to add it"
+            )
+        })?,
+        None => cfg.effective_default().ok_or(
+            "no providers configured yet; run `bot setup` or `bot providers add <id>` first",
+        )?,
+    };
     let entry = entry_of(settings, env)?;
     let provider = settings.build_provider(&entry, env.store, OpenAiCompatConfig::default())?;
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -194,7 +211,11 @@ pub fn providers_default(
     let path = config_path(data_dir);
     let _guard = ProviderConfig::lock(&path)?;
     let mut cfg = ProviderConfig::load(&path)?;
-    cfg.set_default(id)?;
+    cfg.set_default(id).map_err(|e| {
+        format!(
+            "cannot set default provider `{id}`: {e}; run `bot providers list` to see configured providers"
+        )
+    })?;
     if let Some(m) = model {
         cfg.set_model(id, m)?;
     }

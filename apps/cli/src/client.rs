@@ -181,12 +181,15 @@ impl Client {
             fail(
                 exit::UNREACHABLE,
                 format!(
-                    "daemon not reachable at {} (start it with `bot serve`)",
+                    "daemon not reachable at {}; start it with `bot serve` or check `--port` / `--url`",
                     self.base
                 ),
             )
         } else {
-            fail(exit::GENERIC, e.to_string())
+            fail(
+                exit::GENERIC,
+                format!("daemon request to {} failed: {e}", self.base),
+            )
         }
     }
 
@@ -203,9 +206,13 @@ impl Client {
         if body["error"]["code"] == daemon_api::owner::OWNER_REQUIRED {
             return Err(fail(
                 exit::AUTH,
-                "this needs the owner key. A daemon started by the Praxi app keeps it in memory only: \
-                 do this in the app, or stop the app and run `bot serve` in a terminal (it keeps the \
-                 key in the `owner-key` file of the data dir, which this command reads)",
+                "owner authorization required: a daemon started by the desktop app keeps its owner key in memory only; run this action in the desktop app, or stop the app and start `bot serve` in a terminal",
+            ));
+        }
+        if body["error"]["code"] == "setup_required" {
+            return Err(fail(
+                exit::REJECTED,
+                "setup required: no LLM provider is configured yet, so the daemon cannot run chats; run `bot setup` for interactive setup or `bot providers add <id>` to add a provider",
             ));
         }
         let code = match status {
@@ -214,6 +221,14 @@ impl Client {
             s if s.is_client_error() => exit::REJECTED,
             _ => exit::GENERIC,
         };
+        if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+            return Err(fail(
+                code,
+                format!(
+                    "daemon authentication failed ({status}): {msg}; check `BOT_API_TOKEN` or use the same `--data-dir` as `bot serve`"
+                ),
+            ));
+        }
         Err(fail(code, format!("{status}: {msg}")))
     }
 

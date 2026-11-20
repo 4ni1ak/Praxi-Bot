@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { homeStatus } from "./home.ts";
 import {
   computerScopePlan,
   deriveHostState,
@@ -115,4 +116,15 @@ test("only live runs are listed for stop", () => {
 test("the local control bridge stays mounted while a host is selected", () => {
   assert.deepEqual(computerScopePlan("local"), { localBridge: true, hostSession: false });
   assert.deepEqual(computerScopePlan("host-key"), { localBridge: true, hostSession: true });
+});
+
+test("a host that reports starting or degraded startup is shown honestly", () => {
+  const derive = (startup: HostHealthLike["startup"]) =>
+    deriveHostState({ link: link("connected"), health: health({ startup }), ...base });
+  assert.equal(derive("starting").kind, "starting");
+  assert.equal(derive("degraded").kind, "degraded");
+  assert.equal(derive("ready").kind, "connected");
+  assert.equal(hostAcceptsWork(derive("starting")), true);
+  const home = { kind: "host", hostId: "h1", name: "Oracle" } as const;
+  assert.equal(homeStatus(home, false, derive("degraded")), "degraded");
 });

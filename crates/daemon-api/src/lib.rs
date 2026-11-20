@@ -1499,6 +1499,20 @@ pub async fn serve_with_startup(
     prepare: impl Future<Output = ()> + Send + 'static,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<Vec<RunId>> {
+    serve_with_startup_timeout(listener, state, prepare, shutdown, STARTUP_TIMEOUT).await
+}
+
+/// Longest the background startup (`prepare`, peer check, component start) may run
+/// before health reports `degraded`.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(300);
+
+async fn serve_with_startup_timeout(
+    listener: TcpListener,
+    state: AppState,
+    prepare: impl Future<Output = ()> + Send + 'static,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+    startup_timeout: Duration,
+) -> std::io::Result<Vec<RunId>> {
     let _cancel_on_drop = state.shutdown_token().drop_guard();
     state
         .leader()
@@ -1506,31 +1520,43 @@ pub async fn serve_with_startup(
     let startup = {
         let leader = state.leader().clone();
         let cancel = state.shutdown_token();
+        // The work runs in its own task so that a panic is caught at the join.
+        let work = {
+            let leader = leader.clone();
+            tokio::spawn(async move {
+                prepare.await;
+                leader.start().await
+            })
+        };
         tokio::spawn(async move {
             let began = std::time::Instant::now();
             eprintln!("startup: leader components starting in background");
+            let abort = work.abort_handle();
             tokio::select! {
-                () = cancel.cancelled() => {}
-                result = async {
-                    prepare.await;
-                    leader.start().await
-                } => {
+                () = cancel.cancelled() => abort.abort(),
+                result = tokio::time::timeout(startup_timeout, work) => {
                     let elapsed = began.elapsed().as_millis();
                     match result {
-                        Ok(()) if leader.components_allowed() => {
+                        Err(_) => {
+                            abort.abort();
+                            leader.set_degraded(host::StartupReason::TimedOut);
+                            eprintln!("warning: leader startup timed out ({elapsed} ms)");
+                        }
+                        Ok(Err(e)) => {
+                            leader.set_degraded(host::StartupReason::TaskPanicked);
+                            eprintln!("warning: leader startup task failed: {e}");
+                        }
+                        Ok(Ok(Ok(()))) if leader.components_allowed() => {
                             leader.set_startup(host::StartupPhase::Ready, None);
                             eprintln!("startup: leader components started in background (+{elapsed} ms)");
                         }
-                        Ok(()) => {
+                        Ok(Ok(Ok(()))) => {
                             leader.set_startup(host::StartupPhase::Ready, None);
                             eprintln!("startup: leader components idle ({elapsed} ms)");
                         }
-                        Err(e) => {
+                        Ok(Ok(Err(e))) => {
                             // Fixed text: the error itself may carry a path.
-                            leader.set_startup(
-                                host::StartupPhase::Degraded,
-                                Some("the schedule store could not be opened; the scheduler is not running"),
-                            );
+                            leader.set_degraded(host::StartupReason::from_error(&e));
                             eprintln!("warning: leader components failed to start ({elapsed} ms): {e}");
                         }
                     }

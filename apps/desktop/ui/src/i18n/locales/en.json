@@ -2632,9 +2632,11 @@
     },
     "chip": {
       "connecting": "{{name}} · connecting",
+      "degraded": "{{name}} · limited",
       "local": "This computer",
       "offline": "{{name}} · offline",
       "online": "{{name}} · online",
+      "starting": "{{name}} · starting",
       "temporary": "This computer · for now"
     },
     "copy": "Copy",
