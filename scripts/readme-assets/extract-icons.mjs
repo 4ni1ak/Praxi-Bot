@@ -7,6 +7,8 @@
 //
 // lucide-static is ISC licensed, simple-icons is CC0 1.0 (brand marks stay the
 // property of their owners and are used here only to name integrations).
+import console from 'node:console';
+import process from 'node:process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
