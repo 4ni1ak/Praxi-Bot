@@ -105,6 +105,23 @@ impl WorkflowStore {
         }
     }
 
+    /// Isolate a bot's automation inside the already protected daemon `bots`
+    /// directory. The identifier is validated before it becomes a path component.
+    ///
+    /// # Errors
+    /// The bot identifier is not a UUID.
+    pub fn for_bot(&self, bot: &str) -> Result<Self, StoreError> {
+        let id = Uuid::parse_str(bot).map_err(|_| StoreError::BadName(bot.into()))?;
+        Ok(Self::new(
+            &self
+                .dir
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("bots")
+                .join(id.to_string()),
+        ))
+    }
+
     /// The directory holding the files.
     #[must_use]
     pub fn dir(&self) -> &Path {

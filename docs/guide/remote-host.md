@@ -289,9 +289,17 @@ On a host this guide installed by hand:
 On a host, a paired Desktop can operate bots, chats and runs and use the screen
 but cannot change secrets or provider keys, MCP servers, skills, email or web
 search credentials, Telegram pairing, or import/hand over state; do those on the
-host itself. Until the host has a model key of its own, the app says "this host
-has no model key yet": the screen and bot management work, chats cannot be
-answered. Put the key on the host with `praxi setup` (see section 3).
+host itself. An admin desktop that still holds screen-input permission can also
+clear a paused screen takeover on the host from the desktop banner
+(`POST /v1/control/recover`) without losing its own input grant. Until the host
+has a model key of its own, the app says "this host has no model key yet": the
+screen and bot management work, chats cannot be answered. Put the key on the
+host with `praxi setup` (see section 3).
+
+To check whether the desktop's live view is connecting directly over QUIC or
+falling back to a relay (and measure frame rate and RTT before deciding whether
+to open a UDP port), open a tunnel with `bot --remote <ENDPOINT> proxy` and
+follow [Measuring the live-view link](../design/live-view-link-measurement.md).
 
 ### Letting another core control this machine (experimental)
 

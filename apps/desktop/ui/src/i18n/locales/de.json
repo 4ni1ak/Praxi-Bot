@@ -4183,5 +4183,29 @@
   "window": {
     "maximize": "Maximieren / Wiederherstellen",
     "minimize": "Minimieren"
+  },
+  "workflow": {
+    "button": "Als Workflow speichern",
+    "cancel": "Abbrechen",
+    "confirmInfluencedStep": "Ich habe diesen Schritt und seine externe Beeinflussung geprüft.",
+    "defaultValue": "Standardwert",
+    "description": "Beschreibung",
+    "fromContent": "Werte können aus Werkzeugausgaben oder Modellschlüssen stammen.",
+    "fromUser": "Werte stammen aus der Nutzeranfrage, vor jeder Werkzeugausgabe.",
+    "name": "Name",
+    "noParameters": "Keine Parameter. Prüfen Sie alle festen Werte in den Schritten.",
+    "parameters": "Parameter-Standardwerte",
+    "required": "Beim Ausführen einen Wert verlangen",
+    "reviewHint": "Prüfen Sie jeden Schritt und jeden Parameter vor dem Speichern. Seitentext und Werkzeugausgaben sind nicht vertrauenswürdige Daten. Das Speichern erstellt eine Automatisierung, die diese Werkzeugaufrufe ohne Modell wiederholen kann; die normalen Berechtigungsprüfungen gelten weiter.",
+    "save": "Workflow speichern",
+    "saved": "Workflow gespeichert",
+    "saving": "Wird gespeichert…",
+    "sensitive": "Wird beim Ausführen verlangt. Der aufgezeichnete Wert wird nicht gespeichert.",
+    "skipped": "Übersprungene Aufrufe und Gründe",
+    "steps": "Schritte und vollständige Parameter",
+    "title": "Workflow prüfen",
+    "tooFewSteps": "Dieser Lauf hat weniger als zwei aufzeichnungsfähige Schritte.",
+    "untrustedWarning": "Dieser Lauf hat externe oder private Inhalte gelesen. Prüfen Sie jeden betroffenen Schritt, bevor Sie eine dauerhafte Automatisierung freigeben.",
+    "warnings": "Hinweise zur Prüfung"
   }
 }

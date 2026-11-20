@@ -23,8 +23,23 @@ Three ideas run through the whole product:
   model calls. See [Workflows](workflows.md).
 
 > **Status: early development.** The README says it plainly: there is no stable
-> API and only a pre-release (`v0.1.0-alpha.1`) so far. Expect breaking changes. This guide documents what
+> API and only pre-releases (`v0.1.0-alpha.2` latest) so far. Expect breaking changes. This guide documents what
 > the code does today and marks everything else as **Planned**.
+
+## What changed recently
+
+Notable additions in the `0.1.0` desktop, CLI, and evaluation surface:
+
+- **Bot-only left rail and chat management in the bot panel.** The left rail lists bots only; each bot's chats live in its right-hand panel (**Library → Chats**) with an overflow menu for rename, pin, archive, and delete. See [Managing chats](chatting-and-approvals.md#managing-chats-desktop-app).
+- **Message copy and Markdown export.** Hover or focus any message to copy its visible text, or type `/export` in the composer to save the open chat as a `.md` file. See [Copying messages and Markdown export](chatting-and-approvals.md#copying-messages-and-markdown-export).
+- **Keyboard shortcuts dialog (`?`) and "What's new" card.** Press `?` (outside text fields) or use the command palette (`Ctrl/Cmd+K`) to view all shortcuts. Bundled release notes appear once per version after an update with no network fetch. See [Keyboard shortcuts and "What's new"](chatting-and-approvals.md#keyboard-shortcuts-and-whats-new).
+- **Unread markers.** Bots with unseen replies or pending decisions show a dot in the left rail, and the open chat marks the first unseen reply with a **New messages** divider. See [Unread markers](chatting-and-approvals.md#unread-markers).
+- **Praxi as the default main bot and "Make main bot".** Fresh desktop setups default to **Praxi** (white ghost) as the main bot, and any bot's panel has a **Make main bot** star button. See [Main bot and bot order](bots-and-profiles.md#main-bot-and-bot-order-desktop-app).
+- **Auto-starting the local host on send.** Sending a message while this computer's daemon is offline restarts it automatically and delivers the message once it is up; for an offline paired server, the draft is kept with a Retry prompt. See [Sending while the host is offline](chatting-and-approvals.md#sending-while-the-host-is-offline).
+- **Host-admin pause recovery.** A paired host's admin desktop can clear a paused screen takeover via `POST /v1/control/recover` without losing its screen-input right, and **Stop** aborts runs parked behind a pause. See [Live screen privacy and human control](security.md#live-screen-privacy-and-human-control).
+- **Prompt-injection eval pack.** Offline tier-1 injection scenarios with an `unsafe_actions` gate and baseline comparison (`bot-eval run --tier 1 --filter inj- --repeat 3`). See [Prompt-injection evaluation pack](security.md#prompt-injection-evaluation-pack).
+- **`bot proxy` and live-view link measurement.** `bot --remote <ENDPOINT> proxy` opens a loopback tunnel to a paired host for measuring direct vs. relay live-view performance. See [`bot proxy`](cli-reference.md#bot-proxy) and [Measuring the live-view link](../design/live-view-link-measurement.md).
+- **Host operations guide.** Day-to-day Linux host logs, service control, upgrades, backups, and troubleshooting now live in [Host operations](host-operations.md).
 
 ## What is where
 
@@ -32,6 +47,7 @@ Three ideas run through the whole product:
 | --- | --- |
 | Install Praxi and run it the first time | [Install and first run](install.md) |
 | Windows installer details, upgrade, uninstall | [Installing on Windows](install-windows.md) |
+| Set up an always-on Linux host (VPS / VM) | [Running on a remote host](remote-host.md) |
 | Run the always-on Linux host: logs, restart, upgrade, backup | [Host operations](host-operations.md) |
 | Create a bot and understand its profile file | [Bots and profiles](bots-and-profiles.md) |
 | Talk to a bot, approve or deny actions | [Chatting and approvals](chatting-and-approvals.md) |

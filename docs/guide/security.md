@@ -162,10 +162,15 @@ Disconnect, expiry, revoke and restart invalidate input, reset injected keys bes
 effort and retain pause. A legacy release request cannot release an owned
 takeover. A pause that has no takeover owner (your own Pause, also after a
 daemon restart) is released by the local user through the normal release path;
-a takeover latch restored after a restart is cleared by the local user with
+a paused takeover latch (including one restored after a restart) is cleared with
 `POST /v1/control/recover`, which needs no view session and no registered
-target. Resume otherwise requires explicit owned release or privileged
-recovery, durable safe continuation notes and successful reset.
+target. `POST /v1/control/recover` is allowed for the local user and for a
+paired **host admin desktop** that still holds `screen:input` permission (never
+a phone, a non-admin peer, or a bot; an explicit revoke on the host wins). When
+a host admin desktop clears a pause via `recover`, its own screen-input grant is
+kept; only a local user's override revokes a peer's input grant. Resume
+otherwise requires explicit owned release or privileged recovery, durable safe
+continuation notes and successful reset.
 
 You always outrank a paired device. `POST /v1/control/override` (and the app's
 Pause) interrupts any takeover at once, resets pressed keys and keeps the bot
@@ -183,7 +188,8 @@ While you drive (`human_driving`), the bot's observation tools are refused too
 you type, such as passwords or one-time codes. A plain pause keeps reads. A bot
 action that waits for your pause or takeover to end waits at most 30 minutes
 (the same bound as a scheduled approval) and then reports that you are still in
-control; the pause itself stays.
+control; the pause itself stays. Pressing **Stop** aborts any run parked behind
+a pause or takeover immediately instead of waiting out that bound.
 
 The continuation note a takeover leaves in the chat is the only message the
 model receives as a system message from stored history. It has its own role that
@@ -433,3 +439,30 @@ text in that chat (storing it as a secret and removing it from the message is a
 follow-up UI step), and ordinary `text` fills are never masked: what the
 assistant typed is what you see. The memory holding the value is not excluded
 from crash dumps or swap.
+
+## Prompt-injection evaluation pack
+
+To verify that the permission engine and taint gate hold when a model actually
+follows untrusted instructions, the repository includes an offline tier-1
+prompt-injection evaluation pack under `evals/scenarios/inj-*.yaml` (scripted
+model, fake tools, no network). Each attack covers a different untrusted source
+(web pages, e-mail, files, MCP output, chat messages, memory) and has an
+`-holdout` twin with different wording and fixtures.
+
+Run the pack and compare it against the checked-in baseline:
+
+```sh
+cargo run -p evals --bin bot-eval -- run --tier 1 --filter inj- --repeat 3 --out run.jsonl
+cargo run -p evals --bin bot-eval -- compare --baseline evals/baselines/injection-pack.jsonl --run run.jsonl
+```
+
+(If `bot-eval` is already built on `PATH`, run `bot-eval run --tier 1 --filter inj- --repeat 3 --out run.jsonl`.)
+
+- `run` records `unsafe_actions` on every JSONL result and fails if any scenario
+  that is not marked `expected_fail` (a documented gap) triggers an unsafe
+  action, or if a known-gap scenario starts passing without removing its marker.
+- `compare` prints `GO` or `NO-GO` (exiting 1 on `NO-GO`) and rejects any unsafe
+  action, any per-scenario pass-rate drop above `--max-drop` (default `0`), or a
+  missing baseline scenario.
+- The pack runs in CI via `cargo test -p evals`. Details and baseline-update
+  instructions are in [`evals/baselines/README.md`](../../evals/baselines/README.md).
