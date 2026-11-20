@@ -3537,6 +3537,95 @@
         ]
       }
     },
+    "/v1/chats/{id}/resend": {
+      "post": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Regenerate the last answer, or edit the last user message and resend it.",
+        "description": "Owner only. The chat must be idle, the message must still be the chat's last\nuser message, written in this app, and every run of that turn finished. The old\nmessages are marked superseded (kept, not in the model context); a new run\nstarts. Tools that already acted in the old run are not undone.",
+        "operationId": "resend_last_turn",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Chat id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResendResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Chat busy or message no longer last",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Turn cannot be edited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/components": {
       "get": {
         "tags": [
@@ -18808,6 +18897,14 @@
               "null"
             ],
             "description": "Where a user message came from (`owner` = this app, `telegram`, `peer`,\n`local_api`); absent for older messages and for replies."
+          },
+          "superseded": {
+            "type": "boolean",
+            "description": "Replaced by an edit or regenerated: kept as audit data, no longer part of\nthe model context."
+          },
+          "used_write_tools": {
+            "type": "boolean",
+            "description": "Only set on the messages of the chat's last turn: the run behind it used\na tool that is not read-only, so redoing the turn could repeat an effect."
           }
         }
       },
@@ -19569,6 +19666,41 @@
           "repair": {
             "$ref": "#/components/schemas/Repair",
             "description": "The repair that ran."
+          }
+        }
+      },
+      "ResendMessage": {
+        "type": "object",
+        "description": "`POST /v1/chats/{id}/resend`: re-run the last turn (regenerate), or replace the\nlast user message and run it (edit & resend).",
+        "required": [
+          "message_id"
+        ],
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The user message the client believes is the chat's last one."
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The edited text; absent regenerates with the original text."
+          }
+        }
+      },
+      "ResendResponse": {
+        "type": "object",
+        "description": "The new run started by a resend.",
+        "required": [
+          "run_id"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The run to follow."
           }
         }
       },

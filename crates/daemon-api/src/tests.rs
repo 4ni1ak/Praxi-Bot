@@ -539,6 +539,75 @@ async fn bot_with_chats_cannot_be_deleted() {
 // ---------------------------------------------------- messages / events
 
 #[tokio::test]
+async fn resend_edits_the_last_owner_message_keeps_the_old_turn_and_is_owner_only() {
+    let t = setup();
+    let (_, chat) = make_chat(&t).await;
+    let (k, v) = auth();
+    let sent = send(
+        &t.app,
+        Method::POST,
+        &format!("/v1/chats/{chat}/messages"),
+        Some(json!({"text": "first"})),
+        &[(k, v.as_str()), ("x-praxi-message-source", "local_ui")],
+    )
+    .await
+    .json();
+    wait_state(&t, sent["run_id"].as_str().unwrap(), "succeeded").await;
+    let msgs = call(&t, Method::GET, &format!("/v1/chats/{chat}/messages"), None)
+        .await
+        .json();
+    let user_id = msgs[0]["id"].as_str().unwrap().to_owned();
+    let path = format!("/v1/chats/{chat}/resend");
+
+    let r = call_token_only(
+        &t,
+        Method::POST,
+        &path,
+        Some(json!({"message_id": user_id})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let stale = json!({"message_id": uuid::Uuid::now_v7()});
+    assert_eq!(
+        call(&t, Method::POST, &path, Some(stale)).await.status,
+        StatusCode::CONFLICT
+    );
+
+    let r = call(
+        &t,
+        Method::POST,
+        &path,
+        Some(json!({"message_id": user_id, "text": "second"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::ACCEPTED, "{:?}", r.json());
+    wait_state(&t, r.json()["run_id"].as_str().unwrap(), "succeeded").await;
+    let msgs = call(&t, Method::GET, &format!("/v1/chats/{chat}/messages"), None)
+        .await
+        .json();
+    let rows: Vec<(String, bool)> = msgs
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            (
+                m["content"].as_str().unwrap().to_owned(),
+                m["superseded"].as_bool().unwrap_or(false),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("first".to_owned(), true),
+            ("echo: first".to_owned(), true),
+            ("second".to_owned(), false),
+            ("echo: second".to_owned(), false),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn send_message_streams_events_in_order() {
     let t = setup();
     let (_, chat) = make_chat(&t).await;
