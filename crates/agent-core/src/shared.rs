@@ -1063,7 +1063,9 @@ pub fn schedule_id_of(kind: &str) -> Option<TaskId> {
         .map(TaskId)
 }
 
-pub(crate) fn initiator_of(kind: &str) -> InitiatorKind {
+/// Who started a run, from its `kind` string.
+#[must_use]
+pub fn initiator_of(kind: &str) -> InitiatorKind {
     match kind.strip_prefix("turn:") {
         Some("routine") => InitiatorKind::Routine,
         Some("channel") => InitiatorKind::Channel,
@@ -1502,7 +1504,7 @@ impl Shared {
     /// Exposure a run starts with: the parent's (subagents), what its own
     /// history already holds, and the provenance of the chat messages that
     /// enter its context.
-    fn initial_taint(&self, run: &Run, chat_id: ChatId) -> ContentTaint {
+    pub(crate) fn initial_taint(&self, run: &Run, chat_id: ChatId) -> ContentTaint {
         let mut taint = ContentTaint::default();
         if let Some(parent_id) = run.parent_run_id {
             let inherited = self

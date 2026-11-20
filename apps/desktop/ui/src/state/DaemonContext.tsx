@@ -57,6 +57,7 @@ import {
   type RunFact
 } from "./timeline";
 import { humanLine, type ServiceProblem } from "../lib/humanError";
+import { isProcessingRunState } from "../lib/runState";
 
 export type Phase = "connecting" | "ready" | "error";
 
@@ -74,10 +75,6 @@ export interface ComputerEntry {
   /** Channel state of a host as the local daemon reports it. */
   link: HostLinkInfo | null;
 }
-
-/** Runs in these states can still produce approvals / questions. */
-// "pending" is not a daemon run state; "queued" runs can still ask (card 237 PR C).
-const LIVE_RUN_STATES = new Set(["queued", "running", "waiting_approval"]);
 
 type Action =
   | { type: "event"; env: GlobalEnvelope }
@@ -417,7 +414,7 @@ function useDaemonData(conn: Connection | null): DaemonData {
           type: "reconcile",
           approvals: new Set(approvals.map((a) => a.call_id)),
           live: new Set(
-            runList.filter((r) => LIVE_RUN_STATES.has(r.state)).map((r) => r.id)
+            runList.filter((r) => isProcessingRunState(r.state)).map((r) => r.id)
           ),
           asOfMs: startedAt - 1500,
           pending: approvals,

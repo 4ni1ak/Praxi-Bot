@@ -69,6 +69,7 @@ pub mod voice;
 mod voice_routes;
 pub mod web;
 mod web_routes;
+mod workflows;
 
 #[cfg(test)]
 mod schedule_tools_tests;
@@ -1066,6 +1067,7 @@ fn api_routes() -> Router<AppState> {
     use voice_routes as vo;
     use web_routes as w;
     Router::new()
+        .merge(workflows::router())
         .route("/v1/mcp-server/tokens", post(mcp_server::create_token))
         .route(
             "/v1/mcp-server/tokens/{id}",

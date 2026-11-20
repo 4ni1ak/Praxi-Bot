@@ -114,9 +114,15 @@ impl Tool for WorkflowList {
         &self.spec
     }
 
-    async fn call(&self, _ctx: &ToolContext, _input: Value) -> Result<ToolOutput, ToolError> {
-        let list = self
-            .store
+    async fn call(&self, ctx: &ToolContext, _input: Value) -> Result<ToolOutput, ToolError> {
+        let store = match &ctx.bot_id {
+            Some(bot) => self
+                .store
+                .for_bot(bot)
+                .map_err(|e| ToolError::InvalidInput(e.to_string()))?,
+            None => self.store.clone(),
+        };
+        let list = store
             .list()
             .map_err(|e| ToolError::Execution(e.to_string()))?;
         if list.is_empty() {
@@ -217,10 +223,34 @@ impl Tool for WorkflowRun {
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         let i: RunInput =
             serde_json::from_value(input).map_err(|e| ToolError::InvalidInput(e.to_string()))?;
-        let wf = self
-            .store
+        let store = match &ctx.bot_id {
+            Some(bot) => self
+                .store
+                .for_bot(bot)
+                .map_err(|e| ToolError::InvalidInput(e.to_string()))?,
+            None => self.store.clone(),
+        };
+        let wf = store
             .get(&i.name)
             .map_err(|e| ToolError::Execution(e.to_string()))?;
+        if wf
+            .source
+            .as_ref()
+            .is_some_and(|s| s.bot_id != ctx.bot_id.clone().unwrap_or_default())
+        {
+            return Err(ToolError::PermissionDenied(
+                "workflow belongs to another bot".into(),
+            ));
+        }
+        if wf
+            .params
+            .iter()
+            .any(|p| p.name.starts_with("recorded_secret_"))
+        {
+            return Err(ToolError::PermissionDenied(
+                "runtime parameters require the human replay endpoint".into(),
+            ));
+        }
         let _guard = self
             .enter(&ctx.run_id, &wf.name)
             .map_err(|e| ToolError::InvalidInput(e.to_string()))?;

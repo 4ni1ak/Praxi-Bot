@@ -145,7 +145,7 @@ unless `--port` is supplied. Existing `praxi-xvfb` / `praxi-desktop` units,
 host keeps bare Xvfb unless `--with-desktop-session` is passed). On an online
 host, `--with-desktop` installs or refreshes Xvfb and Chromium;
 `--with-desktop-session` adds a minimal Xfce desktop session on top of Xvfb
-(`1280x800x24` on a fresh desktop setup, or preserving existing Xvfb geometry).
+(`1920x1080x24` on a fresh desktop setup, or preserving existing Xvfb geometry).
 
 ### Release administrator setup and dry run
 
@@ -203,7 +203,7 @@ The script:
   private `/tmp` before Xvfb starts. A later run keeps that unit until `--without-desktop`;
 - with `--with-desktop-session`, also installs minimal Xfce (`xfwm4 --compositor=off`,
   `xfce4-panel` with Applications menu, `xfdesktop`, private `praxi` D-Bus
-  session bus + AT-SPI2) in `praxi-desktop.service`, initially `1280x800x24` on
+  session bus + AT-SPI2) in `praxi-desktop.service`, initially `1920x1080x24` on
   fresh desktop installs (preserving existing geometry on upgrades), with
   screen-lock/power/printer autostarts disabled and no unconditional browser
   autostart (`xfce4-terminal` and `thunar` are hidden and omitted by default
@@ -289,9 +289,17 @@ On a host this guide installed by hand:
 On a host, a paired Desktop can operate bots, chats and runs and use the screen
 but cannot change secrets or provider keys, MCP servers, skills, email or web
 search credentials, Telegram pairing, or import/hand over state; do those on the
-host itself. Until the host has a model key of its own, the app says "this host
-has no model key yet": the screen and bot management work, chats cannot be
-answered. Put the key on the host with `praxi setup` (see section 3).
+host itself. An admin desktop that still holds screen-input permission can also
+clear a paused screen takeover on the host from the desktop banner
+(`POST /v1/control/recover`) without losing its own input grant. Until the host
+has a model key of its own, the app says "this host has no model key yet": the
+screen and bot management work, chats cannot be answered. Put the key on the
+host with `praxi setup` (see section 3).
+
+To check whether the desktop's live view is connecting directly over QUIC or
+falling back to a relay (and measure frame rate and RTT before deciding whether
+to open a UDP port), open a tunnel with `bot --remote <ENDPOINT> proxy` and
+follow [Measuring the live-view link](../design/live-view-link-measurement.md).
 
 ### Letting another core control this machine (experimental)
 
@@ -423,7 +431,7 @@ remain enabled; no `--no-sandbox` or broad unit relaxation is applied.
 Xvfb alone does **not** supply a usable desktop (no window manager, panel, or
 application launcher). Adding `--with-desktop-session` (or running
 `sudo bash scripts/linux/setup-headless.sh --system`) provisions a minimal Xfce
-session (`praxi-desktop.service`) on Xvfb (`1280x800x24` on fresh desktop
+session (`praxi-desktop.service`) on Xvfb (`1920x1080x24` on fresh desktop
 installs, or preserving the existing `praxi-xvfb.service` geometry unless
 `--screen` is passed), running as the same unprivileged `praxi` user:
 
@@ -546,6 +554,23 @@ journalctl -u praxi -u praxi-desktop -u praxi-xvfb -n 100
 sudo ./scripts/install-linux.sh --uninstall           # keeps data and user
 sudo ./scripts/install-linux.sh --uninstall --purge   # deletes data too
 ```
+
+### Changing the screen size of an existing host
+
+A mirror can never be sharper than the host's own display: the stream sends the
+screen at its native size (up to 1920x1080) and never upscales. Hosts installed
+before the 1920x1080 default may still run a smaller Xvfb (for example
+`1280x800x24`). The installer keeps an existing geometry on upgrade, so to change
+it pass `--screen` explicitly:
+
+```sh
+sudo bash ./install-linux.sh --version <current> --file ./praxi-linux-x86_64.tar.gz   --screen 1920x1080x24
+```
+
+or edit `-screen 0 <WxHxD>` in `/etc/systemd/system/praxi-xvfb.service`, then
+`sudo systemctl daemon-reload && sudo systemctl restart praxi-xvfb.service`
+(the desktop session and daemon restart with it, so open sessions end). Check the
+result with `systemctl cat praxi-xvfb.service | grep -- -screen`.
 
 ### Operating a host
 

@@ -1990,7 +1990,12 @@ async fn model_called_workflow_is_tainted_before_its_first_egress_step() {
         tool: "web_search".into(),
         input: json!({"query": "saved private content"}),
     })];
-    store.save(&wf).unwrap();
+    // Workflows are bot-scoped: save into this bot's folder.
+    store
+        .for_bot(&env.bot.to_string())
+        .unwrap()
+        .save(&wf)
+        .unwrap();
     let handles = Handles {
         desktop: None,
         browser: None,
@@ -2375,7 +2380,12 @@ async fn listing_saved_workflows_makes_a_later_waived_shell_ask() {
         tool: "shell_run".into(),
         input: json!({"command": "echo hi"}),
     })];
-    store.save(&wf).unwrap();
+    // Workflows are bot-scoped: save into this bot's folder.
+    store
+        .for_bot(&env.bot.to_string())
+        .unwrap()
+        .save(&wf)
+        .unwrap();
     let handles = Handles {
         desktop: None,
         browser: None,
@@ -2419,7 +2429,12 @@ async fn a_replayed_shell_step_asks_under_the_waiver() {
         tool: "shell_run".into(),
         input: executor_input("shell_run"),
     })];
-    store.save(&wf).unwrap();
+    // Workflows are bot-scoped: save into this bot's folder.
+    store
+        .for_bot(&env.bot.to_string())
+        .unwrap()
+        .save(&wf)
+        .unwrap();
     let handles = Handles {
         desktop: None,
         browser: None,

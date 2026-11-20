@@ -242,6 +242,10 @@ longer install-time notes are in
 Until the host has a model key, chats have nothing to answer with. The
 screen and bot list still work.
 
+To measure whether live screen view is using a direct path or a relay (RTT and
+frame rate), open a tunnel with `bot --remote <ENDPOINT> proxy` and follow
+[Measuring the live-view link](../design/live-view-link-measurement.md).
+
 ## Firewall and ports
 
 Leave the daemon on loopback. Do not publish it.

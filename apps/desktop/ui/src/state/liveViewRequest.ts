@@ -19,11 +19,11 @@ export function sessionRequest(input: { viewerOpen: boolean; owning: boolean }):
     // The card: a small picture, a modest budget.
     return { maxWidth: 640, maxHeight: 400, quality: 70 };
   }
-  // Moving content is encoded at this quality (4:4:4); the host adds one lossless frame once the
+  // Moving content is encoded at this quality (4:4:4, the host steps it down to fit a slow link); the host adds one lossless frame once the
   // screen has been still for a moment. The host clamps to its own ceilings.
   return {
     maxWidth: VIEWER_MAX_WIDTH,
     maxHeight: VIEWER_MAX_HEIGHT,
-    quality: 70
+    quality: 80
   };
 }

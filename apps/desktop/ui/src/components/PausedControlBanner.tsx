@@ -1,7 +1,9 @@
 import { PauseCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
+import { liveViewErrorText } from "../lib/liveViewError";
 import { foreignPausedTakeover, visibleActions } from "../lib/liveViewState";
+import { requestStop } from "../state/appStop";
 import { useLiveView } from "../state/LiveViewContext";
 import styles from "./PausedControlBanner.module.css";
 
@@ -33,9 +35,7 @@ export function PausedControlBanner() {
           <span>{t("liveView.pausedBanner.body")}</span>
           {state.lastError ? (
             <span role="alert" data-testid="paused-banner-error">
-              {t(`liveView.errors.${state.lastError.code}`, {
-                defaultValue: t("liveView.errors.generic")
-              })}
+              {liveViewErrorText(state.lastError)}
             </span>
           ) : null}
         </span>
@@ -70,6 +70,15 @@ export function PausedControlBanner() {
               {t("liveView.openScreen")}
             </Button>
           ) : null}
+          {/* A run parked behind the pause shows as running: Stop must always be one click away. */}
+          <Button
+            variant="danger"
+            size="sm"
+            data-testid="paused-banner-stop"
+            onClick={() => requestStop("banner")}
+          >
+            {t("liveView.emergencyStop")}
+          </Button>
         </span>
       </div>
     </div>
