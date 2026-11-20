@@ -22,6 +22,27 @@ export function sourceText(label: string, t: T): string {
   return label;
 }
 
+/** The daemon's English target ids ("the shell") and the key of their words in the UI language. */
+const HOSTS: Record<string, string> = {
+  "the shell": "shell",
+  "a script": "script",
+  "the browser": "browser",
+  "the desktop": "desktop",
+  "the mailbox": "mailbox",
+  "this bot's scheduler": "scheduler",
+  "this bot's memory": "memory",
+  "the user's bots": "bots"
+};
+
+/** Where the data goes, as words: a known internal target id is translated, a site or domain stays. */
+export function hostText(host: string, t: T): string {
+  const key = HOSTS[host];
+  if (key) return t(`chat.approval.plain.host.${key}`);
+  const m = /^mailbox (.+)$/s.exec(host);
+  if (m) return t("chat.approval.plain.host.mailboxNamed", { name: m[1] });
+  return host;
+}
+
 /** Why it asks, in one sentence, from the daemon's reason code. `null` for an older daemon (use its text). */
 export function reasonLine(egress: EgressApprovalDetails, t: T): string | null {
   if (egress.reasonCode !== "egress" && egress.reasonCode !== "egress_executes") return null;
@@ -29,7 +50,7 @@ export function reasonLine(egress: EgressApprovalDetails, t: T): string | null {
     ? egress.read.map((s) => sourceText(s, t)).join(", ")
     : t("chat.approval.plain.reason.unknownSources");
   const key = egress.reasonCode === "egress_executes" || egress.executes ? "egressExecutes" : "egress";
-  return t(`chat.approval.plain.reason.${key}`, { list, host: egress.host });
+  return t(`chat.approval.plain.reason.${key}`, { list, host: hostText(egress.host, t) });
 }
 
 export interface WhereInput {
@@ -135,7 +156,7 @@ export function actionText(tool: string, input: unknown, w: WhereInput, t: T): s
   const where = whereText(tool, w, t);
   // The `pc_*` family always acts on the USER'S computer, whatever the bot runs on.
   if (tool.startsWith("pc_")) {
-    if (tool === "pc_shell_run") return t("chat.approval.plain.action.pcShell", { command: whole(rec.command, 400) });
+    if (tool === "pc_shell_run") return t("chat.approval.plain.action.pcShell");
     if (tool === "pc_fs_write") return t("chat.approval.plain.action.pcWrite", { path: clip(rec.path, 200) });
     if (tool === "pc_fs_read" || tool === "pc_fs_list") {
       return t("chat.approval.plain.action.pcRead", { path: clip(rec.path, 200) });
@@ -143,7 +164,7 @@ export function actionText(tool: string, input: unknown, w: WhereInput, t: T): s
     return pcComputerText(tool, rec, t);
   }
   if (tool === "shell_run") {
-    return t("chat.approval.plain.action.shell", { where, command: whole(rec.command, 400) });
+    return t("chat.approval.plain.action.shell", { where });
   }
   if (tool === "desktop_launch") {
     return t("chat.approval.plain.action.launch", { where, name: clip(rec.executable, 80) });
@@ -153,4 +174,17 @@ export function actionText(tool: string, input: unknown, w: WhereInput, t: T): s
   }
   if (tool.startsWith("desktop_")) return t("chat.approval.plain.action.screen", { where });
   return null;
+}
+
+/**
+ * The command of a shell call, whole and on its own lines, for the code box under the sentence;
+ * `null` for any other call. Only a very long one is cut, and then it ends in "…".
+ */
+export function actionCommand(tool: string, input: unknown): string | null {
+  if (tool !== "shell_run" && tool !== "pc_shell_run") return null;
+  const rec = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const text = typeof rec.command === "string" ? rec.command.trim() : "";
+  if (!text) return null;
+  const chars = [...text];
+  return chars.length > 2000 ? `${chars.slice(0, 2000).join("")}…` : text;
 }
