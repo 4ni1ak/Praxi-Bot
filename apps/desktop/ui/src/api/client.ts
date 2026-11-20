@@ -90,6 +90,11 @@ import type {
   ProvidersDto,
   ReleaseRequest,
   RememberResponse,
+  WorkflowProposal,
+  WorkflowDefinition,
+  SaveWorkflow,
+  RunWorkflow,
+  WorkflowRun,
   RepairId,
   RepairResult,
   Run,
@@ -686,6 +691,24 @@ export class ApiClient {
 
   listRuns(): Promise<Run[]> {
     return this.request("GET", "/runs");
+  }
+  proposeWorkflow(runId: string): Promise<WorkflowProposal> {
+    return this.request("POST", `/runs/${encodeURIComponent(runId)}/workflow-proposal`);
+  }
+  listWorkflows(botId: string): Promise<WorkflowDefinition[]> {
+    return this.request("GET", `/workflows?bot_id=${encodeURIComponent(botId)}`);
+  }
+  getWorkflow(name: string, botId: string): Promise<WorkflowDefinition> {
+    return this.request("GET", `/workflows/${encodeURIComponent(name)}?bot_id=${encodeURIComponent(botId)}`);
+  }
+  saveWorkflow(input: SaveWorkflow): Promise<WorkflowDefinition> {
+    return this.request("POST", "/workflows", { body: input });
+  }
+  deleteWorkflow(name: string, botId: string): Promise<void> {
+    return this.request("DELETE", `/workflows/${encodeURIComponent(name)}?bot_id=${encodeURIComponent(botId)}`);
+  }
+  runWorkflow(name: string, input: RunWorkflow): Promise<WorkflowRun> {
+    return this.request("POST", `/workflows/${encodeURIComponent(name)}/run`, { body: input });
   }
   cancelRun(runId: string): Promise<Run> {
     return this.request("POST", `/runs/${runId}/cancel`);

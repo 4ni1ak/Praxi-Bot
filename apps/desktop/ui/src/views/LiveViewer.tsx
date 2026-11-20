@@ -45,6 +45,7 @@ import { useDaemon } from "../state/DaemonContext";
 import { LiveViewerChat, type LiveChatSlots } from "./LiveViewerChat";
 import { useLiveView, useLocalLiveView } from "../state/LiveViewContext";
 import { requestStop } from "../state/appStop";
+import { liveViewErrorText } from "../lib/liveViewError";
 import styles from "./LiveViewer.module.css";
 
 const FOCUSABLE =
@@ -471,11 +472,7 @@ export function LiveViewer({
           ) : null}
           {state.lastError || viewFailure ? (
             <span className={styles.errorInline} role="alert">
-              {t(`liveView.errors.${state.lastError?.code ?? viewFailure}`, {
-                defaultValue: t(`liveView.reasons.${state.lastError?.code ?? viewFailure}`, {
-                  defaultValue: t("liveView.errors.generic")
-                })
-              })}
+              {liveViewErrorText(state.lastError ?? viewFailure)}
               {viewFailure && !frameUrl ? (
                 <Button variant="secondary" size="sm" onClick={() => {
                   retryStream();

@@ -763,7 +763,7 @@ assert_file_contains "${SANDBOX}/etc/systemd/system/praxi-xvfb.service" "Upholds
 [[ ! -f "${SANDBOX}/etc/systemd/system/praxi-desktop.service" ]] || fail "bare Xvfb should not install praxi-desktop.service"
 pass "existing bare-Xvfb install preserved on no-flag upgrade and upgraded on --with-desktop"
 
-# 6. Explicit --with-desktop-session install (with default 1280x800x24 when no desktop unit exists yet)
+# 6. Explicit --with-desktop-session install (with default 1920x1080x24 when no desktop unit exists yet)
 rm -f "${SANDBOX}/etc/systemd/system/praxi-xvfb.service"
 run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
   --with-desktop-session --skip-packages --no-start > "${TMP_ROOT}/xfce.log" 2>&1
@@ -790,7 +790,7 @@ for u in "${XVFB_FILE}" "${DESK_FILE}" "${SVC_FILE}" "${NODE_FILE}"; do
   assert_file_contains "${u}" "Slice=praxi.slice"
   assert_file_contains "${u}" "User=praxi"
 done
-assert_file_contains "${XVFB_FILE}" "-screen 0 1280x800x24"
+assert_file_contains "${XVFB_FILE}" "-screen 0 1920x1080x24"
 assert_file_contains "${XVFB_FILE}" "-nolisten tcp"
 assert_file_contains "${XVFB_FILE}" "-auth ${SANDBOX}/var/lib/praxi/.Xauthority"
 assert_file_contains "${XVFB_FILE}" "Upholds=praxi-desktop.service praxi.service"
@@ -990,16 +990,22 @@ assert_file_contains "${XVFB_FILE}" "Upholds=praxi-desktop.service praxi.service
 assert_file_not_contains "${XVFB_FILE}" "praxi-xvfb-uphold.sh"
 pass "systemd < 249 uses ExecStartPost uphold fallback while >= 249 emits Upholds="
 
-# 7. Re-run idempotence preserves desktop session + geometry (both no-flag and explicit --with-desktop-session)
-run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
-  --skip-packages --no-start > "${TMP_ROOT}/idempotent.log" 2>&1
+# 7. Re-run idempotence preserves desktop session + an EXISTING Xvfb geometry (both no-flag and explicit --with-desktop-session).
+# The fresh default is 1920x1080x24 (asserted in section 6), so seed a different geometry here: asserting
+# the default would also pass when preservation breaks.
+[[ -f "${DESK_FILE}" ]] || fail "idempotent re-run precondition: praxi-desktop.service missing"
+sed 's/-screen 0 1920x1080x24/-screen 0 1280x800x24/' "${XVFB_FILE}" > "${XVFB_FILE}.seed"
+mv -f "${XVFB_FILE}.seed" "${XVFB_FILE}"
+assert_file_contains "${XVFB_FILE}" "-screen 0 1280x800x24"
+run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz"   --skip-packages --no-start > "${TMP_ROOT}/idempotent.log" 2>&1
 [[ -f "${DESK_FILE}" ]] || fail "idempotent re-run lost praxi-desktop.service"
 assert_file_contains "${XVFB_FILE}" "-screen 0 1280x800x24"
+assert_file_not_contains "${XVFB_FILE}" "1920x1080x24"
 
-run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \
-  --with-desktop-session --skip-packages --no-start > "${TMP_ROOT}/idempotent-flag.log" 2>&1
+run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz"   --with-desktop-session --skip-packages --no-start > "${TMP_ROOT}/idempotent-flag.log" 2>&1
 assert_file_contains "${XVFB_FILE}" "-screen 0 1280x800x24"
-pass "idempotent upgrade (no-flag and --with-desktop-session) preserves praxi-desktop.service and 1280x800x24"
+assert_file_not_contains "${XVFB_FILE}" "1920x1080x24"
+pass "idempotent upgrade (no-flag and --with-desktop-session) preserves praxi-desktop.service and an existing 1280x800x24 geometry"
 
 # 8. Explicit --without-desktop-session removes desktop session but keeps Xvfb
 run_timed bash "${SB_INSTALL}" --version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" \

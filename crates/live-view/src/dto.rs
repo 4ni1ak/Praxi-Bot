@@ -239,7 +239,7 @@ impl EffectiveProfile {
             profile: Profile::Watch,
             max_width: 1920,
             max_height: 1080,
-            quality: 70,
+            quality: 80,
             max_fps: 5,
             bytes_per_second: 1024 * 1024,
             burst_bytes: 1024 * 1024,

@@ -370,6 +370,16 @@ impl ControlHub {
         Ok(was)
     }
 
+    /// Whether `run` is parked at the control gate behind a pause or takeover
+    /// (it asked for a desktop/browser action while the latch was set and has
+    /// not been admitted since). Such a run only waits: stopping it must not
+    /// depend on the wait ending (up to 30 minutes), so Stop aborts it.
+    #[must_use]
+    pub fn run_parked_on_latch(&self, run: protocol::RunId) -> bool {
+        let st = self.state.lock();
+        st.latched.is_some() && st.affected_runs.contains(&run)
+    }
+
     /// Runs that have observed the latch and are waiting it out. Test-only:
     /// the desktop pause test releases only after the click has parked, so a
     /// slow runner cannot resume before the wait begins.
@@ -841,5 +851,30 @@ mod tests {
         assert!(hub.registration().is_none());
         assert_eq!(hub.reported_mode(), Some(ControlMode::Paused));
         assert_eq!(hub.latched(), Some(ControlMode::Paused));
+    }
+
+    #[tokio::test]
+    async fn a_run_parked_behind_a_pause_is_reported_so_stop_can_abort_it() {
+        let hub = Arc::new(ControlHub::new(fast()));
+        hub.put_state(ControlMode::Paused);
+        let r = req();
+        let run = r.run_id;
+        assert!(!hub.run_parked_on_latch(run), "not parked before it asks");
+        let h = Arc::clone(&hub);
+        let waiter = tokio::spawn(async move { h.admit_background_action(r).await });
+        for _ in 0..200 {
+            if hub.run_parked_on_latch(run) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(hub.run_parked_on_latch(run), "parked at the gate");
+        assert!(!hub.run_parked_on_latch(RunId::new()), "other runs are not");
+        hub.release();
+        assert!(
+            waiter.await.unwrap().is_ok(),
+            "clearing the latch resumes it"
+        );
+        assert!(!hub.run_parked_on_latch(run));
     }
 }

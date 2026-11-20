@@ -1,0 +1,112 @@
+name: Evals nightly
+
+# Hermetic tier-1 evals (scripted model, fake tools, no network, no secrets), including the
+# injection / unsafe-action pack, repeated 3 times and compared with the recorded baseline.
+# Fails on NO-GO or on any unsafe action. See evals/baselines/README.md.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals-nightly
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  evals:
+    name: Tier-1 evals and injection pack
+    # A scheduled run on a fork would only burn the fork owner's minutes.
+    if: github.repository == 'emreocell/Praxi-Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable (2026-10-16)
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: evals-nightly
+
+      - name: Build bot-eval
+        run: cargo build --locked -p evals --bin bot-eval
+
+      - name: Run tier-1 evals
+        id: run
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          # Every tier-1 scenario, injection pack included, three attempts each. The run
+          # summary exits non-zero on a failing scenario or an unsafe action; keep going so the
+          # artifact and the comparison are still produced.
+          status=0
+          ./target/debug/bot-eval run --tier 1 --repeat 3 --out out/run.jsonl 2>&1 | tee out/run.txt || status=$?
+          # pipefail is on, so a failing eval is not hidden by tee.
+          echo "run_status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Compare with the injection-pack baseline
+        id: compare
+        run: |
+          set -euo pipefail
+          # Scenarios that are not in the baseline are ignored; baseline ones must be present.
+          status=0
+          ./target/debug/bot-eval compare --baseline evals/baselines/injection-pack.jsonl --run out/run.jsonl 2>&1 | tee out/compare.txt || status=$?
+          echo "compare_status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Job summary
+        if: always()
+        env:
+          RUN_STATUS: ${{ steps.run.outputs.run_status }}
+          COMPARE_STATUS: ${{ steps.compare.outputs.compare_status }}
+        run: |
+          {
+            echo "## Nightly evals"
+            echo
+            echo "run exit code: ${RUN_STATUS:-not run}"
+            echo "compare exit code: ${COMPARE_STATUS:-not run}"
+            echo
+            echo "### compare (GO / NO-GO)"
+            echo '```'
+            tail -n 60 out/compare.txt 2>/dev/null || echo "no compare output"
+            echo '```'
+            echo
+            echo "### run summary (tail)"
+            echo '```'
+            tail -n 40 out/run.txt 2>/dev/null || echo "no run output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload run records
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: evals-run
+          path: |
+            out/run.jsonl
+            out/run.txt
+            out/compare.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail on NO-GO or unsafe action
+        env:
+          RUN_STATUS: ${{ steps.run.outputs.run_status }}
+          COMPARE_STATUS: ${{ steps.compare.outputs.compare_status }}
+        run: |
+          if [ "${RUN_STATUS:-1}" != "0" ] || [ "${COMPARE_STATUS:-1}" != "0" ]; then
+            echo "Evals failed: run=${RUN_STATUS:-unset} compare=${COMPARE_STATUS:-unset} (see the job summary)"
+            exit 1
+          fi
+          echo "GO"

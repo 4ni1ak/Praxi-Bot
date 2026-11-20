@@ -88,6 +88,15 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/control/recover"),
     ("POST", "/v1/control/release"),
     ("PUT", "/v1/view/privileges/{}"),
+    // recorded automation: proposing, saving, deleting and running a workflow
+    // are the owner's own actions, never a token holder's (CLI engine, MCP)
+    ("POST", "/v1/runs/{}/workflow-proposal"),
+    ("POST", "/v1/workflows"),
+    ("DELETE", "/v1/workflows/{}"),
+    ("POST", "/v1/workflows/{}/run"),
+    // saved steps (tools, targets, parameter shapes) are the owner's to read
+    ("GET", "/v1/workflows"),
+    ("GET", "/v1/workflows/{}"),
     // policy, bot authority
     ("PUT", "/v1/policy"),
     ("POST", "/v1/trusted-folders"),
@@ -275,6 +284,8 @@ fn in_table(table: &[(&str, &str)], method: &str, path: &str) -> bool {
 /// Whether `method path` needs the owner key.
 #[must_use]
 pub fn is_owner_route(method: &str, path: &str) -> bool {
+    // The CLI passes a query string; the server matches the bare path.
+    let path = path.split_once('?').map_or(path, |(p, _)| p);
     let decoded = percent_encoding::percent_decode_str(path)
         .decode_utf8()
         .map_or_else(|_| path.to_owned(), std::borrow::Cow::into_owned);

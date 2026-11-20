@@ -60,6 +60,7 @@ import { QueuedMessages } from "../components/QueuedMessages";
 import { RunStatusLine } from "../components/RunStatusLine";
 import { RunChangesGate } from "../components/RunChangesGate";
 import { ThinkingChain } from "../components/ThinkingChain";
+import { WorkflowReview } from "../components/WorkflowReview";
 import { useToast } from "../components/Toast";
 import { useEngineConsent } from "../state/EngineConsent";
 import { OPEN_AI_SETTINGS_EVENT } from "../state/useCliEngineRows";
@@ -172,7 +173,8 @@ type Entry =
   | { kind: "runStopped"; key: string; ts: number }
   | { kind: "route"; key: string; ts: number; run: RunState }
   | { kind: "changes"; key: string; ts: number; run: RunState }
-  | { kind: "remember"; key: string; ts: number; run: RunState };
+  | { kind: "remember"; key: string; ts: number; run: RunState }
+  | { kind: "workflow"; key: string; ts: number; run: RunState };
 
 /** `idle` = offer the button; `saved` = done; `hidden` = the daemon said no (409). */
 type RememberState = "idle" | "busy" | "saved" | "hidden";
@@ -554,6 +556,9 @@ export function ChatView({
           run
         });
       }
+      if (run === lastFinished && serverRuns.some(s => s.id === run.id && s.state === "succeeded" && !s.parent_run_id)) {
+        out.push({ kind: "workflow", key: `${run.id}-workflow`, ts: run.finishedMs ?? run.startedMs, run });
+      }
     }
     // Array.prototype.sort is stable: equal timestamps keep insertion order.
     const sorted = out.sort((a, b) => a.ts - b.ts);
@@ -563,7 +568,7 @@ export function ChatView({
       return index === 0 || new Date(entry.ts).toDateString() !== new Date(sorted[index - 1].ts).toDateString()
         ? [{ kind: "day", key: `day-${entry.key}`, ts: entry.ts }, ...marker, entry] : [...marker, entry];
     });
-  }, [messages, chatRuns, showAgentRoute, remember, seenUntilMs]);
+  }, [messages, chatRuns, showAgentRoute, remember, seenUntilMs, serverRuns]);
 
   const turn = useMemo(() => lastTurn(messages), [messages]);
   const lastItem = entries[entries.length - 1];
@@ -1498,6 +1503,8 @@ export function ChatView({
                   </div>
                 );
               }
+              case "workflow":
+                return client ? <div key={e.key} className={styles.rememberRow}><WorkflowReview client={client} runId={e.run.id} canRemember={true} /></div> : null;
               case "changes": {
                 const restoreSignal = e.run.items.filter(
                   (item) =>

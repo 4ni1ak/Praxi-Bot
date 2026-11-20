@@ -850,7 +850,7 @@ pub const REFINE_JPEG_QUALITY: u8 = 92;
 /// and send no refinement frame.
 const COMPACT_QUALITY_BELOW: u8 = 50;
 /// How long the screen must stay unchanged before one refinement frame is sent.
-pub const SETTLE_AFTER: Duration = Duration::from_millis(400);
+pub const SETTLE_AFTER: Duration = Duration::from_millis(300);
 /// Wait before retrying a refinement frame that the byte budget could not afford yet.
 const REFINE_RETRY: Duration = Duration::from_secs(1);
 
@@ -3506,6 +3506,21 @@ mod tests {
     }
 
     #[test]
+    fn watch_profile_is_full_hd_with_sharp_motion_and_a_quick_still() {
+        let w = EffectiveProfile::watch();
+        assert_eq!((w.max_width, w.max_height), (1920, 1080));
+        assert!(w.quality >= 80, "text must stay readable while it moves");
+        const { assert!(SETTLE_AFTER.as_millis() <= 300) };
+        const { assert!(REFINE_JPEG_QUALITY >= 85) };
+        assert!(refine_enabled(&w));
+        // A native 1280x800 desktop is never scaled (up or down).
+        assert_eq!(
+            compute_target_dimensions(1280, 800, w.max_width, w.max_height).unwrap(),
+            (1280, 800)
+        );
+    }
+
+    #[test]
     fn still_screen_refinement_is_lossless_webp_or_a_q92_jpeg() {
         let (w, h) = (1280u32, 720u32);
         let page = synthetic_text_page(w, h);
@@ -3544,7 +3559,7 @@ mod tests {
         let mut scratch = Vec::new();
         let mut out = Vec::new();
 
-        // New default: native 1920x1080, watch profile, 4:4:4, quality 70.
+        // New default: native 1920x1080, watch profile, 4:4:4, quality 80.
         let watch = EffectiveProfile::watch();
         let (nw, nh) = encode_jpeg_within_budget(
             &page,

@@ -287,8 +287,9 @@ pub async fn run_turn(cfg: TurnConfig) -> Result<TurnTrace> {
     }
     if !cfg.workflows.is_empty() {
         let store = workflow_replay::WorkflowStore::new(dir.path());
+        let scoped_store = store.for_bot(&bot.to_string())?;
         for wf in &cfg.workflows {
-            store
+            scoped_store
                 .save(wf)
                 .map_err(|e| -> Error { format!("workflow {}: {e}", wf.name).into() })?;
         }

@@ -2284,13 +2284,25 @@
       "hint": "Try again. If it keeps happening, copy the details and report it.",
       "title": "Something went wrong"
     },
+    "hostBusy": {
+      "hint": "Wait a few seconds and try again.",
+      "title": "The host is busy"
+    },
     "hostManaged": {
       "hint": "Change it in Praxi on the computer that runs the bot.",
       "title": "This is managed on the other computer"
     },
+    "hostSilent": {
+      "hint": "Check that {{name}} is on and connected to the network, then try again.",
+      "title": "{{name}} did not answer"
+    },
     "http_error": {
       "hint": "Try again. If it keeps happening, copy the details and report it.",
       "title": "The service answered with a problem"
+    },
+    "localOnly": {
+      "hint": "Use Praxi on the host computer itself, or clear it from the administrator desktop.",
+      "title": "Only the person at the host computer can do this"
     },
     "modelFailed": {
       "hint": "Try again, or pick another model. The details below say what the model reported.",
@@ -2300,6 +2312,10 @@
       "hint": "It may still be starting. Praxi will try again by itself; you can also restart the service.",
       "title": "Praxi cannot reach its local service"
     },
+    "noInputBackend": {
+      "hint": "The host has no keyboard and mouse access for this screen (for example a server without a desktop session). You can watch it, but not take it over.",
+      "title": "This screen cannot be controlled"
+    },
     "openSettings": "Open Settings",
     "reload": "Reload",
     "restartApp": "Restart Praxi",
@@ -2307,6 +2323,14 @@
     "restarting": "Restarting…",
     "retry": "Try again",
     "retrying": "Trying again in {{seconds}} s",
+    "screenInputDenied": {
+      "hint": "Allow screen control for this computer in Praxi on the host, then try again.",
+      "title": "Screen control is not allowed for this computer"
+    },
+    "screenNoConfirm": {
+      "hint": "The screen did not confirm that keys were released, so the pause was kept. Try again; if it keeps failing, restart Praxi on the host.",
+      "title": "The screen did not confirm"
+    },
     "sendFailed": {
       "hint": "Check the connection and try again.",
       "title": "Your message was not sent"
@@ -2701,14 +2725,16 @@
       "botPermissions": "A bot's permissions and tools are managed on {{name}} itself. Name, persona and model can be changed here.",
       "composio": "App connections are managed on this computer's owner side, not on {{name}}.",
       "credentials": "Email and search accounts are connected on {{name}} itself.",
-      "generic": "{{name}} did not allow that. It can only be done on {{name}} itself.",
+      "generic": "{{name}} did not allow this: {{reason}}",
       "hostTransfer": "Moving the host and pairing channels is done on {{name}} itself.",
       "knowledge": "Knowledge settings are managed on {{name}} itself.",
       "lifecycle": "Pairing and host updates are done on {{name}} itself.",
+      "localOnly": "Only the person at {{name}} can do this, not this app.",
       "overlay": "Only the person at {{name}} can answer that prompt.",
       "ownerOnly": "This can only be done on {{name}} itself.",
       "policy": "The execution policy is set on {{name}} itself, not from this app.",
       "role": "{{name}} does not allow this computer to do that.",
+      "screenInput": "{{name}} has not allowed this computer to control its screen. Allow it in Praxi on {{name}}.",
       "secrets": "Keys and secrets are added on {{name}} itself, not from this app.",
       "tools": "Tool servers and skills are managed on {{name}} itself."
     },
@@ -4175,5 +4201,29 @@
   "window": {
     "maximize": "Maximize / restore",
     "minimize": "Minimize"
+  },
+  "workflow": {
+    "button": "Save as workflow",
+    "cancel": "Cancel",
+    "confirmInfluencedStep": "I reviewed this step and its external influence.",
+    "defaultValue": "Default value",
+    "description": "Description",
+    "fromContent": "Values may come from tool output or model inference.",
+    "fromUser": "Values matched the user request before any tool output.",
+    "name": "Name",
+    "noParameters": "No parameters. Review all literal values in the steps.",
+    "parameters": "Parameter defaults",
+    "required": "Require a value at replay",
+    "reviewHint": "Review every step and parameter before saving. Page text and tool output are untrusted data. Saving creates an automation that can replay these tool calls without a model; normal permission checks still apply.",
+    "save": "Save workflow",
+    "saved": "Workflow saved",
+    "saving": "Saving…",
+    "sensitive": "Required at replay. The recorded value is not saved.",
+    "skipped": "Skipped calls and reasons",
+    "steps": "Steps and full parameters",
+    "title": "Review workflow",
+    "tooFewSteps": "This run has fewer than two recordable steps.",
+    "untrustedWarning": "This run read external or private content. Review every affected step before granting persistent automation.",
+    "warnings": "Review notes"
   }
 }

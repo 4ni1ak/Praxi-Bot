@@ -1330,7 +1330,11 @@ pub(crate) async fn cancel_run(
     Path(rid): Path<String>,
 ) -> Result<Json<RunDto>, ApiError> {
     let run = s.run_of_user(RunId(id(&rid)?))?;
-    s.agent().cancel(run.id)?;
+    if s.hub().run_parked_on_latch(run.id) {
+        s.agent().force_cancel(run.id)?;
+    } else {
+        s.agent().cancel(run.id)?;
+    }
     Ok(Json(run_dto(&s, s.run_of_user(run.id)?)))
 }
 

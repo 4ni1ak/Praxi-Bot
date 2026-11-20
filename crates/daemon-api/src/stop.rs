@@ -187,7 +187,9 @@ fn attempt_cancel(s: &AppState, run: RunId, force: bool) -> Result<(), String> {
             return Ok(());
         }
     }
-    if force {
+    // A run parked at the control gate behind a pause/takeover ignores the polite
+    // cancel until the wait ends: abort it, it is not doing anything.
+    if force || s.hub().run_parked_on_latch(run) {
         s.agent().force_cancel(run).map_err(|e| e.to_string())
     } else {
         s.agent().cancel(run).map_err(|e| e.to_string())

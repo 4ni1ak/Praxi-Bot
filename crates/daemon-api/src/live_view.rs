@@ -1070,10 +1070,7 @@ pub(crate) async fn takeover(
             "the local user stopped the takeover; only the local user can clear it",
         ));
     }
-    if !live.allowed(&actor, true)
-        || !target_impl.info().capabilities.input
-        || target_impl.input_sink().is_none()
-    {
+    if !live.allowed(&actor, true) {
         audit(
             &s,
             &actor,
@@ -1081,6 +1078,13 @@ pub(crate) async fn takeover(
             serde_json::json!({"target_id":target,"reason":"input_privilege"}),
         )?;
         return Err(ApiError::forbidden("screen:input denied"));
+    }
+    // Allowed, but this screen cannot take input (a headless host, a display
+    // without an input backend): say so, never a bare "denied".
+    if !target_impl.info().capabilities.input || target_impl.input_sink().is_none() {
+        return Err(ApiError::conflict(
+            "this screen target has no input backend, so it cannot be taken over",
+        ));
     }
     // Idempotent lost-response retry does not reset an acquiring/active owner.
     if let Some(old) = s
@@ -1342,7 +1346,10 @@ async fn override_takeover(
     // 1. Revoke the overridden device's input grant FIRST, so that nothing
     // below (a failing audit write, a failing key reset) can leave it in
     // place. Set directly, not through `set_screen_privileges`.
+    // Only the LOCAL user's stop revokes: the paired admin desktop clearing a
+    // pause through `recover` must not lose its own (default) input right.
     if reason == Reason::LocalOverride
+        && actor.local
         && let Some(owner) = s.hub().takeover().map(|t| t.actor)
         && owner.starts_with("peer:")
     {
