@@ -27,7 +27,8 @@ import { productBrandKey, providerBrand } from "../../lib/modelBrand";
 import { humanProviderTestError } from "../../lib/humanError";
 import { isCliDefault, modelGroups } from "../../lib/modelPicker";
 import { canManageProviders, PROVIDERS_LOCAL_ONLY } from "../../lib/providerConnection";
-import { addProvider, setDefaultProvider, testProvider } from "../../lib/providers";
+import { type LocalServer, SUGGESTED_LOCAL_MODEL } from "../../lib/localServers";
+import { addProvider, detectLocalServers, setDefaultProvider, testProvider } from "../../lib/providers";
 import { isTauriRuntime } from "../../overlay/events";
 import { useDaemon } from "../../state/DaemonContext";
 import { notifyProvidersChanged } from "../../state/useProviders";
@@ -68,6 +69,23 @@ export function BrainStep({
   /** Name used in error sentences: the CLI or provider the user just tried. */
   const [subject, setSubject] = useState("");
   const keyInput = useRef<HTMLInputElement | null>(null);
+  /** Local model servers answering on loopback (null while looking). */
+  const [local, setLocal] = useState<LocalServer[] | null>(null);
+  const canProbeLocal = !mock && isTauriRuntime() && canManageProviders(providerTarget);
+
+  useEffect(() => {
+    if (!canProbeLocal) {
+      setLocal([]);
+      return;
+    }
+    let alive = true;
+    void detectLocalServers(providerTarget).then((found) => alive && setLocal(found));
+    return () => {
+      alive = false;
+    };
+    // Probe once per daemon connection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client]);
 
   useEffect(() => {
     if (!client) {
@@ -139,8 +157,8 @@ export function BrainStep({
   };
 
   /** Save the key (or just switch Ollama on), read the provider's models back, pick one. */
-  const connect = async (g: ApiGroup, secret: string, provider: string) => {
-    if (!client || (g !== "ollama" && !looksLikeKey(secret))) {
+  const connect = async (g: ApiGroup | null, secret: string, provider: string, server?: LocalServer) => {
+    if (!client || (g !== "ollama" && !server && !looksLikeKey(secret))) {
       return;
     }
     dispatch({ type: "connecting" });
@@ -154,8 +172,11 @@ export function BrainStep({
       } else if (!canManageProviders(providerTarget) || !isTauriRuntime()) {
         throw new Error(PROVIDERS_LOCAL_ONLY);
       } else {
-        if (g === "ollama") {
-          const res = await addProvider({ id: "ollama" }, providerTarget);
+        if (g === "ollama" || server) {
+          const res = await addProvider(
+            server && server.id !== "lmstudio" ? { id: server.id, baseUrl: server.baseUrl } : { id: provider },
+            providerTarget
+          );
           if (res.code !== 0) {
             throw new Error((res.stderr || res.stdout).trim());
           }
@@ -177,7 +198,7 @@ export function BrainStep({
       const next = await fresh();
       const auto = autoModelFor(next, provider);
       if (!auto) {
-        dispatch({ type: "failed", error: "noModels" });
+        dispatch({ type: "failed", error: g === "ollama" ? "ollamaNoModels" : "noModels" });
         return;
       }
       const count = modelCount(next, provider);
@@ -191,6 +212,13 @@ export function BrainStep({
     } catch (e) {
       fail(e, g, secret);
     }
+  };
+
+  /** One click on a detected LM Studio / llama.cpp server. */
+  const connectLocal = (server: LocalServer) => {
+    setKey("");
+    setSubject(t(`firstRun.brain.local.${server.id}`));
+    void connect(null, "", server.id, server);
   };
 
   const pickApi = (g: ApiGroup) => {
@@ -263,8 +291,9 @@ export function BrainStep({
     : null;
   const error = providerError
     ? `${providerError.title}. ${providerError.hint}`
-    : state.error ? t(`firstRun.errors.${state.error}`, { name: errorName }) : null;
-  const ollamaFound = dto?.configured.some((p) => p.id === "ollama" && p.enabled && p.models.length > 0) === true;
+    : state.error ? t(`firstRun.errors.${state.error}`, { name: errorName, model: SUGGESTED_LOCAL_MODEL }) : null;
+  const ollamaFound = local?.some((s) => s.id === "ollama") === true;
+  const otherLocal = (local ?? []).filter((s) => s.id !== "ollama");
   const keyOpen = group !== null && group !== "ollama" && !connected;
 
   return (
@@ -338,6 +367,30 @@ export function BrainStep({
                 </button>
               );
             })}
+          </div>
+        </section>
+      ) : null}
+
+      {otherLocal.length > 0 && !connected ? (
+        <section className={styles.block} aria-labelledby="fr-local">
+          <h3 id="fr-local" className={styles.eyebrow}>{t("firstRun.brain.localTitle")}</h3>
+          <div className={styles.cards} role="group" aria-label={t("firstRun.brain.localTitle")}>
+            {otherLocal.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`${styles.card} ${styles.cliCard}`}
+                disabled={busy}
+                data-testid={`fr-local-${s.id}`}
+                onClick={() => connectLocal(s)}
+              >
+                <span className={styles.cardText}>
+                  <span className={styles.cardTitle}>{t("firstRun.brain.useCli", { name: t(`firstRun.brain.local.${s.id}`) })}</span>
+                  <span className={styles.cardSub}>{t(s.models.length === 1 ? "firstRun.brain.localSubOne" : "firstRun.brain.localSubMany", { count: s.models.length })}</span>
+                  <span className={styles.cardSub} data-testid={`fr-local-url-${s.id}`}>{s.baseUrl}</span>
+                </span>
+              </button>
+            ))}
           </div>
         </section>
       ) : null}
@@ -445,7 +498,7 @@ export function BrainStep({
         </section>
       ) : null}
 
-      {group === "ollama" && busy ? (
+      {(group === "ollama" || (!group && !state.choice)) && busy ? (
         <p className={styles.status} role="status">
           <LoaderCircle className={styles.spin} aria-hidden="true" />
           {t("firstRun.brain.checking")}

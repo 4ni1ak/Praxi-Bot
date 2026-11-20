@@ -43,7 +43,7 @@ impl LoopMemoryModel {
             &self.model.0,
             crate::CallPurpose::Memory,
         )
-        .map_err(|e| MemoryError::Model(e.into()))?;
+        .map_err(MemoryError::Model)?;
         let mut stream = provider
             .stream(req)
             .await

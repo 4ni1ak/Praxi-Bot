@@ -4,6 +4,7 @@ import {
   ArrowUp,
   Bookmark,
   Paperclip,
+  Pencil,
   Plus,
   Square,
   Terminal,
@@ -51,6 +52,7 @@ import { ModelPicker } from "../components/ModelPicker";
 import { DictateButton } from "../components/DictateButton";
 import { MessageInfo } from "../components/MessageInfo";
 import { MessageActions } from "../components/MessageActions";
+import { EditMessage, RegenerateRow, SupersededView } from "../components/ResendTurn";
 import { CopyButton } from "../components/CopyButton";
 import { useAutoSpeak } from "../components/useAutoSpeak";
 import { SpeakButton } from "../components/SpeakButton";
@@ -74,6 +76,7 @@ import {
   showJumpToLatest,
   showRouteChip
 } from "../lib/chatLogic";
+import { lastTurn, supersededGroups, supersededRunIds, type SupersededGroup } from "../lib/resendTurn";
 import { botWriteMessage, writeBotProfile } from "../lib/botWrite";
 import { splitMentions } from "../lib/mentionText";
 import { transcriptFileName, transcriptMarkdown } from "../lib/transcript";
@@ -131,6 +134,7 @@ import {
 } from "../state/timeline";
 import ccStyles from "../components/ChatCards.module.css";
 import styles from "./ChatView.module.css";
+import msgStyles from "../components/MessageActions.module.css";
 import { type ErrorAction, type HumanError, humanError, humanLine, humanToolError } from "../lib/humanError";
 import type { ApiClient } from "../api/client";
 import { sendWithHostRecovery } from "../lib/hostRecovery";
@@ -160,7 +164,8 @@ interface MenuBot {
 type Entry =
   | { kind: "day"; key: string; ts: number }
   | { kind: "unread"; key: string; ts: number }
-  | { kind: "user"; key: string; ts: number; text: string; source?: string | null; attachments?: Message["attachments"] }
+  | { kind: "user"; key: string; ts: number; msgId: string; text: string; source?: string | null; attachments?: Message["attachments"] }
+  | { kind: "superseded"; key: string; ts: number; group: SupersededGroup }
   | { kind: "assistant"; key: string; ts: number; text: string; live: boolean; botId?: string | null; runId?: string | null }
   | { kind: "item"; key: string; ts: number; item: TimelineItem; runId: string }
   | { kind: "chain"; key: string; ts: number; chain: Chain; runId: string }
@@ -287,6 +292,9 @@ export function ChatView({
   const [nav, setNav] = useState<HistoryNav>(FRESH);
   const pendingCaret = useRef<number | null>(null);
   const [sending, setSending] = useState(false);
+  /** The last user message being edited (inline), and a resend in flight. */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [resending, setResending] = useState(false);
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -436,12 +444,22 @@ export function ChatView({
   const entries = useMemo(() => {
     const out: Entry[] = [];
     const known = new Set(chatRuns.map((r) => r.id));
+    // Replaced / regenerated messages are folded into one "earlier version" row, and their runs'
+    // live events no longer draw as the current answer.
+    const replacedRuns = supersededRunIds(messages);
+    for (const group of supersededGroups(messages)) {
+      out.push({ kind: "superseded", key: group.key, ts: group.ts, group });
+    }
     for (const m of messages) {
+      if (m.superseded) {
+        continue;
+      }
       if (m.role === "user") {
         out.push({
           kind: "user",
           key: `m-${m.id}`,
           ts: m.created_at_ms,
+          msgId: m.id,
           text: m.content,
           source: m.source,
           attachments: m.attachments
@@ -465,6 +483,9 @@ export function ChatView({
       .reverse()
       .find((r) => r.finishedMs !== undefined);
     for (const run of chatRuns) {
+      if (replacedRuns.has(run.id)) {
+        continue;
+      }
       const chip = run.route ? routeChip(run.route, showAgentRoute) : null;
       if (run.route && chip && showRouteChip(chip.cheap, showAgentRoute)) {
         out.push({
@@ -549,6 +570,7 @@ export function ChatView({
     });
   }, [messages, chatRuns, showAgentRoute, remember, seenUntilMs, serverRuns]);
 
+  const turn = useMemo(() => lastTurn(messages), [messages]);
   const lastItem = entries[entries.length - 1];
   // The button is the stop button from the moment a message is sent (before any run event) while the box is empty.
   const readyFiles = files.filter((f) => f.state === "ready");
@@ -771,7 +793,7 @@ export function ChatView({
   /** `/export`: the open chat as a Markdown file (user and bot messages only). */
   const exportChat = () => {
     const title = chat?.title && chat.title !== "New chat" ? chat.title : "";
-    const md = transcriptMarkdown(messages, { title: title || view?.name || "Chat", user: t("chat.export.you"), bot: view?.name ?? "Bot" });
+    const md = transcriptMarkdown(messages.filter((m) => !m.superseded), { title: title || view?.name || "Chat", user: t("chat.export.you"), bot: view?.name ?? "Bot" });
     const url = URL.createObjectURL(new Blob([md], { type: "text/markdown;charset=utf-8" }));
     const a = document.createElement("a");
     a.href = url;
@@ -1010,6 +1032,27 @@ export function ChatView({
       setSendFailure(humanError(e));
     }
   };
+  /** Edit & resend (`text`) or regenerate the last turn: a new run; the old turn stays as "earlier version". */
+  const resendTurn = async (text?: string) => {
+    if (!client || !turn || resending) {
+      return;
+    }
+    setResending(true);
+    try {
+      const res = await client.resendLastTurn(chatId, turn.user.id, await ownerKey(client.baseUrl), text);
+      setEditingId(null);
+      setAckedRunId(res.run_id);
+      scrollToEnd();
+      await Promise.all([loadMessages(), refreshRuns()]);
+    } catch (e) {
+      toast.show(humanLine(e), "danger");
+      void loadMessages();
+    } finally {
+      setResending(false);
+    }
+  };
+  /** Nothing may be running, paused, queued or waiting for an answer while the last turn is redone. */
+  const canResend = turn?.resendable === true && !running && !pausedRunId && queue.length === 0 && !awaitingApproval;
   const wasActive = useRef(active);
   useEffect(() => {
     const was = wasActive.current;
@@ -1358,6 +1401,15 @@ export function ChatView({
               case "user":
                 return (
                   <div key={e.key} className={styles.userRow} data-message-row="user">
+                    {editingId === e.msgId && canResend ? (
+                      <EditMessage
+                        initial={e.text}
+                        usedWriteTools={turn?.usedWriteTools === true}
+                        busy={resending}
+                        onSave={(value) => void resendTurn(value)}
+                        onCancel={() => setEditingId(null)}
+                      />
+                    ) : (
                     <div className={styles.userBubble}>
                       <MessageFiles client={client} chatId={chatId} attachments={e.attachments ?? []} />
                       {splitMentions(e.text, mentionBots).map((part, i) =>
@@ -1368,15 +1420,30 @@ export function ChatView({
                         )
                       )}
                     </div>
+                    )}
                     <MessageActions
                       side="me"
                       meta={<MessageTime ts={e.ts} mode={messageTimes} />}
                     >
                       <CopyButton text={e.text} />
+                      {canResend && turn?.user.id === e.msgId && editingId !== e.msgId ? (
+                        <button
+                          type="button"
+                          className={msgStyles.copyBtn}
+                          aria-label={t("chat.resend.edit")}
+                          title={t("chat.resend.edit")}
+                          data-testid="edit-message-button"
+                          onClick={() => setEditingId(e.msgId)}
+                        >
+                          <Pencil aria-hidden="true" />
+                        </button>
+                      ) : null}
                       <MessageInfo side="me" ts={e.ts} source={e.source} />
                     </MessageActions>
                   </div>
                 );
+              case "superseded":
+                return <SupersededView key={e.key} group={e.group} />;
               case "assistant":
                 return (
                   <div key={e.key} className={styles.assistantRow} data-message-row="assistant">
@@ -1500,6 +1567,14 @@ export function ChatView({
                 );
             }
           })}
+          {canResend && turn?.answered ? (
+            <RegenerateRow
+              key={turn.user.id}
+              usedWriteTools={turn.usedWriteTools}
+              busy={resending}
+              onRegenerate={() => void resendTurn()}
+            />
+          ) : null}
           <QueuedMessages
             queue={queue}
             onSendNow={sendNow}
@@ -1780,7 +1855,7 @@ export function ChatView({
               }}
             />
             {bot ? (
-              <div>
+              <div className={styles.modelSlot}>
                 <ModelPicker
                   groups={pickerGroups}
                   value={view?.executor ?? ""}

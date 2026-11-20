@@ -355,7 +355,7 @@ pub(crate) fn read_bytes(
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum WBlock {
+pub(crate) enum WBlock {
     Heading {
         text: String,
         #[serde(default = "one")]
@@ -493,7 +493,7 @@ fn styles_xml() -> String {
     s
 }
 
-fn build_docx(blocks: &[WBlock]) -> Result<Vec<u8>, ToolError> {
+pub(crate) fn build_docx(blocks: &[WBlock]) -> Result<Vec<u8>, ToolError> {
     let mut body = String::new();
     for b in blocks {
         match b {

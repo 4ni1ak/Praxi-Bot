@@ -163,6 +163,16 @@ impl From<LoopError> for ApiError {
             LoopError::NotFound(w) => Self::not_found(w),
             LoopError::Profile(m) => Self::new(StatusCode::UNPROCESSABLE_ENTITY, "bad_profile", m),
             LoopError::Busy(c) => Self::conflict(format!("chat {c} already has an active turn")),
+            LoopError::NotLastMessage => Self::new(
+                StatusCode::CONFLICT,
+                "message_not_last",
+                "that message is no longer the last message of the chat",
+            ),
+            LoopError::NotResendable(why) => Self::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "message_not_editable",
+                why,
+            ),
             LoopError::StillFinishing(run) => {
                 Self::conflict(format!("run {run} is still finishing; retry resume"))
             }

@@ -65,6 +65,7 @@ test("the automatic model follows the picker's recommendation rules; errors are 
 
   assert.equal(classifyConnectError("HTTP 401 Unauthorized", "gemini"), "badKey");
   assert.equal(classifyConnectError("connection refused", "ollama"), "ollamaDown");
+  assert.equal(classifyConnectError("error sending request for url (http://localhost:11434/v1/models)", "ollama"), "ollamaDown");
   assert.equal(classifyConnectError("dns error: failed to resolve host", "anthropic"), "offline");
   assert.equal(classifyConnectError("something odd", "anthropic"), "unknown");
 });

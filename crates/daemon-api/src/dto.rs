@@ -25,9 +25,15 @@ pub struct Health {
     /// start, `ready` once finished, `degraded` when a component failed to start.
     #[serde(default = "default_ready")]
     pub startup: crate::host::StartupPhase,
-    /// `true` once startup finished without a failure (standby runs no components).
+    /// `true` when startup finished without a failure: this daemon's own automatic
+    /// components are running, or it is standby/client by design and runs none.
+    /// It does NOT mean channels are active; use `channels_active` for that.
     #[serde(default = "default_true")]
     pub components_ready: bool,
+    /// `true` only when this daemon is the active leader and its automatic
+    /// components (scheduler, channels) are running. `false` on standby.
+    #[serde(default)]
+    pub channels_active: bool,
     /// Why startup is `degraded`; fixed text, no secrets or paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_reason: Option<String>,
@@ -334,6 +340,14 @@ pub struct MessageDto {
     /// Files attached to a user message.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<AttachmentDto>,
+    /// Replaced by an edit or regenerated: kept as audit data, no longer part of
+    /// the model context.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub superseded: bool,
+    /// Only set on the messages of the chat's last turn: the run behind it used
+    /// a tool that is not read-only, so redoing the turn could repeat an effect.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub used_write_tools: bool,
 }
 
 /// A file attached to a chat message (`POST /v1/chats/{id}/attachments`).
@@ -391,6 +405,24 @@ pub struct SendMessage {
     /// may be empty when files are attached.
     #[serde(default)]
     pub attachment_ids: Vec<Uuid>,
+}
+
+/// `POST /v1/chats/{id}/resend`: re-run the last turn (regenerate), or replace the
+/// last user message and run it (edit & resend).
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ResendMessage {
+    /// The user message the client believes is the chat's last one.
+    pub message_id: Uuid,
+    /// The edited text; absent regenerates with the original text.
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+/// The new run started by a resend.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ResendResponse {
+    /// The run to follow.
+    pub run_id: Uuid,
 }
 
 /// How a sent message was delivered.

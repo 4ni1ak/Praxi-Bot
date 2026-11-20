@@ -1253,6 +1253,99 @@ async fn startup_reports_starting_with_503_then_degraded_when_the_store_cannot_o
     server.await.unwrap().unwrap();
 }
 
+async fn run_startup_to_degraded(
+    t: &T,
+    prepare: impl std::future::Future<Output = ()> + Send + 'static,
+    timeout: Duration,
+) -> serde_json::Value {
+    use tokio::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (stop, stopping) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(crate::serve_with_startup_timeout(
+        listener,
+        t.state.clone(),
+        prepare,
+        async move {
+            let _ = stopping.await;
+        },
+        timeout,
+    ));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while t.state.leader().startup().0 != crate::host::StartupPhase::Degraded {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("startup must end degraded, not stay starting");
+    let health = call(t, Method::GET, "/v1/health", None).await.json();
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    health
+}
+
+#[tokio::test]
+async fn a_panicking_startup_task_ends_degraded_with_a_fixed_reason() {
+    let t = setup();
+    let health = run_startup_to_degraded(
+        &t,
+        async { panic!("boom at /secret/path") },
+        Duration::from_secs(60),
+    )
+    .await;
+    assert_eq!(health["startup"], "degraded");
+    let reason = health["startup_reason"].as_str().unwrap();
+    assert!(reason.contains("unexpectedly") && !reason.contains("secret"));
+}
+
+#[tokio::test]
+async fn a_hanging_startup_times_out_into_degraded() {
+    let t = setup();
+    let health =
+        run_startup_to_degraded(&t, std::future::pending(), Duration::from_millis(100)).await;
+    assert_eq!(health["startup"], "degraded");
+    assert!(
+        health["startup_reason"]
+            .as_str()
+            .unwrap()
+            .contains("in time")
+    );
+}
+
+#[test]
+fn degraded_reason_follows_the_failure() {
+    use crate::host::StartupReason as R;
+    assert_eq!(
+        R::from_error(&crate::ApiError::unavailable("daemon stopped")),
+        R::DaemonStopped
+    );
+    assert_eq!(
+        R::from_error(&crate::ApiError::internal("x")),
+        R::StoreUnavailable
+    );
+    assert_eq!(
+        R::from_error(&crate::ApiError::bad_request("x")),
+        R::ComponentFailed
+    );
+}
+
+#[tokio::test]
+async fn a_successful_activate_clears_degraded_and_channels_active_is_separate() {
+    let t = setup();
+    t.state
+        .leader()
+        .set_degraded(crate::host::StartupReason::StoreUnavailable);
+    let health = call(&t, Method::GET, "/v1/health", None).await.json();
+    assert_eq!(health["startup"], "degraded");
+    assert_eq!(health["channels_active"], false);
+    t.state.leader().activate(true).await.unwrap();
+    let health = call(&t, Method::GET, "/v1/health", None).await.json();
+    assert_eq!(health["startup"], "ready");
+    assert!(health.get("startup_reason").is_none());
+    assert_eq!(health["components_ready"], true);
+    assert_eq!(health["channels_active"], true);
+    t.state.stop_components().await;
+}
+
 #[tokio::test]
 async fn activate_while_verifying_needs_the_epoch_check_and_force() {
     let t = setup();

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "../overlay/events";
+import { type LocalServer, parseLocalServers } from "./localServers";
 import { canManageProviders, PROVIDERS_LOCAL_ONLY, type ProviderManagementTarget } from "./providerConnection";
 
 /**
@@ -19,7 +20,7 @@ export interface CliResult {
   stderr: string;
 }
 
-type Action = "list" | "add" | "test" | "default";
+type Action = "list" | "add" | "test" | "default" | "detect_local";
 
 interface CliArgs {
   action: Action;
@@ -77,4 +78,17 @@ export async function setAutostart(enabled: boolean): Promise<boolean> {
     return enabled;
   }
   return invoke<boolean>("set_autostart", { enabled });
+}
+
+/**
+ * Looks for a local model server on loopback (Ollama, LM Studio, llama.cpp). The `bot` CLI does
+ * the probing and contacts only 127.0.0.1. Any failure counts as "none found".
+ */
+export async function detectLocalServers(target: ProviderManagementTarget): Promise<LocalServer[]> {
+  try {
+    const res = await providersCli({ action: "detect_local" }, target);
+    return res.code === 0 ? parseLocalServers(res.stdout) : [];
+  } catch {
+    return [];
+  }
 }

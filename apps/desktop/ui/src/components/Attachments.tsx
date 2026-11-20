@@ -98,6 +98,7 @@ export function MessageFiles({
             <FileText aria-hidden="true" />
             <span className={styles.name}>{a.name}</span>
             <span className={styles.meta}>{formatBytes(a.size)}</span>
+            {a.truncated ? <span className={styles.meta}>{t("chat.attach.truncated")}</span> : null}
           </span>
         )
       )}

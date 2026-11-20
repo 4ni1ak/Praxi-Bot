@@ -4852,3 +4852,52 @@ async fn the_admin_desktop_keeps_its_screen_input_after_it_clears_its_own_pause(
     let rows = audit_count(&t, "takeover.recovered");
     assert_eq!(rows, 1);
 }
+
+#[tokio::test]
+async fn host_admin_recover_audits_the_cleared_reason_and_owner_and_revokes_another_peers_input() {
+    use axum::extract::State;
+    let t = Test::new();
+    let (_id, _owned, _body) = t.active(Some("alice")).await;
+    grant(&t, "alice", true, true).await;
+    let alice = view_actor("alice", false);
+    assert!(t.state.live_view().allowed(&alice, true));
+    // The app pauses during the peer's takeover: the latch now carries a reason.
+    let (status, state) = t
+        .call(
+            None,
+            Method::PUT,
+            "/v1/control/state",
+            Some(json!({"mode":"paused","release":false})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{state}");
+    assert_eq!(
+        t.state.hub().takeover().unwrap().info.reason,
+        Some(Reason::LocalOverride)
+    );
+    // The admin desktop clears ANOTHER peer's takeover: that peer loses input.
+    let _ = local_recover(
+        State(t.state.clone()),
+        axum::Extension(view_actor("adm", true)),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("recover refused"));
+    assert!(
+        !t.state.live_view().allowed(&alice, true),
+        "clearing someone else's takeover must still revoke that peer's input"
+    );
+    // The row tells an admin clearing a peer's stop apart from clearing its own pause.
+    let rows: Vec<_> = t
+        .state
+        .storage()
+        .list_audit(t.state.user_id())
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.action == "takeover.recovered")
+        .collect();
+    assert_eq!(rows.len(), 1);
+    let d = &rows[0].detail;
+    assert_eq!(d["by"], json!("host_admin"));
+    assert_eq!(d["previous_owner"], json!("peer:alice"));
+    assert_eq!(d["cleared_reason"], json!("local_override"), "{d:?}");
+}

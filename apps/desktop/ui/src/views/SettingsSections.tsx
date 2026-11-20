@@ -108,7 +108,7 @@ export function ProvidersSection() {
       ) : (
         <>
           {native && !canManage && !onHome ? <p className={formStyles.hint}>{t("settings.providers.localDaemonOnly")}</p> : null}
-          {loadError ? <p className={formStyles.error}>{loadError}</p> : null}
+          {loadError ? <p className={formStyles.error} role="alert">{loadError}</p> : null}
           {list.length === 0 && !loadError ? (
             <p className={formStyles.hint}>{t("settings.providers.none")}</p>
           ) : (
@@ -366,7 +366,7 @@ function BotPermissions({ bot }: { bot: Bot }) {
         <BotAvatar bot={view} size="sm" decorative />
         <span className={styles.rowName}>{view.name}</span>
       </div>
-      {error ? <p className={formStyles.error}>{error}</p> : null}
+      {error ? <p className={formStyles.error} role="alert">{error}</p> : null}
       {eff ? (
         <>
           <p className={formStyles.hint}>
@@ -495,7 +495,7 @@ function WorkspacePolicy() {
   };
 
   if (!policy) {
-    return message ? <p className={formStyles.error}>{message.text}</p> : null;
+    return message ? <p className={formStyles.error} role="alert">{message.text}</p> : null;
   }
   return (
     <div className={styles.botPerm}>

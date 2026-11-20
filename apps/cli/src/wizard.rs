@@ -117,9 +117,10 @@ pub struct SetupEnv<'a> {
 /// Unknown catalog id.
 pub fn entry_for(choice: &ProviderChoice, catalog: &Catalog) -> Result<ProviderEntry> {
     provider_catalog::entry_for(choice, catalog).map_err(|e| match e {
-        provider_catalog::SetupError::Unknown(id) => {
-            format!("unknown provider {id:?}; use --base-url for a custom one").into()
-        }
+        provider_catalog::SetupError::Unknown(id) => format!(
+            "unknown provider `{id}`; run `bot providers add --help` for built-in IDs, or pass `--base-url <URL>` for a custom OpenAI-compatible provider"
+        )
+        .into(),
         other => other.into(),
     })
 }
@@ -303,7 +304,12 @@ pub fn plan_from_args(
     let key = match &args.key_env {
         Some(var) => match read_env(var).filter(|v| !v.trim().is_empty()) {
             Some(v) => Some(SecretValue::new(v.trim())),
-            None => return Err(format!("environment variable {var} is not set").into()),
+            None => {
+                return Err(format!(
+                    "environment variable `{var}` is not set or is empty; export it first and re-run `bot setup`"
+                )
+                .into());
+            }
         },
         None => None,
     };
@@ -314,15 +320,20 @@ pub fn plan_from_args(
     let models = env
         .connector
         .test(&entry, key.as_ref(), wanted.as_ref())
-        .map_err(|e| format!("connection test failed: {e}"))?;
+        .map_err(|e| {
+            format!(
+                "provider connection test failed for `{}`: {e}; check your API key, base URL, and network",
+                entry.id
+            )
+        })?;
     let model = match &args.model {
         Some(m) => Some(m.clone()),
-        None => Some(
-            models
-                .first()
-                .cloned()
-                .ok_or("the provider lists no models; pass --model explicitly")?,
-        ),
+        None => Some(models.first().cloned().ok_or_else(|| {
+            format!(
+                "provider `{}` did not return any models; pass `--model <MODEL>` explicitly",
+                entry.id
+            )
+        })?),
     };
     Ok(SetupPlan {
         lang: args.lang,

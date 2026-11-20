@@ -29,9 +29,9 @@ use crate::profile::BotProfile;
 use crate::shared::{
     ApprovalScope, COMPUTER_IDENTITY_UNBOUND_NOTICE, COMPUTER_PREPARE_TIMEOUT_NOTICE,
     CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, Grants, LoopError,
-    MessageMode, ModelOut, Pending, Providers, STEP_MODEL, STEP_TOOLS, ScheduleWork, Shared,
-    StreamItem, Verdict, initiator_of, kind_for, kind_for_mention, kind_for_schedule,
-    mention_message_id,
+    MessageMode, ModelOut, Pending, Providers, STEP_MODEL, STEP_NUDGE, STEP_TOOLS, STEP_USER,
+    ScheduleWork, Shared, StreamItem, Verdict, initiator_of, kind_for, kind_for_mention,
+    kind_for_schedule, mention_message_id,
 };
 use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_INERT, AUDIT_GRANT_REVOKED};
 
@@ -109,6 +109,7 @@ impl AgentLoop {
                 providers: RwLock::new(providers),
                 global_policy: RwLock::new(cfg.global_policy.clone()),
                 policy_locked: std::sync::atomic::AtomicBool::new(false),
+                spend: crate::spend::SpendState::default(),
                 control: RwLock::new(None),
                 computer_provider: RwLock::new(None),
                 static_desktop: RwLock::new(None),
@@ -514,6 +515,31 @@ impl AgentLoop {
     #[must_use]
     pub fn price_for(&self, model: &str) -> Option<ModelPrice> {
         self.sh.price_for(model)
+    }
+
+    /// The monthly spending limit in USD (`None` = off).
+    #[must_use]
+    pub fn spend_limit(&self) -> Option<f64> {
+        *self.sh.spend.limit.read()
+    }
+
+    /// Set or clear the monthly spending limit. Effective for the next model
+    /// call of every run; the caller validates the value and persists it.
+    pub fn set_spend_limit(&self, limit_usd: Option<f64>) {
+        *self.sh.spend.limit.write() = limit_usd;
+        // A new limit starts a fresh 80% warning cycle.
+        *self.sh.spend.warned_month.lock() = None;
+    }
+
+    /// Month-to-date spend of `user` (local calendar month).
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn spend_status(
+        &self,
+        user: protocol::UserId,
+    ) -> storage::Result<crate::spend::SpendStatus> {
+        crate::spend::spend_status(&self.sh.storage, user, storage::now_ms())
     }
 
     /// Owner kill switch: end every running native-tools engine process of
@@ -1207,6 +1233,105 @@ impl AgentLoop {
             None,
             source,
         )?))
+    }
+
+    /// Re-run the chat's last user turn as a NEW run (regenerate), or replace
+    /// the last user message with `new_text` and run it (edit & resend).
+    ///
+    /// Only the owner's own desktop message that is still the last user
+    /// message, with every run of that turn terminal and no run active in the
+    /// chat. The old user message and its answers are marked superseded (kept
+    /// in storage, left out of the model context and of the prompt's exposure
+    /// provenance); the new user message is stored with source `owner`.
+    /// Side effects of the old run are NOT undone. If the new run cannot start,
+    /// the old messages are restored.
+    ///
+    /// # Errors
+    /// [`LoopError::NotLastMessage`], [`LoopError::NotResendable`],
+    /// [`LoopError::Busy`], or the normal turn-start errors.
+    pub fn resend_last_turn(
+        &self,
+        chat_id: ChatId,
+        message_id: Uuid,
+        new_text: Option<&str>,
+    ) -> Result<RunId> {
+        if self.sh.active.lock().contains_key(&chat_id) {
+            return Err(LoopError::Busy(chat_id));
+        }
+        let messages = self.sh.storage.list_messages(chat_id)?;
+        let Some(idx) = messages.iter().rposition(|m| m.role == "user") else {
+            return Err(LoopError::NotLastMessage);
+        };
+        let last = &messages[idx];
+        if last.id != message_id {
+            return Err(LoopError::NotLastMessage);
+        }
+        if self.sh.storage.message_source(last.id)? != "owner" {
+            return Err(LoopError::NotResendable(
+                "only your own messages can be edited",
+            ));
+        }
+        let turn = &messages[idx..];
+        if turn[1..].iter().any(|m| m.role != "assistant") {
+            return Err(LoopError::NotResendable("the turn holds other messages"));
+        }
+        for run_id in turn.iter().filter_map(|m| m.run_id).collect::<HashSet<_>>() {
+            let terminal = self
+                .sh
+                .storage
+                .get_run(run_id)?
+                .and_then(|r| RunState::parse(&r.state))
+                .is_some_and(RunState::is_terminal);
+            if !terminal {
+                return Err(LoopError::NotResendable(
+                    "the previous run has not finished",
+                ));
+            }
+        }
+        let text = match new_text {
+            Some(t) => {
+                let (_, ids) = crate::attachments::split_marker(&last.content);
+                crate::attachments::with_marker(t, &ids)
+            }
+            None => last.content.clone(),
+        };
+        let ids: Vec<Uuid> = turn.iter().map(|m| m.id).collect();
+        self.sh.storage.set_messages_superseded(&ids, true)?;
+        // Keep the replaced text out of memory recall / session search too.
+        if let Some(m) = self.sh.cfg.memory.as_ref().filter(|m| m.enabled) {
+            let _ = m.store.unindex_messages(&ids);
+        }
+        match self.start_turn_from(
+            chat_id,
+            &text,
+            &kind_for(InitiatorKind::Human),
+            None,
+            None,
+            "owner",
+        ) {
+            Ok(run) => Ok(run),
+            Err(e) => {
+                let _ = self.sh.storage.set_messages_superseded(&ids, false);
+                Err(e)
+            }
+        }
+    }
+
+    /// Whether a finished run executed any tool that is not read-only, i.e.
+    /// whether redoing its turn could repeat an effect on the outside world.
+    /// Conservative: any step not marked replay-safe counts except the user
+    /// message and the nudge, so tool batches, CLI-engine model steps (the CLI
+    /// runs its own shell/file tools inside them), workflows and commands.
+    ///
+    /// # Errors
+    /// Fails on storage errors.
+    pub fn run_used_non_read_tools(&self, run_id: RunId) -> Result<bool> {
+        Ok(self
+            .sh
+            .storage
+            .list_steps(run_id)?
+            .iter()
+            .any(|s| !s.idempotent && s.name != STEP_USER && s.name != STEP_NUDGE))
     }
 
     /// The running turn of `chat_id` when `text` is the `/stop` command and

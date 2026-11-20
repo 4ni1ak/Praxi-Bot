@@ -1285,6 +1285,16 @@
       "notEligible": "Dieser Lauf kann nicht gemerkt werden.",
       "saved": "Gemerkt"
     },
+    "resend": {
+      "acted": "Dieser Lauf hat Werkzeuge genutzt, die außerhalb des Chats handeln. Ein erneuter Lauf macht ihre Wirkung nicht rückgängig.",
+      "cancel": "Abbrechen",
+      "earlier": "Frühere Version",
+      "edit": "Nachricht bearbeiten",
+      "editLabel": "Deine Nachricht bearbeiten",
+      "regenerate": "Neu erzeugen",
+      "regenerateAnyway": "Trotzdem neu erzeugen",
+      "save": "Speichern und erneut senden"
+    },
     "resume": "Fortsetzen",
     "route": {
       "agent": "Agent ({{level}})",
@@ -2073,6 +2083,14 @@
         "hint": "Warte einen Moment und versuche es erneut.",
         "title": "Diese App wird zu oft angefragt"
       },
+      "message_not_editable": {
+        "hint": "Nur deine eigene letzte Nachricht lässt sich bearbeiten oder neu erzeugen, und zwar erst, wenn der Bot fertig ist.",
+        "title": "Diese Nachricht lässt sich nicht bearbeiten"
+      },
+      "message_not_last": {
+        "hint": "Der Chat ist weitergegangen. Lade ihn neu und bearbeite oder erzeuge dann die neueste Nachricht neu.",
+        "title": "Das ist nicht mehr die letzte Nachricht"
+      },
       "modified_since": {
         "hint": "Beim Wiederherstellen würden deine neueren Änderungen überschrieben. Prüfe sie zuerst.",
         "title": "Einige Dateien haben sich geändert, nachdem der Bot sie angefasst hat"
@@ -2176,6 +2194,14 @@
       "skill_too_large": {
         "hint": "Entferne große Dateien daraus und versuche es erneut.",
         "title": "Dieser Skill ist zu groß"
+      },
+      "spend_limit_reached": {
+        "hint": "Das Modell wurde nicht aufgerufen. Erhöhe oder entferne das Limit auf der Nutzungsseite und starte dann erneut.",
+        "title": "Monatliches Ausgabenlimit erreicht"
+      },
+      "spend_limit_unreadable": {
+        "hint": "Das gespeicherte Monatslimit konnte nicht gelesen werden, daher sind kostenpflichtige Modellaufrufe gesperrt. Legen Sie das Limit auf der Seite „Nutzung“ erneut fest.",
+        "title": "Ausgabenlimit nicht lesbar"
       },
       "starting": {
         "hint": "Die App startet noch. Versuche es in ein paar Sekunden erneut.",
@@ -2452,6 +2478,13 @@
       "keyHint": "Im Schlüsselbund deines Systems gespeichert. Er wird nie wieder angezeigt.",
       "keyLabel": "{{name}}-API-Schlüssel",
       "keyPlaceholder": "Füge deinen Schlüssel hier ein",
+      "local": {
+        "llamacpp": "llama.cpp-Server",
+        "lmstudio": "LM Studio"
+      },
+      "localSubMany": "{{count}} Modelle installiert",
+      "localSubOne": "{{count}} Modell installiert",
+      "localTitle": "Läuft außerdem auf diesem Computer",
       "looking": "Suche nach dem, was schon auf diesem Computer vorhanden ist …",
       "model": "Modell",
       "paste": "Einfügen",
@@ -2489,7 +2522,8 @@
       "badKey": "{{name}} hat diesen Schlüssel nicht akzeptiert. Prüfe, ob du ihn vollständig kopiert hast, und füge ihn erneut ein.",
       "noModels": "{{name}} hat den Schlüssel akzeptiert, aber keine Modelle aufgelistet. Versuche es gleich noch einmal.",
       "offline": "{{name}} konnte nicht erreicht werden. Prüfe deine Internetverbindung und versuche es erneut.",
-      "ollamaDown": "Ollama scheint nicht zu laufen. Starte Ollama auf diesem Computer und wähle es dann erneut.",
+      "ollamaDown": "Ollama scheint nicht zu laufen. Öffne die Ollama-App (oder führe `ollama serve` in einem Terminal aus) und wähle es dann erneut.",
+      "ollamaNoModels": "Ollama läuft, aber es ist kein Modell installiert. Führe in einem Terminal `ollama pull {{model}}` (ein kleines Modell) aus und wähle Ollama dann erneut.",
       "unavailable": "Schlüssel können nur über die Desktop-App auf diesem Computer gespeichert werden.",
       "unknown": "Beim Verbinden von {{name}} ist etwas schiefgelaufen. Versuche es erneut oder füge den Schlüssel später unter Einstellungen → KI hinzu."
     },
@@ -2620,9 +2654,11 @@
     },
     "chip": {
       "connecting": "{{name}} · verbindet",
+      "degraded": "{{name}} · eingeschränkt",
       "local": "Dieser Computer",
       "offline": "{{name}} · offline",
       "online": "{{name}} · online",
+      "starting": "{{name}} · startet",
       "temporary": "Dieser Computer · vorerst"
     },
     "copy": "Kopieren",
@@ -3908,7 +3944,7 @@
     },
     "noResults": "Keine passenden Einstellungen.",
     "results": "Suchergebnisse",
-    "search": "Einstellungen durchsuchen",
+    "search": "Einstellungen suchen",
     "title": "Einstellungen",
     "updates": {
       "appVersion": "Desktop-App",
@@ -4098,6 +4134,31 @@
     "costNote": "Kosten werden nur für Modelle mit bekanntem Preis angezeigt; „—“ bedeutet unbekannt.",
     "deletedBot": "Gelöschter Bot",
     "empty": "Noch keine Nutzung. Sobald du einem Bot schreibst, erscheint der Token-Verbrauch hier.",
+    "limit": {
+      "clear": "Limit entfernen",
+      "forecast": "Prognose zum Monatsende",
+      "hint": "Könnte ein Aufruf den Monat über das Limit bringen, stoppt Praxi vor dem Modellaufruf. Auch Hintergrund- und geplante Läufe stoppen und erscheinen als fehlgeschlagene Läufe.",
+      "invalid": "Gib einen Betrag von 1 bis 1.000.000 $ ein.",
+      "label": "Limit in USD pro Monat",
+      "limitLabel": "Limit",
+      "notCounted": "Aufrufe von Modellen mit unbekanntem Preis werden nicht gezählt und nie geschätzt.",
+      "off": "Kein Limit gesetzt",
+      "pace": {
+        "noForecast": "Noch zu wenig Ausgaben für eine Prognose.",
+        "off": "Setze ein Limit für eine Prognose und einen Sicherheitsstopp.",
+        "over": "In diesem Tempo überschreitest du das Limit vor Monatsende.",
+        "reached": "Limit erreicht: Neue Modellaufrufe sind gestoppt, bis du es erhöhst oder entfernst.",
+        "under": "In diesem Tempo bleibst du unter dem Limit.",
+        "warn": "80 % des Limits sind verbraucht."
+      },
+      "placeholder": "z. B. 25",
+      "remaining": "Verbleibend",
+      "remote": "Dies ist ein entfernter Host. Sein Ausgabenlimit lässt sich nur an diesem Computer ändern, weil dein Besitzerschlüssel nie an einen Host gesendet wird.",
+      "save": "Limit setzen",
+      "spent": "Diesen Monat ausgegeben",
+      "title": "Monatliches Ausgabenlimit",
+      "unpriced": "{{count}} Aufrufe diesen Monat hatten keinen bekannten Preis und sind nicht gezählt."
+    },
     "modelCalls": "Modellaufrufe",
     "prompt": "Prompt",
     "range": "Zeitraum",
@@ -4126,7 +4187,9 @@
     "description": "Stimme und Tempo für die Vorlesen-Schaltfläche. Nutzt die Sprachausgabe deines Systems.",
     "dictate": "Diktieren",
     "dictateStop": "Stoppen und umschreiben",
+    "micBusy": "Das Mikrofon wird von einer anderen App verwendet. Schließe sie und versuche es erneut.",
     "micDenied": "Das Mikrofon ist nicht verfügbar. Erlaube den Mikrofonzugriff und versuche es erneut.",
+    "micMissing": "Es wurde kein Mikrofon gefunden. Schließe eines an und versuche es erneut.",
     "notConfigured": "Diktieren ist noch nicht eingerichtet. Füge unter Einstellungen > Allgemein einen Transkriptionsdienst hinzu.",
     "online": "online",
     "speak": "Vorlesen",

@@ -104,6 +104,7 @@ import type {
   ScreenPrivilegesInput,
   RunUsage,
   SendMode,
+  ResendResponse,
   SendResponse,
   SessionInfo,
   SessionUpdate,
@@ -115,6 +116,7 @@ import type {
   ScreenStatus,
   TerminalInfo,
   TerminalOutput,
+  SpendLimit,
   UsageSummary,
   ViewHeartbeat,
   TranscribeInput,
@@ -677,6 +679,17 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Regenerate the last answer (no `text`) or edit the last user message and resend it.
+   * Owner only; the old turn is kept as superseded, a new run starts.
+   */
+  resendLastTurn(chatId: string, messageId: string, ownerKey: string | undefined, text?: string): Promise<ResendResponse> {
+    return this.request("POST", `/chats/${chatId}/resend`, {
+      body: { message_id: messageId, ...(text === undefined ? {} : { text }) },
+      ...(ownerKey ? { headers: { "x-praxi-owner-key": ownerKey } } : {})
+    });
+  }
+
   listRuns(): Promise<Run[]> {
     return this.request("GET", "/runs");
   }
@@ -798,6 +811,15 @@ export class ApiClient {
   /** Turn an English / Turkish phrase into a schedule spec. */
   parseSchedule(text: string, tz?: string): Promise<ParsedSchedule> {
     return this.request("POST", "/schedules/parse", { body: { text, tz } });
+  }
+
+  /** Monthly spending limit and month-to-date spend. */
+  getSpendLimit(): Promise<SpendLimit> {
+    return this.request("GET", "/spend-limit");
+  }
+  /** Set (USD, at least 1) or clear (`null`) the monthly limit; owner only. */
+  setSpendLimit(limitUsd: number | null): Promise<SpendLimit> {
+    return this.request("PUT", "/spend-limit", { body: { limit_usd: limitUsd } });
   }
 
   usage(sinceMs?: number): Promise<UsageSummary> {

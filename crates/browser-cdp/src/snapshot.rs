@@ -99,21 +99,193 @@ pub struct DomExtra {
     pub autocomplete: Option<String>,
     /// Visible text / label for clickable candidates.
     pub text: String,
-    /// `name`, `id` and `aria-label` attributes (page-chosen names that often reveal a secret field).
+    /// `name`, `id`, `aria-label` and `placeholder` attributes (page-chosen names that often reveal a secret field).
     pub name_hints: Vec<String>,
+    /// The element takes text without being an `<input>` / `<textarea>`: `contenteditable` or a
+    /// `textbox` / `searchbox` / `combobox` role. Its name hints count like an input's.
+    pub editable: bool,
 }
 
 /// Words in a field's name / id / aria-label that mark it as holding a secret.
 const SECRET_NAME_WORDS: &[&str] = &[
     "password",
     "passwd",
-    "otp",
     "one-time",
+    "one_time",
+    "onetime",
     "cvv",
     "cvc",
     "card number",
     "iban",
 ];
+
+/// Suffixes that make `hotp<suffix>` a one-time-code name (`hotpcode`) and not a word like `hotpot`.
+const OTP_SUFFIXES: &[&str] = &["code", "input", "token", "field", "value", "key", "pin"];
+
+/// Whether `h` names a one-time-code field: `otp` / `totp` / `hotp` as a word of its own
+/// (`user_otp`, `mfaOtp`, `one-time-otp`), or glued to one end of an identifier segment
+/// (`otpcode`, `otpinput`, `smsotp`, `emailotp`, `totpcode`). `footprint` and `hotpot` do not match.
+/// Rare false positives are fine: they only make a field count as sensitive.
+fn has_otp_word(h: &str) -> bool {
+    // Split at non-alphanumerics and at camelCase boundaries (`mfaOtp` -> `mfa`, `otp`).
+    let mut segments: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut prev: Option<char> = None;
+    for c in h.chars() {
+        if !c.is_ascii_alphanumeric() {
+            if !cur.is_empty() {
+                segments.push(std::mem::take(&mut cur));
+            }
+            prev = None;
+            continue;
+        }
+        if c.is_ascii_uppercase() && prev.is_some_and(|p| p.is_ascii_lowercase()) && !cur.is_empty()
+        {
+            segments.push(std::mem::take(&mut cur));
+        }
+        cur.push(c.to_ascii_lowercase());
+        prev = Some(c);
+    }
+    if !cur.is_empty() {
+        segments.push(cur);
+    }
+    // The unsplit lower-case segments too, so `smsOtp`-style names also match as one glued word.
+    let raw: Vec<String> = h
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .map(str::to_ascii_lowercase)
+        .collect();
+    segments.iter().chain(raw.iter()).any(|s| {
+        matches!(s.as_str(), "otp" | "totp" | "hotp")
+            || s.starts_with("otp")
+            || s.starts_with("totp")
+            || s.ends_with("otp")
+            || s.ends_with("totp")
+            || s.ends_with("hotp")
+            || s.strip_prefix("hotp")
+                .is_some_and(|rest| OTP_SUFFIXES.contains(&rest))
+    })
+}
+
+/// Secret-field words matched on the normalised hint (lower-case, `-`, `_` and spaces removed),
+/// so `card-number`, `Card_Number` and `cardnumber` are the same.
+const SECRET_NORMALISED_WORDS: &[&str] = &[
+    "cardnumber",
+    "ccnumber",
+    "cardnum",
+    "securitycode",
+    "verificationcode",
+    "2fa",
+    "mfa",
+    "passcode",
+];
+
+/// Words that, glued to either side of `otp`, make it a one-time-code name (`emailotpcode`,
+/// `verifyotpcode`, `enterotp`).
+const OTP_NEIGHBOURS: &[&str] = &[
+    "code",
+    "pin",
+    "token",
+    "input",
+    "number",
+    "num",
+    "digit",
+    "field",
+    "value",
+    "key",
+    "sms",
+    "email",
+    "mail",
+    "verify",
+    "verification",
+    "enter",
+    "mfa",
+    "2fa",
+    "auth",
+    "login",
+    "phone",
+    "user",
+    "confirm",
+    "security",
+];
+
+/// Strip everything but ASCII letters and digits, lower-cased.
+fn normalise_hint(h: &str) -> String {
+    h.chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// `otp` somewhere inside the normalised identifier with a one-time-code neighbour: at either end,
+/// before a digit, or next to a word from [`OTP_NEIGHBOURS`]. Catches names with `otp` in the
+/// middle (`emailotpcode`, `enterotp1`) while `footprint`, `hotpot` and `spotpicker` stay plain.
+fn has_otp_inside(n: &str) -> bool {
+    n.match_indices("otp").any(|(i, _)| {
+        let left = &n[..i];
+        let right = &n[i + 3..];
+        left.is_empty()
+            || right.is_empty()
+            || right.starts_with(|c: char| c.is_ascii_digit())
+            || OTP_NEIGHBOURS
+                .iter()
+                .any(|w| left.ends_with(w) || right.starts_with(w))
+    })
+}
+
+/// `pin` as a word of its own (`pin`, `user-pin`, `cardPin`) or `pin` + code/number/input/field.
+fn has_pin_word(h: &str, n: &str) -> bool {
+    let mut seg = String::new();
+    let mut prev: Option<char> = None;
+    let mut segs: Vec<String> = Vec::new();
+    for c in h.chars() {
+        if !c.is_ascii_alphanumeric() {
+            if !seg.is_empty() {
+                segs.push(std::mem::take(&mut seg));
+            }
+            prev = None;
+            continue;
+        }
+        if c.is_ascii_uppercase() && prev.is_some_and(|p| p.is_ascii_lowercase()) && !seg.is_empty()
+        {
+            segs.push(std::mem::take(&mut seg));
+        }
+        seg.push(c.to_ascii_lowercase());
+        prev = Some(c);
+    }
+    if !seg.is_empty() {
+        segs.push(seg);
+    }
+    segs.iter().any(|s| s == "pin")
+        || ["pincode", "pinnumber", "pininput", "pinfield", "pinentry"]
+            .iter()
+            .any(|w| n == *w || n.starts_with(w))
+        || [
+            "userpin",
+            "cardpin",
+            "bankpin",
+            "simpin",
+            "atmpin",
+            "mypin",
+            "newpin",
+            "oldpin",
+            "confirmpin",
+            "securitypin",
+            "accountpin",
+        ]
+        .iter()
+        .any(|w| n.ends_with(w))
+}
+
+/// Whether a name / id / aria-label / placeholder hint marks a field as holding a secret.
+pub fn name_hint_is_secret(h: &str) -> bool {
+    let l = h.to_ascii_lowercase();
+    let n = normalise_hint(h);
+    SECRET_NAME_WORDS.iter().any(|w| l.contains(w))
+        || SECRET_NORMALISED_WORDS.iter().any(|w| n.contains(w))
+        || has_otp_word(h)
+        || has_otp_inside(&n)
+        || has_pin_word(h, &n)
+}
 
 impl DomExtra {
     /// Whether the element looks clickable although it may have no interactive AX role.
@@ -131,11 +303,8 @@ impl DomExtra {
                 let a = a.to_ascii_lowercase();
                 a.contains("password") || a.contains("cc-") || a.contains("one-time-code")
             })
-            || (self.input_type.is_some()
-                && self.name_hints.iter().any(|h| {
-                    let h = h.to_ascii_lowercase();
-                    SECRET_NAME_WORDS.iter().any(|w| h.contains(w))
-                }))
+            || ((self.input_type.is_some() || self.editable)
+                && self.name_hints.iter().any(|h| name_hint_is_secret(h)))
     }
 }
 
@@ -643,6 +812,9 @@ impl Builder<'_> {
 
         // Mask sensitive values.
         let mut value = node.value.clone();
+        // When the DOM capture failed, a text field is unknown, and unknown counts as secret. A node
+        // with no DOM facts in a successful capture is not an input / textarea (those always get
+        // facts): a contenteditable editor or a native <select> cannot be a password field.
         let unknown_sensitivity = self.frames[f].extras_failed && FREE_TEXT_ROLES.contains(&role);
         let is_secret = extra.as_ref().is_some_and(DomExtra::is_sensitive);
         if (is_secret || unknown_sensitivity) && value.is_some() {
@@ -806,6 +978,14 @@ mod tests {
             input_type: Some("password".into()),
             ..Default::default()
         });
+        for (backend_id, tag, input_type) in [(10, "input", Some("text")), (14, "select", None)] {
+            f.extras.push(DomExtra {
+                backend_id,
+                tag: tag.into(),
+                input_type: input_type.map(Into::into),
+                ..Default::default()
+            });
+        }
         let mut refs = RefMap::new();
         let t = text(&[f], &SnapshotOptions::default(), &mut refs);
         assert!(t.contains("textbox \"Password\" value=\"[masked]\""), "{t}");
@@ -943,8 +1123,97 @@ mod tests {
             frame_id: "main".into(),
             loader_id: Some("L1".into()),
             ax_nodes: ax.as_array().unwrap().clone(),
+            extras: if failed {
+                Vec::new()
+            } else {
+                vec![DomExtra {
+                    backend_id: 2,
+                    tag: "input".into(),
+                    input_type: Some("text".into()),
+                    ..Default::default()
+                }]
+            },
             extras_failed: failed,
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_node_without_dom_facts_is_a_plain_field_but_a_failed_capture_is_unknown() {
+        // Production never builds facts for a contenteditable editor or a native <select>.
+        let mut f = textbox_frame("draft text", false);
+        f.extras.clear();
+        let mut refs = RefMap::new();
+        let t = text(&[f], &SnapshotOptions::default(), &mut refs);
+        assert!(t.contains("draft text"), "{t}");
+        assert!(!refs.get("e1").unwrap().sensitive);
+        let mut refs = RefMap::new();
+        let t = text(
+            &[textbox_frame("maybe-a-secret", true)],
+            &SnapshotOptions::default(),
+            &mut refs,
+        );
+        assert!(!t.contains("maybe-a-secret"), "{t}");
+        assert!(refs.get("e1").unwrap().sensitive);
+    }
+
+    #[test]
+    fn otp_names_match_compounds_but_not_ordinary_words() {
+        for yes in [
+            "otp",
+            "user_otp",
+            "mfaOtp",
+            "totp",
+            "otpcode",
+            "otpinput",
+            "smsotp",
+            "emailotp",
+            "otp-code",
+            "hotpcode",
+            "one-time-code",
+            "onetimecode",
+        ] {
+            assert!(name_hint_is_secret(yes), "{yes}");
+        }
+        for no in ["footprint", "hotpot", "footpath", "email", "notpad"] {
+            assert!(!name_hint_is_secret(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn otp_in_the_middle_and_more_secret_hints() {
+        for yes in [
+            "emailotpcode",
+            "verifyotpcode",
+            "enterotp1",
+            "emailOtpCode",
+            "cardnumber",
+            "card-number",
+            "Card_Number",
+            "cc-number",
+            "securitycode",
+            "verification-code",
+            "2fa",
+            "mfa-token",
+            "passcode",
+            "pin",
+            "user_pin",
+            "cardPin",
+            "pincode",
+        ] {
+            assert!(name_hint_is_secret(yes), "{yes}");
+        }
+        for no in [
+            "footprint",
+            "hotpot",
+            "spotpicker",
+            "shipping",
+            "pinterest",
+            "spinner",
+            "mapping",
+            "username",
+        ] {
+            assert!(!name_hint_is_secret(no), "{no}");
         }
     }
 

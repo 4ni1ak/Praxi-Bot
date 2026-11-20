@@ -183,10 +183,78 @@ test("takeover and pause failures name their real reason, never the generic sent
   await i18n.changeLanguage("en");
 });
 
+test("concrete refusal reasons apply only to host refusals or conflict/unavailable answers", async () => {
+  await i18n.changeLanguage("en");
+  // The same words in a plain tool error or an unrelated code must not be rewritten.
+  assert.notEqual(layer.humanError({ message: "the executor is busy; try again" }).code, "hostBusy");
+  assert.notEqual(layer.humanError({ status: 500, code: "internal", message: "no input backend" }).code, "noInputBackend");
+  assert.equal(layer.humanError({ status: 409, code: "conflict", message: "no input backend" }).code, "noInputBackend");
+  assert.equal(layer.humanError({ status: 403, code: "forbidden", host: "h", message: "no input backend" }).code, "host_refusal");
+});
+
 test("the live-view error line falls back to the humanized message, not the generic text", async () => {
   const mod = (await server.ssrLoadModule("/src/lib/liveViewError.ts")) as typeof import("./liveViewError.ts");
   await i18n.changeLanguage("en");
   assert.equal(mod.liveViewErrorText({ code: "forbidden", message: "Praxi host did not allow this: x" }), "Praxi host did not allow this: x");
   assert.equal(mod.liveViewErrorText({ code: "pause_changed" }), i18n.t("liveView.errors.pause_changed"));
   assert.equal(mod.liveViewErrorText({ code: "zzz" }), i18n.t("liveView.errors.generic"));
+});
+
+test("providerTestProblem distinguishes model, endpoint, length bounds and unrelated errors", () => {
+  const longModelErr = `model ${"x".repeat(161)} not found`;
+  const cases: Array<[string, "provider_model" | "provider_endpoint" | undefined]> = [
+    ["", undefined],
+    ["MODEL_NOT_FOUND", "provider_model"],
+    ["Unknown model: foo", "provider_model"],
+    ["model `gpt-99` does not exist", "provider_model"],
+    ["models/gemini-missing is not found", "provider_model"],
+    [longModelErr, undefined],
+    ["model\nnot found", undefined],
+    ["HTTP 404: page missing", "provider_endpoint"],
+    ["Provider error (404)", "provider_endpoint"],
+    ["invalid base URL: missing host", "provider_endpoint"],
+    ["URL scheme is not allowed", "provider_endpoint"],
+    ["HTTP 500 internal server error", undefined]
+  ];
+  for (const [raw, expected] of cases) {
+    assert.equal(layer.providerTestProblem(raw), expected, raw);
+  }
+});
+
+test("exitCodeLabel formats negative NTSTATUS codes in hex and leaves non-negative codes plain", () => {
+  const cases: Array<[number, string]> = [
+    [0, "0"],
+    [1, "1"],
+    [137, "137"],
+    [-1, "-1 (0xFFFFFFFF)"],
+    [-1073741819, "-1073741819 (0xC0000005)"],
+    [-1073741515, "-1073741515 (0xC0000135)"]
+  ];
+  for (const [code, expected] of cases) {
+    assert.equal(layer.exitCodeLabel(code), expected, String(code));
+  }
+});
+
+test("humanError handles non-object inputs, circular objects, status fallbacks and reason precedence", async () => {
+  await i18n.changeLanguage("en");
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+
+  assert.equal(layer.humanError(null).code, "generic");
+  assert.equal(layer.humanError(undefined).code, "generic");
+  assert.equal(layer.humanError(circular).code, "generic");
+  assert.equal(layer.humanError(new Error("ECONNREFUSED 127.0.0.1")).code, "network");
+  assert.equal(layer.humanError({ status: 413, message: "too big" }).code, "payload_too_large");
+  assert.equal(layer.humanError({ status: 429, message: "slow down" }).code, "too_many_requests");
+  assert.equal(layer.humanError({ status: 599, message: "bad gateway" }).code, "internal");
+  assert.equal(layer.humanError({ status: 418, message: "teapot" }).code, "http_error");
+  // Concrete daemon reasons outrank generic HTTP status/code mappings.
+  assert.equal(
+    layer.humanError({ status: 409, code: "conflict", message: "missing input grant for this device" }).code,
+    "screenInputDenied"
+  );
+  // Missing program pattern interpolates program name from both phrasing variants.
+  const missingCmd = layer.humanError("command not found: `ffmpeg`");
+  assert.equal(missingCmd.code, "toolMissingProgram");
+  assert.match(missingCmd.title, /ffmpeg/);
 });

@@ -1285,6 +1285,16 @@
       "notEligible": "Bu çalıştırma hatırlanamaz.",
       "saved": "Hatırlandı"
     },
+    "resend": {
+      "acted": "Bu çalışma sohbetin dışında iş yapan araçlar kullandı. Yeniden yapmak onların yaptıklarını geri almaz.",
+      "cancel": "Vazgeç",
+      "earlier": "Önceki sürüm",
+      "edit": "Mesajı düzenle",
+      "editLabel": "Mesajınızı düzenleyin",
+      "regenerate": "Yeniden oluştur",
+      "regenerateAnyway": "Yine de yeniden oluştur",
+      "save": "Kaydet ve yeniden gönder"
+    },
     "resume": "Sürdür",
     "route": {
       "agent": "Ajan ({{level}})",
@@ -2073,6 +2083,14 @@
         "hint": "Biraz bekleyip yeniden dene.",
         "title": "Bu uygulamaya çok sık istek gidiyor"
       },
+      "message_not_editable": {
+        "hint": "Yalnızca kendi son mesajınız düzenlenebilir veya yeniden oluşturulabilir, o da bot işini bitirdikten sonra.",
+        "title": "Bu mesaj düzenlenemez"
+      },
+      "message_not_last": {
+        "hint": "Sohbet ilerledi. Yeniden yükleyin, sonra en yeni mesajı düzenleyin ya da yeniden oluşturun.",
+        "title": "Bu artık son mesaj değil"
+      },
       "modified_since": {
         "hint": "Geri yüklemek daha yeni değişikliklerinin üzerine yazar. Önce bak.",
         "title": "Bazı dosyalar bot dokunduktan sonra değişti"
@@ -2176,6 +2194,14 @@
       "skill_too_large": {
         "hint": "İçinden büyük dosyaları çıkarıp yeniden dene.",
         "title": "Bu beceri çok büyük"
+      },
+      "spend_limit_reached": {
+        "hint": "Model çağrılmadı. Kullanım sayfasında limiti yükseltin veya kaldırın, sonra yeniden çalıştırın.",
+        "title": "Aylık harcama limitine ulaşıldı"
+      },
+      "spend_limit_unreadable": {
+        "hint": "Kayıtlı aylık limit okunamadığı için ücretli model çağrıları engellendi. Limiti Kullanım sayfasından yeniden belirleyin.",
+        "title": "Harcama limiti okunamadı"
       },
       "starting": {
         "hint": "Uygulama hâlâ başlıyor. Birkaç saniye sonra tekrar dene.",
@@ -2452,6 +2478,13 @@
       "keyHint": "Sistem anahtarlığına kaydedilir. Bir daha gösterilmez.",
       "keyLabel": "{{name}} API anahtarı",
       "keyPlaceholder": "Anahtarını buraya yapıştır",
+      "local": {
+        "llamacpp": "llama.cpp sunucusu",
+        "lmstudio": "LM Studio"
+      },
+      "localSubMany": "{{count}} model yüklü",
+      "localSubOne": "{{count}} model yüklü",
+      "localTitle": "Bu bilgisayarda ayrıca çalışıyor",
       "looking": "Bu bilgisayarda hazır olanlar aranıyor…",
       "model": "Model",
       "paste": "Yapıştır",
@@ -2489,7 +2522,8 @@
       "badKey": "{{name}} bu anahtarı kabul etmedi. Tamamını kopyaladığından emin ol, sonra yeniden yapıştır.",
       "noModels": "{{name}} anahtarı kabul etti ama hiç model listelemedi. Biraz sonra yeniden dene.",
       "offline": "{{name}} servisine ulaşılamadı. İnternet bağlantını kontrol edip yeniden dene.",
-      "ollamaDown": "Ollama çalışıyor gibi görünmüyor. Ollama'yı bu bilgisayarda başlat, sonra yeniden seç.",
+      "ollamaDown": "Ollama çalışmıyor gibi görünüyor. Ollama uygulamasını açın (veya bir terminalde `ollama serve` çalıştırın), sonra yeniden seçin.",
+      "ollamaNoModels": "Ollama çalışıyor ama yüklü model yok. Bir terminalde `ollama pull {{model}}` (küçük bir model) çalıştırın, sonra Ollama'yı yeniden seçin.",
       "unavailable": "Anahtarlar yalnızca bu bilgisayardaki masaüstü uygulamasından kaydedilebilir.",
       "unknown": "{{name}} bağlanırken bir sorun çıktı. Yeniden dene ya da anahtarı sonra Ayarlar → Yapay zekâ bölümünden ekle."
     },
@@ -2620,9 +2654,11 @@
     },
     "chip": {
       "connecting": "{{name}} · bağlanıyor",
+      "degraded": "{{name}} · kısıtlı",
       "local": "Bu bilgisayar",
       "offline": "{{name}} · çevrimdışı",
       "online": "{{name}} · çevrimiçi",
+      "starting": "{{name}} · başlıyor",
       "temporary": "Bu bilgisayar · şimdilik"
     },
     "copy": "Kopyala",
@@ -4098,6 +4134,31 @@
     "costNote": "Maliyet yalnızca fiyatı bilinen modeller için gösterilir; “—” bilinmiyor demektir.",
     "deletedBot": "Silinmiş bot",
     "empty": "Henüz kullanım yok. Bir bota mesaj gönderdiğinde token kullanımı burada görünür.",
+    "limit": {
+      "clear": "Limiti kaldır",
+      "forecast": "Ay sonu tahmini",
+      "hint": "Bir çağrı ayı limitin üzerine çıkarabilecekse Praxi modeli çağırmadan durur. Arka plan ve zamanlanmış çalıştırmalar da durur ve başarısız çalıştırma olarak görünür.",
+      "invalid": "1 ile 1.000.000 $ arasında bir tutar girin.",
+      "label": "Aylık limit (USD)",
+      "limitLabel": "Limit",
+      "notCounted": "Fiyatı bilinmeyen modellere yapılan çağrılar sayılmaz ve asla tahmin edilmez.",
+      "off": "Limit belirlenmedi",
+      "pace": {
+        "noForecast": "Tahmin için henüz yeterli harcama yok.",
+        "off": "Tahmin ve güvenlik freni için bir limit belirleyin.",
+        "over": "Bu hızla ay bitmeden limiti aşacaksınız.",
+        "reached": "Limite ulaşıldı: siz yükseltene veya kaldırana kadar yeni model çağrıları durdurulur.",
+        "under": "Bu hızla limitin altında kalırsınız.",
+        "warn": "Limitin %80'i kullanıldı."
+      },
+      "placeholder": "örn. 25",
+      "remaining": "Kalan",
+      "remote": "Bu bir uzak ana bilgisayar. Harcama sınırı yalnızca o bilgisayarda değiştirilebilir; sahip anahtarın hiçbir zaman bir ana bilgisayara gönderilmez.",
+      "save": "Limiti ayarla",
+      "spent": "Bu ay harcanan",
+      "title": "Aylık harcama limiti",
+      "unpriced": "Bu ay {{count}} çağrının fiyatı bilinmiyor; sayılmadı."
+    },
     "modelCalls": "Model çağrıları",
     "prompt": "İstem",
     "range": "Zaman aralığı",
@@ -4126,7 +4187,9 @@
     "description": "Sesli oku düğmesinin sesi ve hızı. Sistemin konuşma motorunu kullanır.",
     "dictate": "Sesle yaz",
     "dictateStop": "Durdur ve yazıya çevir",
+    "micBusy": "Mikrofon başka bir uygulama tarafından kullanılıyor. Onu kapatıp tekrar dene.",
     "micDenied": "Mikrofon kullanılamıyor. Mikrofon erişimine izin verip tekrar dene.",
+    "micMissing": "Mikrofon bulunamadı. Bir mikrofon bağlayıp tekrar dene.",
     "notConfigured": "Sesle yazma henüz kurulu değil. Ayarlar > Genel bölümünden bir yazıya çevirme servisi ekle.",
     "online": "çevrimiçi",
     "speak": "Sesli oku",

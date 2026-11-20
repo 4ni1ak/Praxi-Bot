@@ -98,6 +98,21 @@ pub struct KeySpec {
     pub modifiers: u32,
 }
 
+/// Error text of [`Page::focused_entry`] when no element holds focus.
+const NO_FOCUS: &str = "no element has keyboard focus";
+
+/// `Enter` carries text for the page but never type into a field.
+fn is_navigation_spec(spec: &str) -> bool {
+    matches!(
+        spec.rsplit('+')
+            .next()
+            .unwrap_or(spec)
+            .to_ascii_lowercase()
+            .as_str(),
+        "enter" | "return"
+    )
+}
+
 /// Parse `Enter`, `Tab`, `ArrowDown`, `a`, `Control+a`, `Shift+Tab`, ...
 pub fn parse_key(spec: &str) -> Result<KeySpec> {
     let parts: Vec<&str> = if spec == "+" {
@@ -259,6 +274,9 @@ impl Page {
                     json!({"nodeId": root, "selector": ":focus"}),
                 )
                 .await?;
+            if focus["nodeId"].as_i64().unwrap_or(0) == 0 {
+                return Err(Error::Element(NO_FOCUS.into()));
+            }
             let node = self
                 .cmd_on(
                     session.as_deref(),
@@ -579,7 +597,8 @@ impl Page {
             role: e.role.clone(),
             frame_origin: frame.origin,
             top_origin: self.top_origin().await,
-            sensitive: e.sensitive,
+            // Live check (as `focused_target`): the snapshot flag can be stale, and fails closed on error.
+            sensitive: self.entry_is_sensitive(&e).await.unwrap_or(true),
         })
     }
 
@@ -598,6 +617,98 @@ impl Page {
         })
     }
 
+    /// Execution-time sensitivity check: refuses when the element was flagged at snapshot time
+    /// or is (or cannot be shown not to be) a secret field right now.
+    async fn refuse_if_sensitive_now(&self, e: &RefEntry, what: &str) -> Result<()> {
+        let live = self.entry_is_sensitive(e).await.unwrap_or(true);
+        if live {
+            return Err(Error::Element(format!(
+                "refused: the target of this {what} is, or may be, a password / one-time-code / card field; nothing was typed"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Fallback for [`Self::refuse_if_sensitive_now`] on the top document's `activeElement`.
+    /// A focused frame or shadow host cannot be looked into here, so it counts as unknown.
+    async fn refuse_if_active_element_secret(&self) -> Result<()> {
+        let refuse = || {
+            Err(Error::Element(
+                "refused: the target of this key press is, or may be, a password / one-time-code / card field; nothing was typed"
+                    .into(),
+            ))
+        };
+        // Evaluate in an isolated world: the page's own scripts cannot patch `document.activeElement`
+        // there, so a hostile page cannot make it report null or a decoy field.
+        let Ok(tree) = self.cmd("Page.getFrameTree", json!({})).await else {
+            return refuse();
+        };
+        let Some(frame_id) = tree["frameTree"]["frame"]["id"].as_str() else {
+            return refuse();
+        };
+        let Ok(world) = self
+            .cmd(
+                "Page.createIsolatedWorld",
+                json!({"frameId": frame_id, "worldName": "praxi-focus-check"}),
+            )
+            .await
+        else {
+            return refuse();
+        };
+        let Some(context_id) = world["executionContextId"].as_i64() else {
+            return refuse();
+        };
+        let Ok(r) = self
+            .cmd(
+                "Runtime.evaluate",
+                json!({"expression": "document.activeElement", "returnByValue": false,
+                       "contextId": context_id}),
+            )
+            .await
+        else {
+            return refuse();
+        };
+        if r.get("exceptionDetails").is_some() {
+            return refuse();
+        }
+        let Some(object_id) = r["result"]["objectId"].as_str() else {
+            return Ok(()); // null: nothing is focused
+        };
+        let Ok(d) = self
+            .cmd(
+                "DOM.describeNode",
+                json!({"objectId": object_id, "pierce": true}),
+            )
+            .await
+        else {
+            return refuse();
+        };
+        let node = &d["node"];
+        let name = node["nodeName"].as_str().unwrap_or("").to_ascii_uppercase();
+        if matches!(name.as_str(), "BODY" | "HTML") {
+            return Ok(());
+        }
+        let hosts_other_document = matches!(name.as_str(), "IFRAME" | "FRAME")
+            || node["shadowRoots"]
+                .as_array()
+                .is_some_and(|a| !a.is_empty());
+        let Some(backend_id) = node["backendNodeId"].as_i64() else {
+            return refuse();
+        };
+        if hosts_other_document {
+            return refuse();
+        }
+        let entry = RefEntry {
+            session_id: None,
+            frame_id: String::new(),
+            backend_id,
+            name: String::new(),
+            role: String::new(),
+            sensitive: true,
+        };
+        self.refuse_if_sensitive_now(&entry, "key press").await
+    }
+
     async fn entry_is_sensitive(&self, e: &RefEntry) -> Result<bool> {
         let node = self
             .cmd_on(
@@ -612,20 +723,23 @@ impl Page {
             .as_array()
             .map(|a| a.iter().map(|v| v.as_str().unwrap_or("")).collect())
             .unwrap_or_default();
-        let attr = |k: &str| {
+        let attr_str = |k: &str| {
             flat.chunks(2)
                 .find(|p| p.len() == 2 && p[0].eq_ignore_ascii_case(k))
-                .map(|p| p[1].to_string())
+                .map(|p| p[1])
         };
+        let attr = |k: &str| attr_str(k).map(str::to_string);
         let is_input = matches!(tag.as_str(), "input" | "textarea");
+        let editable = !is_input && crate::dom::is_editable_attrs(attr_str);
         let extra = DomExtra {
             tag,
             input_type: is_input.then(|| attr("type").unwrap_or_else(|| "text".into())),
             autocomplete: attr("autocomplete"),
-            name_hints: ["name", "id", "aria-label"]
+            name_hints: crate::dom::NAME_HINT_ATTRS
                 .iter()
                 .filter_map(|k| attr(k))
                 .collect(),
+            editable,
             ..Default::default()
         };
         Ok(extra.is_sensitive())
@@ -680,6 +794,17 @@ impl Page {
             down["text"] = json!(t);
         }
         self.check_focused_origin(expected).await?;
+        if k.text.is_some() && !is_navigation_spec(spec) {
+            // Printable input: the focused element must still not be a secret field.
+            match self.focused_entry().await {
+                Ok(focused) => self.refuse_if_sensitive_now(&focused, "key press").await?,
+                // `:focus` does not match on a page without OS focus: ask the document itself.
+                Err(Error::Element(m)) if m == NO_FOCUS => {
+                    self.refuse_if_active_element_secret().await?;
+                }
+                Err(e) => return Err(e),
+            }
+        }
         self.cmd("Input.dispatchKeyEvent", down).await?;
         self.check_focused_origin(expected).await?;
         self.cmd(
@@ -747,9 +872,12 @@ impl Page {
         text: &str,
         expected: Option<&str>,
     ) -> Result<ActionResult> {
-        self.fill_secret(r, text, |origin| {
-            expected.is_none_or(|e| grant_origin_matches(origin.as_deref(), e))
-        })
+        self.fill_checked(
+            r,
+            text,
+            |origin| expected.is_none_or(|e| grant_origin_matches(origin.as_deref(), e)),
+            true,
+        )
         .await
     }
 
@@ -762,9 +890,29 @@ impl Page {
     where
         F: Fn(Option<String>) -> bool + Send + Sync,
     {
+        self.fill_checked(r, text, accept, false).await
+    }
+
+    /// Shared fill step. `refuse_sensitive` (plain, non-secret fills) re-reads the target's
+    /// type / name / autocomplete from the live DOM right before writing, so a page that turned
+    /// the field into a password input after the earlier check and the approval cannot get
+    /// text typed into it. Unknown counts as sensitive.
+    async fn fill_checked<F>(
+        &self,
+        r: &str,
+        text: &str,
+        accept: F,
+        refuse_sensitive: bool,
+    ) -> Result<ActionResult>
+    where
+        F: Fn(Option<String>) -> bool + Send + Sync,
+    {
         let before = self.baseline().await?;
         let res = async {
             let e = self.locate(r).await?;
+            if refuse_sensitive {
+                self.refuse_if_sensitive_now(&e, "fill").await?;
+            }
             let nav = self.shared.nav_gen.load(Ordering::SeqCst);
             let first = self.frame_identity(&e).await?;
             if !accept(first.origin.clone()) {
@@ -774,6 +922,9 @@ impl Page {
                 ));
             }
             let second = self.frame_identity(&e).await?;
+            if refuse_sensitive {
+                self.refuse_if_sensitive_now(&e, "fill").await?;
+            }
             if second != first || self.shared.nav_gen.load(Ordering::SeqCst) != nav {
                 return Err(Error::Element(
                     "the field's frame changed while it was being prepared; nothing was typed"
@@ -813,6 +964,8 @@ impl Page {
         let before = self.baseline().await?;
         let res = async {
             let e = self.locate(r).await?;
+            // Live check, so no caller can type into a secret field through this path.
+            self.refuse_if_sensitive_now(&e, "typing").await?;
             self.focus_entry(&e).await?;
             for ch in text.chars() {
                 if ch == '\n' {
@@ -1169,5 +1322,90 @@ mod tests {
         let c = quad_center(&[0.0, 0.0, 10.0, 0.0, 10.0, 20.0, 0.0, 20.0]).unwrap();
         assert!((c.0 - 5.0).abs() < f64::EPSILON && (c.1 - 10.0).abs() < f64::EPSILON);
         assert!(quad_center(&[1.0]).is_none());
+    }
+
+    #[test]
+    fn grant_origin_matches_canonicalizes_ports_trailing_dots_and_case() {
+        let cases = [
+            (Some("https://example.com"), "https://example.com", true),
+            (
+                Some("https://Example.COM."),
+                "https://example.com:443",
+                true,
+            ),
+            (Some("http://example.com:80"), "http://example.com", true),
+            (
+                Some("https://example.com/login?a=1"),
+                "https://example.com",
+                true,
+            ),
+            (Some("https://[::1]:8443"), "https://[::1]:8443", true),
+            (
+                Some("https://xn--bcher-kva.example"),
+                "https://XN--BCHER-KVA.EXAMPLE.",
+                true,
+            ),
+        ];
+        for (origin, expected, want) in cases {
+            assert_eq!(
+                grant_origin_matches(origin, expected),
+                want,
+                "origin={origin:?} expected={expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn grant_origin_matches_rejects_opaque_scheme_port_and_host_mismatches() {
+        let cases = [
+            (None, "https://example.com"),
+            (Some(""), "https://example.com"),
+            (Some("null"), "https://example.com"),
+            (Some("javascript:alert(1)"), "https://example.com"),
+            (Some("file:///etc/passwd"), "file:///etc/passwd"),
+            (Some("http://example.com"), "https://example.com"),
+            (Some("https://example.com:8443"), "https://example.com"),
+            (Some("https://sub.example.com"), "https://example.com"),
+            (Some("https://example.com"), "not-a-url"),
+        ];
+        for (origin, expected) in cases {
+            assert!(
+                !grant_origin_matches(origin, expected),
+                "origin={origin:?} expected={expected:?} must not match"
+            );
+        }
+    }
+
+    #[test]
+    fn web_origin_accepts_clean_http_origins_and_rejects_opaque_or_paths() {
+        let accept = [
+            (Some("https://example.com"), Some("https://example.com")),
+            (
+                Some("  http://localhost:8080  "),
+                Some("http://localhost:8080"),
+            ),
+            (Some("https://[::1]:8443"), Some("https://[::1]:8443")),
+        ];
+        for (raw, expected) in accept {
+            assert_eq!(web_origin(raw).as_deref(), expected, "raw={raw:?}");
+        }
+
+        let reject = [
+            None,
+            Some(""),
+            Some("null"),
+            Some("https://"),
+            Some("http://"),
+            Some("https://example.com/path"),
+            Some("https://example.com?q=1"),
+            Some("https://example.com#frag"),
+            Some("https://user@example.com"),
+            Some("https://example.com extra"),
+            Some("ws://example.com"),
+            Some("file:///etc/passwd"),
+        ];
+        for raw in reject {
+            assert_eq!(web_origin(raw), None, "raw={raw:?} must be rejected");
+        }
     }
 }

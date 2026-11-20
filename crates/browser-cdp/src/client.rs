@@ -1697,4 +1697,150 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn parse_jpeg_dimensions_parses_sof_with_padding_and_restart_markers() {
+        let sof0 = minimal_jpeg(640, 480, 64);
+        assert_eq!(parse_jpeg_dimensions(&sof0), Ok((640, 480)));
+
+        let max_bounds = minimal_jpeg(
+            u16::try_from(MAX_SCREENCAST_IMAGE_WIDTH).unwrap(),
+            u16::try_from(MAX_SCREENCAST_IMAGE_HEIGHT).unwrap(),
+            64,
+        );
+        assert_eq!(
+            parse_jpeg_dimensions(&max_bounds),
+            Ok((MAX_SCREENCAST_IMAGE_WIDTH, MAX_SCREENCAST_IMAGE_HEIGHT))
+        );
+
+        // SOF2 (progressive, 0xC2) preceded by restart marker (0xD0) and repeated 0xFF padding.
+        let sof2_with_restart = vec![
+            0xFF, 0xD8, 0xFF, 0xD0, 0xFF, 0xFF, 0xC2, 0x00, 0x0B, 0x08, 0x02, 0x58, 0x03, 0x20,
+            0x01, 0x01, 0x11, 0x00,
+        ];
+        assert_eq!(parse_jpeg_dimensions(&sof2_with_restart), Ok((800, 600)));
+    }
+
+    #[test]
+    fn parse_jpeg_dimensions_rejects_malformed_and_truncated_headers() {
+        let cases: &[(&str, &[u8])] = &[
+            ("empty", &[]),
+            ("too_short", &[0xFF, 0xD8, 0xFF]),
+            ("missing_soi", &[0x89, 0x50, 0x4E, 0x47]),
+            ("bad_alignment", &[0xFF, 0xD8, 0x00, 0xC0]),
+            ("eoi_before_sof", &[0xFF, 0xD8, 0xFF, 0xD9]),
+            (
+                "sos_before_sof",
+                &[0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xD9],
+            ),
+            ("truncated_seg_len", &[0xFF, 0xD8, 0xFF, 0xE0, 0x00]),
+            ("seg_len_lt_2", &[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x01]),
+            (
+                "seg_len_past_eof",
+                &[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x00],
+            ),
+            (
+                "truncated_sof",
+                &[0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x05, 0x08, 0x00, 0x01],
+            ),
+            ("no_sof_before_eof", &[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02]),
+        ];
+        for (name, bytes) in cases {
+            assert!(parse_jpeg_dimensions(bytes).is_err(), "{name} should fail");
+        }
+    }
+
+    #[test]
+    fn parse_jpeg_dimensions_rejects_zero_and_oversized_bounds() {
+        let cases = [
+            (0u16, 480u16),
+            (640, 0),
+            (u16::try_from(MAX_SCREENCAST_IMAGE_WIDTH + 1).unwrap(), 100),
+            (100, u16::try_from(MAX_SCREENCAST_IMAGE_HEIGHT + 1).unwrap()),
+        ];
+        for (w, h) in cases {
+            let bytes = minimal_jpeg(w, h, 64);
+            assert_eq!(
+                parse_jpeg_dimensions(&bytes),
+                Err("JPEG dimensions outside live-view bounds"),
+                "w={w} h={h}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_screencast_metadata_rejects_non_finite_and_out_of_range_values() {
+        let meta = || RawScreencastMetadata {
+            offset_top: 10.0,
+            page_scale_factor: 1.0,
+            device_width: 1280.0,
+            device_height: 720.0,
+            scroll_offset_x: 0.0,
+            scroll_offset_y: 0.0,
+            timestamp: Some(123.4),
+        };
+        assert!(validate_screencast_metadata(&meta()).is_some());
+
+        let invalid_cases = [
+            (
+                "negative_offset_top",
+                RawScreencastMetadata {
+                    offset_top: -1.0,
+                    ..meta()
+                },
+            ),
+            (
+                "offset_top_equals_height",
+                RawScreencastMetadata {
+                    offset_top: 720.0,
+                    ..meta()
+                },
+            ),
+            (
+                "zero_scale",
+                RawScreencastMetadata {
+                    page_scale_factor: 0.0,
+                    ..meta()
+                },
+            ),
+            (
+                "zero_width",
+                RawScreencastMetadata {
+                    device_width: 0.0,
+                    ..meta()
+                },
+            ),
+            (
+                "nan_width",
+                RawScreencastMetadata {
+                    device_width: f64::NAN,
+                    ..meta()
+                },
+            ),
+            (
+                "inf_scroll_x",
+                RawScreencastMetadata {
+                    scroll_offset_x: f64::INFINITY,
+                    ..meta()
+                },
+            ),
+            (
+                "negative_timestamp",
+                RawScreencastMetadata {
+                    timestamp: Some(-0.1),
+                    ..meta()
+                },
+            ),
+            (
+                "nan_timestamp",
+                RawScreencastMetadata {
+                    timestamp: Some(f64::NAN),
+                    ..meta()
+                },
+            ),
+        ];
+        for (label, raw) in invalid_cases {
+            assert!(validate_screencast_metadata(&raw).is_none(), "{label}");
+        }
+    }
 }

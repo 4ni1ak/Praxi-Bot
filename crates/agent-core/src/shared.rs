@@ -61,6 +61,13 @@ pub enum LoopError {
     /// The chat already has a running turn; use `send_user_message`.
     #[error("chat {0} already has an active turn")]
     Busy(ChatId),
+    /// The message the client named is no longer the chat's last user message.
+    #[error("that message is not the last message of the chat")]
+    NotLastMessage,
+    /// The last turn cannot be edited or regenerated (foreign source, still
+    /// running, or not a plain user/assistant exchange).
+    #[error("this turn cannot be edited or regenerated: {0}")]
+    NotResendable(&'static str),
     /// A previous drive task for this run has not released its handle yet.
     /// Resume would detach that task or drop the new one; retry once it finishes.
     #[error("run {0} is still finishing; retry resume")]
@@ -867,6 +874,8 @@ pub(crate) struct Shared {
     /// Locked deny-all mode (unusable persisted policy): every decision except
     /// `Meta` is `Deny`, whatever a bot's own policy says.
     pub policy_locked: std::sync::atomic::AtomicBool,
+    /// Monthly spending limit (default off); see `spend.rs`.
+    pub spend: crate::spend::SpendState,
     /// Desktop control bridge (see `control.rs`); `None` = no gate.
     pub control: RwLock<Option<Arc<dyn crate::control::ControlGate>>>,
     /// Dynamic computer availability provider installed by the daemon (`serve`).
@@ -1533,6 +1542,11 @@ impl Shared {
             // Another bot's reply (an `@mention` chat) reaches this run as
             // untrusted data whatever that bot read. Same single exposure
             // state as every other source: no separate flag for mentions.
+            // Text read out of an attached file is untrusted data like any tool read.
+            if let Some(name) = crate::history::text_attachment_source(&self.storage, run) {
+                taint.exposure.observe(true, false);
+                taint.note_label(&format!("attached file {name}"));
+            }
             if crate::history::has_foreign_replies(&self.storage, run) {
                 taint.exposure.observe(true, false);
                 taint.note_label("another bot's reply");

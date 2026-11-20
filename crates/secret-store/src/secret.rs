@@ -369,4 +369,47 @@ mod managed_oauth_tests {
             "plain"
         );
     }
+
+    #[test]
+    fn is_fill_name_checks_case_insensitive_prefix_and_boundaries() {
+        let cases = [
+            ("", false),
+            ("fill", false),
+            ("fill/", true),
+            ("fill/github", true),
+            ("FILL/GITHUB", true),
+            ("FiLl/a/b", true),
+            ("/fill/a", false),
+            ("fill_other/a", false),
+            ("ééééé", false),
+            ("🔒🔑🗝️", false),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(is_fill_name(name), expected, "name={name:?}");
+            assert_eq!(
+                refuse_fill_namespace(name).is_err(),
+                expected,
+                "name={name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_host_credential_checks_case_insensitive_prefix_and_utf8_boundaries() {
+        let cases = [
+            ("", false),
+            ("mcp-server", false),
+            ("mcp-server/", true),
+            ("mcp-server/token/1", true),
+            ("MCP-SERVER/TOKEN", true),
+            ("McP-SeRvEr/x", true),
+            ("/mcp-server/x", false),
+            ("mcp-servers/x", false),
+            ("éééééé", false),
+            ("🔑🔑🔑🔑", false),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(is_host_credential(name), expected, "name={name:?}");
+        }
+    }
 }

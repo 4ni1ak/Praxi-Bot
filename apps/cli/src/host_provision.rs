@@ -28,51 +28,54 @@ use crate::{
 
 #[derive(Debug, Args)]
 pub struct TargetArgs {
-    /// `user@server` (for example ubuntu@203.0.113.7), or the name of a saved server.
+    /// `user@server` (for example `ubuntu@203.0.113.7`), or the name of a saved server.
     pub target: String,
-    /// SSH port (default 22). Not the daemon's global `--port`.
+    /// SSH port (default: 22; distinct from the daemon's global `--port`).
     #[arg(long = "ssh-port")]
     pub ssh_port: Option<u32>,
-    /// Private key file. Without it the ssh-agent is used. Passwords are not supported.
+    /// SSH private key file (uses `ssh-agent` when omitted; passwords are not supported).
     #[arg(long)]
     pub key: Option<PathBuf>,
-    /// Local name for this server (default: derived from the address).
+    /// Local name for this server (defaults to a name derived from the host address).
     #[arg(long)]
     pub name: Option<String>,
-    /// Accept a NEW host key without asking (compare the fingerprint first).
-    /// A changed key is never accepted.
+    /// Accept a new SSH host key without prompting (a changed host key is never accepted).
     #[arg(long)]
     pub yes: bool,
-    /// Skip the virtual display and desktop session.
+    /// Skip installing the virtual display and desktop session.
     #[arg(long)]
     pub no_desktop: bool,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum ProvisionCmd {
-    /// Install Praxi on your own Ubuntu/Debian server over SSH and pair it
-    /// with this computer (idempotent: run it again to resume).
+    /// Install Praxi on an Ubuntu/Debian server over SSH and pair it with this computer.
+    ///
+    /// Idempotent: re-run the same command to resume after a failed step.
     Add(TargetArgs),
-    /// Re-run the install on a server, migrating a plain `bot serve` install
-    /// to host mode in place (its data is kept and snapshotted first).
+    /// Re-run installation on a server and migrate a plain `bot serve` setup to host mode.
+    ///
+    /// Existing server data is preserved and snapshotted before migration.
     Repair(TargetArgs),
-    /// Install this app's version on a server that runs an older one.
+    /// Upgrade Praxi on a paired server to match this client's version.
     Upgrade(TargetArgs),
-    /// Forget a server and revoke this computer on it.
+    /// Disconnect a server and revoke this computer's pairing on it.
     Remove {
         /// Saved server name or `user@server`.
         name: String,
-        /// Also uninstall Praxi on the server (keeps its data).
+        /// Also uninstall Praxi on the server while keeping its data.
         #[arg(long)]
         uninstall: bool,
-        /// Uninstall AND delete the server's data, config and praxi user.
+        /// Uninstall Praxi and delete the server's data, config, and `praxi` user.
         #[arg(long, conflicts_with = "uninstall")]
         purge: bool,
-        /// Skip the typed confirmation for --purge.
+        /// Skip the typed confirmation prompt required for `--purge`.
         #[arg(long)]
         yes: bool,
+        /// SSH port (default: 22; distinct from the daemon's global `--port`).
         #[arg(long = "ssh-port")]
         ssh_port: Option<u32>,
+        /// SSH private key file (uses `ssh-agent` when omitted; passwords are not supported).
         #[arg(long)]
         key: Option<PathBuf>,
     },
@@ -249,9 +252,11 @@ pub(crate) fn resolve_parts(
                 installed_version: None,
             })
     } else {
-        store
-            .load(&validate::name(target)?)
-            .ok_or_else(|| format!("no saved server named {target:?}; use user@server"))?
+        store.load(&validate::name(target)?).ok_or_else(|| {
+            format!(
+                "no saved server named `{target}`; pass `user@server` (for example `ubuntu@203.0.113.7`) to connect to a new server"
+            )
+        })?
     };
     if let Some(n) = name {
         rec.name = validate::name(n)?;
@@ -281,6 +286,14 @@ pub(crate) fn transport(store: &Store, rec: &HostRecord) -> Result<OpenSshTransp
             key: rec.key_path.clone(),
         },
     ))
+}
+
+fn mode_label(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Add => "add",
+        Mode::Repair => "repair",
+        Mode::Upgrade => "upgrade",
+    }
 }
 
 pub fn run(cmd: &ProvisionCmd, data_dir: &Path, client: &dyn Fn() -> Result<Client>) -> Result<()> {
@@ -322,8 +335,12 @@ pub fn run(cmd: &ProvisionCmd, data_dir: &Path, client: &dyn Fn() -> Result<Clie
     let transport = transport(&store, &record)?;
     let mut ui = TerminalUi { accept: args.yes };
     println!(
-        "Provisioning {}@{}:{} as \"{}\" ({mode:?}). SSH uses a key file or ssh-agent; passwords are not supported.\n",
-        record.user, record.host, record.port, record.name
+        "Provisioning {}@{}:{} as \"{}\" ({}). SSH uses a key file or ssh-agent; passwords are not supported.\n",
+        record.user,
+        record.host,
+        record.port,
+        record.name,
+        mode_label(mode)
     );
     let log = store.log_path(&record.name);
     let mut engine = Engine {
@@ -358,7 +375,7 @@ pub fn run(cmd: &ProvisionCmd, data_dir: &Path, client: &dyn Fn() -> Result<Clie
         ));
     }
     println!(
-        "Done. The server is a paired Praxi host. It still needs a model key (`bot setup` on the host, or add one from this computer when that flow lands)."
+        "Done. The server is now a paired Praxi host. Next: configure a model provider by running `bot setup` on the host (or add one in the desktop app)."
     );
     Ok(())
 }

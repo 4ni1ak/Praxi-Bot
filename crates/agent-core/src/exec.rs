@@ -1055,7 +1055,7 @@ impl TurnExecutor {
         // A CLI selected by the HTTP fallback chain is also a whole session.
         if req.model.0.starts_with("cli:") {
             let mut call = crate::usage::CallGuard::start(&self.sh, ctx, &req.model.0, purpose)
-                .map_err(|e| ProviderError::InvalidRequest(e.into()))?;
+                .map_err(ProviderError::InvalidRequest)?;
             call.tier(tier);
             let out = self
                 .exec_cli(run, &req, specs, &CancellationToken::new())
@@ -1069,7 +1069,7 @@ impl TurnExecutor {
         let model = req.model.clone();
         let provider = self.sh.providers.read().pick(&model)?;
         let mut call = crate::usage::CallGuard::start(&self.sh, ctx, &model.0, purpose)
-            .map_err(|e| ProviderError::InvalidRequest(e.into()))?;
+            .map_err(ProviderError::InvalidRequest)?;
         call.tier(tier);
         let mut stream = provider.stream(req).await?;
         let mut out = ModelOut {

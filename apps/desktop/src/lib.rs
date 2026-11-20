@@ -796,6 +796,7 @@ enum ProvidersAction {
     Add,
     Test,
     Default,
+    DetectLocal,
 }
 
 fn valid_provider_id(id: &str) -> bool {
@@ -822,6 +823,8 @@ async fn providers_cli(
     let mut key = None;
     if let ProvidersAction::List = action {
         args.push("list".into());
+    } else if let ProvidersAction::DetectLocal = action {
+        args.push("detect-local".into());
     } else {
         let id = id
             .filter(|i| valid_provider_id(i))
@@ -850,7 +853,7 @@ async fn providers_cli(
                     args.extend(["--model".into(), m]);
                 }
             }
-            ProvidersAction::List => {}
+            ProvidersAction::List | ProvidersAction::DetectLocal => {}
         }
     }
     daemon::run_providers_cli(args, key).await

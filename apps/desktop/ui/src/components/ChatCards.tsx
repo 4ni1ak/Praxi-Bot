@@ -690,7 +690,7 @@ export function ApprovalCard({
           aria-label={t("chat.approval.reasonPlaceholder")}
           onChange={(e) => setReason(e.target.value)}
         />
-        {error ? <p className={formStyles.error}>{error}</p> : null}
+        {error ? <p className={formStyles.error} role="alert">{error}</p> : null}
       </div>
     </div>
   );
@@ -780,7 +780,7 @@ export function QuestionCard({
           </form>
         </>
       ) : null}
-      {error ? <p className={formStyles.error}>{error}</p> : null}
+      {error ? <p className={formStyles.error} role="alert">{error}</p> : null}
     </div>
   );
 }
@@ -910,7 +910,7 @@ export function SubagentCard({ run, renderItem, onCancel }: SubagentCardProps) {
           </Button>
         ) : null}
       </div>
-      {error ? <p className={formStyles.error}>{error}</p> : null}
+      {error ? <p className={formStyles.error} role="alert">{error}</p> : null}
       {expanded ? (
         <div className={styles.cardBody}>
           {task ? (

@@ -53,36 +53,59 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Praxi-Bot command-line interface.
 #[derive(Parser)]
-#[command(name = "bot", version, about = "Praxi-Bot agent CLI", long_about = None)]
+#[command(
+    name = "bot",
+    version,
+    about = "Praxi-Bot agent CLI",
+    long_about = None,
+    after_help = "Exit codes:\n  0  OK\n  1  General error\n  2  Usage error\n  3  Daemon unreachable\n  4  Authentication rejected (or missing API token)\n  5  Not found\n  6  Request rejected (invalid input, conflict, or setup required)\n  7  Run failed or cancelled"
+)]
 struct Cli {
-    /// Data directory (default: `BOT_DATA_DIR` or the OS application data dir).
-    #[arg(long, global = true)]
+    /// Data directory (defaults to `BOT_DATA_DIR` or the OS app-data directory).
+    #[arg(long, global = true, help_heading = "Global Options")]
     data_dir: Option<PathBuf>,
-    /// Directory with provider catalog `*.toml` files (default: built-in set).
-    #[arg(long, global = true, env = "BOT_CATALOG_DIR")]
+    /// Directory with provider catalog `*.toml` files (defaults to the built-in catalog).
+    #[arg(
+        long,
+        global = true,
+        env = "BOT_CATALOG_DIR",
+        help_heading = "Global Options"
+    )]
     catalog_dir: Option<PathBuf>,
-    /// Secret backend: auto (existing file, else OS keychain, else encrypted
-    /// file), keyring, or file. The file passphrase comes from
-    /// `BOT_SECRETS_PASSPHRASE` or a prompt.
+    /// Secret backend: `auto` (existing encrypted file, else OS keychain), `keyring`, or `file`.
+    /// The file backend reads `BOT_SECRETS_PASSPHRASE` or prompts interactively.
     #[arg(
         long,
         global = true,
         default_value = "auto",
-        env = "BOT_SECRETS_BACKEND"
+        env = "BOT_SECRETS_BACKEND",
+        help_heading = "Global Options"
     )]
     secrets_backend: BackendChoice,
-    /// Machine-readable output (JSON / NDJSON on stdout) for status, chat,
-    /// bots and approve. Errors always go to stderr as text.
-    #[arg(long, global = true)]
+    /// Emit machine-readable JSON (or NDJSON for `chat`) on stdout for supported commands.
+    /// Errors always go to stderr as text.
+    #[arg(long, global = true, help_heading = "Global Options")]
     json: bool,
-    /// TCP port of the daemon (`serve` binds 127.0.0.1:PORT; clients connect to it).
-    #[arg(long, global = true, env = "BOT_PORT", default_value_t = daemon_api::DEFAULT_PORT)]
+    /// Loopback TCP port of the daemon (`serve` binds 127.0.0.1:PORT; clients connect to it).
+    #[arg(
+        long,
+        global = true,
+        env = "BOT_PORT",
+        default_value_t = daemon_api::DEFAULT_PORT,
+        help_heading = "Global Options"
+    )]
     port: u16,
-    /// Full daemon URL for client commands (overrides --port).
-    #[arg(long, global = true, env = "BOT_URL")]
+    /// Full daemon URL for client commands (overrides `--port`).
+    #[arg(long, global = true, env = "BOT_URL", help_heading = "Global Options")]
     url: Option<String>,
-    /// Use a paired daemon endpoint through iroh.
-    #[arg(long, global = true, conflicts_with = "url")]
+    /// Target a paired remote daemon by endpoint ID (conflicts with `--url`).
+    #[arg(
+        long,
+        global = true,
+        value_name = "ENDPOINT",
+        conflicts_with = "url",
+        help_heading = "Global Options"
+    )]
     remote: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
@@ -91,18 +114,22 @@ struct Cli {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)] // one-shot CLI args, built once
 enum Command {
-    /// Record, review, save and replay workflows from successful runs.
+    /// Record, review, save, and replay workflows from successful runs.
     Workflow {
         #[command(subcommand)]
         action: workflow::WorkflowCmd,
     },
     /// Print a shell completion script to stdout.
     Completions {
+        /// Shell to generate completions for.
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
     /// Generate section 1 man pages in the given directory.
-    ManPages { output_dir: PathBuf },
+    ManPages {
+        /// Directory where `.1` man page files will be written.
+        output_dir: PathBuf,
+    },
     /// Review local skills and explicitly trust reviewed content.
     Skills {
         #[command(subcommand)]
@@ -118,13 +145,17 @@ enum Command {
         #[command(subcommand)]
         action: host::HostCmd,
     },
-    /// Write one file with your bots, chats, memory, skills and settings (no API keys).
+    /// Back up bots, chats, memory, skills, and settings to one file (no API keys).
+    ///
+    /// Existing files are never overwritten. API keys and tokens are excluded
+    /// from backups and must be re-entered after a restore. Stopping the daemon
+    /// first gives a snapshot that is consistent across all files.
     Backup(backup_cmd::BackupCmd),
-    /// Restore a file written by `backup` (close the app first).
+    /// Restore a backup file created by `bot backup` (stop the daemon first).
     Restore(backup_cmd::RestoreCmd),
-    /// Interactive first-run setup (or scripted with --provider).
+    /// Set up a provider, default model, and first bot (interactive, or scripted with `--provider`).
     Setup(SetupCmd),
-    /// Check the installation (data dir, config, providers, daemon, browser, ...).
+    /// Check installation health (data directory, config, providers, daemon, browser, and more).
     Doctor(DoctorCmd),
     /// Manage stored secrets (values are never printed).
     Secrets {
@@ -136,15 +167,12 @@ enum Command {
         #[command(subcommand)]
         action: ProvidersCmd,
     },
-    /// Run the local daemon API (127.0.0.1 only) until Ctrl-C / SIGTERM.
+    /// Run the local daemon API on 127.0.0.1 until Ctrl-C or SIGTERM.
     ///
-    /// On shutdown running tool steps get `--shutdown-grace` seconds to finish,
-    /// then every live run is paused (resume it after the next start).
-    ///
-    /// Exit codes of the client commands: 0 ok, 1 error, 2 usage, 3 daemon
-    /// unreachable, 4 auth rejected, 5 not found, 6 request rejected, 7 run failed.
+    /// On shutdown, running tool steps get `--shutdown-grace` seconds to finish,
+    /// then every live run is paused so it can be resumed after the next start.
     Serve {
-        /// Run as an always-on host (peer networking defaults on).
+        /// Run as an always-on host (enables peer networking by default).
         #[arg(long)]
         host: bool,
         /// Enable paired remote API access over iroh.
@@ -157,28 +185,32 @@ enum Command {
         /// Seconds running tool steps may take to finish on shutdown.
         #[arg(long, default_value_t = 10)]
         shutdown_grace: u64,
-        /// Read the owner key (one line) from standard input. The desktop app
-        /// uses this so the key never appears in argv, a file or the environment.
+        /// Read the owner key (one line) from standard input.
+        ///
+        /// The desktop app uses this so the key never appears in argv, a file, or the environment.
         #[arg(long)]
         owner_key_stdin: bool,
     },
-    /// Update the Linux installation (restart is explicit).
+    /// Update a Linux installation (does not restart the service).
     SelfUpdate(update::UpdateArgs),
-    /// Show daemon status (also verifies the API token).
+    /// Show daemon status and verify the API token.
     Status,
-    /// With `--remote`: open the tunnel to a paired daemon, print its loopback address and
-    /// token, and keep it open until Ctrl-C (for `scripts/tools/measure-live-link.mjs`).
+    /// Open a local loopback tunnel to a paired remote daemon (requires `--remote`).
+    ///
+    /// Waits up to 20 seconds for the tunnel to connect, prints the loopback URL
+    /// and bearer token, and keeps the tunnel open until Ctrl-C.
+    /// Treat the printed token as a secret and close the tunnel when finished.
     Proxy,
     /// Send a message to a bot and stream the answer.
     Chat {
-        /// Bot id (see `bot bots list`).
+        /// Bot ID (see `bot bots list`).
         bot_id: String,
-        /// The message.
+        /// Message text to send.
         message: String,
         /// Continue an existing chat instead of starting a new one.
         #[arg(long)]
         chat: Option<String>,
-        /// What to do if the chat has a running turn.
+        /// How to handle the message when the chat already has a running turn.
         #[arg(long, value_parser = ["steer", "queue"], default_value = "queue")]
         mode: String,
     },
@@ -187,11 +219,11 @@ enum Command {
         #[command(subcommand)]
         action: BotsCmd,
     },
-    /// Answer a pending question card (`question_asked` event).
+    /// Answer a pending question from a bot.
     Answer {
-        /// Tool call id of the question (shown in the chat stream).
+        /// Question call ID shown in the chat stream.
         call_id: String,
-        /// The answer.
+        /// Answer text to send back to the bot.
         text: String,
     },
     /// List or revoke a bot's persisted "always allow" grants.
@@ -199,39 +231,38 @@ enum Command {
         #[command(subcommand)]
         action: GrantsCmd,
     },
-    /// Manage scheduled runs (cron / interval / one-shot, English or Turkish).
+    /// Manage scheduled runs (cron, interval, or one-shot).
     Schedules {
         #[command(subcommand)]
         action: SchedulesCmd,
     },
-    /// Manage the e-mail accounts of the daemon (IMAP/SMTP, optionally one bot's own).
+    /// Manage daemon email accounts (IMAP/SMTP or AgentMail).
+    #[allow(clippy::doc_markdown)] // doc comment is the --help text; product name stays plain
     Email {
         #[command(subcommand)]
         action: EmailCmd,
     },
-    /// Manage the daemon's MCP servers.
+    /// Manage daemon MCP servers and stdio exposure.
     Mcp {
         #[command(subcommand)]
         action: McpCmd,
     },
-    /// Messaging channels (Telegram).
+    /// Manage messaging channels (Telegram).
     Channels {
         #[command(subcommand)]
         action: ChannelsCmd,
     },
-    /// Approve (or deny) a pending tool call.
+    /// Approve or deny a pending tool call.
     Approve {
-        /// Tool call id (shown in the chat stream / `approval_needed` event).
+        /// Tool call ID shown in the chat stream or `approval_needed` event.
         tool_call_id: String,
-        /// How far the approval reaches. `run_control` lets the run type into
-        /// the one program the card names, until the run ends; the daemon
-        /// refuses it unless the card offered it.
+        /// Approval scope (`run_control` applies only when offered by the approval card).
         #[arg(long, value_parser = ["once", "this_chat", "always", "always_category", "run_control"], default_value = "once")]
         scope: String,
-        /// Deny instead of approving.
+        /// Deny the tool call instead of approving it.
         #[arg(long)]
         deny: bool,
-        /// Reason given to the model on deny.
+        /// Reason given to the model when denying.
         #[arg(long, requires = "deny")]
         reason: Option<String>,
     },
@@ -239,41 +270,44 @@ enum Command {
 
 #[derive(Subcommand)]
 enum McpCmd {
-    /// Add MCP servers from a paste: a server URL, a `claude mcp add ...`
-    /// line, an `npx`/`uvx` command line, or MCP JSON (`{"mcpServers": ...}`).
-    /// Quote the paste, or give `-` to read it from stdin. Values in it
-    /// (`-e KEY=value`, headers, `env`) go to the secret store, never the config.
+    /// Add MCP servers from a URL, launch command, or MCP JSON paste.
+    ///
+    /// Accepts a server URL, a `claude mcp add ...` line, an `npx`/`uvx` command
+    /// line, or MCP JSON (`{"mcpServers": ...}`). Quote the paste, or pass `-` to
+    /// read from stdin. Values in the paste (`-e KEY=value`, headers, `env`) are
+    /// stored in the secret store, never in the config file.
     Add {
-        /// Server name (default: derived from the URL or package).
+        /// Override the derived server name (single server only).
         #[arg(long)]
         name: Option<String>,
-        /// Show what would be added; contact nothing.
+        /// Show what would be added without contacting any server or saving changes.
         #[arg(long)]
         dry_run: bool,
-        /// The paste.
+        /// Server URL, launch line, or JSON paste (use `-` to read from stdin).
         #[arg(required = true, num_args = 1.., allow_hyphen_values = true, trailing_var_arg = true)]
         input: Vec<String>,
     },
-    /// Expose a selected bot as a scoped Praxi MCP server over stdio, using a
-    /// token issued with `bot token create`.
+    /// Expose a selected bot as a scoped Praxi MCP server over stdio.
+    ///
+    /// Uses a scoped credential created with `bot token create`.
     Serve(mcp_serve::ServeArgs),
 }
 
 #[derive(Subcommand)]
 enum GrantsCmd {
-    /// List the grants of a bot.
+    /// List persisted grants for a bot.
     List {
-        /// Bot id.
+        /// Bot ID (see `bot bots list`).
         bot_id: String,
     },
-    /// Remove one grant (the next matching call asks again).
+    /// Revoke one persisted grant so future calls ask again.
     Revoke {
-        /// Bot id.
+        /// Bot ID (see `bot bots list`).
         bot_id: String,
-        /// Revoke the grant of this tool.
+        /// Revoke the grant for this tool name.
         #[arg(long, group = "target")]
         tool: Option<String>,
-        /// Revoke the grant of this permission category (fs, shell, ...).
+        /// Revoke the grant for this permission category (e.g. `fs`, `shell`).
         #[arg(long, group = "target")]
         category: Option<String>,
     },
@@ -283,33 +317,34 @@ enum GrantsCmd {
 enum SchedulesCmd {
     /// List schedules.
     List,
-    /// Add a schedule: `bot schedules add <bot-id> "every weekday at 9" "summarize my inbox"`.
+    /// Add a schedule for a bot.
+    ///
+    /// Example: `bot schedules add <bot-id> "every weekday at 9" "summarize my inbox"`.
     Add {
-        /// Bot id (see `bot bots list`).
+        /// Bot ID (see `bot bots list`).
         bot_id: String,
-        /// When: a phrase such as "every 15 minutes", "in 2 hours",
-        /// "her gün 09:00" (parsed by the daemon).
+        /// Schedule phrase such as "every 15 minutes", "in 2 hours", or "her gün 09:00".
         when: String,
-        /// The prompt the bot runs each time.
+        /// Prompt the bot runs each time the schedule fires.
         prompt: String,
-        /// Name (default: the start of the prompt).
+        /// Display name (defaults to the start of the prompt).
         #[arg(long)]
         name: Option<String>,
-        /// IANA timezone for calendar phrases (default UTC).
+        /// IANA timezone for calendar phrases (defaults to UTC).
         #[arg(long)]
         tz: Option<String>,
-        /// Post the runs to this chat (default: a chat named after the schedule).
+        /// Post runs to this chat ID (defaults to a chat named after the schedule).
         #[arg(long)]
         chat: Option<String>,
     },
     /// Delete a schedule.
     Rm {
-        /// Schedule id.
+        /// Schedule ID (see `bot schedules list`).
         id: String,
     },
-    /// Fire a schedule now (in the background on the daemon).
+    /// Trigger a schedule immediately in the background.
     RunNow {
-        /// Schedule id.
+        /// Schedule ID (see `bot schedules list`).
         id: String,
     },
 }
@@ -318,36 +353,39 @@ enum SchedulesCmd {
 #[allow(clippy::large_enum_variant)] // one-shot CLI args, built once
 #[allow(clippy::doc_markdown)] // doc comments are the --help text; product names stay plain
 enum EmailCmd {
-    /// List the accounts (never shows passwords).
+    /// List configured email accounts (never shows passwords).
     List,
-    /// Add an account: `bot email add work me@gmail.com --preset gmail --password-env MAIL_PW`,
-    /// or an AgentMail inbox: `bot email add --provider agentmail --name helper --bot Atlas --api-key-env AGENTMAIL_KEY`.
+    /// Add an IMAP/SMTP email account or an AgentMail inbox.
+    ///
+    /// IMAP/SMTP example:
+    ///   bot email add work me@gmail.com --preset gmail --bot Atlas --password-env MAIL_PW
+    ///
+    /// AgentMail example:
+    ///   bot email add --provider agentmail --name helper --bot Atlas --api-key-env AGENTMAIL_KEY
     #[command(group = clap::ArgGroup::new("scope").required(true).args(["bot", "all_bots"]))]
     Add {
         /// Account name (letters, digits, `.`, `_`, `-`).
         #[arg(required_unless_present = "name_flag")]
         name: Option<String>,
-        /// Address mail is sent from (not used by `--provider agentmail`).
+        /// Address mail is sent from (not used with `--provider agentmail`).
         #[arg(required_unless_present = "provider")]
         address: Option<String>,
         /// Account name as a flag (same as the positional name).
         #[arg(long = "name", conflicts_with = "name")]
         name_flag: Option<String>,
-        /// `imap_smtp` (your own mailbox, the default) or `agentmail` (an inbox
-        /// created at AgentMail with your own API key).
+        /// Account provider: `imap_smtp` (your own mailbox, default) or `agentmail`.
         #[arg(long, value_parser = ["imap_smtp", "agentmail"])]
         provider: Option<String>,
-        /// AgentMail: hint for the part before the @ of the new address.
+        /// AgentMail: hint for the part before `@` in the new address.
         #[arg(long)]
         name_hint: Option<String>,
-        /// AgentMail: custom verified domain (default: the shared agentmail.to).
+        /// AgentMail: custom verified domain (defaults to `agentmail.to`).
         #[arg(long)]
         domain: Option<String>,
-        /// AgentMail: environment variable holding your API key; hidden prompt
-        /// when omitted. The key is never a command-line argument.
+        /// AgentMail: environment variable holding your API key (hidden prompt when omitted).
         #[arg(long)]
         api_key_env: Option<String>,
-        /// Fill the servers for gmail, outlook, yahoo or icloud.
+        /// Fill IMAP/SMTP server settings for gmail, outlook, yahoo, or icloud.
         #[arg(long, value_parser = ["gmail", "outlook", "yahoo", "icloud"])]
         preset: Option<String>,
         /// IMAP host (port 993, TLS).
@@ -359,59 +397,57 @@ enum EmailCmd {
         /// SMTP host.
         #[arg(long)]
         smtp_host: Option<String>,
-        /// SMTP port (465 with implicit TLS, 587 with `start_tls`).
+        /// SMTP port (465 with `implicit`, 587 with `start_tls`).
         #[arg(long)]
         smtp_port: Option<u16>,
         /// SMTP transport security.
         #[arg(long, value_parser = ["implicit", "start_tls"])]
         smtp_security: Option<String>,
-        /// Login name when it differs from the address.
+        /// Login username when it differs from the email address.
         #[arg(long)]
         username: Option<String>,
-        /// Only this bot may use the account (bot name or id). Required unless `--all-bots`.
+        /// Restrict this account to one bot (bot name or ID; required unless `--all-bots`).
         #[arg(long)]
         bot: Option<String>,
-        /// Let every bot that has the e-mail tools use (and read) this mailbox
-        /// without asking. There is no default: choose this or `--bot`.
+        /// Allow every bot with email tools to use this account (required unless `--bot`).
         #[arg(long)]
         all_bots: bool,
-        /// Sender whose mail may start a run later (repeatable).
+        /// Sender address or `@domain` allowed to trigger runs (repeatable).
         #[arg(long = "allowed-sender")]
         allowed_senders: Vec<String>,
-        /// Environment variable holding the (app) password; hidden prompt when omitted.
+        /// Environment variable holding the password or app password (hidden prompt when omitted).
         #[arg(long)]
         password_env: Option<String>,
     },
-    /// Remove an account and its stored password or key.
+    /// Remove an email account and its stored password or key.
     Rm {
-        /// Account name.
+        /// Account name (see `bot email list`).
         name: String,
-        /// AgentMail: also delete the inbox at AgentMail (irreversible; off by
-        /// default, removing an account only forgets it here).
+        /// AgentMail: also delete the inbox at AgentMail (irreversible; off by default).
         #[arg(long)]
         delete_inbox: bool,
     },
-    /// Check IMAP login and SMTP authentication, or the AgentMail key (sends nothing).
+    /// Test IMAP/SMTP authentication or the AgentMail API key (sends no mail).
     Test {
-        /// Account name.
+        /// Account name (see `bot email list`).
         name: String,
     },
 }
 
 #[derive(Subcommand)]
 enum BotsCmd {
-    /// List bots.
+    /// List configured bots.
     List,
-    /// Add a bot from a profile TOML file.
+    /// Create a bot from a profile TOML file.
     Add {
-        /// Path of the profile file.
+        /// Path to the bot profile TOML file.
         file: PathBuf,
     },
 }
 
 #[derive(Args)]
 struct DoctorCmd {
-    /// Also test provider connections over the network.
+    /// Also test provider connections and peer relay reachability over the network.
     #[arg(long)]
     online: bool,
     /// Write a redacted diagnostic bundle (JSON, no secrets) to this file.
@@ -421,38 +457,38 @@ struct DoctorCmd {
 
 #[derive(Args)]
 struct SetupCmd {
-    /// Provider id; switches to non-interactive mode.
+    /// Provider ID from the catalog (or a custom ID with `--base-url`); enables non-interactive mode.
     #[arg(long)]
     provider: Option<String>,
-    /// Base URL; makes `--provider` a custom OpenAI-compatible provider.
+    /// Custom OpenAI-compatible base URL (requires `--provider`).
     #[arg(long, requires = "provider")]
     base_url: Option<String>,
-    /// Environment variable holding the API key.
+    /// Environment variable holding the API key (requires `--provider`).
     #[arg(long, requires = "provider")]
     key_env: Option<String>,
-    /// Default model (first listed model when omitted).
+    /// Default model ID; uses the first listed model when omitted (requires `--provider`).
     #[arg(long, requires = "provider")]
     model: Option<String>,
-    /// Never prompt (required with --provider; documents script intent).
+    /// Confirm non-interactive setup without prompting (required with `--provider`).
     #[arg(long, short = 'y')]
     yes: bool,
-    /// Language of messages saved with the bot.
+    /// Language for messages saved with the bot.
     #[arg(long, value_enum, default_value = "en")]
     lang: Lang,
-    /// First bot preset.
+    /// Preset for the first bot.
     #[arg(long, value_enum, default_value = "general")]
     bot_preset: BotPreset,
-    /// First bot name.
+    /// Display name for the first bot.
     #[arg(long)]
     bot_name: Option<String>,
-    /// Default permission preset.
+    /// Default permission preset for the first bot.
     #[arg(long, value_enum, default_value = "approve-destructive")]
     permission: PermissionPreset,
 }
 
 #[derive(Subcommand)]
 enum ChannelsCmd {
-    /// Talk to your bots from Telegram.
+    /// Manage the Telegram channel.
     Telegram {
         #[command(subcommand)]
         action: TelegramCmd,
@@ -461,71 +497,77 @@ enum ChannelsCmd {
 
 #[derive(Subcommand, Debug, PartialEq, Eq)]
 enum TelegramCmd {
-    /// Store the `BotFather` token (hidden prompt, never printed) and enable the channel.
+    /// Store the `BotFather` token (hidden prompt, never printed) and enable Telegram.
     Setup {
         /// Read the token from this environment variable instead of prompting.
         #[arg(long)]
         token_env: Option<String>,
     },
-    /// Print a one-time 6-digit pairing code (valid 10 minutes) from the running daemon.
+    /// Print a one-time 6-digit pairing code (valid for 10 minutes) from the running daemon.
     Pair,
-    /// Show whether the channel is configured, running, and how many users are paired.
+    /// Show whether Telegram is configured, enabled, running, and how many users are paired.
     Status,
-    /// Turn the channel off (the token stays stored).
+    /// Disable the Telegram channel while keeping the stored token.
     Disable,
 }
 
 #[derive(Subcommand)]
 enum SecretsCmd {
-    /// List secret names.
+    /// List stored secret names (never prints values).
     List,
-    /// Store a secret; value from `--value-env VAR` or a hidden prompt.
+    /// Store a secret from `--value-env` or a hidden prompt.
     Set {
         /// Secret name.
         name: String,
-        /// Read the value from this environment variable.
+        /// Read the secret value from this environment variable instead of prompting.
         #[arg(long)]
         value_env: Option<String>,
     },
-    /// Delete a secret.
+    /// Delete a stored secret.
     Delete {
-        /// Secret name.
+        /// Secret name (see `bot secrets list`).
         name: String,
     },
 }
 
 #[derive(Subcommand)]
 enum ProvidersCmd {
-    /// List configured providers (`*` = global default).
+    /// List configured providers (`*` marks the global default).
     List,
-    /// Add (or update) a provider.
+    /// Add or update an LLM provider.
+    ///
+    /// Built-in catalog IDs: anthropic, deepseek, gemini, gemini-openai-compat,
+    /// lmstudio, ollama, openrouter. Pass `--base-url` to add a custom
+    /// OpenAI-compatible provider under any ID.
     Add {
-        /// Catalog id, or an id for a custom provider with --base-url.
+        /// Built-in catalog ID, or a custom ID when used with `--base-url`.
         id: String,
-        /// Custom OpenAI-compatible base URL.
+        /// Custom OpenAI-compatible base URL (for example `http://localhost:8000/v1`).
         #[arg(long)]
         base_url: Option<String>,
-        /// Environment variable holding the API key (else hidden prompt when
-        /// the provider needs one).
+        /// Environment variable holding the API key (hidden prompt when omitted and required).
         #[arg(long)]
         key_env: Option<String>,
-        /// Default model.
+        /// Default model ID for this provider.
         #[arg(long)]
         model: Option<String>,
-        /// Skip the connection test.
+        /// Skip the live connection test and save the provider immediately.
         #[arg(long)]
         no_test: bool,
     },
-    /// Test a provider's connection (default provider when omitted).
+    /// Test a provider's connection (uses the default provider when ID is omitted).
     Test {
-        /// Provider id.
+        /// Provider ID (see `bot providers list`).
         id: Option<String>,
     },
-    /// Choose the global default provider.
+    /// Look for a local model server (Ollama, LM Studio, llama.cpp) on loopback
+    /// and print what it found as JSON. Contacts only 127.0.0.1.
+    DetectLocal,
+    /// Set the global default provider.
     Default {
-        /// Provider id.
+        /// Provider ID (see `bot providers list`).
         id: String,
-        /// Also set its default model.
+        /// Also update this provider's default model ID.
         #[arg(long)]
         model: Option<String>,
     },
@@ -558,16 +600,38 @@ fn load_catalog(dir: Option<&PathBuf>) -> Result<Catalog> {
     Ok(Catalog::from_entries(entries))
 }
 
+fn secret_backend_label(kind: secret_store::BackendKind) -> &'static str {
+    match kind {
+        secret_store::BackendKind::Keyring => "OS keychain",
+        secret_store::BackendKind::File => "encrypted file",
+    }
+}
+
+fn proxy_state_label(state: &remote_api::ProxyState) -> String {
+    match state {
+        remote_api::ProxyState::Connected => "connected".to_owned(),
+        remote_api::ProxyState::Reconnecting => "still connecting".to_owned(),
+        remote_api::ProxyState::Unreachable(reason) => format!("unreachable: {reason}"),
+    }
+}
+
 fn data_dir(cli: &Cli) -> Result<PathBuf> {
     cli.data_dir
         .clone()
         .or_else(storage::data_dir)
-        .ok_or_else(|| "cannot determine the data directory; use --data-dir".into())
+        .ok_or_else(|| {
+            "cannot determine the data directory; pass `--data-dir <PATH>` or set `BOT_DATA_DIR`"
+                .into()
+        })
 }
 
 fn read_value(env_var: Option<&str>, prompt: &str) -> Result<SecretValue> {
     if let Some(v) = env_var {
-        let val = std::env::var(v).map_err(|_| format!("environment variable {v} is not set"))?;
+        let val = std::env::var(v).map_err(|_| {
+            format!(
+                "environment variable `{v}` is not set; export it first or omit the `*-env` flag to enter the value interactively"
+            )
+        })?;
         return Ok(SecretValue::new(val.trim()));
     }
     let v = dialoguer::Password::new().with_prompt(prompt).interact()?;
@@ -585,7 +649,9 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     let Some(command) = &cli.command else {
-        println!("Praxi-Bot. Run `bot setup` to get started, or `bot --help`.");
+        println!(
+            "Praxi-Bot CLI. Run `bot setup` to configure a provider and first bot, or `bot --help` to list commands."
+        );
         return Ok(());
     };
     match command {
@@ -623,11 +689,16 @@ fn run() -> Result<()> {
                 }
         )
     {
-        return Err("--remote supports daemon client commands (status, bots, chat, approve, answer, grants, schedules, email, channels telegram pair); this command manages the local installation".into());
+        return Err(
+            "`--remote` is not supported for this local command; supported remote commands are `status`, `proxy`, `bots`, `chat`, `approve`, `answer`, `grants`, `schedules`, `workflow`, `email`, `channels telegram pair`, and `host status|devices|invite|revoke|standby|activate`".into(),
+        );
     }
 
     if cli.remote.is_none() && matches!(command, Command::Proxy) {
-        return Err("`bot proxy` needs --remote <ENDPOINT>".into());
+        return Err(
+            "`bot proxy` requires `--remote <ENDPOINT>`; run `bot --remote <ENDPOINT> proxy`"
+                .into(),
+        );
     }
 
     if let Command::Host {
@@ -704,7 +775,7 @@ fn run() -> Result<()> {
     }
 
     let (store, kind) = open_store(cli.secrets_backend, &data_dir, &ask_passphrase)?;
-    eprintln!("(secret backend: {kind:?})");
+    eprintln!("(secret backend: {})", secret_backend_label(kind));
     let store: &dyn SecretStore = store.as_ref();
     let catalog = load_catalog(cli.catalog_dir.as_ref())?;
     let env = SetupEnv {
@@ -788,6 +859,7 @@ fn run() -> Result<()> {
                 .map(|_| ())
             }
             ProvidersCmd::Test { id } => commands::providers_test(&env, id.as_deref(), &mut say),
+            ProvidersCmd::DetectLocal => commands::providers_detect_local(&mut say),
             ProvidersCmd::List | ProvidersCmd::Default { .. } => Ok(()),
         },
     }
@@ -811,7 +883,7 @@ fn run_doctor(cli: &Cli, c: &DoctorCmd, data_dir: &std::path::Path) -> Result<()
     let catalog = load_catalog(cli.catalog_dir.as_ref()).map_err(|e| e.to_string());
     let pass = std::env::var("BOT_SECRETS_PASSPHRASE").ok();
     let store = open_store(cli.secrets_backend, data_dir, &|_| pass.clone())
-        .map(|(s, k)| (s, format!("{k:?}")))
+        .map(|(s, k)| (s, secret_backend_label(k).to_owned()))
         .map_err(|e| e.to_string());
     let browser = browser_cdp::find_browser();
     let env = doctor::DoctorEnv {
@@ -851,7 +923,7 @@ fn run_doctor(cli: &Cli, c: &DoctorCmd, data_dir: &std::path::Path) -> Result<()
     if fails > 0 {
         return Err(client::fail(
             client::exit::GENERIC,
-            format!("{fails} check(s) failed"),
+            format!("{fails} doctor check(s) failed; follow the fix hints above"),
         ));
     }
     Ok(())
@@ -904,7 +976,7 @@ fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result
         None
     };
     let (store, kind) = open_store(cli.secrets_backend, data_dir, &ask_passphrase)?;
-    eprintln!("(secret backend: {kind:?})");
+    eprintln!("(secret backend: {})", secret_backend_label(kind));
     let catalog = load_catalog(cli.catalog_dir.as_ref())?;
     let providers = serve::build_providers(data_dir, &catalog, store.as_ref(), &mut |w| {
         eprintln!("warning: {w}");
@@ -941,13 +1013,15 @@ fn make_client(cli: &Cli, data_dir: &std::path::Path) -> Result<Client> {
     let token = match std::env::var("BOT_API_TOKEN") {
         Ok(t) if !t.trim().is_empty() => t.trim().to_owned(),
         _ => daemon_api::read_token(data_dir).map_err(|e| {
-            client::fail(
-                client::exit::AUTH,
+            let msg = if e.kind() == std::io::ErrorKind::NotFound {
+                "daemon API token not found in this data directory; start the daemon with `bot serve` (or pass the same `--data-dir` / set `BOT_API_TOKEN`)".to_owned()
+            } else {
                 format!(
-                    "cannot read the API token ({}): {e}; run `bot serve` once or set BOT_API_TOKEN",
+                    "cannot read daemon API token ({}): {e}; check file permissions, restart `bot serve`, or set `BOT_API_TOKEN`",
                     daemon_api::token_path(data_dir).display()
-                ),
-            )
+                )
+            };
+            client::fail(client::exit::AUTH, msg)
         })?,
     };
     let base = cli
@@ -1014,7 +1088,10 @@ async fn proxy_hold(
     out: &mut dyn std::io::Write,
 ) -> Result<()> {
     let Some(proxy) = proxy else {
-        return Err("`bot proxy` needs --remote <ENDPOINT>".into());
+        return Err(
+            "`bot proxy` requires `--remote <ENDPOINT>`; run `bot --remote <ENDPOINT> proxy`"
+                .into(),
+        );
     };
     let mut state = proxy.state.clone();
     let up = tokio::time::timeout(
@@ -1026,7 +1103,8 @@ async fn proxy_hold(
     if !up {
         let now = state.borrow().clone();
         return Err(format!(
-            "the tunnel did not connect within 20 s (state: {now:?}); check the endpoint and that the host is online"
+            "remote tunnel did not connect within 20 s ({}); verify the endpoint ID and check that the host is online",
+            proxy_state_label(&now)
         )
         .into());
     }
@@ -1281,7 +1359,9 @@ fn run_setup(c: &SetupCmd, env: &SetupEnv<'_>) -> Result<()> {
         wizard::plan_from_args(&args, env, &|v| std::env::var(v).ok())?
     } else {
         if c.yes {
-            return Err("--yes needs --provider (non-interactive mode)".into());
+            return Err(
+                "`--yes` requires `--provider <ID>` for non-interactive setup; omit `--yes` for interactive setup or see `bot setup --help`".into(),
+            );
         }
         wizard::run_wizard(&mut TerminalPrompter, env)?
     };
@@ -1295,12 +1375,18 @@ fn run_setup(c: &SetupCmd, env: &SetupEnv<'_>) -> Result<()> {
         println!("Model:    {m}");
     }
     if let Some(s) = &out.secret_name {
-        println!("API key stored as secret {s:?}");
+        println!("Secret:   {s} (API key stored in secret backend)");
     }
     match out.bot_id {
-        Some(id) => println!("Bot created: {id}"),
+        Some(id) => {
+            println!("Bot:      {id}");
+            println!(
+                "Next: run `bot serve` to start the daemon, then `bot chat {id} \"Hello\"` to chat."
+            );
+        }
         None => println!(
-            "No model chosen, so no bot was created. Pick one with `bot providers default <id> --model <m>`, then add a bot (`bot bots add <profile.toml>`)."
+            "No default model was selected, so no bot was created. Set one with `bot providers default {} --model <MODEL>`, then create a bot with `bot bots add <FILE>`.",
+            out.provider_id
         ),
     }
     Ok(())
@@ -1807,6 +1893,144 @@ mod tests {
             Some(Command::Setup(SetupCmd { yes: true, .. }))
         ));
         assert!(Cli::try_parse_from(["bot", "setup", "--key-env", "X"]).is_err());
+    }
+
+    #[test]
+    fn every_visible_command_has_a_description_and_root_help_lists_exit_codes() {
+        fn check_cmd(cmd: &clap::Command, path: &str) {
+            for sub in cmd.get_subcommands() {
+                if sub.is_hide_set() || sub.get_name() == "help" {
+                    continue;
+                }
+                let full = format!("{path} {}", sub.get_name());
+                let about = sub.get_about().map(ToString::to_string).unwrap_or_default();
+                assert!(!about.trim().is_empty(), "missing description for `{full}`");
+                assert!(
+                    about.chars().next().is_some_and(char::is_uppercase),
+                    "description for `{full}` should start with a capital letter: {about:?}"
+                );
+                check_cmd(sub, &full);
+            }
+        }
+        let mut root = Cli::command();
+        check_cmd(&root, "bot");
+        let help = root.render_long_help().to_string();
+        assert!(help.contains("Exit codes:"), "{help}");
+        for code in ["0  OK", "3  Daemon unreachable", "6  Request rejected"] {
+            assert!(
+                help.contains(code),
+                "missing exit code `{code}` in:\n{help}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn setup_required_messages_explain_why_and_next_step() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = load_catalog(None).unwrap();
+        let store = secret_store::MemoryStore::new();
+        let mut warnings = Vec::new();
+        let providers = serve::build_providers(dir.path(), &catalog, &store, &mut |w| {
+            warnings.push(w.to_owned());
+        })
+        .unwrap();
+        assert!(providers.setup_required());
+        assert!(
+            warnings.iter().any(|w| w.contains("no LLM provider")
+                && w.contains("`bot setup`")
+                && w.contains("`bot providers add")),
+            "{warnings:?}"
+        );
+
+        let checks = doctor::run_checks(&doctor::DoctorEnv {
+            data_dir: dir.path(),
+            catalog: Ok(&catalog),
+            store: Ok((&store, "encrypted file".into())),
+            port: 1,
+            online: false,
+            browser: None,
+            browser_error: None,
+            detected: None,
+            desktop: None,
+        });
+        let prov = checks.iter().find(|c| c.title == "providers").unwrap();
+        assert!(prov.detail.contains("no LLM provider"), "{}", prov.detail);
+        let hint = prov.hint.as_deref().unwrap_or_default();
+        assert!(
+            hint.contains("`bot setup`") && hint.contains("`bot providers add"),
+            "{hint}"
+        );
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/health"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": "setup_required",
+                "version": "0.1.0",
+                "uptime_secs": 3
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/approvals"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chats/c1/messages"))
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "error": { "code": "setup_required", "message": "setup required" }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = Client::new(&server.uri(), "tok".into());
+        let mut out = Vec::new();
+        remote::status(&client, false, &mut out).await.unwrap();
+        let status_text = String::from_utf8(out).unwrap();
+        assert!(
+            status_text.contains("no LLM provider") && status_text.contains("`bot setup`"),
+            "{status_text}"
+        );
+
+        let err = client
+            .request(reqwest::Method::POST, "/v1/chats/c1/messages", None)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("no LLM provider")
+                && msg.contains("`bot setup`")
+                && msg.contains("`bot providers add"),
+            "{msg}"
+        );
+        assert_eq!(
+            err.downcast_ref::<ExitError>().map(|e| e.code),
+            Some(client::exit::REJECTED)
+        );
+    }
+
+    #[test]
+    fn user_facing_labels_avoid_raw_debug_names() {
+        assert_eq!(
+            secret_backend_label(secret_store::BackendKind::Keyring),
+            "OS keychain"
+        );
+        assert_eq!(
+            secret_backend_label(secret_store::BackendKind::File),
+            "encrypted file"
+        );
+        assert_eq!(
+            proxy_state_label(&remote_api::ProxyState::Reconnecting),
+            "still connecting"
+        );
+        assert_eq!(
+            proxy_state_label(&remote_api::ProxyState::Unreachable("timeout".into())),
+            "unreachable: timeout"
+        );
     }
 }
 #[cfg(test)]

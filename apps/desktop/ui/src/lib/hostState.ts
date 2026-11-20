@@ -23,6 +23,8 @@ export interface HostHealthLike {
   status: string;
   version: string;
   api_version: string;
+  /** Background startup of the host's own components; absent on older hosts. */
+  startup?: "starting" | "ready" | "degraded";
 }
 
 export type HostUiState =
@@ -34,7 +36,11 @@ export type HostUiState =
   /** The two daemons speak different API versions (blocking) or builds. */
   | { kind: "version_mismatch"; local: string; host: string; blocking: boolean }
   /** Connected and compatible, but the host cannot run a model yet. */
-  | { kind: "no_model_key" };
+  | { kind: "no_model_key" }
+  /** Reachable, but still verifying leadership and starting its components. */
+  | { kind: "starting" }
+  /** Reachable, but a component (for example the scheduler) failed to start. */
+  | { kind: "degraded" };
 
 /** Compare `major.minor` only: patch differences never block. */
 function sameMinor(a: string, b: string): boolean {
@@ -81,6 +87,12 @@ export function deriveHostState(input: {
   if (health.status === "setup_required") {
     return { kind: "no_model_key" };
   }
+  if (health.startup === "starting") {
+    return { kind: "starting" };
+  }
+  if (health.startup === "degraded") {
+    return { kind: "degraded" };
+  }
   return { kind: "connected" };
 }
 
@@ -88,6 +100,8 @@ export function deriveHostState(input: {
 export function hostAcceptsWork(state: HostUiState): boolean {
   return (
     state.kind === "connected" ||
+    state.kind === "starting" ||
+    state.kind === "degraded" ||
     (state.kind === "version_mismatch" && !state.blocking)
   );
 }
@@ -129,7 +143,7 @@ export interface HostStateMemory {
 }
 
 const WORSE = new Set(["connecting", "offline"]);
-const GOOD = new Set(["connected", "no_model_key"]);
+const GOOD = new Set(["connected", "no_model_key", "starting", "degraded"]);
 
 function sameState(a: HostUiState, b: HostUiState): boolean {
   return JSON.stringify(a) === JSON.stringify(b);

@@ -830,6 +830,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/chats/{id}/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Regenerate the last answer, or edit the last user message and resend it.
+         * @description Owner only. The chat must be idle, the message must still be the chat's last
+         *     user message, written in this app, and every run of that turn finished. The old
+         *     messages are marked superseded (kept, not in the model context); a new run
+         *     starts. Tools that already acted in the old run are not undone.
+         */
+        post: operations["resend_last_turn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/components": {
         parameters: {
             query?: never;
@@ -1072,9 +1095,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * `POST /v1/control/recover`: the local user clears a takeover latch (also one
-         *     restored after a restart) without a registered target or view session. The
-         *     bot resumes with a fresh observation.
+         * `POST /v1/control/recover`: the local user, or the paired admin desktop of this host
+         *     (never a phone or a non-admin peer), clears a takeover latch (also one restored after a
+         *     restart) without a registered target or view session. The bot resumes with a fresh
+         *     observation. The audit row names who cleared it, the latch's reason and the previous owner.
          */
         post: operations["local_recover"];
         delete?: never;
@@ -2911,6 +2935,27 @@ export interface paths {
         post?: never;
         /** Refuse assigned skills unless force is explicit; report their bot IDs/names. */
         delete: operations["delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/spend-limit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The monthly spending limit and this month's spend. */
+        get: operations["get_spend_limit"];
+        /**
+         * Set or remove the monthly spending limit (owner only). Effective for the
+         *     next model call of every run, including background and scheduled runs.
+         */
+        put: operations["put_spend_limit"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -4842,7 +4887,16 @@ export interface components {
         Health: {
             /** @description HTTP API compatibility version. */
             api_version: string;
-            /** @description `true` once startup finished without a failure (standby runs no components). */
+            /**
+             * @description `true` only when this daemon is the active leader and its automatic
+             *     components (scheduler, channels) are running. `false` on standby.
+             */
+            channels_active?: boolean;
+            /**
+             * @description `true` when startup finished without a failure: this daemon's own automatic
+             *     components are running, or it is standby/client by design and runs none.
+             *     It does NOT mean channels are active; use `channels_active` for that.
+             */
             components_ready?: boolean;
             /** @description Capabilities of this host; probes never launch a browser. */
             host: components["schemas"]["HostInfo"];
@@ -5985,6 +6039,16 @@ export interface components {
              *     `local_api`); absent for older messages and for replies.
              */
             source?: string | null;
+            /**
+             * @description Replaced by an edit or regenerated: kept as audit data, no longer part of
+             *     the model context.
+             */
+            superseded?: boolean;
+            /**
+             * @description Only set on the messages of the chat's last turn: the run behind it used
+             *     a tool that is not read-only, so redoing the turn could repeat an effect.
+             */
+            used_write_tools?: boolean;
         };
         /**
          * @description What to do when the chat already has a running turn.
@@ -6253,6 +6317,27 @@ export interface components {
             detail: string;
             /** @description The repair that ran. */
             repair: components["schemas"]["Repair"];
+        };
+        /**
+         * @description `POST /v1/chats/{id}/resend`: re-run the last turn (regenerate), or replace the
+         *     last user message and run it (edit & resend).
+         */
+        ResendMessage: {
+            /**
+             * Format: uuid
+             * @description The user message the client believes is the chat's last one.
+             */
+            message_id: string;
+            /** @description The edited text; absent regenerates with the original text. */
+            text?: string | null;
+        };
+        /** @description The new run started by a resend. */
+        ResendResponse: {
+            /**
+             * Format: uuid
+             * @description The run to follow.
+             */
+            run_id: string;
         };
         /**
          * @description Action a restore operation will apply to a path.
@@ -6762,6 +6847,57 @@ export interface components {
             x: number;
             /** Format: double */
             y: number;
+        };
+        /** @description Month-to-date spend against the monthly limit. */
+        SpendLimitDto: {
+            /**
+             * Format: double
+             * @description Linear projection of month-end spend (USD); `null` until spend exists and a day of the month has passed.
+             */
+            forecast_usd?: number | null;
+            /**
+             * Format: double
+             * @description Monthly limit in USD; `null` = no limit.
+             */
+            limit_usd?: number | null;
+            /**
+             * Format: int64
+             * @description Start of the next month (ms since epoch).
+             */
+            month_end_ms: number;
+            /**
+             * Format: int64
+             * @description Start of the current local calendar month (ms since epoch).
+             */
+            month_start_ms: number;
+            /**
+             * Format: int64
+             * @description Now, as the daemon sees it (ms since epoch).
+             */
+            now_ms: number;
+            /**
+             * Format: double
+             * @description `limit_usd - spent_usd`, never negative; `null` without a limit.
+             */
+            remaining_usd?: number | null;
+            /**
+             * Format: double
+             * @description Recorded cost this month (USD). Calls with unknown pricing are not counted.
+             */
+            spent_usd: number;
+            /**
+             * Format: int64
+             * @description Finished calls this month whose model has no known price (not counted).
+             */
+            unpriced_calls: number;
+        };
+        /** @description `PUT /v1/spend-limit`. */
+        SpendLimitInput: {
+            /**
+             * Format: double
+             * @description New monthly limit in USD (1 to 1,000,000); `null` removes the limit.
+             */
+            limit_usd?: number | null;
         };
         /** @description Counters of the SSE machinery (authenticated, unlike `/v1/health`). */
         SseStatus: {
@@ -9544,6 +9680,66 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    resend_last_turn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Chat id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResendMessage"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResendResponse"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Chat busy or message no longer last */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Turn cannot be edited */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -14047,6 +14243,56 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_spend_limit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpendLimitDto"];
+                };
+            };
+        };
+    };
+    put_spend_limit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpendLimitInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpendLimitDto"];
+                };
+            };
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

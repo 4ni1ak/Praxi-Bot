@@ -843,11 +843,61 @@ impl Storage {
     pub fn list_messages(&self, chat_id: ChatId) -> Result<Vec<Message>> {
         let conn = self.conn();
         let mut st = conn.prepare(
+            "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources FROM messages WHERE chat_id = ?1 AND superseded = 0 ORDER BY created_at_ms, id",
+        )?;
+        Ok(st
+            .query_map([chat_id.to_string()], message_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Ids of a chat's superseded messages (replaced by an edit or regenerated).
+    /// They are kept as audit data; [`Self::list_messages`] and the history
+    /// reads leave them out.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn superseded_message_ids(
+        &self,
+        chat_id: ChatId,
+    ) -> Result<std::collections::HashSet<Uuid>> {
+        let conn = self.conn();
+        let mut st =
+            conn.prepare("SELECT id FROM messages WHERE chat_id = ?1 AND superseded = 1")?;
+        let ids = st
+            .query_map([chat_id.to_string()], |r| uuid_at(r, 0))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(ids)
+    }
+
+    /// A chat's messages including superseded ones, oldest first (for the UI).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn list_messages_with_superseded(&self, chat_id: ChatId) -> Result<Vec<Message>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
             "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources FROM messages WHERE chat_id = ?1 ORDER BY created_at_ms, id",
         )?;
         Ok(st
             .query_map([chat_id.to_string()], message_row)?
             .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Mark messages superseded (`true`) or restore them (`false`). Never deletes.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn set_messages_superseded(&self, ids: &[Uuid], superseded: bool) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        for id in ids {
+            tx.execute(
+                "UPDATE messages SET superseded = ?2 WHERE id = ?1",
+                params![id.to_string(), i64::from(superseded)],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// Read the newest contiguous suffix of a chat within both limits.
@@ -872,7 +922,7 @@ impl Storage {
         let conn = self.conn();
         let mut st = conn.prepare(
             "SELECT id, user_id, chat_id, run_id, role, content, created_at_ms, exposure_untrusted, exposure_private, exposure_sources, length(CAST(content AS BLOB)) \
-             FROM messages WHERE chat_id = ?1 AND (?2 IS NULL OR run_id IS NULL OR run_id <> ?2) \
+             FROM messages WHERE chat_id = ?1 AND superseded = 0 AND (?2 IS NULL OR run_id IS NULL OR run_id <> ?2) \
              ORDER BY created_at_ms DESC, id DESC LIMIT ?3",
         )?;
         let limit = i64::try_from(max_messages.saturating_add(1)).unwrap_or(i64::MAX);
@@ -898,7 +948,8 @@ impl Storage {
     }
 
     /// Exposure bits and source labels of every message of `chat` created at or
-    /// before `until_ms`, other than those delivered into `exclude_run`.
+    /// before `until_ms`, other than those delivered into `exclude_run` and
+    /// those superseded by an edit or regenerate (they are not in the context).
     /// Unbounded: unlike the model-context window, nothing scrolls out.
     ///
     /// # Errors
@@ -911,7 +962,7 @@ impl Storage {
     ) -> Result<(bool, bool, Vec<String>)> {
         let conn = self.conn();
         let mut st = conn.prepare(
-            "SELECT exposure_untrusted, exposure_private, exposure_sources FROM messages              WHERE chat_id = ?1 AND created_at_ms <= ?3 AND (run_id IS NULL OR run_id <> ?2)",
+            "SELECT exposure_untrusted, exposure_private, exposure_sources FROM messages WHERE chat_id = ?1 AND superseded = 0 AND created_at_ms <= ?3 AND (run_id IS NULL OR run_id <> ?2)",
         )?;
         let mut rows = st.query(params![
             chat_id.to_string(),
@@ -1401,7 +1452,7 @@ impl Storage {
     pub fn owner_message_texts(&self, chat: ChatId) -> Result<Vec<String>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT content FROM messages WHERE chat_id = ?1 AND role = 'user' AND source = 'owner'
+            "SELECT content FROM messages WHERE chat_id = ?1 AND role = 'user' AND source = 'owner' AND superseded = 0
              ORDER BY created_at_ms DESC LIMIT 200",
         )?;
         let rows = stmt.query_map(params![chat.to_string()], |r| r.get::<_, String>(0))?;
@@ -1544,6 +1595,55 @@ impl Storage {
         Ok(st
             .query_map([user_id.to_string()], audit_row)?
             .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Audit rows of one action written at or after `since_ms` (avoids loading
+    /// the whole log for per-call accounting).
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn list_audit_action_since(
+        &self,
+        user_id: UserId,
+        action: &str,
+        since_ms: i64,
+    ) -> Result<Vec<AuditEntry>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
+            "SELECT id, user_id, run_id, actor, action, detail_json, ts_ms FROM audit_log WHERE user_id = ?1 AND action = ?2 AND ts_ms >= ?3 ORDER BY id",
+        )?;
+        Ok(st
+            .query_map(params![user_id.to_string(), action, since_ms], audit_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Month-to-date usage ledger totals computed in SQL: the sum of recorded
+    /// `cost_usd` (never negative per row) and the count of calls that reported
+    /// tokens but have no price. Only `ledger_version` 1 rows count.
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    #[allow(clippy::cast_sign_loss)]
+    pub fn usage_totals_since(&self, user_id: UserId, since_ms: i64) -> Result<(f64, u64)> {
+        Ok(self.conn().query_row(
+            "SELECT COALESCE(SUM(CASE WHEN json_type(detail_json, '$.cost_usd') IN ('real','integer') THEN MAX(json_extract(detail_json, '$.cost_usd'), 0.0) END), 0.0), COALESCE(SUM(CASE WHEN COALESCE(json_type(detail_json, '$.cost_usd'), 'null') NOT IN ('real','integer') AND json_type(detail_json, '$.tokens') = 'object' THEN 1 END), 0) FROM audit_log WHERE user_id = ?1 AND action = 'usage' AND ts_ms >= ?2 AND json_extract(detail_json, '$.ledger_version') = 1",
+            params![user_id.to_string(), since_ms],
+            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, i64>(1)?.max(0) as u64)),
+        )?)
+    }
+
+    /// Largest `prompt_tokens` any usage row of one run recorded.
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    #[allow(clippy::cast_sign_loss)]
+    pub fn max_run_prompt_tokens(&self, user_id: UserId, run_id: RunId) -> Result<Option<u64>> {
+        let v: Option<i64> = self.conn().query_row(
+            "SELECT MAX(json_extract(detail_json, '$.prompt_tokens')) FROM audit_log WHERE user_id = ?1 AND run_id = ?2 AND action = 'usage'",
+            params![user_id.to_string(), run_id.to_string()],
+            |row| row.get(0),
+        )?;
+        Ok(v.filter(|n| *n >= 0).map(|n| n as u64))
     }
 
     /// Whether one run has an audit fact, without loading other runs' details.
@@ -2063,6 +2163,44 @@ mod tests {
     }
 
     #[test]
+    fn superseded_messages_stay_stored_but_leave_every_context_read() {
+        let f = fx();
+        let mut ids = Vec::new();
+        for i in 0..3u32 {
+            let id = Uuid::from_u128(u128::from(i) + 1);
+            ids.push(id);
+            f.st.insert_message(&Message {
+                id,
+                user_id: f.user.id,
+                chat_id: f.chat.id,
+                run_id: None,
+                role: "user".into(),
+                content: format!("m{i}"),
+                created_at_ms: i64::from(i),
+                exposure_untrusted: true,
+                exposure_private: false,
+                exposure_sources: Vec::new(),
+            })
+            .unwrap();
+            f.st.set_message_source(id, "owner").unwrap();
+        }
+        f.st.set_messages_superseded(&ids[1..], true).unwrap();
+        assert_eq!(f.st.list_messages(f.chat.id).unwrap().len(), 1);
+        let (bounded, _) =
+            f.st.list_messages_bounded(f.chat.id, None, 10, 100)
+                .unwrap();
+        assert_eq!(bounded.len(), 1);
+        assert_eq!(f.st.owner_message_texts(f.chat.id).unwrap(), ["m0"]);
+        assert_eq!(
+            f.st.list_messages_with_superseded(f.chat.id).unwrap().len(),
+            3
+        );
+        assert_eq!(f.st.superseded_message_ids(f.chat.id).unwrap().len(), 2);
+        f.st.set_messages_superseded(&ids[1..], false).unwrap();
+        assert_eq!(f.st.list_messages(f.chat.id).unwrap().len(), 3);
+    }
+
+    #[test]
     fn chat_exposure_until_sees_old_tainted_messages_the_bounded_window_drops() {
         let f = fx();
         let r = run(&f);
@@ -2093,6 +2231,30 @@ mod tests {
             f.st.chat_exposure_until(f.chat.id, r.id, 1000).unwrap();
         assert!(untrusted && !private);
         assert_eq!(sources, vec!["web".to_string()]);
+    }
+
+    #[test]
+    fn chat_exposure_until_ignores_superseded_messages() {
+        let f = fx();
+        let r = run(&f);
+        let id = Uuid::from_u128(77);
+        f.st.insert_message(&Message {
+            id,
+            user_id: f.user.id,
+            chat_id: f.chat.id,
+            run_id: None,
+            role: "user".into(),
+            content: "m".into(),
+            created_at_ms: 1,
+            exposure_untrusted: true,
+            exposure_private: true,
+            exposure_sources: vec!["web".into()],
+        })
+        .unwrap();
+        assert!(f.st.chat_exposure_until(f.chat.id, r.id, 1000).unwrap().0);
+        f.st.set_messages_superseded(&[id], true).unwrap();
+        let (u, p, src) = f.st.chat_exposure_until(f.chat.id, r.id, 1000).unwrap();
+        assert!(!u && !p && src.is_empty());
     }
 
     #[test]

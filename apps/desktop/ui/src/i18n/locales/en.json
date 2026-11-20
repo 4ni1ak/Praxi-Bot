@@ -1285,6 +1285,16 @@
       "notEligible": "This run cannot be remembered.",
       "saved": "Remembered"
     },
+    "resend": {
+      "acted": "This run already used tools that act outside the chat. Redoing it will not undo what they did.",
+      "cancel": "Cancel",
+      "earlier": "Earlier version",
+      "edit": "Edit message",
+      "editLabel": "Edit your message",
+      "regenerate": "Regenerate",
+      "regenerateAnyway": "Regenerate anyway",
+      "save": "Save and resend"
+    },
     "resume": "Resume",
     "route": {
       "agent": "Agent ({{level}})",
@@ -2073,6 +2083,14 @@
         "hint": "Wait a moment and try again.",
         "title": "That app is being asked too often"
       },
+      "message_not_editable": {
+        "hint": "Only your own latest message can be edited or regenerated, and only once the bot has finished.",
+        "title": "This message can't be edited"
+      },
+      "message_not_last": {
+        "hint": "The chat has moved on. Reload it, then edit or regenerate the newest message.",
+        "title": "This is no longer the last message"
+      },
       "modified_since": {
         "hint": "Restoring would overwrite your newer changes. Review them first.",
         "title": "Some files changed after the bot touched them"
@@ -2176,6 +2194,14 @@
       "skill_too_large": {
         "hint": "Remove big files from it and try again.",
         "title": "That skill is too large"
+      },
+      "spend_limit_reached": {
+        "hint": "The model was not called. Raise or remove the limit on the Usage page, then run again.",
+        "title": "Monthly spending limit reached"
+      },
+      "spend_limit_unreadable": {
+        "hint": "The saved monthly limit could not be read, so paid model calls are blocked. Set the limit again on the Usage page.",
+        "title": "Spending limit unreadable"
       },
       "starting": {
         "hint": "The app is still starting up. Try again in a few seconds.",
@@ -2452,6 +2478,13 @@
       "keyHint": "Saved in your system keychain. It is never shown again.",
       "keyLabel": "{{name}} API key",
       "keyPlaceholder": "Paste your key here",
+      "local": {
+        "llamacpp": "llama.cpp server",
+        "lmstudio": "LM Studio"
+      },
+      "localSubMany": "{{count}} models installed",
+      "localSubOne": "{{count}} model installed",
+      "localTitle": "Also running on this computer",
       "looking": "Looking for what is already on this computer…",
       "model": "Model",
       "paste": "Paste",
@@ -2489,7 +2522,8 @@
       "badKey": "{{name}} did not accept this key. Check that you copied all of it, then paste it again.",
       "noModels": "{{name}} accepted the key but listed no models. Try again in a moment.",
       "offline": "Could not reach {{name}}. Check your internet connection and try again.",
-      "ollamaDown": "Ollama does not seem to be running. Start Ollama on this computer, then choose it again.",
+      "ollamaDown": "Ollama does not seem to be running. Open the Ollama app (or run `ollama serve` in a terminal), then choose it again.",
+      "ollamaNoModels": "Ollama is running but has no models installed. In a terminal run `ollama pull {{model}}` (a small model), then choose Ollama again.",
       "unavailable": "Keys can only be saved from the desktop app on this computer.",
       "unknown": "Something went wrong while connecting {{name}}. Try again, or add the key later in Settings → AI."
     },
@@ -2620,9 +2654,11 @@
     },
     "chip": {
       "connecting": "{{name}} · connecting",
+      "degraded": "{{name}} · limited",
       "local": "This computer",
       "offline": "{{name}} · offline",
       "online": "{{name}} · online",
+      "starting": "{{name}} · starting",
       "temporary": "This computer · for now"
     },
     "copy": "Copy",
@@ -4098,6 +4134,31 @@
     "costNote": "Cost is shown only for models with a known price; “—” means unknown.",
     "deletedBot": "Deleted bot",
     "empty": "No usage yet. Send a message to a bot and its token use shows up here.",
+    "limit": {
+      "clear": "Remove limit",
+      "forecast": "Forecast for month end",
+      "hint": "When a call could take the month past the limit, Praxi stops before calling the model. Background and scheduled runs stop too and show up as failed runs.",
+      "invalid": "Enter an amount from $1 to $1,000,000.",
+      "label": "Limit in USD per month",
+      "limitLabel": "Limit",
+      "notCounted": "Calls to models with an unknown price are not counted and never estimated.",
+      "off": "No limit set",
+      "pace": {
+        "noForecast": "Not enough spending yet to forecast.",
+        "off": "Set a limit to get a forecast and a safety stop.",
+        "over": "At this pace you will pass the limit before the month ends.",
+        "reached": "Limit reached: new model calls are stopped until you raise or remove it.",
+        "under": "At this pace you stay under the limit.",
+        "warn": "80% of the limit is used."
+      },
+      "placeholder": "e.g. 25",
+      "remaining": "Remaining",
+      "remote": "This is a remote host. Its spending limit can only be changed on that computer, because your owner key is never sent to a host.",
+      "save": "Set limit",
+      "spent": "Spent this month",
+      "title": "Monthly spending limit",
+      "unpriced": "{{count}} calls this month had no known price and are not counted."
+    },
     "modelCalls": "Model calls",
     "prompt": "Prompt",
     "range": "Time range",
@@ -4126,7 +4187,9 @@
     "description": "Reply voice and speed for the read-aloud button. Uses your system's speech engine.",
     "dictate": "Dictate",
     "dictateStop": "Stop and transcribe",
+    "micBusy": "The microphone is in use by another app. Close it and try again.",
     "micDenied": "The microphone is not available. Allow microphone access and try again.",
+    "micMissing": "No microphone was found. Connect one and try again.",
     "notConfigured": "Dictation is not set up yet. Add a transcription service in Settings > General.",
     "online": "online",
     "speak": "Read aloud",
