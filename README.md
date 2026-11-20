@@ -185,8 +185,8 @@ The [roadmap](docs/ROADMAP.md) has the horizons (no dates, no promises), and the
 | Start here | Reference |
 | --- | --- |
 | [User guide](docs/guide/index.md) | [CLI reference](docs/guide/cli-reference.md) |
-| [Install and first run](docs/guide/install.md) | [Troubleshooting](docs/guide/troubleshooting.md) |
-| [Chatting and approvals](docs/guide/chatting-and-approvals.md) | [FAQ](docs/guide/faq.md) |
+| [Install and first run](docs/guide/install.md) | [Host operations](docs/guide/host-operations.md) and [remote host](docs/guide/remote-host.md) |
+| [Chatting and approvals](docs/guide/chatting-and-approvals.md) | [Troubleshooting](docs/guide/troubleshooting.md) and [FAQ](docs/guide/faq.md) |
 | [Bots and profiles](docs/guide/bots-and-profiles.md) | [Roadmap](docs/ROADMAP.md) |
 | [Scheduled tasks](docs/guide/scheduled-tasks.md) | [Security model](docs/guide/security.md) and [SECURITY.md](SECURITY.md) |
 
