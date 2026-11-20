@@ -116,7 +116,7 @@ function Field({
         {label}
       </label>
       {children}
-      {error ? <p className={formStyles.error}>{error}</p> : null}
+      {error ? <p className={formStyles.error} role="alert">{error}</p> : null}
       {hint && !error ? <p className={formStyles.hint}>{hint}</p> : null}
     </div>
   );
@@ -576,7 +576,7 @@ function AgentmailFlow({
           }}
           allWarning={t("settingsModal.email.form.access.allWarning")}
         />
-        {err("bot") ? <p className={formStyles.error}>{err("bot")}</p> : null}
+        {err("bot") ? <p className={formStyles.error} role="alert">{err("bot")}</p> : null}
       </div>
       <Field
         id="agentmail-hint"
@@ -850,7 +850,7 @@ export function EmailCard() {
         <span>{t("settingsModal.email.note")}</span>
       </p>
       {loadError ? (
-        <p className={formStyles.error}>
+        <p className={formStyles.error} role="alert">
           {t("settingsModal.email.loadError", { message: loadError })}
         </p>
       ) : null}

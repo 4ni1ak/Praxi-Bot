@@ -311,6 +311,8 @@ pub(crate) async fn health(State(s): State<AppState>) -> Json<Health> {
     Json(Health {
         startup,
         components_ready: startup == crate::host::StartupPhase::Ready,
+        channels_active: startup == crate::host::StartupPhase::Ready
+            && s.leader().components_allowed(),
         startup_reason,
         status: if s.agent().providers().setup_required() {
             "setup_required"

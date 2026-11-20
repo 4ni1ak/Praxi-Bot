@@ -2181,6 +2181,10 @@
         "hint": "Das Modell wurde nicht aufgerufen. Erhöhe oder entferne das Limit auf der Nutzungsseite und starte dann erneut.",
         "title": "Monatliches Ausgabenlimit erreicht"
       },
+      "spend_limit_unreadable": {
+        "hint": "Das gespeicherte Monatslimit konnte nicht gelesen werden, daher sind kostenpflichtige Modellaufrufe gesperrt. Legen Sie das Limit auf der Seite „Nutzung“ erneut fest.",
+        "title": "Ausgabenlimit nicht lesbar"
+      },
       "starting": {
         "hint": "Die App startet noch. Versuche es in ein paar Sekunden erneut.",
         "title": "Startet noch"
@@ -2624,9 +2628,11 @@
     },
     "chip": {
       "connecting": "{{name}} · verbindet",
+      "degraded": "{{name}} · eingeschränkt",
       "local": "Dieser Computer",
       "offline": "{{name}} · offline",
       "online": "{{name}} · online",
+      "starting": "{{name}} · startet",
       "temporary": "Dieser Computer · vorerst"
     },
     "copy": "Kopieren",

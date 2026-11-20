@@ -297,7 +297,7 @@ fn check_spend_limit(sh: &Arc<Shared>, ctx: &RunCtx, model: &str) -> Result<f64,
         price,
         sh.cfg.max_tokens,
     );
-    if status.spent_usd + *reserved + estimate > limit {
+    if status.spent_usd + reserved.usd + estimate > limit {
         let _ = sh.audit_usage_record(
             ctx.user_id,
             ctx.run_id,
@@ -307,7 +307,7 @@ fn check_spend_limit(sh: &Arc<Shared>, ctx: &RunCtx, model: &str) -> Result<f64,
                 "estimate_usd": estimate, "model": model,
             }),
         );
-        let blocked_at = status.spent_usd + *reserved;
+        let blocked_at = status.spent_usd + reserved.usd;
         drop(reserved);
         let hint = if limit <= 0.0 {
             " The saved limit could not be read, so spending is blocked until you set it again."
@@ -320,7 +320,7 @@ fn check_spend_limit(sh: &Arc<Shared>, ctx: &RunCtx, model: &str) -> Result<f64,
              not called. Raise or remove the limit on the Usage page, then run again.{hint}",
         ));
     }
-    *reserved += estimate;
+    reserved.add(estimate);
     drop(reserved);
     if status.spent_usd >= 0.8 * limit {
         let month = month_bounds_ms(storage::now_ms()).0;
@@ -370,10 +370,7 @@ fn warn_is_new(sh: &Arc<Shared>, ctx: &RunCtx, month: i64, limit: f64) -> bool {
 }
 
 fn release_reservation(sh: &Shared, amount: f64) {
-    if amount > 0.0 {
-        let mut r = sh.spend.reserved.lock();
-        *r = (*r - amount).max(0.0);
-    }
+    sh.spend.reserved.lock().release(amount);
 }
 
 /// One actual provider invocation (not one model step containing retries).

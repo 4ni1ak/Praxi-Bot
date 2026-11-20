@@ -189,6 +189,44 @@ pub enum StartupPhase {
     Degraded,
 }
 
+/// Why startup is `degraded`. Fixed vocabulary: the texts hold no paths or secrets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StartupReason {
+    /// The schedule store could not be opened.
+    StoreUnavailable,
+    /// The daemon was shutting down while components started.
+    DaemonStopped,
+    /// Another component failed to start.
+    ComponentFailed,
+    /// The background startup task panicked.
+    TaskPanicked,
+    /// Leadership verification or `prepare` did not finish in time.
+    TimedOut,
+}
+
+impl StartupReason {
+    pub(crate) fn text(self) -> &'static str {
+        match self {
+            Self::StoreUnavailable => {
+                "the schedule store could not be opened; the scheduler is not running"
+            }
+            Self::DaemonStopped => "the daemon was stopping while components started",
+            Self::ComponentFailed => "a component could not start; see the daemon log",
+            Self::TaskPanicked => "background startup failed unexpectedly; see the daemon log",
+            Self::TimedOut => {
+                "background startup did not finish in time; leadership could not be verified"
+            }
+        }
+    }
+    pub(crate) fn from_error(error: &ApiError) -> Self {
+        match error.code_str().as_str() {
+            "unavailable" => Self::DaemonStopped,
+            "internal" => Self::StoreUnavailable,
+            _ => Self::ComponentFailed,
+        }
+    }
+}
+
 /// Shared handle for handover, API actions and conflict detection. Transitions are serialized.
 #[derive(Clone)]
 pub struct LeaderControl(Arc<LeaderInner>);
@@ -236,6 +274,17 @@ impl LeaderControl {
     /// Record how background startup stands. `reason` must hold no secrets or paths.
     pub(crate) fn set_startup(&self, phase: StartupPhase, reason: Option<&str>) {
         *self.0.phase.lock() = (phase, reason.map(str::to_owned));
+    }
+    /// Mark startup degraded for a fixed reason.
+    pub(crate) fn set_degraded(&self, reason: StartupReason) {
+        self.set_startup(StartupPhase::Degraded, Some(reason.text()));
+    }
+    /// A later successful component start (for example `host activate`) ends `degraded`.
+    pub(crate) fn clear_degraded(&self) {
+        let mut phase = self.0.phase.lock();
+        if phase.0 == StartupPhase::Degraded {
+            *phase = (StartupPhase::Ready, None);
+        }
     }
     /// The startup phase and, when degraded, a fixed human-readable reason.
     pub(crate) fn startup(&self) -> (StartupPhase, Option<String>) {
@@ -391,6 +440,7 @@ impl LeaderControl {
                 let _ = self.0.events.send(HostEvent::HostStateChanged(idle));
                 return Err(error);
             }
+            self.clear_degraded();
             if let Some(net) = self.network() {
                 net.set_leader_info(Some(next.wire()));
             }

@@ -115,3 +115,15 @@ async fn parallel_runs_cannot_all_pass_just_under_the_limit() {
     );
     lp.cancel(first).unwrap();
 }
+
+#[test]
+fn reservation_sum_snaps_to_zero_when_no_call_is_in_flight() {
+    let mut r = spend::Reserved::default();
+    // 0.1 + 0.2 - 0.1 - 0.2 leaves a tiny positive float remainder.
+    r.add(0.1);
+    r.add(0.2);
+    r.release(0.1);
+    r.release(0.2);
+    assert_eq!(r.calls, 0);
+    assert!(r.usd == 0.0, "drift left over: {}", r.usd);
+}

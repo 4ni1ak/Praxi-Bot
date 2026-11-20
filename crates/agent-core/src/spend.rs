@@ -40,7 +40,36 @@ pub(crate) struct SpendState {
     /// Sum of the estimates of in-flight calls (USD). Spend is only recorded
     /// when a call ends, so without this N parallel calls could all pass at 99%.
     /// Process-wide, so it may over-count across users: that only errs safe.
-    pub reserved: Mutex<f64>,
+    pub reserved: Mutex<Reserved>,
+}
+
+/// In-flight reservations: the USD sum and how many calls hold one. The count
+/// lets the sum snap back to exactly zero when the last call ends, so float
+/// rounding cannot leave a tiny positive remainder behind.
+#[derive(Default)]
+pub(crate) struct Reserved {
+    pub usd: f64,
+    pub calls: u32,
+}
+
+impl Reserved {
+    pub fn add(&mut self, amount: f64) {
+        if amount > 0.0 {
+            self.usd += amount;
+            self.calls += 1;
+        }
+    }
+
+    pub fn release(&mut self, amount: f64) {
+        if amount > 0.0 {
+            self.calls = self.calls.saturating_sub(1);
+            self.usd = if self.calls == 0 {
+                0.0
+            } else {
+                (self.usd - amount).max(0.0)
+            };
+        }
+    }
 }
 
 /// Month-to-date accounting.

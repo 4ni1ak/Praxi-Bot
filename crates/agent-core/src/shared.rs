@@ -1535,6 +1535,11 @@ impl Shared {
             // Another bot's reply (an `@mention` chat) reaches this run as
             // untrusted data whatever that bot read. Same single exposure
             // state as every other source: no separate flag for mentions.
+            // Text read out of an attached file is untrusted data like any tool read.
+            if let Some(name) = crate::history::text_attachment_source(&self.storage, run) {
+                taint.exposure.observe(true, false);
+                taint.note_label(&format!("attached file {name}"));
+            }
             if crate::history::has_foreign_replies(&self.storage, run) {
                 taint.exposure.observe(true, false);
                 taint.note_label("another bot's reply");

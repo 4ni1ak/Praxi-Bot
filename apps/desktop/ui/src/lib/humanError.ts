@@ -199,6 +199,7 @@ const PATTERNS: ReadonlyArray<readonly [RegExp, string, ((m: RegExpExecArray) =>
   [/managed on the host itself/i, "hostManaged"],
   [/no such file or directory|cannot find the (file|path)|os error 2(?![0-9])/i, "toolNotFound"],
   [/expected_version|reload and retry/i, "codes.version_conflict"],
+  [/spend_limit_reached[\s\S]*saved limit could not be read/, "codes.spend_limit_unreadable"],
   [/spend_limit_reached/, "codes.spend_limit_reached"],
   [/providers_require_app_daemon|_outside_tauri|daemon_unavailable/i, "desktop_only"],
   [/denied|not allowed by the user|user rejected/i, "toolDenied"],
@@ -277,9 +278,13 @@ export function humanError(err: unknown): HumanError {
       details
     };
   }
-  for (const [re, key] of REASONS) {
-    if (re.test(raw)) {
-      return pack(key, key, details);
+  // The concrete-reason table only describes daemon refusals: a host refusal, or a conflict /
+  // unavailable answer. A tool result or plain error that merely contains these words is not one.
+  if (host || code === "conflict" || code === "unavailable") {
+    for (const [re, key] of REASONS) {
+      if (re.test(raw)) {
+        return pack(key, key, details);
+      }
     }
   }
   if (code === "network") {

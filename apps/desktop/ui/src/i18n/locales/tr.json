@@ -2181,6 +2181,10 @@
         "hint": "Model çağrılmadı. Kullanım sayfasında limiti yükseltin veya kaldırın, sonra yeniden çalıştırın.",
         "title": "Aylık harcama limitine ulaşıldı"
       },
+      "spend_limit_unreadable": {
+        "hint": "Kayıtlı aylık limit okunamadığı için ücretli model çağrıları engellendi. Limiti Kullanım sayfasından yeniden belirleyin.",
+        "title": "Harcama limiti okunamadı"
+      },
       "starting": {
         "hint": "Uygulama hâlâ başlıyor. Birkaç saniye sonra tekrar dene.",
         "title": "Hâlâ başlatılıyor"
@@ -2624,9 +2628,11 @@
     },
     "chip": {
       "connecting": "{{name}} · bağlanıyor",
+      "degraded": "{{name}} · kısıtlı",
       "local": "Bu bilgisayar",
       "offline": "{{name}} · çevrimdışı",
       "online": "{{name}} · çevrimiçi",
+      "starting": "{{name}} · başlıyor",
       "temporary": "Bu bilgisayar · şimdilik"
     },
     "copy": "Kopyala",

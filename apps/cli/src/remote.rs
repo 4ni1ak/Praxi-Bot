@@ -30,13 +30,21 @@ pub async fn status(c: &Client, json_out: bool, out: &mut dyn Write) -> Result<(
             &json!({"health": health, "pending_approvals": pending}),
         );
     }
-    writeln!(
-        out,
-        "daemon: {} (version {}, up {}s)",
-        health["status"].as_str().unwrap_or("?"),
-        health["version"].as_str().unwrap_or("?"),
-        health["uptime_secs"]
-    )?;
+    let status = health["status"].as_str().unwrap_or("?");
+    let version = health["version"].as_str().unwrap_or("?");
+    let uptime = &health["uptime_secs"];
+    if status == "setup_required" {
+        writeln!(
+            out,
+            "daemon: setup required (no LLM provider configured yet; version {version}, up {uptime}s)"
+        )?;
+        writeln!(
+            out,
+            "next: run `bot setup` for interactive setup, or `bot providers add <id>` to add a provider"
+        )?;
+    } else {
+        writeln!(out, "daemon: {status} (version {version}, up {uptime}s)")?;
+    }
     writeln!(out, "pending approvals: {pending}")?;
     Ok(())
 }
@@ -52,7 +60,10 @@ pub async fn bots_list(c: &Client, json_out: bool, out: &mut dyn Write) -> Resul
     }
     let list = bots.as_array().cloned().unwrap_or_default();
     if list.is_empty() {
-        writeln!(out, "(no bots; add one with `bot bots add <file.toml>`)")?;
+        writeln!(
+            out,
+            "(no bots; run `bot setup` or `bot bots add <file.toml>`)"
+        )?;
     }
     for b in list {
         writeln!(
@@ -77,10 +88,20 @@ pub async fn bots_add(
     out: &mut dyn Write,
 ) -> Result<()> {
     let toml = std::fs::read_to_string(file).map_err(|e| {
-        fail(
-            exit::GENERIC,
-            format!("cannot read {}: {e}", file.display()),
-        )
+        if e.kind() == std::io::ErrorKind::NotFound {
+            fail(
+                exit::GENERIC,
+                format!(
+                    "bot profile file {} not found; check the path and try again",
+                    file.display()
+                ),
+            )
+        } else {
+            fail(
+                exit::GENERIC,
+                format!("cannot read bot profile {}: {e}", file.display()),
+            )
+        }
     })?;
     let bot = c
         .request(
