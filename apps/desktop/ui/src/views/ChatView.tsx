@@ -1780,7 +1780,7 @@ export function ChatView({
               }}
             />
             {bot ? (
-              <div>
+              <div className={styles.modelSlot}>
                 <ModelPicker
                   groups={pickerGroups}
                   value={view?.executor ?? ""}
