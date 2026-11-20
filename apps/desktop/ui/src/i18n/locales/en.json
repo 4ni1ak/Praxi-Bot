@@ -2478,6 +2478,13 @@
       "keyHint": "Saved in your system keychain. It is never shown again.",
       "keyLabel": "{{name}} API key",
       "keyPlaceholder": "Paste your key here",
+      "local": {
+        "llamacpp": "llama.cpp server",
+        "lmstudio": "LM Studio"
+      },
+      "localSubMany": "{{count}} models installed",
+      "localSubOne": "{{count}} model installed",
+      "localTitle": "Also running on this computer",
       "looking": "Looking for what is already on this computer…",
       "model": "Model",
       "paste": "Paste",
@@ -2515,7 +2522,8 @@
       "badKey": "{{name}} did not accept this key. Check that you copied all of it, then paste it again.",
       "noModels": "{{name}} accepted the key but listed no models. Try again in a moment.",
       "offline": "Could not reach {{name}}. Check your internet connection and try again.",
-      "ollamaDown": "Ollama does not seem to be running. Start Ollama on this computer, then choose it again.",
+      "ollamaDown": "Ollama does not seem to be running. Open the Ollama app (or run `ollama serve` in a terminal), then choose it again.",
+      "ollamaNoModels": "Ollama is running but has no models installed. In a terminal run `ollama pull {{model}}` (a small model), then choose Ollama again.",
       "unavailable": "Keys can only be saved from the desktop app on this computer.",
       "unknown": "Something went wrong while connecting {{name}}. Try again, or add the key later in Settings → AI."
     },

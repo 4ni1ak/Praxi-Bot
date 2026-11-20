@@ -32,7 +32,7 @@ export type BrainChoice =
   | { kind: "api"; group: ApiGroup };
 
 /** Human reasons a connection failed; each maps to one sentence in the user's language. */
-export type ConnectError = "badKey" | "offline" | "ollamaDown" | "noModels" | "unavailable" | "unknown" | ProviderTestProblem;
+export type ConnectError = "badKey" | "offline" | "ollamaDown" | "ollamaNoModels" | "noModels" | "unavailable" | "unknown" | ProviderTestProblem;
 
 export interface FirstRunState {
   step: FirstRunStep;
@@ -150,7 +150,7 @@ export function classifyConnectError(raw: string, group: ApiGroup | null): Conne
   if (problem) {
     return problem;
   }
-  if (group === "ollama" && /refused|econnrefused|unreachable|not running|connect|timed out|timeout/.test(text)) {
+  if (group === "ollama" && /refused|econnrefused|unreachable|not running|connect|timed out|timeout|error sending request|tcp/.test(text)) {
     return "ollamaDown";
   }
   if (/network|dns|resolve|timed out|timeout|offline|unreachable|connection|econn|enotfound|failed to fetch/.test(text)) {

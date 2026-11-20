@@ -185,6 +185,19 @@ pub fn providers_test(
     Ok(())
 }
 
+/// `bot providers detect-local`: one JSON array of the local model servers found on loopback.
+///
+/// # Errors
+/// The async runtime cannot start.
+pub fn providers_detect_local(out: &mut dyn FnMut(&str)) -> Result<()> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let found = rt.block_on(provider_catalog::detect_local_servers());
+    out(&serde_json::to_string(&found)?);
+    Ok(())
+}
+
 /// `bot providers default ID [--model M]`.
 ///
 /// # Errors
