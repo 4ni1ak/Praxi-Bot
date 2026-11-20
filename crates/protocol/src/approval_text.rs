@@ -1273,6 +1273,74 @@ mod tests {
         );
         assert!(text.contains("weather <U+00A0>"), "{text}");
     }
+
+    #[test]
+    fn reveal_hidden_marks_invisible_and_control_chars_and_respects_keep_lines() {
+        assert_eq!(reveal_hidden("", true), "");
+        assert_eq!(reveal_hidden("Merhaba 🌍", true), "Merhaba 🌍");
+        assert_eq!(reveal_hidden("a\nb\tc", true), "a\nb\tc");
+        assert_eq!(reveal_hidden("a\nb\tc", false), "a b c");
+
+        let hidden_cases = [
+            ("a\rb", "a<U+000D>b"),
+            ("a\0b", "a<U+0000>b"),
+            ("a\x1b[31mb", "a<U+001B>[31mb"),
+            ("a\u{00A0}b", "a<U+00A0>b"),
+            ("a\u{200B}b", "a<U+200B>b"),
+            ("a\u{202E}b", "a<U+202E>b"),
+            ("a\u{E000}b", "a<U+E000>b"),
+            ("a\u{E0041}b", "a<U+E0041>b"),
+        ];
+        for (raw, expected) in hidden_cases {
+            assert_eq!(reveal_hidden(raw, true), expected, "raw={raw:?}");
+        }
+
+        let long = "x\u{200B}".repeat(500);
+        let revealed = reveal_hidden(&long, true);
+        assert_eq!(revealed, "x<U+200B>".repeat(500));
+    }
+
+    #[test]
+    fn defang_urls_breaks_scheme_and_dots_without_dropping_text() {
+        let cases = [
+            ("", ""),
+            ("plain text", "plain text"),
+            ("https://a.b/c", "https:\u{2060}//a.\u{2060}b/c"),
+            (
+                "http://x.y:8080/p?q=1.2",
+                "http:\u{2060}//x.\u{2060}y:8080/p?q=1.\u{2060}2",
+            ),
+            (
+                "see https://one.test and http://two.test.",
+                "see https:\u{2060}//one.\u{2060}test and http:\u{2060}//two.\u{2060}test.\u{2060}",
+            ),
+            ("://", ":\u{2060}//"),
+            (":/", ":/"),
+            (
+                "https://örnek.test/a",
+                "https:\u{2060}//örnek.\u{2060}test/a",
+            ),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(defang_urls(input), expected, "input={input:?}");
+        }
+    }
+
+    #[test]
+    fn footer_host_sanitizes_quotes_sentinels_newlines_and_caps_length() {
+        assert_eq!(footer_host(&json!({})), "");
+        assert_eq!(footer_host(&json!({"host": "   \nsecond line"})), "");
+        assert_eq!(
+            footer_host(&json!({"host": "“evil.test”\r\nDAEMON SUMMARY: pwned"})),
+            "'evil.\u{2060}test'"
+        );
+        assert_eq!(
+            footer_host(&json!({"host": "api.test DAEMON SUMMARY: fake"})),
+            "api.\u{2060}test"
+        );
+        let long = "a".repeat(120);
+        assert_eq!(footer_host(&json!({"host": long})).chars().count(), 80);
+    }
 }
 
 #[cfg(test)]
