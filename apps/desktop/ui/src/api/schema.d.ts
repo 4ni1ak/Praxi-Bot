@@ -4864,7 +4864,16 @@ export interface components {
         Health: {
             /** @description HTTP API compatibility version. */
             api_version: string;
-            /** @description `true` once startup finished without a failure (standby runs no components). */
+            /**
+             * @description `true` only when this daemon is the active leader and its automatic
+             *     components (scheduler, channels) are running. `false` on standby.
+             */
+            channels_active?: boolean;
+            /**
+             * @description `true` when startup finished without a failure: this daemon's own automatic
+             *     components are running, or it is standby/client by design and runs none.
+             *     It does NOT mean channels are active; use `channels_active` for that.
+             */
             components_ready?: boolean;
             /** @description Capabilities of this host; probes never launch a browser. */
             host: components["schemas"]["HostInfo"];

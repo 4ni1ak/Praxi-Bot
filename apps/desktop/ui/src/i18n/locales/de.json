@@ -2624,9 +2624,11 @@
     },
     "chip": {
       "connecting": "{{name}} · verbindet",
+      "degraded": "{{name}} · eingeschränkt",
       "local": "Dieser Computer",
       "offline": "{{name}} · offline",
       "online": "{{name}} · online",
+      "starting": "{{name}} · startet",
       "temporary": "Dieser Computer · vorerst"
     },
     "copy": "Kopieren",

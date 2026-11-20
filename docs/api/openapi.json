@@ -15477,9 +15477,13 @@
             "type": "string",
             "description": "HTTP API compatibility version."
           },
+          "channels_active": {
+            "type": "boolean",
+            "description": "`true` only when this daemon is the active leader and its automatic\ncomponents (scheduler, channels) are running. `false` on standby."
+          },
           "components_ready": {
             "type": "boolean",
-            "description": "`true` once startup finished without a failure (standby runs no components)."
+            "description": "`true` when startup finished without a failure: this daemon's own automatic\ncomponents are running, or it is standby/client by design and runs none.\nIt does NOT mean channels are active; use `channels_active` for that."
           },
           "host": {
             "$ref": "#/components/schemas/HostInfo",
