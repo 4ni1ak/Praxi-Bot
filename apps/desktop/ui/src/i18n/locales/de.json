@@ -3926,7 +3926,7 @@
         "title": "Kontoname"
       },
       "frame": {
-        "description": "Die native Titelleiste anzeigen (auf manchen Plattformen ist ein Neustart nötig).",
+        "description": "Die native Titelleiste statt der eigenen Fenstertasten der App anzeigen.",
         "title": "Fensterrahmen"
       },
       "send": {
@@ -4296,8 +4296,10 @@
     "takeTheWheel": "Steuer übernehmen"
   },
   "window": {
-    "maximize": "Maximieren / Wiederherstellen",
-    "minimize": "Minimieren"
+    "close": "Schließen",
+    "maximize": "Maximieren",
+    "minimize": "Minimieren",
+    "restore": "Wiederherstellen"
   },
   "workflow": {
     "button": "Als Workflow speichern",
