@@ -780,6 +780,7 @@
     "delete": "Botu sil",
     "deleteBlocked": "Bu botun sohbetleri var ({{count}}); bu yüzden silinemez. Yalnızca sohbeti ve çalışması olmayan bot silinebilir.",
     "deleteBlockedRuns": "Bu botun saklanan {{count}} çalışması var; bu yüzden silinemez. Yalnızca sohbeti ve çalışması olmayan bot silinebilir.",
+    "deleteBlockedRuns_one": "Bu botun saklanan {{count}} çalışması var; bu yüzden silinemez. Yalnızca sohbeti ve çalışması olmayan bot silinebilir.",
     "deleteConfirmBody": "Bot, uygulama erişimi ve e-posta hesapları kaldırılacak. Bu işlem geri alınamaz. Hâlâ sohbeti veya çalışması olan bot silinemez: bu durumda hiçbir şey kaldırılmaz ve nedenini görürsün.",
     "deleteConfirmTitle": "{{name}} silinsin mi?",
     "deleteHint": "Botu, uygulama erişimini ve e-posta hesaplarını kaldırır. Yalnızca sohbeti veya çalışması yokken yapılabilir. Geri alınamaz.",
@@ -1034,6 +1035,7 @@
     "saving": "Kaydediliyor…",
     "unlimited": "Limit yok",
     "unreported": "{{count}} çağrı kullanım bildirmedi ve temkinli bir tahminle sayıldı.",
+    "unreported_one": "{{count}} çağrı kullanım bildirmedi ve temkinli bir tahminle sayıldı.",
     "used": "{{usd}} ve {{amount}} metin parçası kullanıldı. Sıfırlanma: {{when}}."
   },
   "botPanel": {
@@ -1186,6 +1188,7 @@
       "summaryAll": "Tüm ortak becerileri kullanır ({{count}})",
       "summaryLearned": "(+{{count}} öğrenilmiş)",
       "summaryMissing": "Atanmış {{count}} beceri diskte bulunamıyor",
+      "summaryMissing_one": "Atanmış {{count}} beceri diskte bulunamıyor",
       "summarySelected": "{{total}} ortak beceriden {{count}} tanesi",
       "tooMany": "En fazla {{max}} beceri atanabilir. Daha az beceri seç ya da “Tüm ortak beceriler” seçeneğini kullan."
     },
@@ -3227,8 +3230,10 @@
     "emailUnavailable": "E-posta listesi alınamıyor: {{error}}",
     "embed": "Anlamsal dizini oluştur veya devam ettir",
     "embeddingRemaining": "{{count}} parça kaldı",
+    "embeddingRemaining_one": "{{count}} parça kaldı",
     "embeddingRetry": "{{time}} sonrasında yeniden dene",
     "embeddingSkipped": "{{count}} parça atlandı",
+    "embeddingSkipped_one": "{{count}} parça atlandı",
     "embeddingStatus": {
       "awaiting_consent": "Kaynak izni gerekiyor",
       "cancelled": "Embedding duraklatıldı",
@@ -3244,6 +3249,7 @@
     "html": "Kaydedilen içerik HTML biçiminde",
     "importHint": "İçe aktarılan kaynaklar devre dışı başlar. Embedding sağlayıcısını yeniden seçip kaydet; ardından kaynaklara ve arama sorgularına ayrı ayrı izin ver.",
     "indexed": "{{count}} belge işlendi.",
+    "indexed_one": "{{count}} belge işlendi.",
     "kind": "Kaynak türü",
     "kinds": {
       "conversation": "Geçmiş konuşma",
@@ -3293,6 +3299,7 @@
     "select": "Seç…",
     "settings": "Arama ayarları",
     "skippedFiles": "{{count}} dosya atlandı",
+    "skippedFiles_one": "{{count}} dosya atlandı",
     "title": "Bilgi kaynakları ve ortak beyin",
     "url": "Kaydedilmiş sayfanın adresi"
   },
@@ -3478,6 +3485,7 @@
     "copied": "Kopyalandı",
     "copy": "Komutu kopyala",
     "cores": "{{count}} işlemci iş parçacığı",
+    "cores_one": "{{count}} işlemci iş parçacığı",
     "disk": "{{size}} boş disk",
     "fitFast": "rahat çalışır",
     "fitSlow": "çalışır, ama yavaş",
@@ -3544,6 +3552,7 @@
     "previewRun": "Geri çağırmayı önizle",
     "previewTitle": "Botun göreceği blok (geri çağırma önizlemesi)",
     "previewTokens": "{{count}} kayıt çağrıldı · ~{{used}} / {{budget}} token",
+    "previewTokens_one": "{{count}} kayıt çağrıldı · ~{{used}} / {{budget}} token",
     "saveEdit": "Kaydet",
     "scope": "Kapsam",
     "scopeShared": "Tüm botlarda ortak",
@@ -4186,9 +4195,13 @@
       "cron": "Cron: {{cron}}",
       "every": {
         "days": "Her {{count}} günde bir",
+        "days_one": "Her gün",
         "hours": "Her {{count}} saatte bir",
+        "hours_one": "Her saat",
         "minutes": "Her {{count}} dakikada bir",
-        "seconds": "Her {{count}} saniyede bir"
+        "minutes_one": "Her dakika",
+        "seconds": "Her {{count}} saniyede bir",
+        "seconds_one": "Her saniye"
       },
       "unknown": "Özel zamanlama"
     },
@@ -4623,6 +4636,7 @@
       "offline": "Yerel servis çalışmıyor. Tanılama için yeniden başlat.",
       "privacy": "Tanılama sadece ayarlarını okur. Onarım ise yalnızca ilgili düğmeye tıkladığında çalışır.",
       "problems": "{{count}} öğe ilgi bekliyor",
+      "problems_one": "{{count}} öğe ilgi bekliyor",
       "problems_other": "{{count}} öğe ilgi bekliyor",
       "repair": {
         "create_data_dir": "Klasörü oluştur",
@@ -4996,6 +5010,7 @@
       "test": "Test et",
       "testFailed": "Arama testi başarısız ({{ms}} ms): {{error}}",
       "testOk": "{{backend}} yanıt verdi ({{ms}} ms içinde {{count}} sonuç)",
+      "testOk_one": "{{backend}} yanıt verdi ({{ms}} ms içinde {{count}} sonuç)",
       "testQueryLabel": "Test arama sorgusu",
       "testTitle": "Bağlantı testi",
       "testing": "Test ediliyor…",
@@ -5021,6 +5036,7 @@
     "newBot": "Yeni bot",
     "notifications": "Bildirimler",
     "notificationsCount": "{{count}} okunmamış bildirim",
+    "notificationsCount_one": "{{count}} okunmamış bildirim",
     "reorderBot": "{{name}} sırasını değiştir (ok tuşları yukarı/aşağı taşır)",
     "reorderHint": "Satırı sürükle ya da bu tutamaca odaklanıp yukarı/aşağı ok tuşuna bas",
     "reorderMoved": "{{name}} {{pos}}. sıraya taşındı",
@@ -5165,7 +5181,8 @@
       "save": "Limiti ayarla",
       "spent": "Bu ay harcanan",
       "title": "Aylık harcama limiti",
-      "unpriced": "Bu ay {{count}} çağrının fiyatı bilinmiyor; sayılmadı."
+      "unpriced": "Bu ay {{count}} çağrının fiyatı bilinmiyor; sayılmadı.",
+      "unpriced_one": "Bu ay {{count}} çağrının fiyatı bilinmiyor; sayılmadı."
     },
     "loading": "Kullanım yükleniyor…",
     "model": "Model adı",
@@ -5204,7 +5221,9 @@
     },
     "unknown": "Bilinmiyor",
     "unknownCostNotice": "{{count}} çağrının fiyatı bilinmiyor ve maliyet toplamına dahil edilmedi.",
-    "unknownUsageNotice": "{{count}} çağrı token kullanım verisi bildirmedi ve ayrı sayıldı."
+    "unknownCostNotice_one": "{{count}} çağrının fiyatı bilinmiyor ve maliyet toplamına dahil edilmedi.",
+    "unknownUsageNotice": "{{count}} çağrı token kullanım verisi bildirmedi ve ayrı sayıldı.",
+    "unknownUsageNotice_one": "{{count}} çağrı token kullanım verisi bildirmedi ve ayrı sayıldı."
   },
   "voice": {
     "auto": "Otomatik (uygulama diline göre)",
@@ -5304,6 +5323,7 @@
     "pause": "Duraklat",
     "pausedStep": "Çalışma duraklatıldı — devam etmesi bekleniyor.",
     "refusedBadge": "{{count}} bot eylemi reddedildi",
+    "refusedBadge_one": "{{count}} bot eylemi reddedildi",
     "refusedBadge_other": "{{count}} bot eylemi reddedildi",
     "resume": "Devam et",
     "status": {
