@@ -1612,6 +1612,16 @@
         "failed": "Hafızada aranamadı",
         "running": "Hafızada aranıyor"
       },
+      "notes_read": {
+        "done": "Notlar okundu",
+        "failed": "Notlar okunamadı",
+        "running": "Notlar okunuyor"
+      },
+      "notes_write": {
+        "done": "Not kaydedildi",
+        "failed": "Not kaydedilmedi",
+        "running": "Not kaydediliyor"
+      },
       "schedule_create": {
         "done": "Yinelenen görev oluşturuldu",
         "failed": "Yinelenen görev oluşturulmadı",

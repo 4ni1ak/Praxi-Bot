@@ -1612,6 +1612,16 @@
         "failed": "Couldn't search memory",
         "running": "Searching memory"
       },
+      "notes_read": {
+        "done": "Read notes",
+        "failed": "Couldn't read notes",
+        "running": "Reading notes"
+      },
+      "notes_write": {
+        "done": "Saved a note",
+        "failed": "Didn't save a note",
+        "running": "Saving a note"
+      },
       "schedule_create": {
         "done": "Created a recurring task",
         "failed": "Didn't create a recurring task",

@@ -1612,6 +1612,16 @@
         "failed": "Das Gedächtnis konnte nicht durchsucht werden",
         "running": "Durchsucht das Gedächtnis"
       },
+      "notes_read": {
+        "done": "Notizen gelesen",
+        "failed": "Notizen konnten nicht gelesen werden",
+        "running": "Notizen werden gelesen"
+      },
+      "notes_write": {
+        "done": "Notiz gespeichert",
+        "failed": "Notiz nicht gespeichert",
+        "running": "Notiz wird gespeichert"
+      },
       "schedule_create": {
         "done": "Eine wiederkehrende Aufgabe erstellt",
         "failed": "Eine wiederkehrende Aufgabe wurde nicht erstellt",
