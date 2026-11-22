@@ -1372,6 +1372,7 @@ dependencies = [
  "tauri-winres",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
  "toml 0.8.2",
  "tool-registry",
  "url",
@@ -9155,7 +9156,11 @@ checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
 ]
 
@@ -9479,6 +9484,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.5",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 2.0.21",
  "utf-8",
