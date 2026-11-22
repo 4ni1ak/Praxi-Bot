@@ -13,6 +13,7 @@
 mod agent;
 mod approval;
 pub mod attachments;
+mod browser_url;
 mod cli;
 mod compaction;
 mod config;
@@ -40,6 +41,8 @@ pub mod usage;
 
 #[cfg(test)]
 mod approval_expiry_tests;
+#[cfg(test)]
+mod browser_mcp_tests;
 #[cfg(test)]
 mod control_grant_tests;
 #[cfg(test)]

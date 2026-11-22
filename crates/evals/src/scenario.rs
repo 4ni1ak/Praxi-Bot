@@ -296,6 +296,14 @@ pub struct FakeToolSpec {
     /// The call starts an arbitrary program (a run tainted by untrusted content asks).
     #[serde(default)]
     pub executes: bool,
+    /// A tool of an MCP server the owner connected as a browser (name
+    /// `mcp:<server>/<tool>`). Content class, effect and always-ask come from
+    /// `tool_registry::browser_mcp`, exactly as the MCP bridge registers them;
+    /// `content`, `effect` and `executes` are ignored. A tool name the browser
+    /// rules do not know keeps the generic MCP class (untrusted, private,
+    /// egress, destructive).
+    #[serde(default)]
+    pub browser_mcp: bool,
 }
 
 /// Token usage reported with a scripted reply.
@@ -403,6 +411,8 @@ pub enum Act {
     Approve,
     /// Approve for the rest of the chat.
     ApproveChat,
+    /// Approve for the rest of the task (one tool, this run).
+    ApproveTask,
     /// Approve always.
     ApproveAlways,
     /// Deny.
@@ -531,7 +541,7 @@ pub struct ApprovalCardExpect {
     /// Expected `details.kind` (for example, `"egress"`).
     #[serde(default)]
     pub kind: Option<String>,
-    /// Expected `details.why` (`"egress"`, `"executes"`, `"floor"`, `"always_ask"`, `"policy"`).
+    /// Expected `details.why` (`"egress"`, `"executes"`, `"floor"`, `"always_ask"`, `"policy"`, `"browser_address"`).
     #[serde(default)]
     pub why: Option<String>,
     /// Substring expected in `details.host`.
