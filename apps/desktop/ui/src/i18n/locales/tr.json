@@ -1514,6 +1514,7 @@
       "placeholder": "Sohbette ara…",
       "prev": "Önceki eşleşme"
     },
+    "imported": "İçe aktarıldı",
     "jumpToLatest": "En sona git",
     "longMessage": {
       "less": "Daha az göster",
@@ -3586,6 +3587,7 @@
     "sources": {
       "api": "yerel API",
       "app": "bu uygulama",
+      "imported": "içe aktarılan dosya",
       "peer": "başka bir bilgisayar",
       "telegram": "Telegram",
       "unknown": "bilinmiyor"
