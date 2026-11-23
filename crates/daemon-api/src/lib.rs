@@ -59,6 +59,7 @@ pub mod policy;
 pub mod profile_share;
 mod profile_share_routes;
 mod provider_models;
+pub mod recipes;
 mod secret_request_routes;
 pub mod trusted_folders;
 pub use peer::{PeerIdentity, PeerRole, peer_router};
@@ -1216,6 +1217,7 @@ fn api_routes() -> Router<AppState> {
             "/v1/profile-share/templates",
             get(profile_share_routes::profile_templates),
         )
+        .route("/v1/profile-share/recipes", get(recipes::list_recipes))
         .route(
             "/v1/profile-share/export",
             post(profile_share_routes::export_profile),

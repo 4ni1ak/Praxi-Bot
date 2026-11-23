@@ -1,6 +1,8 @@
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
+import { applyRecipeExtras, type Recipe, recipeLines, recipeText } from "../lib/recipes";
+import { useToast } from "./Toast";
 import type { ProvidersDto } from "../api/types";
 import { formatModelRef, resolveAutoExecutorRef } from "../lib/botProfile";
 import { botWriteMessage } from "../lib/botWrite";
@@ -19,7 +21,9 @@ import styles from "./ProfileImportView.module.css";
 
 export type ProfileSource =
   | { kind: "file" }
-  | { kind: "template"; contents: string; requested?: SharePreset };
+  | { kind: "template"; contents: string; requested?: SharePreset }
+  /** A goal recipe: the bot profile plus apps and a schedule, all shown before anything exists. */
+  | { kind: "recipe"; recipe: Recipe };
 
 const CAPABILITIES = [
   ["can_run_shell", "shell"],
@@ -47,13 +51,21 @@ export function ProfileImportView({
   onBack: () => void;
   onDone: (botId: string) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { client, conn, refreshBots } = useDaemon();
+  const toast = useToast();
+  const recipe = source.kind === "recipe" ? source.recipe : null;
   const [contents, setContents] = useState<string | null>(
-    source.kind === "template" ? source.contents : null
+    source.kind === "template"
+      ? source.contents
+      : source.kind === "recipe"
+        ? JSON.stringify(source.recipe.profile)
+        : null
   );
   const [level, setLevel] = useState<SharePreset>(
-    initialLevel(source.kind, source.kind === "template" ? source.requested : undefined)
+    source.kind === "file"
+      ? initialLevel("file")
+      : initialLevel("template", source.kind === "recipe" ? source.recipe.level : source.requested)
   );
   const [computerFiles, setComputerFiles] = useState(false);
   const [model, setModel] = useState<string | undefined>(undefined);
@@ -122,6 +134,17 @@ export function ProfileImportView({
         ...(model ? { model } : {}),
         ...(name?.trim() ? { name: name.trim() } : {})
       });
+      if (recipe) {
+        // Apps and the schedule arrive switched off; the person turns them on.
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
+        const done = await applyRecipeExtras(client, recipe, out.bot.id, i18n.language, tz);
+        toast.show(
+          done.failed.length > 0
+            ? t("recipes.partial", { what: done.failed.join(", ") })
+            : t("recipes.ready"),
+          done.failed.length > 0 ? "danger" : "success"
+        );
+      }
       await refreshBots().catch(() => {});
       onDone(out.bot.id);
     } catch (e) {
@@ -150,6 +173,57 @@ export function ProfileImportView({
               {t("profileShare.chooseFile")}
             </Button>
           </div>
+        ) : null}
+
+        {preview && recipe ? (
+          <section
+            className={styles.section}
+            aria-label={t("recipes.willDo")}
+            data-testid="recipe-summary"
+          >
+            <h3 className={styles.heading}>{recipeText(recipe.names, i18n.language)}</h3>
+            <p className={styles.hint}>{recipeText(recipe.descriptions, i18n.language)}</p>
+            <h3 className={styles.heading}>{t("recipes.canTitle")}</h3>
+            <ul className={styles.list} data-testid="recipe-can">
+              {recipeLines(recipe.can, i18n.language).map((l) => (
+                <li key={l}>{l}</li>
+              ))}
+            </ul>
+            <h3 className={styles.heading}>{t("recipes.cannotTitle")}</h3>
+            <ul className={styles.list} data-testid="recipe-cannot">
+              {recipeLines(recipe.cannot, i18n.language).map((l) => (
+                <li key={l}>{l}</li>
+              ))}
+            </ul>
+            {recipe.apps && recipe.apps.length > 0 ? (
+              <>
+                <h3 className={styles.heading}>{t("recipes.appsTitle")}</h3>
+                <p className={styles.hint}>{t("recipes.appsHint")}</p>
+                <ul className={styles.list} data-testid="recipe-apps">
+                  {recipe.apps.map((a) => (
+                    <li key={a.catalog_id}>
+                      {a.catalog_id}: {recipeText(a.why, i18n.language)}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+            {recipe.schedule ? (
+              <>
+                <h3 className={styles.heading}>{t("recipes.scheduleTitle")}</h3>
+                <p className={styles.hint} data-testid="recipe-schedule">
+                  {t("recipes.scheduleHint", {
+                    title: recipeText(recipe.schedule.title, i18n.language),
+                    when: t(`recipes.when.${recipe.schedule.freq}`, {
+                      time: recipe.schedule.time,
+                      day: t(`recipes.day.${recipe.schedule.weekday ?? 5}`)
+                    })
+                  })}
+                </p>
+              </>
+            ) : null}
+            <p className={styles.hint}>{t("recipes.nothingYet")}</p>
+          </section>
         ) : null}
 
         {preview ? (

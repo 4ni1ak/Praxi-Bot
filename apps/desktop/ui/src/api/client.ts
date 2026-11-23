@@ -8,6 +8,7 @@ import type {
   ImportPreview,
   SharedProfile
 } from "../lib/profileShare";
+import type { Recipe } from "../lib/recipes";
 import type {
   KnowledgeSource,
   KnowledgeSourceInput,
@@ -676,6 +677,10 @@ export class ApiClient {
   /** The built-in bot template gallery (data files shipped with the daemon). */
   profileTemplates(): Promise<SharedProfile[]> {
     return this.request("GET", "/profile-share/templates");
+  }
+  /** The built-in goal recipes ("I want a daily briefing"); data only, nothing is created. */
+  recipes(): Promise<Recipe[]> {
+    return this.request("GET", "/profile-share/recipes");
   }
   /** Owner-only: one bot as a shareable profile file (no secrets, grants, memory or paths). */
   exportProfile(botId: string, includeSchedules: boolean): Promise<ExportOutput> {

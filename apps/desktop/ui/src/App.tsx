@@ -258,6 +258,7 @@ function AppShell() {
     return () => window.removeEventListener(OPEN_AI_SETTINGS_EVENT, open);
   }, []);
   const [newBotOpen, setNewBotOpen] = useState(false);
+  const [newBotRecipe, setNewBotRecipe] = useState<string | undefined>(undefined);
   // The dialogs of a bot (card 244-C): edit and profile replace the old pages; "add skill" can
   // sit on top of the skills dialog or the edit dialog.
   const [botEditOpen, setBotEditOpen] = useState(false);
@@ -1210,9 +1211,14 @@ function AppShell() {
       <AppsModal open={appsOpen} onClose={() => setAppsOpen(false)} />
       <NewBotModal
         open={newBotOpen}
-        onClose={() => setNewBotOpen(false)}
+        initialRecipeId={newBotRecipe}
+        onClose={() => {
+          setNewBotOpen(false);
+          setNewBotRecipe(undefined);
+        }}
         onDone={(botId) => {
           setNewBotOpen(false);
+          setNewBotRecipe(undefined);
           goToBot(botId);
         }}
       />
@@ -1269,6 +1275,11 @@ function AppShell() {
         onSetup={() => {
           setHelpOpen(false);
           handleOpenOnboarding(false);
+        }}
+        onRecipe={(id) => {
+          setHelpOpen(false);
+          setNewBotRecipe(id);
+          setNewBotOpen(true);
         }}
       />
       <LiveViewer onChatSlots={route.kind === "chat" && !hostEmpty ? setHomeChatSlots : undefined} />

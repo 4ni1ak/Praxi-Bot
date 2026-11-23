@@ -8,6 +8,7 @@ import {
   templateDescription,
   templateName
 } from "../lib/profileShare";
+import { type Recipe, recipeText } from "../lib/recipes";
 import type { Bot } from "../api/types";
 import { BotAvatarUploadField, useBotFormDeps } from "../components/BotAdvancedFields";
 import {
@@ -51,10 +52,13 @@ const NEW_BOT_SUBTITLE_ID = "new-bot-subtitle";
 
 function NewBotDialogContent({
   onDone,
-  onClose
+  onClose,
+  initialRecipeId
 }: {
   onDone: (botId: string) => void;
   onClose: () => void;
+  /** Open straight on this recipe's preview (from Help). */
+  initialRecipeId?: string;
 }) {
   const { t, i18n } = useTranslation();
   const { client, bots, conn, refreshBots, activeComputerId, activeHostName } = useDaemon();
@@ -74,6 +78,7 @@ function NewBotDialogContent({
   // Gallery templates and "Import from file" open the preview view instead of this form.
   const [importSource, setImportSource] = useState<ProfileSource | null>(null);
   const [gallery, setGallery] = useState<SharedProfile[]>([]);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
   useEffect(() => {
     if (!client) return undefined;
     let cancelled = false;
@@ -83,10 +88,19 @@ function NewBotDialogContent({
         if (!cancelled) setGallery(list);
       })
       .catch(() => {});
+    client
+      .recipes()
+      .then((list) => {
+        if (cancelled) return;
+        setRecipes(list);
+        const wanted = initialRecipeId ? list.find((r) => r.id === initialRecipeId) : undefined;
+        if (wanted) setImportSource({ kind: "recipe", recipe: wanted });
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [client]);
+  }, [client, initialRecipeId]);
   const [templateId, setTemplateId] = useState<BotTemplateId | null>("blank");
   const [draft, setDraft] = useState<BotDraft>(() => ({
     ...draftFromBot(undefined),
@@ -268,6 +282,32 @@ function NewBotDialogContent({
             );
           })}
         </div>
+
+        {!createdBot && recipes.length > 0 ? (
+          <section
+            className={styles.gallery}
+            aria-label={t("recipes.galleryLabel")}
+            data-testid="recipe-gallery"
+          >
+            <p className={styles.galleryName}>{t("recipes.iWantTo")}</p>
+            <div className={styles.galleryCards}>
+              {recipes.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  className={styles.galleryCard}
+                  data-testid={`recipe-${r.id}`}
+                  onClick={() => setImportSource({ kind: "recipe", recipe: r })}
+                >
+                  <span className={styles.galleryName}>{recipeText(r.names, i18n.language)}</span>
+                  <span className={styles.galleryDesc}>
+                    {recipeText(r.descriptions, i18n.language)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         {!createdBot ? (
           <section
@@ -503,16 +543,18 @@ function NewBotDialogContent({
 export function NewBotModal({
   open,
   onDone,
-  onClose
+  onClose,
+  initialRecipeId
 }: {
   open: boolean;
   onDone: (botId: string) => void;
   onClose: () => void;
+  initialRecipeId?: string;
 }) {
   const { t } = useTranslation();
   return (
     <Modal open={open} onClose={onClose} size="sm" label={t("newBot.title")} describedBy={NEW_BOT_SUBTITLE_ID}>
-      {open ? <NewBotDialogContent onDone={onDone} onClose={onClose} /> : null}
+      {open ? <NewBotDialogContent onDone={onDone} onClose={onClose} initialRecipeId={initialRecipeId} /> : null}
     </Modal>
   );
 }

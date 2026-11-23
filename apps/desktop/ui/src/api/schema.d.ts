@@ -2686,6 +2686,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/profile-share/recipes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The built-in goal recipes (read-only data; nothing is created). */
+        get: operations["list_recipes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/profile-share/templates": {
         parameters: {
             query?: never;
@@ -4071,6 +4088,9 @@ export interface components {
             scope: components["schemas"]["SkillScope"];
             /** @description Skill version string. */
             version: string;
+        };
+        BTreeMap: {
+            [key: string]: string;
         };
         /** @description `409` body of `PATCH /v1/bots/{id}`: the usual error plus the bot as stored now. */
         BotConflictBody: {
@@ -7368,6 +7388,67 @@ export interface components {
         };
         /** @enum {string} */
         Reason: "browser_idle" | "viewer_idle" | "time_limit" | "remote_node_live_view" | "unsupported" | "unavailable" | "expired" | "revoked" | "disconnected" | "stale" | "geometry_changed" | "refresh_pending" | "frame_budget_exceeded" | "drain_timeout" | "audit_failed" | "reset_failed" | "partial_injection" | "rate_limited" | "restart" | "persistence_failed" | "local_override";
+        /** @description A goal-based setup recipe (`*.praxi-recipe.json`). */
+        Recipe: {
+            /** @description Apps it needs (added switched off). */
+            apps?: components["schemas"]["RecipeApp"][];
+            /** @description What the bot will be able to do, in plain words, per language. */
+            can: {
+                [key: string]: string[];
+            };
+            /** @description What it will not do without asking, in plain words, per language. */
+            cannot: {
+                [key: string]: string[];
+            };
+            /** @description One sentence per language. */
+            descriptions: components["schemas"]["BTreeMap"];
+            /** @description Always `praxi-recipe`. */
+            format: string;
+            /**
+             * Format: int32
+             * @description Schema version (`1`).
+             */
+            format_version: number;
+            /** @description lucide icon name, resolved by the app. */
+            icon: string;
+            /** @description Stable slug (`daily-briefing`). */
+            id: string;
+            /** @description Permission level the recipe asks for. Equal to `profile.permissions.preset`; never `full`. */
+            level: components["schemas"]["SharePreset"];
+            /** @description Goal in the user's words ("Give me a morning briefing"), per language. */
+            names: components["schemas"]["BTreeMap"];
+            /** @description The bot. `meta` and `schedules` stay empty (the recipe has its own). */
+            profile: components["schemas"]["SharedProfile"];
+            schedule?: null | components["schemas"]["RecipeSchedule"];
+        };
+        /** @description An app the recipe needs, by MCP catalog id. Never a command, URL or secret. */
+        RecipeApp: {
+            /** @description Id in the MCP catalog (`fetch`, `brave-search`, ...). */
+            catalog_id: string;
+            /** @description Why the recipe wants it, per language. */
+            why: components["schemas"]["BTreeMap"];
+        };
+        /**
+         * @description When a recipe's schedule runs.
+         * @enum {string}
+         */
+        RecipeFreq: "daily" | "weekdays" | "weekly";
+        /** @description The optional schedule of a recipe. Created switched off. */
+        RecipeSchedule: {
+            /** @description How often. */
+            freq: components["schemas"]["RecipeFreq"];
+            /** @description What the bot is asked to do, per language. */
+            prompt: components["schemas"]["BTreeMap"];
+            /** @description Local time, `HH:MM`. */
+            time: string;
+            /** @description Title per language. */
+            title: components["schemas"]["BTreeMap"];
+            /**
+             * Format: int32
+             * @description 0 (Sunday) to 6, for `weekly`.
+             */
+            weekday?: number | null;
+        };
         ReclaimDto: {
             /** @description The local copy runs again (it was enabled before the move). */
             enabled: boolean;
@@ -15159,6 +15240,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_recipes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Recipe"][];
                 };
             };
         };

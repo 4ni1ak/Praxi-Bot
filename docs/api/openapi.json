@@ -9506,6 +9506,35 @@
         ]
       }
     },
+    "/v1/profile-share/recipes": {
+      "get": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "The built-in goal recipes (read-only data; nothing is created).",
+        "operationId": "list_recipes",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Recipe"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/profile-share/templates": {
       "get": {
         "tags": [
@@ -14058,6 +14087,15 @@
             "type": "string",
             "description": "Skill version string."
           }
+        }
+      },
+      "BTreeMap": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "propertyNames": {
+          "type": "string"
         }
       },
       "BotConflictBody": {
@@ -22721,6 +22759,169 @@
           "persistence_failed",
           "local_override"
         ]
+      },
+      "Recipe": {
+        "type": "object",
+        "description": "A goal-based setup recipe (`*.praxi-recipe.json`).",
+        "required": [
+          "format",
+          "format_version",
+          "id",
+          "icon",
+          "names",
+          "descriptions",
+          "level",
+          "can",
+          "cannot",
+          "profile"
+        ],
+        "properties": {
+          "apps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecipeApp"
+            },
+            "description": "Apps it needs (added switched off)."
+          },
+          "can": {
+            "type": "object",
+            "description": "What the bot will be able to do, in plain words, per language.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "cannot": {
+            "type": "object",
+            "description": "What it will not do without asking, in plain words, per language.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "descriptions": {
+            "$ref": "#/components/schemas/BTreeMap",
+            "description": "One sentence per language."
+          },
+          "format": {
+            "type": "string",
+            "description": "Always `praxi-recipe`."
+          },
+          "format_version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Schema version (`1`).",
+            "minimum": 0
+          },
+          "icon": {
+            "type": "string",
+            "description": "lucide icon name, resolved by the app."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable slug (`daily-briefing`)."
+          },
+          "level": {
+            "$ref": "#/components/schemas/SharePreset",
+            "description": "Permission level the recipe asks for. Equal to `profile.permissions.preset`; never `full`."
+          },
+          "names": {
+            "$ref": "#/components/schemas/BTreeMap",
+            "description": "Goal in the user's words (\"Give me a morning briefing\"), per language."
+          },
+          "profile": {
+            "$ref": "#/components/schemas/SharedProfile",
+            "description": "The bot. `meta` and `schedules` stay empty (the recipe has its own)."
+          },
+          "schedule": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RecipeSchedule",
+                "description": "Optional schedule (created switched off)."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "RecipeApp": {
+        "type": "object",
+        "description": "An app the recipe needs, by MCP catalog id. Never a command, URL or secret.",
+        "required": [
+          "catalog_id",
+          "why"
+        ],
+        "properties": {
+          "catalog_id": {
+            "type": "string",
+            "description": "Id in the MCP catalog (`fetch`, `brave-search`, ...)."
+          },
+          "why": {
+            "$ref": "#/components/schemas/BTreeMap",
+            "description": "Why the recipe wants it, per language."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RecipeFreq": {
+        "type": "string",
+        "description": "When a recipe's schedule runs.",
+        "enum": [
+          "daily",
+          "weekdays",
+          "weekly"
+        ]
+      },
+      "RecipeSchedule": {
+        "type": "object",
+        "description": "The optional schedule of a recipe. Created switched off.",
+        "required": [
+          "title",
+          "prompt",
+          "freq",
+          "time"
+        ],
+        "properties": {
+          "freq": {
+            "$ref": "#/components/schemas/RecipeFreq",
+            "description": "How often."
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/BTreeMap",
+            "description": "What the bot is asked to do, per language."
+          },
+          "time": {
+            "type": "string",
+            "description": "Local time, `HH:MM`."
+          },
+          "title": {
+            "$ref": "#/components/schemas/BTreeMap",
+            "description": "Title per language."
+          },
+          "weekday": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "0 (Sunday) to 6, for `weekly`.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "ReclaimDto": {
         "type": "object",

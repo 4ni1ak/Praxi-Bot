@@ -4002,6 +4002,34 @@
     "resets": "Wird zurückgesetzt {{when}}",
     "title": "Verbleibendes Kontingent"
   },
+  "recipes": {
+    "appsHint": "Sie werden ausgeschaltet und nur für diesen Bot hinzugefügt. Verbinden und freigeben musst du sie selbst unter Apps.",
+    "appsTitle": "Benötigte Apps",
+    "canTitle": "Der Bot kann",
+    "cannotTitle": "Der Bot kann nicht",
+    "day": {
+      "0": "Sonntag",
+      "1": "Montag",
+      "2": "Dienstag",
+      "3": "Mittwoch",
+      "4": "Donnerstag",
+      "5": "Freitag",
+      "6": "Samstag"
+    },
+    "galleryLabel": "Ziele",
+    "iWantTo": "Ich möchte …",
+    "nothingYet": "Es wird nichts erstellt, bevor du auf „Bot erstellen“ drückst. Die höchste Berechtigungsstufe wählst du unten, und der Bot bekommt nie mehr als das.",
+    "partial": "Der Bot wurde erstellt, aber das konnte nicht vorbereitet werden: {{what}}. Du kannst es später unter Apps oder Zeitpläne hinzufügen.",
+    "ready": "Dein Bot ist bereit. Seine Apps und sein Zeitplan sind ausgeschaltet, bis du sie einschaltest.",
+    "scheduleHint": "„{{title}}“ wird vorbereitet: {{when}}. Er bleibt ausgeschaltet, bis du ihn einschaltest.",
+    "scheduleTitle": "Zeitplan",
+    "when": {
+      "daily": "jeden Tag um {{time}}",
+      "weekdays": "jeden Werktag um {{time}}",
+      "weekly": "jeden {{day}} um {{time}}"
+    },
+    "willDo": "Was das tun darf"
+  },
   "runLocation": {
     "addHint": "Optional. Deine Bots laufen weiter, auch wenn dieser Computer aus ist.",
     "on": "Auf {{name}}",

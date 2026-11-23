@@ -1,7 +1,10 @@
 import { ExternalLink, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
+import type { Recipe } from "../lib/recipes";
+import { recipeText } from "../lib/recipes";
+import { useDaemon } from "../state/DaemonContext";
 import { DEFAULT_STOP_HOTKEY } from "../config/product";
 import { DOCS_INDEX_URL, docUrl, faqFor, guideFor, guideUrl, searchFaq, searchGuide, startPages } from "../lib/helpFaq";
 import { openExternal } from "../lib/externalLink";
@@ -20,15 +23,33 @@ export function HelpModal({
   onClose,
   stopHotkey,
   sendWith,
-  onSetup
+  onSetup,
+  onRecipe
 }: {
   open: boolean;
   onClose: () => void;
   stopHotkey: string;
   sendWith: "enter" | "ctrl-enter";
   onSetup: () => void;
+  /** Open the new-bot flow on this recipe's preview. */
+  onRecipe?: (recipeId: string) => void;
 }) {
   const { t, i18n } = useTranslation();
+  const { client } = useDaemon();
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  useEffect(() => {
+    if (!open || !client || !onRecipe) return undefined;
+    let cancelled = false;
+    client
+      .recipes()
+      .then((list) => {
+        if (!cancelled) setRecipes(list);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, client, onRecipe]);
   const [query, setQuery] = useState("");
   const ctx = { stopHotkey: stopHotkey || DEFAULT_STOP_HOTKEY, sendWith };
   const items = useMemo(() => searchFaq(faqFor(i18n.language), query), [i18n.language, query]);
@@ -73,6 +94,21 @@ export function HelpModal({
             ))}
           </ul>
         )}
+        {!searching && onRecipe && recipes.length > 0 ? (
+          <section className={styles.guide} aria-label={t("recipes.iWantTo")} data-testid="help-recipes">
+            <h3 className={styles.groupTitle}>{t("recipes.iWantTo")}</h3>
+            <ul className={styles.list}>
+              {recipes.map((r) => (
+                <li key={r.id}>
+                  <button type="button" className={styles.guideLink} data-testid={`help-recipe-${r.id}`} onClick={() => onRecipe(r.id)}>
+                    <span className={styles.guideName}>{recipeText(r.names, i18n.language)}</span>
+                    <span className={styles.guideSummary}>{recipeText(r.descriptions, i18n.language)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
         {guidePages.length > 0 ? (
           <section className={styles.guide} aria-label={t(searching ? "help.center.guideTitle" : "help.center.startTitle")} data-testid="help-guide-results">
             <h3 className={styles.groupTitle}>{t(searching ? "help.center.guideTitle" : "help.center.startTitle")}</h3>

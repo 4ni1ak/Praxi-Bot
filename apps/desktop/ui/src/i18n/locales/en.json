@@ -4002,6 +4002,34 @@
     "resets": "Resets {{when}}",
     "title": "Quota left"
   },
+  "recipes": {
+    "appsHint": "These are added switched off, for this bot only. You connect and approve them yourself in Apps.",
+    "appsTitle": "Apps it needs",
+    "canTitle": "It will be able to",
+    "cannotTitle": "It will not be able to",
+    "day": {
+      "0": "Sunday",
+      "1": "Monday",
+      "2": "Tuesday",
+      "3": "Wednesday",
+      "4": "Thursday",
+      "5": "Friday",
+      "6": "Saturday"
+    },
+    "galleryLabel": "Goals",
+    "iWantTo": "I want to...",
+    "nothingYet": "Nothing is created until you press Create bot. You choose the highest permission level below, and the bot never gets more than that.",
+    "partial": "The bot was created, but this could not be prepared: {{what}}. You can add it later in Apps or Schedules.",
+    "ready": "Your bot is ready. Its apps and schedule are switched off until you turn them on.",
+    "scheduleHint": "\"{{title}}\" is prepared {{when}}. It stays switched off until you turn it on.",
+    "scheduleTitle": "Schedule",
+    "when": {
+      "daily": "every day at {{time}}",
+      "weekdays": "every weekday at {{time}}",
+      "weekly": "every {{day}} at {{time}}"
+    },
+    "willDo": "What this will be allowed to do"
+  },
   "runLocation": {
     "addHint": "Optional. Keeps your bots running when this computer is off.",
     "on": "On {{name}}",

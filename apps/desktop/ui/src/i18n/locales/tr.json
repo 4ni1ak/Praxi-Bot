@@ -4002,6 +4002,34 @@
     "resets": "Yenilenme: {{when}}",
     "title": "Kalan kota"
   },
+  "recipes": {
+    "appsHint": "Bunlar kapalı olarak, yalnızca bu bot için eklenir. Bağlantıyı ve onayı Uygulamalar bölümünde kendin yaparsın.",
+    "appsTitle": "İhtiyaç duyduğu uygulamalar",
+    "canTitle": "Şunları yapabilecek",
+    "cannotTitle": "Şunları yapamayacak",
+    "day": {
+      "0": "Pazar",
+      "1": "Pazartesi",
+      "2": "Salı",
+      "3": "Çarşamba",
+      "4": "Perşembe",
+      "5": "Cuma",
+      "6": "Cumartesi"
+    },
+    "galleryLabel": "Hedefler",
+    "iWantTo": "Şunu istiyorum...",
+    "nothingYet": "Botu oluştur'a basana kadar hiçbir şey oluşturulmaz. En yüksek izin düzeyini aşağıdan sen seçersin; bot bundan fazlasını asla almaz.",
+    "partial": "Bot oluşturuldu ama şu hazırlanamadı: {{what}}. Daha sonra Uygulamalar veya Zamanlamalar bölümünden ekleyebilirsin.",
+    "ready": "Botun hazır. Uygulamaları ve zamanlaması sen açana kadar kapalı.",
+    "scheduleHint": "\"{{title}}\" {{when}} için hazırlanır. Sen açana kadar kapalı kalır.",
+    "scheduleTitle": "Zamanlama",
+    "when": {
+      "daily": "her gün saat {{time}}",
+      "weekdays": "her iş günü saat {{time}}",
+      "weekly": "her {{day}} saat {{time}}"
+    },
+    "willDo": "Bunun neler yapmasına izin verilecek"
+  },
   "runLocation": {
     "addHint": "İsteğe bağlı. Bu bilgisayar kapalıyken de botların çalışmaya devam eder.",
     "on": "{{name}} üzerinde",

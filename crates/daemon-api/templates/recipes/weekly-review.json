@@ -1,0 +1,113 @@
+{
+  "format": "praxi-recipe",
+  "format_version": 1,
+  "id": "weekly-review",
+  "icon": "calendar-check",
+  "names": {
+    "en": "Review my week",
+    "tr": "Haftamı değerlendir",
+    "de": "Blick mit mir auf meine Woche"
+  },
+  "descriptions": {
+    "en": "Friday afternoon: what got done, what is still open and three things to start with on Monday.",
+    "tr": "Cuma öğleden sonra: neler bitti, neler açık kaldı ve Pazartesi başlayacağın üç şey.",
+    "de": "Freitagnachmittag: was erledigt ist, was noch offen ist und drei Dinge für den Montagsstart."
+  },
+  "level": "read-only",
+  "can": {
+    "en": [
+      "Talk through your week with you",
+      "Keep a to-do list"
+    ],
+    "tr": [
+      "Haftanı seninle birlikte gözden geçirebilir",
+      "Bir yapılacaklar listesi tutabilir"
+    ],
+    "de": [
+      "Deine Woche mit dir durchgehen",
+      "Eine Aufgabenliste führen"
+    ]
+  },
+  "cannot": {
+    "en": [
+      "Use the web, your files or your computer",
+      "Send messages or emails",
+      "Do anything without you in the chat"
+    ],
+    "tr": [
+      "İnterneti, dosyalarını veya bilgisayarını kullanamaz",
+      "Mesaj veya e-posta gönderemez",
+      "Sen sohbette değilken bir şey yapamaz"
+    ],
+    "de": [
+      "Das Web, deine Dateien oder deinen Computer nutzen",
+      "Nachrichten oder E-Mails senden",
+      "Etwas tun, ohne dass du im Chat bist"
+    ]
+  },
+  "apps": [],
+  "schedule": {
+    "title": {
+      "en": "Weekly review",
+      "tr": "Haftalık değerlendirme",
+      "de": "Wochenrückblick"
+    },
+    "prompt": {
+      "en": "It is time for my weekly review. Ask me what got done this week, then list what got done, what is still open, and three things to start with on Monday.",
+      "tr": "Haftalık değerlendirme zamanı. Bu hafta neler bittiğini bana sor, sonra bitenleri, açık kalanları ve Pazartesi başlanacak üç şeyi listele.",
+      "de": "Zeit für meinen Wochenrückblick. Frag mich, was diese Woche erledigt wurde, und liste dann auf, was erledigt ist, was noch offen ist und drei Dinge für den Montag."
+    },
+    "freq": "weekly",
+    "time": "17:00",
+    "weekday": 5
+  },
+  "profile": {
+    "format": "praxi-bot-profile",
+    "format_version": 1,
+    "bot": {
+      "name": "Weekly review",
+      "persona": "You help the user look back on their week. Ask what got done, what is still open and what worries them, then give a short summary: done, still open, and three things to start with on Monday. Keep it friendly and under 150 words. You only talk and keep a to-do list; you never change or send anything."
+    },
+    "permissions": {
+      "preset": "read-only",
+      "categories": {
+        "shell": {
+          "level": "deny"
+        },
+        "desktop": {
+          "level": "deny"
+        },
+        "money": {
+          "level": "deny"
+        },
+        "messaging": {
+          "level": "deny"
+        },
+        "accounts": {
+          "level": "deny"
+        },
+        "system": {
+          "level": "deny"
+        },
+        "remote": {
+          "level": "deny"
+        },
+        "script": {
+          "level": "deny"
+        },
+        "fs": {
+          "level": "deny"
+        },
+        "browser": {
+          "level": "deny"
+        }
+      }
+    },
+    "tools": {
+      "allow": [
+        "ask_user",
+        "todo_write"
+      ]
+    }
+  }
+}

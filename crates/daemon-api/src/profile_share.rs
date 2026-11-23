@@ -263,7 +263,12 @@ fn is_bidi_control(c: char) -> bool {
     matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}')
 }
 
-fn clean_text(field: &str, s: &str, max_chars: usize, multiline: bool) -> Result<(), String> {
+pub(crate) fn clean_text(
+    field: &str,
+    s: &str,
+    max_chars: usize,
+    multiline: bool,
+) -> Result<(), String> {
     if s.chars().count() > max_chars {
         return Err(bad(format!(
             "{field} is longer than {max_chars} characters"
@@ -283,7 +288,7 @@ fn clean_text(field: &str, s: &str, max_chars: usize, multiline: bool) -> Result
     Ok(())
 }
 
-fn ident_ok(s: &str, extra: &str, max: usize) -> bool {
+pub(crate) fn ident_ok(s: &str, extra: &str, max: usize) -> bool {
     !s.is_empty()
         && s.len() <= max
         && s.chars()
