@@ -59,6 +59,8 @@ import { chatTitleLabel } from "../lib/chatTitle";
 import { pendingForChat } from "../lib/pendingDecisions";
 import { ChatFindBar } from "../components/ChatFindBar";
 import { Markdown } from "../components/Markdown";
+import { runEndAnnouncement } from "../lib/replyAnnounce";
+import { FoldedBody } from "../components/UserBubble";
 import { UserMessageRow, AssistantMessageRow } from "../components/ChatMessageRow";
 import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
@@ -1210,6 +1212,16 @@ export function ChatView({
       ? control.bot.botName
       : undefined;
   const lastFailed = [...chatRuns].reverse()[0]?.error;
+  // Polite live region: one short line when a run ends (never the streaming text itself).
+  const [announcement, setAnnouncement] = useState("");
+  const runWasActive = useRef(false);
+  const endedWithText = lastItem?.kind === "item" && lastItem.item.kind === "text";
+  useEffect(() => {
+    const said = runEndAnnouncement(runWasActive.current, active, endedWithText, Boolean(lastFailed));
+    runWasActive.current = active;
+    if (said) setAnnouncement(t(`chat.announce.${said}`));
+    else if (active) setAnnouncement("");
+  }, [active, endedWithText, lastFailed, t]);
   const avatarState = awaitingApproval ? "waiting-approval" : active ? (lastItem?.kind === "chain" || (lastItem?.kind === "item" && lastItem.item.kind === "tool") ? "working" : "thinking") : lastFailed ? "error" : "idle";
   // Hands-free voice call (docs/design/voice-call-mode.md): the transcribed text goes out as an ordinary
   // message; approvals stay click-only (the call only pauses while the card waits).
@@ -1296,7 +1308,10 @@ export function ChatView({
           <div className={styles.assistantRow} data-message-row="assistant">
             <div className={styles.assistantBubble}>
               {guestName(runGuest(runId))}
-              <Markdown text={item.text} />
+              {/* Folding waits for the run to finish: a streaming answer must not collapse under the reader. */}
+              <FoldedBody text={run?.finishedMs !== undefined ? item.text : ""} className={styles.foldBody} answer>
+                <Markdown text={item.text} />
+              </FoldedBody>
             </div>
             <MessageActions
               side="bot"
@@ -1670,6 +1685,9 @@ export function ChatView({
           />
         </div>
       </div>
+      <p className={styles.srOnly} role="status" aria-live="polite" data-testid="chat-announce">
+        {announcement}
+      </p>
       {jumpVisible ? (
         <button
           type="button"
