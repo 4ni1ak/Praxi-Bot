@@ -7,10 +7,34 @@
 
 !include "FileFunc.nsh"
 
+; Literal language IDs work even when Tauri includes hooks before MUI languages.
+LangString PraxiStopFailed 1033 "Praxi could not stop. Close Praxi and any Praxi command windows, then try again. Your data has not been removed."
+LangString PraxiStopFailed 1055 "Praxi durdurulamadı. Praxi'yi ve açık Praxi komut pencerelerini kapatıp yeniden deneyin. Verileriniz silinmedi."
+LangString PraxiStopFailed 1031 "Praxi konnte nicht beendet werden. Schließen Sie Praxi und alle Praxi-Konsolenfenster und versuchen Sie es erneut. Ihre Daten wurden nicht gelöscht."
+
+!macro PRAXI_STOP_INSTALLATION HELPER
+  ; The helper matches full executable paths and uses owner-only native stop events.
+  ; It waits for graceful shutdown, then process handles/jobs bound the fallback.
+  ${If} ${FileExists} "$INSTDIR\bot-desktop.exe"
+    nsExec::ExecToStack '"${HELPER}" --stop-for-uninstall "$INSTDIR"'
+    Pop $R0
+    Pop $R1
+    ${If} $R0 != 0
+      ; Fail closed: never remove binaries or data while Praxi may still be running.
+      MessageBox MB_OK|MB_ICONEXCLAMATION "$(PraxiStopFailed)" /SD IDOK
+      Abort
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
-  ; Stop any running per-user Praxi-Bot desktop or daemon process before replacing binaries
-  nsExec::ExecToLog 'taskkill /F /IM "bot-desktop.exe"'
-  nsExec::ExecToLog 'taskkill /F /IM "bot.exe"'
+  ; Run this version's helper; old versions may ignore the flag and open the UI.
+  ; MAINBINARYSRCPATH is provided by Tauri's installer template.
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  File /oname=praxi-lifecycle.exe "${MAINBINARYSRCPATH}"
+  !insertmacro PRAXI_STOP_INSTALLATION "$PLUGINSDIR\praxi-lifecycle.exe"
+  SetOutPath "$INSTDIR"
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
@@ -27,9 +51,7 @@
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  ; Stop running desktop shell and bundled daemon before uninstalling
-  nsExec::ExecToLog 'taskkill /F /IM "bot-desktop.exe"'
-  nsExec::ExecToLog 'taskkill /F /IM "bot.exe"'
+  !insertmacro PRAXI_STOP_INSTALLATION "$INSTDIR\bot-desktop.exe"
 
   ; Always clean up the per-user autostart registry entry on uninstall
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Praxi-Bot"

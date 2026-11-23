@@ -1069,6 +1069,7 @@ fn run_doctor(cli: &Cli, c: &DoctorCmd, data_dir: &std::path::Path) -> Result<()
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // ownership/handshake must precede all daemon assembly paths
 fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result<()> {
     use std::sync::Arc;
 
@@ -1081,7 +1082,48 @@ fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result
     if guard.outcome == process_guard::Outcome::Failed {
         eprintln!("warning: DEGRADED process guard: {}", guard.detail);
     }
-
+    // The desktop releases this handshake only after assigning our process to its job.
+    // Its original Child handle retains assignment rights after our DACL is restricted.
+    // The owner key must only be read after protection, just like provider secrets.
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    #[cfg(windows)]
+    {
+        process_guard::supervision::Job::contain_current_process()?;
+        let event = process_guard::supervision::StopEvent::new()?;
+        let event_stop = stop_tx.clone();
+        std::thread::spawn(move || {
+            if event.wait() {
+                let _ = event_stop.send(true);
+            }
+        });
+    }
+    let owner_key = if matches!(
+        command,
+        Command::Serve {
+            owner_key_stdin: true,
+            ..
+        }
+    ) {
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        let key = line.trim().to_owned();
+        if key.len() != 64 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(
+                "Praxi could not establish a secure connection to the desktop app. Restart Praxi."
+                    .into(),
+            );
+        }
+        let pipe_stop = stop_tx.clone();
+        std::thread::spawn(move || {
+            let mut line = String::new();
+            // EOF also means the owning app exited. No secret is written back to the pipe.
+            let _ = std::io::stdin().read_line(&mut line);
+            let _ = pipe_stop.send(true);
+        });
+        Some(key)
+    } else {
+        None
+    };
     let (host_mode, peer_enabled) = match command {
         Command::Serve { host, peer, .. } => (*host, *peer),
         _ => (false, false),
@@ -1123,25 +1165,12 @@ fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result
             telegram_store: None,
             host_mode,
             peer_enabled,
-            owner_key: None,
+            owner_key,
+            stop: stop_rx,
             safe_mode,
         };
         return serve::serve(data_dir, &opts, providers, None, Some(desktop));
     }
-    let owner_key = if matches!(
-        command,
-        Command::Serve {
-            owner_key_stdin: true,
-            ..
-        }
-    ) {
-        let mut line = String::new();
-        std::io::stdin().read_line(&mut line)?;
-        let key = line.trim().to_owned();
-        (key.len() >= 32).then_some(key)
-    } else {
-        None
-    };
     let (store, kind) = open_store(cli.secrets_backend, data_dir, &ask_passphrase)?;
     eprintln!("(secret backend: {})", secret_backend_label(kind));
     let catalog = load_catalog(cli.catalog_dir.as_ref())?;
@@ -1175,6 +1204,7 @@ fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result
         host_mode,
         peer_enabled,
         owner_key,
+        stop: stop_rx,
         safe_mode,
     };
     serve::serve(data_dir, &opts, providers, Some(host), desktop)
@@ -1197,10 +1227,14 @@ fn make_client(cli: &Cli, data_dir: &std::path::Path) -> Result<Client> {
             client::fail(client::exit::AUTH, msg)
         })?,
     };
-    let base = cli
-        .url
-        .clone()
-        .unwrap_or_else(|| format!("http://127.0.0.1:{}", cli.port));
+    let base = cli.url.clone().unwrap_or_else(|| {
+        if let Some(endpoint) = process_guard::lifecycle::discover(data_dir)
+            && (cli.port == daemon_api::DEFAULT_PORT || cli.port == endpoint.requested_port)
+        {
+            return endpoint.url();
+        }
+        format!("http://127.0.0.1:{}", cli.port)
+    });
     // The owner key of this data dir: present when the daemon is a terminal
     // `bot serve` or a host, absent for a daemon the app started (memory only).
     Ok(Client::new(&base, token).with_owner_key(daemon_api::read_owner_key(data_dir).ok()))

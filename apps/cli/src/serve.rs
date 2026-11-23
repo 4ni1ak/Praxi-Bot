@@ -920,6 +920,8 @@ pub struct ServeOptions {
     /// Owner key handed over by the desktop app on stdin (never argv, a file
     /// or the environment). A host without one creates the `owner-key` file.
     pub owner_key: Option<String>,
+    /// Private desktop pipe or native installer stop event (no new HTTP authority).
+    pub stop: tokio::sync::watch::Receiver<bool>,
     /// Safe mode: no tools for the model, no scheduler, channels, MCP servers,
     /// apps, memory work, peer networking or desktop; nothing stored is changed.
     pub safe_mode: bool,
@@ -973,10 +975,24 @@ pub fn serve(
         host_mode,
         peer_enabled,
         owner_key,
+        stop,
         safe_mode,
     } = opts;
     let safe_mode = *safe_mode;
-    let (port, json, grace) = (*port, *json, *grace);
+    let (requested_port, json, grace) = (*port, *json, *grace);
+    let socket = process_guard::lifecycle::bind(requested_port)?;
+    socket.set_nonblocking(true)?;
+    let port = socket.local_addr()?.port();
+    if requested_port != 0 && port != requested_port {
+        eprintln!("Praxi port {requested_port} is unavailable; using local port {port}.");
+    }
+    process_guard::lifecycle::Endpoint {
+        pid: std::process::id(),
+        port,
+        requested_port,
+    }
+    .publish(data_dir)?;
+    let mut stop = stop.clone();
     step("begin");
     let mut ownership = daemon_api::host::HostConfig::load(data_dir)?;
     if *host_mode {
@@ -1418,8 +1434,7 @@ pub fn serve(
         }
         step("components and apps wired");
         // Loopback only: never bind another interface.
-        let listener =
-            tokio::net::TcpListener::bind(SocketAddr::from((DAEMON_BIND_IP, port))).await?;
+        let listener = tokio::net::TcpListener::from_std(socket)?;
         let addr = listener.local_addr()?;
         step("port bound");
         step("listening");
@@ -1477,7 +1492,18 @@ pub fn serve(
         };
         let shutdown_peer = peer.clone();
         let outcome = daemon_api::serve_with_startup(listener, state, prepare_channels, async move {
-            shutdown_signal().await;
+            tokio::select! {
+                () = shutdown_signal() => eprintln!("lifecycle: stop reason=OS signal"),
+                () = async {
+                    while !*stop.borrow_and_update() {
+                        if stop.changed().await.is_err() {
+                            // A standalone Unix daemon has no desktop pipe; loss of its
+                            // unused sender is not a shutdown request.
+                            std::future::pending::<()>().await;
+                        }
+                    }
+                } => eprintln!("lifecycle: stop reason=desktop quit or installer"),
+            }
             if let Some(peer) = shutdown_peer {
                 peer.shutdown().await;
             }

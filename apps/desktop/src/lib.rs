@@ -4,6 +4,8 @@ pub mod browser;
 pub mod command_names;
 pub mod control;
 pub mod daemon;
+#[cfg(windows)]
+mod lifecycle_windows;
 pub mod listener;
 mod microphone;
 pub mod prereq;
@@ -1134,6 +1136,8 @@ pub fn run() {
         .manage(daemon_handle)
         .setup(move |app| {
             let app_handle = app.handle().clone();
+            #[cfg(windows)]
+            lifecycle_windows::install(&app_handle, Arc::clone(&daemon_for_setup))?;
             #[cfg(windows)]
             microphone::install(&app_handle)?;
             control_for_setup.set_sink(Arc::new(TauriOverlaySink {

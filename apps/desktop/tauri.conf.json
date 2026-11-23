@@ -71,7 +71,8 @@
         "startMenuFolder": "Praxi-Bot",
         "languages": [
           "English",
-          "Turkish"
+          "Turkish",
+          "German"
         ],
         "displayLanguageSelector": true,
         "compression": "lzma",
