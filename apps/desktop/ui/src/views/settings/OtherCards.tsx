@@ -10,6 +10,7 @@ import { UsageView } from "../UsageView";
 import { DataCard } from "./DataCard";
 import { DiagnosticsCard } from "./DiagnosticsCard";
 import { SafeModeCard } from "./SafeModeCard";
+import { UpdatePanel } from "./UpdatePanel";
 import type { CardDef } from "./types";
 
 function VersionBlock() {
@@ -44,10 +45,7 @@ function VersionBlock() {
           {health?.version ?? t("settingsModal.updates.unknown")}
         </span>
       </SettingRow>
-      <SettingRow
-        title={t("settingsModal.updates.how.title")}
-        description={t("settingsModal.updates.how.description")}
-      />
+      <UpdatePanel />
     </SettingGroup>
   );
 }
