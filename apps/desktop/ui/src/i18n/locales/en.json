@@ -61,12 +61,12 @@
       "title": "Checks before installing"
     },
     "choose": {
-      "home": "Use another computer at home",
-      "homeHint": "An old PC or mini PC that you leave switched on.",
-      "oracle": "Get a free always-on server",
-      "oracleHint": "A short guide to the Oracle Cloud free tier. Praxi never sees your account or password.",
-      "ssh": "I already have a server",
-      "sshHint": "You have its address and a key file to sign in (SSH).",
+      "have": "I have a server",
+      "haveHint": "Copy one line, paste it on the server, and paste the code it gives you back here.",
+      "local": "Run on this computer (recommended to start)",
+      "localHint": "Nothing to set up. Your bots already work here. You can add a server later.",
+      "need": "I need a server (free options, step by step)",
+      "needHint": "A short guide to get one: a free cloud server, a rented one, or a spare computer at home.",
       "title": "Which of these fits you?"
     },
     "connect": "Connect",
@@ -185,13 +185,98 @@
         "msg": "Nothing is listening on that port."
       }
     },
-    "home": {
-      "go": "I have the address",
-      "lead": "Any computer that stays on can be a server. Praxi works best with Ubuntu Linux 22.04 or newer on it.",
-      "one": "Install Ubuntu on that computer and turn on its SSH service (the package is called openssh-server).",
-      "three": "Find its address in your router device list; it looks like 192.168.1.20.",
-      "title": "Use another computer at home",
-      "two": "Plug it into your router with a cable if you can, and make sure it never goes to sleep."
+    "guide": {
+      "home": {
+        "card": "A spare computer at home",
+        "cardHint": "An old PC or mini PC that you leave switched on. No monthly cost.",
+        "lead": "Any computer that stays on can be a server. Praxi works best with Ubuntu Linux 22.04 or newer on it.",
+        "step": {
+          "internet": {
+            "body": "Plug it into your router with a cable if you can, and turn off sleep mode so it never goes to sleep.",
+            "title": "Keep it online"
+          },
+          "pc": {
+            "body": "It needs about 2 GB of memory and 10 GB of free disk, and should stay switched on.",
+            "title": "Pick the computer"
+          },
+          "terminal": {
+            "body": "On that computer, open the Terminal app. You will paste one line into it, so you do not need SSH or any key file.",
+            "title": "Open a terminal on it"
+          },
+          "ubuntu": {
+            "body": "Download Ubuntu Server or Desktop from ubuntu.com and follow its install guide. Choose a user name and password you will remember.",
+            "title": "Install Ubuntu on it"
+          }
+        },
+        "title": "Use a spare computer at home"
+      },
+      "oracle": {
+        "card": "Oracle Cloud free tier",
+        "cardHint": "A free always-on server. Takes about 20 minutes and needs a card to prove you are a person.",
+        "lead": "Do these steps in your web browser and tick each one when it is done.",
+        "step": {
+          "account": {
+            "body": "Go to oracle.com/cloud/free and sign up. A payment card only proves you are a person; the free tier is not charged.",
+            "title": "Create a free Oracle Cloud account"
+          },
+          "console": {
+            "body": "When the instance says Running, open its page and look for Console connection or Cloud Shell. Oracle's page explains the one-time setup there. You will paste one line into that window.",
+            "title": "Open its console"
+          },
+          "firewall": {
+            "body": "The default network already allows what Praxi needs. Do not change the network rules.",
+            "title": "Let it reach the internet"
+          },
+          "instance": {
+            "body": "In the console choose Compute, then Create instance. Pick Ubuntu 22.04 or newer and a shape marked Always Free. Let Oracle make the sign-in key; you will not need it.",
+            "title": "Create a virtual machine"
+          }
+        },
+        "title": "Get a free server from Oracle Cloud"
+      },
+      "privacy": "You do this on the provider's website. Praxi does not see your account, your password or your payment card.",
+      "ready": "My server is ready",
+      "vps": {
+        "card": "A rented server (any provider)",
+        "cardHint": "Hetzner, DigitalOcean, OVH and similar. A small one costs a few euros a month.",
+        "lead": "Any provider works if it offers Ubuntu 22.04 or newer. Praxi needs about 2 GB of memory and 10 GB of disk.",
+        "step": {
+          "console": {
+            "body": "On the server's page in the provider's website, look for a button named Console, Web console, VNC or Terminal. You will paste one line into it.",
+            "title": "Open its web console"
+          },
+          "create": {
+            "body": "Choose Ubuntu 22.04 or newer, at least 2 GB of memory, and the cheapest plan that fits. Ignore any option about SSH keys if you can.",
+            "title": "Create a server with Ubuntu"
+          },
+          "provider": {
+            "body": "Pick one you trust and create an account on its website.",
+            "title": "Choose a provider and sign up"
+          }
+        },
+        "title": "Rent a server from any provider"
+      }
+    },
+    "have": {
+      "advanced": "Advanced: connect over SSH",
+      "advancedBody": "For people who already sign in to their server with an SSH key file or agent. Most people do not need this.",
+      "advancedGo": "Use SSH instead",
+      "codeBad": "That is not a valid pairing code, or it has expired. Run the command again to get a new code, then paste it here.",
+      "codeHint": "It starts with bot-pair: . You can paste everything the console printed; Praxi finds the code.",
+      "codeLabel": "Pairing code from the server",
+      "commandLabel": "Command to run on the server",
+      "copied": "Command copied. Paste it into your server's console.",
+      "copy": "Copy command",
+      "devBuild": "This copy of Praxi is not an official release, so the server may not find version {{tag}}. If the command stops while downloading, update Praxi and try again.",
+      "loading": "Preparing your command…",
+      "noCommand": "The command could not be prepared",
+      "one": "Open your server's console or terminal (the provider's website has a Console or Terminal button).",
+      "pair": "Connect",
+      "pairing": "Connecting…",
+      "safe": "The command holds no password or key. The code it prints works once and expires after {{minutes}} minutes.",
+      "three": "When it finishes it prints a pairing code. Paste that code here.",
+      "title": "Connect your server with one command",
+      "two": "Copy the command below and paste it there. It installs Praxi and checks its signature first. It takes a few minutes."
     },
     "host": "Server address",
     "hostHint": "Example: 203.0.113.7 or myserver.example.com",
@@ -200,48 +285,60 @@
     "hostKeyTitle": "Is this your server?",
     "hostKeyYes": "Yes, trust this server",
     "intro": {
-      "go": "Set up a server",
-      "optional": "This is optional. Your bots already run on this computer. Add a server only if you want them to work around the clock.",
-      "optionalTitle": "You do not need one",
-      "skip": "No thanks, use this computer",
-      "title": "What is a server?",
-      "what": "A server is another computer that stays on day and night, usually rented online. Your bots can live there, so they keep working when your own computer is off."
+      "optional": "You do not need one: it is optional, and everything already works on this computer.",
+      "title": "Do you need a server?",
+      "what": "A server is another computer that stays on day and night, so your bots keep working even when your own computer is off."
     },
     "keyFile": "Private key file",
     "keyHint": "Only the path is used. Praxi never copies or stores the key itself.",
+    "keysFound": "Keys found on this computer",
     "lead": "Connect a server you rent. Praxi does the setup for you.",
+    "local": {
+      "body": "Your bots run on this computer. They work while the computer and Praxi are on. That is all you need to start.",
+      "done": "Got it",
+      "later": "If you later want your bots to work around the clock, open the computer menu and choose Add a server again.",
+      "title": "Good choice: nothing to set up"
+    },
     "logEmpty": "Nothing to show yet.",
     "manual": "I have a pairing ticket instead",
+    "need": {
+      "haveOne": "I already have one",
+      "lead": "Pick one. Each guide uses only the provider's own website; Praxi never sees your account, password or card.",
+      "title": "Get a server"
+    },
     "noDaemon": "The local Praxi service is not running. Restart the app and try again.",
     "noKeys": "No key file found in your .ssh folder. Type the path of the key file you downloaded.",
-    "oracle": {
-      "haveIt": "I have these details",
-      "lead": "Do these steps in your web browser, and tick each one when it is done. It takes about 20 minutes.",
-      "privacy": "You do all of this on the Oracle website. Praxi does not see your Oracle account, your password or your payment card.",
-      "ready": "All done, continue",
-      "step": {
-        "account": {
-          "body": "Go to oracle.com/cloud/free and sign up. A payment card is needed to prove you are a person; the free tier is not charged.",
-          "title": "Create a free Oracle Cloud account"
-        },
-        "address": {
-          "body": "When the instance says Running, copy its Public IP address. The user name is ubuntu.",
-          "title": "Copy the public address"
-        },
-        "firewall": {
-          "body": "The default network already allows port 22 (SSH). If you changed the rules, allow incoming TCP on port 22.",
-          "title": "Check that SSH is allowed"
-        },
-        "instance": {
-          "body": "In the console choose Compute, then Create instance. Pick the Ubuntu 22.04 or newer image and a shape marked Always Free.",
-          "title": "Create a virtual machine"
-        },
-        "ssh_key": {
-          "body": "In the instance form choose Generate a key pair and download the private key. Keep that file safe; you will pick it in the next step.",
-          "title": "Let Oracle make you a key"
-        }
+    "pairChecks": {
+      "models": {
+        "fix": "Not allowed yet. On the server, run: bot host admin --all-desktops . You can send models later from the server's page.",
+        "pass": "This app may send model keys to the server",
+        "pending": "Waiting",
+        "running": "Checking permission…",
+        "title": "Models can be sent"
       },
-      "title": "Get a free server from Oracle Cloud"
+      "reach": {
+        "fix": "Praxi could not reach it. Check that the server is on and has internet, then try again. If the code was already used, run the command again for a new one.",
+        "pass": "It answered",
+        "pending": "Waiting",
+        "running": "Calling the server…",
+        "title": "The server answers"
+      },
+      "ready": "Your server is connected and ready.",
+      "screen": {
+        "fix": "The server has no screen yet, so you cannot watch it, but bots still work. Run the command again to add one.",
+        "pass": "You can watch the server's screen",
+        "pending": "Waiting",
+        "running": "Looking for a screen…",
+        "title": "A screen to watch"
+      },
+      "title": "Checking your server",
+      "version": {
+        "fix": "The server runs a different version. It still works; to match it, run the command again on the server.",
+        "pass": "Both run the same version",
+        "pending": "Waiting",
+        "running": "Comparing versions…",
+        "title": "Same Praxi version"
+      }
     },
     "passwordNote": "Praxi signs in with a key file, not a password, so no password is ever typed, saved or sent. If your provider only gave you a password, create a key with your provider's help page first.",
     "port": "Port",
@@ -258,7 +355,6 @@
       "userInvalid": "Use letters, numbers, dots, dashes or underscores only."
     },
     "progress": "Setup progress",
-    "releaseNote": "For now the server must already have Praxi on it. Installing Praxi on a blank server for you is not available yet.",
     "retry": "Try again",
     "retryResume": "Try again from here",
     "sayHello": "Say hello to your bot",
@@ -2436,7 +2532,7 @@
         "title": "That computer did not allow the terminal"
       },
       "host_outdated": {
-        "hint": "The computer is online, but its Praxi-Bot version does not know the terminal yet. Update Praxi-Bot there and restart it, then try again.",
+        "hint": "The computer is online, but its Praxi-Bot version does not know the terminal yet. Update the server, then try again.",
         "title": "That computer runs an older Praxi-Bot"
       },
       "host_setup_conflict": {
@@ -2781,8 +2877,8 @@
       "title": "The model could not answer"
     },
     "network": {
-      "hint": "It may still be starting. Praxi will try again by itself; you can also restart the service.",
-      "title": "Praxi cannot reach its local service"
+      "hint": "Nothing you typed is lost. Praxi keeps trying; press the button again when the notice at the top is gone.",
+      "title": "The local service is not answering right now"
     },
     "noInputBackend": {
       "hint": "The host has no keyboard and mouse access for this screen (for example a server without a desktop session). You can watch it, but not take it over.",
@@ -4465,7 +4561,24 @@
       "unreachable": "Cannot be reached"
     },
     "title": "Your servers",
-    "updateHelp": "To update a server, open its terminal and run the Praxi update there. A one-click update is not available yet."
+    "updateHelp": "Servers added with the app can be updated here. For any other server, Update server shows the exact commands to run on it."
+  },
+  "service": {
+    "copied": "Diagnostic info copied.",
+    "copy": "Copy diagnostic info",
+    "copyFailed": "Could not copy. Try again.",
+    "failed": {
+      "hint": "Praxi's background service stopped answering. Your unsaved input is kept. Restart the service below; if it keeps failing, copy the diagnostic info and send it to support.",
+      "title": "The local service did not come back"
+    },
+    "reconnecting": {
+      "hint": "This usually takes a few seconds. Buttons that need the service wait; your input is kept.",
+      "title": "Reconnecting to the local service…"
+    },
+    "starting": {
+      "hint": "Praxi is getting ready. This can take a moment after an update or restart.",
+      "title": "Starting the local service…"
+    }
   },
   "settings": {
     "accent": {
@@ -5463,6 +5576,115 @@
     "toggle": "Show / hide window",
     "tooltip": "Praxi-Bot",
     "tooltipNeeds": "Praxi-Bot: {n} need you"
+  },
+  "updateServer": {
+    "available": "Update available",
+    "button": "Update server",
+    "buttonAnyway": "Update anyway",
+    "checkAgain": "Check again",
+    "checking": "Checking the server's version…",
+    "commandsLabel": "Commands to run on the server",
+    "confirm": "Update server",
+    "copied": "Commands copied.",
+    "copy": "Copy commands",
+    "copyFailed": "Could not copy. Select the text and copy it by hand.",
+    "doneBody": "The server restarted and answers. Your bots and data are as you left them.",
+    "doneTitle": "{{name}} is up to date",
+    "dontClose": "This takes a few minutes. You can keep this window open; the server restarts near the end.",
+    "fail": {
+      "generic": {
+        "body": "Something went wrong on the server. If the installer got far enough, it put the previous version back.",
+        "next": "Open the details below. You can try again, or run the commands yourself on the server.",
+        "title": "The update did not finish"
+      },
+      "host_key": {
+        "body": "You did not confirm the server's fingerprint (or it changed since you added the server). Nothing was changed.",
+        "next": "If you did not change anything on the server, someone may be pretending to be it: do not continue. Otherwise try again and check the fingerprint.",
+        "title": "The server's identity was not accepted"
+      },
+      "no_ssh": {
+        "body": "The program that logs in to servers (OpenSSH) was not found or could not be prepared.",
+        "next": "Install OpenSSH on this computer, or use the commands instead.",
+        "title": "Praxi-Bot cannot log in from here"
+      },
+      "rolled_back": {
+        "body": "The new version could not start on the server, so Praxi-Bot put the previous version back. Your data was not touched.",
+        "next": "Try again later, or open the details below and copy them when you ask for help.",
+        "title": "The update did not work, the old version is back"
+      },
+      "unreachable": {
+        "body": "The server did not accept the login or did not answer. Nothing was changed.",
+        "next": "Check that the server is on and that you can still log in to it, then try again.",
+        "title": "Could not connect to the server"
+      },
+      "verify": {
+        "body": "The release did not pass the signature check, so it was not installed. The server still runs the version it had before.",
+        "next": "Nothing is wrong with your data. Try again in a few minutes. If it keeps happening, do not install it by hand: ask for help.",
+        "title": "The download could not be verified"
+      }
+    },
+    "hostKeyBody": "{{host}} identified itself with this fingerprint. Continue only if it is the one from your server provider or from the server itself.",
+    "hostKeyNo": "No, stop",
+    "hostKeyTitle": "Is this really your server?",
+    "hostKeyYes": "Yes, continue",
+    "lead": "Install the Praxi-Bot version that matches this app on your server.",
+    "logEmpty": "Nothing yet.",
+    "manualBody": "This computer has no saved login for this server (it was added another way). Log in to the server and paste the commands below. They download the release that matches this app and check its signature before installing.",
+    "manualNoSsh": "Praxi-Bot cannot log in to this server for you",
+    "manualNote": "Your data is kept. Afterwards come back here and press Check again.",
+    "manualTitle": "Run the update on the server yourself",
+    "newer": "Newer than this app",
+    "noRelease": "This app does not know which release it came from, so it cannot name the exact version. Install the latest release from the Praxi-Bot guide (Linux server page) with the --update option.",
+    "p1": "The server restarts for a few seconds.",
+    "p2": "Bots running there pause for that moment and carry on afterwards.",
+    "p3": "Your data, bots and settings are kept.",
+    "p4": "The previous program files are kept on the server in /opt/praxi.backup-<time>, and your data is saved separately before the update, so both can be put back.",
+    "p5": "Only the release that matches this app is installed, and Praxi-Bot checks its signature first. Nothing unchecked is ever run.",
+    "progress": "Update progress",
+    "retry": "Try again",
+    "rows": {
+      "backup": {
+        "done": "Copy saved",
+        "failed": "Could not save the copy",
+        "pending": "Waiting",
+        "running": "Saving a copy of your data…",
+        "title": "Making a safety copy"
+      },
+      "check": {
+        "done": "The server answers",
+        "failed": "The server did not answer",
+        "pending": "Waiting",
+        "running": "Asking the server for its health…",
+        "title": "Checking that it works"
+      },
+      "connect": {
+        "done": "Connected",
+        "failed": "Could not connect",
+        "pending": "Waiting",
+        "running": "Logging in and checking the server…",
+        "title": "Connecting to the server"
+      },
+      "install": {
+        "done": "New version installed",
+        "failed": "The update did not finish",
+        "pending": "Waiting",
+        "running": "Downloading the release, verifying it, installing it and restarting the server…",
+        "title": "Downloading, checking and installing"
+      }
+    },
+    "safe": "If something goes wrong, the server goes back to the version it had before. You will see what happened and what to do next.",
+    "showCommands": "Show the commands instead",
+    "showLog": "Show details",
+    "starting": "Starting the update…",
+    "stopped": "The update was stopped before it finished.",
+    "thisServer": "this server",
+    "title": "Update server",
+    "titleFor": "Update {{name}}",
+    "unknown": "Version unknown (the server may be off).",
+    "upToDate": "Up to date",
+    "versionLine": "Server version {{server}} · this app {{app}}",
+    "versionUnknown": "Exact version unknown (an older server)",
+    "whatHappens": "What will happen"
   },
   "usage": {
     "bot": "Bot",

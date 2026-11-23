@@ -21,8 +21,11 @@ reuses its healthy listener. The Windows single-instance plugin also focuses the
 existing desktop window instead of starting a second shell.
 
 Discovery is a hint, not authentication. Before handing the token to a recorded
-listener, the desktop checks both the exact PID and its OS user. For a daemon it
-started, the existing exact-child check applies. An explicit loopback `BOT_URL`
+listener, both default CLI discovery and the desktop require the recorded PID to
+own the listening socket and run this installation's canonical `bot` image on
+Windows. The desktop also retains its OS-user check. Lock and discovery files
+have owner-only Windows ACLs; an open lock cannot be renamed or deleted. For a
+daemon the desktop started, the existing exact-child check applies. An explicit loopback `BOT_URL`
 keeps the existing listener identity checks. Owner routes, approvals, redaction,
 egress checks and untrusted-content handling are unchanged. Reusing a daemon does
 not grant a new desktop its old in-memory owner key; a CLI-owned daemon retains its

@@ -63,9 +63,12 @@ import type {
   GrantTarget,
   Health,
   HostLinkConnection,
+  BootstrapCommand,
   HostLinkInfo,
+  HostStatus,
   PcRequestList,
   HostSetupJob,
+  HostVersion,
   SshKeyHint,
   StartHostSetupInput,
   HostLinkList,
@@ -630,6 +633,14 @@ export class ApiClient {
   startHostSetup(input: StartHostSetupInput): Promise<HostSetupJob> {
     return this.request("POST", "/hosts/setup", { body: input });
   }
+  /** Update the program on a server this computer added (owner only; its stored SSH details are used). */
+  startHostUpdate(hostId: string): Promise<HostSetupJob> {
+    return this.request("POST", "/hosts/setup/update", { body: { host_id: hostId } });
+  }
+  /** The version a paired server runs (fails when it is off). */
+  getHostVersion(hostId: string): Promise<HostVersion> {
+    return this.request("GET", `/hosts/${encodeURIComponent(hostId)}/version`);
+  }
   getHostSetup(job: string): Promise<HostSetupJob> {
     return this.request("GET", `/hosts/setup/${encodeURIComponent(job)}`);
   }
@@ -640,6 +651,14 @@ export class ApiClient {
   }
   cancelHostSetup(job: string): Promise<HostSetupJob> {
     return this.request("POST", `/hosts/setup/${encodeURIComponent(job)}/cancel`);
+  }
+  /** The one command to paste on a server (no SSH details, no key file): installs and prints a pairing code. */
+  hostBootstrap(): Promise<BootstrapCommand> {
+    return this.request("GET", "/hosts/setup/bootstrap");
+  }
+  /** What a host says about itself (call on a client connected to the HOST). */
+  hostStatus(): Promise<HostStatus> {
+    return this.request("GET", "/host");
   }
   /** Private key files found in `~/.ssh` (paths only). */
   async listSshKeys(): Promise<SshKeyHint[]> {
