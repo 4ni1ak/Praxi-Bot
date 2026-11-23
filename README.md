@@ -233,9 +233,8 @@ Outside pull requests are welcome, from a typo fix to a feature.
 
 <!-- contributors:start -->
 <a href="https://github.com/emreocell"><img src="https://github.com/emreocell.png?size=96" width="48" height="48" alt="emreocell" title="emreocell"></a>
-<a href="https://github.com/P1LOTRX"><img src="https://github.com/P1LOTRX.png?size=96" width="48" height="48" alt="P1LOTRX" title="P1LOTRX"></a>
-<a href="https://github.com/RiccardoBifulco"><img src="https://github.com/RiccardoBifulco.png?size=96" width="48" height="48" alt="RiccardoBifulco" title="RiccardoBifulco"></a>
 <a href="https://github.com/husodrn46"><img src="https://github.com/husodrn46.png?size=96" width="48" height="48" alt="husodrn46" title="husodrn46"></a>
+<a href="https://github.com/RiccardoBifulco"><img src="https://github.com/RiccardoBifulco.png?size=96" width="48" height="48" alt="RiccardoBifulco" title="RiccardoBifulco"></a>
 <a href="https://github.com/MacallanTheRoot"><img src="https://github.com/MacallanTheRoot.png?size=96" width="48" height="48" alt="MacallanTheRoot" title="MacallanTheRoot"></a>
 <a href="https://github.com/MOzcelik14"><img src="https://github.com/MOzcelik14.png?size=96" width="48" height="48" alt="MOzcelik14" title="MOzcelik14"></a>
 <a href="https://github.com/yigitbuyukeren"><img src="https://github.com/yigitbuyukeren.png?size=96" width="48" height="48" alt="yigitbuyukeren" title="yigitbuyukeren"></a>
