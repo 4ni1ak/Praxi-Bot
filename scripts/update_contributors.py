@@ -10,7 +10,8 @@ The people come from the GitHub commits API (the account that *authored* each co
 default branch), so someone whose commits GitHub's contributors graph misses still appears.
 `Co-authored-by` trailers are never read: AI tools (Claude, Codex, Cursor, ...) are added
 that way, and are not contributors. Accounts that are bots, or listed in NOT_PEOPLE, are
-dropped. Set GITHUB_TOKEN to avoid the anonymous rate limit.
+dropped, and so are accounts that no longer exist on GitHub (their avatar would be a broken
+image). Set GITHUB_TOKEN to avoid the anonymous rate limit.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ import os
 import re
 import sys
 import unittest
+import urllib.error
 import urllib.request
 
 REPO = "emreocell/Praxi-Bot"
@@ -52,6 +54,19 @@ def people(commits: list[dict]) -> list[str]:
     return sorted(counts, key=lambda login: (-counts[login], login.lower()))
 
 
+def account_exists(login: str) -> bool:
+    """False only when GitHub answers 404: a deleted or renamed account. Any other error
+    (rate limit, network) keeps the person listed rather than dropping them."""
+    request = urllib.request.Request(f"https://api.github.com/users/{login}", headers=_headers())
+    try:
+        with urllib.request.urlopen(request, timeout=30):
+            return True
+    except urllib.error.HTTPError as error:
+        return error.code != 404
+    except OSError:
+        return True
+
+
 def render(logins: list[str]) -> str:
     cells = [
         f'<a href="https://github.com/{login}"><img src="https://github.com/{login}.png?size={AVATAR * 2}" '
@@ -68,11 +83,16 @@ def splice(readme: str, block: str) -> str:
     return pattern.sub(lambda _m: f"{START}\n{block}\n{END}", readme, count=1)
 
 
-def fetch_commits() -> list[dict]:
+def _headers() -> dict[str, str]:
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "praxi-contributors"}
     token = os.environ.get("GITHUB_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def fetch_commits() -> list[dict]:
+    headers = _headers()
     commits: list[dict] = []
     for page in range(1, 101):
         url = f"https://api.github.com/repos/{REPO}/commits?per_page=100&page={page}"
@@ -87,7 +107,8 @@ def fetch_commits() -> list[dict]:
 def main(argv: list[str]) -> int:
     with open(README, encoding="utf-8", newline="") as f:
         current = f.read()
-    updated = splice(current, render(people(fetch_commits())))
+    logins = [login for login in people(fetch_commits()) if account_exists(login)]
+    updated = splice(current, render(logins))
     if "--check" in argv:
         if updated != current:
             print("README.md contributors are out of date: run scripts/update_contributors.py")
