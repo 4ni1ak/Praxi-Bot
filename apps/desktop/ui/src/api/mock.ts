@@ -993,6 +993,10 @@ export class MockApiClient extends ApiClient {
       if (!seg[2] && method === "POST") return ok(this.hostSetup.start(opts.body as never));
       if (seg[2] === "update" && method === "POST") return ok(this.hostSetup.startUpdate((opts.body as { host_id: string }).host_id));
       if (seg[2] === "ssh-keys") return ok({ keys: this.hostSetup.keys() });
+      if (seg[2] === "bootstrap") {
+        const command = ["S=; [ \"$(id -u)\" -eq 0 ] || S=sudo; $S bash -s <<'PRAXI_SETUP'", "PRAXI_TAG=v0.1.0", "# (mock)", "praxi_main </dev/null", "PRAXI_SETUP", ""].join("\n");
+        return ok({ release_tag: "v0.1.0", command, ticket_minutes: 30, published: true });
+      }
       if (seg[3] === "host-key") return ok(this.hostSetup.answerKey(seg[2], body.accept));
       if (seg[3] === "cancel") return ok(this.hostSetup.cancel(seg[2]));
       return ok(this.hostSetup.get(seg[2]));
