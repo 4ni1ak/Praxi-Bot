@@ -361,6 +361,9 @@ pub(crate) fn make_loop(
         config,
     );
     lp.add_profile(bot, prof);
+    lp.sh
+        .legacy_always
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     lp
 }
 

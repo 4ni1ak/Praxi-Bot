@@ -157,6 +157,8 @@ impl AgentLoop {
                 task_reap_done: AtomicBool::new(false),
                 #[cfg(test)]
                 exec_commit_hook: Mutex::new(None),
+                #[cfg(test)]
+                legacy_always: AtomicBool::new(false),
             }
         });
         let rt = Arc::new(Runtime::new(

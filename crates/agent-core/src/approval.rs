@@ -1630,10 +1630,22 @@ impl Shared {
             && name == "browser_open"
             && !exposure.has_private()
             && memory.as_ref().is_some_and(|m| m.kind == ScopeKind::Origin);
+        #[cfg(test)]
+        let legacy_always = self
+            .legacy_always
+            .load(std::sync::atomic::Ordering::Relaxed);
+        #[cfg(not(test))]
+        let legacy_always = false;
         let always_refused = (Self::run_tool_eligible(name) && exposure.has_private())
             || matches!(why, "floor" | "always_ask" | "executes" | "browser_address")
             || (why == "egress" && !site_egress_offered)
-            || always_blocked(name, effect, category);
+            || !always_allowed(
+                name,
+                effect,
+                category,
+                memory.as_ref().is_some_and(|m| m.kind == ScopeKind::Origin),
+                legacy_always,
+            );
         let always_offered = !once_only && !always_refused;
         let class = self.content_class(ctx, name, input);
         if let Some(obj) = details.get_or_insert_with(|| json!({})).as_object_mut() {
@@ -2609,48 +2621,33 @@ impl LoopGate {
 /// A script or workflow call that was allowed has put its result in front of
 /// the model by the time the next call is authorized. Record that now so the
 /// next inner call sees the taint. A denial records nothing.
-fn is_sensitive_always_blocked(name: &str, effect: Effect, category: PermissionCategory) -> bool {
-    if (effect == Effect::Destructive && !matches!(name, "shell_run" | "pc_shell_run"))
-        || matches!(category, PermissionCategory::Money)
-    {
-        return true;
-    }
-    let low = name.to_ascii_lowercase();
-    let has_word = low.split(['_', '-', '/', '.', ':']).any(|w| {
-        matches!(
-            w,
-            "rm" | "drop"
-                | "pay"
-                | "charge"
-                | "remove"
-                | "fill"
-                | "login"
-                | "signin"
-                | "auth"
-                | "oauth"
-                | "token"
-        )
-    });
-    has_word
-        || low.contains("secret")
-        || low.contains("credential")
-        || low.contains("password")
-        || low.contains("payment")
-        || low.contains("billing")
-        || low.contains("checkout")
-        || low.contains("purchase")
-        || low.contains("invoice")
-        || low.contains("transfer")
-        || low.contains("withdraw")
-        || low.contains("wallet")
-        || low.contains("delete")
-        || low.contains("wipe")
-        || low.contains("destroy")
-        || low.contains("purge")
-}
+/// Read-only tools a standing "Always allow" may cover tool-wide. Everything else is refused:
+/// the list is an allow-list on purpose, because a deny-list keyed on tool names misses sends,
+/// writes, shell commands and any MCP / Composio tool with an innocent name.
+const ALWAYS_READ_ONLY_TOOLS: &[&str] = &["fs_read", "fs_list", "fs_stat", "fs_search"];
 
-fn always_blocked(name: &str, effect: Effect, category: PermissionCategory) -> bool {
-    is_sensitive_always_blocked(name, effect, category)
+/// Whether "Always allow" may be offered and accepted for this call at all. Allowed: a
+/// `browser_open` scoped to one exact origin, and an explicitly listed read-only tool whose
+/// effect really is a read. Not allowed: email / send / message / post / upload, file writes,
+/// shell, MCP and Composio tools of any name, desktop input, and anything destructive, paid
+/// or credential-related.
+pub(crate) fn always_allowed(
+    name: &str,
+    effect: Effect,
+    category: PermissionCategory,
+    origin_scoped: bool,
+    legacy_test_lift: bool,
+) -> bool {
+    if legacy_test_lift {
+        return !(matches!(category, PermissionCategory::Money) || effect == Effect::Destructive);
+    }
+    if matches!(category, PermissionCategory::Money) || effect == Effect::Destructive {
+        return false;
+    }
+    if name == "browser_open" {
+        return origin_scoped;
+    }
+    effect == Effect::Read && ALWAYS_READ_ONLY_TOOLS.contains(&name)
 }
 
 fn note_gate(ctx: &RunCtx, req: &GateRequest) {

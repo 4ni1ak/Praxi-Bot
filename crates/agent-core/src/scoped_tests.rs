@@ -13,9 +13,26 @@ use tool_registry::{ContentClass, Effect};
 
 use crate::scoped_grant::{Scope, ScopeKind};
 use crate::tests::{
-    Env, Fake, TestTool, calls, cfg, make_loop, profile, setup, t, text, until, with_class,
+    Env, Fake, TestTool, calls, cfg, make_loop as make_loop_legacy, profile, setup, t, text, until,
+    with_class,
 };
 use crate::{AgentLoop, ApprovalScope, GrantTarget, LoopError};
+
+/// Strict loop: the real "Always allow" allow-list applies.
+fn make_loop(
+    storage: &Arc<storage::Storage>,
+    bot: protocol::BotId,
+    fake: &Arc<Fake>,
+    tools: &[&Arc<TestTool>],
+    prof: crate::BotProfile,
+    config: crate::LoopConfig,
+) -> AgentLoop {
+    let lp = make_loop_legacy(storage, bot, fake, tools, prof, config);
+    lp.sh
+        .legacy_always
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    lp
+}
 
 const ASK: &str = "[permissions]\npreset = \"read-and-draft\"\n";
 
@@ -72,17 +89,107 @@ async fn asks(env: &Env, lp: &AgentLoop) -> bool {
     }
 }
 
-#[tokio::test]
-async fn a_folder_rule_covers_that_folder_only_survives_restart_and_is_revocable() {
+/// Offer and acceptance of "Always allow" for one pending call; the loop is then cancelled.
+async fn always_is_refused(
+    name: &str,
+    effect: Effect,
+    cat: PermissionCategory,
+    input: serde_json::Value,
+) {
     let env = setup();
-    let write = tool("fs_write", Effect::Write, PermissionCategory::Fs);
-    let paths = ["docs/a.md", "docs/sub/b.md", "src/c.rs"];
-    let script = paths
+    let t_tool = tool(name, effect, cat);
+    let fake = Fake::new(vec![calls(&[("c1", name, input)]), text("ok")]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&t_tool)],
+        profile(ASK),
+        cfg(Policy::approve_destructive()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    let Event::ApprovalNeeded(card) =
+        until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(
+        card.details.as_ref().unwrap()["always_offered"],
+        false,
+        "{name} must not show Always"
+    );
+    assert!(
+        matches!(
+            lp.approve(card.call_id, ApprovalScope::Always, env.user),
+            Err(LoopError::OnceOnly(_))
+        ),
+        "{name} must refuse Always"
+    );
+    lp.cancel(run).unwrap();
+    let _ = lp.wait(run).await;
+    assert!(lp.list_grants(env.bot).is_empty(), "{name}");
+}
+
+/// "Always allow" is an allow-list: sends, writes, shell and MCP / Composio tools of any
+/// name are refused, however innocent the name looks.
+#[tokio::test]
+async fn always_allow_is_refused_for_sends_writes_shell_and_innocently_named_tools() {
+    let msg = PermissionCategory::Messaging;
+    for (name, effect, cat, input) in [
+        ("email_send", Effect::Write, msg, json!({"to": "a@b.test"})),
+        ("send_message", Effect::Write, msg, json!({"text": "hi"})),
+        (
+            "fs_write",
+            Effect::Write,
+            PermissionCategory::Fs,
+            json!({"path": "docs/a.md"}),
+        ),
+        (
+            "shell_run",
+            Effect::Destructive,
+            PermissionCategory::Shell,
+            json!({"command": "npm publish"}),
+        ),
+        (
+            "shell_run",
+            Effect::Destructive,
+            PermissionCategory::Shell,
+            json!({"command": "git push"}),
+        ),
+        (
+            "shell_run",
+            Effect::Destructive,
+            PermissionCategory::Shell,
+            json!({"command": "scp a.txt host:/tmp"}),
+        ),
+        (
+            "composio/GMAIL_SEND_EMAIL",
+            Effect::Write,
+            msg,
+            json!({"to": "a@b.test"}),
+        ),
+    ] {
+        always_is_refused(name, effect, cat, input).await;
+    }
+}
+
+/// A site grant is origin-exact, durable across a restart and revocable.
+#[tokio::test]
+async fn an_origin_grant_covers_that_origin_survives_restart_and_is_revocable() {
+    let env = setup();
+    let browser = tool("browser_open", Effect::Write, PermissionCategory::Browser);
+    let urls = [
+        "https://webioo.com.tr/a",
+        "https://webioo.com.tr/b/c",
+        "https://other.example/",
+    ];
+    let script = urls
         .iter()
         .enumerate()
-        .flat_map(|(i, p)| {
+        .flat_map(|(i, u)| {
             [
-                calls(&[(&format!("c{i}"), "fs_write", json!({"path": p}))]),
+                calls(&[(&format!("c{i}"), "browser_open", json!({"url": u}))]),
                 text("ok"),
             ]
         })
@@ -92,12 +199,16 @@ async fn a_folder_rule_covers_that_folder_only_survives_restart_and_is_revocable
         &env.storage,
         env.bot,
         &fake,
-        &[t(&write)],
+        &[t(&browser)],
         profile(ASK),
         cfg(Policy::approve_destructive()),
     );
     approve(&env, &lp, ApprovalScope::Always).await;
-    let rule = scoped("fs_write", ScopeKind::Folder, "docs");
+    let rule = scoped(
+        "browser_open",
+        ScopeKind::Origin,
+        "https://webioo.com.tr:443",
+    );
     assert_eq!(
         lp.list_grants(env.bot)
             .iter()
@@ -105,118 +216,23 @@ async fn a_folder_rule_covers_that_folder_only_survives_restart_and_is_revocable
             .collect::<Vec<_>>(),
         vec![&rule]
     );
-    // Below the folder: no card. A sibling folder: a card.
-    assert!(!asks(&env, &lp).await);
-    assert!(asks(&env, &lp).await);
-    assert_eq!(write.count.load(Ordering::SeqCst), 2);
-
-    // Durable: a fresh loop on the same storage still has the rule; revoking removes it.
-    let fake2 = Fake::new(vec![
-        calls(&[("c9", "fs_write", json!({"path": "docs/z.md"}))]),
-        text("ok"),
-    ]);
+    assert!(
+        !asks(&env, &lp).await,
+        "the whole origin, by the owner's click"
+    );
+    assert!(asks(&env, &lp).await, "another origin asks");
+    let fake2 = Fake::new(vec![]);
     let lp2 = make_loop(
         &env.storage,
         env.bot,
         &fake2,
-        &[t(&write)],
+        &[t(&browser)],
         profile(ASK),
         cfg(Policy::approve_destructive()),
     );
     assert_eq!(lp2.list_grants(env.bot).len(), 1);
     assert!(lp2.revoke_grant(env.bot, &rule).unwrap());
     assert!(lp2.list_grants(env.bot).is_empty());
-}
-
-#[tokio::test]
-async fn a_command_rule_is_the_exact_command_and_a_compound_command_is_once_only() {
-    let env = setup();
-    let shell = tool("shell_run", Effect::Destructive, PermissionCategory::Shell);
-    let fake = Fake::new(vec![
-        calls(&[("c1", "shell_run", json!({"command": "git status -s"}))]),
-        text("ok"),
-        calls(&[("c2", "shell_run", json!({"command": "git status --branch"}))]),
-        text("ok"),
-        // A run cancelled at its card never reaches its closing text.
-        calls(&[("c3", "shell_run", json!({"command": "git push"}))]),
-        calls(&[(
-            "c4",
-            "shell_run",
-            json!({"command": "git status; rm -rf x"}),
-        )]),
-        text("ok"),
-    ]);
-    let lp = make_loop(
-        &env.storage,
-        env.bot,
-        &fake,
-        &[t(&shell)],
-        profile(ASK),
-        cfg(Policy::approve_destructive()),
-    );
-    approve(&env, &lp, ApprovalScope::Always).await;
-    assert_eq!(
-        lp.list_grants(env.bot)[0].target,
-        scoped("shell_run", ScopeKind::Command, "git status")
-    );
-    assert!(!asks(&env, &lp).await, "same program and sub-command");
-    assert!(asks(&env, &lp).await, "another sub-command");
-    // A compound command is approved once: the daemon refuses a standing choice for it.
-    let mut rx = lp.subscribe();
-    let run = lp.run_turn(env.chat, "go").unwrap();
-    let Event::ApprovalNeeded(card) =
-        until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
-    else {
-        unreachable!()
-    };
-    let details = card.details.clone().unwrap();
-    assert_eq!(details["once_only"], true);
-    assert_eq!(details["risk"], "high", "a shell command is desktop-only");
-    assert!(details.get("memory").is_none());
-    assert!(matches!(
-        lp.approve(card.call_id, ApprovalScope::Always, env.user),
-        Err(LoopError::OnceOnly(_))
-    ));
-    lp.cancel(run).unwrap();
-    let _ = lp.wait(run).await;
-}
-
-#[tokio::test]
-async fn a_remembered_command_does_not_waive_the_untrusted_content_gate() {
-    let env = setup();
-    let shell = Arc::new(with_class(
-        "shell_run",
-        Effect::Destructive,
-        PermissionCategory::Shell,
-        ContentClass::all().executes(),
-        "ok",
-    ));
-    let page = Arc::new(with_class(
-        "web_read",
-        Effect::Read,
-        PermissionCategory::Browser,
-        ContentClass::untrusted_private(),
-        "page",
-    ));
-    let fake = Fake::new(vec![
-        calls(&[("c1", "shell_run", json!({"command": "ls"}))]),
-        text("ok"),
-        calls(&[("c2", "web_read", json!({"url": "https://a.example"}))]),
-        calls(&[("c3", "shell_run", json!({"command": "ls"}))]),
-        text("ok"),
-    ]);
-    let lp = make_loop(
-        &env.storage,
-        env.bot,
-        &fake,
-        &[t(&shell), t(&page)],
-        profile(ASK),
-        cfg(Policy::approve_destructive()),
-    );
-    approve(&env, &lp, ApprovalScope::Always).await;
-    // The rule exists, but a run that read a page asks before starting any program.
-    assert!(asks(&env, &lp).await);
-    assert_eq!(shell.count.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -412,4 +428,58 @@ async fn browser_open_refuses_always_allow_after_private_read() {
     ));
     lp2.cancel(run2).unwrap();
     let _ = lp2.wait(run2).await;
+}
+
+/// The allow-list itself: the user's own computer, desktop input and unknown names never
+/// qualify; an origin-scoped `browser_open` and a listed read-only tool do.
+#[test]
+fn the_always_allow_list_is_closed() {
+    use crate::approval::always_allowed;
+    let fs = PermissionCategory::Fs;
+    assert!(!always_allowed(
+        "pc_fs_write",
+        Effect::Write,
+        fs,
+        false,
+        false
+    ));
+    assert!(!always_allowed(
+        "desktop_type",
+        Effect::Write,
+        PermissionCategory::Browser,
+        false,
+        false
+    ));
+    assert!(
+        !always_allowed("fs_read", Effect::Write, fs, false, false),
+        "a listed name is not enough, the effect must be a read"
+    );
+    assert!(!always_allowed(
+        "browser_open",
+        Effect::Read,
+        PermissionCategory::Browser,
+        false,
+        false
+    ));
+    assert!(always_allowed(
+        "browser_open",
+        Effect::Read,
+        PermissionCategory::Browser,
+        true,
+        false
+    ));
+    assert!(always_allowed("fs_read", Effect::Read, fs, false, false));
+    // An MCP / Composio tool is refused whatever it is called and whatever it claims to do.
+    for name in [
+        "mcp:notes/sync_everything",
+        "mcp:notes/read_note",
+        "composio/GMAIL_SEND_EMAIL",
+    ] {
+        for effect in [Effect::Read, Effect::Write] {
+            assert!(
+                !always_allowed(name, effect, PermissionCategory::Browser, false, false),
+                "{name}"
+            );
+        }
+    }
 }

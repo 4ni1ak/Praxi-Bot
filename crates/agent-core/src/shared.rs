@@ -1101,6 +1101,10 @@ pub(crate) struct Shared {
     /// pre-tool deny recheck.
     #[cfg(test)]
     pub exec_commit_hook: Mutex<Option<ExecCommitHook>>,
+    /// Test-only: lifts the "Always allow" allow-list so older tests can still exercise the
+    /// grant mechanics with a generic tool. Never set outside tests.
+    #[cfg(test)]
+    pub legacy_always: AtomicBool,
 }
 
 /// Test-only hook invoked under `exec_gate` before the pre-tool deny recheck.
