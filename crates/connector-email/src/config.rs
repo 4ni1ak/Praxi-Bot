@@ -48,6 +48,51 @@ impl AccountKind {
     }
 }
 
+/// What an identity may do with the send button. Sending always asks the owner
+/// first; this can only make it stricter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SendMode {
+    /// Every send is shown to the owner for approval (default).
+    #[default]
+    Ask,
+    /// Bots may only save drafts from this address; nothing is sent.
+    DraftOnly,
+}
+
+impl SendMode {
+    /// Whether this is the default (not written to `email.toml`).
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::Ask
+    }
+}
+
+/// Who may use an account as a mail identity, and how.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IdentitySettings {
+    /// Further bots (storage UUIDs) that may use the account besides
+    /// [`AccountConfig::bot`]. Only meaningful for a bound account: an unbound
+    /// account is already open to every bot.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared_with: Vec<String>,
+    /// Bots whose default sender this account is (when they pass no `account`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub default_for: Vec<String>,
+    /// Draft only, or ask the owner each time.
+    #[serde(default, skip_serializing_if = "SendMode::is_default")]
+    pub send_mode: SendMode,
+}
+
+impl IdentitySettings {
+    /// Whether nothing is set (not written to `email.toml`).
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// IMAP server (always implicit TLS, usually port 993).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -164,6 +209,9 @@ pub struct AccountConfig {
     /// (`ann@example.com`) or a whole domain (`@example.com`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_senders: Vec<String>,
+    /// Identity settings: extra bots, default-sender bots, send mode.
+    #[serde(default, skip_serializing_if = "IdentitySettings::is_default")]
+    pub identity: IdentitySettings,
 }
 
 /// Longest bot id accepted (a UUID is 36 characters).
@@ -294,6 +342,24 @@ impl AccountConfig {
                 || !bot.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
         {
             return Err(EmailError::Config("invalid bot id".into()));
+        }
+        for id in self
+            .identity
+            .shared_with
+            .iter()
+            .chain(&self.identity.default_for)
+        {
+            if id.is_empty()
+                || id.len() > MAX_BOT_ID_LEN
+                || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            {
+                return Err(EmailError::Config("invalid bot id".into()));
+            }
+        }
+        if self.identity.shared_with.len() > MAX_ALLOWED_SENDERS
+            || self.identity.default_for.len() > MAX_ALLOWED_SENDERS
+        {
+            return Err(EmailError::Config("too many bots".into()));
         }
         if self.allowed_senders.len() > MAX_ALLOWED_SENDERS {
             return Err(EmailError::Config("too many allowed senders".into()));

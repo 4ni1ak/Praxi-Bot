@@ -47,21 +47,35 @@ pub struct EmailConnector {
     attachments_dir: RwLock<Option<PathBuf>>,
 }
 
-/// A bound account is usable only by its bot (ids compare case-insensitively,
-/// they are UUIDs); an unbound one by every caller. `bot == None` (not a bot)
-/// is never "every bot": it reaches unbound accounts only.
+fn is_bot(id: &str, bot: Option<&str>) -> bool {
+    bot.is_some_and(|b| id.eq_ignore_ascii_case(b))
+}
+
+/// A bound account is usable only by its bot and the bots it is shared with
+/// (ids compare case-insensitively, they are UUIDs); an unbound one by every
+/// caller. `bot == None` (not a bot) is never "every bot": it reaches unbound
+/// accounts only.
 fn usable_by(acct: &AccountConfig, bot: Option<&str>) -> bool {
     match &acct.bot {
         None => true,
-        Some(owner) => bot.is_some_and(|b| owner.eq_ignore_ascii_case(b)),
+        Some(owner) => {
+            is_bot(owner, bot) || acct.identity.shared_with.iter().any(|s| is_bot(s, bot))
+        }
     }
 }
 
 fn owned_by(acct: &AccountConfig, bot: Option<&str>) -> bool {
-    match (&acct.bot, bot) {
-        (Some(owner), Some(b)) => owner.eq_ignore_ascii_case(b),
-        _ => false,
-    }
+    acct.bot.as_deref().is_some_and(|o| is_bot(o, bot))
+        || acct.identity.shared_with.iter().any(|s| is_bot(s, bot))
+}
+
+/// The account `bot` has marked as its default sender, if it may use it.
+fn default_of<'a>(
+    all: &'a BTreeMap<String, AccountConfig>,
+    bot: Option<&str>,
+) -> Option<&'a AccountConfig> {
+    all.values()
+        .find(|a| usable_by(a, bot) && a.identity.default_for.iter().any(|d| is_bot(d, bot)))
 }
 
 impl EmailConnector {
@@ -358,6 +372,9 @@ impl Scoped<'_> {
                 .cloned()
                 .ok_or_else(|| EmailError::Input(format!("unknown account {n:?}")));
         }
+        if let Some(default) = default_of(&all, self.bot) {
+            return Ok(default.clone());
+        }
         let mine: Vec<&AccountConfig> = all.values().filter(|a| owned_by(a, self.bot)).collect();
         let pool: Vec<&AccountConfig> = if mine.is_empty() {
             all.values().filter(|a| a.bot.is_none()).collect()
@@ -377,6 +394,26 @@ impl Scoped<'_> {
                     .join(", ")
             ))),
         }
+    }
+
+    /// The accounts this bot may use as a sender, with the one a call without
+    /// `account` would pick marked. Names and addresses only: no secrets.
+    #[must_use]
+    pub fn identities(&self) -> Vec<(AccountConfig, bool)> {
+        let all = self.conn.snapshot();
+        let chosen = self.account(None).ok().map(|a| a.name);
+        all.values()
+            .filter(|a| usable_by(a, self.bot))
+            .map(|a| (a.clone(), chosen.as_deref() == Some(a.name.as_str())))
+            .collect()
+    }
+
+    /// The account a call with `account` would use.
+    ///
+    /// # Errors
+    /// [`EmailError::Input`] as for any call.
+    pub fn resolve(&self, account: Option<&str>) -> Result<AccountConfig, EmailError> {
+        self.account(account)
     }
 
     /// Name of the account a call with `account` would use.

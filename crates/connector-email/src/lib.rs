@@ -36,8 +36,8 @@ use tool_registry::{Tool, ToolRegistry};
 
 pub use agentmail::{AgentMailClient, AgentMailEndpoint, AgentMailProvider, ApiKey};
 pub use config::{
-    AccountConfig, AccountKind, ImapSettings, SmtpSecurity, SmtpSettings, normalize_sender,
-    validate_account_name, validate_host,
+    AccountConfig, AccountKind, IdentitySettings, ImapSettings, SendMode, SmtpSecurity,
+    SmtpSettings, normalize_sender, validate_account_name, validate_host,
 };
 pub use connector::{EmailConnector, MAX_ATTACHMENT_BYTES, Scoped, SearchResult};
 pub use error::{EmailError, ProviderError};
@@ -69,6 +69,8 @@ pub fn register(registry: &ToolRegistry, connector: &Arc<EmailConnector>) -> usi
 
 #[cfg(test)]
 mod bot_tests;
+#[cfg(test)]
+mod identity_tests;
 #[cfg(test)]
 mod kind_tests;
 #[cfg(test)]

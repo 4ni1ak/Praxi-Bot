@@ -290,7 +290,7 @@ async fn registration_effects_and_input_validation() {
     let config = account(&imap, &smtp, SmtpSecurity::Implicit);
     let conn = connector(config.clone());
     let registry = ToolRegistry::new();
-    assert_eq!(register(&registry, &conn), 6);
+    assert_eq!(register(&registry, &conn), 7);
     assert_eq!(register(&registry, &conn), 0);
     for name in crate::TOOL_NAMES {
         let tool = registry.get(name).unwrap();
@@ -492,6 +492,7 @@ async fn hung_secret_store_times_out() {
         timeout_secs: 1,
         bot: None,
         allowed_senders: Vec::new(),
+        identity: Default::default(),
         kind: crate::AccountKind::ImapSmtp,
         inbox_id: None,
     };

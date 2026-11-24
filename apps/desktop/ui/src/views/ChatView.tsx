@@ -1433,6 +1433,7 @@ export function ChatView({
             tool={item}
             serverName={decisions.serverName}
             onTrustFolder={decisions.trustFolder}
+            botId={chat?.bot_id}
             onDecide={decisions.decide(item.callId)}
           />
         ) : (

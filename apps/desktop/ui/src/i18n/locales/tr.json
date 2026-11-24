@@ -1571,6 +1571,13 @@
         "label": "{{name}} aracının alacağı tam veri",
         "shortened": "Kısaltıldı: yalnızca ilk {{shown}} karakter gösteriliyor."
       },
+      "mail": {
+        "another": "Başka adresten gönder…",
+        "draftOnly": "Yalnızca taslak",
+        "from": "Kimden",
+        "switchLabel": "Başka adresten gönder",
+        "useThis": "Bu adresi kullan"
+      },
       "memory": {
         "always": "{{target}} için bu botta her zaman izin ver",
         "target": {
@@ -2094,6 +2101,11 @@
         "done": "E-posta taslağı hazırlandı",
         "failed": "E-posta taslağı hazırlanmadı",
         "running": "E-posta taslağı hazırlanıyor"
+      },
+      "email_identities": {
+        "done": "E-posta adreslerine baktı",
+        "failed": "E-posta adreslerine bakılamadı",
+        "running": "Kullanabileceği e-posta adreslerine bakıyor"
       },
       "email_mark": {
         "done": "E-postanın okundu durumu değişti",
@@ -5644,10 +5656,12 @@
         "own": "Kendi posta kutumu bağla",
         "ownText": "Zaten sahip olduğun bir posta kutusunu (Gmail, Outlook, iCloud, kendi sunucun) IMAP ve SMTP ile kullan."
       },
+      "defaultTag": "{{count}} bot için varsayılan",
       "delete": "Sil",
       "deleteConfirm": "Bu posta kutusu silinsin mi?",
       "deletedBot": "silinmiş bot",
-      "description": "Botlarının okuyup yazabileceği posta kutuları. Bir posta kutusu tek bir bota ait olabilir.",
+      "description": "Botlarının okuyup yazabildiği e-posta adresleri. Her adres bir bot, birkaç bot ya da tüm botlar tarafından kullanılabilir.",
+      "draftOnlyTag": "Yalnızca taslak",
       "edit": "Düzenle",
       "empty": "Henüz posta kutusu yok.",
       "errors": {
@@ -5665,11 +5679,13 @@
           "all": "E-postası açık her bot",
           "allWarning": "E-posta araçları olan her bot bu posta kutusunu sormadan okuyabilir.",
           "label": "Bu posta kutusunu kimler kullanabilir",
-          "nobody": "Botu seç ya da her bot seçeneğini seç.",
-          "some": "Yalnızca bir bot"
+          "nobody": "En az bir bot seç ya da herhangi bir botu seç.",
+          "some": "Yalnızca bu botlar"
         },
         "address": "E-posta adresi",
         "create": "Posta kutusu ekle",
+        "defaultFor": "Varsayılan gönderici olduğu botlar",
+        "defaultForHint": "Bot bir adres belirtmezse bu adresten gönderir.",
         "imapHost": "IMAP sunucusu",
         "implicit": "TLS",
         "name": "Ad",
@@ -5688,6 +5704,13 @@
         },
         "save": "Kaydet",
         "security": "SMTP güvenliği",
+        "sendMode": {
+          "ask": "Her seferinde bana sor",
+          "askHint": "Her ileti önce sana gösterilir: Kimden, Kime, konu ve metin.",
+          "draftOnly": "Yalnızca taslak",
+          "draftOnlyHint": "Botlar bu adresten taslak yazabilir ama asla göndermez.",
+          "label": "Gönderim"
+        },
         "senders": "İzinli gönderenler",
         "sendersHint": "Adresler veya @alan adları, her satıra bir tane. Yakında eklenecek gelen posta özelliği için saklanır; şimdilik gelen e-postalara tepki verilmez.",
         "smtpHost": "SMTP sunucusu",
@@ -5719,6 +5742,7 @@
         "tls": "TLS başarısız",
         "unreachable": "Bağlanılamıyor"
       },
+      "sharedDomain": "Bu ortak adres toplu ya da soğuk e-posta için uygun değil. Tanıtım için kendi alan adını kullan.",
       "test": "Bağlantıyı dene",
       "testing": "Deneniyor…",
       "title": "E-posta",

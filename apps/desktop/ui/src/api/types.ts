@@ -475,6 +475,8 @@ export type EmailSecurity = S["EmailSecurity"];
 /** `imap_smtp` (own mailbox) or `agentmail` (an inbox created with the user's key). */
 export type EmailProviderKind = S["EmailProviderKind"];
 export type EmailProbeStatus = S["EmailProbeStatus"];
+/** `ask` (every send needs approval) or `draft_only`. */
+export type EmailSendMode = S["EmailSendMode"];
 export type EmailTestReport = S["EmailTestReport"];
 /** One inbox row: headers only; every text field is untrusted, show it as plain text. */
 export type EmailMessage = S["EmailMessageDto"];

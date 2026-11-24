@@ -5,6 +5,7 @@ import type {
   EmailAccountPatch,
   EmailProbeStatus,
   EmailSecurity,
+  EmailSendMode,
   EmailTestReport
 } from "../api/types.ts";
 import type { BotScope } from "./mcpApps.ts";
@@ -99,6 +100,10 @@ export interface EmailForm {
    * with no bot picked yet is an error, never "everyone".
    */
   bot: BotScope;
+  /** Bots that use this address as their default sender. */
+  defaultFor: string[];
+  /** Draft only, or ask the owner every time. */
+  sendMode: EmailSendMode;
   /** Allowed senders, one per line or separated by commas. */
   allowedSenders: string;
 }
@@ -117,6 +122,8 @@ export function emptyForm(): EmailForm {
     password: "",
     // Least privilege: a new mailbox belongs to no bot until one is picked.
     bot: { mode: "some", ids: [] },
+    defaultFor: [],
+    sendMode: "ask",
     allowedSenders: ""
   };
 }
@@ -152,8 +159,23 @@ export function presetOf(a: Pick<EmailAccount, "imap" | "smtp">): EmailPresetId 
 }
 
 /** "Everyone" or exactly the one bot (never an empty list from a stored account). */
-export function scopeFromBot(bot: string | null | undefined): BotScope {
-  return bot ? { mode: "some", ids: [bot] } : { mode: "all" };
+export function scopeFromBot(
+  bot: string | null | undefined,
+  sharedWith: readonly string[] = []
+): BotScope {
+  return bot ? { mode: "some", ids: [bot, ...sharedWith] } : { mode: "all" };
+}
+
+/** The bots a scope names (empty for "every bot"). */
+export function sharedFromScope(scope: BotScope): string[] {
+  return scope.mode === "all" ? [] : scope.ids.slice(1);
+}
+
+/** Default-sender bots that are still allowed to use the address. */
+export function defaultForFromForm(form: Pick<EmailForm, "bot" | "defaultFor">): string[] {
+  return form.bot.mode === "all"
+    ? form.defaultFor
+    : form.defaultFor.filter((id) => form.bot.mode === "some" && form.bot.ids.includes(id));
 }
 
 /**
@@ -179,7 +201,9 @@ export function formFromAccount(a: EmailAccount): EmailForm {
     smtpPort: String(a.smtp.port ?? 465),
     smtpSecurity: a.smtp.security ?? "implicit",
     password: "",
-    bot: scopeFromBot(a.bot),
+    bot: scopeFromBot(a.bot, a.shared_with ?? []),
+    defaultFor: a.default_for ?? [],
+    sendMode: a.send_mode ?? "ask",
     allowedSenders: a.allowed_senders.join("\n")
   };
 }
@@ -309,6 +333,9 @@ export function toInput(form: EmailForm): ImapSmtpInput {
       security: form.smtpSecurity
     },
     bot: bot ?? null,
+    shared_with: sharedFromScope(form.bot),
+    default_for: defaultForFromForm(form),
+    send_mode: form.sendMode,
     allowed_senders: parseSenders(form.allowedSenders)
   };
   if (form.password !== "") {
@@ -345,6 +372,15 @@ export function toPatch(
   }
   if ((input.bot ?? null) !== (original.bot ?? null)) {
     patch.bot = input.bot ?? null;
+  }
+  if ((input.shared_with ?? []).join(",") !== (original.shared_with ?? []).join(",")) {
+    patch.shared_with = input.shared_with ?? [];
+  }
+  if ((input.default_for ?? []).join(",") !== (original.default_for ?? []).join(",")) {
+    patch.default_for = input.default_for ?? [];
+  }
+  if (input.send_mode !== (original.send_mode ?? "ask")) {
+    patch.send_mode = input.send_mode;
   }
   const senders = input.allowed_senders ?? [];
   if (senders.join("\n") !== original.allowed_senders.join("\n")) {

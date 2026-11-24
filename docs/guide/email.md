@@ -151,16 +151,29 @@ allowed_senders = ["alice@example.com", "@corp.example"]   # stored; used by a l
 
 ## Available tools
 
-Once enabled, six tools are registered under the `Messaging` permission category:
+Once enabled, seven tools are registered under the `Messaging` permission category:
 
 | Tool | Effect | Description |
 | --- | --- | --- |
+| `email_identities` | Read | List the mail identities (addresses) the bot may use, its default and each send mode; no secrets |
 | `email_list_folders` | Read | List folders and attributes via IMAP LIST |
 | `email_search` | Read | Search messages with sender/subject/date/unread filters; returns UID summaries |
 | `email_read` | Read | Read message content and attachment metadata by UID using BODY.PEEK |
 | `email_mark_read` | Write | Set or clear the Seen flag on a message |
 | `email_draft` | Write | Save a message as a draft in the drafts folder (never contacts SMTP) |
 | `email_send` | Destructive | Send an e-mail immediately over SMTP (**requires human approval**) |
+
+## Several mail identities
+
+You can add several mailboxes (your own IMAP/SMTP mailbox, an AgentMail address for the bot, ...) in **Settings > Mail**. For each one you choose:
+
+- **Who can use it**: any bot, or only the bots you pick.
+- **Default sender for**: the bots that send from it when they name no address. A bot has one default.
+- **Sending**: *Ask me each time* (default) or *Drafts only*. A drafts-only address saves what a bot wants to send as a draft and never sends it.
+
+The bot lists its identities with `email_identities`, picks one from the task ("send from my work address") and says which one it used. The approval card always shows **From**, To, subject and text; choose another address on the card and the bot is asked to send the same message from it, so you read the new card in full before anything leaves. Passwords and API keys stay in the secret store and are never shown to the model.
+
+The shared `agentmail.to` domain is not suitable for cold mail; use an address on your own domain for outreach.
 
 ## Approvals and security
 

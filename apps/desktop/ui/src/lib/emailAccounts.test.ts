@@ -296,3 +296,26 @@ test("creating an AgentMail account on the mock returns the address and never th
 test("toInput names the provider so a stored IMAP account is never mistaken", () => {
   assert.equal(toInput(filled()).provider, "imap_smtp");
 });
+
+test("several bots, a default sender and draft-only travel as separate fields", () => {
+  const original = account({ bot: ATLAS });
+  const form = {
+    ...formFromAccount(original),
+    bot: { mode: "some" as const, ids: [ATLAS, "bot-2"] },
+    defaultFor: ["bot-2", "gone-bot"],
+    sendMode: "draft_only" as const
+  };
+  const input = toInput(form);
+  assert.equal(input.bot, ATLAS);
+  assert.deepEqual(input.shared_with, ["bot-2"]);
+  // A bot that cannot use the address cannot be its default sender.
+  assert.deepEqual(input.default_for, ["bot-2"]);
+  assert.deepEqual(toPatch(form, original), {
+    shared_with: ["bot-2"],
+    default_for: ["bot-2"],
+    send_mode: "draft_only"
+  });
+  const back = formFromAccount(account({ bot: ATLAS, shared_with: ["bot-2"], default_for: ["bot-2"], send_mode: "draft_only" }));
+  assert.deepEqual(back.bot, { mode: "some", ids: [ATLAS, "bot-2"] });
+  assert.equal(back.sendMode, "draft_only");
+});

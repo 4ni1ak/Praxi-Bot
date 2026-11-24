@@ -5,12 +5,14 @@ import {
   CircleCheck,
   Copy,
   ExternalLink,
+  FilePen,
   Info,
   KeyRound,
   Mail,
   Pencil,
   PlugZap,
   Plus,
+  Star,
   Trash2,
   TriangleAlert,
   Users
@@ -22,6 +24,7 @@ import { SettingsCard } from "../../components/SettingsUi";
 import { BrandIcon } from "../../components/BrandIcon";
 import { botView } from "../../lib/botProfile";
 import { MAIL_CHANGED_EVENT, nextStep } from "../../lib/botMail";
+import { isSharedDomain } from "../../lib/mailIdentity";
 import type { EmailAccount, EmailTestReport } from "../../api/types";
 import { openExternal } from "../../lib/externalLink";
 import { BotAccessPicker } from "../../components/BotAccessPicker";
@@ -145,6 +148,8 @@ function AccountForm({
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<EmailTestReport | null>(null);
   const [testing, setTesting] = useState(false);
+  // A bot can be made the default sender only if it may use the address at all.
+  const defaultCandidates = bots.filter((b) => form.bot.mode === "all" || form.bot.ids.includes(b.id));
   const set = (patch: Partial<EmailForm>) => {
     setForm((f) => ({ ...f, ...patch }));
     setReport(null);
@@ -365,7 +370,6 @@ function AccountForm({
       <div className={formStyles.field}>
         <span className={formStyles.label}>{t("settingsModal.email.form.access.label")}</span>
         <BotAccessPicker
-          single
           scope={form.bot}
           bots={bots}
           onChange={(bot) => set({ bot })}
@@ -377,6 +381,47 @@ function AccountForm({
           }}
           allWarning={t("settingsModal.email.form.access.allWarning")}
         />
+      </div>
+
+      {defaultCandidates.length > 0 ? (
+        <div className={formStyles.field} data-testid="email-default-for">
+          <span className={formStyles.label}>{t("settingsModal.email.form.defaultFor")}</span>
+          <div className={styles.defaults}>
+            {defaultCandidates.map((b) => (
+              <label key={b.id} className={styles.remote}>
+                <input
+                  type="checkbox"
+                  checked={form.defaultFor.includes(b.id)}
+                  onChange={(e) =>
+                    set({
+                      defaultFor: e.target.checked
+                        ? [...form.defaultFor, b.id]
+                        : form.defaultFor.filter((id) => id !== b.id)
+                    })
+                  }
+                />
+                <span>{b.name}</span>
+              </label>
+            ))}
+          </div>
+          <p className={formStyles.hint}>{t("settingsModal.email.form.defaultForHint")}</p>
+        </div>
+      ) : null}
+
+      <div className={formStyles.field}>
+        <span className={formStyles.label}>{t("settingsModal.email.form.sendMode.label")}</span>
+        <Segmented
+          label={t("settingsModal.email.form.sendMode.label")}
+          value={form.sendMode}
+          onChange={(sendMode) => set({ sendMode })}
+          options={[
+            { value: "ask", label: t("settingsModal.email.form.sendMode.ask"), testId: "email-send-ask" },
+            { value: "draft_only", label: t("settingsModal.email.form.sendMode.draftOnly"), testId: "email-send-draft" }
+          ]}
+        />
+        <p className={formStyles.hint}>
+          {t(form.sendMode === "ask" ? "settingsModal.email.form.sendMode.askHint" : "settingsModal.email.form.sendMode.draftOnlyHint")}
+        </p>
       </div>
 
       <Field
@@ -681,6 +726,18 @@ function AccountRow({
           <span className={styles.name}>{account.name}</span>
           <span className={styles.address}>{account.address}</span>
           {isAgentmail ? <span className={styles.tag}>AgentMail</span> : null}
+          {account.send_mode === "draft_only" ? (
+            <span className={styles.tag} data-testid={`email-draft-only-${account.name}`}>
+              <FilePen aria-hidden="true" />
+              {t("settingsModal.email.draftOnlyTag")}
+            </span>
+          ) : null}
+          {(account.default_for ?? []).length > 0 ? (
+            <span className={styles.tag} data-testid={`email-default-${account.name}`}>
+              <Star aria-hidden="true" />
+              {t("settingsModal.email.defaultTag", { count: (account.default_for ?? []).length })}
+            </span>
+          ) : null}
           <span className={styles.tag}>
             {boundBot ? <BotAvatar bot={botView(boundBot)} size="xs" decorative /> : <Users aria-hidden="true" />}
             {botName === null
@@ -709,6 +766,12 @@ function AccountRow({
             </>
           )}
         </div>
+        {isSharedDomain(account) ? (
+          <p className={`${styles.meta} ${styles.warn}`} data-testid={`email-shared-domain-${account.name}`}>
+            <TriangleAlert aria-hidden="true" />
+            <span>{t("settingsModal.email.sharedDomain")}</span>
+          </p>
+        ) : null}
         {report ? <TestResult report={report} /> : null}
         {isAgentmail ? (
           <ConnectionTestButton

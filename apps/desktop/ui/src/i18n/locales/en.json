@@ -1571,6 +1571,13 @@
         "label": "Exactly what {{name}} will receive",
         "shortened": "Shortened: only the first {{shown}} characters are shown."
       },
+      "mail": {
+        "another": "Send from another address…",
+        "draftOnly": "Drafts only",
+        "from": "From",
+        "switchLabel": "Send from another address",
+        "useThis": "Use this address"
+      },
       "memory": {
         "always": "Always allow {{target}} for this bot",
         "target": {
@@ -2094,6 +2101,11 @@
         "done": "Drafted an email",
         "failed": "Didn't draft an email",
         "running": "Drafting an email"
+      },
+      "email_identities": {
+        "done": "Checked the mail addresses",
+        "failed": "Couldn't check the mail addresses",
+        "running": "Checking which mail addresses it can use"
       },
       "email_mark": {
         "done": "Changed the read state of email",
@@ -5644,10 +5656,12 @@
         "own": "Connect my own mailbox",
         "ownText": "Use a mailbox you already have (Gmail, Outlook, iCloud, your own server) over IMAP and SMTP."
       },
+      "defaultTag": "Default for {{count}}",
       "delete": "Delete",
       "deleteConfirm": "Delete this mailbox?",
       "deletedBot": "deleted bot",
-      "description": "Mailboxes your bots can read and write with. A mailbox can belong to one bot.",
+      "description": "Mail addresses your bots can read and write with. Each address can be used by one bot, several, or all.",
+      "draftOnlyTag": "Drafts only",
       "edit": "Edit",
       "empty": "No mailboxes yet.",
       "errors": {
@@ -5665,11 +5679,13 @@
           "all": "Any bot with e-mail enabled",
           "allWarning": "Every bot that has the e-mail tools can then read this mailbox without asking.",
           "label": "Who can use this mailbox",
-          "nobody": "Pick the bot, or choose any bot.",
-          "some": "Only one bot"
+          "nobody": "Pick at least one bot, or choose any bot.",
+          "some": "Only these bots"
         },
         "address": "E-mail address",
         "create": "Add mailbox",
+        "defaultFor": "Default sender for",
+        "defaultForHint": "When the bot does not name an address, it sends from this one.",
         "imapHost": "IMAP server",
         "implicit": "TLS",
         "name": "Name",
@@ -5688,6 +5704,13 @@
         },
         "save": "Save",
         "security": "SMTP security",
+        "sendMode": {
+          "ask": "Ask me each time",
+          "askHint": "Every message is shown to you first: From, To, subject and text.",
+          "draftOnly": "Drafts only",
+          "draftOnlyHint": "Bots can write drafts from this address, but never send.",
+          "label": "Sending"
+        },
         "senders": "Allowed senders",
         "sendersHint": "Addresses or @domains, one per line. Stored for the coming inbound-mail feature; nothing reacts to incoming mail yet.",
         "smtpHost": "SMTP server",
@@ -5719,6 +5742,7 @@
         "tls": "TLS failed",
         "unreachable": "Cannot connect"
       },
+      "sharedDomain": "This shared address is not suitable for cold mail. Use your own domain for outreach.",
       "test": "Test connection",
       "testing": "Testing…",
       "title": "Email",

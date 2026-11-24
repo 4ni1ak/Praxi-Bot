@@ -14,12 +14,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use connector_email::{
     AccountConfig, AccountKind, AgentMailEndpoint, CreateInbox, EmailConnector, EmailError,
-    ImapSettings, OutgoingMail, ProbeReport, ProbeStatus, ProviderError, SearchQuery, SmtpSecurity,
-    SmtpSettings, normalize_sender, validate_account_name,
+    IdentitySettings, ImapSettings, OutgoingMail, ProbeReport, ProbeStatus, ProviderError,
+    SearchQuery, SendMode, SmtpSecurity, SmtpSettings, normalize_sender, validate_account_name,
 };
 use daemon_api::email::{
     EmailAccountDto, EmailAccountInput, EmailAccountPatch, EmailImapServer, EmailMessageDto,
-    EmailProbeStatus, EmailProviderKind, EmailSecurity, EmailSmtpServer, EmailTestReport,
+    EmailProbeStatus, EmailProviderKind, EmailSecurity, EmailSendMode, EmailSmtpServer,
+    EmailTestReport,
 };
 use daemon_api::{EmailControl, EmailControlError};
 use secret_store::{SecretRef, SecretStore};
@@ -194,6 +195,44 @@ pub fn register_email(
     store: Option<&Arc<dyn SecretStore>>,
 ) -> usize {
     start_email(data_dir, registry, store).map_or(0, |(_, added)| added)
+}
+
+fn send_mode_in(m: EmailSendMode) -> SendMode {
+    match m {
+        EmailSendMode::Ask => SendMode::Ask,
+        EmailSendMode::DraftOnly => SendMode::DraftOnly,
+    }
+}
+
+fn send_mode_out(m: SendMode) -> EmailSendMode {
+    match m {
+        SendMode::Ask => EmailSendMode::Ask,
+        SendMode::DraftOnly => EmailSendMode::DraftOnly,
+    }
+}
+
+fn identity_in(input: &EmailAccountInput) -> IdentitySettings {
+    IdentitySettings {
+        shared_with: input.shared_with.clone(),
+        default_for: input.default_for.clone(),
+        send_mode: send_mode_in(input.send_mode),
+    }
+}
+
+/// A bot has one default sender: `keep` (just saved) wins, every other account
+/// drops the bots `keep` now claims.
+fn unique_defaults(list: &mut [AccountConfig], keep: &str) {
+    let claimed: Vec<String> = list
+        .iter()
+        .find(|a| a.name == keep)
+        .map(|a| a.identity.default_for.clone())
+        .unwrap_or_default();
+    for other in list.iter_mut().filter(|a| a.name != keep) {
+        other
+            .identity
+            .default_for
+            .retain(|b| !claimed.iter().any(|c| c.eq_ignore_ascii_case(b)));
+    }
 }
 
 fn security_in(s: EmailSecurity) -> SmtpSecurity {
@@ -377,6 +416,9 @@ impl EmailHost {
             drafts_folder: a.drafts_folder.clone(),
             bot: a.bot.clone(),
             allowed_senders: a.allowed_senders.clone(),
+            shared_with: a.identity.shared_with.clone(),
+            default_for: a.identity.default_for.clone(),
+            send_mode: send_mode_out(a.identity.send_mode),
             password_set: self.secrets.get(a.password.name()).ok().flatten().is_some(),
             custom_ca: a.extra_root_pem.is_some(),
         }
@@ -526,6 +568,7 @@ impl EmailHost {
             timeout_secs: 30,
             bot: input.bot.clone(),
             allowed_senders: senders(&input.allowed_senders)?,
+            identity: identity_in(input),
             kind: AccountKind::ImapSmtp,
             inbox_id: None,
         };
@@ -586,6 +629,7 @@ impl EmailHost {
             timeout_secs: 30,
             bot: input.bot.clone(),
             allowed_senders,
+            identity: identity_in(input),
             kind: AccountKind::AgentMail,
             inbox_id: Some(inbox.inbox_id.clone()),
         };
@@ -601,6 +645,7 @@ impl EmailHost {
         let result = match stored {
             Ok(()) => {
                 list.push(account.clone());
+                unique_defaults(&mut list, &account.name);
                 self.commit(list)
             }
             Err(e) => Err(e),
@@ -680,6 +725,7 @@ impl EmailControl for EmailHost {
         self.store_secret(secret.clone(), password).await?;
         self.unpend(&secret);
         list.push(account.clone());
+        unique_defaults(&mut list, &account.name);
         if let Err(e) = self.commit(list) {
             self.drop_managed_secrets(std::slice::from_ref(&account))
                 .await;
@@ -715,7 +761,7 @@ impl EmailControl for EmailHost {
                 || typed.password.is_some())
         {
             return Err(invalid(
-                "an AgentMail account only takes `bot`, `allowed_senders` and `api_key`",
+                "an AgentMail account only takes the bot settings, `allowed_senders`, `send_mode` and `api_key`",
             ));
         }
         if !api && typed.api_key.is_some() {
@@ -749,6 +795,15 @@ impl EmailControl for EmailHost {
         if let Some(v) = typed.allowed_senders {
             slot.allowed_senders = senders(&v)?;
         }
+        if let Some(v) = typed.shared_with {
+            slot.identity.shared_with = v;
+        }
+        if let Some(v) = typed.default_for {
+            slot.identity.default_for = v;
+        }
+        if let Some(v) = typed.send_mode {
+            slot.identity.send_mode = send_mode_in(v);
+        }
         slot.validate().map_err(invalid)?;
         let password = if api { typed.api_key } else { typed.password }.filter(|p| !p.is_empty());
         if password.is_none() && credential_target(slot) != before {
@@ -758,6 +813,7 @@ impl EmailControl for EmailHost {
         }
         let secret = slot.password.name().to_owned();
         let updated = slot.clone();
+        unique_defaults(&mut list, name);
         // New password first: if storing it fails nothing has changed, and if
         // the commit fails the old password is put back, so the live servers
         // and the stored password never disagree for longer than this call.
@@ -942,12 +998,29 @@ impl EmailControl for EmailHost {
     async fn forget_bot(&self, bot_id: &str) -> Result<usize, EmailControlError> {
         let _guard = self.ops.lock().await;
         let list = self.connector.accounts();
-        let (gone, rest): (Vec<_>, Vec<_>) = list.into_iter().partition(|a| {
+        let (gone, mut rest): (Vec<_>, Vec<_>) = list.into_iter().partition(|a| {
             a.bot
                 .as_deref()
                 .is_some_and(|b| b.eq_ignore_ascii_case(bot_id))
         });
+        // A deleted bot also leaves the sharing and default lists of the
+        // accounts that stay (this only ever narrows who may use them).
+        let mut trimmed = false;
+        for a in &mut rest {
+            let (s0, d0) = (a.identity.shared_with.len(), a.identity.default_for.len());
+            a.identity
+                .shared_with
+                .retain(|b| !b.eq_ignore_ascii_case(bot_id));
+            a.identity
+                .default_for
+                .retain(|b| !b.eq_ignore_ascii_case(bot_id));
+            trimmed |= (s0, d0) != (a.identity.shared_with.len(), a.identity.default_for.len());
+        }
+        if gone.is_empty() && !trimmed {
+            return Ok(0);
+        }
         if gone.is_empty() {
+            self.commit(rest)?;
             return Ok(0);
         }
         self.commit(rest)?;

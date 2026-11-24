@@ -34,6 +34,18 @@ pub enum EmailProviderKind {
     Agentmail,
 }
 
+/// What bots may do with a mail identity. Sending always needs the owner's
+/// approval; this can only make it stricter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EmailSendMode {
+    /// Every send is shown to the owner for approval (default).
+    #[default]
+    Ask,
+    /// Bots can only save drafts from this address.
+    DraftOnly,
+}
+
 /// An IMAP server (always implicit TLS).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct EmailImapServer {
@@ -108,6 +120,15 @@ pub struct EmailAccountDto {
     /// Senders whose mail may start a run (stored now, enforced by the inbound
     /// trigger).
     pub allowed_senders: Vec<String>,
+    /// Further bots (storage UUIDs) that may use the account besides `bot`.
+    #[serde(default)]
+    pub shared_with: Vec<String>,
+    /// Bots that use this account as their default sender.
+    #[serde(default)]
+    pub default_for: Vec<String>,
+    /// Draft only, or ask the owner each time.
+    #[serde(default)]
+    pub send_mode: EmailSendMode,
     /// Whether the secret (password, or the API key of an `agentmail` account)
     /// is stored. The secret itself is never returned.
     pub password_set: bool,
@@ -159,6 +180,15 @@ pub struct EmailAccountInput {
     /// Senders whose mail may start a run (addresses or `@domain`).
     #[serde(default)]
     pub allowed_senders: Vec<String>,
+    /// Further bots that may use the account besides `bot`.
+    #[serde(default)]
+    pub shared_with: Vec<String>,
+    /// Bots that use this account as their default sender.
+    #[serde(default)]
+    pub default_for: Vec<String>,
+    /// Draft only, or ask the owner each time (default).
+    #[serde(default)]
+    pub send_mode: EmailSendMode,
     /// The account password or app password. **Write-only**: it goes to the
     /// secret store and is never returned or logged. Required on create.
     #[serde(default)]
@@ -204,6 +234,15 @@ pub struct EmailAccountPatch {
     /// Allowed senders; present list replaces the stored one.
     #[serde(default)]
     pub allowed_senders: Option<Vec<String>>,
+    /// Further bots that may use the account; a present list replaces it.
+    #[serde(default)]
+    pub shared_with: Option<Vec<String>>,
+    /// Bots that use this account as default sender; a present list replaces it.
+    #[serde(default)]
+    pub default_for: Option<Vec<String>>,
+    /// Draft only, or ask each time.
+    #[serde(default)]
+    pub send_mode: Option<EmailSendMode>,
     /// New password (write-only).
     #[serde(default)]
     pub password: Option<String>,

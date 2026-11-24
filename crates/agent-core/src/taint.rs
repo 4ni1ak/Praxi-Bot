@@ -1381,6 +1381,7 @@ mod card_tests {
             timeout_secs: 30,
             bot: None,
             allowed_senders: Vec::new(),
+            identity: Default::default(),
             kind: builtin_tools::connector_email::AccountKind::ImapSmtp,
             inbox_id: None,
         };

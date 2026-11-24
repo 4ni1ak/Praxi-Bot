@@ -1571,6 +1571,13 @@
         "label": "Genau das erhält {{name}}",
         "shortened": "Gekürzt: Es werden nur die ersten {{shown}} Zeichen angezeigt."
       },
+      "mail": {
+        "another": "Von anderer Adresse senden…",
+        "draftOnly": "Nur Entwürfe",
+        "from": "Von",
+        "switchLabel": "Von anderer Adresse senden",
+        "useThis": "Diese Adresse verwenden"
+      },
       "memory": {
         "always": "{{target}} für diesen Bot immer erlauben",
         "target": {
@@ -2094,6 +2101,11 @@
         "done": "Eine E-Mail entworfen",
         "failed": "Eine E-Mail wurde nicht entworfen",
         "running": "Entwirft eine E-Mail"
+      },
+      "email_identities": {
+        "done": "E-Mail-Adressen geprüft",
+        "failed": "E-Mail-Adressen konnten nicht geprüft werden",
+        "running": "Prüft, welche E-Mail-Adressen er nutzen kann"
       },
       "email_mark": {
         "done": "Den Lesestatus von E-Mails geändert",
@@ -5644,10 +5656,12 @@
         "own": "Mein eigenes Postfach verbinden",
         "ownText": "Nutze ein bereits vorhandenes Postfach (Gmail, Outlook, iCloud, dein eigener Server) über IMAP und SMTP."
       },
+      "defaultTag": "Standard für {{count}}",
       "delete": "Löschen",
       "deleteConfirm": "Dieses Postfach löschen?",
       "deletedBot": "gelöschter Bot",
-      "description": "Postfächer, mit denen deine Bots lesen und schreiben können. Ein Postfach kann zu einem Bot gehören.",
+      "description": "E-Mail-Adressen, mit denen deine Bots lesen und schreiben können. Jede Adresse kann von einem Bot, mehreren oder allen genutzt werden.",
+      "draftOnlyTag": "Nur Entwürfe",
       "edit": "Bearbeiten",
       "empty": "Noch keine Postfächer.",
       "errors": {
@@ -5665,11 +5679,13 @@
           "all": "Jeder Bot mit aktivierter E-Mail",
           "allWarning": "Jeder Bot mit den E-Mail-Werkzeugen kann dieses Postfach dann ohne Nachfrage lesen.",
           "label": "Wer dieses Postfach nutzen darf",
-          "nobody": "Wähle den Bot oder wähle einen beliebigen Bot.",
-          "some": "Nur ein Bot"
+          "nobody": "Wähle mindestens einen Bot oder einen beliebigen Bot.",
+          "some": "Nur diese Bots"
         },
         "address": "E-Mail-Adresse",
         "create": "Postfach hinzufügen",
+        "defaultFor": "Standardabsender für",
+        "defaultForHint": "Nennt der Bot keine Adresse, sendet er von dieser.",
         "imapHost": "IMAP-Server",
         "implicit": "TLS",
         "name": "Name",
@@ -5688,6 +5704,13 @@
         },
         "save": "Speichern",
         "security": "SMTP-Sicherheit",
+        "sendMode": {
+          "ask": "Jedes Mal fragen",
+          "askHint": "Jede Nachricht wird dir zuerst gezeigt: Von, An, Betreff und Text.",
+          "draftOnly": "Nur Entwürfe",
+          "draftOnlyHint": "Bots können von dieser Adresse Entwürfe schreiben, aber nie senden.",
+          "label": "Versand"
+        },
         "senders": "Erlaubte Absender",
         "sendersHint": "Adressen oder @Domains, eine pro Zeile. Für die kommende Funktion für eingehende E-Mails gespeichert; bisher reagiert nichts auf eingehende E-Mails.",
         "smtpHost": "SMTP-Server",
@@ -5719,6 +5742,7 @@
         "tls": "TLS fehlgeschlagen",
         "unreachable": "Verbindung nicht möglich"
       },
+      "sharedDomain": "Diese gemeinsame Adresse eignet sich nicht für Kaltakquise. Nutze dafür deine eigene Domain.",
       "test": "Verbindung testen",
       "testing": "Wird getestet …",
       "title": "E-Mail",

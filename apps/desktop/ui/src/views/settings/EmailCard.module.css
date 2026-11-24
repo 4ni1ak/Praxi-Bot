@@ -344,3 +344,15 @@
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
 }
+
+.defaults {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+.warn svg {
+  flex: none;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
