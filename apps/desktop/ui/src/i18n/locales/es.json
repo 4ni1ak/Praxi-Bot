@@ -1992,6 +1992,11 @@
         "failed": "No pudo rellenar el campo",
         "running": "Rellenando un campo"
       },
+      "browser_hover": {
+        "done": "Pasó el puntero sobre algo en una página",
+        "failed": "No pudo pasar el puntero sobre algo",
+        "running": "Pasando el puntero sobre algo en una página"
+      },
       "browser_open": {
         "done": "Abrió una página",
         "failed": "No pudo abrir la página",
@@ -2006,6 +2011,11 @@
         "done": "Eligió una opción en una página",
         "failed": "No pudo elegir una opción",
         "running": "Eligiendo una opción en una página"
+      },
+      "browser_select_text": {
+        "done": "Seleccionó texto en una página",
+        "failed": "No seleccionó texto en una página",
+        "running": "Seleccionando texto en una página"
       },
       "browser_view": {
         "done": "Vio una página",
