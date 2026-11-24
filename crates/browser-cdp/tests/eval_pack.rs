@@ -57,9 +57,14 @@ fn page_of(path: &str) -> Option<&'static str> {
         "/menu" | "/menu-top" => MENU,
         "/laptops" => LAPTOPS,
         "/sentence" => SENTENCE,
+        "/hijack" => HIJACK,
         _ => return None,
     })
 }
+
+/// Navigates to another origin (same port, other host name) on the first mouse move.
+const HIJACK: &str = r#"<html><body onmousemove="if(location.hostname==='127.0.0.1')location.hostname='localhost'">
+<p style="margin:40px">Approve the payment now</p></body></html>"#;
 
 fn list_page(n: u32) -> String {
     let next = if n < 3 {
@@ -663,5 +668,32 @@ async fn a_sentence_is_selected_by_its_text_and_a_word_by_double_click() {
         .unwrap()
         .to_owned();
     assert_eq!(got.trim(), "Returns");
+    let _ = b.close().await;
+}
+
+/// The origin was approved before the pointer moved; the move navigated to another origin.
+/// No press may land on the page that was never approved.
+#[tokio::test]
+#[ignore = "needs Chrome/Edge"]
+async fn select_text_rechecks_the_origin_after_the_pointer_move() {
+    let port = serve().await;
+    let b = Browser::launch(LaunchOptions::default()).await.unwrap();
+    let page = open_at(&b, port, "/hijack").await;
+    let approved = format!("http://127.0.0.1:{port}");
+    let r = page
+        .select_text(&TextSelection {
+            r: None,
+            text: Some("Approve the payment"),
+            unit: SelectUnit::Word,
+            feel: Feel::Natural,
+            expected: Some(&approved),
+        })
+        .await
+        .unwrap();
+    assert!(!r.ok, "a press was sent after the origin changed");
+    assert!(
+        r.error.unwrap_or_default().contains("origin changed"),
+        "wrong refusal"
+    );
     let _ = b.close().await;
 }

@@ -1494,6 +1494,26 @@ impl Page {
         Ok(out)
     }
 
+    /// The approved-origin check of `select_text`: the element's frame, or the top document
+    /// when selecting by text only.
+    async fn check_select_origin(
+        &self,
+        entry: Option<&RefEntry>,
+        expected: Option<&str>,
+    ) -> Result<()> {
+        match (entry, expected) {
+            (Some(e), _) => self.check_input_origin(e, expected).await,
+            (None, Some(expected))
+                if !grant_origin_matches(self.top_origin().await.as_deref(), expected) =>
+            {
+                Err(Error::Element(
+                    "receiving frame origin changed; ask again before input".into(),
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+
     async fn select_text_inner(&self, req: &TextSelection<'_>) -> Result<()> {
         let mut rng = Jitter::from_clock();
         let feel = req.feel;
@@ -1503,14 +1523,9 @@ impl Page {
         };
         if let Some(e) = &entry {
             self.refuse_if_sensitive_now(e, "selecting text").await?;
-            self.check_input_origin(e, req.expected).await?;
-        } else if let Some(expected) = req.expected
-            && !grant_origin_matches(self.top_origin().await.as_deref(), expected)
-        {
-            return Err(Error::Element(
-                "receiving frame origin changed; ask again before input".into(),
-            ));
         }
+        self.check_select_origin(entry.as_ref(), req.expected)
+            .await?;
         let needle = req.text.map(str::trim).filter(|t| !t.is_empty());
         let found = match (&entry, needle, req.unit) {
             // A word or a paragraph of a whole element: click its middle.
@@ -1523,6 +1538,13 @@ impl Page {
         let start = found.start;
         self.glide(start, feel, &mut rng).await?;
         sleep(human::settle_pause(feel, &mut rng)).await;
+        // The glide may have run page handlers (mouseover/mousemove) that navigated or swapped
+        // the page: check again before any press, as `click_inner` does.
+        if let Some(e) = &entry {
+            self.refuse_if_sensitive_now(e, "selecting text").await?;
+        }
+        self.check_select_origin(entry.as_ref(), req.expected)
+            .await?;
         if req.unit == SelectUnit::Range {
             let down = json!({"button": "left", "clickCount": 1, "buttons": 1});
             self.mouse("mousePressed", start.0, start.1, down).await?;
@@ -1546,6 +1568,10 @@ impl Page {
         } else {
             let clicks: u32 = if req.unit == SelectUnit::Word { 2 } else { 3 };
             for n in 1..=clicks {
+                if n > 1 {
+                    self.check_select_origin(entry.as_ref(), req.expected)
+                        .await?;
+                }
                 let btn = json!({"button": "left", "clickCount": n});
                 self.mouse("mousePressed", start.0, start.1, btn.clone())
                     .await?;
