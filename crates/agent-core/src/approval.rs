@@ -64,6 +64,8 @@ impl Drop for ClosedGuard {
 
 /// What a call's card says when nobody decided it in time (the model sees it as the denial reason).
 pub(crate) const EXPIRED_REASON: &str = "expired: nobody answered in time";
+/// Reason on the denial a Stop records for an approval that was still open.
+pub(crate) const STOPPED_REASON: &str = "denied: stopped by you";
 
 /// How a wait for the user ended.
 enum Waited {
@@ -1396,7 +1398,7 @@ impl Shared {
                 run_id,
                 call_id,
                 denied_by: ctx.user_id,
-                reason: Some("denied: stopped by you".into()),
+                reason: Some(STOPPED_REASON.into()),
             }),
         );
     }
@@ -1794,7 +1796,7 @@ impl Shared {
                     let _gate = self.exec_gate.lock();
                     if self.run_is_stopped(ctx.run_id) {
                         self.record_stop_denial(ctx.run_id, call_id, approval_id);
-                        return Err(Some("denied: stopped by you".into()));
+                        return Err(Some(STOPPED_REASON.into()));
                     }
                     if matches!(
                         self.decide_with_target(
@@ -2174,7 +2176,7 @@ impl ExecPermit {
         if self.sh.run_is_stopped(self.ctx.run_id) {
             self.sh
                 .record_stop_denial(self.ctx.run_id, self.call_id, self.approval_id);
-            return Err(Some("denied: stopped by you".into()));
+            return Err(Some(STOPPED_REASON.into()));
         }
         if matches!(
             self.sh.decide_with_target(
