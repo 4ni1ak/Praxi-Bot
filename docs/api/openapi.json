@@ -28892,7 +28892,10 @@
           "local_model",
           "stt_base_url",
           "stt_model",
-          "stt_key_set"
+          "stt_key_set",
+          "use_provider_key",
+          "gemini_provider_key_available",
+          "stt_provider_key_available"
         ],
         "properties": {
           "gemini_key_set": {
@@ -28902,6 +28905,10 @@
           "gemini_model": {
             "type": "string",
             "description": "Gemini Live model used for transcription (e.g. `gemini-3.5-transcribe-live`)."
+          },
+          "gemini_provider_key_available": {
+            "type": "boolean",
+            "description": "A Gemini provider with a key exists under Bots & models."
           },
           "local_model": {
             "type": "string",
@@ -28922,6 +28929,14 @@
           "stt_provider": {
             "$ref": "#/components/schemas/VoiceProvider",
             "description": "The active speech-to-text provider."
+          },
+          "stt_provider_key_available": {
+            "type": "boolean",
+            "description": "A provider under Bots & models has a key and the same base URL as `stt_base_url`."
+          },
+          "use_provider_key": {
+            "type": "boolean",
+            "description": "Reuse the key of a matching provider from Bots & models instead of a separate voice\nkey (default on). The key itself never leaves the secret store."
           }
         }
       },
@@ -28995,6 +29010,13 @@
                 "description": "Switch the provider."
               }
             ]
+          },
+          "use_provider_key": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Reuse the matching provider key from Bots & models (default on)."
           }
         }
       },

@@ -738,6 +738,8 @@ const HOME_STORES: &[&str] = &[
     ".cursor-agent",
     ".gemini",
     ".qwen",
+    ".kiro",
+    ".copilot",
     ".config/opencode",
     ".config/claude",
     ".config/cursor",
@@ -1087,6 +1089,14 @@ mod tests {
             ("cat ~/.qwen/oauth_creds.json", None),
             ("cat ${HOME}/.qwen/settings.json", None),
             ("cat .qwen/oauth_creds.json", Some("/home/praxi")),
+            // Kiro CLI: MCP servers, hooks and permission rules under ~/.kiro
+            ("cat ~/.kiro/settings/mcp.json", None),
+            ("rm ${HOME}/.kiro/settings/permissions.yaml", None),
+            // Copilot CLI: config.json (accounts, plaintext token without a keychain) and
+            // settings.json (hooks, MCP servers) under ~/.copilot
+            ("cat ~/.copilot/config.json", None),
+            (r"type %USERPROFILE%\.copilot\settings.json", None),
+            ("cat .copilot/config.json", Some("/home/praxi")),
             (
                 "cp /tmp/evil /var/lib/praxi/runtimes/npm-global/bin/claude",
                 None,
