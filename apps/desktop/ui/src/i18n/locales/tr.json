@@ -1917,7 +1917,7 @@
       "waiting": "Onayını bekliyor"
     },
     "runFailed": "Çalışma başarısız oldu: {{message}}",
-    "runStopped": "Durduruldu.",
+    "runStopped": "Senin tarafından durduruldu",
     "send": "Gönder",
     "slash": {
       "apps": "Uygulamaları aç",

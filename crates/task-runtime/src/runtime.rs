@@ -316,6 +316,25 @@ impl Runtime {
 
     /// Terminal-or-paused state a stopped live run moves to: `Paused` after
     /// [`Runtime::request_pause`], else `Cancelled`.
+    /// Move a stopped run to [`Self::stop_state`]. If a hard stop already
+    /// marked it terminal, keep that state instead of failing the transition.
+    fn finish_stopped(&self, run_id: RunId) -> Result<RunState> {
+        let to = self.stop_state(run_id);
+        match self.transition(run_id, to, None) {
+            Err(RuntimeError::IllegalTransition { .. }) => {
+                let run = self.require_run(run_id)?;
+                let state =
+                    RunState::parse(&run.state).ok_or(RuntimeError::UnknownState(run.state))?;
+                if state.is_terminal() {
+                    Ok(state)
+                } else {
+                    Err(RuntimeError::IllegalTransition { from: state, to })
+                }
+            }
+            other => other,
+        }
+    }
+
     fn stop_state(&self, run_id: RunId) -> RunState {
         if self.pausing.lock().contains(&run_id) {
             RunState::Paused
@@ -474,9 +493,22 @@ impl Runtime {
                             None,
                             true,
                         )?;
-                        return self.transition(run_id, self.stop_state(run_id), None);
+                        return self.finish_stopped(run_id);
                     }
                     Some(Ok(output)) => {
+                        // The step finished on a worker that never polled the
+                        // token (a blocking sleep). Stop still wins.
+                        if token.is_cancelled() {
+                            st.update_step(
+                                step_id,
+                                StepStatus::Interrupted.as_str(),
+                                attempt,
+                                None,
+                                None,
+                                true,
+                            )?;
+                            return self.finish_stopped(run_id);
+                        }
                         st.update_step(
                             step_id,
                             StepStatus::Succeeded.as_str(),
