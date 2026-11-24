@@ -135,6 +135,7 @@
       "Voice call (desktop app)",
       "Slash commands",
       "Managing chats (desktop app)",
+      "Opening Praxi links (desktop app)",
       "Copying messages and Markdown export",
       "Unread markers",
       "Keyboard shortcuts and \"What's new\"",
@@ -250,6 +251,7 @@
     "doc": "decision-pool.md",
     "title": "Optional decision pool",
     "headings": [
+      "Quick switch for Gemini",
       "Configure the pool",
       "Input, answers, and accounting"
     ],
@@ -288,6 +290,19 @@
       "Give a bot its own address (AgentMail)"
     ],
     "summary": "Praxi includes IMAP and SMTP tools that allow your bots to read, search, draft, and send e-mails."
+  },
+  {
+    "doc": "embeddings.md",
+    "title": "Helpers (optional): embeddings and the decision helper",
+    "headings": [
+      "What are embeddings?",
+      "Your text is only sent with your permission",
+      "Free keys and limits",
+      "Fallback chain",
+      "Decision helper (optional)",
+      "Problems"
+    ],
+    "summary": "You do not need any of this to use Praxi. With no keys, Praxi uses a simple"
   },
   {
     "doc": "faq.md",
@@ -429,6 +444,7 @@
     "title": "Install and first run",
     "headings": [
       "Option A: Windows desktop app",
+      "Desktop link support",
       "Option B: build the CLI from source",
       "Building the Windows installer yourself",
       "First run from the terminal",

@@ -15,6 +15,7 @@
 //! browser `EventSource` clients (Host / Origin still apply).
 
 mod attachment_routes;
+mod audit_routes;
 pub mod auth;
 mod bot_engine;
 mod bot_tools;
@@ -69,6 +70,7 @@ pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod bot_limits_routes;
 mod data_routes;
 mod incoming_webhook;
+mod embeddings_routes;
 mod routes;
 mod schedule;
 mod schedule_tools;
@@ -848,6 +850,19 @@ impl AppState {
         Ok(store)
     }
 
+    /// The memory store when memory has ever been used here (the agent's store,
+    /// one opened earlier, or a `memory.db` on disk); never creates a database.
+    /// Used by deletions, which must clean up memory but must not start it.
+    pub(crate) fn memory_store_if_present(&self) -> Option<Arc<memory_store::MemoryStore>> {
+        if self.0.agent.memory_store().is_some()
+            || self.0.memory.lock().is_some()
+            || self.data_dir().join("memory.db").exists()
+        {
+            return self.memory_store().ok();
+        }
+        None
+    }
+
     /// The running scheduler, or `503` when the daemon did not start one.
     pub(crate) fn scheduler(&self) -> Result<Scheduler, ApiError> {
         if self.leader().is_starting() {
@@ -1339,6 +1354,12 @@ fn api_routes() -> Router<AppState> {
             axum::routing::patch(memory::update_memory).delete(memory::delete_memory),
         )
         .route("/v1/memory/{id}/undo", post(memory::undo_memory))
+        .route("/v1/memory/{id}/erase", post(memory::erase_memory))
+        .route("/v1/memory/forgotten", get(memory::list_forgotten))
+        .route(
+            "/v1/memory/forgotten/{id}",
+            axum::routing::delete(memory::remove_forgotten),
+        )
         .route("/v1/memory/pending", get(memory::list_pending))
         .route("/v1/memory/{id}/approve", post(memory::approve_memory))
         .route("/v1/memory/{id}/discard", post(memory::discard_memory))
@@ -1517,6 +1538,9 @@ fn api_routes() -> Router<AppState> {
         )
         .route("/v1/doctor", get(doctor_routes::get_doctor))
         .route("/v1/logs/recent", get(logs::recent))
+        .route("/v1/audit", get(audit_routes::list))
+        .route("/v1/audit/export", get(audit_routes::export))
+        .route("/v1/audit/verify", get(audit_routes::verify))
         .route("/v1/doctor/report", get(doctor_routes::report))
         .route("/v1/doctor/repair/{id}", post(doctor_routes::repair))
         .route(
@@ -1655,6 +1679,18 @@ fn api_routes() -> Router<AppState> {
         .route(
             "/v1/connection-test/email",
             post(connection_test::test_email),
+        )
+        .route(
+            "/v1/embeddings",
+            get(embeddings_routes::get_embeddings).put(embeddings_routes::put_embeddings),
+        )
+        .route(
+            "/v1/decision-helper",
+            get(embeddings_routes::get_decision_helper).put(embeddings_routes::put_decision_helper),
+        )
+        .route(
+            "/v1/embeddings/{id}/test",
+            post(embeddings_routes::test_embedding),
         )
         .route(
             "/v1/spend-limit",

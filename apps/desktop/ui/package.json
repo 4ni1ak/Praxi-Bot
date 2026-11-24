@@ -22,11 +22,13 @@
     "check:visual:update": "node scripts/check-visual.mjs --update --no-contrast",
     "smoke": "node scripts/smoke.mjs",
     "test:contrast": "vitest run tests/wallpaper.contrast.spec.ts",
-    "check:chat-ui": "node scripts/check-chat-ui.mjs"
+    "check:chat-ui": "node scripts/check-chat-ui.mjs",
+    "check:attachments": "node scripts/check-attachments.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
+    "@fontsource/opendyslexic": "^5.3.0",
     "@tauri-apps/api": "^2.3.0",
     "@tauri-apps/plugin-store": "^2.2.0",
     "@xterm/addon-fit": "0.10.0",

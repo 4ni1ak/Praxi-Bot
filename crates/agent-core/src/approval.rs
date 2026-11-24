@@ -735,6 +735,142 @@ impl Shared {
             .any(|got| got == want)
     }
 
+    /// The URL of a plain navigation: `browser_open` with the `url` field alone, http(s), no
+    /// userinfo, no query and no fragment. Only the structural part: whether it may go out
+    /// silently is decided by [`Self::plain_navigation_waived`] (root URLs only).
+    pub(crate) fn plain_navigation(name: &str, input: &Value) -> Option<url::Url> {
+        if name != "browser_open" || input.as_object().is_none_or(|o| o.len() != 1) {
+            return None;
+        }
+        let url = url::Url::parse(input.get("url")?.as_str()?).ok()?;
+        (matches!(url.scheme(), "http" | "https")
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.host_str().is_some()
+            && url.query().is_none()
+            && url.fragment().is_none())
+        .then_some(url)
+    }
+
+    /// A bare token (no scheme) an owner wrote counts as a site name only when it is a
+    /// registrable-domain shape under a real public TLD that is not a common file extension
+    /// (`README.md`, `main.rs`, `script.sh` are files, not sites).
+    fn bare_site_name(authority: &str) -> bool {
+        const FILE_EXT: &[&str] = &[
+            "md", "rs", "py", "sh", "js", "ts", "json", "toml", "txt", "html", "htm", "css", "exe",
+            "zip", "pdf", "yml", "yaml", "log", "bat", "ps1", "cs", "pl", "rb", "go", "cc", "c",
+            "h", "so", "dll", "doc", "docx", "xls", "xlsx", "png", "jpg", "gif", "svg", "xml",
+            "csv", "ini", "cfg", "lock", "tmp", "bak", "mov", "mp3", "mp4", "tar", "gz", "rar",
+            "7z", "jar", "apk", "iso", "dmg", "msi", "sql", "db", "php", "lua", "ex", "kt",
+            "swift",
+        ];
+        const TLDS: &[&str] = &[
+            "com", "net", "org", "io", "dev", "app", "co", "de", "uk", "edu", "gov", "info", "ai",
+            "tr", "fr", "es", "it", "nl", "be", "ch", "at", "se", "no", "dk", "fi", "pl", "pt",
+            "ie", "gr", "cz", "ru", "ua", "jp", "kr", "cn", "in", "au", "nz", "ca", "us", "br",
+            "mx", "ar", "za", "eu", "biz", "xyz", "online", "site", "shop", "store", "tech",
+            "cloud", "blog", "news", "me", "tv",
+        ];
+        let labels: Vec<&str> = authority.split('.').collect();
+        let ok_label = |l: &&str| {
+            !l.is_empty()
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        };
+        let Some(tld) = labels.last().map(|t| t.to_ascii_lowercase()) else {
+            return false;
+        };
+        labels.len() >= 2
+            && labels.iter().all(ok_label)
+            && TLDS.contains(&tld.as_str())
+            && !FILE_EXT.contains(&tld.as_str())
+    }
+
+    /// `host:port` of a navigation, host lower case with no trailing dot.
+    fn nav_site(url: &url::Url) -> Option<(String, u16)> {
+        Some((
+            url.host_str()?.trim_end_matches('.').to_ascii_lowercase(),
+            url.port_or_known_default()?,
+        ))
+    }
+
+    /// A navigation to the ROOT of an origin (path `/` or empty, no query, fragment, userinfo
+    /// or explicit port) that is the current page's origin, an origin the owner named in this
+    /// chat (a full http(s) URL or a bare domain under a real TLD) or one they approved once.
+    /// A root URL carries nothing but the host, so it is not "sending". Any non-empty path
+    /// asks (unless the owner granted the whole site, see `gate_waived`): a path can carry a
+    /// value copied from a page, and no shape or word rule on it is reliable.
+    fn plain_navigation_waived(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
+        // With private data in the context even a host name is a channel: keep asking.
+        if ctx.taint.lock().exposure.has_private() {
+            return false;
+        }
+        let Some(url) = Self::plain_navigation(name, input) else {
+            return false;
+        };
+        if url.path() != "/" || url.port().is_some() {
+            return false;
+        }
+        let Some(site) = Self::nav_site(&url) else {
+            return false;
+        };
+        let origin = format!("{}://{}:{}", url.scheme(), site.0, site.1);
+        if ctx
+            .page_origin
+            .lock()
+            .as_deref()
+            .and_then(Self::origin_of)
+            .is_some_and(|o| o == origin)
+        {
+            return true;
+        }
+        if self
+            .grants
+            .lock()
+            .nav_origin
+            .contains(&(ctx.chat_id, ctx.bot_id, origin))
+        {
+            return true;
+        }
+        let Ok(texts) = self.storage.owner_message_texts(ctx.chat_id) else {
+            return false;
+        };
+        texts
+            .iter()
+            .flat_map(|m| m.split_whitespace())
+            .map(|w| {
+                w.trim_matches([
+                    '.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '<', '>', '"', '\'',
+                ])
+            })
+            .any(|w| {
+                let (scheme, rest) = match w.split_once("://") {
+                    Some((s, r)) if matches!(s, "http" | "https") => (Some(s), r),
+                    Some(_) => return false,
+                    None => (None, w),
+                };
+                let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+                // A bare domain must look like a real site, not a file name.
+                if scheme.is_none() && !Self::bare_site_name(authority) {
+                    return false;
+                }
+                let Ok(said) =
+                    url::Url::parse(&format!("{}://{authority}", scheme.unwrap_or("https")))
+                else {
+                    return false;
+                };
+                // Userinfo in what the owner wrote is not a plain site name.
+                if !said.username().is_empty() || said.password().is_some() {
+                    return false;
+                }
+                // A site named with https is never used over plain http.
+                Self::nav_site(&said) == Some(site.clone())
+                    && (said.scheme() == url.scheme()
+                        || (scheme.is_none() && url.scheme() == "https"))
+            })
+    }
+
     /// A call that only the taint gate (not the policy, not an always-ask tool, not a floor)
     /// makes ask, on a bot whose level allows it: the card may offer "always for this chat".
     pub(crate) fn gate_grantable(
@@ -780,7 +916,7 @@ impl Shared {
         if ctx.initiator != InitiatorKind::Human {
             return false;
         }
-        if self.user_typed_url(ctx, name, input) {
+        if self.user_typed_url(ctx, name, input) || self.plain_navigation_waived(ctx, name, input) {
             return true;
         }
         Self::gate_key(name, input, ctx.page_origin.lock().as_deref()).is_some_and(
@@ -2144,6 +2280,18 @@ impl ExecPermit {
                     dest,
                 ));
             }
+        }
+        // Approving a plain navigation remembers its origin for this chat, but only for the
+        // silent ROOT navigation (see `plain_navigation_waived`); it never covers other paths.
+        if self.ctx.initiator == InitiatorKind::Human
+            && let Some(url) = Shared::plain_navigation(&self.name, &self.input)
+            && let Some((host, port)) = Shared::nav_site(&url)
+        {
+            self.sh.grants.lock().nav_origin.insert((
+                self.ctx.chat_id,
+                self.ctx.bot_id,
+                format!("{}://{host}:{port}", url.scheme()),
+            ));
         }
         // "Always" on a site's gate card remembers that origin for the bot (owner-confirmed).
         if gate_grant

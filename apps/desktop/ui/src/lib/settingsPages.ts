@@ -41,6 +41,7 @@ export const CARD_META: Record<string, CardMeta> = {
   times: { page: "general" },
   autostart: { page: "general" },
   keepInTray: { page: "general" },
+  quickAsk: { page: "general" },
   hotkey: { page: "general", advanced: true },
   onboarding: { page: "general" },
 
@@ -53,6 +54,7 @@ export const CARD_META: Record<string, CardMeta> = {
   photorealAvatars: { page: "appearance", advanced: true },
   background: { page: "appearance", advanced: true },
   frame: { page: "appearance", advanced: true },
+  accessibility: { page: "appearance" },
 
   detectedAccounts: { page: "models" },
   keys: { page: "models", learn: "apiKey" },
@@ -75,6 +77,7 @@ export const CARD_META: Record<string, CardMeta> = {
   "speak-replies": { page: "voice" },
   voice: { page: "voice" },
   dictation: { page: "voice" },
+  "voice-input": { page: "voice" },
 
   knowledge: { page: "data", learn: "memory" },
   memory: { page: "data", learn: "memory", risk: "memory" },
@@ -155,7 +158,7 @@ export function isCardShown(meta: CardMeta, mode: DetailMode, searching: boolean
 
 /** The app-held settings each page can reset; daemon-held state (permissions) resets separately. */
 const RESET_KEYS: Partial<Record<SettingsPageId, readonly (keyof AppSettings)[]>> = {
-  general: ["sendWith", "messageTimes", "autostart", "keepInTray", "stopHotkey"],
+  general: ["sendWith", "messageTimes", "autostart", "keepInTray", "quickAskEnabled", "quickAskHotkey", "stopHotkey"],
   appearance: [
     "themeMode",
     "accentColor",
@@ -173,10 +176,16 @@ const RESET_KEYS: Partial<Record<SettingsPageId, readonly (keyof AppSettings)[]>
     "transparentChat",
     "chatPanel",
     "transparencyOverride",
-    "photorealAvatars"
+    "photorealAvatars",
+    "textScale",
+    "density",
+    "dyslexiaFont",
+    "reduceMotion",
+    "reduceTransparency",
+    "focusRing"
   ],
   notifications: ["notifyNeedsYou", "notifyLongRun", "notifyFailed", "notifyPrivate", "quietHours", "mutedBotIds", "digestTime", "digestLastDay"],
-  voice: ["voiceName", "voiceRate", "speakReplies"]
+  voice: ["voiceName", "voiceRate", "speakReplies", "pttEnabled", "pttKey", "micDeviceId", "silenceStopSec"]
 };
 
 /** The settings patch that restores a page to the recommended values (null = nothing to reset). */

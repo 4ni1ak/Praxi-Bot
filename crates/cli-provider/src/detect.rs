@@ -70,7 +70,7 @@ pub enum AuthState {
 /// A detected coding CLI engine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DetectedCli {
-    /// Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `agy`).
+    /// Engine id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `agy`, `qwen`, `copilot`, `kiro`).
     pub id: String,
     /// Display name.
     pub display_name: String,
@@ -1277,16 +1277,21 @@ impl Detector {
     }
 
     async fn detect_fresh(&self) -> Vec<DetectedCli> {
-        let (claude, codex, cursor, opencode, gemini, agy) = tokio::join!(
+        let (claude, codex, cursor, opencode, gemini, agy, qwen, copilot, kiro) = tokio::join!(
             self.probe_claude(),
             self.probe_codex(),
             self.probe_cursor(),
             self.probe_opencode(),
             self.probe_gemini(),
             self.probe_agy(),
+            self.probe_qwen(),
+            self.probe_copilot(),
+            self.probe_unverified_auth("kiro"),
         );
 
-        let mut rows = vec![claude, codex, cursor, opencode, gemini, agy];
+        let mut rows = vec![
+            claude, codex, cursor, opencode, gemini, agy, qwen, copilot, kiro,
+        ];
         // Gemini CLI is retired (Antigravity replaces it): never offered for install,
         // listed only where it is already installed so that setup keeps working.
         rows.retain(|r| r.id != "gemini" || r.installed);
@@ -1655,7 +1660,23 @@ impl Detector {
     /// Antigravity CLI: version only. It has no auth-status command, and its login
     /// files are never read, so sign-in stays unknown.
     async fn probe_agy(&self) -> DetectedCli {
-        let (mut cli, resolved) = self.probe_engine_version("agy").await;
+        self.probe_unverified_auth("agy").await
+    }
+
+    /// Version probe only: the CLI has no sign-in evidence Praxi can read.
+    async fn probe_unverified_auth(&self, id: &str) -> DetectedCli {
+        let (mut cli, resolved) = self.probe_engine_version(id).await;
+        if cli.installed && resolved.is_some() && cli.detail.is_none() {
+            cli.detail = Some("auth_unverified".to_owned());
+        }
+        cli
+    }
+
+    /// GitHub Copilot CLI keeps its sign-in in the OS credential store (or, without one,
+    /// in `~/.copilot/config.json`, which also holds unrelated state) and has no status
+    /// command. A GitHub token in the environment is not evidence of a Copilot plan.
+    async fn probe_copilot(&self) -> DetectedCli {
+        let (mut cli, resolved) = self.probe_engine_version("copilot").await;
         if cli.installed && resolved.is_some() && cli.detail.is_none() {
             cli.detail = Some("auth_unverified".to_owned());
         }
@@ -1663,17 +1684,27 @@ impl Detector {
     }
 
     async fn probe_gemini(&self) -> DetectedCli {
-        let (mut cli, resolved) = self.probe_engine_version("gemini").await;
+        self.probe_oauth_file("gemini", ".gemini").await
+    }
+
+    /// Qwen Code has no auth-status command (`qwen auth` is removed in 0.28). Its OAuth
+    /// sign-in is `~/.qwen/oauth_creds.json`; API keys live in settings and are not evidence.
+    async fn probe_qwen(&self) -> DetectedCli {
+        self.probe_oauth_file("qwen", ".qwen").await
+    }
+
+    /// Version probe plus an exists-only check of `~/<dir>/oauth_creds.json` (never read).
+    async fn probe_oauth_file(&self, id: &str, dir: &str) -> DetectedCli {
+        let (mut cli, resolved) = self.probe_engine_version(id).await;
         if !cli.installed || resolved.is_none() || cli.detail.is_some() {
             return cli;
         }
 
-        // Check exists ~/.gemini/oauth_creds.json (exists check only, no read)
         let exists = self
             .env
             .home_dir
             .as_ref()
-            .map(|h| h.join(".gemini").join("oauth_creds.json"))
+            .map(|h| h.join(dir).join("oauth_creds.json"))
             .is_some_and(|p| std::fs::metadata(&p).is_ok_and(|m| m.is_file()));
 
         cli.auth = AuthState::Unknown;

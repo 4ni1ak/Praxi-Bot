@@ -12,6 +12,7 @@ import { parseDigestTime } from "../lib/digestNotify";
 import { DEFAULT_QUIET_HOURS, parseQuietHours, type QuietHours } from "../lib/quietHours";
 import { defaultWindowFrame } from "../lib/windowChrome";
 
+import { DEFAULT_PTT_KEY, DEFAULT_SILENCE_STOP_SEC, parseMicDeviceId, parsePttKey, parseSilenceStopSec } from "../lib/voiceInput";
 import { DEFAULT_VOICE_RATE, parseVoiceName, parseVoiceRate } from "../lib/voicePrefs";
 import { type MessageTimes, parseMessageTimes } from "../lib/messageTime";
 import {
@@ -42,6 +43,10 @@ export interface AppSettings extends AppearanceSettings {
   keepInTray: boolean;
   /** The one-time "still running in the tray" notice was shown. */
   trayNoticeSeen: boolean;
+  /** Global "Quick ask" hotkey and window (off by default). */
+  quickAskEnabled: boolean;
+  /** The Quick ask hotkey, e.g. `Ctrl+Alt+Space`. */
+  quickAskHotkey: string;
   /** OS notification when an approval or question waits (window unfocused). */
   notifyNeedsYou: boolean;
   /** ... when a run longer than 30 s finishes (window unfocused). */
@@ -80,8 +85,18 @@ export interface AppSettings extends AppearanceSettings {
   voiceRate: number;
   /** Read each finished bot reply aloud automatically. */
   speakReplies: boolean;
+  /** Push-to-talk: hold a key to dictate, release to send. Off by default. */
+  pttEnabled: boolean;
+  /** `KeyboardEvent.code` of the push-to-talk key. */
+  pttKey: string;
+  /** Chosen microphone `deviceId`; "" = the system default. */
+  micDeviceId: string;
+  /** Stop dictating after this many seconds of silence; 0 = off (click to stop). */
+  silenceStopSec: number;
   /** App version whose "What's new" card was last shown (or skipped); "" = never. */
   lastSeenVersion: string;
+  /** The "Getting started" checklist was put away from the empty chat (Help still shows it). */
+  gettingStartedHidden: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -98,6 +113,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autostart: false,
   keepInTray: false,
   trayNoticeSeen: false,
+  quickAskEnabled: false,
+  quickAskHotkey: "Ctrl+Alt+Space",
   notifyNeedsYou: true,
   notifyLongRun: true,
   notifyFailed: true,
@@ -117,7 +134,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   voiceName: "",
   voiceRate: DEFAULT_VOICE_RATE,
   speakReplies: false,
-  lastSeenVersion: ""
+  pttEnabled: false,
+  pttKey: DEFAULT_PTT_KEY,
+  micDeviceId: "",
+  silenceStopSec: DEFAULT_SILENCE_STOP_SEC,
+  lastSeenVersion: "",
+  gettingStartedHidden: false
 };
 
 export function shouldOpenOnboardingOnStart(
@@ -174,7 +196,12 @@ export function loadSettingsSync(): AppSettings | null {
       voiceName: parseVoiceName(parsed.voiceName),
       voiceRate: parseVoiceRate(parsed.voiceRate),
       speakReplies: parsed.speakReplies === true,
-      lastSeenVersion: typeof parsed.lastSeenVersion === "string" ? parsed.lastSeenVersion : ""
+      pttEnabled: parsed.pttEnabled === true,
+      pttKey: parsePttKey(parsed.pttKey),
+      micDeviceId: parseMicDeviceId(parsed.micDeviceId),
+      silenceStopSec: parseSilenceStopSec(parsed.silenceStopSec),
+      lastSeenVersion: typeof parsed.lastSeenVersion === "string" ? parsed.lastSeenVersion : "",
+      gettingStartedHidden: parsed.gettingStartedHidden === true
     };
   } catch {
     return null;
@@ -225,6 +252,10 @@ export async function loadSettings(): Promise<AppSettings> {
       const trayNoticeSeen =
         (await store.get<boolean>("trayNoticeSeen")) ??
         DEFAULT_SETTINGS.trayNoticeSeen;
+      const quickAskEnabled =
+        (await store.get<boolean>("quickAskEnabled")) ?? DEFAULT_SETTINGS.quickAskEnabled;
+      const quickAskHotkey =
+        (await store.get<string>("quickAskHotkey")) ?? DEFAULT_SETTINGS.quickAskHotkey;
       const notifyNeedsYou =
         (await store.get<boolean>("notifyNeedsYou")) ??
         DEFAULT_SETTINGS.notifyNeedsYou;
@@ -262,8 +293,13 @@ export async function loadSettings(): Promise<AppSettings> {
       const voiceName = parseVoiceName(await store.get<string>("voiceName"));
       const voiceRate = parseVoiceRate(await store.get<number>("voiceRate"));
       const speakReplies = (await store.get<boolean>("speakReplies")) === true;
+      const pttEnabled = (await store.get<boolean>("pttEnabled")) === true;
+      const pttKey = parsePttKey(await store.get<string>("pttKey"));
+      const micDeviceId = parseMicDeviceId(await store.get<string>("micDeviceId"));
+      const silenceStopSec = parseSilenceStopSec(await store.get<number>("silenceStopSec"));
       const lastSeen = await store.get<string>("lastSeenVersion");
       const lastSeenVersion = typeof lastSeen === "string" ? lastSeen : "";
+      const gettingStartedHidden = (await store.get<boolean>("gettingStartedHidden")) === true;
 
       return {
         ...appearance,
@@ -279,6 +315,8 @@ export async function loadSettings(): Promise<AppSettings> {
         autostart,
         keepInTray,
         trayNoticeSeen,
+        quickAskEnabled,
+        quickAskHotkey,
         notifyNeedsYou,
         notifyLongRun,
         notifyFailed,
@@ -298,7 +336,12 @@ export async function loadSettings(): Promise<AppSettings> {
         voiceName,
         voiceRate,
         speakReplies,
-        lastSeenVersion
+        pttEnabled,
+        pttKey,
+        micDeviceId,
+        silenceStopSec,
+        lastSeenVersion,
+        gettingStartedHidden
       };
     } catch {
       // Fall back to localStorage below if reading from plugin-store fails
@@ -333,6 +376,8 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
       await store.set("autostart", settings.autostart);
       await store.set("keepInTray", settings.keepInTray);
       await store.set("trayNoticeSeen", settings.trayNoticeSeen);
+      await store.set("quickAskEnabled", settings.quickAskEnabled);
+      await store.set("quickAskHotkey", settings.quickAskHotkey);
       await store.set("notifyNeedsYou", settings.notifyNeedsYou);
       await store.set("notifyLongRun", settings.notifyLongRun);
       await store.set("notifyFailed", settings.notifyFailed);
@@ -352,7 +397,12 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
       await store.set("voiceName", settings.voiceName);
       await store.set("voiceRate", settings.voiceRate);
       await store.set("speakReplies", settings.speakReplies);
+      await store.set("pttEnabled", settings.pttEnabled);
+      await store.set("pttKey", settings.pttKey);
+      await store.set("micDeviceId", settings.micDeviceId);
+      await store.set("silenceStopSec", settings.silenceStopSec);
       await store.set("lastSeenVersion", settings.lastSeenVersion);
+      await store.set("gettingStartedHidden", settings.gettingStartedHidden);
       await store.save();
     } catch {
       // Ignore store write errors in non-Tauri environments

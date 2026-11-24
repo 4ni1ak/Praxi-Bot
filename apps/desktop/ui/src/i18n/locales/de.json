@@ -21,7 +21,7 @@
     "auth_key": "Schlüsseldatei",
     "cancelNote": "Beim Abbrechen wird zuerst der laufende Schritt beendet.",
     "cancelled": "Einrichtung abgebrochen",
-    "cancelledBody": "Es wurde nichts weiter getan. Du kannst jederzeit neu beginnen.",
+    "cancelledBody": "Es ist nichts passiert. Du kannst jederzeit neu beginnen.",
     "checks": {
       "login": {
         "fix": "Prüfe Benutzernamen und Schlüsseldatei. Siehe die Erklärung weiter unten.",
@@ -72,7 +72,7 @@
     "connect": "Verbinden",
     "copied": "Details kopiert.",
     "copy": "Details kopieren",
-    "copyFailed": "Kopieren nicht möglich.",
+    "copyFailed": "Kopieren hat nicht geklappt.",
     "done": {
       "open": {
         "body": "Wähle den Server oben im Computer-Menü. Dann kannst du mit seinen Bots chatten, seinen Bildschirm ansehen und sein Terminal öffnen.",
@@ -366,7 +366,7 @@
       "pair": "Diesen Computer koppeln",
       "verify": "Prüfen, ob es funktioniert"
     },
-    "startFailed": "Start nicht möglich. Prüfe die Details oben und versuche es erneut.",
+    "startFailed": "Der Start hat nicht geklappt. Prüfe die Details oben und versuche es noch mal.",
     "starting": "Startet …",
     "state": {
       "done": "Fertig",
@@ -395,7 +395,7 @@
     "boundaryBody": "Die App kann einen Skill noch nicht selbst im Skills-Ordner speichern. Dein Skill hat in der App eine vorläufige Prüfung bestanden; ob er geladen wird, entscheidet der Hintergrunddienst. Lege die Datei einmal ab und drücke dann „Prüfen“.",
     "boundaryTitle": "Vorerst ein manueller Schritt",
     "check": "Prüfen",
-    "checkFailed": "Prüfung nicht möglich",
+    "checkFailed": "Prüfen hat nicht geklappt",
     "checking": "Wird geprüft …",
     "chooseFile": "SKILL.md wählen",
     "continue": "Weiter",
@@ -420,17 +420,17 @@
     "installSubtitle": "Lege die Datei im Skills-Ordner ab und prüfe sie.",
     "issue": {
       "bodyEmpty": "Schreibe die Anweisungen.",
-      "descriptionEmpty": "Eine Beschreibung ist erforderlich.",
+      "descriptionEmpty": "Bitte eine Beschreibung angeben.",
       "descriptionLines": "Die Beschreibung muss eine einzelne Zeile sein.",
       "descriptionLong": "Die Beschreibung darf höchstens 200 Zeichen lang sein.",
       "nameChars": "Verwende nur Kleinbuchstaben, Ziffern, - _ und .",
       "nameDots": "Der Name darf kein „..“ enthalten und nicht mit einem Punkt enden.",
-      "nameEmpty": "Ein Name ist erforderlich.",
+      "nameEmpty": "Bitte einen Namen angeben.",
       "nameLength": "Der Name darf höchstens 64 Zeichen lang sein.",
       "nameStart": "Der Name muss mit einem Buchstaben oder einer Ziffer beginnen.",
       "nameTaken": "Ein Skill mit diesem Namen existiert bereits.",
       "tooLarge": "Der Skill ist größer als 64 KB.",
-      "versionEmpty": "Eine Version ist erforderlich."
+      "versionEmpty": "Bitte eine Version angeben."
     },
     "keywords": "Stichwörter",
     "keywordsPlaceholder": "rechnung, zahlung",
@@ -479,6 +479,37 @@
       "theme": "Designfarbe",
       "themeHint": "Die eigene Akzentfarbe des Designs.",
       "title": "Akzent"
+    },
+    "accessibility": {
+      "densities": {
+        "comfortable": "Normal",
+        "compact": "Kompakt",
+        "spacious": "Großzügig"
+      },
+      "density": "Abstände",
+      "description": "Macht die App leichter lesbar und bedienbar. Änderungen wirken sofort und werden nur auf diesem Gerät gespeichert.",
+      "dyslexiaFont": {
+        "hint": "Verwendet die Schrift OpenDyslexic mit etwas mehr Zeilenabstand.",
+        "title": "Legasthenie-freundliche Schrift"
+      },
+      "focusRing": "Fokusrahmen",
+      "focusRings": {
+        "extra": "Extra dick",
+        "normal": "Normal",
+        "thick": "Dick"
+      },
+      "highContrastHint": "Für den stärksten Kontrast wählen Sie unter Design das Design „Hoher Kontrast“ (dunkel oder hell).",
+      "previewSample": "Beispiel: So sehen Ihre Nachrichten und Einstellungen aus.",
+      "reduceMotion": {
+        "hint": "Stoppt Animationen und Übergänge; der Live-Hintergrund steht still.",
+        "title": "Bewegung reduzieren"
+      },
+      "reduceTransparency": {
+        "hint": "Panels werden immer deckend gezeichnet, auch wenn Windows Transparenzeffekte erlaubt.",
+        "title": "Transparenz reduzieren"
+      },
+      "textSize": "Schriftgröße",
+      "title": "Barrierefreiheit"
     },
     "backdrop": {
       "all": "Alle Hintergründe",
@@ -828,7 +859,114 @@
       "label": "Werkzeuge, die Bots nutzen dürfen",
       "restricted": "Einige Werkzeuge sind durch eine eigene Erlaubnisliste eingeschränkt; bearbeite sie in den Servereinstellungen."
     },
+    "trust": {
+      "badgeAsks": "Fragt immer",
+      "badgeTrusted": "Kennzeichnungen vertraut",
+      "explain": "Ein Server kennzeichnet jedes Werkzeug als schreibgeschützt oder nicht. Bei „Nein“ fragt jede Aktion zuerst nach. Bei „Ja“ laufen nur als schreibgeschützt gekennzeichnete Werkzeuge ohne Nachfrage; alles, was etwas ändert oder löscht, fragt weiterhin nach. Sie können das später in den Einstellungen der App ändern.",
+      "learn": "Mehr erfahren",
+      "no": "Nein, bei jeder Aktion nachfragen",
+      "question": "Vertrauen Sie diesem Server, seine eigenen Werkzeuge ehrlich zu beschreiben?",
+      "savedNo": "{{name}}: Jede Aktion fragt wieder nach.",
+      "savedYes": "{{name}}: Die lesenden Werkzeuge laufen jetzt ohne Nachfrage.",
+      "yes": "Ja, nur lesende Werkzeuge ohne Nachfrage ausführen"
+    },
     "usedBy": "Genutzt von"
+  },
+  "audit": {
+    "action": "Technischer Name",
+    "actor": {
+      "bot": "Ein Bot",
+      "system": "Praxi selbst",
+      "user": "Sie"
+    },
+    "all": "Alle",
+    "anyTime": "Jederzeit",
+    "bot": "Bot",
+    "close": "Schließen",
+    "copied": "Details kopiert.",
+    "copy": "Details kopieren",
+    "copyFailed": "Kopieren fehlgeschlagen.",
+    "description": "Sehen Sie, was genehmigt, geändert, importiert oder benutzt wurde und von wem. Geheimnisse bleiben verborgen.",
+    "details": "Details",
+    "detailsNote": "Technische Details ohne Geheimnisse.",
+    "empty": "Keine passenden Ereignisse.",
+    "event": {
+      "bot_create": "Ein Bot wurde erstellt",
+      "bot_delete": "Ein Bot wurde gelöscht",
+      "bot_update": "Die Einstellungen eines Bots wurden geändert",
+      "checkpoint_restored": "Dateien wurden auf einen früheren Stand zurückgesetzt",
+      "components_install_started": "Eine Komponenteninstallation wurde gestartet",
+      "composio_call": "Eine verbundene App wurde benutzt",
+      "composio_key_removed": "Ein Schlüssel einer App-Verbindung wurde entfernt",
+      "composio_key_set": "Ein Schlüssel einer App-Verbindung wurde gespeichert",
+      "doctor_repair": "Eine Reparatur wurde ausgeführt",
+      "engine_killed": "Die Engine eines Bots wurde gestoppt",
+      "engine_updated": "Die Engine eines Bots wurde geändert",
+      "fill_grant_revoke": "Die Erlaubnis, ein Geheimnis einzutragen, wurde entzogen",
+      "fill_secret_delete": "Ein gespeichertes Geheimnis wurde gelöscht",
+      "grant_always": "Immer erlauben wurde erteilt",
+      "host_invite": "Ein Gerät wurde eingeladen",
+      "host_link_connect": "Ein Server wurde verbunden",
+      "host_link_disconnect": "Ein Server wurde getrennt",
+      "host_update_start": "Ein Server-Update wurde gestartet",
+      "input_batch_authorized": "Maus- und Tastatursteuerung wurde erlaubt",
+      "knowledge_embedding_approved": "Das Senden von Notizen zur Indexierung wurde genehmigt",
+      "llm_call_started": "Ein KI-Modell wurde aufgerufen",
+      "mcp_token_created": "Ein Zugangsschlüssel für Werkzeuge wurde erstellt",
+      "mcp_token_revoked": "Ein Zugangsschlüssel für Werkzeuge wurde widerrufen",
+      "mcp_tool_called": "Ein externes Werkzeug wurde benutzt",
+      "peer_decision_completed": "Die Anfrage eines gekoppelten Geräts wurde entschieden",
+      "peer_decision_requested": "Ein gekoppeltes Gerät bat um Genehmigung",
+      "profile_export": "Ein Bot-Profil wurde exportiert",
+      "profile_import": "Ein Bot-Profil wurde importiert",
+      "provider_cli_enable": "Eine KI-Engine für die Kommandozeile wurde eingeschaltet",
+      "question_answered": "Eine Frage eines Bots wurde beantwortet",
+      "skill_update_requested": "Ein Skill-Update wurde angefordert",
+      "takeover_active": "Sie haben die Steuerung des Bildschirms übernommen",
+      "trusted_folder_add": "Ein Ordner wurde als vertrauenswürdig markiert",
+      "trusted_folder_remove": "Ein Ordner ist nicht mehr vertrauenswürdig",
+      "unknown": "Andere Aktivität",
+      "usage": "Ein KI-Modellaufruf wurde erfasst"
+    },
+    "exportCsv": "Als CSV exportieren",
+    "exportDone": "Exportiert. Geheimnisse sind in der Datei verborgen.",
+    "exportFailed": "Der Export ist fehlgeschlagen.",
+    "exportJson": "Als JSON exportieren",
+    "failed": "Das Aktivitätsprotokoll konnte nicht geladen werden.",
+    "filterActor": "Wer",
+    "filterBot": "Bot",
+    "filterKind": "Art",
+    "filterTime": "Zeitraum",
+    "kind": {
+      "approval": "Genehmigungen",
+      "import": "Importe",
+      "key_use": "Nutzung von Schlüsseln und Apps",
+      "other": "Andere",
+      "permission": "Berechtigungsänderungen",
+      "takeover": "Übernahmen",
+      "update": "Updates und Installationen"
+    },
+    "last24h": "Letzte 24 Stunden",
+    "last30d": "Letzte 30 Tage",
+    "last7d": "Letzte 7 Tage",
+    "loading": "Wird geladen…",
+    "next": "Ältere",
+    "open": "Aktivitätsprotokoll öffnen",
+    "prev": "Neuere",
+    "privacy": "Nur Sie sehen dies. Geheimnisse und Schlüssel werden vor der Anzeige und dem Export verborgen.",
+    "range": "{{from}}–{{to}} von {{total}}",
+    "retry": "Erneut versuchen",
+    "search": "Suchen",
+    "title": "Aktivitätsprotokoll",
+    "type": "Art",
+    "verify": "Integrität prüfen",
+    "verifyFailed": "Die Prüfung konnte nicht ausgeführt werden.",
+    "verifyNote": "Dieses Protokoll ist nicht kryptografisch signiert: Die Prüfung findet entfernte, nicht geänderte Einträge.",
+    "verifyOk": "Keine Probleme: {{count}} Ereignisse, keine fehlen, und das Protokoll kann nur ergänzt werden.",
+    "verifyProblem": "Warnung: {{missing}} Ereignisse fehlen oder der Schutz ist aus. Behandeln Sie dieses Protokoll mit Vorsicht.",
+    "what": "Was passierte",
+    "when": "Wann",
+    "who": "Wer"
   },
   "backdrop": {
     "names": {
@@ -880,7 +1018,7 @@
     },
     "customHint": "Für ein Modell, das die Auswahllisten nicht enthalten. Gib es als provider/model ein.",
     "customIssue": {
-      "empty": "Das Hauptmodell ist erforderlich.",
+      "empty": "Bitte ein Hauptmodell wählen.",
       "noModel": "Füge das Modell nach dem Anbieter hinzu: provider/model.",
       "spaces": "Eine Modell-ID darf keine Leerzeichen enthalten."
     },
@@ -891,9 +1029,9 @@
     "deleteBlocked": "Dieser Bot hat noch Chats ({{count}}) und kann daher nicht gelöscht werden. Nur ein Bot ohne Chats oder Läufe kann entfernt werden.",
     "deleteBlockedRuns": "Dieser Bot hat noch gespeicherte Läufe ({{count}}) und kann daher nicht gelöscht werden. Nur ein Bot ohne Chats oder Läufe kann entfernt werden.",
     "deleteBlockedRuns_one": "Dieser Bot hat noch einen gespeicherten Lauf ({{count}}) und kann daher nicht gelöscht werden. Nur ein Bot ohne Chats oder Läufe kann entfernt werden.",
-    "deleteConfirmBody": "Der Bot, sein Zugriff auf Apps und seine E-Mail-Konten werden entfernt. Dies kann nicht rückgängig gemacht werden. Ein Bot, der noch Chats oder Läufe hat, kann nicht gelöscht werden: In diesem Fall wird nichts entfernt, und du siehst den Grund.",
+    "deleteConfirmBody": "Der Bot, sein Zugriff auf Apps und seine E-Mail-Konten werden entfernt, und die Erinnerungen, die nur dieser Bot gelernt hat, werden endgültig gelöscht. Mit deinen anderen Bots geteilte Erinnerungen bleiben. Dies kann nicht rückgängig gemacht werden. Ein Bot, der noch Chats oder Läufe hat, kann nicht gelöscht werden: In diesem Fall wird nichts entfernt, und du siehst den Grund.",
     "deleteConfirmTitle": "{{name}} löschen?",
-    "deleteHint": "Entfernt den Bot, seinen Zugriff auf Apps und seine E-Mail-Konten. Nur möglich, solange er keine Chats oder Läufe hat. Dies kann nicht rückgängig gemacht werden.",
+    "deleteHint": "Entfernt den Bot, seinen Zugriff auf Apps, seine E-Mail-Konten und die Erinnerungen, die nur er gelernt hat. Nur möglich, solange er keine Chats oder Läufe hat. Dies kann nicht rückgängig gemacht werden.",
     "deleteTitle": "Diesen Bot löschen",
     "deleted": "{{name}} wurde gelöscht.",
     "discard": "Verwerfen",
@@ -1047,7 +1185,7 @@
     "engine": {
       "title": "Motor"
     },
-    "executorRequired": "Das Ausführungsmodell ist erforderlich.",
+    "executorRequired": "Bitte ein Ausführungsmodell wählen.",
     "files": {
       "computer": {
         "hint": "Dateien überall lesen, wo du kannst. Geschützte Bereiche (Praxi-Daten, Passwörter, CLI-Einstellungen, Systemordner) bleiben tabu. Änderungen fragen weiterhin gemäß der Berechtigungsstufe nach.",
@@ -1071,7 +1209,7 @@
     "manageBotsHint": "Erlaubt diesem Bot, andere Bots zu erstellen und zu verwalten. Er kann ihnen nie mehr geben, als er selbst hat, und du gibst jede Änderung vollständig frei.",
     "models": "Modelle",
     "name": "Name",
-    "nameRequired": "Ein Name ist erforderlich.",
+    "nameRequired": "Bitte einen Namen angeben.",
     "permissions": "Berechtigungen",
     "persona": "Persönlichkeit",
     "personaPlaceholder": "Wie soll sich dieser Bot verhalten? (Systemanweisung)",
@@ -1543,22 +1681,52 @@
     },
     "attach": {
       "add": "Dateien oder Bilder anhängen",
-      "failed": "Diese Datei konnte nicht angehängt werden",
+      "command": "Sende Dateien mit einer normalen Nachricht. Entferne sie, bevor du einen Schrägstrichbefehl verwendest.",
+      "delivery": "Neue Dateien bleiben bis zum Senden in diesem Browser. Beim Senden werden sie auf den Computer des Chats kopiert. Bilder oder ausgelesener Text werden an den gewählten KI-Anbieter übermittelt.",
+      "details": "Ziel der Dateien und Größenlimits",
+      "documentHelp": "Dokumenttext wird als nicht vertrauenswürdige Daten behandelt, niemals als Anweisungen. Gescannte PDFs enthalten möglicherweise keinen lesbaren Text. Beim Verkleinern eines animierten Bildes wird das erste Einzelbild verwendet.",
+      "empty": "Diese Datei ist leer. Wähle eine Datei mit Inhalt.",
+      "failed": "Die Datei ließ sich nicht anhängen. Entferne sie und versuche es noch mal.",
+      "footer": "Beheben Sie Dateifehler oder entfernen Sie die Dateien vor dem Senden. Bereits kopierte Dateien bleiben auf dem Computer des Chats, auch wenn sie hier entfernt werden.",
+      "imageFailed": "Das Bild ließ sich nicht vorbereiten. Versuche ein kleineres PNG-, JPEG-, GIF- oder WebP-Bild.",
+      "imageTooLarge": "Das Bild ist auch nach dem Verkleinern zu groß. Wähle ein Bild unter 5 MB.",
+      "limits": "Bis zu 6 Dateien; jeweils 15 MB, Textdateien 1 MB, vorbereitete Bilder 5 MB. Bilder über 2048 Pixel werden verkleinert.",
       "list": "Angehängte Dateien",
+      "local": "Im Browser bereit",
+      "localNotice": "Neue Dateien bleiben bis zum Senden in diesem Browser.",
       "pastedName": "Eingefügte Datei",
+      "preparing": "Wird in diesem Browser vorbereitet…",
+      "providerImage": "An die KI: dieses Bild",
+      "providerText": "An die KI: ausgelesener Text (nicht vertrauenswürdig)",
+      "ready": "Bereit zum Senden",
       "remove": "{{name}} entfernen",
+      "resized": "Bild verkleinert",
+      "retry": "{{name}} für einen weiteren Sendeversuch vorbereiten",
+      "stored": "Auf dem Computer des Chats gespeichert",
+      "textTooLarge": "Textdateien dürfen höchstens 1 MB groß sein. Wähle eine kleinere Datei.",
       "tooLarge": "Zu groß (höchstens 15 MB)",
       "tooMany": "Höchstens 6 Dateien pro Nachricht",
       "truncated": "Nur der Anfang dieser Datei wurde gelesen",
-      "unsupported": "Dieser Dateityp wird nicht unterstützt. Nutze ein Bild, PDF, Word, Excel, PowerPoint oder eine Textdatei.",
-      "uploading": "Wird hochgeladen"
+      "unsupported": "Verwende PNG, JPEG, GIF, WebP, PDF, DOCX, XLSX, PPTX oder eine UTF-8-Textdatei. Audio, Video und andere Binärdateien gehen nicht.",
+      "untrusted": "Nicht vertrauenswürdiger Dateiinhalt",
+      "uploading": "Wird auf den Computer des Chats kopiert…"
     },
     "chain": {
       "details": "Details",
       "groupApp": "{{app}} ×{{count}}",
       "groupSame": "{{what}} ×{{count}}",
+      "groupSite": "{{host}} besucht",
       "problems_one": "{{count}} Schritt fehlgeschlagen",
       "problems_other": "{{count}} Schritte fehlgeschlagen",
+      "reason": {
+        "blocked": "Von dir blockiert",
+        "noAnswer": "Keine Antwort rechtzeitig",
+        "other": "Hat nicht geklappt",
+        "stopped": "Vor dem Ende gestoppt",
+        "timeout": "Zeitüberschreitung",
+        "timeoutAfter": "Zeitüberschreitung nach {{seconds}} s"
+      },
+      "showAll": "{{count}} weitere Schritte anzeigen",
       "slow": "Dauert länger als üblich",
       "started": "Gestartet {{start}}",
       "startedFinished": "Gestartet {{start}} · beendet {{end}}",
@@ -1568,6 +1736,8 @@
         "running": "Arbeitet",
         "skipped": "Übersprungen"
       },
+      "stepCount_one": "{{count}} Schritt",
+      "stepCount_other": "{{count}} Schritte",
       "summary": "{{count}} Schritte · {{what}} · {{duration}}",
       "summaryPlain": "{{count}} Schritte · {{duration}}",
       "thought": "Nachgedacht: {{duration}}",
@@ -2114,12 +2284,32 @@
     "working": "Arbeitet …",
     "yesterdayLabel": "Gestern"
   },
+  "chatExport": {
+    "approvals": "Freigabe-Antworten (erlaubt oder abgelehnt)",
+    "copied": "Als Markdown kopiert",
+    "copy": "Als Markdown kopieren",
+    "copyFailed": "Kopieren war nicht möglich. Speichern Sie stattdessen die Datei.",
+    "format": "Dateityp",
+    "formats": {
+      "html": "Webseite (HTML)",
+      "json": "Datendatei (JSON)",
+      "markdown": "Textdatei (Markdown)"
+    },
+    "include": "Enthalten",
+    "loading": "Vorschau wird vorbereitet…",
+    "menu": "Chat exportieren…",
+    "messages": "Nachrichten",
+    "previewClipped": "Die Vorschau zeigt nur den Anfang. Die Datei enthält alles.",
+    "previewLabel": "Vorschau des exportierten Chats",
+    "privacy": "Passwörter, Schlüssel, private Nachrichten und Ihr Benutzerordner werden entfernt, bevor etwas angezeigt oder gespeichert wird. Angehängte Dateien sind nicht enthalten.",
+    "save": "Datei speichern…",
+    "steps": "Schritte des Bots",
+    "title": "Chat exportieren"
+  },
   "chatHistory": {
     "count": "{{count}} passende Nachrichten",
     "count_one": "{{count}} passende Nachricht",
     "count_other": "{{count}} passende Nachrichten",
-    "exportJson": "Als JSON exportieren",
-    "exportMarkdown": "Als Markdown exportieren",
     "more": "Weitere Ergebnisse",
     "noneYet": "Auf dieser Seite noch keine sichtbaren Treffer",
     "results": "Ergebnisse der Nachrichtensuche",
@@ -2133,7 +2323,7 @@
     "archivedToggle": "Archiviert ({{count}})",
     "delete": "Löschen",
     "deleteActiveRun": "In diesem Chat ist gerade ein Lauf aktiv. Stoppe ihn zuerst, bevor du den Chat löschst.",
-    "deleteBody": "„{{title}}“ und alle zugehörigen Nachrichten werden dauerhaft gelöscht. Das lässt sich nicht rückgängig machen.",
+    "deleteBody": "\"{{title}}\" und die Nachrichten werden endgültig gelöscht und erscheinen auch nicht mehr in der Suche in früheren Gesprächen. Dies kann nicht rückgängig gemacht werden.",
     "deleteConfirm": "Chat löschen",
     "deleteTitle": "Diesen Chat löschen?",
     "empty": "Drücke „Neuer Chat“ und schreibe, was du brauchst. Deine Chats werden hier gespeichert.",
@@ -2369,6 +2559,12 @@
     "sending": "Wird verschoben …",
     "summary": "{{done}} verschoben, {{skipped}} übersprungen, {{failed}} fehlgeschlagen.",
     "title": "Diesen Server zum Zuhause meiner Bots machen"
+  },
+  "deepLinks": {
+    "blocked": "Schließe deine aktuelle Arbeit ab, bevor du diesen Link öffnest.",
+    "invalid": "Dieser Praxi-Link ist ungültig.",
+    "missing": "Das Ziel dieses Links ist auf dem ausgewählten Computer nicht verfügbar.",
+    "offline": "Der ausgewählte Computer ist nicht erreichbar. Öffne den Link erneut, sobald er online ist."
   },
   "dev": {
     "runningLabel": "Bot-Lauf aktiv",
@@ -3255,6 +3451,15 @@
     "saved": "Vertrauenswürdig: {{folder}}",
     "title": "Vertrauenswürdige Ordner"
   },
+  "gettingStarted": {
+    "allDone": "Alles bereit. Hier ist alles erledigt.",
+    "hide": "Auf dem Startbildschirm ausblenden",
+    "progress": "{{done}} von {{total}} erledigt",
+    "show": "Auf dem Startbildschirm wieder anzeigen",
+    "stateDone": "erledigt",
+    "stateOpen": "noch nicht erledigt",
+    "title": "Erste Schritte"
+  },
   "health": {
     "connected": "Lokaler Dienst läuft",
     "connecting": "Der lokale Dienst wird gestartet …",
@@ -3295,6 +3500,7 @@
     "closePanel": "Seitenpanel schließen",
     "dialogClose": "Dialog schließen",
     "dialogFocus": "Fokus im Dialog verschieben",
+    "dictatePtt": "Sprechtaste gedrückt halten zum Diktieren, loslassen zum Senden (in Einstellungen > Sprache einschalten)",
     "exitLiveFocus": "Tastatursteuerung der Live-Ansicht verlassen",
     "findInChat": "In diesem Chat suchen",
     "findNav": "Nächster / vorheriger Treffer in der Suchleiste, schließen",
@@ -3321,6 +3527,81 @@
     "title": "Tastenkürzel",
     "voiceCallEnd": "Sprachanruf beenden",
     "voiceCallTalk": "Im Push-to-Talk-Anruf zum Sprechen halten"
+  },
+  "helpers": {
+    "add": {
+      "address": "Serveradresse",
+      "addressHint": "Zum Beispiel Ollama, LM Studio, OpenRouter, Mistral oder Together.",
+      "cancel": "Abbrechen",
+      "compatible": "Andere (OpenAI-kompatibel)",
+      "dimensions": "Vektorgröße",
+      "dimensionsHint": "Lassen Sie die vorgeschlagene Zahl stehen, außer Ihr Anbieter nennt eine andere.",
+      "key": "API-Schlüssel",
+      "keyOptional": "Leer lassen, wenn der Server keinen Schlüssel braucht.",
+      "keyStored": "Wird sicher auf diesem Computer gespeichert und nie wieder angezeigt.",
+      "kind": "Anbieter",
+      "model": "Modell",
+      "open": "Embedding-Anbieter hinzufügen",
+      "otherName": "diesen Server",
+      "reuseGemini": "Den bereits hinzugefügten Gemini-Schlüssel verwenden",
+      "save": "Anbieter speichern",
+      "use": "Verwenden für"
+    },
+    "allowSending": "Praxi darf meinen Text an diesen Anbieter senden",
+    "decision": {
+      "custom": "Sie haben das von Hand in decider.toml eingerichtet.",
+      "description": "Ein kleiner Online-Helfer, der bei einfachen Fragen schnell berät. Er kann nur beraten: Er kann nie eine Erlaubnis erteilen oder etwas genehmigen.",
+      "limits": "Kostenlose Limits: {{rpm}} Anfragen pro Minute, {{tpm}} Texteinheiten pro Minute, {{rpd}} Anfragen pro Tag (geprüft am {{date}}).",
+      "needKey": "Fügen Sie zuerst einen Gemini-Schlüssel hinzu.",
+      "off": "Aus",
+      "on": "An",
+      "title": "Entscheidungshelfer",
+      "turnOff": "Ausschalten",
+      "turnOn": "Einschalten"
+    },
+    "description": "Zusätzliche Dienste, die Gedächtnis und Entscheidungen klüger machen. Für die Nutzung von Praxi ist hier nichts nötig.",
+    "embeddings": {
+      "description": "Mit Embeddings findet Praxi Notizen und Erinnerungen nach ihrer Bedeutung, nicht nur nach genauen Wörtern. Ohne Anbieter nutzt Praxi eine einfache Offline-Methode, und nichts verlässt diesen Computer.",
+      "none": "Noch kein Anbieter: Praxi nutzt seine Offline-Methode.",
+      "title": "Bedeutungssuche (Embeddings)"
+    },
+    "fallbackNote": "Ist ein Anbieter ausgelastet, ohne freies Kontingent oder nicht erreichbar, nimmt Praxi den nächsten und zuletzt die Offline-Methode. Ein kostenloses Limit wird nie absichtlich überschritten.",
+    "keyOptional": "Ein Gemini-Schlüssel ist optional; ein kostenloser Schlüssel bringt Ihnen ein klügeres Gedächtnis und schnellere Entscheidungen.",
+    "learnMore": "Mehr erfahren",
+    "privacy": {
+      "agree": "Ich verstehe das und erlaube das Senden von Text an {{provider}}",
+      "notice": "Der Text Ihrer Notizen, Erinnerungen und Dokumente wird an {{provider}} gesendet, damit er nach Bedeutung durchsucht werden kann.",
+      "safeguards": "Passwörter und Schlüssel werden vorher entfernt. Als privat Markiertes wird nie gesendet. Sie können das jederzeit ausschalten."
+    },
+    "purpose": {
+      "memory": "Erinnerungen abrufen",
+      "router": "Die passende Abkürzung oder das passende Werkzeug wählen"
+    },
+    "remote": "Öffnen Sie die Einstellungen auf diesem Computer, um Helfer zu ändern.",
+    "remove": "Entfernen",
+    "retryIn": "erneut in {{seconds}} s",
+    "state": {
+      "cooling_down": "Macht kurz Pause",
+      "dimension_mismatch": "Antworten haben die falsche Größe",
+      "key_missing": "Kein Schlüssel gespeichert",
+      "key_rejected": "Schlüssel wurde abgelehnt",
+      "not_allowed": "Wartet auf Ihre Erlaubnis",
+      "offline": "Nicht erreichbar",
+      "ok": "Funktioniert",
+      "rate_limited": "Kostenloses Limit erreicht, wartet",
+      "rejected": "Anfrage wurde abgelehnt",
+      "unavailable": "Auf diesem Computer nicht verfügbar"
+    },
+    "test": "Verbindung testen",
+    "testOk": "Verbindung funktioniert",
+    "title": "Helfer (optional)",
+    "usage": {
+      "noLimit": "{{used}} genutzt",
+      "of": "{{used}} von {{limit}}",
+      "perDay": "Anfragen pro Tag",
+      "perMinute": "Anfragen pro Minute",
+      "tokensPerMinute": "Textmenge pro Minute"
+    }
   },
   "home": {
     "admin": {
@@ -3859,10 +4140,21 @@
     "editLabel": "Erinnerungstext",
     "empty": "Dein Bot merkt sich hier nützliche Dinge, etwa deinen Namen. Erzähle ihm im Chat etwas oder füge unten selbst eine Erinnerung hinzu.",
     "emptyTitle": "Noch keine Erinnerungen",
+    "erase": "Endgültig löschen",
+    "eraseBody": "Der Text wird überall entfernt, auch aus dem Rückgängig-Verlauf, und lässt sich nicht wiederherstellen. Frühere Backups können ihn noch enthalten; beim Wiederherstellen eines Backups kann der Eintrag zurückkehren.",
+    "eraseConfirm": "Endgültig löschen",
+    "eraseTitle": "Diesen Gedächtniseintrag endgültig löschen?",
+    "erasedNotice": "Gedächtniseintrag endgültig gelöscht.",
     "expires": "läuft am {{date}} ab",
     "forget": "Vergessen",
     "forgottenBadge": "Vergessen",
+    "forgottenEmpty": "Noch nichts vergessen.",
+    "forgottenErased": "Endgültig gelöscht",
+    "forgottenHint": "Was du vergessen hast, wird aus Gesprächen nicht erneut gelernt. Entferne einen Eintrag, damit dein Bot es wieder lernen darf.",
     "forgottenNotice": "Erinnerung vergessen.",
+    "forgottenRemove": "Erneutes Lernen erlauben",
+    "forgottenRemovedNotice": "Das darf jetzt wieder gelernt werden.",
+    "forgottenSectionTitle": "Vergessene Einträge",
     "includeForgotten": "Vergessene Einträge anzeigen",
     "kind": "Kategorie",
     "kindFilter": "Kategorie",
@@ -4020,6 +4312,55 @@
     "thinking": "Denken",
     "title": "Modell"
   },
+  "myBots": {
+    "all": "Alle Zustände",
+    "clear": "Filter zurücksetzen",
+    "costHint": "In USD auf das Tageslimit angerechneter Betrag am lokalen Tag des Bots. Fehlende Nutzungsdaten werden gegebenenfalls geschätzt; Modelle ohne bekannten Preis sind nicht enthalten. Weitere Tages-, Wochen- und Monatslimits können ebenfalls gelten.",
+    "costLimit": "{{cost}} von {{limit}}",
+    "costNoLimit": "{{cost}} / kein tägliches Geldlimit",
+    "costUnavailable": "Kosten nicht verfügbar",
+    "count": "{{shown}} von {{total}} Bots werden angezeigt",
+    "dailyLimit": "Tägliche Ausgaben für {{name}}",
+    "emptyHint": "Erstellen Sie einen Bot für Recherchen, alltägliche Aufgaben oder eigene Ideen.",
+    "emptyTitle": "Erstellen Sie Ihren ersten Bot",
+    "filter": "Zustand",
+    "grid": "Kartenraster",
+    "lastActivity": "Letzte Aktivität",
+    "layout": "Botansicht",
+    "list": "Kompakte Liste",
+    "loading": "Kosten werden geladen…",
+    "newBot": "Bot erstellen",
+    "newChat": "Neuer Chat",
+    "noActivity": "Noch keine Aktivität",
+    "noMatches": "Keine passenden Bots",
+    "noMatchesHint": "Versuchen Sie einen anderen Namen oder Zustand.",
+    "pause": "Pausieren",
+    "pauseUnavailable": "Der Bot, der diesen Computer steuert, kann pausiert werden. Andere Aufgaben können Sie im jeweiligen Chat stoppen.",
+    "refresh": "Bots aktualisieren",
+    "resume": "Fortsetzen",
+    "review": "Anfrage prüfen",
+    "schedule": "Zeitplan erstellen",
+    "scope": "Bots auf {{place}}. Wählen Sie einen anderen Ort, um die dortigen Bots zu sehen.",
+    "search": "Bot suchen",
+    "server": "Eigener Server",
+    "settings": "Einstellungen",
+    "sort": "Sortieren nach",
+    "sortBy": {
+      "activity": "Letzte Aktivität",
+      "cost": "Höchste Kosten heute",
+      "name": "Botname"
+    },
+    "stale": "Die Verbindung für Aktualisierungen ist unterbrochen. Dies sind die zuletzt bekannten Angaben. Verbinden Sie sich erneut, bevor Sie Änderungen vornehmen.",
+    "status": {
+      "approval": "Wartet auf Ihre Antwort",
+      "idle": "Bereit",
+      "paused": "Pausiert",
+      "running": "Arbeitet"
+    },
+    "thisComputer": "Dieser Computer",
+    "title": "Meine Bots",
+    "today": "Heute / Tageslimit"
+  },
   "needs": {
     "empty": "Wenn ein Bot dein OK braucht oder eine Frage hat, erscheint das hier.",
     "emptyTitle": "Alles erledigt",
@@ -4107,10 +4448,15 @@
     }
   },
   "notifyHistory": {
+    "allBots": "Alle Bots",
+    "allTypes": "Alle Arten",
     "clear": "Verlauf löschen",
     "empty": "Wenn ein Bot eine Aufgabe beendet oder dein OK braucht, siehst du es hier.",
     "emptyAction": "Ansehen, was dich braucht",
     "emptyTitle": "Nichts Neues",
+    "filterBot": "Bot",
+    "filterType": "Art",
+    "filters": "Benachrichtigungen filtern",
     "held": "Zurückgehalten (Ruhezeit)",
     "heldMuted": "Zurückgehalten (Bot stummgeschaltet)",
     "kind": {
@@ -4121,12 +4467,23 @@
       "scheduleDone": "Geplanter Auftrag fertig"
     },
     "markAllRead": "Alle als gelesen markieren",
+    "noMatch": "Keine Benachrichtigung passt zu diesen Filtern.",
+    "noMatchTitle": "Hier ist nichts",
+    "onlyUnread": "Nur ungelesene",
     "openNeeds": "„Braucht dich“ öffnen",
+    "quietNote": "{{count}} Benachrichtigungen wurden in den Ruhezeiten zurückgehalten und sind noch ungelesen.",
+    "quietNote_one": "{{count}} Benachrichtigung wurde in den Ruhezeiten zurückgehalten und ist noch ungelesen.",
+    "resetFilters": "Alles anzeigen",
+    "retention": "Wird {{days}} Tage lang aufbewahrt, höchstens {{max}} Benachrichtigungen, danach automatisch entfernt.",
+    "showSnoozed": "Zurückgestellt ({{count}})",
     "shown": "Angezeigt",
+    "snooze": "1 Std. zurückstellen",
+    "snoozeHint": "Blendet dies für eine Stunde aus. Es kommt von selbst wieder.",
     "subtitle": "Was die Bots gemeldet haben und was die Ruhezeiten zurückgehalten haben. Offene Freigaben bleiben immer unter „Braucht dich“.",
     "title": "Benachrichtigungsverlauf",
     "unread": "Ungelesen",
-    "unreadCount": "{{count}} ungelesen"
+    "unreadCount": "{{count}} ungelesen",
+    "unsnooze": "Zurückholen"
   },
   "overlay": {
     "actions": {
@@ -4155,6 +4512,7 @@
     "empty": "Kein passender Befehl",
     "go": {
       "home": "Zur Übersicht",
+      "myBots": "Meine Bots",
       "needs": "Zu „Braucht dich“",
       "schedules": "Zu geplanten Aufgaben",
       "settings": "Einstellungen öffnen",
@@ -4305,6 +4663,31 @@
     "remove": "Diese Nachricht aus der Warteschlange entfernen",
     "sendNow": "Jetzt senden"
   },
+  "quickAsk": {
+    "bot": "Bot",
+    "clipboardEmpty": "In der Zwischenablage ist nichts Brauchbares.",
+    "clipboardOff": "Deine Zwischenablage wird nur genutzt, wenn du hier klickst.",
+    "close": "Schließen",
+    "failed": "Das hat nicht geklappt. Bitte versuche es noch einmal.",
+    "hints": "Enter sendet · Esc schließt",
+    "includeClipboard": "Zwischenablage einbeziehen",
+    "needsYou": "Dafür brauchst du die Freigabe. Öffne es in der App, um zu entscheiden.",
+    "noBots": "Noch keine Bots. Lege zuerst in der App einen an.",
+    "noService": "Praxi-Bot ist noch nicht bereit: {{reason}}",
+    "openInApp": "In der App öffnen",
+    "placeholder": "Frag etwas und drücke Enter",
+    "problem": {
+      "in_use": "Ein anderes Programm nutzt dieses Kürzel bereits. Wähle ein anderes.",
+      "invalid": "Dieses Tastenkürzel ist ungültig. Beispiel: Ctrl+Alt+Space.",
+      "needs_modifier": "Füge Ctrl oder Alt hinzu, sonst würde normales Tippen blockiert.",
+      "reserved": "Windows und die meisten Apps nutzen dieses Kürzel bereits. Wähle ein anderes.",
+      "same_as_stop": "Das ist bereits dein Stopp-Kürzel. Wähle ein anderes.",
+      "shift_only": "Shift allein reicht nicht. Füge Ctrl oder Alt hinzu."
+    },
+    "send": "Senden",
+    "thinking": "Denkt nach…",
+    "title": "Schnell fragen"
+  },
   "quota": {
     "remaining": "{{label}}: {{pct}} % übrig",
     "resets": "Wird zurückgesetzt {{when}}",
@@ -4366,13 +4749,18 @@
     "exported": "Bericht gespeichert",
     "footer": "Mit Praxi erstellt. Private Details sind nicht enthalten.",
     "hint": "Sieh Schritt für Schritt, was der Bot in diesem Lauf getan hat",
+    "noRecordedSteps": "Für diesen Lauf sind keine aufgezeichneten Schritte verfügbar.",
     "noSteps": "Der Bot hat in diesem Lauf keine Werkzeuge benutzt.",
     "outcome": "Ergebnis",
     "outcomes": {
       "done": "Fertig",
       "failed": "Fehlgeschlagen",
+      "paused": "Pausiert",
+      "queued": "In der Warteschlange",
+      "running": "Läuft",
       "stopped": "Von dir gestoppt",
-      "unfinished": "Nicht abgeschlossen"
+      "unfinished": "Nicht abgeschlossen",
+      "waitingApproval": "Wartet auf Genehmigung"
     },
     "privacy": "Private Details bleiben draußen: Was eingegeben, gelesen oder beantwortet wurde, wird nicht gezeigt, und alles, was wie ein Passwort oder Schlüssel aussieht, wird verborgen.",
     "started": "Gestartet",
@@ -4780,6 +5168,7 @@
       "de": "Deutsch",
       "description": "Wähle die Anzeigesprache der Oberfläche.",
       "en": "English",
+      "es": "Español",
       "title": "Sprache",
       "tr": "Türkçe"
     },
@@ -4861,6 +5250,12 @@
       "restartManual": "Starte den Hintergrunddienst selbst neu, damit er die Änderung übernimmt (er wurde nicht von dieser App gestartet).",
       "test": "Verbindung testen",
       "title": "Modellanbieter"
+    },
+    "quickAsk": {
+      "description": "Standardmäßig aus. Wenn aktiv, öffnet ein Tastenkürzel in jedem Programm ein kleines Feld, in dem du eine Frage eintippst und Enter drückst. Jede Frage startet einen neuen Chat mit dem gewählten Bot.",
+      "hotkey": "Tasten für „Schnell fragen“",
+      "privacy": "Zwischenablage und Bildschirm werden nie gelesen, außer du klickst im Feld auf „Zwischenablage einbeziehen“.",
+      "title": "Kürzel für „Schnell fragen“"
     },
     "quiet": {
       "allowUrgent": "Trotzdem melden, wenn ein Bot auf mich wartet",
@@ -5835,6 +6230,16 @@
     "exportCsv": "CSV herunterladen",
     "exportDone": "Nutzungs-CSV heruntergeladen.",
     "exportFailed": "Nutzungs-CSV konnte nicht heruntergeladen werden",
+    "insights": {
+      "noChat": "Kein Chat zum Öffnen",
+      "openRun": "Öffnen",
+      "openRunLabel": "Chat des Laufs von {{bot}} am {{when}} öffnen",
+      "priceUnknown": "Preis unbekannt",
+      "title": "Wohin das Geld geht",
+      "tokensShort": "{{amount}} Tokens",
+      "topRuns": "Teuerste Läufe",
+      "unknownPriceNote": "Einträge mit „Unbekannt“ nutzen ein Modell ohne bekannten Preis: Ihre Tokens werden gezählt, die Kosten nicht."
+    },
     "limit": {
       "clear": "Limit entfernen",
       "forecast": "Prognose zum Monatsende",
@@ -5883,15 +6288,27 @@
     "tokens": "Tokens",
     "total": "Gesamt",
     "trend": {
+      "alertKey": "Warnung bei 80 % ({{amount}})",
       "ariaLabel": "Täglicher {{metric}}-Verlauf über {{days}} Tage",
       "dayReadout": "{{day}} · {{calls}} Aufrufe · {{amount}} Tokens · {{cost}}",
+      "forecast": "Diesen Monat ausgegeben: {{spent}}. In diesem Tempo endet der Monat bei etwa {{forecast}}.",
+      "forecastNone": "Für eine Prognose gibt es diesen Monat noch zu wenig Nutzung mit bekanntem Preis.",
+      "forecastPartial": "{{count}} Aufrufe hatten keinen bekannten Preis und werden nicht mitgezählt.",
+      "granularities": {
+        "day": "Pro Tag",
+        "month": "Pro Monat",
+        "week": "Pro Woche"
+      },
+      "granularity": "Gruppieren nach",
       "hoverHint": "Fahre über einen Tag oder fokussiere ihn, um die Summen zu sehen.",
+      "limitKey": "Monatslimit ({{amount}})",
       "metric": "Diagramm-Kennzahl",
       "metrics": {
         "calls": "Aufrufe",
         "cost": "Kosten",
         "tokens": "Token-Menge"
       },
+      "prorated": "Die Linien zeigen den gleichmäßigen Anteil Ihres Monatslimits für einen Tag bzw. eine Woche.",
       "showTable": "Tägliche Tabelle anzeigen",
       "timeZone": "Lokale Tage ({{tz}})",
       "title": "Tagesverlauf"
@@ -5955,6 +6372,48 @@
     "description": "Stimme und Tempo für die Vorlesen-Schaltfläche. Nutzt die Sprachausgabe deines Systems.",
     "dictate": "Diktieren",
     "dictateStop": "Stoppen und transkribieren",
+    "input": {
+      "denied": {
+        "linux": "Öffnen Sie die Systemeinstellungen → Datenschutz (oder Ton) und erlauben Sie Praxi-Bot die Nutzung des Mikrofons. Bei Flatpak oder Snap erlauben Sie die Audio-Berechtigung. Starten Sie Praxi-Bot dann neu und versuchen Sie es erneut.",
+        "mac": "Öffnen Sie Systemeinstellungen → Datenschutz & Sicherheit → Mikrofon und aktivieren Sie Praxi-Bot. Schließen Sie Praxi-Bot dann, öffnen Sie es neu und versuchen Sie es erneut.",
+        "windows": "Öffnen Sie Windows-Einstellungen → Datenschutz & Sicherheit → Mikrofon. Schalten Sie Mikrofonzugriff und Desktop-Apps den Zugriff auf Ihr Mikrofon erlauben ein. Schließen Sie Praxi-Bot dann, öffnen Sie es neu und versuchen Sie es erneut."
+      },
+      "deniedTitle": "Praxi-Bot darf das Mikrofon nicht verwenden.",
+      "description": "Wählen Sie Ihr Mikrofon, prüfen Sie, ob es funktioniert, und legen Sie fest, wie die Aufnahme startet und endet.",
+      "mic": {
+        "default": "Systemstandard",
+        "description": "Wählen Sie, welches Mikrofon verwendet wird. Der Pegelbalken bewegt sich, wenn es Sie hört. Beim Test wird nichts aufgezeichnet oder gesendet.",
+        "test": "Mikrofon testen",
+        "testing": "Es wird 5 Sekunden zugehört. Sagen Sie etwas.",
+        "title": "Mikrofon",
+        "unnamed": "Mikrofon {{n}}",
+        "verdict": {
+          "good": "Das Mikrofon funktioniert.",
+          "quiet": "Es war nur ein sehr leises Geräusch zu hören. Sprechen Sie näher am Mikrofon oder erhöhen Sie die Lautstärke.",
+          "silent": "Es war nichts zu hören. Prüfen Sie, ob das richtige Mikrofon gewählt und nicht stummgeschaltet ist."
+        }
+      },
+      "ptt": {
+        "description": "Halten Sie {{key}} zum Aufnehmen gedrückt und lassen Sie zum Senden los. Funktioniert, solange das Praxi-Bot-Fenster im Vordergrund ist. Standardmäßig aus.",
+        "key": "Sprechtaste",
+        "title": "Sprechtaste"
+      },
+      "recording": "Aufnahme läuft",
+      "releaseToSend": "{{key}} loslassen zum Senden",
+      "silence": {
+        "description": "Eine per Klick gestartete Aufnahme endet nach so viel Stille von selbst. Bei der Sprechtaste bestimmen Sie das Ende.",
+        "off": "Aus (zum Beenden klicken)",
+        "seconds": "Nach {{count}} Sekunden",
+        "seconds_one": "Nach {{count}} Sekunde",
+        "seconds_other": "Nach {{count}} Sekunden",
+        "title": "Stoppen, wenn ich aufhöre zu sprechen"
+      },
+      "stopsOnSilence": "Endet nach {{count}} Sekunden Stille",
+      "stopsOnSilence_one": "Endet nach {{count}} Sekunde Stille",
+      "stopsOnSilence_other": "Endet nach {{count}} Sekunden Stille",
+      "title": "Mikrofon und Sprechtaste",
+      "unsupported": "Dieses Fenster kann kein Audio aufnehmen, deshalb gibt es hier nichts einzustellen."
+    },
     "local": {
       "details": "Download von etwa {{size}} MB von {{host}} (wird mit einer festen Prüfsumme kontrolliert). Lizenz: {{license}}.",
       "download": "Herunterladen ({{size}} MB)",
@@ -5979,6 +6438,7 @@
     "speed": "Tempo",
     "stop": "Vorlesen beenden",
     "stt": {
+      "advanced": "Erweitert (Modell und Adresse)",
       "clearKey": "Schlüssel entfernen",
       "description": "Wo deine Aufnahmen transkribiert werden: ein OpenAI-kompatibler Dienst (Cloud-Anbieter oder lokaler Whisper-Server).",
       "geminiKey": "Gemini-API-Schlüssel",
@@ -5993,10 +6453,18 @@
       "providerGemini": "Gemini Live",
       "providerLocal": "Auf diesem Computer (offline)",
       "providerWhisper": "Whisper-kompatibel (OpenAI / lokal)",
+      "reuseGemini": "Meinen Gemini-Schlüssel aus „Bots & Modelle“ verwenden",
+      "reuseKey": "Meinen passenden Schlüssel aus „Bots & Modelle“ verwenden",
       "save": "Speichern",
       "saved": "Diktiereinstellungen gespeichert",
+      "statusNoGeminiKey": "Noch kein Gemini-Schlüssel. Fügen Sie ihn unter „Bots & Modelle“ hinzu oder fügen Sie unten einen ein.",
+      "statusNoKey": "Noch kein Schlüssel. Fügen Sie unten einen ein (ein lokaler Server braucht evtl. keinen).",
+      "statusOwnKey": "Bereit: Ein separat für Sprache gespeicherter Schlüssel wird verwendet.",
+      "statusReusing": "Bereit: Der bereits für diesen Dienst hinzugefügte Schlüssel wird verwendet. Er bleibt im geheimen Speicher.",
+      "statusReusingGemini": "Bereit: Der bereits hinzugefügte Gemini-Schlüssel wird verwendet. Er bleibt im geheimen Speicher.",
       "title": "Diktierdienst",
-      "url": "Dienstadresse"
+      "url": "Dienstadresse",
+      "whereTitle": "Wohin Ihre Stimme geht:"
     },
     "tableOmitted": "(Tabelle ausgelassen)",
     "title": "Gesprochene Antworten",

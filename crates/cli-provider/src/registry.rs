@@ -209,6 +209,68 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         login: "agy",
         docs_url: "https://antigravity.google/docs",
     },
+    // Qwen Code (a Gemini CLI fork). Runs with its own tools through `qwen --acp`.
+    // Interface read from the npm package 0.28.4, not from a signed-in run.
+    CliEngineSpec {
+        id: "qwen",
+        display_name: "Qwen Code",
+        command: "qwen",
+        aliases: &[],
+        runnable: false,
+        version_args: &["--version"],
+        auth_args: &[],
+        minimum_version: None,
+        install_windows: npm(&["install", "-g", "@qwen-code/qwen-code"], false),
+        install_unix: npm(&["install", "-g", "@qwen-code/qwen-code"], false),
+        models: &["default"],
+        login: "qwen",
+        docs_url: "https://qwenlm.github.io/qwen-code-docs/",
+    },
+    // GitHub Copilot CLI. Runs with its own tools through `copilot --acp`.
+    // Interface read from the npm package 1.0.115 (`--help`, an unauthenticated ACP
+    // `initialize` and `session/new`), not from a signed-in run. Sign-in is `copilot login`
+    // (OS credential store) and has no status command.
+    CliEngineSpec {
+        id: "copilot",
+        display_name: "GitHub Copilot CLI",
+        command: "copilot",
+        aliases: &[],
+        runnable: false,
+        version_args: &["--version"],
+        auth_args: &[],
+        minimum_version: None,
+        install_windows: npm(&["install", "-g", "@github/copilot"], false),
+        install_unix: npm(&["install", "-g", "@github/copilot"], false),
+        models: &["default"],
+        login: "copilot login",
+        docs_url: "https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-copilot-cli",
+    },
+    // Kiro CLI (AWS). Runs with its own tools through `kiro-cli acp` (CLI V3). Interface
+    // read from kiro.dev/docs/cli, not from an install. `whoami` has a status output but
+    // its signed-out exit code is undocumented, so sign-in stays unverified.
+    CliEngineSpec {
+        id: "kiro",
+        display_name: "Kiro CLI",
+        command: "kiro-cli",
+        aliases: &[],
+        runnable: false,
+        version_args: &["--version"],
+        auth_args: &[],
+        minimum_version: None,
+        install_windows: None,
+        install_unix: Some(InstallCommand {
+            program: "sh",
+            args: &[
+                "-c",
+                "curl --proto =https --proto-redir =https --tlsv1.2 -fsSL https://cli.kiro.dev/install | bash",
+            ],
+            verified: false,
+            executable: false,
+        }),
+        models: &["default"],
+        login: "kiro-cli login",
+        docs_url: "https://kiro.dev/docs/cli/",
+    },
 ];
 
 #[must_use]

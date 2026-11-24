@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Brain } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button, Card } from "ui";
-import type { MemoryItem, MemoryKind, MemoryPreview } from "../../api/types";
+import type { ForgottenItem, MemoryItem, MemoryKind, MemoryPreview } from "../../api/types";
+import { ConfirmDialog } from "../../components/DialogParts";
 import form from "../../components/Form.module.css";
 import { EmptyState } from "../../components/EmptyState";
 import { BotMemorySettings } from "../../components/BotMemorySettings";
@@ -25,6 +26,8 @@ export function MemoryCard() {
   const [search, setSearch] = useState("");
   const [includeDeleted, setIncludeDeleted] = useState(false);
   const [items, setItems] = useState<MemoryItem[]>([]);
+  const [forgotten, setForgotten] = useState<ForgottenItem[]>([]);
+  const [erasing, setErasing] = useState<MemoryItem | null>(null);
   const [pending, setPending] = useState<MemoryItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,9 +56,11 @@ export function MemoryCard() {
       q: search,
       includeDeleted
     });
+    const tombstones = await client.listForgottenMemories(activeBot);
     const held = await client.listPendingMemories();
     if (current !== epoch.current) return;
     setItems(list.filter((m) => !m.pending));
+    setForgotten(tombstones);
     setPending(held);
   }, [client, activeBot, botOnly, kindFilter, search, includeDeleted]);
 
@@ -109,6 +114,21 @@ export function MemoryCard() {
       await client.deleteMemory(item.id);
       setNotice(t("memory.forgottenNotice"));
       setLastUndoId(item.id);
+    });
+
+  const erase = (item: MemoryItem) =>
+    act(async () => {
+      if (!client) return;
+      await client.eraseMemory(item.id);
+      setErasing(null);
+      setNotice(t("memory.erasedNotice"));
+    });
+
+  const allowAgain = (entry: ForgottenItem) =>
+    act(async () => {
+      if (!client) return;
+      await client.removeForgottenMemory(entry.id);
+      setNotice(t("memory.forgottenRemovedNotice"));
     });
 
   const review = (item: MemoryItem, ok: boolean) =>
@@ -295,6 +315,15 @@ export function MemoryCard() {
                       </Button>
                     </>
                   ) : null}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy}
+                    data-testid="memory-erase"
+                    onClick={() => setErasing(item)}
+                  >
+                    {t("memory.erase")}
+                  </Button>
                   {item.undo_journal_id !== null && item.undo_journal_id !== undefined ? (
                     <Button
                       size="sm"
@@ -331,6 +360,38 @@ export function MemoryCard() {
               </div>
             </section>
           ) : null}
+          <details className={styles.group} data-testid="memory-forgotten">
+            <summary>{t("memory.forgottenSectionTitle")}</summary>
+            <div className={styles.form}>
+              <p className={form.hint}>{t("memory.forgottenHint")}</p>
+              {forgotten.length === 0 ? (
+                <p className={form.hint}>{t("memory.forgottenEmpty")}</p>
+              ) : (
+                <ul className={styles.list}>
+                  {forgotten.map((entry) => (
+                    <li key={entry.id} className={styles.source} data-testid="memory-forgotten-item">
+                      <strong>{entry.label ?? t("memory.forgottenErased")}</strong>
+                      <span className={form.hint}>
+                        {t(`memory.kinds.${entry.kind}`)} · {botName(entry.bot_id)} ·{" "}
+                        {new Date(entry.created_ms).toLocaleDateString(i18n.language)}
+                        {entry.erased && entry.label ? ` · ${t("memory.forgottenErased")}` : ""}
+                      </span>
+                      <div className={styles.actions}>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={() => void allowAgain(entry)}
+                        >
+                          {t("memory.forgottenRemove")}
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </details>
           <details className={styles.group}>
             <summary>{t("memory.addTitle")}</summary>
             <div className={styles.form}>
@@ -416,6 +477,16 @@ export function MemoryCard() {
           </details>
         </>
       )}
+      <ConfirmDialog
+        open={erasing !== null}
+        title={t("memory.eraseTitle")}
+        body={<p>{t("memory.eraseBody")}</p>}
+        confirmLabel={t("memory.eraseConfirm")}
+        tone="danger"
+        busy={busy}
+        onCancel={() => setErasing(null)}
+        onConfirm={() => erasing && void erase(erasing)}
+      />
     </Card>
   );
 }

@@ -44,6 +44,7 @@ fn ctx(u: UserId, b: BotId, excerpt: &str) -> ExtractionContext {
         chat_id: ChatId::new(),
         message_id: None,
         excerpt: excerpt.into(),
+        user_messages: vec![excerpt.into()],
         untrusted: false,
         hold_all: false,
         share_with_other_bots: true,

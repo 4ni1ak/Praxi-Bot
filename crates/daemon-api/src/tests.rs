@@ -23,6 +23,7 @@ use crate::fake::FakeProvider;
 use crate::{AppState, DaemonConfig, router};
 
 mod attachments;
+mod audit;
 mod bot_patch;
 mod bot_tools;
 mod chat_history;
@@ -31,6 +32,7 @@ mod composio;
 mod connection_test;
 mod doctor;
 mod email;
+mod embeddings;
 mod fill_secrets;
 mod host;
 mod host_admin;
@@ -2405,12 +2407,17 @@ async fn providers_detected_reports_five_rows_without_the_retired_gemini_cli() {
     assert_eq!(r.status, StatusCode::OK);
     let list = r.json();
     let items = list.as_array().unwrap();
-    assert_eq!(items.len(), 5);
+    assert_eq!(items.len(), 8);
     let ids: Vec<&str> = items
         .iter()
         .map(|item| item["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, vec!["claude", "codex", "cursor", "opencode", "agy"]);
+    assert_eq!(
+        ids,
+        vec![
+            "claude", "codex", "cursor", "opencode", "agy", "qwen", "copilot", "kiro"
+        ]
+    );
     for row in items {
         assert_eq!(row["runnable"], false);
     }
@@ -4469,6 +4476,7 @@ async fn usage_purpose_totals_are_additive_and_preserve_the_legacy_shape() {
         "by_model",
         "by_provider",
         "daily",
+        "top_runs",
         "calls_without_usage",
         "calls_without_cost",
         "time_zone",

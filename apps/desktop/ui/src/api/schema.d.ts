@@ -372,6 +372,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit events, newest first, with filters and paging (owner-only). */
+        get: operations["audit_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Redacted CSV or JSON export of the filtered events (owner-only). */
+        get: operations["audit_export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/audit/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check the log's append-only protection and look for removed rows (owner-only). */
+        get: operations["audit_verify"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots": {
         parameters: {
             query?: never;
@@ -1481,6 +1532,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/decision-helper": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The optional decision helper (Gemini Decisions) and its state. */
+        get: operations["get_decision_helper"];
+        /**
+         * Switch the decision helper on or off (owner only). It only ever gives
+         *     advice: a decision never grants a permission.
+         */
+        put: operations["put_decision_helper"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/doctor": {
         parameters: {
             query?: never;
@@ -1677,6 +1749,44 @@ export interface paths {
          *     `name` is used. Same limits and the same coarse report as the saved test.
          */
         post: operations["test_email_draft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/embeddings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The embedding setup with live state and usage (no secrets). */
+        get: operations["get_embeddings"];
+        /**
+         * Save the embedding setup (owner only). Text is only ever sent to a provider
+         *     whose `allow_remote` the owner switched on.
+         */
+        put: operations["put_embeddings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/embeddings/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send one fixed test sentence to a provider (owner only). */
+        post: operations["test_embedding"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2724,6 +2834,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/memory/forgotten": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_forgotten"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/forgotten/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Let a forgotten statement be learned again. */
+        delete: operations["remove_forgotten"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/memory/pending": {
         parameters: {
             query?: never;
@@ -2783,6 +2926,27 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["discard_memory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/{id}/erase": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Erase a memory permanently (live or already forgotten): its text is removed
+         *     from the item, the search index and the undo journal. Backups made earlier
+         *     still contain it; restoring one can bring the item back.
+         */
+        post: operations["erase_memory"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4357,6 +4521,78 @@ export interface components {
             /** @description Only the start of the text was given to the model. */
             truncated: boolean;
         };
+        /** @description One audit event, details redacted. */
+        AuditEventDto: {
+            /** @description Machine name of the action (for example `grant.always`). */
+            action: string;
+            /** @description Who acted. */
+            actor: string;
+            /** @description Bot it belongs to, if known. */
+            bot_id?: string | null;
+            /** @description Name of that bot, if it still exists. */
+            bot_name?: string | null;
+            /** @description Details with secrets removed. */
+            detail: unknown;
+            /**
+             * Format: int64
+             * @description Stable, increasing id.
+             */
+            id: number;
+            /** @description Plain category: approval, permission, takeover, import, update, `key_use`, other. */
+            kind: string;
+            /** @description Run it belongs to, if any. */
+            run_id?: string | null;
+            /**
+             * Format: int64
+             * @description When it happened (Unix ms).
+             */
+            ts_ms: number;
+        };
+        /** @description A page of events. */
+        AuditPage: {
+            /** @description Distinct actors in the time window (for the filter list). */
+            actors: string[];
+            /** @description Newest first. */
+            items: components["schemas"]["AuditEventDto"][];
+            /** @description Page size used. */
+            limit: number;
+            /** @description Rows skipped. */
+            offset: number;
+            /** @description Events matching the filters. */
+            total: number;
+        };
+        /** @description Result of the integrity check. */
+        AuditVerify: {
+            /** @description Whether both append-only rules are in place. */
+            append_only_rules: boolean;
+            /**
+             * Format: int64
+             * @description Events stored.
+             */
+            entries: number;
+            /**
+             * Format: int64
+             * @description First event id.
+             */
+            first_id?: number | null;
+            /**
+             * @description Whether the log is hash-chained. It is not: protection is the
+             *     database's own append-only rules plus the gap check below.
+             */
+            hash_chain: boolean;
+            /**
+             * Format: int64
+             * @description Last event id.
+             */
+            last_id?: number | null;
+            /**
+             * Format: int64
+             * @description Ids missing between first and last (rows removed behind the rules).
+             */
+            missing: number;
+            /** @description `ok` or `problem`. */
+            status: string;
+        };
         /** @description Catalog skill entry annotated with whether it is assigned to the bot. */
         AvailableSkillDto: {
             /** @description True when this skill is visible to the bot under its current assignment. */
@@ -4595,6 +4831,24 @@ export interface components {
             input: boolean;
             reason?: null | components["schemas"]["Reason"];
             view: boolean;
+        };
+        /** @description One model of the catalog. */
+        CatalogModelDto: {
+            /** @description Recommended vector size. */
+            dimensions: number;
+            free_tier?: null | components["schemas"]["LimitsDto"];
+            /** @description Plain-language name. */
+            label: string;
+            /** @description `YYYY-MM-DD` last reviewed. */
+            last_reviewed: string;
+            /** @description Largest vector size. */
+            max_dimensions: number;
+            /** @description Longest input in tokens. */
+            max_input_tokens: number;
+            /** @description Model id. */
+            model: string;
+            /** @description `gemini`, `openai` or `local`. */
+            provider: string;
         };
         /** @description A catalog entry. */
         CatalogProviderDto: {
@@ -5414,6 +5668,37 @@ export interface components {
          * @enum {string}
          */
         Decision: "approve" | "deny";
+        /** @description `GET /v1/decision-helper`. */
+        DecisionHelperDto: {
+            /** @description A Gemini key is set up, so the helper can be switched on. */
+            available: boolean;
+            /** @description `decider.toml` was written by hand; switching here would replace it. */
+            custom_file: boolean;
+            /** @description The helper is on. */
+            enabled: boolean;
+            free_tier?: null | components["schemas"]["LimitsDto"];
+            /** @description `YYYY-MM-DD` the limits were last reviewed. */
+            last_reviewed: string;
+            /** @description Model used. */
+            model: string;
+        };
+        /** @description `PUT /v1/decision-helper`. */
+        DecisionHelperInput: {
+            /** @description Switch the helper on or off. */
+            enabled: boolean;
+        };
+        /** @description The Gemini decision helper model of the catalog. */
+        DecisionModelDto: {
+            free_tier?: null | components["schemas"]["LimitsDto"];
+            /** @description Plain-language name. */
+            label: string;
+            /** @description `YYYY-MM-DD` last reviewed. */
+            last_reviewed: string;
+            /** @description Model id. */
+            model: string;
+            /** @description Provider id. */
+            provider: string;
+        };
         /** @description Response of a decision. */
         DecisionResponse: {
             /**
@@ -5708,6 +5993,17 @@ export interface components {
             source_label?: string | null;
             target: components["schemas"]["EmbeddingGrantTarget"];
         };
+        /** @description The dated catalog. */
+        EmbeddingCatalogDto: {
+            /** @description Decision models. */
+            decision_models: components["schemas"]["DecisionModelDto"][];
+            /** @description `YYYY-MM-DD` last reviewed. */
+            last_reviewed: string;
+            /** @description Embedding models. */
+            models: components["schemas"]["CatalogModelDto"][];
+            /** @description Caveat for the numbers. */
+            note: string;
+        };
         EmbeddingGrantTarget: {
             /** @enum {string} */
             kind: "queries";
@@ -5716,6 +6012,112 @@ export interface components {
             kind: "documents";
             /** Format: uuid */
             source_id: string;
+        };
+        /** @description One configured provider. */
+        EmbeddingProviderDto: {
+            /** @description Private-network endpoints are allowed for this provider. */
+            allow_local_network: boolean;
+            /** @description The owner agreed that text is sent to this provider. */
+            allow_remote: boolean;
+            /** @description Endpoint, if not the default. */
+            base_url?: string | null;
+            /** @description Vector size. */
+            dimensions: number;
+            /** @description Whether an API key is stored (the key itself is never returned). */
+            has_key: boolean;
+            /** @description Short id. */
+            id: string;
+            /** @description `gemini`, `openai`, `compatible` or `local`. */
+            kind: string;
+            limits?: null | components["schemas"]["LimitsDto"];
+            /** @description Model id. */
+            model: string;
+            /** @description Whether text leaves this computer. */
+            remote: boolean;
+            /** @description Whether the `dimensions` parameter is sent. */
+            request_dimensions: boolean;
+            /**
+             * Format: int64
+             * @description Seconds until the provider is tried again.
+             */
+            retry_in_secs: number;
+            /**
+             * @description `ok`, `not_allowed`, `key_missing`, `cooling_down`, `key_rejected`,
+             *     `rate_limited`, `offline`, `dimension_mismatch`, `rejected` or `unavailable`.
+             */
+            state: string;
+            /** @description Used / limit bars. */
+            usage: components["schemas"]["UsageDto"];
+        };
+        /** @description A provider as the owner edits it. */
+        EmbeddingProviderInput: {
+            /**
+             * @description Owner-only: also allow a custom endpoint on the private network.
+             *     Link-local and cloud-metadata addresses are never allowed.
+             */
+            allow_local_network?: boolean;
+            /** @description The owner agrees that text is sent to this provider. */
+            allow_remote?: boolean;
+            /** @description New API key (write-only; leave out to keep the stored key). */
+            api_key?: string | null;
+            /** @description Endpoint (required for `compatible`). */
+            base_url?: string | null;
+            /** @description Remove the stored key. */
+            clear_key?: boolean;
+            /**
+             * @description A fresh, explicit consent for exactly this destination (provider kind,
+             *     model and endpoint as sent in this request). Consent is only carried over
+             *     from the stored setup when none of those changed; otherwise
+             *     `allow_remote` is ignored unless this is true.
+             */
+            confirm_remote?: boolean;
+            /** @description Vector size. */
+            dimensions: number;
+            /** @description Short id (`a-z`, `0-9`, `-`). */
+            id: string;
+            /** @description `gemini`, `openai`, `compatible` or `local`. */
+            kind: string;
+            limits?: null | components["schemas"]["LimitsDto"];
+            /** @description Model id. */
+            model: string;
+            /** @description Send the `dimensions` parameter. */
+            request_dimensions?: boolean;
+            /** @description Copy the key of a chat provider (`gemini`) instead of typing it. */
+            reuse_key_from?: string | null;
+        };
+        /** @description Result of `POST /v1/embeddings/{id}/test`. */
+        EmbeddingTestDto: {
+            /** @description `ok` or the reason (see `state` of a provider). */
+            outcome: string;
+        };
+        /** @description `GET /v1/embeddings`. */
+        EmbeddingsDto: {
+            /** @description Known models and limits. */
+            catalog: components["schemas"]["EmbeddingCatalogDto"];
+            /**
+             * @description Per purpose (`router`, `memory`, `knowledge`): provider ids in priority
+             *     order. The offline embedder is always tried last.
+             */
+            chains: {
+                [key: string]: string[];
+            };
+            /** @description Configured providers. */
+            providers: components["schemas"]["EmbeddingProviderDto"][];
+            /** @description Bots that never use a remote provider. */
+            remote_denied_bots: string[];
+            /** @description Chat providers whose key can be reused (`gemini`). */
+            reusable_keys: string[];
+        };
+        /** @description `PUT /v1/embeddings`. */
+        EmbeddingsInput: {
+            /** @description Provider ids per purpose. */
+            chains?: {
+                [key: string]: string[];
+            };
+            /** @description The complete provider list. */
+            providers: components["schemas"]["EmbeddingProviderInput"][];
+            /** @description Bots that never use a remote provider. */
+            remote_denied_bots?: string[];
         };
         /** @description Request body for `POST /v1/providers/cli/enable`. */
         EnableCliProviderInput: {
@@ -5853,6 +6255,26 @@ export interface components {
          * @enum {string}
          */
         FitDto: "comfortable" | "slow" | "too_large";
+        /**
+         * @description A statement the owner forgot; extraction does not learn it again until the
+         *     owner removes this entry. Holds no text once erased permanently.
+         */
+        ForgottenItemDto: {
+            /**
+             * Format: uuid
+             * @description `None` means the statement was forgotten for all bots.
+             */
+            bot_id?: string | null;
+            /** Format: int64 */
+            created_ms: number;
+            /** @description Erased permanently: the text is gone everywhere. */
+            erased: boolean;
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["MemoryKindDto"];
+            /** @description Short preview; `None` when the item was erased permanently. */
+            label?: string | null;
+        };
         /**
          * @description `POST /v1/view/sessions/{id}/ack`: the newest frame this viewer has put on screen. Unlike
          *     `SessionUpdate` it changes nothing else and never forces a refresh, so a viewer can send
@@ -6831,6 +7253,24 @@ export interface components {
              */
             gseq: number;
         };
+        /** @description Provider limits (RPM / TPM / RPD). */
+        LimitsDto: {
+            /**
+             * Format: int32
+             * @description Requests per day.
+             */
+            rpd?: number | null;
+            /**
+             * Format: int32
+             * @description Requests per minute.
+             */
+            rpm?: number | null;
+            /**
+             * Format: int32
+             * @description Tokens per minute.
+             */
+            tpm?: number | null;
+        };
         /** @description Advice for this machine. `recommended` null means "no recommendation". */
         LocalAdviceDto: {
             basis: components["schemas"]["MemoryBasisDto"];
@@ -7654,6 +8094,19 @@ export interface components {
              *     a tool that is not read-only, so redoing the turn could repeat an effect.
              */
             used_write_tools?: boolean;
+        };
+        /** @description A used / limit pair for the usage bars. */
+        MeterDto: {
+            /**
+             * Format: int64
+             * @description Provider limit, if known.
+             */
+            limit?: number | null;
+            /**
+             * Format: int64
+             * @description Used in the current window.
+             */
+            used: number;
         };
         /**
          * @description What to do when the chat already has a running turn.
@@ -9133,6 +9586,39 @@ export interface components {
             /** Format: int32 */
             rows: number;
         };
+        /** @description One run in the "most expensive runs" list of `GET /v1/usage`. */
+        TopRunUsage: components["schemas"]["UsageTotals"] & {
+            /**
+             * Format: uuid
+             * @description Bot that executed the run.
+             */
+            bot_id: string;
+            /**
+             * Format: int64
+             * @description Calls of this run whose cost is unknown.
+             */
+            calls_without_cost?: number;
+            /**
+             * Format: int64
+             * @description Calls of this run that reported no token usage.
+             */
+            calls_without_usage?: number;
+            /**
+             * Format: uuid
+             * @description Chat the run belongs to (lets the UI open it), when it has one.
+             */
+            chat_id?: string | null;
+            /**
+             * Format: int64
+             * @description When the run started (Unix ms).
+             */
+            created_at_ms: number;
+            /**
+             * Format: uuid
+             * @description Run id.
+             */
+            run_id: string;
+        };
         /** @description Body of `POST /v1/voice/transcribe`. */
         TranscribeInput: {
             /** @description The recording, base64 (standard alphabet). */
@@ -9199,6 +9685,15 @@ export interface components {
         UpdateMemoryInput: {
             content: string;
         };
+        /** @description Usage bars: requests/min, tokens/min, requests/day. */
+        UsageDto: {
+            /** @description Requests in the last 24 hours. */
+            requests_per_day: components["schemas"]["MeterDto"];
+            /** @description Requests in the last minute. */
+            requests_per_minute: components["schemas"]["MeterDto"];
+            /** @description Tokens in the last minute. */
+            tokens_per_minute: components["schemas"]["MeterDto"];
+        };
         /** @description `GET /v1/usage`. */
         UsageSummary: {
             /** @description Per bot. */
@@ -9230,6 +9725,11 @@ export interface components {
             runs: number;
             /** @description IANA time zone used to bucket `daily` (e.g. `Europe/Istanbul` or `UTC`). */
             time_zone?: string;
+            /**
+             * @description The (at most five) most expensive runs in the range: known cost first,
+             *     then runs of unknown price by tokens.
+             */
+            top_runs?: components["schemas"]["TopRunUsage"][];
             /** @description Totals over all counted runs. */
             total: components["schemas"]["UsageTotals"];
         };
@@ -9275,6 +9775,8 @@ export interface components {
             gemini_key_set: boolean;
             /** @description Gemini Live model used for transcription (e.g. `gemini-3.5-transcribe-live`). */
             gemini_model: string;
+            /** @description A Gemini provider with a key exists under Bots & models. */
+            gemini_provider_key_available: boolean;
             /** @description Id of the on-device speech model used when the provider is `local_voice`. */
             local_model: string;
             /** @description Base URL of the OpenAI-compatible transcription service (without `/audio/transcriptions`). */
@@ -9285,6 +9787,13 @@ export interface components {
             stt_model: string;
             /** @description The active speech-to-text provider. */
             stt_provider: components["schemas"]["VoiceProvider"];
+            /** @description A provider under Bots & models has a key and the same base URL as `stt_base_url`. */
+            stt_provider_key_available: boolean;
+            /**
+             * @description Reuse the key of a matching provider from Bots & models instead of a separate voice
+             *     key (default on). The key itself never leaves the secret store.
+             */
+            use_provider_key: boolean;
         };
         /** @description Body of `PUT /v1/voice`; omitted fields keep their value. */
         VoiceConfigInput: {
@@ -9305,6 +9814,8 @@ export interface components {
             /** @description Model name. */
             stt_model?: string | null;
             stt_provider?: null | components["schemas"]["VoiceProvider"];
+            /** @description Reuse the matching provider key from Bots & models (default on). */
+            use_provider_key?: boolean | null;
         };
         /**
          * @description Which service turns speech into text.
@@ -10289,6 +10800,142 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    audit_list: {
+        parameters: {
+            query?: {
+                /** @description Only events at or after this time (Unix ms). */
+                since_ms?: number;
+                /** @description Only events at or before this time (Unix ms). */
+                until_ms?: number;
+                /** @description Only events by this actor (`user`, `bot`, `system`, ...). */
+                actor?: string;
+                /** @description Only this kind: approval, permission, takeover, import, update, `key_use`, other. */
+                kind?: string;
+                /** @description Only events of this bot (id). */
+                bot?: string;
+                /** @description Case-insensitive text search over action, actor and redacted details. */
+                q?: string;
+                /** @description Rows to skip (newest first). */
+                offset?: number;
+                /** @description Page size, 1 to 200 (default 50). */
+                limit?: number;
+                /** @description Export format: `csv` (default) or `json`. */
+                format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditPage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    audit_export: {
+        parameters: {
+            query?: {
+                /** @description Only events at or after this time (Unix ms). */
+                since_ms?: number;
+                /** @description Only events at or before this time (Unix ms). */
+                until_ms?: number;
+                /** @description Only events by this actor (`user`, `bot`, `system`, ...). */
+                actor?: string;
+                /** @description Only this kind: approval, permission, takeover, import, update, `key_use`, other. */
+                kind?: string;
+                /** @description Only events of this bot (id). */
+                bot?: string;
+                /** @description Case-insensitive text search over action, actor and redacted details. */
+                q?: string;
+                /** @description Rows to skip (newest first). */
+                offset?: number;
+                /** @description Page size, 1 to 200 (default 50). */
+                limit?: number;
+                /** @description Export format: `csv` (default) or `json`. */
+                format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redacted events as CSV or JSON */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    audit_verify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditVerify"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12076,8 +12723,12 @@ export interface operations {
             path: {
                 /** @description Chat id */
                 id: string;
-                /** @description `markdown` (default) or `json`. */
+                /** @description `markdown` (default), `json` or `html` (one self-contained page). */
                 format: string | null;
+                /** @description Include the step list (default true). */
+                steps: boolean | null;
+                /** @description Include the approval answers (default true). */
+                approvals: boolean | null;
             };
             cookie?: never;
         };
@@ -13204,6 +13855,56 @@ export interface operations {
             };
         };
     };
+    get_decision_helper: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionHelperDto"];
+                };
+            };
+        };
+    };
+    put_decision_helper: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecisionHelperInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionHelperDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     get_doctor: {
         parameters: {
             query?: never;
@@ -13808,6 +14509,102 @@ export interface operations {
                 };
             };
             /** @description e-mail management is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_embeddings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbeddingsDto"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_embeddings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbeddingsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbeddingsDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    test_embedding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description provider id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbeddingTestDto"];
+                };
+            };
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -16042,6 +16839,63 @@ export interface operations {
             };
         };
     };
+    list_forgotten: {
+        parameters: {
+            query?: {
+                /** @description Only items that apply to this bot */
+                bot?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForgottenItemDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    remove_forgotten: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     list_pending: {
         parameters: {
             query?: never;
@@ -16178,6 +17032,33 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["MemoryItemDto"];
                 };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    erase_memory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             404: {
                 headers: {

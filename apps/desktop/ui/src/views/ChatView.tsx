@@ -29,7 +29,8 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState
+  useState,
+  useSyncExternalStore
 } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
@@ -37,6 +38,7 @@ import type { LiveChatSlots } from "./LiveViewerChat";
 import { ownerKey } from "../lib/ownerKey";
 import { chatActivityMs } from "../lib/unread";
 import { useChatRead } from "../state/useChatRead";
+import { useLeaveGuard } from "../state/LeaveGuard";
 import { NewMessagesDivider } from "../components/NewMessagesDivider";
 import { BotAvatar, Button } from "ui";
 import { isMockMode } from "../api/mockMode";
@@ -105,7 +107,8 @@ import { hasConnectedModel, modelGroups } from "../lib/modelPicker";
 import { openSettingsTarget } from "../lib/settingsLink";
 import { type ChatRunPhase, runBarModel, runStopUi, STOP_CONFIRM_MS } from "../lib/runBar";
 import { sendButtonDisabled, sendButtonMode } from "../lib/composerRun";
-import { type PendingFile, MAX_ATTACHMENT_BYTES, filesOf, room, uploadErrorKey } from "../lib/attachments";
+import { ATTACHMENT_ACCEPT, filesOf } from "../lib/attachments";
+import { AttachmentDraft } from "../lib/attachmentDraft";
 import { ComposerFiles } from "../components/Attachments";
 import { enqueue, putBack, removeQueued, takeForNow, takeForRunEnd } from "../lib/messageQueue";
 import { groupPending, isBatchable, shouldBatch } from "../lib/approvalBatch";
@@ -129,7 +132,8 @@ import {
   detectTrigger,
   APP_COMMAND_EVENT,
   isExportCommand,
-  appCommandFor
+  appCommandFor,
+  parseSlashInput
 } from "../lib/slash";
 import { appendDictation } from "../lib/dictation";
 import { FRESH, type HistoryNav, afterEdit, historyKey, userMessageTexts } from "../lib/composerHistory";
@@ -228,6 +232,7 @@ function canOfferRemember(run: RunState): boolean {
 
 export function ChatView({
   chatId,
+  external = false,
   jumpMessageId,
   jumpRequestId,
   onBack,
@@ -240,6 +245,7 @@ export function ChatView({
   liveChatSlots
 }: {
   chatId: string;
+  external?: boolean;
   jumpMessageId?: string;
   jumpRequestId?: number;
   /** Present only when there is a page to go back to; without it the header has no arrow. */
@@ -332,6 +338,8 @@ export function ChatView({
   // A pasted credential found in the draft before send (kinds only; the value stays in `text`).
   const [secretKinds, setSecretKinds] = useState<string[] | null>(null);
   const [queue, updateQueue] = useChatQueue(chatId);
+  /** Messages queued in this view. A chat opened from a link delivers only these at run end. */
+  const queuedHere = useRef(new Set<string>());
   // Up / Down recall this chat's earlier messages; the draft is kept (lib/composerHistory).
   const [nav, setNav] = useState<HistoryNav>(FRESH);
   const pendingCaret = useRef<number | null>(null);
@@ -339,7 +347,15 @@ export function ChatView({
   /** The last user message being edited (inline), and a resend in flight. */
   const [editingId, setEditingId] = useState<string | null>(null);
   const [resending, setResending] = useState(false);
-  const [files, setFiles] = useState<PendingFile[]>([]);
+  const [attachments] = useState(() => new AttachmentDraft());
+  const files = useSyncExternalStore(attachments.subscribe, attachments.snapshot);
+  useLeaveGuard({
+    state: () => ({
+      dirty: text.length > 0 || files.length > 0 || editingId !== null,
+      busy: sending || resending
+    }),
+    confirm: () => {}
+  }, true);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   /** The run the daemon named for the message just sent, until the run list shows it. */
@@ -418,14 +434,18 @@ export function ChatView({
       el.style.height = `${Math.min(el.scrollHeight, parseFloat(getComputedStyle(el).maxHeight))}px`;
     }
   }, [text]);
-  const mountedAt = useRef(Date.now());
+  const followNewSince = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    followNewSince.current = external ? null : Date.now();
+    return () => { followNewSince.current = null; };
+  }, [external]);
   const switchedFor = useRef(new Set<string>());
 
   const chatRuns = useMemo(
     () => topLevelRuns(events, chatId),
     [events, chatId]
   );
-  useAutoSpeak(chatId, chatRuns);
+  useAutoSpeak(chatId, chatRuns, external);
   const finishedCount = chatRuns.filter(
     (r) => r.finishedMs !== undefined
   ).length;
@@ -433,13 +453,15 @@ export function ChatView({
   // `/new` typed in the chat: the daemon starts a new chat and says so in its
   // reply; follow it (only for turns that finish while this view is open).
   useEffect(() => {
+    const since = followNewSince.current;
+    if (since === null) return;
     for (const run of chatRuns) {
       const r = run.route?.route;
       if (
         r?.kind !== "command" ||
         r.name !== "new" ||
         run.finishedMs === undefined ||
-        run.finishedMs < mountedAt.current ||
+        run.finishedMs < since ||
         run.error !== null ||
         switchedFor.current.has(run.id)
       ) {
@@ -451,12 +473,13 @@ export function ChatView({
         void refreshChats()
           .catch(() => {})
           .then(() => {
+            if (followNewSince.current !== since) return;
             toast.show(t("chat.newChatStarted"), "success");
             onSwitchChat(id);
           });
       }
     }
-  }, [chatRuns, onSwitchChat, refreshChats, toast, t]);
+  }, [chatRuns, external, onSwitchChat, refreshChats, toast, t]);
 
   const loadMessages = useCallback(async () => {
     if (!client) {
@@ -502,7 +525,8 @@ export function ChatView({
     client?.baseUrl ?? "",
     chatId,
     chatActivityMs(runs, needs, chatId),
-    messages
+    messages,
+    external
   );
 
   const entries = useMemo(() => {
@@ -642,11 +666,10 @@ export function ChatView({
   const turn = useMemo(() => lastTurn(messages), [messages]);
   const lastItem = entries[entries.length - 1];
   // The button is the stop button from the moment a message is sent (before any run event) while the box is empty.
-  const readyFiles = files.filter((f) => f.state === "ready");
-  const uploadingFiles = files.some((f) => f.state === "uploading");
+  const blockedFiles = attachments.blocked;
   const sendMode = sendButtonMode({
     runActive: running,
-    hasText: !sending && (text.trim().length > 0 || readyFiles.length > 0)
+    hasText: files.length > 0 || (!sending && text.trim().length > 0)
   });
   // ---- follow new content unless the user scrolled up
   const timelineRef = useRef<HTMLDivElement | null>(null);
@@ -792,65 +815,18 @@ export function ChatView({
     });
   };
 
-  const dropFiles = (list: PendingFile[]) => {
-    for (const f of list) {
-      if (f.preview) {
-        URL.revokeObjectURL(f.preview);
-      }
-    }
-  };
-
-  // A different chat starts with an empty tray.
-  useEffect(
-    () => () => {
-      setFiles((prev) => {
-        dropFiles(prev);
-        return [];
-      });
-    },
-    [chatId]
-  );
+  // Switching chats/hosts or closing the view cancels pending work and releases previews.
+  useEffect(() => () => attachments.clear(), [attachments, chatId, client]);
 
   const removeFile = (key: string) => {
-    setFiles((prev) => {
-      dropFiles(prev.filter((f) => f.key === key));
-      return prev.filter((f) => f.key !== key);
-    });
+    attachments.remove(key);
+    inputRef.current?.focus();
   };
 
   const addFiles = (incoming: File[]) => {
-    if (!client || incoming.length === 0) {
-      return;
-    }
-    const taken = files.filter((f) => f.state !== "failed").length;
-    const accepted = incoming.slice(0, room(taken, incoming.length));
-    if (accepted.length < incoming.length) {
+    if (!client || sending || attachments.locked) return;
+    if (attachments.add(incoming, t("chat.attach.pastedName")) > 0) {
       toast.show(t("chat.attach.tooMany"), "info");
-    }
-    for (const file of accepted) {
-      const key = crypto.randomUUID();
-      const name = file.name || t("chat.attach.pastedName");
-      const base: PendingFile = {
-        key,
-        name,
-        size: file.size,
-        state: "uploading",
-        preview: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined
-      };
-      setFiles((prev) => [...prev, base]);
-      const patch = (p: Partial<PendingFile>) =>
-        setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, ...p } : f)));
-      if (file.size > MAX_ATTACHMENT_BYTES) {
-        patch({ state: "failed", errorKey: "chat.attach.tooLarge" });
-        continue;
-      }
-      client
-        .uploadAttachment(chatId, file, name)
-        .then((att) => patch({ state: "ready", id: att.id, kind: att.kind }))
-        .catch((e: unknown) => {
-          const err = e as { code?: string; status?: number };
-          patch({ state: "failed", errorKey: uploadErrorKey(err.code, err.status) });
-        });
     }
   };
 
@@ -867,8 +843,12 @@ export function ChatView({
   // so a call that returns early (busy, offline) cannot leave a standing permission behind.
   const send = async (allowSecrets = false) => {
     const body = text.trim();
-    const attachmentIds = readyFiles.flatMap((f) => (f.id ? [f.id] : []));
-    if (!client || (!body && attachmentIds.length === 0) || sending || uploadingFiles) {
+    const hasFiles = files.length > 0;
+    if (!client || (!body && !hasFiles) || sending || attachments.locked || blockedFiles) {
+      return;
+    }
+    if (hasFiles && body.startsWith("/")) {
+      toast.show(t("chat.attach.command"), "info");
       return;
     }
     if (isExportCommand(body)) {
@@ -877,7 +857,7 @@ export function ChatView({
       return;
     }
     // "/help", "/settings" ...: the app opens the place itself; nothing is sent to the bot.
-    const appCommand = attachmentIds.length === 0 ? appCommandFor(body) : null;
+    const appCommand = !hasFiles ? appCommandFor(body) : null;
     if (appCommand) {
       setText("");
       window.dispatchEvent(new CustomEvent(APP_COMMAND_EVENT, { detail: appCommand.target }));
@@ -898,12 +878,20 @@ export function ChatView({
     }
     // A message typed while the bot works joins the queue as a "Sirada." bubble (slash commands such
     // as /stop still go straight to the daemon). It is delivered when the run ends or by "Simdi gonder".
-    if (active && !body.startsWith("/") && attachmentIds.length === 0) {
-      updateQueue((q) => enqueue(q, body, crypto.randomUUID(), Date.now()));
+    if (active && !body.startsWith("/") && !hasFiles) {
+      const id = crypto.randomUUID();
+      queuedHere.current.add(id);
+      updateQueue((q) => enqueue(q, body, id, Date.now()));
       setText("");
       scrollToEnd();
       return;
     }
+    // A chat opened from a link never follows earlier `/new` results; a `/new` sent here does.
+    if (followNewSince.current === null && parseSlashInput(body)?.name === "new") {
+      followNewSince.current = Date.now();
+    }
+    attachments.locked = true;
+    const attachmentSignal = attachments.signal;
     setSending(true);
     setError(null);
     setSendFailure(null);
@@ -914,7 +902,11 @@ export function ChatView({
       const outcome = await sendWithHostRecovery({
         send: async (fresh) => {
           const c = (fresh as ApiClient | null) ?? client;
-          return c.sendMessage(chatId, body, undefined, await ownerKey(c.baseUrl), attachmentIds);
+          attachmentSignal.throwIfAborted();
+          const attachmentIds = await attachments.uploadAll((blob, name, signal) => c.uploadAttachment(chatId, blob, name, signal));
+          const key = await ownerKey(c.baseUrl);
+          attachmentSignal.throwIfAborted();
+          return c.sendMessage(chatId, body, undefined, key, attachmentIds);
         },
         ensure: ensureHostOnline
       });
@@ -951,10 +943,7 @@ export function ChatView({
         toast.show(t("chat.stopped"), "info");
       }
       setText("");
-      setFiles((prev) => {
-        dropFiles(prev);
-        return [];
-      });
+      attachments.clear();
       setNav(FRESH);
       scrollToEnd();
       await Promise.all([loadMessages(), refreshRuns()]);
@@ -963,6 +952,7 @@ export function ChatView({
       setStopPending(false);
       setSendFailure(humanError(e));
     } finally {
+      attachments.locked = false;
       setSending(false);
       setAckedRunId(null);
     }
@@ -1136,13 +1126,14 @@ export function ChatView({
       stoppedByUser.current = false;
       return;
     }
-    const { message, rest } = takeForRunEnd(queue, was, active);
+    // A link only opens the chat: what was queued before it stays queued until the user acts.
+    const { message } = takeForRunEnd(queue, was, active, (m) => !external || queuedHere.current.has(m.id));
     if (message) {
-      updateQueue(() => rest);
+      updateQueue((q) => removeQueued(q, message.id));
       void deliverQueued(message, "queue");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, queue]);
+  }, [active, queue, external]);
   const sendNow = (id: string) => {
     const { message, rest } = takeForNow(queue, id);
     if (message) {
@@ -1731,6 +1722,7 @@ export function ChatView({
         onDrop={(e) => {
           const dropped = filesOf(e.dataTransfer);
           setDragOver(false);
+          if (e.dataTransfer.types.includes("Files")) e.preventDefault();
           if (dropped.length > 0) {
             e.preventDefault();
             addFiles(dropped);
@@ -1942,7 +1934,7 @@ export function ChatView({
               }
             }}
           >
-          <ComposerFiles files={files} onRemove={removeFile} />
+          <ComposerFiles files={files} onRemove={removeFile} onRetry={(key) => attachments.retry(key)} disabled={sending} />
           <div className={styles.inputWrap}>
           {paintsMentions ? (
             <div className={styles.mirror} aria-hidden="true">
@@ -2023,6 +2015,8 @@ export function ChatView({
               ref={fileInputRef}
               type="file"
               multiple
+              accept={ATTACHMENT_ACCEPT}
+              disabled={sending}
               hidden
               data-testid="attach-input"
               onChange={(e) => {
@@ -2034,9 +2028,9 @@ export function ChatView({
               variant="ghost"
               size="sm"
               className={styles.plus}
-              title={t("chat.attach.add")}
+              title={`${t("chat.attach.add")} — ${t("chat.attach.limits")}`}
               aria-label={t("chat.attach.add")}
-              disabled={!client}
+              disabled={!client || sending}
               onClick={() => fileInputRef.current?.click()}
             >
               <Paperclip />
@@ -2086,7 +2080,7 @@ export function ChatView({
               className={styles.send}
               data-mode={sendMode}
               data-testid="send-button"
-              disabled={sendButtonDisabled({ mode: sendMode, sending: sending || uploadingFiles, stopping: false })}
+              disabled={sendButtonDisabled({ mode: sendMode, sending: sending || blockedFiles, stopping: false })}
               title={sendMode === "stop" ? t(stopUi ? "chat.runBar.forceStop" : "chat.stop") : t("chat.send")}
               aria-label={sendMode === "stop" ? t(stopUi ? "chat.runBar.forceStop" : "chat.stop") : t("chat.send")}
               onClick={() => (sendMode === "stop" ? void stopRun() : void send())}

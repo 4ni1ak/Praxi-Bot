@@ -480,6 +480,37 @@
       "themeHint": "The theme's own accent color.",
       "title": "Accent"
     },
+    "accessibility": {
+      "densities": {
+        "comfortable": "Normal",
+        "compact": "Compact",
+        "spacious": "Roomy"
+      },
+      "density": "Spacing",
+      "description": "Make the app easier to read and use. Changes show at once and are saved on this device only.",
+      "dyslexiaFont": {
+        "hint": "Uses the OpenDyslexic font with a little more space between lines.",
+        "title": "Dyslexia-friendly font"
+      },
+      "focusRing": "Focus outline",
+      "focusRings": {
+        "extra": "Extra thick",
+        "normal": "Normal",
+        "thick": "Thick"
+      },
+      "highContrastHint": "For the strongest contrast, pick the High contrast theme (dark or light) under Theme.",
+      "previewSample": "Sample: this is how your messages and settings will look.",
+      "reduceMotion": {
+        "hint": "Stops animations and transitions, and the live wallpaper stands still.",
+        "title": "Reduce motion"
+      },
+      "reduceTransparency": {
+        "hint": "Panels are always solid, even if Windows allows see-through effects.",
+        "title": "Reduce transparency"
+      },
+      "textSize": "Text size",
+      "title": "Accessibility"
+    },
     "backdrop": {
       "all": "All backdrops",
       "calm": "Calm",
@@ -828,7 +859,114 @@
       "label": "Tools bots may use",
       "restricted": "Some tools are limited by a custom allow-list; edit it in the server settings."
     },
+    "trust": {
+      "badgeAsks": "Always asks",
+      "badgeTrusted": "Labels trusted",
+      "explain": "A server labels each tool as read-only or not. If you answer No, every action asks first. If you answer Yes, only tools it marks read-only run without asking; anything that changes or deletes still asks. You can change this later in the app's settings.",
+      "learn": "Learn more",
+      "no": "No, ask me for every action",
+      "question": "Do you trust this server to describe its own tools honestly?",
+      "savedNo": "{{name}}: every action asks again.",
+      "savedYes": "{{name}}: its read-only tools now run without asking.",
+      "yes": "Yes, let its read-only tools run without asking"
+    },
     "usedBy": "Used by"
+  },
+  "audit": {
+    "action": "Technical name",
+    "actor": {
+      "bot": "A bot",
+      "system": "Praxi itself",
+      "user": "You"
+    },
+    "all": "All",
+    "anyTime": "Any time",
+    "bot": "Bot",
+    "close": "Close",
+    "copied": "Details copied.",
+    "copy": "Copy details",
+    "copyFailed": "Could not copy.",
+    "description": "See what was approved, changed, imported or used, and by whom. Secrets are hidden.",
+    "details": "Details",
+    "detailsNote": "Technical details with secrets removed.",
+    "empty": "No events match.",
+    "event": {
+      "bot_create": "A bot was created",
+      "bot_delete": "A bot was deleted",
+      "bot_update": "A bot's settings were changed",
+      "checkpoint_restored": "Files were restored to an earlier state",
+      "components_install_started": "A component install was started",
+      "composio_call": "A connected app was used",
+      "composio_key_removed": "An app connection key was removed",
+      "composio_key_set": "An app connection key was saved",
+      "doctor_repair": "A repair was run",
+      "engine_killed": "A bot's engine was stopped",
+      "engine_updated": "A bot's engine was changed",
+      "fill_grant_revoke": "Permission to fill in a secret was withdrawn",
+      "fill_secret_delete": "A saved secret was deleted",
+      "grant_always": "Always allow was given",
+      "host_invite": "A device was invited",
+      "host_link_connect": "A server was connected",
+      "host_link_disconnect": "A server was disconnected",
+      "host_update_start": "A server update was started",
+      "input_batch_authorized": "Mouse and keyboard control was allowed",
+      "knowledge_embedding_approved": "Sending notes for indexing was approved",
+      "llm_call_started": "An AI model was called",
+      "mcp_token_created": "An access pass for tools was created",
+      "mcp_token_revoked": "An access pass for tools was revoked",
+      "mcp_tool_called": "An outside tool was used",
+      "peer_decision_completed": "A paired device's request was decided",
+      "peer_decision_requested": "A paired device asked for approval",
+      "profile_export": "A bot profile was exported",
+      "profile_import": "A bot profile was imported",
+      "provider_cli_enable": "A command-line AI engine was turned on",
+      "question_answered": "A question from a bot was answered",
+      "skill_update_requested": "A skill update was requested",
+      "takeover_active": "You took control of the screen",
+      "trusted_folder_add": "A folder was marked as trusted",
+      "trusted_folder_remove": "A folder is no longer trusted",
+      "unknown": "Other activity",
+      "usage": "An AI model call was recorded"
+    },
+    "exportCsv": "Export CSV",
+    "exportDone": "Exported. Secrets are hidden in the file.",
+    "exportFailed": "The export failed.",
+    "exportJson": "Export JSON",
+    "failed": "The activity log could not be loaded.",
+    "filterActor": "Who",
+    "filterBot": "Bot",
+    "filterKind": "Type",
+    "filterTime": "Time",
+    "kind": {
+      "approval": "Approvals",
+      "import": "Imports",
+      "key_use": "Key and app use",
+      "other": "Other",
+      "permission": "Permission changes",
+      "takeover": "Takeovers",
+      "update": "Updates and installs"
+    },
+    "last24h": "Last 24 hours",
+    "last30d": "Last 30 days",
+    "last7d": "Last 7 days",
+    "loading": "Loading…",
+    "next": "Older",
+    "open": "Open the activity log",
+    "prev": "Newer",
+    "privacy": "Only you can see this. Secrets and keys are hidden before anything is shown or exported.",
+    "range": "{{from}}–{{to}} of {{total}}",
+    "retry": "Try again",
+    "search": "Search",
+    "title": "Activity log",
+    "type": "Type",
+    "verify": "Check integrity",
+    "verifyFailed": "The check could not run.",
+    "verifyNote": "This log is not cryptographically signed: the check finds removed entries, not edited ones.",
+    "verifyOk": "No problems found: {{count}} events, none missing, and the log can only be added to.",
+    "verifyProblem": "Warning: {{missing}} events are missing or the protection is off. Treat this log with care.",
+    "what": "What happened",
+    "when": "When",
+    "who": "Who"
   },
   "backdrop": {
     "names": {
@@ -891,9 +1029,9 @@
     "deleteBlocked": "This bot still has chats ({{count}}), so it cannot be deleted. Only a bot without chats or runs can be removed.",
     "deleteBlockedRuns": "This bot still has {{count}} retained runs, so it cannot be deleted. Only a bot without chats or runs can be removed.",
     "deleteBlockedRuns_one": "This bot still has {{count}} retained run, so it cannot be deleted. Only a bot without chats or runs can be removed.",
-    "deleteConfirmBody": "The bot, its access to apps and its e-mail accounts will be removed. This cannot be undone. A bot that still has chats or runs cannot be deleted: in that case nothing is removed and you will see why.",
+    "deleteConfirmBody": "The bot, its access to apps and its e-mail accounts will be removed, and the memories only this bot learned are erased for good. Memories shared with your other bots stay. This cannot be undone. A bot that still has chats or runs cannot be deleted: in that case nothing is removed and you will see why.",
     "deleteConfirmTitle": "Delete {{name}}?",
-    "deleteHint": "Removes the bot, its access to apps and its e-mail accounts. Only possible while it has no chats or runs. This cannot be undone.",
+    "deleteHint": "Removes the bot, its access to apps, its e-mail accounts and the memories only it learned. Only possible while it has no chats or runs. This cannot be undone.",
     "deleteTitle": "Delete this bot",
     "deleted": "{{name}} was deleted.",
     "discard": "Discard",
@@ -1543,22 +1681,52 @@
     },
     "attach": {
       "add": "Attach files or images",
-      "failed": "Could not attach this file",
+      "command": "Send files with a regular message. Remove them before using a slash command.",
+      "delivery": "New files stay in this browser until Send. Send copies them to the chat’s computer and includes the images or extracted text in the selected AI provider’s input.",
+      "details": "Where files go and size limits",
+      "documentHelp": "Document text is treated as untrusted data, never instructions. Scanned PDFs may have no readable text. Resizing an animated image uses its first frame.",
+      "empty": "This file is empty. Choose a file with content.",
+      "failed": "Could not attach this file. Remove it and try again.",
+      "footer": "Fix or remove failed files before sending. Files already copied stay on the chat’s computer even if removed here.",
+      "imageFailed": "This image could not be prepared. Try a smaller PNG, JPEG, GIF or WebP image.",
+      "imageTooLarge": "The image is still too large after resizing. Choose an image under 5 MB.",
+      "limits": "Up to 6 files; 15 MB each, text 1 MB, prepared images 5 MB. Images over 2048 pixels are reduced.",
       "list": "Attached files",
+      "local": "Ready in this browser",
+      "localNotice": "New files stay in this browser until Send.",
       "pastedName": "Pasted file",
+      "preparing": "Preparing in this browser…",
+      "providerImage": "To AI: this image",
+      "providerText": "To AI: extracted text (untrusted)",
+      "ready": "Ready to send",
       "remove": "Remove {{name}}",
+      "resized": "Image reduced",
+      "retry": "Prepare {{name}} for another send attempt",
+      "stored": "Saved on the chat’s computer",
+      "textTooLarge": "Text files can be at most 1 MB. Choose a smaller file.",
       "tooLarge": "Too large (15 MB at most)",
       "tooMany": "At most 6 files per message",
       "truncated": "Only the start of this file was read",
-      "unsupported": "This file type is not supported. Use an image, PDF, Word, Excel, PowerPoint or a text file.",
-      "uploading": "Uploading"
+      "unsupported": "Use PNG, JPEG, GIF, WebP, PDF, DOCX, XLSX, PPTX or a UTF-8 text file. Audio, video and other binary files are not supported.",
+      "untrusted": "Untrusted file content",
+      "uploading": "Copying to the chat’s computer…"
     },
     "chain": {
       "details": "Details",
       "groupApp": "{{app}} ×{{count}}",
       "groupSame": "{{what}} ×{{count}}",
+      "groupSite": "Browsed {{host}}",
       "problems_one": "{{count}} step failed",
       "problems_other": "{{count}} steps failed",
+      "reason": {
+        "blocked": "Blocked by you",
+        "noAnswer": "No answer in time",
+        "other": "Did not work",
+        "stopped": "Stopped before finishing",
+        "timeout": "Timed out",
+        "timeoutAfter": "Timed out after {{seconds}} s"
+      },
+      "showAll": "Show {{count}} more steps",
       "slow": "Taking longer than usual",
       "started": "Started {{start}}",
       "startedFinished": "Started {{start}} · finished {{end}}",
@@ -1568,6 +1736,8 @@
         "running": "Working",
         "skipped": "Skipped"
       },
+      "stepCount_one": "{{count}} step",
+      "stepCount_other": "{{count}} steps",
       "summary": "{{count}} steps · {{what}} · {{duration}}",
       "summaryPlain": "{{count}} steps · {{duration}}",
       "thought": "Thought for {{duration}}",
@@ -2114,12 +2284,32 @@
     "working": "Working…",
     "yesterdayLabel": "Yesterday"
   },
+  "chatExport": {
+    "approvals": "Approval answers (allowed or denied)",
+    "copied": "Copied as Markdown",
+    "copy": "Copy as Markdown",
+    "copyFailed": "Could not copy. Try saving the file instead.",
+    "format": "File type",
+    "formats": {
+      "html": "Web page (HTML)",
+      "json": "Data file (JSON)",
+      "markdown": "Text (Markdown)"
+    },
+    "include": "Include",
+    "loading": "Preparing the preview…",
+    "menu": "Export chat…",
+    "messages": "Messages",
+    "previewClipped": "The preview shows only the start. The file contains everything.",
+    "previewLabel": "Preview of the exported chat",
+    "privacy": "Passwords, keys, private messages and your user folder are removed before anything is shown or saved. Attached files are not included.",
+    "save": "Save file…",
+    "steps": "Steps the bot took",
+    "title": "Export chat"
+  },
   "chatHistory": {
     "count": "{{count}} matching messages",
     "count_one": "{{count}} matching message",
     "count_other": "{{count}} matching messages",
-    "exportJson": "Export as JSON",
-    "exportMarkdown": "Export as Markdown",
     "more": "More results",
     "noneYet": "No visible matches on this page yet",
     "results": "Message search results",
@@ -2133,7 +2323,7 @@
     "archivedToggle": "Archived ({{count}})",
     "delete": "Delete",
     "deleteActiveRun": "A run is currently active in this chat. Stop it first before deleting.",
-    "deleteBody": "\"{{title}}\" and its messages will be permanently deleted. This cannot be undone.",
+    "deleteBody": "\"{{title}}\" and its messages will be permanently deleted, and it will no longer turn up in searches of past conversations. This cannot be undone.",
     "deleteConfirm": "Delete chat",
     "deleteTitle": "Delete this chat?",
     "empty": "Press “New chat” and write what you need. Your chats are saved here.",
@@ -2369,6 +2559,12 @@
     "sending": "Moving…",
     "summary": "{{done}} moved, {{skipped}} skipped, {{failed}} failed.",
     "title": "Make this server the home of my bots"
+  },
+  "deepLinks": {
+    "blocked": "Finish your current work before opening this link.",
+    "invalid": "This Praxi link is invalid.",
+    "missing": "This link’s destination is unavailable on the selected computer.",
+    "offline": "The selected computer is unavailable. Try the link again when it’s online."
   },
   "dev": {
     "runningLabel": "Bot Run Active",
@@ -3255,6 +3451,15 @@
     "saved": "Trusted: {{folder}}",
     "title": "Trusted folders"
   },
+  "gettingStarted": {
+    "allDone": "You're all set. Everything here is done.",
+    "hide": "Hide from the start screen",
+    "progress": "{{done}} of {{total}} done",
+    "show": "Show on the start screen again",
+    "stateDone": "done",
+    "stateOpen": "not done yet",
+    "title": "Getting started"
+  },
   "health": {
     "connected": "Local service running",
     "connecting": "Starting the local service…",
@@ -3295,6 +3500,7 @@
     "closePanel": "Close the side panel",
     "dialogClose": "Close the dialog",
     "dialogFocus": "Move focus inside the dialog",
+    "dictatePtt": "Hold the push-to-talk key to dictate, release to send (turn it on in Settings > Voice)",
     "exitLiveFocus": "Leave keyboard control of the live view",
     "findInChat": "Find in this chat",
     "findNav": "Next / previous match in the find bar, close it",
@@ -3321,6 +3527,81 @@
     "title": "Keyboard shortcuts",
     "voiceCallEnd": "End the voice call",
     "voiceCallTalk": "Hold to talk in a push-to-talk call"
+  },
+  "helpers": {
+    "add": {
+      "address": "Server address",
+      "addressHint": "For example Ollama, LM Studio, OpenRouter, Mistral or Together.",
+      "cancel": "Cancel",
+      "compatible": "Other (OpenAI-compatible)",
+      "dimensions": "Vector size",
+      "dimensionsHint": "Leave the suggested number unless your provider says otherwise.",
+      "key": "API key",
+      "keyOptional": "Leave empty if the server needs no key.",
+      "keyStored": "Stored safely on this computer. It is never shown again.",
+      "kind": "Provider",
+      "model": "Model",
+      "open": "Add an embedding provider",
+      "otherName": "this server",
+      "reuseGemini": "Use the Gemini key I already added",
+      "save": "Save provider",
+      "use": "Use it for"
+    },
+    "allowSending": "Allow Praxi to send my text to this provider",
+    "decision": {
+      "custom": "You set this up by hand in decider.toml.",
+      "description": "A small online helper that gives quick advice on simple questions. It can only advise: it can never give a permission or approve anything.",
+      "limits": "Free limits: {{rpm}} requests per minute, {{tpm}} units of text per minute, {{rpd}} requests per day (checked {{date}}).",
+      "needKey": "Add a Gemini key first to use it.",
+      "off": "Off",
+      "on": "On",
+      "title": "Decision helper",
+      "turnOff": "Turn off",
+      "turnOn": "Turn on"
+    },
+    "description": "Extra services that make memory and decisions smarter. Nothing here is needed to use Praxi.",
+    "embeddings": {
+      "description": "Embeddings let Praxi find notes and memories by meaning, not only by exact words. Without a provider Praxi uses a simple offline method, and nothing leaves this computer.",
+      "none": "No provider yet: Praxi uses its offline method.",
+      "title": "Embeddings"
+    },
+    "fallbackNote": "If a provider is busy, out of free quota or not reachable, Praxi uses the next one and finally the offline method. It never goes over a free limit on purpose.",
+    "keyOptional": "A Gemini key is optional; a free key gives you a smarter memory and faster decisions.",
+    "learnMore": "Learn more",
+    "privacy": {
+      "agree": "I understand and allow sending text to {{provider}}",
+      "notice": "The text of your notes, memories and documents will be sent to {{provider}} so it can be searched by meaning.",
+      "safeguards": "Passwords and keys are removed first. Anything marked private is never sent. You can switch this off at any time."
+    },
+    "purpose": {
+      "memory": "Memory recall",
+      "router": "Choosing the right shortcut or tool"
+    },
+    "remote": "Open Settings on this computer to change helpers.",
+    "remove": "Remove",
+    "retryIn": "again in {{seconds}} s",
+    "state": {
+      "cooling_down": "Resting for a moment",
+      "dimension_mismatch": "Answers have the wrong size",
+      "key_missing": "No key saved",
+      "key_rejected": "Key was refused",
+      "not_allowed": "Waiting for your permission",
+      "offline": "Not reachable",
+      "ok": "Working",
+      "rate_limited": "Free limit reached, resting",
+      "rejected": "Request was refused",
+      "unavailable": "Not available on this computer"
+    },
+    "test": "Test connection",
+    "testOk": "Connection works",
+    "title": "Helpers (optional)",
+    "usage": {
+      "noLimit": "{{used}} used",
+      "of": "{{used}} of {{limit}}",
+      "perDay": "Requests per day",
+      "perMinute": "Requests per minute",
+      "tokensPerMinute": "Amount of text per minute"
+    }
   },
   "home": {
     "admin": {
@@ -3859,10 +4140,21 @@
     "editLabel": "Memory text",
     "empty": "Your bot remembers useful facts here, like your name. Tell it something in a chat, or add one yourself below.",
     "emptyTitle": "No memories yet",
+    "erase": "Erase permanently",
+    "eraseBody": "The text is removed everywhere, including the undo history, and cannot be restored. Backups made earlier may still contain it, and restoring one can bring the item back.",
+    "eraseConfirm": "Erase permanently",
+    "eraseTitle": "Erase this memory permanently?",
+    "erasedNotice": "Memory erased permanently.",
     "expires": "expires {{date}}",
     "forget": "Forget",
     "forgottenBadge": "Forgotten",
+    "forgottenEmpty": "Nothing forgotten yet.",
+    "forgottenErased": "Erased permanently",
+    "forgottenHint": "Things you forgot are not learned again from conversations. Remove an entry to let your bot learn it again.",
     "forgottenNotice": "Memory forgotten.",
+    "forgottenRemove": "Allow learning again",
+    "forgottenRemovedNotice": "This can be learned again now.",
+    "forgottenSectionTitle": "Forgotten items",
     "includeForgotten": "Show forgotten items",
     "kind": "Category",
     "kindFilter": "Category",
@@ -4020,6 +4312,55 @@
     "thinking": "Thinking",
     "title": "Model"
   },
+  "myBots": {
+    "all": "All statuses",
+    "clear": "Clear filters",
+    "costHint": "USD counted toward the daily limit in the bot’s local day. Missing usage may be estimated; models with no known price are not included. Other daily, weekly and monthly limits may also apply.",
+    "costLimit": "{{cost}} / {{limit}}",
+    "costNoLimit": "{{cost}} / no daily money limit",
+    "costUnavailable": "Cost unavailable",
+    "count": "Showing {{shown}} of {{total}} bots",
+    "dailyLimit": "Daily spending for {{name}}",
+    "emptyHint": "Create a bot to help with research, everyday tasks, or your own ideas.",
+    "emptyTitle": "Your first bot starts here",
+    "filter": "Status",
+    "grid": "Card grid",
+    "lastActivity": "Last activity",
+    "layout": "Bot layout",
+    "list": "Compact list",
+    "loading": "Loading cost…",
+    "newBot": "Create a bot",
+    "newChat": "New chat",
+    "noActivity": "No activity yet",
+    "noMatches": "No bots match",
+    "noMatchesHint": "Try another name or status.",
+    "pause": "Pause",
+    "pauseUnavailable": "Pause is available for the bot controlling this computer. Other runs can be stopped from their chat.",
+    "refresh": "Refresh bots",
+    "resume": "Resume",
+    "review": "Review request",
+    "schedule": "Schedule",
+    "scope": "Bots on {{place}}. Choose another location to see its bots.",
+    "search": "Find a bot",
+    "server": "Server",
+    "settings": "Settings",
+    "sort": "Sort by",
+    "sortBy": {
+      "activity": "Last activity",
+      "cost": "Highest cost today",
+      "name": "Name"
+    },
+    "stale": "Updates are disconnected. These are the last known details; reconnect before making changes.",
+    "status": {
+      "approval": "Needs your input",
+      "idle": "Idle",
+      "paused": "Paused",
+      "running": "Running"
+    },
+    "thisComputer": "This computer",
+    "title": "My bots",
+    "today": "Today / daily limit"
+  },
   "needs": {
     "empty": "When a bot needs your OK or has a question, it shows up here.",
     "emptyTitle": "All clear",
@@ -4107,10 +4448,15 @@
     }
   },
   "notifyHistory": {
+    "allBots": "All bots",
+    "allTypes": "All types",
     "clear": "Clear history",
     "empty": "When a bot finishes a job or needs your OK, you will see it here.",
     "emptyAction": "See what needs you",
     "emptyTitle": "Nothing new",
+    "filterBot": "Bot",
+    "filterType": "Type",
+    "filters": "Filter notifications",
     "held": "Held (quiet hours)",
     "heldMuted": "Held (bot muted)",
     "kind": {
@@ -4121,12 +4467,23 @@
       "scheduleDone": "Scheduled job finished"
     },
     "markAllRead": "Mark all read",
+    "noMatch": "No notification matches these filters.",
+    "noMatchTitle": "Nothing here",
+    "onlyUnread": "Only unread",
     "openNeeds": "Open Needs you",
+    "quietNote": "{{count}} notifications were held back during quiet hours and are still unread.",
+    "quietNote_one": "{{count}} notification was held back during quiet hours and is still unread.",
+    "resetFilters": "Show everything",
+    "retention": "Kept for {{days}} days, up to {{max}} notifications, then removed automatically.",
+    "showSnoozed": "Snoozed ({{count}})",
     "shown": "Shown",
+    "snooze": "Snooze 1 h",
+    "snoozeHint": "Hide this for one hour. It comes back by itself.",
     "subtitle": "What the bots announced, and what quiet hours held back. Pending approvals always stay in Needs you.",
     "title": "Notification history",
     "unread": "Unread",
-    "unreadCount": "{{count}} unread"
+    "unreadCount": "{{count}} unread",
+    "unsnooze": "Bring back"
   },
   "overlay": {
     "actions": {
@@ -4155,6 +4512,7 @@
     "empty": "No matching command",
     "go": {
       "home": "Go to overview",
+      "myBots": "My bots",
       "needs": "Go to Needs you",
       "schedules": "Go to scheduled tasks",
       "settings": "Open settings",
@@ -4305,6 +4663,31 @@
     "remove": "Remove this queued message",
     "sendNow": "Send now"
   },
+  "quickAsk": {
+    "bot": "Bot",
+    "clipboardEmpty": "Nothing usable on the clipboard.",
+    "clipboardOff": "Your clipboard is not used unless you press this.",
+    "close": "Close",
+    "failed": "That did not work. Please try again.",
+    "hints": "Enter sends · Esc closes",
+    "includeClipboard": "Include clipboard",
+    "needsYou": "This needs your approval. Open it in the app to decide.",
+    "noBots": "No bots yet. Create one in the app first.",
+    "noService": "Praxi-Bot is not ready yet: {{reason}}",
+    "openInApp": "Open in app",
+    "placeholder": "Ask something and press Enter",
+    "problem": {
+      "in_use": "Another program already uses this shortcut. Pick another.",
+      "invalid": "This shortcut is not valid. Example: Ctrl+Alt+Space.",
+      "needs_modifier": "Add Ctrl or Alt to the shortcut, otherwise it would block normal typing.",
+      "reserved": "Windows and most apps already use this shortcut. Pick another.",
+      "same_as_stop": "This is already your Stop shortcut. Pick another.",
+      "shift_only": "Shift alone is not enough. Add Ctrl or Alt."
+    },
+    "send": "Send",
+    "thinking": "Thinking…",
+    "title": "Quick ask"
+  },
   "quota": {
     "remaining": "{{label}}: {{pct}}% left",
     "resets": "Resets {{when}}",
@@ -4366,13 +4749,18 @@
     "exported": "Report saved",
     "footer": "Made with Praxi. Private details are left out.",
     "hint": "See what the bot did in this run, step by step",
+    "noRecordedSteps": "Step history is unavailable for this run.",
     "noSteps": "The bot did not use any tools in this run.",
     "outcome": "Result",
     "outcomes": {
       "done": "Finished",
       "failed": "Failed",
+      "paused": "Paused",
+      "queued": "Queued",
+      "running": "Running",
       "stopped": "Stopped by you",
-      "unfinished": "Not finished"
+      "unfinished": "Not finished",
+      "waitingApproval": "Waiting for approval"
     },
     "privacy": "Private details are left out: what was typed, read or answered is not shown, and anything that looks like a password or key is hidden.",
     "started": "Started",
@@ -4780,6 +5168,7 @@
       "de": "Deutsch",
       "description": "Select the display language for the interface.",
       "en": "English",
+      "es": "Español",
       "title": "Language",
       "tr": "Türkçe"
     },
@@ -4861,6 +5250,12 @@
       "restartManual": "Restart the background service yourself so it picks up the change (it was not started by this app).",
       "test": "Test connection",
       "title": "Model providers"
+    },
+    "quickAsk": {
+      "description": "Off by default. When on, a keyboard shortcut works from any program and opens a small box where you type a question and press Enter. Each question starts a new chat with the bot you pick.",
+      "hotkey": "Quick ask shortcut keys",
+      "privacy": "The clipboard and your screen are never read unless you press \"Include clipboard\" in the box.",
+      "title": "Quick ask shortcut"
     },
     "quiet": {
       "allowUrgent": "Still notify when a bot is blocked on me",
@@ -5835,6 +6230,16 @@
     "exportCsv": "Download CSV",
     "exportDone": "Usage CSV downloaded.",
     "exportFailed": "Could not download usage CSV",
+    "insights": {
+      "noChat": "No chat to open",
+      "openRun": "Open",
+      "openRunLabel": "Open the chat of the run by {{bot}} on {{when}}",
+      "priceUnknown": "Price unknown",
+      "title": "Where the money goes",
+      "tokensShort": "{{amount}} tokens",
+      "topRuns": "Most expensive runs",
+      "unknownPriceNote": "Entries marked \"Unknown\" use a model without a known price: their tokens are counted, their cost is not."
+    },
     "limit": {
       "clear": "Remove limit",
       "forecast": "Forecast for month end",
@@ -5883,15 +6288,27 @@
     "tokens": "Tokens",
     "total": "Total",
     "trend": {
+      "alertKey": "Alert at 80% ({{amount}})",
       "ariaLabel": "Daily {{metric}} trend over {{days}} days",
       "dayReadout": "{{day}} · {{calls}} calls · {{amount}} tokens · {{cost}}",
+      "forecast": "Spent this month: {{spent}}. At this pace the month ends at about {{forecast}}.",
+      "forecastNone": "Not enough priced usage this month yet for a forecast.",
+      "forecastPartial": "{{count}} calls had no known price and are not counted.",
+      "granularities": {
+        "day": "Per day",
+        "month": "Per month",
+        "week": "Per week"
+      },
+      "granularity": "Group by",
       "hoverHint": "Hover or focus a day to see its totals.",
+      "limitKey": "Monthly limit ({{amount}})",
       "metric": "Chart metric",
       "metrics": {
         "calls": "Calls",
         "cost": "Cost",
         "tokens": "Tokens"
       },
+      "prorated": "Lines show the even share of your monthly limit for one day or week.",
       "showTable": "Show daily breakdown table",
       "timeZone": "Local days ({{tz}})",
       "title": "Daily trend"
@@ -5955,6 +6372,48 @@
     "description": "Reply voice and speed for the read-aloud button. Uses your system's speech engine.",
     "dictate": "Dictate",
     "dictateStop": "Stop and transcribe",
+    "input": {
+      "denied": {
+        "linux": "Open your system settings → Privacy (or Sound) and allow Praxi-Bot to use the microphone. If you use a Flatpak or Snap, allow the audio permission for it. Then restart Praxi-Bot and try again.",
+        "mac": "Open System Settings → Privacy & Security → Microphone and turn on Praxi-Bot. Then close and reopen Praxi-Bot and try again.",
+        "windows": "Open Windows Settings → Privacy & security → Microphone. Turn on Microphone access and Let desktop apps access your microphone. Then close and reopen Praxi-Bot and try again."
+      },
+      "deniedTitle": "Praxi-Bot is not allowed to use the microphone.",
+      "description": "Choose your microphone, check that it works, and decide how recording starts and stops.",
+      "mic": {
+        "default": "System default",
+        "description": "Pick which microphone to use. The level bar moves when it hears you. Nothing is recorded or sent during the test.",
+        "test": "Test microphone",
+        "testing": "Listening for 5 seconds. Say something.",
+        "title": "Microphone",
+        "unnamed": "Microphone {{n}}",
+        "verdict": {
+          "good": "The microphone works.",
+          "quiet": "A very quiet sound was heard. Speak closer to the microphone or raise its volume.",
+          "silent": "No sound was heard. Check that the right microphone is selected and not muted."
+        }
+      },
+      "ptt": {
+        "description": "Hold {{key}} to record and let go to send. Works while the Praxi-Bot window is in front. Off by default.",
+        "key": "Push-to-talk key",
+        "title": "Push-to-talk"
+      },
+      "recording": "Recording",
+      "releaseToSend": "Release {{key}} to send",
+      "silence": {
+        "description": "Recording that you started by clicking ends by itself after this much silence. With push-to-talk you decide when it ends.",
+        "off": "Off (click to stop)",
+        "seconds": "After {{count}} seconds",
+        "seconds_one": "After {{count}} second",
+        "seconds_other": "After {{count}} seconds",
+        "title": "Stop when I stop talking"
+      },
+      "stopsOnSilence": "Stops after {{count}} seconds of silence",
+      "stopsOnSilence_one": "Stops after {{count}} second of silence",
+      "stopsOnSilence_other": "Stops after {{count}} seconds of silence",
+      "title": "Microphone and push-to-talk",
+      "unsupported": "This window cannot record audio, so there is nothing to set up here."
+    },
     "local": {
       "details": "Download about {{size}} MB from {{host}} (checked against a fixed checksum). Licence: {{license}}.",
       "download": "Download ({{size}} MB)",
@@ -5979,6 +6438,7 @@
     "speed": "Speed",
     "stop": "Stop reading",
     "stt": {
+      "advanced": "Advanced (model and address)",
       "clearKey": "Remove key",
       "description": "Where your recordings are transcribed: an OpenAI-compatible service (a cloud provider or a local whisper server).",
       "geminiKey": "Gemini API key",
@@ -5993,10 +6453,18 @@
       "providerGemini": "Gemini Live",
       "providerLocal": "On this computer (offline)",
       "providerWhisper": "Whisper-compatible (OpenAI / local)",
+      "reuseGemini": "Use my Gemini key from Bots & models",
+      "reuseKey": "Use my matching key from Bots & models",
       "save": "Save",
       "saved": "Dictation settings saved",
+      "statusNoGeminiKey": "No Gemini key yet. Add one under Bots & models, or paste a key below.",
+      "statusNoKey": "No key yet. Paste one below (a local server may not need one).",
+      "statusOwnKey": "Ready: using a separate key saved for voice.",
+      "statusReusing": "Ready: using the key you already added for this service. It stays in the secret store.",
+      "statusReusingGemini": "Ready: using the Gemini key you already added. It stays in the secret store.",
       "title": "Dictation service",
-      "url": "Service address"
+      "url": "Service address",
+      "whereTitle": "Where your voice goes:"
     },
     "tableOmitted": "(table omitted)",
     "title": "Spoken replies",

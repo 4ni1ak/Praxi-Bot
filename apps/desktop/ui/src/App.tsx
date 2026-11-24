@@ -1,11 +1,12 @@
-import { BellDot, BellRing, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Monitor, Plus, Search, Server, ServerOff, Settings2 } from "lucide-react";
+import { BellDot, BellRing, Bot, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Monitor, Plus, Search, Server, ServerOff, Settings2 } from "lucide-react";
+import { effectiveWallpaperMotion } from "./lib/accessibility";
 import { unreadBotIds } from "./lib/unread";
 import { useReadState } from "./store/readStateStore";
 import { ApiError } from "./api/client";
-import type { UpdateChatInput } from "./api/types";
+import type { Run, UpdateChatInput } from "./api/types";
 import { isMockMode } from "./api/mockMode";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BotAvatar,
@@ -54,6 +55,8 @@ import { HealthIndicator } from "./components/HealthIndicator";
 import { ServiceBanner } from "./components/ServiceBanner";
 import { ServiceStateProvider } from "./state/ServiceState";
 import { HelpModal } from "./components/HelpModal";
+import { GettingStarted } from "./components/GettingStarted";
+import type { StepTarget } from "./lib/gettingStarted";
 import { DemoModal } from "./demo/DemoModal";
 import { type DemoTaskId, offerDemo } from "./demo/demoEngine";
 import { useProviders } from "./state/useProviders";
@@ -63,6 +66,7 @@ import whatsNewFile from "./whats-new.json";
 import { getVersion } from "@tauri-apps/api/app";
 import { isHelpKey } from "./lib/shortcuts";
 import { chatTitleLabel } from "./lib/chatTitle";
+import { OPEN_CHAT_EVENT, type OpenChatTarget } from "./lib/openChatLink";
 import { APP_COMMAND_EVENT, type AppCommandTarget } from "./lib/slash";
 import { editorSection } from "./lib/botEditor";
 import { BOT_COLORS, botView, draftFromBot } from "./lib/botProfile";
@@ -81,6 +85,7 @@ import { getAutostart, setAutostart } from "./lib/providers";
 import { isProcessingRunState } from "./lib/runState";
 import { PausedControlBanner } from "./components/PausedControlBanner";
 import { RunBar } from "./components/RunBar";
+import { RunTimelineModal } from "./components/RunTimelineModal";
 import { runBarModel } from "./lib/runBar";
 import { ToastProvider } from "./components/Toast";
 import { ControlBridgeHost } from "./state/ControlBridgeHost";
@@ -142,6 +147,8 @@ import { OnboardingView } from "./views/OnboardingView";
 import { SchedulesView } from "./views/SchedulesView";
 import { AppsModal } from "./views/AppsModal";
 import { NewBotModal } from "./views/NewBotModal";
+import { MyBotsView } from "./views/MyBotsView";
+import { nativePauseAction } from "./lib/myBots";
 import { SettingsModal } from "./views/SettingsModal";
 import { OPEN_SETTINGS_EVENT, type SettingsTarget } from "./lib/settingsLink";
 import { OPEN_AI_SETTINGS_EVENT } from "./state/useCliEngineRows";
@@ -151,6 +158,8 @@ import { EngineConsentProvider } from "./state/EngineConsent";
 import type { SettingsSectionId } from "./views/settings/types";
 import type { SettingsPageId } from "./lib/settingsPages";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { createDeepLinkDispatcher } from "./lib/deepLinks";
+import { onDeepLinkPending } from "./lib/shell";
 import { i18n, type SupportedLanguage } from "./i18n";
 import {
   broadcastSettingsUpdated,
@@ -180,26 +189,30 @@ import { humanLine } from "./lib/humanError";
 
 type Route =
   | { kind: "home" }
+  | { kind: "myBots" }
   | { kind: "onboarding" }
   /** A bot without any chat yet: the empty state (there is no bot page). */
-  | { kind: "bot"; botId: string }
-  | { kind: "chat"; chatId: string; botId: string; messageId?: string; jumpRequestId?: number }
+  | { kind: "bot"; botId: string; edit?: boolean }
+  | { kind: "chat"; chatId: string; botId: string; messageId?: string; jumpRequestId?: number; external?: boolean }
   | { kind: "needs" }
   | { kind: "notifications" }
-  | { kind: "schedules" };
+  | { kind: "schedules"; botId?: string };
 
-function AppShell() {
+function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDispatcher> }) {
   const { t } = useTranslation();
   const {
     phase,
     error: daemonError,
     runs,
+    events,
     bots,
     chats,
     needs,
+    conn,
     client,
     refreshBots,
     refreshChats,
+    refreshRuns,
     pendingChatIds,
     updateChat,
     deleteChat,
@@ -211,13 +224,17 @@ function AppShell() {
     serviceProblem,
     startup,
     retryInSeconds,
-    activeComputerId
+    activeComputerId,
+    hostState,
+    initialComputer,
+    isActiveComputer
   } = useDaemon();
   const { openViewer } = useLiveView();
   const readState = useReadState(client?.baseUrl ?? "");
   const unreadBots = useMemo(() => unreadBotIds(chats, runs, needs, readState), [chats, runs, needs, readState]);
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
+  const [linkedRun, setLinkedRun] = useState<Run | null>(null);
   const [homeChatSlots, setHomeChatSlots] = useState<LiveChatSlots | null>(null);
   const [localChatSlots, setLocalChatSlots] = useState<LiveChatSlots | null>(null);
   // Every route change goes through this gate: a bot dialog with unsaved data asks first, and one
@@ -303,6 +320,37 @@ function AppShell() {
   const { dto: providersDto } = useProviders();
   const showDemoOffer = offerDemo(providersDto);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [linkOwner] = useState(() => ({}));
+  const linkSession = useMemo(() => client === null ? null : {}, [client]);
+  useLayoutEffect(() => () => deepLinks.detach(linkOwner), [deepLinks, linkOwner]);
+  useLayoutEffect(() => {
+    if (!isTauriRuntime()) return;
+    const waiting = !settingsLoaded || initialComputer === "waiting" ||
+      (initialComputer === "ready" && (phase === "connecting" || hostState?.kind === "connecting" || (conn && !client)));
+    const offline = initialComputer === "offline" || phase === "error" || !linkSession ||
+      hostState?.kind === "offline" || hostState?.kind === "not_paired" ||
+      (hostState?.kind === "version_mismatch" && hostState.blocking);
+    deepLinks.update({
+      owner: linkOwner,
+      computerId: initialComputer === "ready" ? activeComputerId : null,
+      selected: () => isActiveComputer(activeComputerId),
+      connection: waiting ? "waiting" : offline ? "offline" : {
+        key: linkSession, refreshBots, refreshChats, refreshRuns
+      },
+      open: (destination) => {
+        if (settingsOpen !== null || newBotOpen || newChatBusy || pendingChatIds.size > 0) return false;
+        return leave.attemptSilently(() => {
+          if (destination.kind === "run") {
+            setLinkedRun(destination.run);
+          } else {
+            setLinkedRun(null);
+            setRoute(destination.kind === "chat" ? { ...destination, external: true } : destination);
+          }
+        }) === "went";
+      },
+      feedback: (failure) => toast.show(t(`deepLinks.${failure}`), "danger")
+    });
+  });
   const [appVersion, setAppVersion] = useState("");
   const [whatsNewDone, setWhatsNewDone] = useState(false);
   const [layout, setLayout] = useState<ShellLayout>(loadShellLayout);
@@ -346,7 +394,7 @@ function AppShell() {
       const params = new URLSearchParams(window.location.search);
       const mock = isMockMode();
       const merged: AppSettings = { ...loaded, autostart: osAutostart,
-        ...(mock ? { onboardingCompleted: true, language: (["en", "de"] as const).find((l) => l === params.get("lang")) ?? ("tr" as const) } : {}),
+        ...(mock ? { onboardingCompleted: true, language: (["en", "de", "es"] as const).find((l) => l === params.get("lang")) ?? ("tr" as const) } : {}),
       };
       if (mock) Object.assign(merged, appearanceFromQuery(params, merged));
       if (mock) {
@@ -380,6 +428,7 @@ function AppShell() {
         if (screen === "newbot") setNewBotOpen(true);
         if (screen === "bot" || screen === "gone") setRoute({ kind: "bot", botId: screen === "gone" ? "00000000-0000-4000-8000-000000000000" : atlas });
         if (screen === "schedules") setRoute({ kind: "schedules" });
+        if (screen === "myBots") setRoute({ kind: "myBots" });
         if (screen === "needs") setRoute({ kind: "needs" });
         if (screen === "home" || screen === "offline") setRoute({ kind: "home" });
       }
@@ -673,9 +722,29 @@ function AppShell() {
     const chat = chats.find((c) => c.id === chatId);
     go({ kind: "chat", chatId, botId: chat?.bot_id ?? "", messageId, jumpRequestId: messageId ? Date.now() : undefined });
   };
+  // A card inside Settings (the Usage page's expensive runs) opens a chat and gets out of the way.
+  const openChatRef = useRef(openChat);
+  openChatRef.current = openChat;
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      setSettingsOpen(null);
+      openChatRef.current((e as CustomEvent<OpenChatTarget>).detail.chatId);
+    };
+    window.addEventListener(OPEN_CHAT_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_CHAT_EVENT, onOpen);
+  }, []);
   const openNeeds = () => go({ kind: "needs" });
+  /** Where a "Getting started" step's button leads: always an existing screen, never a new flow. */
+  const openGettingStartedTarget = (target: StepTarget, botId: string | undefined) => {
+    if (target === "ai") setSettingsOpen("ai");
+    else if (target === "computer") setSettingsOpen("computer");
+    else if (target === "apps") setAppsOpen(true);
+    else if (target === "schedules") go({ kind: "schedules" });
+    else if (botId) void startChat(botId);
+    else setNewBotOpen(true);
+  };
   const notifyHistory = useNotificationHistory();
-  const notifyUnread = unreadCount(notifyHistory);
+  const notifyUnread = unreadCount(notifyHistory, Date.now());
   // Selecting a bot: its latest chat, or the empty state when it has none.
   const goToBot = (botId: string) => go(botLanding(botId, chats));
   const startChat = async (botId: string) => {
@@ -722,17 +791,18 @@ function AppShell() {
   const botInView = selectedBot !== undefined && (route.kind === "chat" || route.kind === "bot");
   // The bot dialogs belong to one bot: another bot, or leaving the bot views, closes them.
   const dialogBotId = botInView ? selectedBot?.id : undefined;
+  const requestedBotEdit = route.kind === "bot" && route.edit === true;
   const lastDialogBot = useRef<string | undefined>(undefined);
   useEffect(() => {
     // (A first selection - mock review links open a dialog together with the route - keeps them.)
-    if (lastDialogBot.current !== undefined) {
-      setBotEditOpen(false);
+    if (lastDialogBot.current !== undefined || requestedBotEdit) {
+      setBotEditOpen(requestedBotEdit);
       setBotProfileOpen(false);
       setSkillsOpen(false);
       setAddSkillOpen(false);
     }
     lastDialogBot.current = dialogBotId;
-  }, [dialogBotId]);
+  }, [dialogBotId, requestedBotEdit]);
   const panelVisible = panelOpen && botInView;
   const float = isFloatShell(shellSettings.uiStyle, backdropIsActive(shellSettings.backdrop, shellSettings.backgroundUrl));
   const panelWidth = Math.min(layout.panel, panelMax(viewportWidth, layout.rail, float));
@@ -850,7 +920,7 @@ function AppShell() {
       style={{ "--size-sidebar-width": `${railWidth}px` } as CSSProperties}
       backdrop={
         wallpaperKind ? (
-          <Wallpaper kind={wallpaperKind} motion={settings.wallpaperMotion} />
+          <Wallpaper kind={wallpaperKind} motion={effectiveWallpaperMotion(settings.wallpaperMotion, settings.reduceMotion)} />
         ) : settings.backdrop !== NO_BACKDROP && settings.backdrop !== CUSTOM_BACKDROP ? (
           <Backdrop
             scene={settings.backdrop}
@@ -952,6 +1022,7 @@ function AppShell() {
             <div className={styles.brand}>
               <b className={styles.brandName}>{PRODUCT_CONFIG.appName}</b>
               <div className={styles.topActions}>
+                <button className={styles.iconButton} title={t("myBots.title")} aria-label={t("myBots.title")} aria-current={route.kind === "myBots" ? "page" : undefined} data-testid="my-bots-button" onClick={() => go({ kind: "myBots" })}><Bot /></button>
                 <button ref={searchButtonRef} className={styles.iconButton} title={t("sidebar.searchBots")} aria-label={t("sidebar.searchBots")} onClick={() => { if (search.expandStored) setRail(RAIL_MIN); setBotSearch(search.open ? "" : null); }}><Search /></button>
                 <button className={styles.iconButton} title={t("sidebar.newBot")} aria-label={t("sidebar.newBot")} data-testid="new-bot-button" onClick={() => setNewBotOpen(true)}><Plus /></button>
               </div>
@@ -1172,12 +1243,22 @@ function AppShell() {
             onGoFirst={goToBot}
             onCreateBot={() => setNewBotOpen(true)}
             onDemo={showDemoOffer ? (task) => setDemo({ task }) : undefined}
+            extra={
+              <GettingStarted
+                variant="start"
+                hidden={settings.gettingStartedHidden}
+                onAction={(target) => openGettingStartedTarget(target, route.botId)}
+                onHide={() => updateSettings({ gettingStartedHidden: true })}
+                onShow={() => updateSettings({ gettingStartedHidden: false })}
+              />
+            }
           />
         ) : null}
         {route.kind === "chat" && !hostEmpty ? (
           <ChatView
             key={route.chatId}
             chatId={route.chatId}
+            external={route.external}
             jumpMessageId={route.messageId}
             jumpRequestId={route.jumpRequestId}
             onBack={() => {
@@ -1195,8 +1276,24 @@ function AppShell() {
         ) : null}
         {route.kind === "needs" ? <NeedsYouView onOpenChat={openChat} /> : null}
         {route.kind === "notifications" ? <NotificationHistoryView onOpenChat={openChat} onOpenNeeds={openNeeds} /> : null}
+        {route.kind === "myBots" ? <MyBotsView
+          control={controlState}
+          newChatBusy={newChatBusy}
+          onNewBot={() => setNewBotOpen(true)}
+          onNewChat={(botId) => void startChat(botId)}
+          onOpenChat={openChat}
+          onSettings={(botId) => go({ kind: "bot", botId, edit: true })}
+          onSchedule={(botId) => go({ kind: "schedules", botId })}
+          onPause={async (botId) => {
+            // Re-read before a global native action: a stale card must not pause another bot.
+            const snapshot = await getControlState();
+            const action = nativePauseAction(botId, activeComputerId === LOCAL_COMPUTER, snapshot);
+            if (!action) throw new Error(t("myBots.pauseUnavailable"));
+            setControlState(await (action === "pause" ? pauseBotRun() : resumeBotRun()));
+          }}
+        /> : null}
         {route.kind === "schedules" ? (
-          <SchedulesView onOpenChat={openChat} />
+          <SchedulesView onOpenChat={openChat} initialBotId={route.botId} />
         ) : null}
       </div>
       <PaletteHost
@@ -1289,6 +1386,12 @@ function AppShell() {
         onClose={() => setAddSkillOpen(false)}
       />
       <WhatsNewModal notes={showWhatsNew ? whatsNewNotes : null} onClose={recordWhatsNew} />
+      <RunTimelineModal
+        run={linkedRun ? events.runs[linkedRun.id] ?? null : null}
+        fallback={linkedRun ? runs.find((run) => run.id === linkedRun.id) ?? linkedRun : undefined}
+        botName={linkedRun ? bots.find((bot) => bot.id === linkedRun.bot_id)?.name ?? "" : ""}
+        onClose={() => setLinkedRun(null)}
+      />
       <HelpModal
         open={helpOpen}
         onClose={() => setHelpOpen(false)}
@@ -1302,6 +1405,18 @@ function AppShell() {
           setHelpOpen(false);
           setDemo({ task: null });
         }}
+        gettingStarted={
+          <GettingStarted
+            variant="help"
+            hidden={settings.gettingStartedHidden}
+            onAction={(target) => {
+              setHelpOpen(false);
+              openGettingStartedTarget(target, selectedBot?.id ?? bots[0]?.id);
+            }}
+            onHide={() => updateSettings({ gettingStartedHidden: true })}
+            onShow={() => updateSettings({ gettingStartedHidden: false })}
+          />
+        }
       />
       <DemoModal
         open={demo !== null}
@@ -1349,6 +1464,8 @@ export function ComputerScope({ children }: { children: ReactNode }) {
 }
 
 export function App() {
+  const [deepLinks] = useState(createDeepLinkDispatcher);
+  useEffect(() => onDeepLinkPending(deepLinks), [deepLinks]);
   return (
     <ToastProvider>
       <DaemonProvider>
@@ -1358,7 +1475,7 @@ export function App() {
           <ComputerScope>
             <LeaveGuardProvider>
               <EngineConsentProvider>
-                <AppShell />
+                <AppShell deepLinks={deepLinks} />
               </EngineConsentProvider>
             </LeaveGuardProvider>
           </ComputerScope>

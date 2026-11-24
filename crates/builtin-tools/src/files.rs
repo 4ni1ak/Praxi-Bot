@@ -1184,6 +1184,9 @@ const CREDENTIAL_NAMES: &[&str] = &[
     ".cursor",
     ".cursor-agent",
     ".opencode",
+    ".qwen",
+    ".kiro",
+    ".copilot",
     // Project-level OpenCode config can declare plugins, commands and MCP
     // servers that run code, so it is protected in every workspace on purpose.
     // Likewise `.claude/` (hooks, commands) and `.cursor/` (rules, MCP).
@@ -1350,9 +1353,9 @@ pub fn workspace_refusal(dir: &Path, data_dir: &Path) -> Option<&'static str> {
 
 /// Credential and tool-configuration folders (SSH, cloud, GPG, container, CLI settings).
 /// A workspace may not be one, sit inside one, or contain one under the home folder.
-const CREDENTIAL_DIRS: [&str; 12] = [
-    ".claude", ".codex", ".gemini", ".cursor", ".config", ".local", ".ssh", ".aws", ".gnupg",
-    ".azure", ".kube", ".docker",
+const CREDENTIAL_DIRS: [&str; 15] = [
+    ".claude", ".codex", ".gemini", ".qwen", ".copilot", ".kiro", ".cursor", ".config", ".local",
+    ".ssh", ".aws", ".gnupg", ".azure", ".kube", ".docker",
 ];
 
 fn workspace_refusal_with_home(
@@ -1802,6 +1805,9 @@ const SENSITIVE_SEQUENCES: &[&[&str]] = &[
     &[".claude"],
     &[".codex"],
     &[".gemini"],
+    &[".qwen"],
+    &[".kiro"],
+    &[".copilot"],
     &[".opencode"],
     // Linux keyrings, wallets, browsers
     &[".local", "share", "keyrings"],
@@ -4291,6 +4297,12 @@ mod tests {
             ".claude.json",
             ".codex/auth.json",
             ".gemini/oauth_creds.json",
+            ".qwen/oauth_creds.json",
+            ".qwen/settings.json",
+            ".kiro/settings/mcp.json",
+            ".kiro/hooks/post-save.json",
+            ".copilot/config.json",
+            ".copilot/settings.json",
             ".cursor/mcp.json",
             ".cursor-agent/auth.json",
             "AppData/Roaming/Cursor/User/settings.json",
@@ -6119,6 +6131,9 @@ mod tests {
             ".gemini",
             ".cursor",
             ".opencode",
+            ".qwen",
+            ".kiro",
+            ".copilot",
             ".claude.json.backup",
             "opencode.json",
             "opencode.jsonc",

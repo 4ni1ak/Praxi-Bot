@@ -25,7 +25,10 @@ export function DictationCard() {
   const [geminiModel, setGeminiModel] = useState("");
   const [localModel, setLocalModel] = useState("whisper-small");
   const [drafts, setDrafts] = useState<Partial<Record<SttProvider, string>>>({});
+  const [useProviderKey, setUseProviderKey] = useState(true);
   const [busy, setBusy] = useState(false);
+  // The offline option is offered only when this build contains it.
+  const [localAvailable, setLocalAvailable] = useState(false);
 
   const keyInput = useRef<HTMLInputElement | null>(null);
 
@@ -37,14 +40,26 @@ export function DictationCard() {
     setModel(c.stt_model);
     setGeminiModel(c.gemini_model);
     setLocalModel(c.local_model);
+    setUseProviderKey(c.use_provider_key);
   }, [client]);
   useEffect(() => {
     client?.getVoice().then(apply).catch(() => undefined);
   }, [client, apply]);
+  useEffect(() => {
+    client?.getLocalVoice().then((s) => setLocalAvailable(s.available)).catch(() => setLocalAvailable(false));
+  }, [client]);
 
   const gemini = provider === "gemini_live";
   const local = provider === "local_voice";
   const keyStored = gemini ? config?.gemini_key_set : config?.stt_key_set;
+  const providerKeyAvailable = Boolean(gemini ? config?.gemini_provider_key_available : config?.stt_provider_key_available);
+  const reusing = providerKeyAvailable && useProviderKey;
+  const needsOwnKey = !reusing;
+  const status = reusing
+    ? t(gemini ? "voice.stt.statusReusingGemini" : "voice.stt.statusReusing")
+    : keyStored
+      ? t("voice.stt.statusOwnKey")
+      : t(gemini ? "voice.stt.statusNoGeminiKey" : "voice.stt.statusNoKey");
 
   const save = async (extra: Partial<VoiceConfigInput> = {}) => {
     if (!client) {
@@ -86,7 +101,10 @@ export function DictationCard() {
   const privacy = local ? t("voice.stt.localPrivacy") : gemini ? t("voice.stt.geminiPrivacy") : t("voice.stt.privacy");
   const key = provider === "local_voice" ? "" : (drafts[provider] ?? "");
   return (
-    <SettingRow stacked title={t("voice.stt.title")} description={`${t("voice.stt.description")} ${privacy}`}>
+    <SettingRow stacked title={t("voice.stt.title")} description={t("voice.stt.description")}>
+      <p role="note" data-testid="voice-where">
+        <strong>{t("voice.stt.whereTitle")}</strong> {privacy}
+      </p>
       <select
         className={formStyles.input}
         aria-label={t("voice.stt.provider")}
@@ -95,50 +113,64 @@ export function DictationCard() {
       >
         <option value="whisper">{t("voice.stt.providerWhisper")}</option>
         <option value="gemini_live">{t("voice.stt.providerGemini")}</option>
-        <option value="local_voice">{t("voice.stt.providerLocal")}</option>
+        {localAvailable || local ? <option value="local_voice">{t("voice.stt.providerLocal")}</option> : null}
       </select>
       {local ? (
         <LocalVoicePanel model={localModel} onModel={setLocalModel} />
-      ) : gemini ? (
-        <input
-          className={formStyles.input}
-          aria-label={t("voice.stt.geminiModel")}
-          value={geminiModel}
-          placeholder="gemini-3.5-transcribe-live"
-          onChange={(e) => setGeminiModel(e.target.value)}
-        />
       ) : (
         <>
-          <input
-            className={formStyles.input}
-            aria-label={t("voice.stt.url")}
-            value={url}
-            placeholder="https://api.openai.com/v1"
-            onChange={(e) => setUrl(e.target.value)}
-          />
-          <input
-            className={formStyles.input}
-            aria-label={t("voice.stt.model")}
-            value={model}
-            placeholder="whisper-1"
-            onChange={(e) => setModel(e.target.value)}
-          />
+          {providerKeyAvailable ? (
+            <label data-testid="voice-reuse-key">
+              <input type="checkbox" checked={useProviderKey} onChange={(e) => setUseProviderKey(e.target.checked)} />{" "}
+              {gemini ? t("voice.stt.reuseGemini") : t("voice.stt.reuseKey")}
+            </label>
+          ) : null}
+          <p role="status" data-testid="voice-key-status">{status}</p>
+          {needsOwnKey ? (
+            <input
+              ref={keyInput}
+              data-settings-field="voice-key"
+              className={formStyles.input}
+              type="password"
+              autoComplete="off"
+              aria-label={gemini ? t("voice.stt.geminiKey") : t("voice.stt.key")}
+              value={key}
+              placeholder={keyStored ? t("voice.stt.keyStored") : gemini ? t("voice.stt.geminiKey") : t("voice.stt.key")}
+              onChange={(e) => setDrafts((d) => ({ ...d, [provider]: e.target.value }))}
+            />
+          ) : null}
+          <details data-testid="voice-advanced">
+            <summary>{t("voice.stt.advanced")}</summary>
+            {gemini ? (
+              <input
+                className={formStyles.input}
+                aria-label={t("voice.stt.geminiModel")}
+                value={geminiModel}
+                placeholder="gemini-3.5-transcribe-live"
+                onChange={(e) => setGeminiModel(e.target.value)}
+              />
+            ) : (
+              <>
+                <input
+                  className={formStyles.input}
+                  aria-label={t("voice.stt.url")}
+                  value={url}
+                  placeholder="https://api.openai.com/v1"
+                  onChange={(e) => setUrl(e.target.value)}
+                />
+                <input
+                  className={formStyles.input}
+                  aria-label={t("voice.stt.model")}
+                  value={model}
+                  placeholder="whisper-1"
+                  onChange={(e) => setModel(e.target.value)}
+                />
+              </>
+            )}
+          </details>
         </>
       )}
-      {local ? null : (
-      <input
-        ref={keyInput}
-        data-settings-field="voice-key"
-        className={formStyles.input}
-        type="password"
-        autoComplete="off"
-        aria-label={gemini ? t("voice.stt.geminiKey") : t("voice.stt.key")}
-        value={key}
-        placeholder={keyStored ? t("voice.stt.keyStored") : gemini ? t("voice.stt.geminiKey") : t("voice.stt.key")}
-        onChange={(e) => setDrafts((d) => ({ ...d, [provider]: e.target.value }))}
-      />
-      )}
-      <Button size="sm" disabled={busy} onClick={() => void save(provider === "local_voice" ? {} : sttKeyInput(provider, drafts))}>
+      <Button size="sm" disabled={busy} onClick={() => void save(provider === "local_voice" ? {} : { ...sttKeyInput(provider, drafts), use_provider_key: useProviderKey })}>
         {t("voice.stt.save")}
       </Button>
       {local ? null : (
@@ -148,7 +180,7 @@ export function DictationCard() {
           run={() => (client ? client.testConnection("voice") : Promise.reject(new Error("daemon not connected")))}
         />
       )}
-      {keyStored && !local ? (
+      {keyStored && !local && needsOwnKey ? (
         <Button
           size="sm"
           variant="ghost"

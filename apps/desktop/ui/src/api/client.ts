@@ -1,4 +1,5 @@
 import { createSseParser } from "./events.ts";
+import { exportQuery } from "../lib/chatHistory.ts";
 import { isLocalBaseUrl } from "../lib/liveViewState.ts";
 import type { Connection } from "./connection";
 import type {
@@ -19,6 +20,7 @@ import type {
   KnowledgeEmbeddingProgress,
   KnowledgeEmbeddingApproval,
   KnowledgeEmbeddingGrantTarget,
+  ForgottenItem,
   MemoryItem,
   MemoryKind,
   CreateMemoryInput,
@@ -36,6 +38,8 @@ import type {
 } from "./types";
 import type {
   RecentLogs,
+  AuditPage,
+  AuditVerify,
   AcceptedResponse,
   AdminCliEngine,
   AdminCliInstall,
@@ -144,6 +148,10 @@ import type {
   TerminalInfo,
   TerminalOutput,
   SpendLimit,
+  EmbeddingsSetup,
+  EmbeddingsInput,
+  EmbeddingTest,
+  DecisionHelper,
   DataUsage,
   ClearCacheResult,
   BotSpendLimits,
@@ -320,6 +328,21 @@ export class ApiClient {
 
   undoMemory(id: string): Promise<MemoryItem> {
     return this.request("POST", `/memory/${encodeURIComponent(id)}/undo`);
+  }
+
+  /** Erase a memory for good (text, search entries and undo history). */
+  eraseMemory(id: string): Promise<void> {
+    return this.request("POST", `/memory/${encodeURIComponent(id)}/erase`);
+  }
+
+  /** Statements the owner forgot; extraction does not learn them again. */
+  listForgottenMemories(bot?: string | null): Promise<ForgottenItem[]> {
+    return this.request("GET", "/memory/forgotten", { query: { bot: bot ?? undefined } });
+  }
+
+  /** Let a forgotten statement be learned again. */
+  removeForgottenMemory(id: string): Promise<void> {
+    return this.request("DELETE", `/memory/forgotten/${encodeURIComponent(id)}`);
   }
 
   /** Memories held for the owner's OK (not used in answers until approved). */
@@ -829,8 +852,15 @@ export class ApiClient {
   searchChatHistory(q: string, offset = 0, signal?: AbortSignal): Promise<import("./types").SearchPage> {
     return this.request("GET", "/chats/search", { query: { q, offset }, signal });
   }
-  exportChat(chatId: string, format: import("../lib/chatHistory").ExportFormat): Promise<Blob> {
-    return this.requestBlob("GET", `/chats/${encodeURIComponent(chatId)}/export?format=${format}`);
+  exportChat(
+    chatId: string,
+    format: import("../lib/chatHistory").ExportFormat,
+    options?: import("../lib/chatHistory").ExportOptions
+  ): Promise<Blob> {
+    return this.requestBlob(
+      "GET",
+      `/chats/${encodeURIComponent(chatId)}/export?${exportQuery(format, options)}`
+    );
   }
 
   listChats(): Promise<Chat[]> {
@@ -858,8 +888,8 @@ export class ApiClient {
   }
 
   /** Upload one file for the next message of a chat; the daemon sniffs its type and size. */
-  uploadAttachment(chatId: string, file: Blob, name: string): Promise<Attachment> {
-    return this.request("POST", `/chats/${chatId}/attachments`, { raw: file, query: { name } });
+  uploadAttachment(chatId: string, file: Blob, name: string, signal?: AbortSignal): Promise<Attachment> {
+    return this.request("POST", `/chats/${chatId}/attachments`, { raw: file, query: { name }, signal });
   }
   /** The stored original of an attachment (an image to show in the message). */
   attachmentBlob(chatId: string, attachmentId: string): Promise<Blob> {
@@ -1062,6 +1092,27 @@ export class ApiClient {
   /** Set (USD, at least 1) or clear (`null`) the monthly limit; owner only. */
   setSpendLimit(limitUsd: number | null): Promise<SpendLimit> {
     return this.request("PUT", "/spend-limit", { body: { limit_usd: limitUsd } });
+  }
+
+  /** Embedding providers, chains, usage bars and the dated model catalog (no keys). */
+  getEmbeddings(): Promise<EmbeddingsSetup> {
+    return this.request("GET", "/embeddings");
+  }
+  /** Save the embedding setup; owner only. A key is write-only. */
+  putEmbeddings(input: EmbeddingsInput): Promise<EmbeddingsSetup> {
+    return this.request("PUT", "/embeddings", { body: input });
+  }
+  /** Send one fixed test sentence to a provider; owner only. */
+  testEmbedding(id: string): Promise<EmbeddingTest> {
+    return this.request("POST", `/embeddings/${encodeURIComponent(id)}/test`);
+  }
+  /** The optional Gemini decision helper. */
+  getDecisionHelper(): Promise<DecisionHelper> {
+    return this.request("GET", "/decision-helper");
+  }
+  /** Switch the decision helper on or off; owner only. */
+  setDecisionHelper(enabled: boolean): Promise<DecisionHelper> {
+    return this.request("PUT", "/decision-helper", { body: { enabled } });
   }
 
   /** A bot's daily/weekly/monthly limits with what each period has used. */
@@ -1502,6 +1553,21 @@ export class ApiClient {
   /** Owner-only, host-local redacted operational records. */
   recentLogs(): Promise<RecentLogs> {
     return this.request("GET", "/logs/recent");
+  }
+
+  /** Owner-only audit events, newest first (redacted by the daemon). */
+  auditLog(query: Query): Promise<AuditPage> {
+    return this.request("GET", "/audit", { query });
+  }
+
+  /** Owner-only redacted export of the filtered audit events. */
+  auditExport(query: Query, format: "csv" | "json"): Promise<string> {
+    return this.requestText("GET", "/audit/export", { query: { ...query, format } });
+  }
+
+  /** Owner-only integrity check of the audit log. */
+  auditVerify(): Promise<AuditVerify> {
+    return this.request("GET", "/audit/verify");
   }
 
   /** Read-only checks (`GET /v1/doctor`, at most ~10 s). */

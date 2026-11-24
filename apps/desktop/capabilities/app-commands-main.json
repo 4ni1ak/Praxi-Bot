@@ -5,6 +5,7 @@
     "main"
   ],
   "permissions": [
+    "allow-deep-link-take",
     "allow-open-composio-link",
     "allow-get-control-state",
     "allow-begin-action",
@@ -38,6 +39,7 @@
     "allow-update-status",
     "allow-update-check",
     "allow-update-install",
-    "allow-update-rollback"
+    "allow-update-rollback",
+    "allow-quick-ask-configure"
   ]
 }

@@ -14,7 +14,9 @@ import { MESSAGE_TIMES_VALUES } from "../../lib/messageTime";
 import { SEND_WITH_VALUES } from "../../lib/settingsPrefs";
 import { NotificationSettings } from "../NotificationSettings";
 import styles from "../SettingsModal.module.css";
+import { QuickAskCard } from "./QuickAskCard";
 import { DictationCard } from "./DictationCard";
+import { VoiceInputSettings } from "./VoiceInputSettings";
 import { VoiceSettings } from "./VoiceSettings";
 import type { CardDef, SettingsBridge } from "./types";
 
@@ -71,7 +73,8 @@ export function generalCards(b: SettingsBridge, t: TFunction): CardDef[] {
           options={[
             { value: "en", label: t("settings.language.en") },
             { value: "tr", label: t("settings.language.tr") },
-            { value: "de", label: t("settings.language.de") }
+            { value: "de", label: t("settings.language.de") },
+            { value: "es", label: t("settings.language.es") }
           ]}
         />
       </SettingRow>,
@@ -141,6 +144,13 @@ export function generalCards(b: SettingsBridge, t: TFunction): CardDef[] {
       { keywords: "ses voice speech tts sesli oku vorlesen stimme" }
     ),
     card(
+      "voice-input",
+      t("voice.input.title"),
+      t("voice.input.description"),
+      <VoiceInputSettings settings={settings} update={update} />,
+      { keywords: "push to talk ptt hotkey microphone mikrofon mic level test silence sessizlik stille tus bas konus sprechtaste" }
+    ),
+    card(
       "dictation",
       t("voice.stt.title"),
       t("voice.stt.description"),
@@ -181,6 +191,13 @@ export function generalCards(b: SettingsBridge, t: TFunction): CardDef[] {
         />
       </SettingRow>,
       { keywords: "tray taskbar system tray tepsi bildirim alani hintergrund infobereich minimize" }
+    ),
+    card(
+      "quickAsk",
+      t("settings.quickAsk.title"),
+      t("settings.quickAsk.description"),
+      <QuickAskCard settings={settings} update={update} />,
+      { keywords: "quick ask hotkey shortcut global schnell fragen kisayol hizli sor overlay" }
     ),
     card(
       "hotkey",
