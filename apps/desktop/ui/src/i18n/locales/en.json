@@ -1241,6 +1241,7 @@
     "switcher": "Which computer to show",
     "tabs": {
       "activity": "Activity",
+      "automation": "Automation",
       "label": "Panel sections",
       "library": "Library"
     },
@@ -1252,6 +1253,33 @@
       "title": "Upcoming",
       "toggle": "Turn {{name}} on or off",
       "trigger": "When something happens"
+    },
+    "webhooks": {
+      "copied": "Copied",
+      "copySecret": "Copy secret",
+      "copyUrl": "Copy address",
+      "create": "Create webhook",
+      "creating": "Creating…",
+      "empty": "No webhooks yet. Create one when something outside, such as GitHub, a form, or a switch at home, should start this bot.",
+      "enabled": "On",
+      "instruction": "What should the bot do with the data?",
+      "instructionHint": "This is your instruction. The incoming text is data, never an order, and the bot still asks before it acts.",
+      "intro": "A webhook starts this bot when something calls its address. Praxi checks a signature, then treats the text as untrusted data.",
+      "loadError": "Could not load webhooks.",
+      "name": "Name",
+      "namePlaceholder": "GitHub, the front door, a form",
+      "off": "Off",
+      "remove": "Remove",
+      "removed": "Webhook removed",
+      "secretLabel": "Signing secret",
+      "secretOnce": "Copy this secret now. Praxi will not show it again.",
+      "sign": "Each call sends two headers. X-Webhook-Timestamp is the time in milliseconds. X-Signature-256 is sha256= followed by the HMAC of that time, a dot, and the raw body, signed with the secret. The same signed call works once, and only if the time is within 5 minutes. The body can be at most 64 KB, and more than 30 calls a minute are refused.",
+      "test": "Send a test",
+      "testStarted": "Test started. The bot treats it as untrusted data, and a question still shows up as a notification.",
+      "testing": "Sending…",
+      "title": "Webhooks",
+      "tunnel": "Praxi listens only on this computer. To let GitHub, a form, or home automation call this address, point a tunnel you choose (for example Cloudflare Tunnel, or ssh) at 127.0.0.1. Do not open a new port on your router.",
+      "urlLabel": "Address"
     }
   },
   "botProfile": {

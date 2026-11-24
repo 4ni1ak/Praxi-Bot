@@ -33,6 +33,7 @@ import { BotComputerBlock } from "./BotComputerBlock";
 import { StopStatusNotice } from "./StopStatusNotice";
 import styles from "./BotPanel.module.css";
 import { BotPanelMail } from "./BotPanelMail";
+import { BotPanelWebhooks } from "./BotPanelWebhooks";
 import { BotPanelSkills } from "./BotPanelSkills";
 import { BrandMark } from "./BrandMark";
 import { ChatHistorySearch } from "./ChatHistorySearch";
@@ -170,7 +171,7 @@ export function BotPanel({
 }) {
   const { t, i18n } = useTranslation();
   const { events, refreshRuns } = useDaemon();
-  const [tab, setTab] = useState<"activity" | "library">("activity");
+  const [tab, setTab] = useState<"activity" | "automation" | "library">("activity");
   const [openSub, setOpenSub] = useState<string | null>(null);
   const [chatQuery, setChatQuery] = useState("");
   const visibleChats = filterChats(chats, chatQuery, t("botPanel.untitled"));
@@ -277,7 +278,7 @@ export function BotPanel({
       </header>
 
       <div className={styles.tabs} role="tablist" aria-label={t("botPanel.tabs.label")}>
-        {(["activity", "library"] as const).map((id) => (
+        {(["activity", "automation", "library"] as const).map((id, index, tabs) => (
           <button
             key={id}
             type="button"
@@ -290,12 +291,12 @@ export function BotPanel({
             data-testid={`bot-panel-tab-${id}`}
             onClick={() => setTab(id)}
             onKeyDown={(e) => {
-              if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-                e.preventDefault();
-                const next = id === "activity" ? "library" : "activity";
-                setTab(next);
-                document.getElementById(`bot-panel-tab-${next}`)?.focus();
-              }
+              if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+              e.preventDefault();
+              const step = e.key === "ArrowRight" ? 1 : -1;
+              const next = tabs[(index + step + tabs.length) % tabs.length];
+              setTab(next);
+              document.getElementById(`bot-panel-tab-${next}`)?.focus();
             }}
           >
             {t(`botPanel.tabs.${id}`)}
@@ -360,6 +361,8 @@ export function BotPanel({
               }
             })}
           </>
+        ) : tab === "automation" ? (
+          <BotPanelWebhooks botId={bot.id} />
         ) : (
           library.map((id) =>
             id === "skills" ? (

@@ -1206,6 +1206,12 @@ pub fn initiator_of(kind: &str) -> InitiatorKind {
         Some(s) if s == "external_schedule" || s.starts_with("external_schedule:") => {
             InitiatorKind::ExternalSchedule
         }
+        // An incoming webhook is external data. It must not fall through to
+        // Human: that would let the router and `call:` lines treat the payload
+        // as the owner's own instructions.
+        Some(s) if s == "incoming_webhook" || s.starts_with("incoming_webhook:") => {
+            InitiatorKind::ExternalSchedule
+        }
         Some(s) if s == "schedule" || s.starts_with("schedule:") => InitiatorKind::Schedule,
         Some(s) if s == "external_agent" || s.starts_with("external_agent:") => {
             InitiatorKind::ExternalAgent
