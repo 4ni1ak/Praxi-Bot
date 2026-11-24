@@ -625,6 +625,52 @@ impl Shared {
         )
     }
 
+    /// Remember the host of an origin the owner just approved a navigation to (any scope), so a
+    /// favicon may be fetched for it. Bounded; the oldest entry goes first.
+    pub(crate) fn note_approved_origin(&self, name: &str, input: &Value) {
+        let Derived::Scope(sc) = scoped_grant::derive(name, input) else {
+            return;
+        };
+        if name != "browser_open" || sc.kind != ScopeKind::Origin {
+            return;
+        }
+        let Some(host) = host_of_origin(&sc.pattern) else {
+            return;
+        };
+        let mut hosts = self.approved_hosts.lock();
+        if !hosts.contains(&host) {
+            if hosts.len() >= 500 {
+                hosts.pop_front();
+            }
+            hosts.push_back(host);
+        }
+    }
+
+    /// Whether `host` already counts as allowed for some bot: a standing or chat grant for its
+    /// origin, or a navigation the owner approved. Fetching its favicon is then no new egress.
+    pub(crate) fn site_allowed(&self, host: &str) -> bool {
+        let host = host.trim_end_matches('.').to_ascii_lowercase();
+        let origin_match = |tool: &str, sc: &Scope| {
+            tool == "browser_open"
+                && sc.kind == ScopeKind::Origin
+                && host_of_origin(&sc.pattern).is_some_and(|h| h == host)
+        };
+        if self.approved_hosts.lock().contains(&host) {
+            return true;
+        }
+        let g = self.grants.lock();
+        g.always.iter().any(|x| {
+            !x.inert
+                && matches!(&x.target, GrantTarget::Scoped { tool, scope } if origin_match(tool, scope))
+        }) || g
+            .this_chat_scoped
+            .iter()
+            .any(|(_, _, tool, sc, _)| origin_match(tool, sc))
+            || g.gate_chat
+                .iter()
+                .any(|(_, _, class, dest)| *class == "web" && host_of_origin(dest).is_some_and(|h| h == host))
+    }
+
     /// The Balanced lane for this call, `None` in every other mode.
     ///
     /// Only the user's own runs (typed or scheduled) get a lane: a peer, an
@@ -2123,6 +2169,8 @@ impl ExecPermit {
             .sh
             .storage
             .decide_approval(self.approval_id, "approved");
+        // A navigation the owner approved makes its host fetchable for favicons.
+        self.sh.note_approved_origin(&self.name, &self.input);
         // An approved read of the user's computer covers that family for the
         // rest of THIS run only.
         if self.effect == Effect::Read
@@ -2648,6 +2696,13 @@ pub(crate) fn always_allowed(
         return origin_scoped;
     }
     effect == Effect::Read && ALWAYS_READ_ONLY_TOOLS.contains(&name)
+}
+
+fn host_of_origin(origin: &str) -> Option<String> {
+    url::Url::parse(origin)
+        .ok()?
+        .host_str()
+        .map(|h| h.trim_end_matches('.').to_ascii_lowercase())
 }
 
 fn note_gate(ctx: &RunCtx, req: &GateRequest) {

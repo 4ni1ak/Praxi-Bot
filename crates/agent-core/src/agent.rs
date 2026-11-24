@@ -149,6 +149,7 @@ impl AgentLoop {
                 parked: Mutex::new(HashMap::new()),
                 exec_gate: Mutex::new(()),
                 native_runs: Mutex::new(HashMap::new()),
+                approved_hosts: Mutex::new(std::collections::VecDeque::new()),
                 #[cfg(test)]
                 task_reap_gate: Mutex::new(None),
                 #[cfg(test)]
@@ -1708,6 +1709,13 @@ impl AgentLoop {
             }
         }
         Ok(())
+    }
+
+    /// Whether a site host already counts as allowed (a grant for its origin or an approved
+    /// navigation). The favicon route fetches nothing for any other host.
+    #[must_use]
+    pub fn site_allowed(&self, host: &str) -> bool {
+        self.sh.site_allowed(host)
     }
 
     /// The persisted "always allow" rules of a bot.
