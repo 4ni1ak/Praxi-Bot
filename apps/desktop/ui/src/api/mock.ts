@@ -1490,6 +1490,9 @@ export class MockApiClient extends ApiClient {
           this.messages.set(seg[1], [...previous, { id: crypto.randomUUID(), chat_id: seg[1], role: "user", content: input.text ?? "", created_at_ms: Date.now() } as Message]);
           return ok({ delivery: "started", run_id: crypto.randomUUID() });
         }
+        if (seg[2] === "resend") {
+          return ok({ run_id: crypto.randomUUID(), message_id: crypto.randomUUID() });
+        }
         const id = crypto.randomUUID();
         const created = { id, chat_id: id, bot_id: input.bot_id ?? ATLAS, title: input.title ?? "Yeni sohbet", created_at_ms: Date.now(), pinned: false, archived: false };
         this.chats.push(created);
@@ -1653,6 +1656,8 @@ export class MockApiClient extends ApiClient {
               },
               summary: "webioo.com.tr sitesini aç"
             }]
+          : typeof window !== "undefined" && new URLSearchParams(window.location.search).get("screen") === "notifications"
+          ? [{ call_id: "mock-open-webioo", run_id: "mock-live", requested_at_ms: Date.now() - 45_000, decision: null, tool_name: "browser_open", input: { url: "https://webioo.com.tr" }, summary: "Open webioo.com.tr" }]
           : typeof window !== "undefined" && new URLSearchParams(window.location.search).get("screen")?.startsWith("approval-schedule")
           ? [{ call_id: "mock-sch", run_id: "mock-live", requested_at_ms: Date.now() - 3000, decision: null, tool_name: "schedule_create", summary: "Create a schedule" }]
           : []);
@@ -2678,7 +2683,7 @@ export class MockApiClient extends ApiClient {
 function mockLiveRunId(): string | null {
   if (typeof window === "undefined") return null;
   const screen = new URLSearchParams(window.location.search).get("screen");
-  return screen === "working" || screen === "approval" || screen === "approval-site" || screen === "subagents" ? "mock-live" : null;
+  return screen === "working" || screen === "approval" || screen === "approval-site" || screen === "subagents" || screen === "notifications" ? "mock-live" : null;
 }
 
 /** Review-state events for `?mock=1&screen=...` (approval, streaming, default run). */
@@ -2686,12 +2691,17 @@ export function mockReviewEvents(): { ts_ms: number; event: GlobalEnvelope["even
   const out: { ts_ms: number; event: GlobalEnvelope["event"] }[] = [];
   const screen = new URLSearchParams(window.location.search).get("screen");
   if (screen === "long-chat") return longChatEvents();
-  if (screen === "approval" || screen === "approval-site" || screen?.startsWith("approval-schedule") || screen === "streaming" || screen === "working" || screen === "subagents") {
+  if (screen === "approval" || screen === "approval-site" || screen?.startsWith("approval-schedule") || screen === "streaming" || screen === "working" || screen === "subagents" || screen === "notifications") {
     const bot_id = "11111111-1111-4111-8111-111111111111";
     const chat_id = "33333333-3333-4333-8333-333333333333";
     const events: GlobalEnvelope["event"][] = [
       { type: "run_started", run_id: "mock-live", bot_id, chat_id },
-      { type: "message_delta", run_id: "mock-live", text: screen === "approval" ? "Raporu hazırladım. Paylaşmadan önce eski taslakları temizlemem gerekiyor." : screen === "approval-site" ? "Panelden güncel sipariş durumunu kontrol edeceğim." : "Taslağı oluşturuyorum, önce kaynakları karşılaştırıyorum…" },
+      ...(screen === "notifications" ? [
+        { type: "tool_call_requested", run_id: "mock-live", call_id: "mock-open-webioo", tool_name: "browser_open", input: { url: "https://webioo.com.tr" } },
+        { type: "approval_needed", run_id: "mock-live", call_id: "mock-open-webioo", tool_name: "browser_open", input: { url: "https://webioo.com.tr" }, summary: "Open webioo.com.tr" }
+      ] as GlobalEnvelope["event"][] : ([
+        { type: "message_delta", run_id: "mock-live", text: screen === "approval" ? "Raporu hazırladım. Paylaşmadan önce eski taslakları temizlemem gerekiyor." : screen === "approval-site" ? "Panelden güncel sipariş durumunu kontrol edeceğim." : "Taslağı oluşturuyorum, önce kaynakları karşılaştırıyorum…" },
+      ] as GlobalEnvelope["event"][])),
       ...(screen === "working" ? [
         { type: "tool_call_requested", run_id: "mock-live", call_id: "mock-w1", tool_name: "web_search", input: { query: "cpu llm benchmark 2026" } },
         { type: "tool_call_completed", run_id: "mock-live", call_id: "mock-w1", error: null },
