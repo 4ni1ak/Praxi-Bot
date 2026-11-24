@@ -4830,3 +4830,97 @@ async fn health_contract_fixture_matches_the_real_reply() {
         assert!(accepted.contains(&dto.status.as_str()), "{name}");
     }
 }
+
+#[tokio::test]
+async fn favicon_endpoint_validates_and_serves_cached_icon() {
+    let png = [
+        0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, b'I', b'H', b'D',
+        b'R',
+    ];
+    let t = setup_with(|dir| {
+        let cache = dir.join("cache").join("favicons");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("example.com.png"), png).unwrap();
+    });
+
+    // Requires authentication.
+    let unauth = send(&t.app, Method::GET, "/v1/favicons/example.com", None, &[]).await;
+    assert_eq!(unauth.status, StatusCode::UNAUTHORIZED);
+
+    // Rejects non-public domains, IPs and bare labels.
+    for bad in ["localhost", "127.0.0.1", "intranet.local", "singlelabel"] {
+        let r = call(&t, Method::GET, &format!("/v1/favicons/{bad}"), None).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+
+    // Serves cached icon directly from local cache with safe headers.
+    let res = call(&t, Method::GET, "/v1/favicons/Example.COM", None).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(
+        res.headers
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("image/png")
+    );
+    assert_eq!(
+        res.headers
+            .get("x-content-type-options")
+            .and_then(|v| v.to_str().ok()),
+        Some("nosniff")
+    );
+    assert_eq!(res.body.as_slice(), &png);
+}
+
+#[tokio::test]
+async fn grant_revocation_requires_owner_key() {
+    let t = setup();
+    let (bot, chat) = make_chat(&t).await;
+    let bot_path = format!("/v1/bots/{bot}");
+
+    let run = send_msg(&t, &chat, "call:danger_run {}", "queue").await["run_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (call_id, _) = pending_call(&t).await;
+
+    // A token holder without the owner key cannot decide an approval or revoke a grant.
+    let no_owner = call_token_only(
+        &t,
+        Method::POST,
+        &format!("/v1/approvals/{call_id}"),
+        Some(json!({"decision": "approve", "scope": "always_category"})),
+    )
+    .await;
+    assert_eq!(no_owner.status, StatusCode::FORBIDDEN);
+    assert_eq!(no_owner.json()["error"]["code"], "owner_key_required");
+
+    let ok = call(
+        &t,
+        Method::POST,
+        &format!("/v1/approvals/{call_id}"),
+        Some(json!({"decision": "approve", "scope": "always_category"})),
+    )
+    .await;
+    assert_eq!(ok.status, StatusCode::OK);
+    wait_state(&t, &run, "succeeded").await;
+
+    let body = json!({"target": {"kind": "category", "name": "fs"}});
+    let deny = call_token_only(
+        &t,
+        Method::DELETE,
+        &format!("{bot_path}/grants"),
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(deny.status, StatusCode::FORBIDDEN);
+    assert_eq!(deny.json()["error"]["code"], "owner_key_required");
+
+    let revoke = call(
+        &t,
+        Method::DELETE,
+        &format!("{bot_path}/grants"),
+        Some(body),
+    )
+    .await;
+    assert_eq!(revoke.status, StatusCode::NO_CONTENT);
+}

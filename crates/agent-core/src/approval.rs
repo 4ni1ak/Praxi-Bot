@@ -609,6 +609,11 @@ impl Shared {
         if name != "browser_open" || input.as_object().is_none_or(|o| o.len() != 1) {
             return false;
         }
+        // A remembered site only waives untrusted-web-only egress; once the run has read
+        // private data, navigating to any site still asks so private text cannot leak in URLs.
+        if ctx.taint.lock().exposure.has_private() {
+            return false;
+        }
         let Derived::Scope(call) = scoped_grant::derive(name, input) else {
             return false;
         };
@@ -1620,13 +1625,16 @@ impl Shared {
             );
         // A standing tool grant for an MCP tool is not offered once the run read something
         // private: the owner decides that on a clean card, never next to private data.
-        let always_refused = Self::run_tool_eligible(name) && exposure.has_private();
-        let always_offered = !once_only
-            && !always_refused
-            && !matches!(
-                why,
-                "egress" | "executes" | "always_ask" | "browser_address"
-            );
+        // Destructive, credential and payment actions never offer or accept "Always allow".
+        let site_egress_offered = why == "egress"
+            && name == "browser_open"
+            && !exposure.has_private()
+            && memory.as_ref().is_some_and(|m| m.kind == ScopeKind::Origin);
+        let always_refused = (Self::run_tool_eligible(name) && exposure.has_private())
+            || matches!(why, "floor" | "always_ask" | "executes" | "browser_address")
+            || (why == "egress" && !site_egress_offered)
+            || always_blocked(name, effect, category);
+        let always_offered = !once_only && !always_refused;
         let class = self.content_class(ctx, name, input);
         if let Some(obj) = details.get_or_insert_with(|| json!({})).as_object_mut() {
             obj.insert("why".into(), json!(why));
@@ -2601,6 +2609,50 @@ impl LoopGate {
 /// A script or workflow call that was allowed has put its result in front of
 /// the model by the time the next call is authorized. Record that now so the
 /// next inner call sees the taint. A denial records nothing.
+fn is_sensitive_always_blocked(name: &str, effect: Effect, category: PermissionCategory) -> bool {
+    if (effect == Effect::Destructive && !matches!(name, "shell_run" | "pc_shell_run"))
+        || matches!(category, PermissionCategory::Money)
+    {
+        return true;
+    }
+    let low = name.to_ascii_lowercase();
+    let has_word = low.split(['_', '-', '/', '.', ':']).any(|w| {
+        matches!(
+            w,
+            "rm" | "drop"
+                | "pay"
+                | "charge"
+                | "remove"
+                | "fill"
+                | "login"
+                | "signin"
+                | "auth"
+                | "oauth"
+                | "token"
+        )
+    });
+    has_word
+        || low.contains("secret")
+        || low.contains("credential")
+        || low.contains("password")
+        || low.contains("payment")
+        || low.contains("billing")
+        || low.contains("checkout")
+        || low.contains("purchase")
+        || low.contains("invoice")
+        || low.contains("transfer")
+        || low.contains("withdraw")
+        || low.contains("wallet")
+        || low.contains("delete")
+        || low.contains("wipe")
+        || low.contains("destroy")
+        || low.contains("purge")
+}
+
+fn always_blocked(name: &str, effect: Effect, category: PermissionCategory) -> bool {
+    is_sensitive_always_blocked(name, effect, category)
+}
+
 fn note_gate(ctx: &RunCtx, req: &GateRequest) {
     let mut content = req.content;
     if content.in_owner_browser && crate::browser_url::opens_non_public(&req.tool, &req.input) {

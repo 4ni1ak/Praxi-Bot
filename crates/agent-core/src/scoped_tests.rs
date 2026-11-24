@@ -218,3 +218,198 @@ async fn a_remembered_command_does_not_waive_the_untrusted_content_gate() {
     assert!(asks(&env, &lp).await);
     assert_eq!(shell.count.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn destructive_credential_and_payment_actions_refuse_always_allow() {
+    for (name, effect, cat, input) in [
+        (
+            "fs_delete",
+            Effect::Destructive,
+            PermissionCategory::Fs,
+            json!({"path": "notes.txt"}),
+        ),
+        (
+            "email_send",
+            Effect::Destructive,
+            PermissionCategory::Messaging,
+            json!({"to": "a@example.test", "body": "hi"}),
+        ),
+        (
+            "pay_order",
+            Effect::Write,
+            PermissionCategory::Money,
+            json!({"amount": 10}),
+        ),
+        (
+            "account_login",
+            Effect::Write,
+            PermissionCategory::Accounts,
+            json!({"user": "x"}),
+        ),
+    ] {
+        let env = setup();
+        let t_tool = tool(name, effect, cat);
+        let fake = Fake::new(vec![calls(&[("c1", name, input)]), text("ok")]);
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &fake,
+            &[t(&t_tool)],
+            profile(ASK),
+            cfg(Policy::approve_destructive()),
+        );
+        let mut rx = lp.subscribe();
+        let run = lp.run_turn(env.chat, "go").unwrap();
+        let Event::ApprovalNeeded(card) =
+            until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+        else {
+            unreachable!()
+        };
+        let details = card.details.clone().unwrap();
+        assert_eq!(details["always_offered"], false, "{name}");
+        assert!(
+            matches!(
+                lp.approve(card.call_id, ApprovalScope::Always, env.user),
+                Err(LoopError::OnceOnly(_))
+            ),
+            "{name} must refuse Always"
+        );
+        lp.cancel(run).unwrap();
+        let _ = lp.wait(run).await;
+        assert!(lp.list_grants(env.bot).is_empty(), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn browser_open_offers_always_allow_per_site_when_untrusted_only_not_after_private_read() {
+    let env = setup();
+    let page = Arc::new(with_class(
+        "web_search",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::untrusted(),
+        "search results",
+    ));
+    let browser = Arc::new(with_class(
+        "browser_open",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::declared(true, false, true),
+        "opened",
+    ));
+    let priv_file = Arc::new(with_class(
+        "fs_read",
+        Effect::Read,
+        PermissionCategory::Fs,
+        ContentClass::private_read(),
+        "secret",
+    ));
+    let fake = Fake::new(vec![
+        calls(&[("c1", "web_search", json!({"query": "webioo"}))]),
+        calls(&[(
+            "c2",
+            "browser_open",
+            json!({"url": "https://webioo.com.tr/home"}),
+        )]),
+        calls(&[(
+            "c3",
+            "browser_open",
+            json!({"url": "https://webioo.com.tr/docs"}),
+        )]),
+        calls(&[(
+            "c4",
+            "browser_open",
+            json!({"url": "https://other.example/"}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&browser), t(&priv_file)],
+        profile(ASK),
+        cfg(Policy::approve_destructive()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "open webioo").unwrap();
+    let Event::ApprovalNeeded(card) =
+        until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    let details = card.details.clone().unwrap();
+    assert_eq!(details["always_offered"], true);
+    assert_eq!(details["memory"]["kind"], "origin");
+    assert_eq!(details["memory"]["pattern"], "https://webioo.com.tr:443");
+    lp.approve(card.call_id, ApprovalScope::Always, env.user)
+        .unwrap();
+    // Second call to same origin runs without asking; third call to another site asks.
+    let Event::ApprovalNeeded(other) =
+        until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(other.input["url"], "https://other.example/");
+    assert_eq!(browser.count.load(Ordering::SeqCst), 2);
+    lp.cancel(run).unwrap();
+    let _ = lp.wait(run).await;
+}
+
+#[tokio::test]
+async fn browser_open_refuses_always_allow_after_private_read() {
+    let page = Arc::new(with_class(
+        "web_search",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::untrusted(),
+        "search results",
+    ));
+    let browser = Arc::new(with_class(
+        "browser_open",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::declared(true, false, true),
+        "opened",
+    ));
+    let priv_file = Arc::new(with_class(
+        "fs_read",
+        Effect::Read,
+        PermissionCategory::Fs,
+        ContentClass::private_read(),
+        "secret",
+    ));
+    let env2 = setup();
+    let fake2 = Fake::new(vec![
+        calls(&[("p0", "web_search", json!({"query": "news"}))]),
+        calls(&[("p1", "fs_read", json!({"path": "secret.txt"}))]),
+        calls(&[(
+            "p2",
+            "browser_open",
+            json!({"url": "https://other.example/leak"}),
+        )]),
+        text("done"),
+    ]);
+    let lp2 = make_loop(
+        &env2.storage,
+        env2.bot,
+        &fake2,
+        &[t(&page), t(&browser), t(&priv_file)],
+        profile(ASK),
+        cfg(Policy::approve_destructive()),
+    );
+    let mut rx2 = lp2.subscribe();
+    let run2 = lp2.run_turn(env2.chat, "read then open").unwrap();
+    let Event::ApprovalNeeded(priv_card) =
+        until(&mut rx2, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(priv_card.details.as_ref().unwrap()["always_offered"], false);
+    assert!(matches!(
+        lp2.approve(priv_card.call_id, ApprovalScope::Always, env2.user),
+        Err(LoopError::OnceOnly(_))
+    ));
+    lp2.cancel(run2).unwrap();
+    let _ = lp2.wait(run2).await;
+}
