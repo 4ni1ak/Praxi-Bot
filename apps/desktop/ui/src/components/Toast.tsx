@@ -118,6 +118,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               type="button"
               className={styles.closeBtn}
               aria-label={t("notifyHistory.dismiss")}
+              title={t("notifyHistory.dismiss")}
               onClick={() => dismiss(i.id)}
             >
               <X aria-hidden="true" />

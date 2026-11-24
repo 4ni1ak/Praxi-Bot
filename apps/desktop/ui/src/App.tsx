@@ -433,9 +433,7 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
         if (screen === "schedules") setRoute({ kind: "schedules" });
         if (screen === "myBots") setRoute({ kind: "myBots" });
         if (screen === "needs") setRoute({ kind: "needs" });
-        if (screen === "notifications" || screen === "notifications-empty") {
-          setRoute({ kind: "notifications" });
-        }
+        if (screen === "notifications" || screen === "notifications-empty") setRoute({ kind: "notifications" });
         if (screen === "home" || screen === "offline") setRoute({ kind: "home" });
       }
       setSettings(merged);

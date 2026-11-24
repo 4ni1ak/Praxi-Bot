@@ -2701,7 +2701,7 @@ export function mockReviewEvents(): { ts_ms: number; event: GlobalEnvelope["even
         { type: "approval_needed", run_id: "mock-live", call_id: "mock-open-webioo", tool_name: "browser_open", input: { url: "https://webioo.com.tr" }, summary: "Open webioo.com.tr" }
       ] as GlobalEnvelope["event"][] : ([
         { type: "message_delta", run_id: "mock-live", text: screen === "approval" ? "Raporu hazırladım. Paylaşmadan önce eski taslakları temizlemem gerekiyor." : screen === "approval-site" ? "Panelden güncel sipariş durumunu kontrol edeceğim." : "Taslağı oluşturuyorum, önce kaynakları karşılaştırıyorum…" },
-      ] as GlobalEnvelope["event"][]),
+      ] as GlobalEnvelope["event"][])),
       ...(screen === "working" ? [
         { type: "tool_call_requested", run_id: "mock-live", call_id: "mock-w1", tool_name: "web_search", input: { query: "cpu llm benchmark 2026" } },
         { type: "tool_call_completed", run_id: "mock-live", call_id: "mock-w1", error: null },

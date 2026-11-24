@@ -165,17 +165,23 @@ export function isActionable(
 export const unreadCount = (list: HistoryEntry[], now?: number): number =>
   list.filter((e) => !e.read && (now === undefined || !isSnoozed(e, now))).length;
 
-/** Sidebar badge count: only unread, non-snoozed items that need action. */
+/**
+ * Sidebar badge count: unread, non-snoozed items that need action. Duplicates
+ * collapse the way the inbox shows them ("asked 4 times" is one item).
+ */
 export const actionableCount = (
   list: HistoryEntry[],
   now?: number,
   liveCallIds?: ReadonlySet<string>
 ): number =>
-  list.filter(
-    (e) =>
-      !e.read &&
-      (now === undefined || !isSnoozed(e, now)) &&
-      isActionable(e, liveCallIds)
+  collapseDuplicates(
+    list.filter(
+      (e) =>
+        !e.read &&
+        (now === undefined || !isSnoozed(e, now)) &&
+        isActionable(e, liveCallIds)
+    ),
+    liveCallIds
   ).length;
 
 export function snooze(list: HistoryEntry[], id: string, until: number): HistoryEntry[] {

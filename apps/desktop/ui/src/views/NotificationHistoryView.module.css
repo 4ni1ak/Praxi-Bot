@@ -470,7 +470,7 @@
   white-space: nowrap;
 }
 
-@media (width <= 48em) {
+@media (width <= 768px) {
   .pane {
     padding: var(--space-4);
   }

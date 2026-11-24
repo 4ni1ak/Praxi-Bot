@@ -157,3 +157,8 @@ test("groups collapsed items into Needs you, Updates, and Earlier", () => {
   assert.deepEqual(grouped.updates.map((g) => g.primary.id), ["update-1", "update-recent-read"]);
   assert.deepEqual(grouped.earlier.map((g) => g.primary.id), ["earlier-1"]);
 });
+
+test("sidebar badge counts a repeated approval once, like the inbox group", () => {
+  const list = [1, 2, 3, 4].map((n) => e(`ask-${n}`, now - n, { callId: "call-live" }));
+  assert.equal(actionableCount(list, now, new Set(["call-live"])), 1);
+});
