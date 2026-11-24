@@ -1849,9 +1849,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Fetch and cache a site's favicon directly from `https://<domain>` (never a
-         *     third-party favicon service). Returns `404` when unavailable so the UI falls
-         *     back to a globe or letter tile.
+         * A site's favicon, from the local cache or fetched directly from `https://<domain>` (never a
+         *     third-party favicon service) when that host is already allowed for a bot. Owner-only.
+         *     Returns `404` when unavailable or not allowed so the UI falls back to a globe or letter tile.
          */
         get: operations["get_favicon"];
         put?: never;
