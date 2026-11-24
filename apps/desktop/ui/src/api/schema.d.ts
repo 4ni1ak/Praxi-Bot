@@ -15819,16 +15819,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description bad signature, stale timestamp, or replay */
+            /** @description bad signature, unknown webhook, stale timestamp, or replay */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15852,7 +15844,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description more than the per-minute cap */
+            /** @description too many calls or too many failed calls this minute */
             429: {
                 headers: {
                     [name: string]: unknown;

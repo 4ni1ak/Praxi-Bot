@@ -8,7 +8,7 @@
 //! A call is authentic only when `X-Webhook-Timestamp` (Unix milliseconds) is
 //! inside five minutes and `X-Signature-256` is the hex HMAC-SHA256 of
 //! `{timestamp}.{body}` under that webhook's secret. The same signature is
-//! accepted once. The body is untrusted data: it is JSON-encoded into the run
+//! accepted once (remembered in the database, so a restart does not forget it). The body is untrusted data: it is JSON-encoded into the run
 //! and is never a tool directive. The run uses the bot's profile. A tool that
 //! has to ask waits on the normal approval, which the app shows as a
 //! notification. Management routes are owner-only.
@@ -39,6 +39,23 @@ const RATE_WINDOW_MS: i64 = 60_000;
 
 /// Accepted calls per webhook per minute. Tests use a small cap so the check stays fast.
 pub(crate) const RATE_MAX: usize = if cfg!(test) { 3 } else { 30 };
+
+/// Failed calls (any reason) one webhook id may cause per minute before the
+/// daemon stops looking anything up. Unknown ids count too, under their own id.
+pub(crate) const FAIL_ID_MAX: usize = if cfg!(test) { 6 } else { 10 };
+
+/// Failed calls across all webhook ids per minute.
+pub(crate) const FAIL_GLOBAL_MAX: usize = if cfg!(test) { 8 } else { 60 };
+
+/// Ids tracked for failures at once; further ids share one bucket.
+const MAX_TRACKED_IDS: usize = 1024;
+
+/// Audit rows for rejected calls per minute. The rest are counted and
+/// reported in the next row, so a flood cannot fill the log.
+pub(crate) const REJECT_AUDIT_MAX: usize = if cfg!(test) { 2 } else { 10 };
+
+/// Secret checked for an id that does not exist, so the work is the same.
+const DUMMY_SECRET: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Webhooks one bot may have.
 const MAX_PER_BOT: i64 = 20;
@@ -390,73 +407,97 @@ pub(crate) async fn test_webhook(
     request_body(content = String, content_type = "text/plain"),
     responses((status = 202, body = IncomingWebhookAccepted),
               (status = 400, body = ErrorBody, description = "timestamp missing or not a number"),
-              (status = 401, body = ErrorBody, description = "bad signature, stale timestamp, or replay"),
-              (status = 404, body = ErrorBody),
+              (status = 401, body = ErrorBody, description = "bad signature, unknown webhook, stale timestamp, or replay"),
               (status = 409, body = ErrorBody, description = "turned off, safe mode, or standby"),
               (status = 413, description = "body larger than 64 KB"),
-              (status = 429, body = ErrorBody, description = "more than the per-minute cap")))]
+              (status = 429, body = ErrorBody, description = "too many calls or too many failed calls this minute")))]
 pub(crate) async fn receive_webhook(
     State(s): State<AppState>,
     AxumPath(hook): AxumPath<String>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<(StatusCode, Json<IncomingWebhookAccepted>), ApiError> {
-    let id = crate::routes::id(&hook)?;
-    let text = std::str::from_utf8(&body)
-        .map_err(|_| ApiError::bad_request("the body must be UTF-8 text"))?;
-    let Some((row, secret)) = s.storage().incoming_webhook_secret(id)? else {
-        return Err(ApiError::not_found("webhook"));
-    };
-    if row.user_id != s.user_id() {
-        return Err(ApiError::not_found("webhook"));
-    }
-    let ts = timestamp_of(&headers)?;
-    let signature = signature_of(&headers);
     let now = storage::now_ms();
+    let guard = guard_for(s.storage().data_dir());
+    // A malformed id is treated like an unknown one: same answer, same cost.
+    let parsed = Uuid::parse_str(hook.trim()).ok();
+    let bucket = parsed.unwrap_or_else(Uuid::nil);
+    if !guard.lock().failures_allowed(bucket, now) {
+        guard.lock().suppressed += 1;
+        return Err(too_many());
+    }
+    let fail = |row: Option<Uuid>, reason: &str| {
+        guard.lock().note_failure(bucket, now);
+        reject(&s, &guard, now, row, reason);
+        invalid_signature()
+    };
+    let Ok(text) = std::str::from_utf8(&body) else {
+        guard.lock().note_failure(bucket, now);
+        return Err(ApiError::bad_request("the body must be UTF-8 text"));
+    };
+    let found = match parsed {
+        Some(id) => s
+            .storage()
+            .incoming_webhook_secret(id)?
+            .filter(|(row, _)| row.user_id == s.user_id()),
+        None => None,
+    };
+    let (row, secret) = match found {
+        Some((row, secret)) => (Some(row), secret),
+        None => (None, DUMMY_SECRET.to_owned()),
+    };
+    let ts = match timestamp_of(&headers) {
+        Ok(ts) => ts,
+        Err(err) => {
+            guard.lock().note_failure(bucket, now);
+            return Err(err);
+        }
+    };
+    let signature = signature_of(&headers);
     if (now.saturating_sub(ts)).abs() > WINDOW_MS {
-        reject(&s, row.id, "stale_timestamp");
-        return Err(invalid_signature());
+        return Err(fail(row.as_ref().map(|r| r.id), "stale_timestamp"));
     }
     let signed = format!("{ts}.{text}");
-    if scheduler::verify_webhook_signature(&secret, signed.as_bytes(), signature).is_err() {
-        reject(&s, row.id, "bad_signature");
-        return Err(invalid_signature());
-    }
+    let verified =
+        scheduler::verify_webhook_signature(&secret, signed.as_bytes(), signature).is_ok();
+    let Some(row) = row.filter(|_| verified) else {
+        return Err(fail(parsed, "bad_signature"));
+    };
     // The secret is not used again and must not be logged.
     drop(secret);
     if !row.enabled {
-        reject(&s, row.id, "disabled");
+        reject(&s, &guard, now, Some(row.id), "disabled");
         return Err(ApiError::conflict("this webhook is turned off"));
     }
     if s.safe_mode() {
-        reject(&s, row.id, "safe_mode");
+        reject(&s, &guard, now, Some(row.id), "safe_mode");
         return Err(ApiError::conflict(
             "incoming webhooks are paused in safe mode",
         ));
     }
     let key = signature_key(signature);
-    let guard = guard_for(s.storage().data_dir());
-    {
-        let mut guard = guard.lock();
-        if !guard.allow(row.id, now) {
-            reject(&s, row.id, "rate_limited");
-            return Err(ApiError::new(
-                StatusCode::TOO_MANY_REQUESTS,
-                "too_many_requests",
-                "this webhook has been called too many times; try again in a minute",
-            ));
-        }
-        let expires = ts.max(now).saturating_add(WINDOW_MS);
-        if !guard.remember(row.id, &key, now, expires) {
-            guard.undo_hit(row.id, now);
-            reject(&s, row.id, "replay");
-            return Err(invalid_signature());
-        }
+    if !guard.lock().allow(row.id, now) {
+        guard.lock().suppressed += 1;
+        return Err(too_many());
+    }
+    let expires = ts.max(now).saturating_add(WINDOW_MS);
+    let fresh = s.storage().remember_webhook_signature(
+        row.id,
+        &key,
+        now,
+        expires,
+        i64::try_from(MAX_REMEMBERED).unwrap_or(i64::MAX),
+    )?;
+    if !fresh {
+        guard.lock().undo_hit(row.id, now);
+        guard.lock().note_failure(bucket, now);
+        reject(&s, &guard, now, Some(row.id), "replay");
+        return Err(invalid_signature());
     }
     let accepted = match start_run(&s, &row, text) {
         Ok(accepted) => accepted,
         Err(err) => {
-            guard.lock().forget(row.id, &key);
+            let _ = s.storage().forget_webhook_signature(row.id, &key);
             guard.lock().undo_hit(row.id, now);
             return Err(err);
         }
@@ -475,13 +516,34 @@ pub(crate) async fn receive_webhook(
     Ok((StatusCode::ACCEPTED, Json(accepted)))
 }
 
-fn reject(s: &AppState, id: Uuid, reason: &str) {
+fn too_many() -> ApiError {
+    ApiError::new(
+        StatusCode::TOO_MANY_REQUESTS,
+        "too_many_requests",
+        "too many calls; try again in a minute",
+    )
+}
+
+/// Audit a refused call, but only `REJECT_AUDIT_MAX` per minute. Calls over
+/// the budget are counted and reported in the next row (`suppressed`).
+fn reject(
+    s: &AppState,
+    guard: &parking_lot::Mutex<Guard>,
+    now: i64,
+    id: Option<Uuid>,
+    reason: &str,
+) {
+    let slot = guard.lock().audit_slot(now);
+    let Some(suppressed) = slot else {
+        guard.lock().suppressed += 1;
+        return;
+    };
     let _ = audit(
         s,
         "webhook",
         "incoming_webhook.rejected",
         None,
-        &serde_json::json!({"webhook_id": id, "reason": reason}),
+        &serde_json::json!({"webhook_id": id, "reason": reason, "suppressed": suppressed}),
     );
 }
 
@@ -571,21 +633,72 @@ fn start_run(
 
 #[derive(Default)]
 struct Guard {
-    /// `(webhook, signature hex)` remembered until `expires`.
-    seen: HashMap<(Uuid, String), i64>,
     /// Accepted-call timestamps per webhook.
     hits: HashMap<Uuid, VecDeque<i64>>,
+    /// Failed-call timestamps per id (real or not).
+    fails: HashMap<Uuid, VecDeque<i64>>,
+    /// Failed-call timestamps across all ids.
+    fails_all: VecDeque<i64>,
+    /// Audit rows written for refused calls in the last minute.
+    rejects: VecDeque<i64>,
+    /// Refused calls not audited since the last audited one.
+    suppressed: u64,
+}
+
+fn trim(q: &mut VecDeque<i64>, now: i64) {
+    while q
+        .front()
+        .is_some_and(|at| now.saturating_sub(*at) >= RATE_WINDOW_MS)
+    {
+        q.pop_front();
+    }
 }
 
 impl Guard {
+    /// Whether another call for `id` may even be looked at.
+    fn failures_allowed(&mut self, id: Uuid, now: i64) -> bool {
+        trim(&mut self.fails_all, now);
+        if self.fails_all.len() >= FAIL_GLOBAL_MAX {
+            return false;
+        }
+        let key = self.fail_key(id);
+        self.fails.get_mut(&key).is_none_or(|q| {
+            trim(q, now);
+            q.len() < FAIL_ID_MAX
+        })
+    }
+
+    fn fail_key(&self, id: Uuid) -> Uuid {
+        if self.fails.contains_key(&id) || self.fails.len() < MAX_TRACKED_IDS {
+            id
+        } else {
+            Uuid::nil()
+        }
+    }
+
+    fn note_failure(&mut self, id: Uuid, now: i64) {
+        self.fails_all.push_back(now);
+        self.fails.retain(|_, q| {
+            trim(q, now);
+            !q.is_empty()
+        });
+        let key = self.fail_key(id);
+        self.fails.entry(key).or_default().push_back(now);
+    }
+
+    /// `Some(n)` when a refused call may be audited now (`n` were skipped before).
+    fn audit_slot(&mut self, now: i64) -> Option<u64> {
+        trim(&mut self.rejects, now);
+        if self.rejects.len() >= REJECT_AUDIT_MAX {
+            return None;
+        }
+        self.rejects.push_back(now);
+        Some(std::mem::take(&mut self.suppressed))
+    }
+
     fn allow(&mut self, id: Uuid, now: i64) -> bool {
         let hits = self.hits.entry(id).or_default();
-        while hits
-            .front()
-            .is_some_and(|at| now.saturating_sub(*at) >= RATE_WINDOW_MS)
-        {
-            hits.pop_front();
-        }
+        trim(hits, now);
         if hits.len() >= RATE_MAX {
             return false;
         }
@@ -600,24 +713,6 @@ impl Guard {
         if let Some(pos) = hits.iter().rposition(|at| *at == now) {
             hits.remove(pos);
         }
-    }
-
-    /// Remember a signature. `false` means it was already seen, or the memory is full.
-    fn remember(&mut self, id: Uuid, key: &str, now: i64, expires: i64) -> bool {
-        self.seen.retain(|_, exp| *exp > now);
-        let map_key = (id, key.to_owned());
-        if self.seen.get(&map_key).is_some_and(|exp| *exp > now) {
-            return false;
-        }
-        if self.seen.len() >= MAX_REMEMBERED {
-            return false;
-        }
-        self.seen.insert(map_key, expires);
-        true
-    }
-
-    fn forget(&mut self, id: Uuid, key: &str) {
-        self.seen.remove(&(id, key.to_owned()));
     }
 }
 
@@ -634,4 +729,10 @@ fn guard_for(dir: &Path) -> std::sync::Arc<parking_lot::Mutex<Guard>> {
     map.entry(dir.to_path_buf())
         .or_insert_with(|| std::sync::Arc::new(parking_lot::Mutex::new(Guard::default())))
         .clone()
+}
+
+/// Drop the in-memory counters, as a restart would.
+#[cfg(test)]
+pub(crate) fn forget_memory_for_tests(dir: &Path) {
+    guards().lock().remove(dir);
 }

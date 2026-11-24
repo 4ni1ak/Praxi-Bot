@@ -21,11 +21,11 @@ Two headers are required:
 - `X-Webhook-Timestamp`: the current time in Unix milliseconds.
 - `X-Signature-256`: `sha256=` followed by the hex HMAC-SHA256 of `{timestamp}.{raw body}`, using the secret. `X-Hub-Signature-256` is accepted with the same value.
 
-A signature of the body alone is not enough. The time must be within 5 minutes, and that exact signature works once. A second copy is refused. The body can be at most 64 KB. More than 30 accepted calls in a minute are refused. A webhook that is off does not count toward that limit.
+A signature of the body alone is not enough. The time must be within 5 minutes, and that exact signature works once. A second copy is refused, even after Praxi restarts. The body can be at most 64 KB. More than 30 accepted calls in a minute are refused. A webhook that is off does not count toward that limit. Failed calls are limited too: after 10 failures in a minute for one address (or 60 across all addresses) Praxi answers 429 without looking anything up. A wrong address answers exactly like a wrong signature, so an address cannot be guessed. Only the first few refused calls each minute are written to the audit log; the rest are counted.
 
 ## What the bot does with the text
 
-The body is data, never an instruction. Praxi stores it as untrusted content and does not turn a line such as `call:something` into a tool. The run uses the bot's own permission level. If a tool needs your OK, the question is queued as a notification, the same way a scheduled job asks.
+The body is data, never an instruction. Your instruction is the only task the bot is given. The body is shown to the model as a quoted, labelled data block, marks the run as having read untrusted content, and is never a message from you. Praxi does not turn a line such as `call:something` into a tool. The run uses the bot's own permission level. If a tool needs your OK, the question is queued as a notification, the same way a scheduled job asks.
 
 The test button sends a tiny payload, `{"praxi_test":true}`, through the same path. It does not spend the outside rate limit.
 

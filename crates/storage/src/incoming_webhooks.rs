@@ -189,4 +189,48 @@ impl Storage {
         )?;
         Ok(n == 1)
     }
+
+    /// Remember an accepted signature until `expires_ms`. `false` means it was
+    /// already remembered (a replay) or `max` live entries exist. Expired
+    /// entries are dropped first.
+    ///
+    /// # Errors
+    /// SQLite errors.
+    pub fn remember_webhook_signature(
+        &self,
+        id: Uuid,
+        signature: &str,
+        now_ms: i64,
+        expires_ms: i64,
+        max: i64,
+    ) -> Result<bool> {
+        let conn = self.conn();
+        conn.execute(
+            "DELETE FROM incoming_webhook_seen WHERE expires_ms <= ?1",
+            params![now_ms],
+        )?;
+        let live: i64 = conn.query_row("SELECT COUNT(*) FROM incoming_webhook_seen", [], |r| {
+            r.get(0)
+        })?;
+        if live >= max {
+            return Ok(false);
+        }
+        let n = conn.execute(
+            "INSERT OR IGNORE INTO incoming_webhook_seen (webhook_id, signature, expires_ms) VALUES (?1, ?2, ?3)",
+            params![id.to_string(), signature, expires_ms],
+        )?;
+        Ok(n == 1)
+    }
+
+    /// Forget a signature again (the run it was for could not start).
+    ///
+    /// # Errors
+    /// SQLite errors.
+    pub fn forget_webhook_signature(&self, id: Uuid, signature: &str) -> Result<()> {
+        self.conn().execute(
+            "DELETE FROM incoming_webhook_seen WHERE webhook_id = ?1 AND signature = ?2",
+            params![id.to_string(), signature],
+        )?;
+        Ok(())
+    }
 }

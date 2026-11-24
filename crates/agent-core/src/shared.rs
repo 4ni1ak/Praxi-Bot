@@ -1768,6 +1768,12 @@ impl Shared {
             }
         }
         absorb_run_history(&mut taint, self, run.id, 0);
+        // The body of a signed webhook call is untrusted data from the first
+        // model call on: the run is tainted like one that read a web page.
+        if crate::history::is_webhook_run(run) {
+            taint.exposure.observe(true, false);
+            taint.note_label("incoming webhook body");
+        }
         // A subagent does not see the chat. A top-level turn, including a
         // scheduled one, does: provenance rides on the messages that enter
         // the context. Dropped by the history bound means the bytes are not

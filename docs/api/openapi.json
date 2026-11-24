@@ -8982,17 +8982,7 @@
             }
           },
           "401": {
-            "description": "bad signature, stale timestamp, or replay",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
+            "description": "bad signature, unknown webhook, stale timestamp, or replay",
             "content": {
               "application/json": {
                 "schema": {
@@ -9015,7 +9005,7 @@
             "description": "body larger than 64 KB"
           },
           "429": {
-            "description": "more than the per-minute cap",
+            "description": "too many calls or too many failed calls this minute",
             "content": {
               "application/json": {
                 "schema": {

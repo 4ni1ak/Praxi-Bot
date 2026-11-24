@@ -254,10 +254,14 @@ async fn bad_signature_replay_size_and_rate_are_refused() {
     assert!(audit.iter().any(|a| {
         a.action == "incoming_webhook.rejected" && a.detail["reason"] == "bad_signature"
     }));
+    // Refused calls are audited only up to the per-minute budget; the rest are counted.
+    let rejected = audit
+        .iter()
+        .filter(|a| a.action == "incoming_webhook.rejected")
+        .count();
     assert!(
-        audit
-            .iter()
-            .any(|a| { a.action == "incoming_webhook.rejected" && a.detail["reason"] == "replay" })
+        rejected <= crate::incoming_webhook::REJECT_AUDIT_MAX,
+        "{rejected}"
     );
 }
 
@@ -311,8 +315,12 @@ async fn injection_text_in_the_payload_cannot_trigger_a_tool() {
         .iter()
         .find(|m| m.role == "assistant")
         .map_or("", |m| m.content.as_str());
+    // The echo provider repeats the last user turn: the body arrives in the
+    // untrusted data block, labelled as not being the task.
     assert!(
-        assistant.contains("untrusted source data"),
+        assistant.contains("UNTRUSTED body of a signed incoming webhook")
+            && assistant.contains(r#""trust":"untrusted""#)
+            && assistant.contains(payload),
         "the model must see the payload as data, got {assistant}"
     );
     assert!(
@@ -355,7 +363,7 @@ async fn test_button_starts_an_untrusted_run_and_peers_cannot_manage() {
         .find(|m| m.role == "assistant")
         .map(|m| m.content.clone())
         .unwrap_or_default();
-    assert!(assistant.contains("untrusted source data"));
+    assert!(assistant.contains("UNTRUSTED body of a signed incoming webhook"));
     assert!(
         t.state
             .storage()
@@ -390,4 +398,113 @@ async fn test_button_starts_an_untrusted_run_and_peers_cannot_manage() {
             assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{role:?} {path}");
         }
     }
+}
+
+fn dummy_headers(ts: i64, sig: &str) -> [(&'static str, String); 2] {
+    [
+        ("x-webhook-timestamp", ts.to_string()),
+        ("x-signature-256", sig.to_owned()),
+    ]
+}
+
+async fn call_hook(t: &T, id: &str, body: &str, ts: i64, sig: &str) -> Resp {
+    let h = dummy_headers(ts, sig);
+    hook(t, id, body, &[(h[0].0, &h[0].1), (h[1].0, &h[1].1)]).await
+}
+
+#[tokio::test]
+async fn unknown_id_and_bad_signature_look_the_same() {
+    let t = super::setup();
+    let (bot, _) = make_chat(&t).await;
+    let (id, secret) = create(&t, &bot, "Same").await;
+    let ts = storage::now_ms();
+    let bad = call_hook(&t, &id, "x", ts, &sign("wrong", ts, "x")).await;
+    let unknown = Uuid::now_v7().to_string();
+    let none = call_hook(&t, &unknown, "x", ts, &sign(&secret, ts, "x")).await;
+    // Even a correctly signed call to an id that does not exist is just a bad signature.
+    assert_eq!(bad.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(none.status, bad.status);
+    assert_eq!(none.body, bad.body);
+    let malformed = call_hook(&t, "not-a-uuid", "x", ts, &sign(&secret, ts, "x")).await;
+    assert_eq!(malformed.status, bad.status);
+    assert_eq!(malformed.body, bad.body);
+}
+
+#[tokio::test]
+async fn a_flood_of_bad_signatures_is_cut_off_before_any_lookup() {
+    let t = super::setup();
+    let (bot, _) = make_chat(&t).await;
+    let (id, secret) = create(&t, &bot, "Flood").await;
+    let ts = storage::now_ms();
+    let mut statuses = Vec::new();
+    for n in 0..20 {
+        let body = format!("flood-{n}");
+        let r = call_hook(&t, &id, &body, ts, &sign("wrong", ts, &body)).await;
+        statuses.push(r.status);
+    }
+    let first_limited = statuses
+        .iter()
+        .position(|s| *s == StatusCode::TOO_MANY_REQUESTS)
+        .expect("the flood must be limited");
+    assert_eq!(first_limited, crate::incoming_webhook::FAIL_ID_MAX);
+    assert!(
+        statuses[..first_limited]
+            .iter()
+            .all(|s| *s == StatusCode::UNAUTHORIZED)
+    );
+    assert!(
+        statuses[first_limited..]
+            .iter()
+            .all(|s| *s == StatusCode::TOO_MANY_REQUESTS)
+    );
+    // One id's lockout does not block another id (until the global budget is spent).
+    let r = call_hook(&t, &Uuid::now_v7().to_string(), "x", ts, "sha256=00").await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    // Audit growth is bounded: far fewer rows than refused calls, none for the limited ones.
+    let rejected = t
+        .state
+        .storage()
+        .list_audit(t.state.user_id())
+        .unwrap()
+        .into_iter()
+        .filter(|a| a.action == "incoming_webhook.rejected")
+        .count();
+    assert!(
+        rejected <= crate::incoming_webhook::REJECT_AUDIT_MAX,
+        "{rejected}"
+    );
+    assert_eq!(runs(&t).len(), 0);
+    let _ = secret;
+}
+
+#[tokio::test]
+async fn a_flood_of_unknown_ids_is_limited_globally() {
+    let t = super::setup();
+    let ts = storage::now_ms();
+    let mut limited = 0;
+    for _ in 0..(crate::incoming_webhook::FAIL_GLOBAL_MAX + 5) {
+        let r = call_hook(&t, &Uuid::now_v7().to_string(), "x", ts, "sha256=00").await;
+        match r.status {
+            StatusCode::UNAUTHORIZED => {}
+            StatusCode::TOO_MANY_REQUESTS => limited += 1,
+            other => panic!("unexpected {other}"),
+        }
+    }
+    assert_eq!(limited, 5);
+}
+
+#[tokio::test]
+async fn a_captured_request_cannot_be_replayed_after_a_restart() {
+    let t = super::setup();
+    let (bot, _) = make_chat(&t).await;
+    let (id, secret) = create(&t, &bot, "Replay").await;
+    let ts = storage::now_ms();
+    let sig = sign(&secret, ts, "once");
+    let first = call_hook(&t, &id, "once", ts, &sig).await;
+    assert_eq!(first.status, StatusCode::ACCEPTED, "{:?}", first.json());
+    // A restart forgets everything held in memory.
+    crate::incoming_webhook::forget_memory_for_tests(t.state.storage().data_dir());
+    let again = call_hook(&t, &id, "once", ts, &sig).await;
+    assert_eq!(again.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(runs(&t).len(), 1);
 }
