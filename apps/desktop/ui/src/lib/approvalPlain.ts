@@ -1,4 +1,7 @@
 import type { ComputerApprovalDetails, EgressApprovalDetails } from "./approvalDetails.ts";
+import { describeTool, hostOf, isSendTool, resolveToolCall } from "./toolLabels.ts";
+
+type AppName = (server: string) => string | null;
 
 /** `t` as i18next gives it; a plain function keeps this module free of React. */
 export type T = (key: string, values?: Record<string, unknown>) => string;
@@ -241,7 +244,7 @@ function cutAndEscape(text: string, max: number): { text: string; shortened: boo
  * `null` for any other call. Only a very long one is cut (`shortened`, text ends in "…").
  */
 export function actionCommand(tool: string, input: unknown): { text: string; shortened: boolean } | null {
-  if (tool !== "shell_run" && tool !== "pc_shell_run") return null;
+  if (tool !== "shell_run" && tool !== "pc_shell_run" && tool !== "shell.run") return null;
   const rec = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const text = typeof rec.command === "string" ? rec.command.trim() : "";
   if (!text) return null;
@@ -303,4 +306,184 @@ export function browserStepLines(details: unknown, t: T): string[] | null {
     lines.push(t(`chat.approval.steps.${key}`, values));
   }
   return lines;
+}
+
+function asObj(v: unknown): Record<string, unknown> | null {
+  return typeof v === "object" && v !== null && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null;
+}
+
+/** Public hostname targeted by a browser/web/site approval, for rendering a crisp site favicon. */
+export function approvalTargetDomain(tool: string, input: unknown, details?: unknown): string | null {
+  const rec = asObj(input) ?? {};
+  for (const key of ["url", "href", "origin", "domain", "site"]) {
+    const raw = rec[key];
+    if (typeof raw === "string" && raw.trim()) {
+      const host = hostOf(raw.trim());
+      if (host && host.includes(".")) return host;
+      if (!raw.includes("/") && !raw.includes(":") && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(raw.trim())) {
+        return raw.trim().replace(/^www\./i, "").toLowerCase();
+      }
+    }
+  }
+  const det = asObj(details);
+  if (det) {
+    const egress = asObj(det.egress);
+    const candidate =
+      (typeof egress?.host === "string" && egress.host) ||
+      (typeof det.host === "string" && det.host) ||
+      null;
+    if (candidate) {
+      const host = hostOf(candidate) ?? candidate.replace(/^www\./i, "").toLowerCase();
+      if (host.includes(".") && !host.includes(" ")) return host;
+    }
+    const mem = asObj(det.memory);
+    if (mem?.kind === "origin" && typeof mem.pattern === "string") {
+      const host = hostOf(mem.pattern);
+      if (host && host.includes(".")) return host;
+    }
+  }
+  void tool;
+  return null;
+}
+
+export type RiskKind = "send" | "delete" | "run";
+
+/**
+ * Classifies high-consequence actions whose critical target data (recipient/subject,
+ * command line, or path) must stay visible on the compact card before expanding Details.
+ */
+export function approvalRiskKind(tool: string, input: unknown, details?: unknown): RiskKind | null {
+  const call = resolveToolCall(tool, input);
+  const low = call.name.toLowerCase();
+  if (isSendTool(tool) || isSendTool(call.name)) return "send";
+  if (low === "shell_run" || low === "pc_shell_run" || low === "shell.run" || low === "shell") {
+    return "run";
+  }
+  if (
+    low === "fs_delete" ||
+    low === "pc_fs_delete" ||
+    low.includes("delete") ||
+    low.includes("remove") ||
+    low.includes("wipe") ||
+    low.includes("purge")
+  ) {
+    return "delete";
+  }
+  const det = asObj(details);
+  if (det?.kind === "schedule" && det.action === "delete") return "delete";
+  return null;
+}
+
+/** Whether standing "Always allow" is strictly forbidden for this call in the UI. */
+export function isAlwaysBlockedAction(tool: string, input: unknown, details?: unknown): boolean {
+  const call = resolveToolCall(tool, input);
+  const low = `${tool} ${call.name}`.toLowerCase();
+  const det = asObj(details);
+  if (det?.always_offered === false) return true;
+  if (det?.kind === "bot" || det?.kind === "control_grant" || det?.kind === "app_action") return true;
+  if (det?.kind === "schedule" && (det.action === "delete" || det.action === "edit")) return true;
+  if (approvalRiskKind(tool, input, details) === "delete") return true;
+  const rec = asObj(call.input) ?? {};
+  if (
+    (call.name === "shell_run" || call.name === "pc_shell_run" || call.name === "shell.run") &&
+    typeof rec.command === "string" &&
+    /\b(rm|rmdir|del|erase|format|mkfs|dd|shutdown|reboot)\b/i.test(rec.command)
+  ) {
+    return true;
+  }
+  return /\b(secret|credential|password|login|signin|auth|oauth|token|fill|payment|billing|checkout|purchase|invoice|transfer|withdraw|wallet|pay|charge|delete|remove|wipe|destroy|purge|drop|rm)\b/.test(
+    low.replace(/[._/:-]+/g, " ")
+  );
+}
+
+/** One short exact-data line for risky send/delete/run cards; null for non-risky calls or when already shown verbatim in headline. */
+export function approvalCompactPreview(
+  tool: string,
+  input: unknown,
+  details?: unknown
+): { text: string; kind: RiskKind } | null {
+  const kind = approvalRiskKind(tool, input, details);
+  if (!kind) return null;
+  const call = resolveToolCall(tool, input);
+  const rec = asObj(call.input) ?? {};
+  if (kind === "run") {
+    const raw = typeof rec.command === "string" ? rec.command.trim() : "";
+    if (!raw || [...raw].length <= 44 && !raw.includes("\n")) return null;
+    const cmd = whole(raw, 110);
+    return cmd ? { kind, text: escapeInvisible(cmd) } : null;
+  }
+  if (kind === "send") {
+    const to = typeof rec.to === "string" ? rec.to : Array.isArray(rec.to) ? rec.to.join(", ") : "";
+    const subject = typeof rec.subject === "string" ? rec.subject : "";
+    const joined = [to, subject].filter(Boolean).join(" — ");
+    return joined ? { kind, text: escapeInvisible(clip(joined, 110)) } : null;
+  }
+  const target =
+    (typeof rec.path === "string" && rec.path) ||
+    (typeof rec.target === "string" && rec.target) ||
+    (typeof rec.id === "string" && rec.id) ||
+    "";
+  return target ? { kind, text: escapeInvisible(clip(target, 110)) } : null;
+}
+
+/**
+ * One short plain sentence describing the approval request ("Open webioo.com.tr",
+ * "Run shell command", "Send email to team@praxi.dev").
+ */
+export function approvalHeadline(
+  tool: string,
+  input: unknown,
+  details: unknown,
+  w: WhereInput,
+  t: T,
+  brandName?: AppName
+): string {
+  const det = asObj(details);
+  if (det?.kind === "bot" && typeof det.action === "string") {
+    return t(`chat.approval.bot.title.${det.action}`);
+  }
+  if (det?.kind === "control_grant") {
+    return t("chat.approval.compact.controlGrant");
+  }
+  if (det?.kind === "schedule") {
+    const action = typeof det.action === "string" ? det.action : "create";
+    const name = typeof det.name === "string" ? det.name : "";
+    if (name) return t(`chat.approval.compact.schedule.${action}`, { name: clip(name, 48) });
+  }
+  if (det?.kind === "app_action" && typeof det.app === "string" && typeof det.action === "string") {
+    return `${det.app} · ${det.action}`;
+  }
+  const call = resolveToolCall(tool, input);
+  const domain = approvalTargetDomain(call.name, call.input, details);
+  if (
+    domain &&
+    (call.name === "browser_open" ||
+      call.name === "pc_browser_open" ||
+      call.name.endsWith("browser_navigate") ||
+      call.name.endsWith("browser_tab_new"))
+  ) {
+    return t("chat.approval.compact.openSite", { site: domain });
+  }
+  const rec = asObj(call.input) ?? {};
+  if ((call.name === "email_send" || call.name.endsWith("send_message")) && typeof rec.to === "string" && rec.to.trim()) {
+    return t("chat.approval.compact.sendMail", { to: escapeInvisible(clip(rec.to.trim(), 48)) });
+  }
+  if (call.name === "shell_run" || call.name === "pc_shell_run" || call.name === "shell.run") {
+    const cmd = typeof rec.command === "string" ? clip(rec.command.trim(), 44) : "";
+    if (cmd) return t("chat.approval.compact.runCommand", { command: escapeInvisible(cmd) });
+  }
+  if (call.name === "fs_delete" || call.name === "pc_fs_delete") {
+    const p = typeof rec.path === "string" ? clip(rec.path.trim(), 48) : "";
+    if (p) return t("chat.approval.compact.deletePath", { path: escapeInvisible(p) });
+  }
+  const plain =
+    browserMcpText(call.name, call.input, details, t) ??
+    actionText(call.name, call.input, w, t);
+  if (plain) return plain;
+  const mcp = /^mcp:([^/]+)\/(.+)$/.exec(call.name);
+  const canonical = mcp ? `${mcp[1]}.${mcp[2]}` : call.name;
+  const stepLabel = describeTool(canonical, call.input, brandName);
+  return t(`${stepLabel.key}.running`, stepLabel.values);
 }
