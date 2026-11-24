@@ -470,7 +470,8 @@
   white-space: nowrap;
 }
 
-@media (width <= 768px) {
+/* stylelint-disable-next-line unit-disallowed-list -- desktop window resize boundary */
+@media (width <= 48em) {
   .pane {
     padding: var(--space-4);
   }

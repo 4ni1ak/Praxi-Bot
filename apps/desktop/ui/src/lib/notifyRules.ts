@@ -1,6 +1,7 @@
 import type { GlobalEnvelope } from "../api/types.ts";
 import type { RunState, ToolItem } from "../state/timeline.ts";
 import { isBatchable } from "./approvalBatch.ts";
+import { isAlwaysBlockedAction } from "./approvalPlain.ts";
 import { describeTool, hostOf, isSendTool, resolveToolCall } from "./toolLabels.ts";
 
 /** A run that took longer than this notifies when it finishes (unfocused). */
@@ -207,6 +208,12 @@ export interface NotificationText {
 }
 
 type AppName = (server: string) => string | null;
+
+/** `mcp:playwright/browser_evaluate` and `playwright.browser_evaluate` are the same call. */
+function canonicalTool(name: string): string {
+  const m = /^mcp:([^/]+)\/(.+)$/.exec(name);
+  return m ? `${m[1]}.${m[2]}` : name;
+}
 
 /**
  * One short human sentence for an approval ("Praxi needs your OK to open webioo.com.tr"):

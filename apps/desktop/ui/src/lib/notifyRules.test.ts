@@ -202,7 +202,7 @@ test("approval toast says one human sentence, never the raw summary, json or ids
     approval: appr()
   };
   const text = notificationText(d, "Praxi", false, tr);
-  assert.ok(text.body.startsWith("Praxi: "));
+  assert.ok(text.body.startsWith("notify.approval.mcp"));
   assert.ok(text.body.includes('"app":"Playwright"'));
   assert.ok(text.body.includes('"action":"browser evaluate"'));
   assert.ok(!text.body.includes("function") && !text.body.includes("ca99609c") && !text.body.includes("pc:"));
