@@ -146,6 +146,8 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("PATCH", "/v1/memory/{}"),
     ("DELETE", "/v1/memory/{}"),
     ("POST", "/v1/memory/{}/undo"),
+    ("POST", "/v1/memory/{}/erase"),
+    ("DELETE", "/v1/memory/forgotten/{}"),
     ("POST", "/v1/memory/{}/approve"),
     ("POST", "/v1/memory/{}/discard"),
     ("PUT", "/v1/memory/embedding"),

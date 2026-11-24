@@ -23,6 +23,7 @@ mod secrets;
 mod sessions;
 mod settings;
 mod store;
+mod tombstones;
 mod types;
 mod vec;
 
@@ -50,4 +51,6 @@ pub use settings::{
 };
 pub use store::MemoryStore;
 pub use tools::MEMORY_TOOL_NAMES;
-pub use types::{JournalEntry, JournalOp, Kind, ListFilter, Memory, MemoryPatch, NewMemory, Trust};
+pub use types::{
+    JournalEntry, JournalOp, Kind, ListFilter, Memory, MemoryPatch, NewMemory, Tombstone, Trust,
+};
