@@ -376,26 +376,60 @@ export function approvalRiskKind(tool: string, input: unknown, details?: unknown
   return null;
 }
 
-/** Whether standing "Always allow" is strictly forbidden for this call in the UI. */
+/** Read-only tools a standing "Always allow" may cover; mirrors the daemon's allow-list. */
+const ALWAYS_READ_ONLY_TOOLS = new Set(["fs_read", "fs_list", "fs_stat", "fs_search"]);
+
+/**
+ * Whether standing "Always allow" is refused for this call. The daemon is authoritative (it
+ * refuses the choice and sends `always_offered`); this mirrors its ALLOW-list so the button never
+ * shows for anything else: only `browser_open` scoped to one origin and the listed read-only
+ * tools qualify. Sends, writes, shell, MCP / Composio tools of any name, desktop input and
+ * every destructive, paid or credential action are refused.
+ */
 export function isAlwaysBlockedAction(tool: string, input: unknown, details?: unknown): boolean {
   const call = resolveToolCall(tool, input);
-  const low = `${tool} ${call.name}`.toLowerCase();
   const det = asObj(details);
   if (det?.always_offered === false) return true;
   if (det?.kind === "bot" || det?.kind === "control_grant" || det?.kind === "app_action") return true;
-  if (det?.kind === "schedule" && (det.action === "delete" || det.action === "edit")) return true;
-  if (approvalRiskKind(tool, input, details) === "delete") return true;
-  const rec = asObj(call.input) ?? {};
-  if (
-    (call.name === "shell_run" || call.name === "pc_shell_run" || call.name === "shell.run") &&
-    typeof rec.command === "string" &&
-    /\b(rm|rmdir|del|erase|format|mkfs|dd|shutdown|reboot)\b/i.test(rec.command)
-  ) {
-    return true;
+  if (det?.kind === "schedule") return true;
+  if (call.name === "browser_open") return asObj(det?.memory)?.kind !== "origin";
+  return !ALWAYS_READ_ONLY_TOOLS.has(call.name);
+}
+
+type HostFlag = "mixed" | "idn" | null;
+
+/** Scripts present in a host's letters (Latin / Cyrillic / Greek / other). */
+function scriptsOf(host: string): Set<string> {
+  const out = new Set<string>();
+  for (const ch of host) {
+    if (/[A-Za-z]/.test(ch)) out.add("latin");
+    else if (/\p{Script=Cyrillic}/u.test(ch)) out.add("cyrillic");
+    else if (/\p{Script=Greek}/u.test(ch)) out.add("greek");
+    else if (/\p{L}/u.test(ch)) out.add("other");
   }
-  return /\b(secret|credential|password|login|signin|auth|oauth|token|fill|payment|billing|checkout|purchase|invoice|transfer|withdraw|wallet|pay|charge|delete|remove|wipe|destroy|purge|drop|rm)\b/.test(
-    low.replace(/[._/:-]+/g, " ")
-  );
+  return out;
+}
+
+/**
+ * The address as the owner must read it: the ASCII (punycode) form of the host, and whether it
+ * can imitate another site: `mixed` when letters of several alphabets share the name (a Cyrillic
+ * "о" inside `webioo.com.tr`), `idn` for any other international name (non-ASCII or `xn--`).
+ */
+export function lookalikeHost(rawTarget: string, host: string): { host: string; flag: HostFlag } {
+  const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(rawTarget.trim())?.[1] ?? rawTarget.trim();
+  const rawHost = authority.slice(authority.lastIndexOf("@") + 1).replace(/:\d*$/, "");
+  const scripts = scriptsOf(rawHost);
+  let ascii = host;
+  if (/[\u0080-\u{10ffff}]/u.test(host)) {
+    try {
+      ascii = new URL(`https://${host}`).hostname;
+    } catch {
+      ascii = host;
+    }
+  }
+  if (scripts.size > 1) return { host: ascii, flag: "mixed" };
+  if (/[\u0080-\u{10ffff}]/u.test(rawHost) || /(^|\.)xn--/i.test(ascii)) return { host: ascii, flag: "idn" };
+  return { host: ascii, flag: null };
 }
 
 /** One short exact-data line for risky send/delete/run cards; null for non-risky calls or when already shown verbatim in headline. */
@@ -464,7 +498,12 @@ export function approvalHeadline(
       call.name.endsWith("browser_navigate") ||
       call.name.endsWith("browser_tab_new"))
   ) {
-    return t("chat.approval.compact.openSite", { site: domain });
+    // The host is shown whole (never clipped) and, for an international name, in its ASCII
+    // form with a warning, so a look-alike cannot read as the site it imitates.
+    const rawTarget = typeof asObj(call.input)?.url === "string" ? (asObj(call.input)!.url as string) : domain;
+    const { host, flag } = lookalikeHost(rawTarget, domain);
+    if (flag) return t(`chat.approval.compact.openSite_${flag}`, { site: host });
+    return t("chat.approval.compact.openSite", { site: host });
   }
   const rec = asObj(call.input) ?? {};
   if ((call.name === "email_send" || call.name.endsWith("send_message")) && typeof rec.to === "string" && rec.to.trim()) {

@@ -1491,6 +1491,8 @@
         "controlGrant": "Bildschirm- & Tastatursteuerung teilen",
         "deletePath": "{{path}} löschen",
         "openSite": "{{site}} öffnen",
+        "openSite_idn": "{{site}} öffnen (internationale Adresse, genau prüfen)",
+        "openSite_mixed": "{{site}} öffnen (mischt Alphabete, kann eine andere Seite nachahmen)",
         "runCommand": "Ausführen: {{command}}",
         "schedule": {
           "create": "Zeitplan erstellen: \"{{name}}\"",

@@ -108,7 +108,9 @@ test("a browser card says what happens once and offers once, this task and deny"
     { name: "mcp:crm/update", input: { id: 1 } },
     { why: "policy", once_only: false, run_grant: true, always_offered: true }
   );
-  assert.ok(clean.includes("Allow for this task") && clean.includes('data-testid="approval-always"'));
+  assert.ok(clean.includes("Allow for this task"));
+  // An MCP tool never shows a standing Always allow, whatever its name: only a site does.
+  assert.ok(!clean.includes('data-testid="approval-always"'), "no Always for an MCP tool");
   assert.ok(!clean.includes(">This chat<"), "this task replaces this chat");
   // Destructive actions never offer Always allow.
   const del = render("fs_delete", { path: "/Users/emre/tmp/old.txt" }, { why: "policy", once_only: false, always_offered: true });

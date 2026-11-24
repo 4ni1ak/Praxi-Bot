@@ -1,11 +1,18 @@
 import { Globe } from "lucide-react";
 import { useEffect, useState } from "react";
+import { mayFetchFavicon } from "../lib/faviconPolicy";
 import { useOptionalDaemonClient } from "../state/DaemonContext";
 import styles from "./SiteFavicon.module.css";
 
 interface SiteFaviconProps {
   domain: string;
   size?: number;
+  /**
+   * The site is already allowed (a standing grant or an approved navigation). Only then is its
+   * icon requested; otherwise (a pending approval card) the neutral tile is shown and nothing is
+   * fetched.
+   */
+  allowed?: boolean;
 }
 
 const iconCache = new WeakMap<object, Map<string, Promise<string | null>>>();
@@ -32,14 +39,14 @@ function loadCachedFavicon(client: { faviconBlob(domain: string): Promise<Blob> 
  * (`GET /v1/favicons/{domain}`), falling back gracefully to a crisp initial tile
  * or globe icon using theme tokens.
  */
-export function SiteFavicon({ domain, size = 18 }: SiteFaviconProps) {
+export function SiteFavicon({ domain, size = 18, allowed = false }: SiteFaviconProps) {
   const client = useOptionalDaemonClient();
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     setFailed(false);
-    if (!client || !domain) {
+    if (!client || !domain || !mayFetchFavicon(allowed, domain)) {
       setSrc(null);
       return;
     }
@@ -50,7 +57,7 @@ export function SiteFavicon({ domain, size = 18 }: SiteFaviconProps) {
     return () => {
       active = false;
     };
-  }, [client, domain]);
+  }, [client, domain, allowed]);
 
   const initial = domain.replace(/^www\./i, "").trim().charAt(0).toUpperCase();
   const boxStyle = { width: size, height: size };

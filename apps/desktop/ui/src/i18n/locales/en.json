@@ -1491,6 +1491,8 @@
         "controlGrant": "Share screen & keyboard control",
         "deletePath": "Delete {{path}}",
         "openSite": "Open {{site}}",
+        "openSite_idn": "Open {{site}} (international address, check it carefully)",
+        "openSite_mixed": "Open {{site}} (mixes alphabets, may imitate another site)",
         "runCommand": "Run {{command}}",
         "schedule": {
           "create": "Create schedule \"{{name}}\"",

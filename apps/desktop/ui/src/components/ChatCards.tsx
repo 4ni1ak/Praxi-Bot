@@ -564,7 +564,7 @@ export function ApprovalCard({
       <div className={styles.approvalTopRow}>
         <span className={styles.approvalIcon}>
           {domain ? (
-            <SiteFavicon domain={domain} size={22} />
+            <SiteFavicon domain={domain} size={22} /* no `allowed`: a pending card never fetches */ />
           ) : (
             <StepIcon icon={callGlyph.icon ?? glyph.icon} brand={callGlyph.brand ?? glyph.brand} size={20} />
           )}

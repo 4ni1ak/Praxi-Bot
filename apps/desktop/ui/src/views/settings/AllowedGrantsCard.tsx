@@ -24,7 +24,7 @@ function siteDomain(target: GrantTarget): string | null {
 function GrantIcon({ target }: { target: GrantTarget }) {
   const domain = siteDomain(target);
   if (domain) {
-    return <SiteFavicon domain={domain} size={18} />;
+    return <SiteFavicon domain={domain} size={18} allowed />;
   }
   if (target.kind === "scoped" && target.scope === "command") {
     return <Terminal size={16} aria-hidden="true" className={styles.kindIcon} />;

@@ -1491,6 +1491,8 @@
         "controlGrant": "Ekran ve klavye kontrolünü paylaş",
         "deletePath": "{{path}} öğesini sil",
         "openSite": "{{site}} sitesini aç",
+        "openSite_idn": "{{site}} sitesini aç (uluslararası adres, dikkatle kontrol et)",
+        "openSite_mixed": "{{site}} sitesini aç (farklı alfabeleri karıştırıyor, başka bir siteyi taklit edebilir)",
         "runCommand": "Çalıştır: {{command}}",
         "schedule": {
           "create": "Zamanlama oluştur: \"{{name}}\"",
