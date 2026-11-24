@@ -12,6 +12,7 @@ import { parseDigestTime } from "../lib/digestNotify";
 import { DEFAULT_QUIET_HOURS, parseQuietHours, type QuietHours } from "../lib/quietHours";
 import { defaultWindowFrame } from "../lib/windowChrome";
 
+import { DEFAULT_PTT_KEY, DEFAULT_SILENCE_STOP_SEC, parseMicDeviceId, parsePttKey, parseSilenceStopSec } from "../lib/voiceInput";
 import { DEFAULT_VOICE_RATE, parseVoiceName, parseVoiceRate } from "../lib/voicePrefs";
 import { type MessageTimes, parseMessageTimes } from "../lib/messageTime";
 import {
@@ -84,6 +85,14 @@ export interface AppSettings extends AppearanceSettings {
   voiceRate: number;
   /** Read each finished bot reply aloud automatically. */
   speakReplies: boolean;
+  /** Push-to-talk: hold a key to dictate, release to send. Off by default. */
+  pttEnabled: boolean;
+  /** `KeyboardEvent.code` of the push-to-talk key. */
+  pttKey: string;
+  /** Chosen microphone `deviceId`; "" = the system default. */
+  micDeviceId: string;
+  /** Stop dictating after this many seconds of silence; 0 = off (click to stop). */
+  silenceStopSec: number;
   /** App version whose "What's new" card was last shown (or skipped); "" = never. */
   lastSeenVersion: string;
   /** The "Getting started" checklist was put away from the empty chat (Help still shows it). */
@@ -125,6 +134,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   voiceName: "",
   voiceRate: DEFAULT_VOICE_RATE,
   speakReplies: false,
+  pttEnabled: false,
+  pttKey: DEFAULT_PTT_KEY,
+  micDeviceId: "",
+  silenceStopSec: DEFAULT_SILENCE_STOP_SEC,
   lastSeenVersion: "",
   gettingStartedHidden: false
 };
@@ -183,6 +196,10 @@ export function loadSettingsSync(): AppSettings | null {
       voiceName: parseVoiceName(parsed.voiceName),
       voiceRate: parseVoiceRate(parsed.voiceRate),
       speakReplies: parsed.speakReplies === true,
+      pttEnabled: parsed.pttEnabled === true,
+      pttKey: parsePttKey(parsed.pttKey),
+      micDeviceId: parseMicDeviceId(parsed.micDeviceId),
+      silenceStopSec: parseSilenceStopSec(parsed.silenceStopSec),
       lastSeenVersion: typeof parsed.lastSeenVersion === "string" ? parsed.lastSeenVersion : "",
       gettingStartedHidden: parsed.gettingStartedHidden === true
     };
@@ -276,6 +293,10 @@ export async function loadSettings(): Promise<AppSettings> {
       const voiceName = parseVoiceName(await store.get<string>("voiceName"));
       const voiceRate = parseVoiceRate(await store.get<number>("voiceRate"));
       const speakReplies = (await store.get<boolean>("speakReplies")) === true;
+      const pttEnabled = (await store.get<boolean>("pttEnabled")) === true;
+      const pttKey = parsePttKey(await store.get<string>("pttKey"));
+      const micDeviceId = parseMicDeviceId(await store.get<string>("micDeviceId"));
+      const silenceStopSec = parseSilenceStopSec(await store.get<number>("silenceStopSec"));
       const lastSeen = await store.get<string>("lastSeenVersion");
       const lastSeenVersion = typeof lastSeen === "string" ? lastSeen : "";
       const gettingStartedHidden = (await store.get<boolean>("gettingStartedHidden")) === true;
@@ -315,6 +336,10 @@ export async function loadSettings(): Promise<AppSettings> {
         voiceName,
         voiceRate,
         speakReplies,
+        pttEnabled,
+        pttKey,
+        micDeviceId,
+        silenceStopSec,
         lastSeenVersion,
         gettingStartedHidden
       };
@@ -372,6 +397,10 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
       await store.set("voiceName", settings.voiceName);
       await store.set("voiceRate", settings.voiceRate);
       await store.set("speakReplies", settings.speakReplies);
+      await store.set("pttEnabled", settings.pttEnabled);
+      await store.set("pttKey", settings.pttKey);
+      await store.set("micDeviceId", settings.micDeviceId);
+      await store.set("silenceStopSec", settings.silenceStopSec);
       await store.set("lastSeenVersion", settings.lastSeenVersion);
       await store.set("gettingStartedHidden", settings.gettingStartedHidden);
       await store.save();
