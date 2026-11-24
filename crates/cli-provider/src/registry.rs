@@ -226,6 +226,70 @@ pub const CLI_ENGINES: &[CliEngineSpec] = &[
         login: "qwen",
         docs_url: "https://qwenlm.github.io/qwen-code-docs/",
     },
+    // GitHub Copilot CLI. Runs with its own tools through `copilot --acp`.
+    // Interface read from the npm package 1.0.115 (`--help`, an unauthenticated ACP
+    // `initialize` and `session/new`), not from a signed-in run. Sign-in is `copilot login`
+    // (OS credential store) and has no status command.
+    CliEngineSpec {
+        id: "copilot",
+        display_name: "GitHub Copilot CLI",
+        command: "copilot",
+        aliases: &[],
+        runnable: false,
+        version_args: &["--version"],
+        auth_args: &[],
+        minimum_version: None,
+        install_windows: npm(&["install", "-g", "@github/copilot"], false),
+        install_unix: npm(&["install", "-g", "@github/copilot"], false),
+        models: &["default"],
+        login: "copilot login",
+        docs_url: "https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-copilot-cli",
+    },
+    // Kiro CLI (AWS). Runs with its own tools through `kiro-cli acp` (CLI V3). Interface
+    // read from kiro.dev/docs/cli, not from an install. `whoami` has a status output but
+    // its signed-out exit code is undocumented, so sign-in stays unverified.
+    CliEngineSpec {
+        id: "kiro",
+        display_name: "Kiro CLI",
+        command: "kiro-cli",
+        aliases: &[],
+        runnable: false,
+        version_args: &["--version"],
+        auth_args: &[],
+        minimum_version: None,
+        install_windows: None,
+        install_unix: Some(InstallCommand {
+            program: "sh",
+            args: &[
+                "-c",
+                "curl --proto =https --proto-redir =https --tlsv1.2 -fsSL https://cli.kiro.dev/install | bash",
+            ],
+            verified: false,
+            executable: false,
+        }),
+        models: &["default"],
+        login: "kiro-cli login",
+        docs_url: "https://kiro.dev/docs/cli/",
+    },
+    // Kimi Code CLI (Moonshot). Runs with its own tools through `kimi acp`.
+    // Interface read from the npm package 2.7.3 (`--help`, an unauthenticated ACP
+    // `initialize`, and the bundled ACP server), not from a signed-in run. The Python
+    // `kimi-cli` (1.x) is the retired predecessor under the same command name.
+    CliEngineSpec {
+        id: "kimi",
+        display_name: "Kimi Code CLI",
+        command: "kimi",
+        aliases: &[],
+        runnable: false,
+        version_args: &["--version"],
+        auth_args: &[],
+        minimum_version: None,
+        install_windows: npm(&["install", "-g", "@moonshot-ai/kimi-code"], false),
+        install_unix: npm(&["install", "-g", "@moonshot-ai/kimi-code"], false),
+        models: &["default"],
+        login: "kimi login",
+        docs_url: "https://moonshotai.github.io/kimi-code/",
+    },
 ];
 
 #[must_use]

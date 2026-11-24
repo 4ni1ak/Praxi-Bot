@@ -3291,3 +3291,333 @@ async fn an_imported_user_row_with_a_url_never_waives_the_taint_approval() {
         }
     }
 }
+
+/// Runs `fs_read` of an untrusted page, then one `browser_open` of `url`, in a chat where the
+/// owner wrote `said`. Returns whether the open ran without a card.
+async fn plain_open_runs_silently(said: &str, url: &str, private: bool) -> bool {
+    let env = setup();
+    let class = if private {
+        ContentClass::untrusted_private()
+    } else {
+        ContentClass::untrusted()
+    };
+    let page = read_tool("fs_read", class);
+    let open = open_tool();
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+        calls(&[("c2", "browser_open", json!({ "url": url }))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&open)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp
+        .send_user_message_from(env.chat, said, crate::MessageMode::Steer, "owner")
+        .map(|d| match d {
+            crate::Delivery::NewTurn(r) => r,
+            _ => unreachable!(),
+        })
+        .unwrap();
+    let ev = until(&mut rx, |e| {
+        matches!(e, Event::ApprovalNeeded(_) | Event::RunFinished(_))
+    })
+    .await;
+    if matches!(ev, Event::ApprovalNeeded(_)) {
+        assert_eq!(open.count.load(Ordering::SeqCst), 0, "{url}: asked but ran");
+        lp.cancel(run).unwrap();
+        false
+    } else {
+        assert_eq!(open.count.load(Ordering::SeqCst), 1, "{url}");
+        true
+    }
+}
+
+#[tokio::test]
+async fn plain_navigation_to_a_named_site_is_silent_after_a_page_was_read() {
+    let said = "look at webioo.com.tr and tell me what they sell";
+    for url in ["https://webioo.com.tr/", "https://WEBIOO.com.tr./"] {
+        assert!(plain_open_runs_silently(said, url, false).await, "{url}");
+    }
+    // a full URL the owner wrote names its site too (http stays http only)
+    assert!(plain_open_runs_silently("see https://a.example/", "https://a.example/", false).await);
+    // the root of the current page's origin needs no owner mention (see the page-origin test)
+    // any non-empty path asks, even a word the owner typed
+    assert!(
+        !plain_open_runs_silently(
+            "look at webioo.com.tr, the iletisim page",
+            "https://webioo.com.tr/iletisim",
+            false
+        )
+        .await,
+        "a path is never waived by this exception"
+    );
+}
+
+#[tokio::test]
+async fn an_owner_typed_secret_in_a_path_always_asks() {
+    let digest = "0123456789abcdef0123456789abcdef";
+    let key = "sk-live-AbCdEfGhIjKlMnOp";
+    for (typed, path) in [
+        (key, key.to_owned()),
+        (digest, digest.to_owned()),
+        ("abcd/efgh/ijkl/mnop", "abcd/efgh/ijkl/mnop".to_owned()),
+        ("abcd.efgh.ijkl.mnop", "abcd/efgh/ijkl/mnop".to_owned()),
+        ("abcd.efgh.ijkl.mnop", "abcd.efgh.ijkl.mnop".to_owned()),
+        ("abcd~efgh~ijkl~mnop", "abcd~efgh~ijkl~mnop".to_owned()),
+        ("a1b2", "a1b2".to_owned()),
+        ("123456", "123456".to_owned()),
+        (
+            "0123456789abcde 0123456789abcde 0123456789abcde",
+            "0123456789abcde/0123456789abcde/0123456789abcde".to_owned(),
+        ),
+        (
+            "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqr",
+            "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqr".to_owned(),
+        ),
+    ] {
+        let said = format!("look at webioo.com.tr, key {typed}");
+        let url = format!("https://webioo.com.tr/{path}");
+        assert!(!plain_open_runs_silently(&said, &url, false).await, "{url}");
+    }
+}
+
+#[tokio::test]
+async fn a_root_remembered_origin_does_not_silence_secret_paths() {
+    let env = setup();
+    let page = read_tool("fs_read", ContentClass::untrusted());
+    let open = open_tool();
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+        calls(&[(
+            "c2",
+            "browser_open",
+            json!({"url": "https://other.example/"}),
+        )]),
+        calls(&[(
+            "c3",
+            "browser_open",
+            json!({"url": "https://other.example/sk-live-AbCdEfGhIjKlMnOp"}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&open)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    lp.send_user_message_from(
+        env.chat,
+        "go, key sk-live-AbCdEfGhIjKlMnOp",
+        crate::MessageMode::Steer,
+        "owner",
+    )
+    .unwrap();
+    // the first open (new origin) asks; approve it for this chat
+    let Event::ApprovalNeeded(card) =
+        until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    lp.approve(card.call_id, crate::ApprovalScope::Once, env.user)
+        .unwrap();
+    // the secret path on the same origin must ask again
+    let ev = until(&mut rx, |e| {
+        matches!(e, Event::ApprovalNeeded(_) | Event::RunFinished(_))
+    })
+    .await;
+    assert!(
+        matches!(ev, Event::ApprovalNeeded(_)),
+        "secret path ran silently"
+    );
+    assert_eq!(open.count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_file_name_the_owner_mentions_is_not_a_site() {
+    for name in ["README.md", "main.rs", "main.py", "script.sh"] {
+        let said = format!("please read {name} and summarize");
+        let url = format!("https://{}/", name.to_lowercase());
+        assert!(
+            !plain_open_runs_silently(&said, &url, false).await,
+            "{name}"
+        );
+    }
+    // an explicit scheme still names a site
+    assert!(plain_open_runs_silently("see https://a.example/", "https://a.example/", false).await);
+}
+
+#[tokio::test]
+async fn full_level_without_untrusted_content_never_asks() {
+    let env = setup();
+    let read = read_tool("fs_read", ContentClass::default());
+    let open = open_tool();
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "a.txt"}))]),
+        calls(&[(
+            "c2",
+            "browser_open",
+            json!({"url": "https://z.example/x?q=1"}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&read), t(&open)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    lp.send_user_message_from(env.chat, "go", crate::MessageMode::Steer, "owner")
+        .unwrap();
+    let ev = until(&mut rx, |e| {
+        matches!(e, Event::ApprovalNeeded(_) | Event::RunFinished(_))
+    })
+    .await;
+    assert!(
+        matches!(ev, Event::RunFinished(_)),
+        "asked with no untrusted content"
+    );
+}
+
+#[tokio::test]
+async fn navigation_that_could_carry_page_data_or_leave_the_named_site_still_asks() {
+    let said = "look at webioo.com.tr please";
+    for url in [
+        // tainted value in the query, the path, the fragment
+        "https://webioo.com.tr/?q=SECRET",
+        "https://webioo.com.tr/#SECRET",
+        "https://webioo.com.tr/c2VjcmV0LXRva2VuLWZyb20tdGhlLXBhZ2UtYWJjZGVmZ2hpams",
+        "https://webioo.com.tr/%73ecret",
+        "https://webioo.com.tr/0123456789abcdef0123456789abcdef",
+        // another site, a lookalike, userinfo and punycode tricks, a downgrade
+        "https://evil.example/",
+        "https://webioo.com.tr.evil.example/",
+        "https://webioo.com.tr@evil.example/",
+        "https://webioo.com.tr:pw@webioo.com.tr/",
+        "https://xn--webio-9ua.com.tr/",
+        "http://webioo.com.tr:8080/",
+        "http://webioo.com.tr/",
+        "ftp://webioo.com.tr/",
+    ] {
+        // `http://webioo.com.tr/` has no scheme in the owner's words, so only https is named
+        assert!(!plain_open_runs_silently(said, url, false).await, "{url}");
+    }
+    // private data in the context: even a named site asks
+    assert!(!plain_open_runs_silently(said, "https://webioo.com.tr/iletisim", true).await);
+    // a site only the page mentions is not named by the owner
+    assert!(!plain_open_runs_silently("read page.html", "https://webioo.com.tr/", false).await);
+}
+
+#[tokio::test]
+async fn a_chat_site_grant_covers_every_path_of_that_exact_origin_only() {
+    let env = setup();
+    let page = read_tool("fs_read", ContentClass::untrusted());
+    let open = open_tool();
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+        // no grant yet: a deep path asks
+        calls(&[(
+            "c2",
+            "browser_open",
+            json!({"url": "https://a.example/deep/one"}),
+        )]),
+        // after the click: another deep path of the same origin passes
+        calls(&[(
+            "c3",
+            "browser_open",
+            json!({"url": "https://a.example/deep/two/x"}),
+        )]),
+        // the grant covers neither a subdomain, nor another scheme or port
+        calls(&[(
+            "c4",
+            "browser_open",
+            json!({"url": "https://sub.a.example/deep"}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&open)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "read it then browse").unwrap();
+    let Event::ApprovalNeeded(first) =
+        until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(first.input["url"], "https://a.example/deep/one");
+    assert_eq!(open.count.load(Ordering::SeqCst), 0, "no grant: asked");
+    lp.approve(first.call_id, crate::ApprovalScope::ThisChat, env.user)
+        .unwrap();
+    let Event::ApprovalNeeded(next) =
+        until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(next.input["url"], "https://sub.a.example/deep");
+    assert_eq!(open.count.load(Ordering::SeqCst), 2, "one and two ran");
+    lp.cancel(run).unwrap();
+}
+
+#[tokio::test]
+async fn a_root_open_of_the_current_page_origin_is_silent_but_a_deep_path_asks() {
+    let env = setup();
+    let page = read_tool("fs_read", ContentClass::untrusted());
+    let open = open_tool();
+    let click = with_class(
+        "browser_click",
+        Effect::Write,
+        PermissionCategory::Browser,
+        ContentClass::untrusted(),
+        "clicked",
+    );
+    // the browser reports this origin as the current page
+    *click.page_origin.lock() = Some("https://cur.example:443".to_owned());
+    let click = Arc::new(click);
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+        calls(&[("c1b", "browser_click", json!({"ref": "e1"}))]),
+        calls(&[("c2", "browser_open", json!({"url": "https://cur.example/"}))]),
+        calls(&[(
+            "c3",
+            "browser_open",
+            json!({"url": "https://cur.example/x"}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&open), t(&click)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "read it then browse").unwrap();
+    let Event::ApprovalNeeded(card) =
+        until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(card.input["url"], "https://cur.example/x");
+    assert_eq!(open.count.load(Ordering::SeqCst), 1, "the root ran");
+    lp.cancel(run).unwrap();
+}

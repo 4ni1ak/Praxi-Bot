@@ -714,6 +714,9 @@ pub(crate) struct Grants {
     /// taint-gate card on a Full bot (see `Shared::gate_key`). Never covers a send, a payment,
     /// a never-list command or a secret fill: those are not grantable.
     pub gate_chat: HashSet<(ChatId, BotId, &'static str, String)>,
+    /// `(chat, bot, origin)`: sites the owner approved once for a plain navigation (no query,
+    /// fragment or form). Never covers anything but a plain `browser_open`.
+    pub nav_origin: HashSet<(ChatId, BotId, String)>,
     /// `(chat, bot, tool, target, computer)`: "allow for this chat" on a tool that is
     /// remembered per target. Covers only that target (see `scoped_grant`).
     pub this_chat_scoped: HashSet<(
@@ -1112,6 +1115,13 @@ pub(crate) struct Shared {
     /// pre-tool deny recheck.
     #[cfg(test)]
     pub exec_commit_hook: Mutex<Option<ExecCommitHook>>,
+    /// Hosts the owner approved a navigation to (any scope), newest last, bounded. A favicon may
+    /// be fetched for these and for hosts with a standing / chat grant, never for anything else.
+    pub approved_hosts: Mutex<VecDeque<String>>,
+    /// Test-only: lifts the "Always allow" allow-list so older tests can still exercise the
+    /// grant mechanics with a generic tool. Never set outside tests.
+    #[cfg(test)]
+    pub legacy_always: AtomicBool,
 }
 
 /// Test-only hook invoked under `exec_gate` before the pre-tool deny recheck.
