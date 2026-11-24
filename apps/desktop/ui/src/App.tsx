@@ -3,10 +3,10 @@ import { effectiveWallpaperMotion } from "./lib/accessibility";
 import { unreadBotIds } from "./lib/unread";
 import { useReadState } from "./store/readStateStore";
 import { ApiError } from "./api/client";
-import type { UpdateChatInput } from "./api/types";
+import type { Run, UpdateChatInput } from "./api/types";
 import { isMockMode } from "./api/mockMode";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BotAvatar,
@@ -85,6 +85,7 @@ import { getAutostart, setAutostart } from "./lib/providers";
 import { isProcessingRunState } from "./lib/runState";
 import { PausedControlBanner } from "./components/PausedControlBanner";
 import { RunBar } from "./components/RunBar";
+import { RunTimelineModal } from "./components/RunTimelineModal";
 import { runBarModel } from "./lib/runBar";
 import { ToastProvider } from "./components/Toast";
 import { ControlBridgeHost } from "./state/ControlBridgeHost";
@@ -157,6 +158,8 @@ import { EngineConsentProvider } from "./state/EngineConsent";
 import type { SettingsSectionId } from "./views/settings/types";
 import type { SettingsPageId } from "./lib/settingsPages";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { createDeepLinkDispatcher } from "./lib/deepLinks";
+import { onDeepLinkPending } from "./lib/shell";
 import { i18n, type SupportedLanguage } from "./i18n";
 import {
   broadcastSettingsUpdated,
@@ -190,23 +193,26 @@ type Route =
   | { kind: "onboarding" }
   /** A bot without any chat yet: the empty state (there is no bot page). */
   | { kind: "bot"; botId: string; edit?: boolean }
-  | { kind: "chat"; chatId: string; botId: string; messageId?: string; jumpRequestId?: number }
+  | { kind: "chat"; chatId: string; botId: string; messageId?: string; jumpRequestId?: number; external?: boolean }
   | { kind: "needs" }
   | { kind: "notifications" }
   | { kind: "schedules"; botId?: string };
 
-function AppShell() {
+function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDispatcher> }) {
   const { t } = useTranslation();
   const {
     phase,
     error: daemonError,
     runs,
+    events,
     bots,
     chats,
     needs,
+    conn,
     client,
     refreshBots,
     refreshChats,
+    refreshRuns,
     pendingChatIds,
     updateChat,
     deleteChat,
@@ -218,13 +224,17 @@ function AppShell() {
     serviceProblem,
     startup,
     retryInSeconds,
-    activeComputerId
+    activeComputerId,
+    hostState,
+    initialComputer,
+    isActiveComputer
   } = useDaemon();
   const { openViewer } = useLiveView();
   const readState = useReadState(client?.baseUrl ?? "");
   const unreadBots = useMemo(() => unreadBotIds(chats, runs, needs, readState), [chats, runs, needs, readState]);
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
   const [route, setRoute] = useState<Route>({ kind: "home" });
+  const [linkedRun, setLinkedRun] = useState<Run | null>(null);
   const [homeChatSlots, setHomeChatSlots] = useState<LiveChatSlots | null>(null);
   const [localChatSlots, setLocalChatSlots] = useState<LiveChatSlots | null>(null);
   // Every route change goes through this gate: a bot dialog with unsaved data asks first, and one
@@ -310,6 +320,37 @@ function AppShell() {
   const { dto: providersDto } = useProviders();
   const showDemoOffer = offerDemo(providersDto);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [linkOwner] = useState(() => ({}));
+  const linkSession = useMemo(() => client === null ? null : {}, [client]);
+  useLayoutEffect(() => () => deepLinks.detach(linkOwner), [deepLinks, linkOwner]);
+  useLayoutEffect(() => {
+    if (!isTauriRuntime()) return;
+    const waiting = !settingsLoaded || initialComputer === "waiting" ||
+      (initialComputer === "ready" && (phase === "connecting" || hostState?.kind === "connecting" || (conn && !client)));
+    const offline = initialComputer === "offline" || phase === "error" || !linkSession ||
+      hostState?.kind === "offline" || hostState?.kind === "not_paired" ||
+      (hostState?.kind === "version_mismatch" && hostState.blocking);
+    deepLinks.update({
+      owner: linkOwner,
+      computerId: initialComputer === "ready" ? activeComputerId : null,
+      selected: () => isActiveComputer(activeComputerId),
+      connection: waiting ? "waiting" : offline ? "offline" : {
+        key: linkSession, refreshBots, refreshChats, refreshRuns
+      },
+      open: (destination) => {
+        if (settingsOpen !== null || newBotOpen || newChatBusy || pendingChatIds.size > 0) return false;
+        return leave.attemptSilently(() => {
+          if (destination.kind === "run") {
+            setLinkedRun(destination.run);
+          } else {
+            setLinkedRun(null);
+            setRoute(destination.kind === "chat" ? { ...destination, external: true } : destination);
+          }
+        }) === "went";
+      },
+      feedback: (failure) => toast.show(t(`deepLinks.${failure}`), "danger")
+    });
+  });
   const [appVersion, setAppVersion] = useState("");
   const [whatsNewDone, setWhatsNewDone] = useState(false);
   const [layout, setLayout] = useState<ShellLayout>(loadShellLayout);
@@ -1217,6 +1258,7 @@ function AppShell() {
           <ChatView
             key={route.chatId}
             chatId={route.chatId}
+            external={route.external}
             jumpMessageId={route.messageId}
             jumpRequestId={route.jumpRequestId}
             onBack={() => {
@@ -1344,6 +1386,12 @@ function AppShell() {
         onClose={() => setAddSkillOpen(false)}
       />
       <WhatsNewModal notes={showWhatsNew ? whatsNewNotes : null} onClose={recordWhatsNew} />
+      <RunTimelineModal
+        run={linkedRun ? events.runs[linkedRun.id] ?? null : null}
+        fallback={linkedRun ? runs.find((run) => run.id === linkedRun.id) ?? linkedRun : undefined}
+        botName={linkedRun ? bots.find((bot) => bot.id === linkedRun.bot_id)?.name ?? "" : ""}
+        onClose={() => setLinkedRun(null)}
+      />
       <HelpModal
         open={helpOpen}
         onClose={() => setHelpOpen(false)}
@@ -1416,6 +1464,8 @@ export function ComputerScope({ children }: { children: ReactNode }) {
 }
 
 export function App() {
+  const [deepLinks] = useState(createDeepLinkDispatcher);
+  useEffect(() => onDeepLinkPending(deepLinks), [deepLinks]);
   return (
     <ToastProvider>
       <DaemonProvider>
@@ -1425,7 +1475,7 @@ export function App() {
           <ComputerScope>
             <LeaveGuardProvider>
               <EngineConsentProvider>
-                <AppShell />
+                <AppShell deepLinks={deepLinks} />
               </EngineConsentProvider>
             </LeaveGuardProvider>
           </ComputerScope>

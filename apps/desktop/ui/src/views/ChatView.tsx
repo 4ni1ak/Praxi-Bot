@@ -38,6 +38,7 @@ import type { LiveChatSlots } from "./LiveViewerChat";
 import { ownerKey } from "../lib/ownerKey";
 import { chatActivityMs } from "../lib/unread";
 import { useChatRead } from "../state/useChatRead";
+import { useLeaveGuard } from "../state/LeaveGuard";
 import { NewMessagesDivider } from "../components/NewMessagesDivider";
 import { BotAvatar, Button } from "ui";
 import { isMockMode } from "../api/mockMode";
@@ -131,7 +132,8 @@ import {
   detectTrigger,
   APP_COMMAND_EVENT,
   isExportCommand,
-  appCommandFor
+  appCommandFor,
+  parseSlashInput
 } from "../lib/slash";
 import { appendDictation } from "../lib/dictation";
 import { FRESH, type HistoryNav, afterEdit, historyKey, userMessageTexts } from "../lib/composerHistory";
@@ -230,6 +232,7 @@ function canOfferRemember(run: RunState): boolean {
 
 export function ChatView({
   chatId,
+  external = false,
   jumpMessageId,
   jumpRequestId,
   onBack,
@@ -242,6 +245,7 @@ export function ChatView({
   liveChatSlots
 }: {
   chatId: string;
+  external?: boolean;
   jumpMessageId?: string;
   jumpRequestId?: number;
   /** Present only when there is a page to go back to; without it the header has no arrow. */
@@ -334,6 +338,8 @@ export function ChatView({
   // A pasted credential found in the draft before send (kinds only; the value stays in `text`).
   const [secretKinds, setSecretKinds] = useState<string[] | null>(null);
   const [queue, updateQueue] = useChatQueue(chatId);
+  /** Messages queued in this view. A chat opened from a link delivers only these at run end. */
+  const queuedHere = useRef(new Set<string>());
   // Up / Down recall this chat's earlier messages; the draft is kept (lib/composerHistory).
   const [nav, setNav] = useState<HistoryNav>(FRESH);
   const pendingCaret = useRef<number | null>(null);
@@ -343,6 +349,13 @@ export function ChatView({
   const [resending, setResending] = useState(false);
   const [attachments] = useState(() => new AttachmentDraft());
   const files = useSyncExternalStore(attachments.subscribe, attachments.snapshot);
+  useLeaveGuard({
+    state: () => ({
+      dirty: text.length > 0 || files.length > 0 || editingId !== null,
+      busy: sending || resending
+    }),
+    confirm: () => {}
+  }, true);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   /** The run the daemon named for the message just sent, until the run list shows it. */
@@ -421,14 +434,18 @@ export function ChatView({
       el.style.height = `${Math.min(el.scrollHeight, parseFloat(getComputedStyle(el).maxHeight))}px`;
     }
   }, [text]);
-  const mountedAt = useRef(Date.now());
+  const followNewSince = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    followNewSince.current = external ? null : Date.now();
+    return () => { followNewSince.current = null; };
+  }, [external]);
   const switchedFor = useRef(new Set<string>());
 
   const chatRuns = useMemo(
     () => topLevelRuns(events, chatId),
     [events, chatId]
   );
-  useAutoSpeak(chatId, chatRuns);
+  useAutoSpeak(chatId, chatRuns, external);
   const finishedCount = chatRuns.filter(
     (r) => r.finishedMs !== undefined
   ).length;
@@ -436,13 +453,15 @@ export function ChatView({
   // `/new` typed in the chat: the daemon starts a new chat and says so in its
   // reply; follow it (only for turns that finish while this view is open).
   useEffect(() => {
+    const since = followNewSince.current;
+    if (since === null) return;
     for (const run of chatRuns) {
       const r = run.route?.route;
       if (
         r?.kind !== "command" ||
         r.name !== "new" ||
         run.finishedMs === undefined ||
-        run.finishedMs < mountedAt.current ||
+        run.finishedMs < since ||
         run.error !== null ||
         switchedFor.current.has(run.id)
       ) {
@@ -454,12 +473,13 @@ export function ChatView({
         void refreshChats()
           .catch(() => {})
           .then(() => {
+            if (followNewSince.current !== since) return;
             toast.show(t("chat.newChatStarted"), "success");
             onSwitchChat(id);
           });
       }
     }
-  }, [chatRuns, onSwitchChat, refreshChats, toast, t]);
+  }, [chatRuns, external, onSwitchChat, refreshChats, toast, t]);
 
   const loadMessages = useCallback(async () => {
     if (!client) {
@@ -505,7 +525,8 @@ export function ChatView({
     client?.baseUrl ?? "",
     chatId,
     chatActivityMs(runs, needs, chatId),
-    messages
+    messages,
+    external
   );
 
   const entries = useMemo(() => {
@@ -858,10 +879,16 @@ export function ChatView({
     // A message typed while the bot works joins the queue as a "Sirada." bubble (slash commands such
     // as /stop still go straight to the daemon). It is delivered when the run ends or by "Simdi gonder".
     if (active && !body.startsWith("/") && !hasFiles) {
-      updateQueue((q) => enqueue(q, body, crypto.randomUUID(), Date.now()));
+      const id = crypto.randomUUID();
+      queuedHere.current.add(id);
+      updateQueue((q) => enqueue(q, body, id, Date.now()));
       setText("");
       scrollToEnd();
       return;
+    }
+    // A chat opened from a link never follows earlier `/new` results; a `/new` sent here does.
+    if (followNewSince.current === null && parseSlashInput(body)?.name === "new") {
+      followNewSince.current = Date.now();
     }
     attachments.locked = true;
     const attachmentSignal = attachments.signal;
@@ -1099,13 +1126,14 @@ export function ChatView({
       stoppedByUser.current = false;
       return;
     }
-    const { message, rest } = takeForRunEnd(queue, was, active);
+    // A link only opens the chat: what was queued before it stays queued until the user acts.
+    const { message } = takeForRunEnd(queue, was, active, (m) => !external || queuedHere.current.has(m.id));
     if (message) {
-      updateQueue(() => rest);
+      updateQueue((q) => removeQueued(q, message.id));
       void deliverQueued(message, "queue");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, queue]);
+  }, [active, queue, external]);
   const sendNow = (id: string) => {
     const { message, rest } = takeForNow(queue, id);
     if (message) {
