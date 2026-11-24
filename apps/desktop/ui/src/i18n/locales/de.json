@@ -1379,6 +1379,7 @@
     "switcher": "Welcher Computer angezeigt wird",
     "tabs": {
       "activity": "Aktivität",
+      "automation": "Automatisierung",
       "label": "Panel-Bereiche",
       "library": "Bibliothek"
     },
@@ -1390,6 +1391,33 @@
       "title": "Anstehend",
       "toggle": "{{name}} ein- oder ausschalten",
       "trigger": "Wenn etwas passiert"
+    },
+    "webhooks": {
+      "copied": "Kopiert",
+      "copySecret": "Geheimnis kopieren",
+      "copyUrl": "Adresse kopieren",
+      "create": "Webhook anlegen",
+      "creating": "Wird angelegt…",
+      "empty": "Noch keine Webhooks. Lege einen an, wenn etwas von außen, etwa GitHub, ein Formular oder ein Schalter zu Hause, diesen Bot starten soll.",
+      "enabled": "An",
+      "instruction": "Was soll der Bot mit den Daten tun?",
+      "instructionHint": "Das ist deine Anweisung. Der eingehende Text ist Daten, nie ein Befehl, und der Bot fragt weiter, bevor er handelt.",
+      "intro": "Ein Webhook startet diesen Bot, wenn etwas seine Adresse aufruft. Praxi prüft die Signatur und behandelt den Text als nicht vertrauenswürdige Daten.",
+      "loadError": "Webhooks konnten nicht geladen werden.",
+      "name": "Name",
+      "namePlaceholder": "GitHub, die Haustür, ein Formular",
+      "off": "Aus",
+      "remove": "Entfernen",
+      "removed": "Webhook entfernt",
+      "secretLabel": "Signatur-Geheimnis",
+      "secretOnce": "Kopiere dieses Geheimnis jetzt. Praxi zeigt es nicht wieder an.",
+      "sign": "Jeder Aufruf sendet zwei Header. X-Webhook-Timestamp ist die Zeit in Millisekunden. X-Signature-256 beginnt mit sha256= und ist der HMAC aus dieser Zeit, einem Punkt und dem Rohtext, signiert mit dem Geheimnis. Derselbe signierte Aufruf gilt einmal und nur, wenn die Zeit innerhalb von 5 Minuten liegt. Der Text darf höchstens 64 KB groß sein. Mehr als 30 Aufrufe pro Minute werden abgelehnt.",
+      "test": "Test senden",
+      "testStarted": "Test gestartet. Der Bot behandelt ihn als nicht vertrauenswürdige Daten, und eine Frage erscheint weiter als Benachrichtigung.",
+      "testing": "Wird gesendet…",
+      "title": "Eingehende Webhooks",
+      "tunnel": "Praxi hört nur auf diesem Computer. Damit GitHub, ein Formular oder die Hausautomation diese Adresse aufrufen kann, leite einen Tunnel deiner Wahl (zum Beispiel Cloudflare Tunnel oder ssh) auf 127.0.0.1. Öffne keinen neuen Port am Router.",
+      "urlLabel": "Adresse"
     }
   },
   "botProfile": {

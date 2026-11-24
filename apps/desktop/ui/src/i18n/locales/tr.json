@@ -1379,6 +1379,7 @@
     "switcher": "Hangi bilgisayar gösterilsin",
     "tabs": {
       "activity": "Etkinlik",
+      "automation": "Otomasyon",
       "label": "Panel bölümleri",
       "library": "Kitaplık"
     },
@@ -1390,6 +1391,33 @@
       "title": "Yaklaşanlar",
       "toggle": "{{name}} açık/kapalı",
       "trigger": "Bir olay olunca"
+    },
+    "webhooks": {
+      "copied": "Kopyalandı",
+      "copySecret": "Sırrı kopyala",
+      "copyUrl": "Adresi kopyala",
+      "create": "Webhook oluştur",
+      "creating": "Oluşturuluyor…",
+      "empty": "Henüz webhook yok. GitHub, bir form ya da evdeki bir anahtar bu botu başlatacaksa bir tane oluştur.",
+      "enabled": "Açık",
+      "instruction": "Bot bu veriyle ne yapsın?",
+      "instructionHint": "Bu senin talimatın. Gelen metin veridir, emir değildir. Bot bir şey yapmadan önce yine sorar.",
+      "intro": "Bir webhook, bir şey adresini çağırınca bu botu başlatır. Praxi imzayı kontrol eder ve metni güvenilmeyen veri olarak görür.",
+      "loadError": "Webhook'lar yüklenemedi.",
+      "name": "Ad",
+      "namePlaceholder": "GitHub, giriş kapısı, bir form",
+      "off": "Kapalı",
+      "remove": "Kaldır",
+      "removed": "Webhook kaldırıldı",
+      "secretLabel": "İmza sırrı",
+      "secretOnce": "Bu sırrı şimdi kopyala. Praxi onu bir daha göstermez.",
+      "sign": "Her çağrı iki başlık gönderir. X-Webhook-Timestamp, milisaniye cinsinden zamandır. X-Signature-256, sha256= ile başlar ve bu zamanın, bir noktanın ve ham gövdenin HMAC'idir; sır ile imzalanır. Aynı imzalı çağrı bir kez geçerlidir ve yalnızca zaman 5 dakika içindeyse. Gövde en fazla 64 KB olabilir. Dakikada 30'dan fazla çağrı reddedilir.",
+      "test": "Deneme gönder",
+      "testStarted": "Deneme başladı. Bot bunu güvenilmeyen veri sayar. Bir soru yine bildirim olarak görünür.",
+      "testing": "Gönderiliyor…",
+      "title": "Webhook'lar",
+      "tunnel": "Praxi yalnız bu bilgisayarı dinler. GitHub, bir form ya da ev otomasyonu bu adresi çağıracaksa, kendi seçtiğin bir tüneli (örneğin Cloudflare Tunnel ya da ssh) 127.0.0.1 adresine yönelt. Yönlendiricide yeni bir kapı açma.",
+      "urlLabel": "Adres"
     }
   },
   "botProfile": {

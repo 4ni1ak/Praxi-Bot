@@ -9,6 +9,8 @@ import { MockLiveViewService } from "./mockLiveView.ts";
 import { longChatEvents, longChatMessages } from "./mockLongChat.ts";
 import type {
   BotSpendLimits,
+  IncomingWebhook,
+  IncomingWebhookCreated,
   Bot,
   BotSkills,
   Chat,
@@ -730,6 +732,7 @@ const DOCTOR_CHECKS: DoctorCheck[] = [
  * the UI and its tests exercise the real request paths.
  */
 export class MockApiClient extends ApiClient {
+  private readonly incomingWebhooks = new Map<string, IncomingWebhook[]>();
   private readonly knowledgeSources = new Map<string, KnowledgeSource[]>();
   private readonly knowledgeSettings = new Map<string, KnowledgeSettings>();
   private readonly knowledgeApprovals = new Map<string, { bot: string; card: KnowledgeEmbeddingApproval; revision?: number }>();
@@ -1069,6 +1072,9 @@ export class MockApiClient extends ApiClient {
     await Promise.resolve();
     const ok = (v: unknown) => v as T;
     const seg = path.split("/").filter(Boolean).map(decodeURIComponent);
+    if (seg[0] === "bots" && seg[2] === "incoming-webhooks") {
+      return ok(this.incomingWebhookRoute(method, seg, opts.body));
+    }
     if (seg[0] === "hosts" && seg[1] === "setup") {
       const body = opts.body as { host: string; accept: boolean };
       if (!seg[2] && method === "POST") return ok(this.hostSetup.start(opts.body as never));
@@ -2198,6 +2204,60 @@ export class MockApiClient extends ApiClient {
       return { deleted: true, used_by: [] };
     }
     throw new ApiError(404, "not_found", "unknown skills route");
+  }
+
+  /** Offline demo for the Automation tab. The secret is returned only on create. */
+  private incomingWebhookRoute(method: string, seg: string[], body: unknown): unknown {
+    const botId = seg[1] ?? "";
+    if (!this.bots.some((b) => b.id === botId)) throw new ApiError(404, "not_found", "bot");
+    const rows = this.incomingWebhooks.get(botId) ?? [];
+    const hookId = seg[3];
+    if (method === "GET" && !hookId) return rows.map((row) => ({ ...row }));
+    if (method === "POST" && !hookId) {
+      const input = body as { name?: string; instruction?: string };
+      const name = (input.name ?? "").trim();
+      if (!name || [...name].length > 80) throw new ApiError(400, "bad_request", "name must be 1 to 80 characters");
+      const now = Date.now();
+      const id = crypto.randomUUID();
+      const row: IncomingWebhook = {
+        id,
+        bot_id: botId,
+        name,
+        instruction: (input.instruction ?? "").trim() || "Summarize this webhook for the owner.",
+        enabled: true,
+        path: `/v1/incoming-webhooks/${id}`,
+        created_at_ms: now,
+        updated_at_ms: now,
+        last_fired_at_ms: null
+      };
+      this.incomingWebhooks.set(botId, [...rows, row]);
+      const created: IncomingWebhookCreated = { webhook: row, secret: "ab".repeat(32) };
+      return created;
+    }
+    const row = rows.find((item) => item.id === hookId);
+    if (!row) throw new ApiError(404, "not_found", "webhook");
+    if (method === "PATCH") {
+      const input = body as { name?: string; instruction?: string; enabled?: boolean };
+      if (input.name !== undefined) row.name = input.name.trim();
+      if (input.instruction !== undefined) row.instruction = input.instruction.trim() || row.instruction;
+      if (input.enabled !== undefined) row.enabled = input.enabled;
+      row.updated_at_ms = Date.now();
+      return { ...row };
+    }
+    if (method === "DELETE") {
+      this.incomingWebhooks.set(botId, rows.filter((item) => item.id !== hookId));
+      return undefined;
+    }
+    if (method === "POST" && seg[4] === "test") {
+      if (!row.enabled) throw new ApiError(409, "conflict", "webhook is off");
+      return {
+        status: "accepted",
+        webhook_id: row.id,
+        run_id: crypto.randomUUID(),
+        chat_id: crypto.randomUUID()
+      };
+    }
+    throw new ApiError(404, "not_found", `mock: ${method} incoming-webhooks`);
   }
 
   private getBotSkillsState(botId: string): BotSkills {
