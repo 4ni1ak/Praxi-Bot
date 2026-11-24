@@ -127,8 +127,8 @@ test("private mode keeps only bot name and generic text", () => {
   const d = decideNotification(env(approval, 11_000), ctx());
   assert.ok(d);
   const open = notificationText(d, "Atlas", false, t);
-  // an approval is worded from the tool, never from the raw summary
-  assert.ok(open.body.startsWith("notify.approval.other"));
+  // an approval is worded plainly from the tool/headline, prefixed by bot name
+  assert.ok(open.body.startsWith("Atlas: "));
   assert.ok(!open.body.includes("rm -rf"));
   const question = notificationText({ ...d, approval: undefined }, "Atlas", false, t);
   assert.equal(question.body, "notify.detail.needsYou:Run rm -rf build");
@@ -158,7 +158,7 @@ test("approval toast says one human sentence, never the raw summary, json or ids
     approval: appr()
   };
   const text = notificationText(d, "Praxi", false, tr);
-  assert.ok(text.body.startsWith("notify.approval.mcp"));
+  assert.ok(text.body.startsWith("Praxi: "));
   assert.ok(text.body.includes('"app":"Playwright"'));
   assert.ok(text.body.includes('"action":"browser evaluate"'));
   assert.ok(!text.body.includes("function") && !text.body.includes("ca99609c") && !text.body.includes("pc:"));
@@ -174,6 +174,8 @@ test("always-allow is offered only when the card would offer it; special cards g
   assert.equal(alwaysOffered(undefined), true);
   assert.equal(alwaysOffered({ once_only: true }), false);
   assert.equal(alwaysOffered({ why: "egress", once_only: false }), false);
+  assert.equal(alwaysOffered({ always_offered: true }, "fs_delete", { path: "a" }), false);
+  assert.equal(alwaysOffered({ always_offered: true }, "mcp:stripe/create_payment", {}), false);
   assert.deepEqual(approvalActions(appr({ once_only: true })), ["allow", "deny"]);
   assert.deepEqual(approvalActions(appr({ kind: "egress", once_only: false })), []);
   assert.deepEqual(approvalActions(appr(undefined, "gmail.send_email")), []);

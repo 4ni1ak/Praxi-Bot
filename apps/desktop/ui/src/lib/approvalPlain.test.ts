@@ -155,3 +155,36 @@ test("a browser batch card lists every step as a numbered readable line with inv
   await i18n.changeLanguage("en");
   assert.equal(plain.browserStepLines({ kind: "other" }, ((k: string) => k) as import("./approvalPlain.ts").T), null);
 });
+
+test("compact headline, domain extraction, risky previews and always-allow safety blocks", async () => {
+  const t = ((k: string, v?: Record<string, unknown>) => i18n.t(k, v)) as import("./approvalPlain.ts").T;
+  await i18n.changeLanguage("en");
+  assert.equal(
+    plain.approvalTargetDomain("browser_open", { url: "https://www.webioo.com.tr/orders?id=1" }),
+    "webioo.com.tr"
+  );
+  assert.equal(
+    plain.approvalHeadline("browser_open", { url: "https://webioo.com.tr/dashboard" }, undefined, { computer: null, serverName: null }, t),
+    "Open webioo.com.tr"
+  );
+  assert.equal(
+    plain.approvalHeadline("email_send", { to: "team@praxi.dev", subject: "Weekly" }, undefined, { computer: null, serverName: null }, t),
+    "Send mail to team@praxi.dev"
+  );
+  assert.deepEqual(
+    plain.approvalCompactPreview("email_send", { to: "team@praxi.dev", subject: "Weekly" }),
+    { kind: "send", text: "team@praxi.dev — Weekly" }
+  );
+  assert.deepEqual(
+    plain.approvalCompactPreview("shell_run", { command: "ls -la && cat very-long-output-file-name-that-exceeds-short-headline-length.txt" }),
+    { kind: "run", text: "ls -la && cat very-long-output-file-name-that-exceeds-short-headline-length.txt" }
+  );
+  assert.equal(plain.isAlwaysBlockedAction("shell.run", { command: "rm -rf ./drafts/old" }), true);
+  assert.equal(plain.isAlwaysBlockedAction("fs_delete", { path: "a" }), true);
+  assert.equal(plain.isAlwaysBlockedAction("fill_secret", { site: "example.com" }), true);
+  assert.equal(plain.isAlwaysBlockedAction("mcp:stripe/create_payment", {}), true);
+  assert.equal(
+    plain.isAlwaysBlockedAction("browser_open", { url: "https://webioo.com.tr" }, { always_offered: true }),
+    false
+  );
+});
