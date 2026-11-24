@@ -410,3 +410,99 @@ async fn safe_mode_external_schedule_reports_the_refusal() {
         .expect_err("a tool schedule must be refused in safe mode");
     assert!(err.to_string().contains("disabled in safe mode"), "{err}");
 }
+
+/// A webhook run (`ExternalSchedule`) can never use a standing "Always" grant, a
+/// scoped site grant or the root-navigation waiver. The same grants do cover a
+/// human run, so the test fails if the lookup ever moves above the initiator check.
+#[tokio::test]
+async fn webhook_run_ignores_always_grants_scoped_grants_and_the_navigation_waiver() {
+    use crate::scoped_grant::{Scope, ScopeKind};
+    use crate::shared::{Grant, GrantTarget};
+    let env = setup();
+    let write = Arc::new(tool("write", Effect::Write, "w"));
+    let open = Arc::new(with_class(
+        "browser_open",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::none(),
+        "o",
+    ));
+    let fake = Fake::new(vec![]);
+    let mut policy = Policy::full();
+    policy
+        .categories
+        .insert(PermissionCategory::Fs, Rule::new(Level::Ask));
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[&write, &open],
+        profile(""),
+        cfg(policy),
+    );
+    let ctx_for = |kind: String| {
+        let run = lp
+            .rt
+            .create_run(env.user, env.bot, Some(env.chat), &kind)
+            .unwrap();
+        let row = env.storage.get_run(run).unwrap().unwrap();
+        let ctx = lp.sh.ctx(&row).unwrap();
+        ctx.taint.lock().exposure.untrusted = true;
+        ctx
+    };
+    let human = ctx_for("turn".into());
+    let hook = ctx_for(format!("turn:external_schedule:{}", TaskId::new()));
+    assert_eq!(human.initiator, InitiatorKind::Human);
+    assert_eq!(hook.initiator, InitiatorKind::ExternalSchedule);
+    let root = json!({"url": "https://example.com/"});
+    let origin = "https://example.com:443".to_owned();
+    let grant = |target| Grant {
+        bot_id: env.bot,
+        target,
+        granted_at_ms: 1,
+        computer: None,
+        inert: false,
+    };
+    {
+        let mut g = lp.sh.grants.lock();
+        g.always.push(grant(GrantTarget::Tool("write".into())));
+        g.always.push(grant(GrantTarget::Scoped {
+            tool: "browser_open".into(),
+            scope: Scope {
+                kind: ScopeKind::Origin,
+                pattern: origin.clone(),
+            },
+        }));
+        g.nav_origin.insert((env.chat, env.bot, origin));
+    }
+    let decide = |ctx: &_, tool: &str, cat, input: &Value| {
+        let effect = if tool == "write" {
+            Effect::Write
+        } else {
+            Effect::Read
+        };
+        lp.sh.decide(ctx, tool, effect, cat, input)
+    };
+    // Positive control: the human run is covered by every one of them.
+    assert_eq!(
+        decide(&human, "write", PermissionCategory::Fs, &json!({})),
+        crate::PolicyDecision::Allow
+    );
+    assert_eq!(
+        decide(&human, "browser_open", PermissionCategory::Browser, &root),
+        crate::PolicyDecision::Allow
+    );
+    // The webhook run is never waived.
+    for (tool, cat, input) in [
+        ("write", PermissionCategory::Fs, json!({})),
+        ("browser_open", PermissionCategory::Browser, root.clone()),
+    ] {
+        assert!(
+            decide(&hook, tool, cat, &input).is_ask(),
+            "{tool} was waived for a webhook run"
+        );
+    }
+    // Nor does the navigation waiver (nav_origin only) apply on its own.
+    lp.sh.grants.lock().always.clear();
+    assert!(decide(&hook, "browser_open", PermissionCategory::Browser, &root).is_ask());
+}

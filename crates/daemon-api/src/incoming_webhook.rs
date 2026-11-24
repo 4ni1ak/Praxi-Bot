@@ -1,8 +1,8 @@
 //! Incoming webhooks: the owner gives a bot an address that starts a run.
 //!
 //! The address is `POST /v1/incoming-webhooks/{id}` on the daemon that is
-//! already listening on loopback (and, if the owner paired a phone, the
-//! existing relay). Nothing opens a new port. To let GitHub, a form, or home
+//! already listening on loopback. Paired peers are denied both the ingress and
+//! the management routes (the relay never carries them). Nothing opens a new port. To let GitHub, a form, or home
 //! automation call it, the owner points a tunnel they choose at `127.0.0.1`.
 //!
 //! A call is authentic only when `X-Webhook-Timestamp` (Unix milliseconds) is

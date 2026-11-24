@@ -25,10 +25,14 @@ A signature of the body alone is not enough. The time must be within 5 minutes, 
 
 ## What the bot does with the text
 
-The body is data, never an instruction. Your instruction is the only task the bot is given. The body is shown to the model as a quoted, labelled data block, marks the run as having read untrusted content, and is never a message from you. Praxi does not turn a line such as `call:something` into a tool. The run uses the bot's own permission level. If a tool needs your OK, the question is queued as a notification, the same way a scheduled job asks.
+The body is data, never an instruction. Your instruction is the only task the bot is given. The body is shown to the model as a quoted, labelled data block (cut to the first 4096 bytes, even though up to 64 KB is accepted), marks the run as having read untrusted content, and is never a message from you. Praxi does not turn a line such as `call:something` into a tool. The run uses the bot's own permission level. If a tool needs your OK, the question is queued as a notification, the same way a scheduled job asks.
 
 The test button sends a tiny payload, `{"praxi_test":true}`, through the same path. It does not spend the outside rate limit.
 
 ## What is written down
 
 Creating, editing, deleting, testing, accepting, and refusing a call are written to the audit log. The log stores the reason (bad signature, old timestamp, replay, rate limit, turned off, or safe mode). It does not store the secret or the body.
+
+## Moving to another computer
+
+Webhook secrets do not travel in a state bundle. A normal export blanks them (and the list of already-seen signatures); only when you choose to export all secrets do the secret bytes stay in the file. Either way, on import every webhook comes back turned off with no secret, and so do webhook triggers of scheduled jobs. Create the webhook again (or turn it on with a new secret) on the new computer. The secret is currently stored as plain text in the local database; a protected secret store and a rotate button are planned.

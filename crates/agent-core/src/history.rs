@@ -598,6 +598,7 @@ fn fold_hint(out: &mut [Message], note: &str) {
         m.role == MessageRole::User
             && m.content.as_str().is_some_and(|t| {
                 !t.starts_with("[router data: UNTRUSTED")
+                    && !t.starts_with("[webhook data:")
                     && !t.starts_with(crate::knowledge::RETRIEVAL_DATA_LABEL)
             })
     });
