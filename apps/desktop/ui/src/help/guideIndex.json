@@ -410,7 +410,8 @@
       "What you set up",
       "What the caller sends",
       "What the bot does with the text",
-      "What is written down"
+      "What is written down",
+      "Moving to another computer"
     ],
     "summary": "A webhook starts one of your bots when something outside calls an address. GitHub, a form, or a switch at home can do that. You create the webhook in the bot panel, on the Automation tab."
   },
