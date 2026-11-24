@@ -1900,7 +1900,7 @@
       "waiting": "Wartet auf deine Genehmigung"
     },
     "runFailed": "Der Lauf ist fehlgeschlagen: {{message}}",
-    "runStopped": "Gestoppt.",
+    "runStopped": "Von dir gestoppt",
     "send": "Senden",
     "slash": {
       "apps": "Apps öffnen",

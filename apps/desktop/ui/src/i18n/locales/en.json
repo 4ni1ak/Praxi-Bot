@@ -1900,7 +1900,7 @@
       "waiting": "Waiting for your approval"
     },
     "runFailed": "The run failed: {{message}}",
-    "runStopped": "Stopped.",
+    "runStopped": "Stopped by you",
     "send": "Send",
     "slash": {
       "apps": "Open apps",

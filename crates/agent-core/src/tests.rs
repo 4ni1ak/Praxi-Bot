@@ -1463,7 +1463,7 @@ async fn queue_runs_as_next_turn_with_history() {
 }
 
 #[tokio::test]
-async fn stop_drops_queued_messages_instead_of_starting_the_next_turn() {
+async fn stop_keeps_queued_messages_instead_of_starting_the_next_turn() {
     let env = setup();
     let mut slow = tool("t.slow", Effect::Read, "r");
     slow.delay = Duration::from_secs(30);
@@ -1495,6 +1495,17 @@ async fn stop_drops_queued_messages_instead_of_starting_the_next_turn() {
         fake.n_requests(),
         1,
         "the queued message started a turn after Stop"
+    );
+    let queued = lp
+        .sh
+        .queued
+        .lock()
+        .get(&env.chat)
+        .and_then(|q| q.front().map(|(text, _)| text.clone()));
+    assert_eq!(
+        queued.as_deref(),
+        Some("two"),
+        "Stop leaves the queue in place"
     );
     assert!(
         lp.run_turn(env.chat, "three").is_ok(),

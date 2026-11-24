@@ -106,7 +106,7 @@ import { dayHeader, type MessageTimes } from "../lib/messageTime";
 import { hasConnectedModel, modelGroups } from "../lib/modelPicker";
 import { openSettingsTarget } from "../lib/settingsLink";
 import { type ChatRunPhase, runBarModel, runStopUi, STOP_CONFIRM_MS } from "../lib/runBar";
-import { sendButtonDisabled, sendButtonMode } from "../lib/composerRun";
+import { activeRunAfterCancel, composerButton } from "../lib/composerRun";
 import { ATTACHMENT_ACCEPT, filesOf } from "../lib/attachments";
 import { AttachmentDraft } from "../lib/attachmentDraft";
 import { ComposerFiles } from "../components/Attachments";
@@ -362,6 +362,8 @@ export function ChatView({
   const [ackedRunId, setAckedRunId] = useState<string | null>(null);
   /** Stop was pressed while the send was still unanswered: it is applied when the run is named. */
   const [stopPending, setStopPending] = useState(false);
+  /** Stop was pressed: the round button shows Stopping until the run is no longer active. */
+  const [stopPressed, setStopPressed] = useState(false);
   const stopWhileSending = useRef(false);
   const activeRunIdRef = useRef<string | null>(null);
   const [caret, setCaret] = useState(0);
@@ -514,7 +516,15 @@ export function ChatView({
     !chatRuns.some((r) => r.id === ackedRunId && r.finishedMs !== undefined)
       ? ackedRunId
       : null;
-  const activeRunId = serverLive?.id ?? eventLive?.id ?? ackedLive;
+  const finishedByEvent = new Set(
+    chatRuns.filter((r) => r.finishedMs !== undefined || r.stopped).map((r) => r.id)
+  );
+  const activeRunId = activeRunAfterCancel({
+    listedLiveId: serverLive?.id ?? null,
+    finishedByEvent,
+    eventLiveId: eventLive?.id ?? null,
+    ackedId: ackedLive
+  });
   activeRunIdRef.current = activeRunId;
   const pausedRunId = activeRunId ? null : (serverPaused?.id ?? null);
   const active = activeRunId !== null;
@@ -665,12 +675,7 @@ export function ChatView({
   }, [entries]);
   const turn = useMemo(() => lastTurn(messages), [messages]);
   const lastItem = entries[entries.length - 1];
-  // The button is the stop button from the moment a message is sent (before any run event) while the box is empty.
   const blockedFiles = attachments.blocked;
-  const sendMode = sendButtonMode({
-    runActive: running,
-    hasText: files.length > 0 || (!sending && text.trim().length > 0)
-  });
   // ---- follow new content unless the user scrolled up
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const lastTop = useRef(0);
@@ -1030,6 +1035,13 @@ export function ChatView({
     // Through the Stop ledger (PR #94 owns the logic): the run is held (cannot act) at
     // once and the cancel is retried with the same stop id until the daemon reports it
     // terminal. A desktop-driving run is stopped with the app-wide Stop.
+    // A second press while Stopping is already showing is the hard stop.
+    const hard =
+      stopPressed ||
+      appLedger().runEntries().some(
+        (e) => e.id === activeRunId && (e.phase === "held" || e.phase === "cancel_requested" || e.phase === "failed")
+      );
+    setStopPressed(true);
     if (nativeActive) {
       requestStop("banner");
       return;
@@ -1045,10 +1057,6 @@ export function ChatView({
       }
       return;
     }
-    // A second press while the first is still unconfirmed is the hard stop.
-    const hard = appLedger().runEntries().some(
-      (e) => e.id === activeRunId && (e.phase === "held" || e.phase === "cancel_requested" || e.phase === "failed")
-    );
     cancelRun(activeRunId, hard ? { force: true } : undefined);
     try {
       await refreshRuns();
@@ -1148,6 +1156,9 @@ export function ChatView({
   const stopRecord = ledgerRun?.stopId
     ? appLedger().stopRecords().find((r) => r.id === ledgerRun.stopId)
     : undefined;
+  useEffect(() => {
+    if (!running) setStopPressed(false);
+  }, [running]);
   const stopUi = runStopUi({
     ledgerPhase: ledgerRun?.phase,
     pending: stopPending,
@@ -1158,6 +1169,11 @@ export function ChatView({
   });
   // Re-render once the daemon has had STOP_CONFIRM_MS to confirm, so "not confirmed" shows up.
   const stopWaiting = stopUi?.phase === "stopping" && stopRecord !== undefined;
+  const buttonMode = composerButton({
+    runActive: running,
+    hasText: files.length > 0 || (!sending && text.trim().length > 0),
+    stopping: stopPressed || stopUi?.phase === "stopping"
+  });
   const stopDecided = stopRecord?.decidedMono;
   const [, setStopTick] = useState(0);
   useEffect(() => {
@@ -2078,14 +2094,33 @@ export function ChatView({
             <button
               type="button"
               className={styles.send}
-              data-mode={sendMode}
+              data-mode={buttonMode}
               data-testid="send-button"
-              disabled={sendButtonDisabled({ mode: sendMode, sending: sending || blockedFiles, stopping: false })}
-              title={sendMode === "stop" ? t(stopUi ? "chat.runBar.forceStop" : "chat.stop") : t("chat.send")}
-              aria-label={sendMode === "stop" ? t(stopUi ? "chat.runBar.forceStop" : "chat.stop") : t("chat.send")}
-              onClick={() => (sendMode === "stop" ? void stopRun() : void send())}
+              disabled={buttonMode === "send" && (sending || blockedFiles)}
+              title={
+                buttonMode === "stopping"
+                  ? t("runStatus.stopping")
+                  : buttonMode === "stop"
+                    ? t(stopUi ? "chat.runBar.forceStop" : "chat.stop")
+                    : t("chat.send")
+              }
+              aria-label={
+                buttonMode === "stopping"
+                  ? t("runStatus.stopping")
+                  : buttonMode === "stop"
+                    ? t(stopUi ? "chat.runBar.forceStop" : "chat.stop")
+                    : t("chat.send")
+              }
+              onClick={() => (buttonMode === "send" ? void send() : void stopRun())}
             >
-              {sendMode === "stop" ? <span className={styles.stopMark} aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
+              {buttonMode === "send" ? (
+                <ArrowUp aria-hidden="true" />
+              ) : (
+                <>
+                  <span className={styles.stopMark} aria-hidden="true" />
+                  {buttonMode === "stopping" ? <span className={styles.srOnly}>{t("runStatus.stopping")}</span> : null}
+                </>
+              )}
             </button>
           </div>
           </div>

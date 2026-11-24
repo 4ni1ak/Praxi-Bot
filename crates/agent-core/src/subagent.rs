@@ -633,6 +633,7 @@ impl AgentLoop {
             if state.is_terminal() {
                 continue;
             }
+            self.sh.user_stopped.lock().insert(kid.id);
             let live = self.rt.active_runs().contains(&kid.id);
             if self.rt.cancel(kid.id).is_ok() {
                 crate::usage::finish(&self.sh, kid.id);

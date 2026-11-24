@@ -1074,6 +1074,13 @@ pub(crate) struct Shared {
     /// What a schedule-started run does instead of asking the model, until its
     /// first step has been planned (afterwards it lives in the step's input).
     pub directives: Mutex<HashMap<RunId, ScheduleWork>>,
+    /// Runs the owner stopped. An approval abandoned by that stop is a denial,
+    /// not a timeout. Cleared when the run is concluded.
+    pub user_stopped: Mutex<HashSet<RunId>>,
+    /// Runs whose terminal bookkeeping has started. A second conclude (the
+    /// drive task waking after the stop supervisor already finished the run)
+    /// must not emit another `run_finished` or start a queued turn.
+    pub concluded: Mutex<HashSet<RunId>>,
     /// Runs that paused because nobody answered an approval in time.
     pub approval_paused: Mutex<HashSet<RunId>>,
     /// Runs left paused because this boot could not read the local identity.

@@ -1362,7 +1362,12 @@ impl Shared {
         approval_id: Uuid,
         last_parked: bool,
     ) {
-        let _ = self.storage.decide_approval(approval_id, "expired");
+        // The owner pressed Stop: that is a refusal. A timeout, or a schedule
+        // run that pauses because nobody answered, stays "expired".
+        let stopped = self.user_stopped.lock().contains(&run_id);
+        let _ = self
+            .storage
+            .decide_approval(approval_id, if stopped { "denied" } else { "expired" });
         let alive = self
             .storage
             .get_run(run_id)
@@ -1370,21 +1375,28 @@ impl Shared {
             .flatten()
             .and_then(|r| RunState::parse(&r.state))
             .is_some_and(|s| matches!(s, RunState::Running | RunState::WaitingApproval));
-        if !alive {
+        if !alive && !stopped {
             return;
         }
-        if last_parked {
+        // Putting a stopped run back to Running would leave it looking live
+        // after Stop. A timeout still resumes so the model can carry on.
+        if alive && last_parked && !stopped {
             self.set_state(run_id, RunState::Running);
         }
         let ctx = self.runs.lock().get(&run_id).cloned();
         if let Some(ctx) = ctx {
+            let reason = if stopped {
+                "denied: stopped by you"
+            } else {
+                EXPIRED_REASON
+            };
             self.emit(
                 &ctx,
                 Event::ToolCallDenied(ToolCallDenied {
                     run_id,
                     call_id,
                     denied_by: ctx.user_id,
-                    reason: Some(EXPIRED_REASON.into()),
+                    reason: Some(reason.into()),
                 }),
             );
         }

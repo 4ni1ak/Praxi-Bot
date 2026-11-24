@@ -49,6 +49,8 @@ mod bot_limit_tests;
 #[cfg(test)]
 mod browser_mcp_tests;
 #[cfg(test)]
+mod cancel_supervisor;
+#[cfg(test)]
 mod control_grant_tests;
 #[cfg(test)]
 mod egress_tests;
