@@ -102,6 +102,8 @@ pub enum Driver {
     Agy,
     /// Qwen Code (`qwen --acp`).
     Qwen,
+    /// Kiro CLI (`kiro-cli acp`).
+    Kiro,
     /// GitHub Copilot CLI (`copilot --acp`).
     Copilot,
 }
@@ -128,7 +130,7 @@ pub enum Transport {
 }
 
 impl Driver {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Claude,
         Self::Codex,
         Self::Cursor,
@@ -137,9 +139,10 @@ impl Driver {
         Self::Agy,
         Self::Qwen,
         Self::Copilot,
+        Self::Kiro,
     ];
 
-    /// Registry id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `agy`, `qwen`, `copilot`).
+    /// Registry id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `agy`, `qwen`, `copilot`, `kiro`).
     #[must_use]
     pub const fn id(self) -> &'static str {
         match self {
@@ -150,6 +153,7 @@ impl Driver {
             Self::Gemini => "gemini",
             Self::Agy => "agy",
             Self::Qwen => "qwen",
+            Self::Kiro => "kiro",
             Self::Copilot => "copilot",
         }
     }
@@ -169,6 +173,7 @@ impl Driver {
             Self::Gemini => "Gemini CLI",
             Self::Agy => "Antigravity",
             Self::Qwen => "Qwen Code",
+            Self::Kiro => "Kiro CLI",
             Self::Copilot => "GitHub Copilot CLI",
         }
     }
@@ -183,7 +188,8 @@ impl Driver {
             | Self::Gemini
             | Self::Agy
             | Self::Qwen
-            | Self::Copilot => Transport::Acp,
+            | Self::Copilot
+            | Self::Kiro => Transport::Acp,
         }
     }
 
@@ -192,7 +198,7 @@ impl Driver {
     #[must_use]
     pub const fn support(self) -> Support {
         match self {
-            Self::Gemini | Self::OpenCode | Self::Agy | Self::Qwen | Self::Copilot => {
+            Self::Gemini | Self::OpenCode | Self::Agy | Self::Qwen | Self::Copilot | Self::Kiro => {
                 Support::Experimental
             }
             _ => Support::Verified,
@@ -417,6 +423,17 @@ pub fn level_plan(driver: Driver, level: ApprovalLevel) -> LevelPlan {
                 ..plan(level, Full, "permission requests approved automatically")
             },
         },
+        // Kiro CLI V3 rejects the trust flags on `acp` and has no per-launch mode. Below Full
+        // it runs on its own policy: by default reads are allowed and writes and most
+        // commands ask, but the user's own Kiro permission rules still apply. Full approves
+        // each `session/request_permission`.
+        Driver::Kiro => match level {
+            Ask | AcceptEdits | Auto => plan(level, Ask, "default permissions"),
+            Full => LevelPlan {
+                acp_allow_all: true,
+                ..plan(level, Full, "every permission request approved")
+            },
+        },
     }
 }
 
@@ -447,6 +464,8 @@ pub fn acp_args(driver: Driver, plan: &LevelPlan, model: Option<&str>) -> Option
             args.push("acp".into());
             args.extend(own(plan.flags));
         }
+        // Pinned to V3 so `acp.agentEngine` in the user's settings cannot switch harness.
+        Driver::Kiro => args.extend(own(&["acp", "--agent-engine", "v3"])),
         Driver::Copilot => {
             args.push("--acp".into());
             args.extend(own(plan.flags));
@@ -467,6 +486,7 @@ mod tests {
     #[allow(clippy::too_many_lines)] // One table, one test.
     fn level_mapping_per_cli() {
         use ApprovalLevel::{AcceptEdits, Ask, Auto, Full};
+        const KIRO_ARGV: &[&str] = &["acp", "--agent-engine", "v3"];
         // (driver, level) -> (applied level, native setting, ACP argv)
         let cases: &[(Driver, ApprovalLevel, ApprovalLevel, &str, &[&str])] = &[
             (Driver::Claude, Ask, Ask, "--permission-mode default", &[]),
@@ -617,6 +637,22 @@ mod tests {
                 "permission requests approved automatically",
                 &["--acp", "--no-auto-update", "--disallow-temp-dir"],
             ),
+            (Driver::Kiro, Ask, Ask, "default permissions", KIRO_ARGV),
+            (
+                Driver::Kiro,
+                AcceptEdits,
+                Ask,
+                "default permissions",
+                KIRO_ARGV,
+            ),
+            (Driver::Kiro, Auto, Ask, "default permissions", KIRO_ARGV),
+            (
+                Driver::Kiro,
+                Full,
+                Full,
+                "every permission request approved",
+                KIRO_ARGV,
+            ),
         ];
         for (driver, level, applied, native, argv) in cases {
             let p = level_plan(*driver, *level);
@@ -665,6 +701,12 @@ mod tests {
                 "-m",
                 "qwen3-coder-plus"
             ]
+        );
+        assert_eq!(Driver::Kiro.support(), Support::Experimental);
+        assert!(level_plan(Driver::Kiro, Full).acp_allow_all);
+        assert_eq!(
+            acp_args(Driver::Kiro, &level_plan(Driver::Kiro, Ask), Some("x")).unwrap(),
+            KIRO_ARGV
         );
         assert_eq!(Driver::OpenCode.support(), Support::Experimental);
         assert!(!level_plan(Driver::OpenCode, Ask).enforced);

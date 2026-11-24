@@ -91,6 +91,8 @@ pub enum CliEngine {
     Agy,
     /// Qwen Code (`qwen --acp`).
     Qwen,
+    /// Kiro CLI (`kiro-cli acp`).
+    Kiro,
     /// GitHub Copilot CLI (`copilot --acp`).
     Copilot,
 }
@@ -107,6 +109,7 @@ impl CliEngine {
             Self::Gemini => "gemini",
             Self::Agy => "agy",
             Self::Qwen => "qwen",
+            Self::Kiro => "kiro",
             Self::Copilot => "copilot",
         }
     }
@@ -458,6 +461,7 @@ impl ProviderConfig {
                     CliEngine::Gemini => "cli:gemini",
                     CliEngine::Agy => "cli:agy",
                     CliEngine::Qwen => "cli:qwen",
+                    CliEngine::Kiro => "cli:kiro",
                     CliEngine::Copilot => "cli:copilot",
                 };
                 if p.id != id

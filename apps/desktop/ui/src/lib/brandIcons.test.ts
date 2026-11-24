@@ -92,6 +92,7 @@ test('Antigravity uses the official press path rather than an approximation', ()
   assert.deepEqual(brandIcon('cli:agy'), brandIcon('antigravity'));
   assert.equal(brandIcon('cli:qwen').known, true);
   assert.deepEqual(brandIcon('cli:qwen'), brandIcon('qwen'));
+  for (const name of ['cli:kiro', 'kiro-cli', 'Kiro CLI']) assert.deepEqual(brandIcon(name), brandIcon('kiro'), name);
   assert.equal(brandIcon('cli:copilot').known, true);
   assert.deepEqual(brandIcon('cli:copilot'), brandIcon('githubcopilot'));
 });
