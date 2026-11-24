@@ -54,6 +54,7 @@ export const CARD_META: Record<string, CardMeta> = {
   photorealAvatars: { page: "appearance", advanced: true },
   background: { page: "appearance", advanced: true },
   frame: { page: "appearance", advanced: true },
+  accessibility: { page: "appearance" },
 
   detectedAccounts: { page: "models" },
   keys: { page: "models", learn: "apiKey" },
@@ -175,7 +176,13 @@ const RESET_KEYS: Partial<Record<SettingsPageId, readonly (keyof AppSettings)[]>
     "transparentChat",
     "chatPanel",
     "transparencyOverride",
-    "photorealAvatars"
+    "photorealAvatars",
+    "textScale",
+    "density",
+    "dyslexiaFont",
+    "reduceMotion",
+    "reduceTransparency",
+    "focusRing"
   ],
   notifications: ["notifyNeedsYou", "notifyLongRun", "notifyFailed", "notifyPrivate", "quietHours", "mutedBotIds", "digestTime", "digestLastDay"],
   voice: ["voiceName", "voiceRate", "speakReplies", "pttEnabled", "pttKey", "micDeviceId", "silenceStopSec"]
