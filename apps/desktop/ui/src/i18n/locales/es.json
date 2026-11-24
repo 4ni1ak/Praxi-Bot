@@ -5187,7 +5187,7 @@
     "permissions": {
       "description": "What each bot may do right now, including “Always allow” rules you granted from approval cards.",
       "grantCategory": "Always allow every {{name}} tool",
-      "grantScoped": "Always allow {{tool}} on {{target}}",
+      "grantScoped": "{{tool}} ({{scope}})",
       "grantSite": "Abrir siempre {{site}}",
       "grantTool": "Always allow {{name}}",
       "inertGrant": "Inactive: this rule is not tied to a computer and no longer applies.",
