@@ -1482,6 +1482,7 @@ impl AgentLoop {
     /// [`LoopError::NoPendingApproval`] if it is not waiting (already decided
     /// or lost in a restart).
     pub fn approve(&self, call_id: ToolCallId, scope: ApprovalScope, by: UserId) -> Result<()> {
+        self.refuse_if_stopped(call_id)?;
         // Server-side, for every channel: an approval that carries details (a
         // schedule) or whose tool is always-ask is given once, never as a grant.
         // The run-scoped control scope is the one non-Once scope a once-only
@@ -1545,6 +1546,7 @@ impl AgentLoop {
     /// # Errors
     /// [`LoopError::NoPendingApproval`] if no question is waiting under that id.
     pub fn answer_question(&self, call_id: ToolCallId, answer: &str) -> Result<()> {
+        self.refuse_if_stopped(call_id)?;
         self.take_pending(call_id)?
             .tx
             .send(Verdict::Answered {
@@ -1587,6 +1589,9 @@ impl AgentLoop {
         stored: bool,
         by: UserId,
     ) -> Result<()> {
+        if stored {
+            self.refuse_if_stopped(call_id)?;
+        }
         self.sh.secret_requests.lock().remove(&call_id);
         let verdict = if stored {
             Verdict::SecretStored
@@ -1783,6 +1788,19 @@ impl AgentLoop {
         }
     }
 
+    /// A card of a run the owner stopped can no longer be approved, answered or
+    /// completed: it is closed as denied and the caller sees it as gone.
+    fn refuse_if_stopped(&self, call_id: ToolCallId) -> Result<()> {
+        let run = self.sh.pending.lock().get(&call_id).map(|p| p.run_id);
+        if let Some(run) = run
+            && self.sh.run_is_stopped(run)
+        {
+            self.sh.deny_open_for_stop(run);
+            return Err(LoopError::NoPendingApproval(call_id));
+        }
+        Ok(())
+    }
+
     fn take_pending(&self, call_id: ToolCallId) -> Result<Pending> {
         self.sh
             .pending
@@ -1808,6 +1826,9 @@ impl AgentLoop {
     /// `false` so a forced stop does not arm another supervisor.
     fn cancel_user(&self, run_id: RunId, supervise: bool) -> Result<()> {
         self.sh.user_stopped.lock().insert(run_id);
+        // Every open card of the run is denied now, before anything can clear
+        // the marker (a forced stop concludes before the aborted task unwinds).
+        self.sh.deny_open_for_stop(run_id);
         self.cancel_wait_pc_timer(run_id);
         self.sh.run_computers.lock().remove(&run_id);
         self.sh.directives.lock().remove(&run_id);
@@ -1815,7 +1836,7 @@ impl AgentLoop {
             && self.rt.state(run_id).ok() == Some(RunState::Paused);
         let result = self.rt.cancel(run_id);
         // A cancelled parent takes its subagents with it.
-        self.cancel_descendants(run_id);
+        self.cancel_descendants(run_id, supervise);
         crate::usage::finish(&self.sh, run_id);
         if result.is_ok() && idle_paused {
             self.sh.concluded.lock().insert(run_id);
@@ -1853,7 +1874,7 @@ impl AgentLoop {
     /// If the run is still going a second after Stop, abort its drive task.
     /// A `std::thread::sleep` (or any wait that never polls the token) cannot
     /// leave the run `running`.
-    fn arm_stop_supervisor(&self, run_id: RunId) {
+    pub(crate) fn arm_stop_supervisor(&self, run_id: RunId) {
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             return;
         };

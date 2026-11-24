@@ -67,6 +67,8 @@ mod server_computer_tests;
 #[cfg(test)]
 mod spend_tests;
 #[cfg(test)]
+mod stop_approval_tests;
+#[cfg(test)]
 mod subagent_tests;
 #[cfg(test)]
 mod tests;

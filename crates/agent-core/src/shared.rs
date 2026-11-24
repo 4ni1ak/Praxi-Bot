@@ -691,6 +691,10 @@ pub(crate) struct Pending {
     /// A tool-wide standing grant ("always for this bot") is refused for this card: an MCP
     /// tool in a run that has read something private.
     pub always_refused: bool,
+    /// The run that parked this card, so Stop can close every card of a run.
+    pub run_id: RunId,
+    /// The persisted approval row of this park.
+    pub approval_id: uuid::Uuid,
 }
 
 /// Browser actions that act on the page open right now: their allowance is bound to its origin.
