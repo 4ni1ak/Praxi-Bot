@@ -1379,6 +1379,7 @@
     "switcher": "Which computer to show",
     "tabs": {
       "activity": "Activity",
+      "automation": "Automatización",
       "label": "Panel sections",
       "library": "Library"
     },
@@ -1390,6 +1391,33 @@
       "title": "Upcoming",
       "toggle": "Turn {{name}} on or off",
       "trigger": "When something happens"
+    },
+    "webhooks": {
+      "copied": "Copiado",
+      "copySecret": "Copiar secreto",
+      "copyUrl": "Copiar dirección",
+      "create": "Crear webhook",
+      "creating": "Creando…",
+      "empty": "Aún no hay webhooks. Crea uno cuando algo externo, como GitHub, un formulario o un interruptor de casa, deba iniciar este bot.",
+      "enabled": "Activado",
+      "instruction": "¿Qué debe hacer el bot con los datos?",
+      "instructionHint": "Esta es tu instrucción. El texto entrante son datos, nunca una orden, y el bot sigue preguntando antes de actuar.",
+      "intro": "Un webhook inicia este bot cuando algo llama a su dirección. Praxi comprueba una firma y luego trata el texto como datos no fiables.",
+      "loadError": "No se pudieron cargar los webhooks.",
+      "name": "Nombre",
+      "namePlaceholder": "GitHub, la puerta de entrada, un formulario",
+      "off": "Desactivado",
+      "remove": "Quitar",
+      "removed": "Webhook eliminado",
+      "secretLabel": "Secreto de firma",
+      "secretOnce": "Copia este secreto ahora. Praxi no volverá a mostrarlo.",
+      "sign": "Cada llamada envía dos cabeceras. X-Webhook-Timestamp es la hora en milisegundos. X-Signature-256 es sha256= seguido del HMAC de esa hora, un punto y el cuerpo sin modificar, firmado con el secreto. La misma llamada firmada funciona una sola vez, y solo si la hora está dentro de 5 minutos. El cuerpo puede ocupar como máximo 64 KB, y se rechazan más de 30 llamadas por minuto.",
+      "test": "Enviar una prueba",
+      "testStarted": "Prueba iniciada. El bot la trata como datos no fiables y una pregunta sigue apareciendo como notificación.",
+      "testing": "Enviando…",
+      "title": "Webhooks",
+      "tunnel": "Praxi solo escucha en este equipo. Para que GitHub, un formulario o la domótica llamen a esta dirección, apunta un túnel que elijas (por ejemplo Cloudflare Tunnel o ssh) a 127.0.0.1. No abras un puerto nuevo en tu router.",
+      "urlLabel": "Dirección"
     }
   },
   "botProfile": {
@@ -6410,6 +6438,7 @@
     "speed": "Speed",
     "stop": "Stop reading",
     "stt": {
+      "advanced": "Avanzado (modelo y dirección)",
       "clearKey": "Remove key",
       "description": "Where your recordings are transcribed: an OpenAI-compatible service (a cloud provider or a local whisper server).",
       "geminiKey": "Gemini API key",
@@ -6424,8 +6453,15 @@
       "providerGemini": "Gemini Live",
       "providerLocal": "On this computer (offline)",
       "providerWhisper": "Whisper-compatible (OpenAI / local)",
+      "reuseGemini": "Usar mi clave de Gemini de Bots y modelos",
+      "reuseKey": "Usar mi clave correspondiente de Bots y modelos",
       "save": "Save",
       "saved": "Dictation settings saved",
+      "statusNoGeminiKey": "Aún no hay clave de Gemini. Añade una en Bots y modelos o pega una clave abajo.",
+      "statusNoKey": "Aún no hay clave. Pega una abajo (un servidor local puede no necesitarla).",
+      "statusOwnKey": "Listo: se usa una clave aparte guardada para la voz.",
+      "statusReusing": "Listo: se usa la clave que ya añadiste para este servicio. Sigue en el almacén de secretos.",
+      "statusReusingGemini": "Listo: se usa la clave de Gemini que ya añadiste. Sigue en el almacén de secretos.",
       "title": "Dictation service",
       "url": "Service address",
       "whereTitle": "Where your voice goes:"

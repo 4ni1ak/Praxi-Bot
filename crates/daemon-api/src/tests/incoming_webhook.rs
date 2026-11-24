@@ -180,7 +180,7 @@ async fn bad_signature_replay_size_and_rate_are_refused() {
         ],
     )
     .await;
-    assert_eq!(again.status, StatusCode::UNAUTHORIZED, "replay");
+    assert_eq!(again.status, StatusCode::UNAUTHORIZED, "replay refused");
     assert_eq!(runs(&t).len(), 1, "a replay must not start a second run");
 
     let off = call(
