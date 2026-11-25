@@ -115,6 +115,31 @@ async fn changes_are_debounced_then_indexed_and_deletes_are_dropped() {
     assert_eq!(status.state, KnowledgeWatchState::Watching);
     assert_eq!(status.indexed_files, 1);
     assert_eq!(status.last_sync_ms, Some(3_000));
+
+    host.write("b.md", "spectrometer updated notes");
+    std::fs::rename(
+        host.folder.path().join("b.md"),
+        host.folder.path().join("renamed.md"),
+    )
+    .unwrap();
+    tick(&host.state, P, 4_000).await;
+    tick(&host.state, P, 5_000).await;
+    assert_eq!(host.indexed(), ["renamed.md"]);
+    let store = KnowledgeStore::open(host.state.data_dir(), host.owner).unwrap();
+    assert!(
+        !store
+            .search(&memory_store::knowledge::SearchRequest::new("spectrometer"))
+            .unwrap()
+            .hits
+            .is_empty()
+    );
+    assert!(
+        store
+            .search(&memory_store::knowledge::SearchRequest::new("beta"))
+            .unwrap()
+            .hits
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -149,7 +174,10 @@ async fn constant_churn_backs_off_instead_of_indexing() {
     host.write("a.md", "v0");
     tick(&host.state, P, 1_000).await;
     for (i, now) in [2_000, 3_000, 4_000, 5_000].into_iter().enumerate() {
-        host.write("a.md", &format!("a longer version {i}{}", "x".repeat(i * 3)));
+        host.write(
+            "a.md",
+            &format!("a longer version {i}{}", "x".repeat(i * 3)),
+        );
         tick(&host.state, P, now).await;
     }
     assert_eq!(host.status().state, KnowledgeWatchState::BackingOff);
@@ -162,7 +190,7 @@ async fn constant_churn_backs_off_instead_of_indexing() {
 #[tokio::test]
 async fn the_per_minute_file_budget_spreads_a_large_folder_over_time() {
     let host = Host::new();
-    for i in 0..40 {
+    for i in 0..18 {
         host.write(&format!("f{i:02}.md"), &format!("note {i}"));
     }
     let slow = Params {
@@ -170,13 +198,13 @@ async fn the_per_minute_file_budget_spreads_a_large_folder_over_time() {
         ..P
     };
     tick(&host.state, slow, 1_000).await;
-    // One page (32 files) used up the budget; the rest waits for the next minute.
-    assert_eq!(host.indexed().len(), 32);
+    // A partial page must stop exactly at the budget.
+    assert_eq!(host.indexed().len(), 10);
     assert_eq!(host.status().state, KnowledgeWatchState::Waiting);
     tick(&host.state, slow, 30_000).await;
-    assert_eq!(host.indexed().len(), 32);
+    assert_eq!(host.indexed().len(), 10);
     tick(&host.state, slow, 62_000).await;
-    assert_eq!(host.indexed().len(), 40);
+    assert_eq!(host.indexed().len(), 18);
 }
 
 #[tokio::test]
@@ -187,7 +215,8 @@ async fn paused_folder_is_left_alone_until_resumed() {
     host.state
         .0
         .knowledge_watch
-        .set_paused(&host.state.data_dir(), host.source, true);
+        .set_paused(&host.state.data_dir(), host.source, true)
+        .unwrap();
     host.write("b.md", "beta");
     tick(&host.state, P, 2_000).await;
     tick(&host.state, P, 3_000).await;
@@ -202,7 +231,8 @@ async fn paused_folder_is_left_alone_until_resumed() {
     host.state
         .0
         .knowledge_watch
-        .set_paused(&host.state.data_dir(), host.source, false);
+        .set_paused(&host.state.data_dir(), host.source, false)
+        .unwrap();
     tick(&host.state, P, 4_000).await;
     assert_eq!(host.indexed(), ["a.md", "b.md"]);
 }
@@ -220,4 +250,116 @@ async fn a_missing_folder_reports_a_plain_error_and_recovers() {
     std::fs::rename(&moved, &path).unwrap();
     tick(&host.state, P, 100_000).await;
     assert!(host.status().error.is_none());
+}
+
+#[tokio::test]
+async fn only_consented_enabled_folders_are_watched_and_attempts_share_a_budget() {
+    let host = Host::new();
+    let unselected = tempfile::tempdir().unwrap();
+    std::fs::write(unselected.path().join("private.md"), "unselected").unwrap();
+    host.write("a.md", "allowed");
+    let oversized = std::fs::File::create(host.folder.path().join("b.md")).unwrap();
+    oversized
+        .set_len(memory_store::knowledge::source_adapters::MAX_SOURCE_BYTES as u64 + 1)
+        .unwrap();
+    let store = KnowledgeStore::open(host.state.data_dir(), host.owner).unwrap();
+    let disabled = store
+        .add_source(NewSource::new(
+            SourceKind::Folder,
+            "Disabled",
+            unselected.path().display().to_string(),
+        ))
+        .unwrap();
+    store
+        .update_source(
+            disabled.id,
+            disabled.revision,
+            memory_store::knowledge::SourceUpdate {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let slow = Params {
+        files_per_minute: 2,
+        ..P
+    };
+    tick(&host.state, slow, 1_000).await;
+    assert_eq!(host.indexed(), ["a.md"]);
+    assert_eq!(host.status().error.unwrap().code, "some_files_skipped");
+    assert!(store.list_documents(disabled.id).unwrap().is_empty());
+    assert_eq!(host.state.0.knowledge_watch.budget.lock().used, 2);
+    host.state
+        .0
+        .knowledge_watch
+        .set_paused(&host.state.data_dir(), host.source, false)
+        .unwrap();
+    host.write("c.md", "new note");
+    tick(&host.state, slow, 2_000).await;
+    assert_eq!(
+        host.indexed(),
+        ["a.md"],
+        "resume cannot reset the shared budget"
+    );
+}
+
+#[tokio::test]
+async fn watch_routes_require_the_owner_and_enforce_bot_scope() {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+    let host = Host::new();
+    host.state
+        .set_owner_key("owner-watch-key-with-at-least-32-bytes".into());
+    let app = crate::router(host.state.clone());
+    let base = format!("/v1/bots/{}/knowledge", host.owner.bot_id);
+    for (method, path) in [
+        ("GET", format!("{base}/watch")),
+        ("HEAD", format!("{base}/watch")),
+        ("PUT", format!("{base}/sources/{}/watch", host.source)),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(&path)
+                    .header("authorization", "Bearer test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"paused":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+    for (bot, expected) in [
+        (host.owner.bot_id.0, StatusCode::OK),
+        (Uuid::now_v7(), StatusCode::NOT_FOUND),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!(
+                        "/v1/bots/{bot}/knowledge/sources/{}/watch",
+                        host.source
+                    ))
+                    .header("authorization", "Bearer test-token")
+                    .header(
+                        "x-praxi-owner-key",
+                        "owner-watch-key-with-at-least-32-bytes",
+                    )
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"paused":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+    }
+    assert_eq!(host.status().state, KnowledgeWatchState::Paused);
 }

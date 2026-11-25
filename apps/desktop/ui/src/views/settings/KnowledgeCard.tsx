@@ -58,17 +58,24 @@ export function KnowledgeCard() {
     const [next, config, allChats, mail, watching] = await Promise.all([
       client.listKnowledgeSources(activeBot), client.getKnowledgeSettings(activeBot), client.listChats(),
       client.listKnowledgeEmailCaptures(activeBot).then((captures) => ({ captures, error: null }), (error: unknown) => ({ captures: [], error: message(error) })),
-      client.listKnowledgeWatch(activeBot).catch(() => [] as KnowledgeWatchStatus[])
+      client.listKnowledgeWatch(activeBot)
     ]);
     if (current !== epoch.current) return;
     setSources(next); setSettings(config); setChats(allChats.filter((chat) => chat.bot_id === activeBot)); setCaptures(mail.captures); setEmailError(mail.error); setWatch(Object.fromEntries(watching.map((item) => [item.source_id, item])));
   }, [client, activeBot]);
 
   useEffect(() => {
-    setSources([]); setSettings(null); setGrant(null); setRemoving(null); setRenaming(null); setRebinding(null); setCursors({}); setError(null); setEmailError(null); setEmbeddingProgress({}); setIndexFailures({});
+    setWatch({}); setSources([]); setSettings(null); setGrant(null); setRemoving(null); setRenaming(null); setRebinding(null); setCursors({}); setError(null); setEmailError(null); setEmbeddingProgress({}); setIndexFailures({});
     void reload().catch((e: unknown) => setError(message(e)));
     return () => { epoch.current += 1; };
   }, [reload]);
+
+  // Keep counts, source revisions and watcher state current while this view is open.
+  useEffect(() => {
+    if (busy) return;
+    const timer = window.setInterval(() => { void reload().catch((e: unknown) => setError(message(e))); }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [busy, reload]);
 
   const act = async (operation: () => Promise<unknown>) => {
     setBusy(true); setError(null); setNotice("");

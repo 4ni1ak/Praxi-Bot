@@ -8,14 +8,16 @@
 //! minute with a pause between pages so it stays out of the user's way.
 //!
 //! Safety is inherited, not re-implemented: indexing goes through the same
-//! `reindex_inner` as the manual button, i.e. `SelectedSource` (no symlink is
+//! `reindex_limited` as the manual button, i.e. `SelectedSource` (no symlink is
 //! ever followed, secret-looking names and credential folders are skipped,
 //! size/depth/entry caps, daemon state excluded) and only for sources the
 //! owner enabled. Disabling a source stops its watching.
 
 use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
-use std::path::Path;
+use std::path::{Component, Path};
+
+use cap_fs_ext::DirExt;
 use std::time::Duration;
 
 use axum::{
@@ -65,8 +67,6 @@ struct SourceWatch {
     next_check_ms: i64,
     backing_off: bool,
     cursor: Option<String>,
-    window_start_ms: i64,
-    used_in_window: usize,
     skipped_files: usize,
     last_sync_ms: Option<i64>,
     error: Option<&'static str>,
@@ -77,6 +77,7 @@ struct SourceWatch {
 pub(crate) struct WatchHub {
     sources: parking_lot::Mutex<HashMap<Uuid, SourceWatch>>,
     paused: parking_lot::Mutex<Option<BTreeSet<Uuid>>>,
+    budget: parking_lot::Mutex<Budget>,
 }
 
 const PAUSED_FILE: &str = "knowledge-watch-paused.json";
@@ -94,53 +95,80 @@ impl WatchHub {
             .clone()
     }
 
-    fn set_paused(&self, data_dir: &Path, id: Uuid, paused: bool) {
-        let mut set = self.paused_set(data_dir);
+    fn set_paused(&self, data_dir: &Path, id: Uuid, paused: bool) -> Result<(), ApiError> {
+        self.paused_set(data_dir);
+        let mut guard = self.paused.lock();
+        let mut set = guard.clone().unwrap_or_default();
         if paused {
             set.insert(id);
         } else {
             set.remove(&id);
         }
-        // Best effort: a failed write only means the pause is forgotten on restart.
-        let tmp = data_dir.join(format!("{PAUSED_FILE}.tmp"));
-        if let Ok(bytes) = serde_json::to_vec(&set)
-            && std::fs::write(&tmp, bytes).is_ok()
-        {
-            let _ = std::fs::rename(&tmp, data_dir.join(PAUSED_FILE));
-        }
-        *self.paused.lock() = Some(set);
+        // Unique temporary file, persisted before acknowledging the owner's choice.
+        let mut tmp = tempfile::NamedTempFile::new_in(data_dir)
+            .map_err(|_| ApiError::internal("cannot save automatic update preference"))?;
+        serde_json::to_writer(tmp.as_file_mut(), &set)
+            .map_err(|_| ApiError::internal("cannot save automatic update preference"))?;
+        tmp.persist(data_dir.join(PAUSED_FILE))
+            .map_err(|_| ApiError::internal("cannot save automatic update preference"))?;
+        *guard = Some(set);
         if !paused {
-            // Resuming starts fresh: no stale backoff, one catch-up scan.
+            // Resuming starts fresh, but cannot reset the daemon's file budget.
             self.sources.lock().remove(&id);
         }
+        Ok(())
     }
 }
 
-fn hash_file_state(root: &Path, files: &[String]) -> u64 {
+#[derive(Default)]
+struct Budget {
+    start_ms: Option<i64>,
+    used: usize,
+}
+
+fn hash_file_state(source: &Source, files: &[String]) -> Result<u64, &'static str> {
+    // Every ancestor is opened without following links, including replacements
+    // made after SelectedSource enumerated the folder. No ambient path stat.
+    let root =
+        memory_store::knowledge::source_adapters::plain_directory(Path::new(&source.locator))
+            .map_err(|_| "folder_unreadable")?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.locator.hash(&mut hasher);
     for name in files {
         name.hash(&mut hasher);
-        // symlink_metadata: a link swapped in later is hashed, never followed.
-        match std::fs::symlink_metadata(root.join(name)) {
+        let metadata = (|| {
+            let mut parent = root.try_clone()?;
+            let relative = Path::new(name);
+            if let Some(ancestors) = relative.parent() {
+                for part in ancestors.components() {
+                    let Component::Normal(part) = part else {
+                        return Err(std::io::Error::other("invalid source path"));
+                    };
+                    parent = parent.open_dir_nofollow(part)?;
+                }
+            }
+            parent.symlink_metadata(
+                relative
+                    .file_name()
+                    .ok_or_else(|| std::io::Error::other("invalid source path"))?,
+            )
+        })();
+        match metadata {
             Ok(meta) => {
                 meta.len().hash(&mut hasher);
                 meta.file_type().is_symlink().hash(&mut hasher);
-                meta.modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_nanos())
-                    .hash(&mut hasher);
+                meta.modified().ok().map(|t| t.into_std()).hash(&mut hasher);
             }
             Err(_) => 0u8.hash(&mut hasher),
         }
     }
-    hasher.finish()
+    Ok(hasher.finish())
 }
 
 fn open(s: &AppState, source: &Source) -> Result<SelectedSource, &'static str> {
     SelectedSource::open_on_host(Path::new(&source.locator), true, &s.data_dir(), false).map_err(
         |error| {
-            if !Path::new(&source.locator).is_dir() {
+            if matches!(&error, memory_store::MemoryError::Io(io) if io.kind() == std::io::ErrorKind::NotFound) {
                 "folder_missing"
             } else if error.to_string().contains("entry limit") {
                 "too_many_files"
@@ -166,7 +194,7 @@ fn observe(s: &AppState, source: &Source, w: &mut SourceWatch, p: &Params, now: 
         Ok(selected) => selected,
         Err(code) => {
             w.error = Some(code);
-            w.failures += 1;
+            w.failures = w.failures.saturating_add(1);
             w.next_check_ms = now + backoff_ms(p.tick_ms, w.failures, p.backoff_cap_ms);
             w.backing_off = true;
             return false;
@@ -175,8 +203,16 @@ fn observe(s: &AppState, source: &Source, w: &mut SourceWatch, p: &Params, now: 
     if w.error.is_some_and(|code| code != "some_files_skipped") {
         w.error = None;
     }
-    w.failures = 0;
-    let fingerprint = hash_file_state(Path::new(&source.locator), selected.files());
+    let fingerprint = match hash_file_state(source, selected.files()) {
+        Ok(fingerprint) => fingerprint,
+        Err(code) => {
+            w.error = Some(code);
+            w.failures = w.failures.saturating_add(1);
+            w.next_check_ms = now + backoff_ms(p.tick_ms, w.failures, p.backoff_cap_ms);
+            w.backing_off = true;
+            return false;
+        }
+    };
     match w.fingerprint.replace(fingerprint) {
         // First sight (also after a restart): one catch-up scan, which is cheap
         // when nothing changed because unchanged hashes are skipped.
@@ -187,12 +223,12 @@ fn observe(s: &AppState, source: &Source, w: &mut SourceWatch, p: &Params, now: 
         Some(old) if old != fingerprint => {
             w.pending = true;
             w.quiet_ticks = 0;
-            w.churn += 1;
+            w.churn = w.churn.saturating_add(1);
             // A change can land before the scan cursor: scan again from the top.
             w.cursor = None;
         }
         Some(_) => {
-            w.quiet_ticks += 1;
+            w.quiet_ticks = w.quiet_ticks.saturating_add(1);
             w.churn = 0;
         }
     }
@@ -217,14 +253,21 @@ fn index(
     s.agent().refresh_external_redactor();
     let store = KnowledgeStore::open(s.data_dir(), owner)
         .map_err(|_| ApiError::internal("knowledge store"))?;
+    let mut budget = s.0.knowledge_watch.budget.lock();
+    let start = *budget.start_ms.get_or_insert(now);
+    if now - start >= 60_000 {
+        budget.start_ms = Some(now);
+        budget.used = 0;
+    }
     loop {
-        if now - w.window_start_ms >= 60_000 {
-            w.window_start_ms = now;
-            w.used_in_window = 0;
+        if s.shutdown_token().is_cancelled()
+            || s.0.knowledge_watch.paused_set(&s.data_dir()).contains(&id)
+        {
+            return Ok(());
         }
-        if w.used_in_window >= p.files_per_minute {
+        if budget.used >= p.files_per_minute {
             // Budget used: stay pending, continue from the cursor next minute.
-            w.next_check_ms = w.window_start_ms + 60_000;
+            w.next_check_ms = budget.start_ms.unwrap_or(now) + 60_000;
             return Ok(());
         }
         let Some(source) = store
@@ -233,8 +276,12 @@ fn index(
         else {
             return Ok(());
         };
-        let done = crate::knowledge::reindex_inner(s, owner, &source, w.cursor.as_deref())?;
-        w.used_in_window += done.indexing.processed.max(1);
+        let page_size = p.files_per_minute.saturating_sub(budget.used).min(32);
+        // Reserve attempts before I/O: unreadable and oversized files also cost
+        // budget, as does a partially completed page that returns an error.
+        budget.used += page_size;
+        let done =
+            crate::knowledge::reindex_limited(s, owner, &source, w.cursor.as_deref(), page_size)?;
         w.skipped_files += done.indexing.failures.len();
         if let Some(cursor) = done.indexing.next_cursor {
             w.cursor = Some(cursor);
@@ -245,6 +292,7 @@ fn index(
             w.cursor = None;
             w.pending = false;
             w.last_sync_ms = Some(now);
+            w.failures = 0;
             w.error = (w.skipped_files > 0).then_some("some_files_skipped");
             w.skipped_files = 0;
             return Ok(());
@@ -271,7 +319,6 @@ pub(crate) async fn tick(s: &AppState, p: Params, now: i64) {
     let Ok(bots) = s.storage().list_bots(s.user_id()) else {
         return;
     };
-    let paused = s.0.knowledge_watch.paused_set(&s.data_dir());
     let mut live = BTreeSet::new();
     for bot in bots {
         let owner = Scope {
@@ -287,8 +334,14 @@ pub(crate) async fn tick(s: &AppState, p: Params, now: i64) {
         };
         for source in sources {
             live.insert(source.id);
-            if !paused.contains(&source.id) {
+            if !s
+                .0
+                .knowledge_watch
+                .paused_set(&s.data_dir())
+                .contains(&source.id)
+            {
                 step(s, owner, source, p, now).await;
+                tokio::time::sleep(p.page_pause).await;
             }
         }
     }
@@ -300,7 +353,12 @@ pub(crate) async fn tick(s: &AppState, p: Params, now: i64) {
 
 async fn step(s: &AppState, owner: Scope, source: Source, p: Params, now: i64) {
     let hub = &s.0.knowledge_watch;
-    let mut w = hub.sources.lock().remove(&source.id).unwrap_or_default();
+    let mut w = hub
+        .sources
+        .lock()
+        .get(&source.id)
+        .cloned()
+        .unwrap_or_default();
     let id = source.id;
     // Reads only names and metadata; bounded by the entry cap.
     let observed = {
@@ -347,7 +405,7 @@ async fn step(s: &AppState, owner: Scope, source: Source, p: Params, now: i64) {
     if let Ok((mut done, ok)) = result {
         if !ok {
             done.error = Some("sync_failed");
-            done.failures += 1;
+            done.failures = done.failures.saturating_add(1);
             done.next_check_ms = now + backoff_ms(p.tick_ms, done.failures, p.backoff_cap_ms);
             done.backing_off = true;
         }
@@ -463,7 +521,9 @@ fn folder_statuses(s: &AppState, owner: Scope) -> Result<Vec<KnowledgeWatchStatu
         .list_sources()
         .map_err(|_| ApiError::internal("knowledge store"))?
         .iter()
-        .filter(|src| src.kind == SourceKind::Folder && src.enabled)
+        .filter(|src| {
+            src.kind == SourceKind::Folder && src.enabled && !src.locator.starts_with("imported:")
+        })
         .map(|src| status_of(s, &store, src))
         .collect()
 }
@@ -486,7 +546,9 @@ pub(crate) async fn set_watch_paused(
     ApiJson(input): ApiJson<KnowledgeWatchPause>,
 ) -> Result<Json<KnowledgeWatchStatus>, ApiError> {
     let owner = crate::knowledge::scope(&s, bot)?;
+    let authority = crate::knowledge::try_authority(&s, owner.bot_id)?;
     crate::knowledge::read_blocking(move || {
+        let _authority = authority;
         let store = KnowledgeStore::open_existing(s.data_dir(), owner)
             .map_err(|_| ApiError::internal("knowledge store"))?
             .ok_or_else(|| ApiError::not_found("knowledge source"))?;
@@ -496,7 +558,7 @@ pub(crate) async fn set_watch_paused(
             .filter(|src| src.kind == SourceKind::Folder)
             .ok_or_else(|| ApiError::not_found("knowledge folder"))?;
         s.0.knowledge_watch
-            .set_paused(&s.data_dir(), id, input.paused);
+            .set_paused(&s.data_dir(), id, input.paused)?;
         status_of(&s, &store, &source).map(Json)
     })
     .await

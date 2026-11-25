@@ -4046,12 +4046,13 @@
         "too_many_files": "Dieser Ordner enthält zu viele Dateien. Wählen Sie einen kleineren Ordner."
       },
       "files": "{{count}} Dateien indexiert",
+      "files_one": "{{count}} Datei indexiert",
       "lastSync": "zuletzt aktualisiert {{time}}",
       "neverSynced": "noch nicht aktualisiert",
       "pause": "Updates pausieren",
       "resume": "Updates fortsetzen",
       "state": {
-        "backing_off": "Dateien ändern sich ständig, Prüfung seltener",
+        "backing_off": "Aktualisierungen verlangsamt; neuer Versuch automatisch",
         "paused": "Automatische Updates pausiert",
         "waiting": "Änderungen gefunden, Aktualisierung gleich",
         "watching": "Wird automatisch aktualisiert"

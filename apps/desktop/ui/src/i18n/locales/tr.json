@@ -4046,12 +4046,13 @@
         "too_many_files": "Bu klasörde çok fazla dosya var. Daha küçük bir klasör seçin."
       },
       "files": "{{count}} dosya dizinlendi",
+      "files_one": "{{count}} dosya dizinlendi",
       "lastSync": "son güncelleme {{time}}",
       "neverSynced": "henüz güncellenmedi",
       "pause": "Güncellemeyi duraklat",
       "resume": "Güncellemeye devam et",
       "state": {
-        "backing_off": "Dosyalar sürekli değişiyor, daha seyrek kontrol ediliyor",
+        "backing_off": "Güncellemeler yavaşlatıldı; otomatik yeniden denenecek",
         "paused": "Otomatik güncelleme duraklatıldı",
         "waiting": "Değişiklik bulundu, birazdan güncellenecek",
         "watching": "Otomatik güncelleniyor"
