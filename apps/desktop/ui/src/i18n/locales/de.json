@@ -1570,7 +1570,7 @@
         "stillAsks": "Praxi fragt erneut bei anderen Programmen, beim Starten, bei Befehlen, Skripten, Ziehen, Dateidialogen, Passwortfeldern und jeder anderen Taste. Terminals, Browser, Launcher und Remote-Desktop-Viewer werden nur am Dateinamen erkannt, was eine Heuristik ist: Eine umbenannte Kopie wird nicht erkannt. Die Berechtigung endet mit der Aufgabe und wird nach jedem gestoppten oder fehlgeschlagenen Senden zurückgezogen."
       },
       "countdown": "Automatische Ablehnung in {{seconds}} s",
-      "decidedElsewhere": "Wurde bereits in einem anderen Fenster entschieden.",
+      "decidedElsewhere": "Diese Anfrage wurde bereits bearbeitet oder ist abgelaufen.",
       "deny": "Ablehnen",
       "egress": {
         "hidden": "{{hidden}} unsichtbare Zeichen werden als <U+XXXX> angezeigt",
@@ -1959,7 +1959,7 @@
       "answer": "Antworten",
       "answered": "Du hast geantwortet: {{answer}}",
       "closed": "Diese Frage ist nicht mehr offen.",
-      "decidedElsewhere": "Wurde bereits in einem anderen Fenster beantwortet.",
+      "decidedElsewhere": "Diese Frage wurde bereits beantwortet oder ist abgelaufen.",
       "placeholder": "Andere Antwort eingeben …",
       "title": "Der Bot fragt"
     },

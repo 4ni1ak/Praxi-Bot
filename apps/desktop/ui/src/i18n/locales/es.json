@@ -1570,7 +1570,7 @@
         "stillAsks": "Se pedirá permiso de nuevo para usar otros programas, iniciar aplicaciones, ejecutar comandos o scripts, arrastrar, abrir cuadros de selección de archivos, escribir en campos de contraseña o pulsar cualquier otra tecla. Las terminales, los navegadores, los lanzadores y los visores de escritorio remoto se identifican solo por el nombre del archivo. Si el nombre cambió, no se reconocen. El permiso termina con la tarea y se revoca si se detiene o falla un envío."
       },
       "countdown": "Se rechazará automáticamente en {{seconds}} s",
-      "decidedElsewhere": "Ya se decidió en otra ventana.",
+      "decidedElsewhere": "Esta solicitud ya se ha resuelto o ha caducado.",
       "deny": "Rechazar",
       "egress": {
         "hidden": "Se muestran {{hidden}} caracteres invisibles como <U+XXXX>",
@@ -1959,7 +1959,7 @@
       "answer": "Responder",
       "answered": "Respondiste: {{answer}}",
       "closed": "Esta pregunta ya está cerrada.",
-      "decidedElsewhere": "Ya se respondió en otra ventana.",
+      "decidedElsewhere": "Esta pregunta ya se ha respondido o ha caducado.",
       "placeholder": "Escribe otra respuesta…",
       "title": "El bot pregunta"
     },

@@ -17,7 +17,7 @@ still use their own guarded authority. Navigation stays on app origins and new w
 windows are denied. The main window gains only the explicit open-pop-out command.
 
 Approvals and questions use the existing daemon endpoints: the daemon owns the first
-accepted answer. A stale decision shows that it was decided elsewhere; unrelated errors
+accepted answer. A stale decision is shown as already handled or expired; unrelated errors
 stay errors. Chat cancellation reuses the existing Stop retry machinery with an independent,
 unpersisted observer ledger. The main window remains the native Stop/heartbeat owner.
 

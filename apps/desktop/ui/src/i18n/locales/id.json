@@ -1570,7 +1570,7 @@
         "stillAsks": "It asks again for other programs, launching, commands, scripts, dragging, file dialogs, password fields and any other key. Terminals, browsers, launchers and remote-desktop viewers are recognised by file name only, which is a heuristic: a renamed copy is not recognised. The permission ends with the task and is withdrawn after any stopped or failed send."
       },
       "countdown": "Auto-deny in {{seconds}} s",
-      "decidedElsewhere": "Permintaan ini sudah diputuskan di jendela lain.",
+      "decidedElsewhere": "Permintaan ini sudah ditangani atau sudah kedaluwarsa.",
       "deny": "Deny",
       "egress": {
         "hidden": "{{hidden}} invisible characters are shown as <U+XXXX>",
@@ -1959,7 +1959,7 @@
       "answer": "Answer",
       "answered": "You answered: {{answer}}",
       "closed": "This question is no longer open.",
-      "decidedElsewhere": "Pertanyaan ini sudah dijawab di jendela lain.",
+      "decidedElsewhere": "Pertanyaan ini sudah dijawab atau sudah kedaluwarsa.",
       "placeholder": "Type another answer…",
       "title": "The bot asks"
     },

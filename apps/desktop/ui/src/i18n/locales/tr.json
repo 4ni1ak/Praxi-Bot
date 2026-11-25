@@ -1570,7 +1570,7 @@
         "stillAsks": "Şunlar için yine sorar: başka programlar, program başlatma, komutlar, betikler, sürükleme, dosya iletişim kutuları, parola alanları ve diğer tüm tuşlar. Terminaller, tarayıcılar, başlatıcılar ve uzak masaüstü görüntüleyicileri yalnızca dosya adına göre tanınır; bu bir tahmine dayanır, adı değiştirilmiş kopya tanınmaz. İzin görevle biter ve durdurulan veya başarısız olan her gönderimden sonra geri alınır."
       },
       "countdown": "{{seconds}} sn içinde otomatik reddedilir",
-      "decidedElsewhere": "Başka bir pencerede zaten karar verildi.",
+      "decidedElsewhere": "Bu istek daha önce sonuçlandırıldı veya süresi doldu.",
       "deny": "Reddet",
       "egress": {
         "hidden": "{{hidden}} görünmeyen karakter <U+XXXX> olarak gösterilir",
@@ -1959,7 +1959,7 @@
       "answer": "Yanıtla",
       "answered": "Yanıtın: {{answer}}",
       "closed": "Bu soru artık açık değil.",
-      "decidedElsewhere": "Başka bir pencerede zaten yanıtlandı.",
+      "decidedElsewhere": "Bu soru daha önce yanıtlandı veya süresi doldu.",
       "placeholder": "Başka bir yanıt yaz…",
       "title": "Bot soruyor"
     },
