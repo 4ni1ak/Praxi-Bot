@@ -15,6 +15,10 @@ pub enum StageFile {
     SetupHeadless,
     /// The capability pack catalog (`packs.txt`).
     Packs,
+    /// The web scraping add-on's program, pinned requirements and service unit (`packs/scrape/`).
+    ScrapeService,
+    ScrapeLock,
+    ScrapeUnit,
 }
 
 /// `provision.sh` subcommands (fixed set).
@@ -89,6 +93,9 @@ impl RemoteCmd {
             Self::Stage(StageFile::Installer) => stage_cmd!("install-linux.sh"),
             Self::Stage(StageFile::SetupHeadless) => stage_cmd!("setup-headless.sh"),
             Self::Stage(StageFile::Packs) => stage_cmd!("packs.txt"),
+            Self::Stage(StageFile::ScrapeService) => stage_cmd!("praxi_scrape.py"),
+            Self::Stage(StageFile::ScrapeLock) => stage_cmd!("scrape-requirements.lock"),
+            Self::Stage(StageFile::ScrapeUnit) => stage_cmd!("praxi-scrape.service"),
             Self::Provision(Sub::Preflight) => user_cmd!("preflight"),
             Self::Provision(Sub::Status) => user_cmd!("status"),
             Self::Provision(Sub::InstallGh) => root_cmd!("install-gh"),
@@ -205,6 +212,9 @@ mod tests {
             RemoteCmd::Stage(StageFile::Installer),
             RemoteCmd::Stage(StageFile::SetupHeadless),
             RemoteCmd::Stage(StageFile::Packs),
+            RemoteCmd::Stage(StageFile::ScrapeService),
+            RemoteCmd::Stage(StageFile::ScrapeLock),
+            RemoteCmd::Stage(StageFile::ScrapeUnit),
             RemoteCmd::Provision(PacksFacts),
             RemoteCmd::Provision(PacksPlan),
             RemoteCmd::Provision(PackInstall),

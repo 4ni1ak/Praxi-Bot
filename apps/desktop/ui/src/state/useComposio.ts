@@ -76,6 +76,10 @@ export function useComposio(active: boolean, query: string, group: string) {
         }
         setItems((prev) => (from ? appendPage(prev, page.items) : page.items));
         setMeta({ source: page.source, refreshing: page.refreshing, error: page.error });
+        if (page.error === "unauthorized") {
+          // The saved login is refused: the status carries `login_expired`, which the Connect flow reads.
+          void reloadStatus();
+        }
         setCursor(page.next_cursor ?? null);
         setError(null);
       } catch (e) {
@@ -88,7 +92,7 @@ export function useComposio(active: boolean, query: string, group: string) {
         }
       }
     },
-    [client]
+    [client, reloadStatus]
   );
 
   // Status and apps when the modal opens.

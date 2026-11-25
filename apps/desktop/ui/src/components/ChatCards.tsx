@@ -60,6 +60,7 @@ import { StepIcon } from "./StepIcon";
 import formStyles from "./Form.module.css";
 import styles from "./ChatCards.module.css";
 import { humanLine, humanToolError } from "../lib/humanError";
+import { isAlreadyDecidedError } from "../lib/popout";
 import {
   COMMAND_LIMIT,
   INPUT_LIMIT,
@@ -652,6 +653,7 @@ export function ApprovalCard({
 }: ApprovalCardProps) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
+  const [decidedElsewhere, setDecidedElsewhere] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const outbound = isOutboundSend(tool.name);
@@ -702,12 +704,17 @@ export function ApprovalCard({
     try {
       await onDecide(decision, scope, why);
     } catch (e) {
-      setError(humanLine(e));
-      setBusy(false);
+      if (isAlreadyDecidedError(e)) {
+        setDecidedElsewhere(true);
+        setError(t("chat.approval.decidedElsewhere"));
+      } else {
+        setError(humanLine(e));
+        setBusy(false);
+      }
     }
   };
 
-  const disabled = busy || remaining === 0;
+  const disabled = busy || decidedElsewhere || remaining === 0;
   const glyph = describeTool(tool.name, tool.input, brandName);
   const tt = t as unknown as T;
   // `use_tool` wraps the real call: the card words (and the glyph shows) the call that would run.
@@ -1047,9 +1054,10 @@ export function QuestionCard({
   const { t } = useTranslation();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [decidedElsewhere, setDecidedElsewhere] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const answered = q.answer !== undefined;
-  const locked = answered || q.closed === true;
+  const locked = answered || decidedElsewhere || q.closed === true;
 
   const submit = async (answer: string) => {
     if (!answer.trim()) {
@@ -1060,7 +1068,12 @@ export function QuestionCard({
     try {
       await onAnswer(answer.trim());
     } catch (e) {
-      setError(humanLine(e));
+      if (isAlreadyDecidedError(e)) {
+        setDecidedElsewhere(true);
+        setError(t("chat.question.decidedElsewhere"));
+      } else {
+        setError(humanLine(e));
+      }
     } finally {
       setBusy(false);
     }

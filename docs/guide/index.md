@@ -101,6 +101,7 @@ Seven short pages in plain words. Read them in this order:
 | Read and add calendar events | [Calendar (CalDAV)](calendar.md) |
 | Let a bot read Home Assistant entities and call services | [Home Assistant](home-assistant.md) |
 | Let a bot search the web and read pages without a browser | [Web tools](web.md) |
+| Add the optional page reader for cleaner text and small crawls | [Web scraping add-on](web-scraping.md) |
 | Give a bot a scratchpad between runs | [Notes](agent-tools.md) |
 | Let a bot work in apps on your own PC | [Computer use](computer-use.md) |
 | Set up knowledge embeddings (optional; knowledge search works without them) | [Set up knowledge embeddings](knowledge-embeddings.md) |

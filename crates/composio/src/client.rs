@@ -252,7 +252,13 @@ impl ComposioClient {
                 project_id,
             } => {
                 headers.insert(HeaderName::from_static("x-user-api-key"), secret(key)?);
-                if let (Some(org), Some(project)) = (org_id, project_id) {
+                // Composio wants the NANO ids here (`proj_...`); a UUID is refused
+                // with a 401/403 on every call, so such a pair is never sent (the
+                // key alone addresses the developer project).
+                if let (Some(org), Some(project)) = (org_id, project_id)
+                    && !looks_like_uuid(org)
+                    && !looks_like_uuid(project)
+                {
                     headers.insert(HeaderName::from_static("x-org-id"), plain(org)?);
                     headers.insert(HeaderName::from_static("x-project-id"), plain(project)?);
                 }
@@ -457,8 +463,10 @@ impl ComposioClient {
 
     /// Org and project of the logged-in user key.
     ///
-    /// UNVERIFIED: `GET /auth/session/info` with `x-user-api-key`; the CLI
-    /// reads `project.id` and `project.org.id` (`services/composio-account.ts`).
+    /// `GET /auth/session/info` with `x-user-api-key`.  The CLI reads the org
+    /// from `project.org.id` and the project from `project.nano_id`
+    /// (`effects/browser-login.ts`): `project.id` is a UUID, which Composio
+    /// refuses in the `x-project-id` header.  A UUID is never returned here.
     ///
     /// # Errors
     /// API or transport errors.
@@ -470,10 +478,13 @@ impl ComposioClient {
         let pick = |p: &str| {
             v.pointer(p)
                 .and_then(Value::as_str)
-                .filter(|s| valid_id(s))
+                .filter(|s| valid_id(s) && !looks_like_uuid(s))
                 .map(str::to_owned)
         };
-        Ok((pick("/project/org/id"), pick("/project/id")))
+        Ok((
+            pick("/project/org/id"),
+            pick("/project/nano_id").or_else(|| pick("/project/id")),
+        ))
     }
 
     /// A Tool Router session for `user_id` (used to create connect links when
@@ -716,6 +727,16 @@ impl ComposioClient {
         }
         Ok(v.get("data").cloned().unwrap_or(Value::Null))
     }
+}
+
+/// Whether `id` has the 8-4-4-4-12 shape of a UUID (Composio's nano ids never do).
+#[must_use]
+pub fn looks_like_uuid(id: &str) -> bool {
+    id.len() == 36
+        && id.char_indices().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => c.is_ascii_hexdigit(),
+        })
 }
 
 fn valid_id(id: &str) -> bool {

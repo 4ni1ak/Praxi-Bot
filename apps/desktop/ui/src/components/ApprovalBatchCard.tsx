@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import { callIdsOf, type BatchRow } from "../lib/approvalBatch";
 import { humanLine } from "../lib/humanError";
+import { isAlreadyDecidedError } from "../lib/popoutModel";
 import { toolSentence } from "../lib/runSentence";
 import { summarizeInput } from "./ChatCards";
 import styles from "./ChatCards.module.css";
@@ -49,7 +50,7 @@ export function ApprovalBatchCard({ rows, onDecide, variant = "inline" }: Props)
         if (deny.length > 0) await onDecide(deny, "deny");
       }
     } catch (e) {
-      setError(humanLine(e));
+      setError(isAlreadyDecidedError(e) ? t("chat.approval.decidedElsewhere") : humanLine(e));
       setBusy(false);
     }
   };

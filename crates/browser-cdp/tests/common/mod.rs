@@ -30,6 +30,8 @@ const HEAVY: &str = "<title>Heavy</title><h1>Heavy</h1><div id=root></div><scrip
 const r=document.getElementById('root');for(let i=0;i<1000;i++){const a=document.createElement('a');a.href='#'+i;a.textContent='link '+i;r.append(a);}\
 for(let i=0;i<4000;i++){const d=document.createElement('div');d.textContent='row '+i;r.append(d);}</script>";
 
+const CONSENT: &str = "<title>consent-start</title><p>Shop</p><div id=\"onetrust-banner-sdk\" style=\"position:fixed;bottom:0;left:0;right:0;height:100px;background:#ddd\"><button id=\"onetrust-reject-all-handler\" onclick=\"document.title='rejected'\">Reject All</button></div>";
+
 /// Start the server on a random port; returns the port.
 pub async fn serve() -> u16 {
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -72,6 +74,7 @@ pub async fn serve() -> u16 {
                             "/confirm" => CONFIRM,
                             "/beforeunload" => BEFOREUNLOAD,
                             "/heavy" => HEAVY,
+                            "/consent" => CONSENT,
                             _ => "<title>other</title><p>other</p>",
                         };
                         format!(

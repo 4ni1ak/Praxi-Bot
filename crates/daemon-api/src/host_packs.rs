@@ -31,6 +31,7 @@ pub enum PackAction {
 
 /// One pack on one server.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[allow(clippy::struct_excessive_bools)] // independent catalog facts, serialised one by one
 pub struct HostPackInfo {
     /// Catalog id (`office`, `docs`, `ocr`, `media`, `dev`). The app shows its own localised name.
     pub id: String,
@@ -42,6 +43,24 @@ pub struct HostPackInfo {
     pub base: bool,
     /// False for shared system tools that Praxi never removes.
     pub removable: bool,
+    /// SPDX licence expression of the software the pack installs (shown as a chip for every pack).
+    pub license: String,
+    /// GPL/AGPL family.
+    pub copyleft: bool,
+    /// Installed from the server's own Debian/Ubuntu software sources (Praxi ships nothing).
+    pub distro: bool,
+    /// Separate copyleft software downloaded from its author: the owner must acknowledge the
+    /// licence notice (`PackPlanInput.acknowledged`) before it is installed.
+    pub needs_ack: bool,
+    /// Where the software's source lives.
+    pub source_url: String,
+    /// The licence text.
+    pub notice_url: String,
+    /// Pinned upstream version (empty for distribution packs).
+    pub version: String,
+    /// SHA-256 of the pinned requirements file, for packs that have one.
+    #[serde(default)]
+    pub lock_sha256: Option<String>,
 }
 
 /// One program the fact sheet looked for.
@@ -77,6 +96,10 @@ pub struct PackPlanInput {
     pub action: PackAction,
     /// Catalog ids. Anything else is refused.
     pub packs: Vec<String>,
+    /// Catalog ids whose licence notice the owner has read and accepted. A pack that needs it
+    /// (`HostPackInfo.needs_ack`) cannot be installed without its id here.
+    #[serde(default)]
+    pub acknowledged: Vec<String>,
 }
 
 /// What would happen to one pack. Nothing has been changed yet.
@@ -90,8 +113,8 @@ pub struct PackPlanItem {
     pub size_mb: u32,
     /// Already as wanted: nothing to do.
     pub noop: bool,
-    /// Why it cannot run: `shared`, `dependants`, `unavailable`, `needs_admin`, `unsupported`,
-    /// `connection` or `failed`.
+    /// Why it cannot run: `shared`, `dependants`, `unavailable`, `needs_python`, `needs_ack`,
+    /// `needs_admin`, `unsupported`, `connection` or `failed`.
     #[serde(default)]
     pub blocked: Option<String>,
 }

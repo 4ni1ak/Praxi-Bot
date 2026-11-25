@@ -25,22 +25,60 @@ export function onboardingAllowed(activeComputerId: string): boolean {
 }
 
 /**
+ * Refusals an older host (or a computer that is not yet confirmed as administrator) gives for things
+ * the owner's confirmed desktop CAN do on a current host. One sentence tells the person what to do
+ * (confirm this computer, update the host) instead of a dead end. Matched on the lower-cased English
+ * text the daemon sends; those strings are never shown to people.
+ */
+const NEEDS_ADMIN: readonly string[] = [
+  "this needs the owner key",
+  "the execution policy is managed on the host",
+  "secrets are managed on the host",
+  "tool servers and skills are managed on the host",
+  "mcp server management is",
+  "mcp sign-in is a host-local",
+  "account credentials are managed on the host",
+  "permissions and tools of a bot on a host are managed on the host",
+  "knowledge settings are managed by the local owner",
+  "knowledge sources and embedding authority",
+  "host-local provider management is not allowed",
+  "connection tests spend this host",
+  "recent logs are available only",
+  "the audit log is available only",
+  "the outgoing-mail guard",
+  "bot profile files are handled by the owner",
+  "site icons are fetched for the local owner",
+  "data folder sizes and clear cache",
+  "embedding providers and their keys",
+  "trusted folders are a host-local",
+  "incoming webhooks are managed on this computer",
+  "mailboxes are read from the owner's desktop",
+  "per-site and per-app permission rules are managed",
+  "personal memory is managed by the local owner",
+  "can only be changed at this computer",
+  "fill secrets are managed by the local owner",
+  "shared skill management is local-owner only"
+];
+
+/**
  * Host refusal messages (daemon `403` bodies) mapped to i18n keys under `hostMode.refusal`.
  * Matched on the English text the daemon sends; the daemon strings are not shown to people.
+ * Order matters: the first needle found wins.
  */
 const REFUSALS: ReadonlyArray<readonly [needle: string, key: string]> = [
   ["the owner must confirm this desktop on the host", "adminRequired"],
-  ["execution policy is managed on the host", "policy"],
-  ["secrets are managed on the host", "secrets"],
-  ["tool servers and skills are managed on the host", "tools"],
-  ["mcp server management is a host-local", "tools"],
-  ["mcp sign-in is a host-local", "tools"],
-  ["account credentials are managed on the host", "credentials"],
+  ...NEEDS_ADMIN.map((needle) => [needle, "needsAdmin"] as const),
+  // What a host never lets the app do, even as administrator (see `peer.rs`, `ADMIN_DESKTOP_NEVER`).
   ["host transfer and channel pairing are done on the host", "hostTransfer"],
   ["pairing and host lifecycle are managed on the host", "lifecycle"],
-  ["permissions and tools of a bot on a host are managed on the host", "botPermissions"],
-  ["knowledge settings are managed by the local owner", "knowledge"],
-  ["composio connections are managed by the owner", "composio"],
+  ["host links are managed by the local user only", "hostOnly"],
+  ["the mcp server facade is host-local", "hostOnly"],
+  ["host-local diagnostics are not allowed", "hostOnly"],
+  ["not a peer path", "hostOnly"],
+  ["screen permissions of devices are granted on the host", "hostOnly"],
+  ["revealing a stored secret is done at the host", "hostOnly"],
+  ["a stored secret is revealed only at this computer", "hostOnly"],
+  ["composio connections are managed by the owner", "ownerOnly"],
   ["only the local user answers overlay questions", "overlay"],
   ["only the local user may do this", "localOnly"],
   ["only the local user can clear it", "localOnly"],
@@ -48,15 +86,19 @@ const REFUSALS: ReadonlyArray<readonly [needle: string, key: string]> = [
   ["screen:input denied", "screenInput"],
   ["screen:view denied", "screenInput"],
   ["input grant for this device", "screenInput"],
-  ["host-local provider management is not allowed", "localProviders"],
-  ["connection tests spend this host", "connectionTest"],
   ["local-owner only", "ownerOnly"],
   ["peer role does not allow this operation", "role"],
   ["paired peer identity required", "role"]
 ];
 
-/** i18n key (under `hostMode.refusal.`) for a refusal, or `null` when it is not one. */
-export function hostRefusalKey(status: number | undefined, message: string): string | null {
+/**
+ * i18n key (under `hostMode.refusal.`) for a refusal, or `null` when it is not one. The stable
+ * error `code` counts as much as the text: a daemon that answers `owner_key_required` is asking
+ * for what the host's administrator desktop has.
+ */
+export function hostRefusalKey(status: number | undefined, message: string, code?: string): string | null {
+  if (code === "owner_key_required") return "needsAdmin";
+  if (code === "host_admin_required") return "adminRequired";
   const text = message.toLowerCase();
   for (const [needle, key] of REFUSALS) {
     if (text.includes(needle)) {

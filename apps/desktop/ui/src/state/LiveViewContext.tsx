@@ -175,11 +175,20 @@ function initialMockViewerOpen(): boolean {
 
 export function LiveViewProvider({
   children,
-  scope = "home"
+  scope = "home",
+  initialOpen,
+  focusBotId = null,
+  initialTargetId = null
 }: {
   children: ReactNode;
   /** `local`: this computer's own provider (the outer one), also published as the local view. */
   scope?: "home" | "local";
+  /** Start with the viewer open (used by the dedicated live-view pop-out window). */
+  initialOpen?: boolean;
+  /** A dedicated viewer follows this bot when no computer card supplies its focus. */
+  focusBotId?: string | null;
+  /** Preselect a target id once loaded (used by the dedicated live-view pop-out window). */
+  initialTargetId?: string | null;
 }) {
   const { client, onDaemonEvent, bots } = useDaemon();
 
@@ -218,7 +227,7 @@ export function LiveViewProvider({
   const [targetsStatus, setTargetsStatus] = useState<TargetsStatus>("unknown");
   const [targetsError, setTargetsError] = useState<string | null>(null);
   const [availability, setAvailability] = useState<TargetUnavailable[]>([]);
-  const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  const [selectedTargetId, setSelectedTargetId] = useState<string | null>(initialTargetId ?? null);
   const [controlState, setControlStateRaw] = useState<ControlStateDto | null>(
     null
   );
@@ -244,7 +253,9 @@ export function LiveViewProvider({
   const pauseClearingRef = useRef(false);
   const toast = useToast();
   const { t } = useTranslation();
-  const [viewerOpen, setViewerOpen] = useState<boolean>(initialMockViewerOpen);
+  const [viewerOpen, setViewerOpen] = useState<boolean>(() =>
+    typeof initialOpen === "boolean" ? initialOpen : initialMockViewerOpen()
+  );
   const [cardDemand, setCardDemandState] = useState<{
     active: boolean;
     botId: string | null;
@@ -490,7 +501,7 @@ export function LiveViewProvider({
     }
   }, [client, viewerOpen, cardDemand.active, refreshTargets]);
 
-  const botFocus = cardDemand.botId ?? (bots.length > 0 ? bots[0].id : null);
+  const botFocus = cardDemand.botId ?? focusBotId ?? (bots.length > 0 ? bots[0].id : null);
   const preferDesktop = cardDemand.active && !viewerOpen && !isControlBusy(state);
   const preferredTargetId = preferDesktop ? null : selectedTargetId;
   const selectedTarget = useMemo(

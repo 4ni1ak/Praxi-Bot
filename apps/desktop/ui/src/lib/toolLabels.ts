@@ -99,6 +99,7 @@ const secondsChip = (i: Record<string, unknown>): StepChip[] => {
 const TABLE: Record<string, Entry> = {
   web_search: { id: "web_search", icon: "search", chips: queryChip },
   web_extract: { id: "web_read", icon: "globe", chips: urlChip },
+  web_scrape: { id: "web_read", icon: "globe", chips: urlChip },
   web_feed: { id: "web_read", icon: "globe", chips: urlChip },
   web_metadata: { id: "web_read", icon: "globe", chips: urlChip },
   web_sitemap: { id: "web_read", icon: "globe", chips: urlChip },
@@ -122,6 +123,7 @@ const TABLE: Record<string, Entry> = {
   browser_press: { id: "browser_press", icon: "globe" },
   browser_select: { id: "browser_select", icon: "globe" },
   browser_scroll: { id: "browser_view", icon: "globe" },
+  browser_dismiss_consent: { id: "browser_dismiss_consent", icon: "globe" },
   browser_hover: { id: "browser_hover", icon: "globe" },
   browser_select_text: { id: "browser_select_text", icon: "globe" },
   browser_back: { id: "browser_view", icon: "globe" },

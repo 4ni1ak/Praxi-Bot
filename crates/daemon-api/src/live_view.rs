@@ -87,6 +87,11 @@ impl Actor {
             decisions: false,
         }
     }
+    /// The owner of this daemon: the person at its own app, or the administrator
+    /// desktop of a host (the owner there, see `peer::admin_desktop_never`).
+    pub(crate) fn is_owner(&self) -> bool {
+        self.local || self.admin
+    }
     pub(crate) fn peer(p: &crate::PeerIdentity) -> Self {
         Self {
             key: format!("peer:{}", p.key),

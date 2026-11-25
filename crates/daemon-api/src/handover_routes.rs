@@ -74,7 +74,7 @@ fn call_id(raw: &str) -> Result<ToolCallId, ApiError> {
 }
 
 fn local(actor: &Actor) -> Result<(), ApiError> {
-    if actor.local {
+    if actor.is_owner() {
         Ok(())
     } else {
         Err(ApiError::forbidden(

@@ -1,5 +1,6 @@
 import i18n from "i18next";
 import type { StartupDiagnostics } from "../api/connection.ts";
+import { emailProviderKind } from "./emailProvider.ts";
 import { hostRefusalKey } from "./hostMode.ts";
 import { redactDetails } from "./redactDetails.ts";
 
@@ -33,6 +34,7 @@ export const DAEMON_ERROR_CODES = [
   "busy",
   "component_conflict",
   "composio_error",
+  "composio_login_expired",
   "composio_not_configured",
   "composio_rate_limited",
   "conflict",
@@ -49,6 +51,7 @@ export const DAEMON_ERROR_CODES = [
   "host_not_permitted",
   "host_outdated",
   "host_setup_conflict",
+  "host_terminal_failed",
   "host_unreachable",
   "input_busy",
   "input_rate_limited",
@@ -286,6 +289,12 @@ export function humanError(err: unknown): HumanError {
 
   // A paired host's refusal: one sentence naming the server (the raw daemon text stays in details).
   const host = typeof env.host === "string" ? env.host : undefined;
+  // The provider (AgentMail) refused: the host DID answer, with a 502 that carries this code. Say what
+  // the provider said no to, never "the host does not respond".
+  if (code === "email_provider_error") {
+    const kind = emailProviderKind(raw);
+    return pack(kind === "other" ? "codes.email_provider_error" : `emailProvider.${kind}`, "email_provider_error", details);
+  }
   // The host never answered (no connection, or the proxy timed out waiting for it): not a refusal.
   if (host && (code === "network" || status === 502 || status === 504)) {
     return {
@@ -296,11 +305,11 @@ export function humanError(err: unknown): HumanError {
       details
     };
   }
-  const refusal = host ? hostRefusalKey(status, raw) : null;
+  const refusal = host ? hostRefusalKey(status, raw, code) : null;
   if (host && refusal) {
     return {
       code: "host_refusal",
-      title: tr(`hostMode.refusal.${refusal}`, { name: host, reason: raw }),
+      title: tr(`hostMode.refusal.${refusal}`, { name: host }),
       hint: "",
       details
     };

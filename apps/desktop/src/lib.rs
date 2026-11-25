@@ -7,6 +7,7 @@ pub mod daemon;
 mod deep_link;
 pub mod listener;
 mod microphone;
+pub mod popout;
 pub mod prereq;
 pub mod quick_ask;
 pub mod shell;
@@ -30,7 +31,10 @@ use tauri::{
     RunEvent, State, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent,
 };
 use widget_visibility::WidgetVisibility;
-use window_gate::{MAIN_AND_WIDGET, MAIN_ONLY, require_window};
+use window_gate::{
+    MAIN_AND_WIDGET, MAIN_AND_WIDGET_AND_CHAT, MAIN_AND_WIDGET_AND_POPOUT, MAIN_ONLY,
+    require_window,
+};
 
 const MENU_ID_SIMULATE_RUN: &str = "dev.simulate_bot_run";
 const DEEP_LINK_PENDING_EVENT: &str = "shell:deep_link_pending";
@@ -595,7 +599,7 @@ fn pause_bot_run(
     window: Window,
     control: State<'_, ControlHandle>,
 ) -> Result<ControlSnapshot, String> {
-    require_window(&window, MAIN_AND_WIDGET)?;
+    require_window(&window, MAIN_AND_WIDGET_AND_CHAT)?;
     control.pause().map_err(|e| e.to_string())
 }
 
@@ -605,7 +609,7 @@ fn resume_bot_run(
     window: Window,
     control: State<'_, ControlHandle>,
 ) -> Result<ControlSnapshot, String> {
-    require_window(&window, MAIN_AND_WIDGET)?;
+    require_window(&window, MAIN_AND_WIDGET_AND_CHAT)?;
     control.resume().map_err(|e| e.to_string())
 }
 
@@ -615,7 +619,7 @@ fn take_the_wheel(
     window: Window,
     control: State<'_, ControlHandle>,
 ) -> Result<ControlSnapshot, String> {
-    require_window(&window, MAIN_AND_WIDGET)?;
+    require_window(&window, MAIN_AND_WIDGET_AND_CHAT)?;
     control.take_the_wheel().map_err(|e| e.to_string())
 }
 
@@ -625,7 +629,7 @@ fn give_back_control(
     window: Window,
     control: State<'_, ControlHandle>,
 ) -> Result<ControlSnapshot, String> {
-    require_window(&window, MAIN_AND_WIDGET)?;
+    require_window(&window, MAIN_AND_WIDGET_AND_CHAT)?;
     control.give_back().map_err(|e| e.to_string())
 }
 
@@ -636,7 +640,7 @@ fn stop_bot_run(
     control: State<'_, ControlHandle>,
     token: Option<String>,
 ) -> Result<ControlSnapshot, String> {
-    require_window(&window, MAIN_AND_WIDGET)?;
+    require_window(&window, MAIN_AND_WIDGET_AND_POPOUT)?;
     Ok(control.stop_user(token))
 }
 
@@ -819,6 +823,98 @@ fn open_log_folder(window: Window) -> Result<(), String> {
     require_window(&window, MAIN_ONLY)?;
     let dir = daemon::log_folder()?;
     open::that(&dir).map_err(|e| format!("cannot open {} ({e})", dir.display()))
+}
+
+fn is_safe_workspace_folder_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > 80 || name == "." || name == ".." {
+        return false;
+    }
+    if name.ends_with('.') || name.ends_with(' ') {
+        return false;
+    }
+    if name.chars().any(|c| {
+        c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+    }) {
+        return false;
+    }
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        && !((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit())
+}
+
+#[cfg(windows)]
+fn is_reparse_point_dir(meta: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    meta.file_attributes() & 0x0400 != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point_dir(_meta: &std::fs::Metadata) -> bool {
+    false
+}
+
+/// Open either the Praxi workspaces root (`Documents/Praxi`) or a single bot
+/// workspace folder under it in the OS file manager. Main window only.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn open_workspace_folder(
+    app: tauri::AppHandle,
+    window: Window,
+    folder_name: Option<String>,
+) -> Result<(), String> {
+    require_window(&window, MAIN_ONLY)?;
+    let root = if let Some(override_dir) = std::env::var_os("BOT_WORKSPACES_DIR")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+    {
+        override_dir
+    } else {
+        app.path()
+            .document_dir()
+            .map_err(|_| "documents folder unavailable".to_owned())?
+            .join("Praxi")
+    };
+    if let Ok(meta) = std::fs::symlink_metadata(&root) {
+        if meta.file_type().is_symlink() || is_reparse_point_dir(&meta) || !meta.is_dir() {
+            return Err("workspaces folder is not a plain directory".to_owned());
+        }
+    } else {
+        std::fs::create_dir_all(&root).map_err(|_| "workspaces folder unavailable".to_owned())?;
+    }
+
+    let target = match folder_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(name) => {
+            if !is_safe_workspace_folder_name(name) {
+                return Err("invalid workspace folder name".to_owned());
+            }
+            let dir = root.join(name);
+            if let Ok(meta) = std::fs::symlink_metadata(&dir) {
+                if meta.file_type().is_symlink() || is_reparse_point_dir(&meta) || !meta.is_dir() {
+                    return Err("bot workspace is not a plain directory".to_owned());
+                }
+            } else {
+                std::fs::create_dir(&dir)
+                    .map_err(|_| "bot workspace folder unavailable".to_owned())?;
+            }
+            let root_canon = std::fs::canonicalize(&root)
+                .map_err(|_| "workspaces folder unavailable".to_owned())?;
+            let dir_canon = std::fs::canonicalize(&dir)
+                .map_err(|_| "bot workspace folder unavailable".to_owned())?;
+            if !dir_canon.starts_with(&root_canon) || dir_canon == root_canon {
+                return Err("bot workspace path is unsafe".to_owned());
+            }
+            dir
+        }
+        None => root,
+    };
+
+    open::that(&target).map_err(|e| format!("cannot open {} ({e})", target.display()))
 }
 
 /// First-run prerequisite check for the start-up screen: `WebView2`, the service file, the data
@@ -1137,6 +1233,8 @@ pub fn run() {
     let daemon_handle = Arc::new(DaemonHandle::default());
     let daemon_for_exit = Arc::clone(&daemon_handle);
     let daemon_for_setup = Arc::clone(&daemon_handle);
+    let popout_state = Arc::new(popout::PopoutState::load());
+    let popout_for_exit = Arc::clone(&popout_state);
 
     let context = tauri::generate_context!();
     let (update_plugin, update_runtime) = update::init(&context.package_info().version.to_string());
@@ -1158,12 +1256,24 @@ pub fn run() {
         } else {
             None
         };
+        let chat_popout_id = match &activation {
+            Some(deep_link::Activation::Chat { id }) => Some(id.clone()),
+            _ => None,
+        };
         let notify = activation.is_some();
         if let Some(activation) = activation {
             app.state::<deep_link::Pending>().replace(activation);
         }
         let app_handle = app.clone();
-        let _ = app.run_on_main_thread(move || focus_main_for_launch(&app_handle, notify));
+        let _ = app.run_on_main_thread(move || {
+            if let Some(ref chat_id) = chat_popout_id
+                && popout::focus_existing_chat(&app_handle, chat_id)
+            {
+                let _ = app_handle.state::<deep_link::Pending>().take();
+                return;
+            }
+            focus_main_for_launch(&app_handle, notify);
+        });
     }));
     let app = builder
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -1171,6 +1281,7 @@ pub fn run() {
         .plugin(update_plugin)
         .plugin(quick_ask::plugin())
         .manage(quick_ask::QuickAskState::default())
+        .manage(popout_state)
         .manage(update_runtime)
         .manage(shell::TrayState::default())
         .manage(control)
@@ -1212,25 +1323,53 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() == "main" && matches!(event, WindowEvent::Focused(_)) {
+            let label = window.label();
+            if label == "main" && matches!(event, WindowEvent::Focused(_)) {
                 // Leaving the main window shows the widget (while a run is active); coming
                 // back hides it again, so it never sits on top of the chat or right panel.
                 apply_widget_visibility(window.app_handle());
             }
-            // Like a menu: the Quick ask window goes away when the user clicks elsewhere.
-            if window.label() == quick_ask::WINDOW_LABEL
-                && matches!(event, WindowEvent::Focused(false))
+            if popout::is_popout_label(label)
+                && let Some(popouts) = window.app_handle().try_state::<Arc<popout::PopoutState>>()
             {
+                let scale = window.scale_factor().unwrap_or(1.0);
+                match event {
+                    WindowEvent::Moved(pos) => {
+                        popouts.record_move(label, pos.x, pos.y, scale);
+                    }
+                    WindowEvent::Resized(size) => {
+                        popouts.record_resize(label, size.width, size.height, scale);
+                    }
+                    WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                        if let Ok(pos) = window.outer_position() {
+                            popouts.record_move(label, pos.x, pos.y, *scale_factor);
+                        }
+                        if let Ok(size) = window.inner_size() {
+                            popouts.record_resize(label, size.width, size.height, *scale_factor);
+                        }
+                    }
+                    WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => {
+                        // Closing a pop-out saves its geometry and NEVER stops a run or exits.
+                        popouts.persist();
+                    }
+                    _ => {}
+                }
+            }
+            // Like a menu: the Quick ask window goes away when the user clicks elsewhere.
+            if label == quick_ask::WINDOW_LABEL && matches!(event, WindowEvent::Focused(false)) {
                 let _ = window.hide();
             }
             if let WindowEvent::CloseRequested { api, .. } = event
-                && window.label() == "main"
+                && label == "main"
             {
                 shell::handle_close_request(window.app_handle(), api);
             }
-            if window.label() == "main" && matches!(event, WindowEvent::Destroyed) {
+            if label == "main" && matches!(event, WindowEvent::Destroyed) {
                 // `exit` may end the process without running `RunEvent::Exit`,
                 // so stop a daemon this app started right here.
+                if let Some(popouts) = window.app_handle().try_state::<Arc<popout::PopoutState>>() {
+                    popouts.persist();
+                }
                 if let Some(daemon) = window.app_handle().try_state::<Arc<DaemonHandle>>() {
                     daemon.stop();
                 }
@@ -1263,6 +1402,7 @@ pub fn run() {
             daemon_restart,
             daemon_diagnostics,
             open_log_folder,
+            open_workspace_folder,
             prereq_check,
             open_webview_download,
             providers_cli,
@@ -1284,6 +1424,11 @@ pub fn run() {
             quick_ask::quick_ask_connect,
             quick_ask::quick_ask_hide,
             quick_ask::quick_ask_open_in_app,
+            popout::open_popout_window,
+            popout::popout_connect,
+            popout::popout_owner_key,
+            popout::popout_set_always_on_top,
+            popout::popout_focus_main,
         ])
         .build(context)
         .expect("error while building tauri application");
@@ -1302,6 +1447,7 @@ pub fn run() {
             }
         }
         if matches!(event, RunEvent::Exit) {
+            popout_for_exit.persist();
             // Stop the daemon only if this app started it.
             daemon_for_exit.stop();
         }
@@ -1537,11 +1683,11 @@ mod acl_tests {
         ("open_composio_link", "MAIN_ONLY"),
         ("begin_action", "MAIN_ONLY"),
         ("start_bot_run", "MAIN_ONLY"),
-        ("pause_bot_run", "MAIN_AND_WIDGET"),
-        ("resume_bot_run", "MAIN_AND_WIDGET"),
-        ("take_the_wheel", "MAIN_AND_WIDGET"),
-        ("give_back_control", "MAIN_AND_WIDGET"),
-        ("stop_bot_run", "MAIN_AND_WIDGET"),
+        ("pause_bot_run", "MAIN_AND_WIDGET_AND_CHAT"),
+        ("resume_bot_run", "MAIN_AND_WIDGET_AND_CHAT"),
+        ("take_the_wheel", "MAIN_AND_WIDGET_AND_CHAT"),
+        ("give_back_control", "MAIN_AND_WIDGET_AND_CHAT"),
+        ("stop_bot_run", "MAIN_AND_WIDGET_AND_POPOUT"),
         ("finish_bot_run", "MAIN_ONLY"),
         ("ack_stop", "MAIN_ONLY"),
         ("dismiss_stop_widget", "MAIN_AND_WIDGET"),
@@ -1555,6 +1701,7 @@ mod acl_tests {
         ("daemon_restart", "MAIN_ONLY"),
         ("daemon_diagnostics", "MAIN_ONLY"),
         ("open_log_folder", "MAIN_ONLY"),
+        ("open_workspace_folder", "MAIN_ONLY"),
         ("prereq_check", "MAIN_ONLY"),
         ("open_webview_download", "MAIN_ONLY"),
         ("providers_cli", "MAIN_ONLY"),
@@ -1575,6 +1722,11 @@ mod acl_tests {
         ("quick_ask_connect", "QUICK_ASK_ONLY"),
         ("quick_ask_hide", "QUICK_ASK_ONLY"),
         ("quick_ask_open_in_app", "QUICK_ASK_ONLY"),
+        ("open_popout_window", "MAIN_ONLY"),
+        ("popout_connect", "POPOUT_ONLY"),
+        ("popout_owner_key", "POPOUT_ONLY"),
+        ("popout_set_always_on_top", "POPOUT_ONLY"),
+        ("popout_focus_main", "POPOUT_ONLY"),
     ];
 
     /// Read-only commands with no side effect beyond returning state; the
@@ -1696,6 +1848,10 @@ mod acl_tests {
         "quick_ask_connect",
         "quick_ask_hide",
         "quick_ask_open_in_app",
+        "popout_connect",
+        "popout_owner_key",
+        "popout_set_always_on_top",
+        "popout_focus_main",
     ];
 
     #[test]
@@ -1723,6 +1879,32 @@ mod acl_tests {
                     "quick_ask_open_in_app",
                 ]),
             ),
+            (
+                "chat-33333333-3333-4333-8333-333333333333",
+                set(&[
+                    "popout_connect",
+                    "popout_owner_key",
+                    "popout_set_always_on_top",
+                    "popout_focus_main",
+                    "get_control_state",
+                    "pause_bot_run",
+                    "resume_bot_run",
+                    "take_the_wheel",
+                    "give_back_control",
+                    "stop_bot_run",
+                ]),
+            ),
+            (
+                "live-home",
+                set(&[
+                    "popout_connect",
+                    "popout_owner_key",
+                    "popout_set_always_on_top",
+                    "popout_focus_main",
+                    "get_control_state",
+                    "stop_bot_run",
+                ]),
+            ),
             ("overlay-0", set(&["get_control_state"])),
             ("overlay-3", set(&["get_control_state"])),
             ("some-future-window", BTreeSet::new()),
@@ -1739,6 +1921,8 @@ mod acl_tests {
         assert!(commands_for("main").contains("finish_bot_run"));
         assert!(commands_for("main").contains("ack_stop"));
         assert!(commands_for("main").contains("deep_link_take"));
+        assert!(!commands_for("main").contains("popout_connect"));
+        assert!(!commands_for("main").contains("popout_owner_key"));
     }
 
     #[test]
@@ -1762,7 +1946,13 @@ mod acl_tests {
 
     #[test]
     fn widget_and_overlays_cannot_reach_the_sensitive_commands() {
-        for label in ["widget", "overlay-0", "quick-ask"] {
+        for label in [
+            "widget",
+            "overlay-0",
+            "quick-ask",
+            "chat-33333333-3333-4333-8333-333333333333",
+            "live-home",
+        ] {
             let allowed = commands_for(label);
             for sensitive in [
                 "quick_ask_configure",
@@ -1779,6 +1969,7 @@ mod acl_tests {
                 "daemon_restart",
                 "daemon_diagnostics",
                 "open_log_folder",
+                "open_workspace_folder",
                 "prereq_check",
                 "open_webview_download",
                 "simulate_bot_run",
@@ -1788,6 +1979,7 @@ mod acl_tests {
                 "set_needs_count",
                 "set_tray_labels",
                 "set_keep_in_tray",
+                "open_popout_window",
             ] {
                 assert!(
                     !allowed.contains(sensitive),
@@ -1879,6 +2071,19 @@ mod acl_tests {
         let config = tauri_conf();
         for window in config["app"]["windows"].as_array().expect("windows") {
             assert_ne!(window["useHttpsScheme"], serde_json::json!(true));
+        }
+    }
+
+    #[test]
+    fn workspace_folder_name_validation_rejects_traversal_and_reserved_names() {
+        use crate::is_safe_workspace_folder_name;
+        assert!(is_safe_workspace_folder_name("Atlas"));
+        assert!(is_safe_workspace_folder_name("research-bot_1"));
+        for bad in [
+            "", ".", "..", "a/b", "a\\b", "C:", "Atlas.", "Atlas ", "CON", "aux.txt", "COM1",
+            "lpt9",
+        ] {
+            assert!(!is_safe_workspace_folder_name(bad), "should reject {bad:?}");
         }
     }
 }

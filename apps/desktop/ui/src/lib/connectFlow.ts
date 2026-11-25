@@ -1,10 +1,11 @@
 /**
  * One continuous "Connect <app>" flow for a Composio app (card 279).
  *
- * With a Composio credential the app's own consent page opens at once. Without one, the
- * one-time Composio sign-in opens first and, when it finishes, the SAME flow carries on to the
- * app's consent page without the person pressing anything again. The flow only OPENS pages; an
- * app counts as connected when Composio says so (its state in the app list), never from here.
+ * With a Composio credential the app's own consent page opens at once. Without one, or when
+ * Composio no longer accepts the saved one, the Composio sign-in opens first and, when it
+ * finishes, the SAME flow carries on to the app's consent page without the person pressing
+ * anything again. The flow only OPENS pages; an app counts as connected when Composio says so
+ * (its state in the app list), never from here.
  */
 
 export type FlowStep =
@@ -25,12 +26,30 @@ export interface FlowState {
   /** Whether the Composio sign-in is part of this flow (two progress dots instead of one). */
   firstTime: boolean;
   /** Stable reason when `step` is `failed`. */
-  reason?: "login_open" | "login_failed" | "app_link" | "app_open";
+  reason?: FlowReason;
 }
+
+export type FlowReason =
+  | "login_open"
+  | "login_failed"
+  /** Composio refused the saved login even after a fresh sign-in, or the sign-in is needed again. */
+  | "login_expired"
+  | "rate_limited"
+  /** Composio (or the way to it) failed: not the person's doing. */
+  | "upstream"
+  | "app_link"
+  | "app_open";
+
+/** What a failed "give me the app's consent link" call means, in the flow's terms. */
+export type LinkFailure = "login" | "rate_limited" | "upstream" | "other";
 
 export interface FlowDeps {
   /** A Composio credential exists (the browser login of #137, or a pasted project key). */
   configured(): boolean;
+  /** Composio refused the saved credential: a fresh sign-in is needed, a retry cannot help. */
+  loginExpired(): boolean;
+  /** Sort the error of `appConnect` (the daemon codes `composio_login_expired` etc.). */
+  classify(error: unknown): LinkFailure;
   loginStart(): Promise<{ login_url: string }>;
   loginStatus(): Promise<{ state: "idle" | "pending" | "linked" | "failed" }>;
   appConnect(slug: string): Promise<{ redirect_url: string }>;
@@ -56,64 +75,88 @@ export async function runConnectFlow(
   report: (state: FlowState) => void,
   cancel: FlowCancel
 ): Promise<FlowState> {
-  const firstTime = !deps.configured();
+  let firstTime = !deps.configured() || deps.loginExpired();
   const done = (state: FlowState): FlowState => {
     report(state);
     return state;
   };
-  const base = { slug, name, firstTime };
-  if (firstTime) {
-    done({ ...base, step: "login" });
+  const base = () => ({ slug, name, firstTime });
+  /** The Composio sign-in; returns the end state when the flow must stop, else null. */
+  const signIn = async (): Promise<FlowState | null> => {
+    done({ ...base(), step: "login" });
     try {
       const { login_url } = await deps.loginStart();
       if (!(await deps.open(login_url, true))) {
-        return done({ ...base, step: "failed", reason: "login_open" });
+        return done({ ...base(), step: "failed", reason: "login_open" });
       }
     } catch {
-      return done({ ...base, step: "failed", reason: "login_failed" });
+      return done({ ...base(), step: "failed", reason: "login_failed" });
     }
     const started = deps.now();
     for (;;) {
       if (cancel.cancelled) {
-        return done({ ...base, step: "cancelled" });
+        return done({ ...base(), step: "cancelled" });
       }
       if (deps.now() - started > LOGIN_GIVE_UP_MS) {
-        return done({ ...base, step: "timed_out" });
+        return done({ ...base(), step: "timed_out" });
       }
       await deps.sleep(LOGIN_POLL_MS);
       if (cancel.cancelled) {
-        return done({ ...base, step: "cancelled" });
+        return done({ ...base(), step: "cancelled" });
       }
       try {
         const { state } = await deps.loginStatus();
         if (state === "linked") {
-          break;
+          return null;
         }
         if (state === "failed") {
-          return done({ ...base, step: "failed", reason: "login_failed" });
+          return done({ ...base(), step: "failed", reason: "login_failed" });
         }
       } catch {
         // A missed poll is not the end of the sign-in.
       }
     }
+  };
+  if (firstTime) {
+    const stopped = await signIn();
+    if (stopped) {
+      return stopped;
+    }
   }
-  if (cancel.cancelled) {
-    return done({ ...base, step: "cancelled" });
+  let signedInHere = firstTime;
+  for (;;) {
+    if (cancel.cancelled) {
+      return done({ ...base(), step: "cancelled" });
+    }
+    done({ ...base(), step: "app" });
+    try {
+      const link = await deps.appConnect(slug);
+      if (cancel.cancelled) {
+        return done({ ...base(), step: "cancelled" });
+      }
+      if (!(await deps.open(link.redirect_url, false))) {
+        return done({ ...base(), step: "failed", reason: "app_open" });
+      }
+      return done({ ...base(), step: "opened" });
+    } catch (e) {
+      const why = deps.classify(e);
+      if (why === "login" && !signedInHere) {
+        // Composio no longer accepts the saved login: renew it in this same flow.
+        signedInHere = true;
+        firstTime = true;
+        const stopped = await signIn();
+        if (stopped) {
+          return stopped;
+        }
+        continue;
+      }
+      return done({
+        ...base(),
+        step: "failed",
+        reason: why === "login" ? "login_expired" : why === "other" ? "app_link" : why
+      });
+    }
   }
-  done({ ...base, step: "app" });
-  let link: { redirect_url: string };
-  try {
-    link = await deps.appConnect(slug);
-  } catch {
-    return done({ ...base, step: "failed", reason: "app_link" });
-  }
-  if (cancel.cancelled) {
-    return done({ ...base, step: "cancelled" });
-  }
-  if (!(await deps.open(link.redirect_url, false))) {
-    return done({ ...base, step: "failed", reason: "app_open" });
-  }
-  return done({ ...base, step: "opened" });
 }
 
 /** Which of the two progress dots is current (1 = Composio sign-in, 2 = the app). */
@@ -124,4 +167,25 @@ export function progressDot(state: FlowState): 1 | 2 {
 /** Whether the sheet is still busy with this flow. */
 export function flowActive(state: FlowState | null): boolean {
   return state !== null && (state.step === "login" || state.step === "app");
+}
+
+/**
+ * Sort the error of the "consent link" request by the daemon's stable code (never by its text).
+ * `composio_login_expired` / `composio_not_configured` mean a Composio sign-in fixes it.
+ */
+export function classifyLinkFailure(error: unknown): LinkFailure {
+  const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
+  switch (code) {
+    case "composio_login_expired":
+    case "composio_not_configured":
+      return "login";
+    case "composio_rate_limited":
+      return "rate_limited";
+    case "composio_error":
+    case "network":
+    case "timeout":
+      return "upstream";
+    default:
+      return "other";
+  }
 }

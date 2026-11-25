@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import type { ApiClient } from "../api/client";
 import { humanLine } from "../lib/humanError";
+import { isAlreadyDecidedError } from "../lib/popout";
 import type { ChatDockAction, ChatDockMode } from "../lib/liveChatDock";
 import { useDaemon } from "../state/DaemonContext";
 import type { NeedsYouEntry } from "../state/timeline";
@@ -22,7 +23,9 @@ export interface LiveChatSlots {
 
 function PendingApproval({ approval, client }: { approval: NeedsYouEntry; client: ApiClient }) {
   const { t } = useTranslation();
+  const { refreshRuns } = useDaemon();
   const [busy, setBusy] = useState(false);
+  const [locked, setLocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const decide = async (decision: "approve" | "deny") => {
@@ -31,8 +34,14 @@ function PendingApproval({ approval, client }: { approval: NeedsYouEntry; client
     try {
       await client.decideApproval(approval.callId, decision, decision === "approve" ? "once" : undefined);
     } catch (err) {
-      setError(humanLine(err));
-      setBusy(false);
+      if (isAlreadyDecidedError(err)) {
+        setLocked(true);
+        setError(t("chat.approval.decidedElsewhere"));
+        void refreshRuns();
+      } else {
+        setError(humanLine(err));
+        setBusy(false);
+      }
     }
   };
 
@@ -40,10 +49,10 @@ function PendingApproval({ approval, client }: { approval: NeedsYouEntry; client
     <li>
       <div className={styles.chatApproval}>
         <span>{approval.title}</span>
-        <Button size="sm" variant="primary" disabled={busy} onClick={() => void decide("approve")}>
+        <Button size="sm" variant="primary" disabled={busy || locked} onClick={() => void decide("approve")}>
           {t("chat.approval.compact.allow")}
         </Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void decide("deny")}>
+        <Button size="sm" variant="ghost" disabled={busy || locked} onClick={() => void decide("deny")}>
           {t("chat.approval.deny")}
         </Button>
       </div>

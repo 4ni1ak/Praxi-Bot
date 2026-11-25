@@ -306,3 +306,42 @@ async fn the_guard_runs_again_for_the_identity_chosen_on_the_card() {
     assert_eq!(conn.guard().log(10)[0].account, "work");
     assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn literal_backslash_n_in_the_body_becomes_real_line_breaks_on_the_card_and_in_the_mail() {
+    let (server, conn) = setup().await;
+    let t = send_tool(&conn);
+    let input = json!({
+        "to": ["bob@example.com"],
+        "subject": "Hello\\nthere",
+        "body": "Merhaba,\\n\\nBen Praxi.\\r\\nIyi gunler\\tdilerim!"
+    });
+    let d = t.approval_details(&ctx(), &input).await.unwrap().unwrap();
+    let card = d["body"].as_str().unwrap();
+    assert!(
+        card.starts_with("Merhaba,\n\nBen Praxi.\r\nIyi gunler\tdilerim!"),
+        "{card:?}"
+    );
+    assert!(!card.contains("\\n"), "{card:?}");
+    assert_eq!(d["subject"], "Hello there");
+    t.call(&ctx(), input).await.unwrap();
+    let sent = sent_bodies(&server).await;
+    assert!(
+        sent[0].starts_with("Merhaba,\n\nBen Praxi.\r\n"),
+        "{:?}",
+        sent[0]
+    );
+    assert!(!sent[0].contains("\\n"), "{:?}", sent[0]);
+}
+
+#[tokio::test]
+async fn a_body_that_already_has_real_line_breaks_is_never_altered() {
+    let (server, conn) = setup().await;
+    let t = send_tool(&conn);
+    let body = "Use the \\n escape in C.\nSecond line";
+    let input = json!({"to": ["bob@example.com"], "subject": "Code", "body": body});
+    let d = t.approval_details(&ctx(), &input).await.unwrap().unwrap();
+    assert!(d["body"].as_str().unwrap().starts_with(body));
+    t.call(&ctx(), input).await.unwrap();
+    assert!(sent_bodies(&server).await[0].starts_with(body));
+}

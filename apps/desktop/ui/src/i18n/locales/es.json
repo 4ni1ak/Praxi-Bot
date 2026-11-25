@@ -733,7 +733,7 @@
         "failed": "The app list could not be refreshed: showing the saved one.",
         "offline": "No connection: showing the saved app list.",
         "rate_limited": "Composio is busy: showing the saved app list.",
-        "unauthorized": "Composio sign-in ran out: showing the saved app list."
+        "unauthorized": "Composio ya no acepta el inicio de sesión guardado: se muestra la lista de apps guardada."
       },
       "connectedSection": "Connected",
       "disable": "Turn off",
@@ -758,6 +758,7 @@
       "loading": "Loading apps…",
       "noResults": "No matching apps.",
       "openFailed": "The sign-in link was not opened because it is not a Composio link.",
+      "relogin": "Iniciar sesión en Composio de nuevo",
       "retry": "Try again",
       "state": {
         "active": "Connected",
@@ -847,8 +848,11 @@
       "failed": {
         "app_link": "The page for {{name}} could not be prepared. Try again.",
         "app_open": "The page for {{name}} could not be opened.",
+        "login_expired": "Composio ya no acepta el inicio de sesión guardado, así que {{name}} aún no se puede conectar. Inicia sesión en Composio de nuevo.",
         "login_failed": "The sign-in did not finish. Try again.",
-        "login_open": "The sign-in page could not be opened."
+        "login_open": "The sign-in page could not be opened.",
+        "rate_limited": "Composio está ocupado ahora mismo. Espera un minuto y vuelve a intentar con {{name}}.",
+        "upstream": "No se pudo contactar con Composio o no respondió. Revisa la conexión del equipo donde se ejecutan los bots y vuelve a intentarlo."
       },
       "login": "The sign-in page opened in your browser. Finish it there and {{name}} opens next by itself.",
       "opened": "{{name}}'s page is open in your browser. Allow access there; it shows up as Connected here.",
@@ -1309,6 +1313,7 @@
     "computer": "Computer",
     "edit": "Edit bot",
     "isMain": "This is the main bot",
+    "liteFullHint": "Hay un modelo ligero seleccionado. Para tareas largas de muchos pasos funciona mejor un modelo más potente: este puede detenerse a preguntar o perder el hilo. Puedes cambiarlo en los ajustes del bot.",
     "mail": {
       "agentmail": "Own address",
       "check": "Check connection",
@@ -1570,6 +1575,7 @@
         "stillAsks": "Se pedirá permiso de nuevo para usar otros programas, iniciar aplicaciones, ejecutar comandos o scripts, arrastrar, abrir cuadros de selección de archivos, escribir en campos de contraseña o pulsar cualquier otra tecla. Las terminales, los navegadores, los lanzadores y los visores de escritorio remoto se identifican solo por el nombre del archivo. Si el nombre cambió, no se reconocen. El permiso termina con la tarea y se revoca si se detiene o falla un envío."
       },
       "countdown": "Se rechazará automáticamente en {{seconds}} s",
+      "decidedElsewhere": "Esta solicitud ya se ha resuelto o ha caducado.",
       "deny": "Rechazar",
       "egress": {
         "hidden": "Se muestran {{hidden}} caracteres invisibles como <U+XXXX>",
@@ -1958,6 +1964,7 @@
       "answer": "Responder",
       "answered": "Respondiste: {{answer}}",
       "closed": "Esta pregunta ya está cerrada.",
+      "decidedElsewhere": "Esta pregunta ya se ha respondido o ha caducado.",
       "placeholder": "Escribe otra respuesta…",
       "title": "El bot pregunta"
     },
@@ -2066,6 +2073,11 @@
         "done": "Hizo clic en una página",
         "failed": "No pudo hacer clic en la página",
         "running": "Haciendo clic en una página"
+      },
+      "browser_dismiss_consent": {
+        "done": "Cerró el aviso de cookies de una página",
+        "failed": "No pudo cerrar el aviso de cookies",
+        "running": "Cerrando el aviso de cookies de una página"
       },
       "browser_eval": {
         "done": "Ejecutó un script en el navegador",
@@ -2836,6 +2848,10 @@
         "hint": "Try again in a moment. If it keeps failing, reconnect the app.",
         "title": "Composio could not finish that"
       },
+      "composio_login_expired": {
+        "hint": "Abre Apps y pulsa Iniciar sesión en Composio de nuevo. Basta un clic en el navegador.",
+        "title": "Composio ya no acepta tu inicio de sesión"
+      },
       "composio_not_configured": {
         "hint": "Add your Composio key in Apps, then try again.",
         "title": "Composio is not set up yet"
@@ -2899,6 +2915,10 @@
       "host_setup_conflict": {
         "hint": "Wait for the current setup to finish, then try again.",
         "title": "That computer is already being set up"
+      },
+      "host_terminal_failed": {
+        "hint": "El equipo está en línea y respondió, pero su terminal informó de un error. Mira los detalles de abajo y vuelve a intentarlo.",
+        "title": "El terminal falló en ese equipo"
       },
       "host_unreachable": {
         "hint": "Its copy may still be running. Try again, or confirm to bring the schedule back anyway.",
@@ -3220,6 +3240,36 @@
       "title": "This only works in the desktop app"
     },
     "details": "Details",
+    "emailProvider": {
+      "auth": {
+        "hint": "Comprueba que copiaste la clave completa de tu cuenta de AgentMail y vuelve a intentarlo.",
+        "title": "AgentMail no aceptó esta clave de API"
+      },
+      "forbidden": {
+        "hint": "Crea en tu cuenta de AgentMail una clave que pueda crear buzones.",
+        "title": "Esta clave de AgentMail no tiene permiso para eso"
+      },
+      "quota": {
+        "hint": "Elimina un buzón que no uses o mejora el plan en AgentMail y vuelve a intentarlo.",
+        "title": "Tu plan de AgentMail alcanzó su límite"
+      },
+      "rateLimited": {
+        "hint": "Espera un minuto y vuelve a intentarlo.",
+        "title": "AgentMail te pide que vayas más despacio"
+      },
+      "rejected": {
+        "hint": "Revisa la clave y el nombre de la dirección (letras, números y guiones) y vuelve a intentarlo.",
+        "title": "AgentMail no aceptó esta solicitud"
+      },
+      "taken": {
+        "hint": "Los nombres de agentmail.to los comparte todo el mundo. Elige otro; ya te pusimos uno que parece libre.",
+        "title": "Ese nombre de dirección ya está ocupado en AgentMail"
+      },
+      "transient": {
+        "hint": "El problema es de su lado. Vuelve a intentarlo en unos minutos.",
+        "title": "AgentMail no está disponible ahora"
+      }
+    },
     "engineNeedsNative": {
       "hint": "It works with its own tools. Press Fix to allow that for this bot.",
       "title": "This model needs your OK first"
@@ -3870,7 +3920,7 @@
       "bots": "Los bots de este servidor están listos.",
       "model": "Hay un modelo conectado."
     },
-    "managedOnServer": "Las claves, los permisos, las herramientas y la vinculación se gestionan en {{name}}. Desde aquí puedes crear y editar bots, hablar con ellos y ver la pantalla del servidor.",
+    "managedOnServer": "Cuando este equipo esté confirmado como administrador en {{name}}, también podrás gestionar desde aquí claves, permisos, herramientas y correo. La vinculación de dispositivos y las actualizaciones de {{name}} se quedan en {{name}}.",
     "missing": {
       "bots": "Todavía no hay bots en este servidor.",
       "model": "Todavía no hay ningún modelo conectado en este servidor."
@@ -3886,23 +3936,16 @@
     "newBotNeedsModel": "{{name}} aún no tiene un modelo. Conecta uno en el servidor antes de crear un bot allí.",
     "refusal": {
       "adminRequired": "{{name}} aún no ha confirmado este equipo como administrador. Ejecuta una vez `bot host admin --all-desktops` en {{name}} y vuelve a intentarlo.",
-      "botPermissions": "Los permisos y las herramientas de cada bot se gestionan en {{name}}. Desde aquí puedes cambiar su nombre, personalidad y modelo.",
-      "composio": "Las conexiones a apps las gestiona el propietario de este equipo. No se gestionan en {{name}}.",
-      "connectionTest": "Las claves solo se pueden probar desde {{name}}.",
-      "credentials": "Este ajuste de correo o búsqueda se cambia en {{name}}, no desde esta aplicación.",
-      "generic": "{{name}} rechazó esta acción: {{reason}}",
+      "generic": "{{name}} no permitió esto y no se cambió nada. El motivo técnico está en Detalles.",
+      "hostOnly": "Esto se hace solo en {{name}}, a propósito. La app no puede hacerlo.",
       "hostTransfer": "El traslado del equipo anfitrión y la vinculación de canales se hacen en {{name}}.",
-      "knowledge": "Los ajustes de conocimiento se gestionan en {{name}}.",
-      "lifecycle": "La vinculación y las actualizaciones del equipo anfitrión se hacen en {{name}}.",
+      "lifecycle": "Vincular dispositivos nuevos y actualizar {{name}} se hace en {{name}} con sus comandos `bot host`, a propósito.",
       "localOnly": "Solo la persona que está en {{name}} puede hacer esto.",
-      "localProviders": "Los modelos locales y las herramientas de programación pertenecen al equipo que ejecuta el bot. Cambia a «Este equipo» para configurarlos.",
+      "needsAdmin": "{{name}} no aceptó esto desde la app. Confirma este equipo una vez con `bot host admin --all-desktops` en {{name}}, actualiza {{name}} a la última versión y vuelve a intentarlo.",
       "overlay": "Solo la persona que está en {{name}} puede responder a ese aviso.",
       "ownerOnly": "Esto solo se puede hacer en {{name}}.",
-      "policy": "La política de ejecución se configura únicamente en {{name}}.",
       "role": "{{name}} no permite que este equipo haga eso.",
-      "screenInput": "{{name}} no ha autorizado a este equipo a controlar su pantalla. Concede el permiso en Praxi desde {{name}}.",
-      "secrets": "Las claves y otras credenciales solo se añaden en {{name}}.",
-      "tools": "Los servidores de herramientas y las skills se gestionan en {{name}}."
+      "screenInput": "{{name}} no ha autorizado a este equipo a controlar su pantalla. Concede el permiso en Praxi desde {{name}}."
     },
     "state": {
       "connected": "Conectado",
@@ -4494,6 +4537,7 @@
     "recent": "Recientes",
     "reset": "Restablecer",
     "results": "Resultados de mensajes",
+    "retry": "Reintentar",
     "searching": "Buscando…",
     "title": "Buscar mensajes",
     "when": "Fecha",
@@ -4878,6 +4922,20 @@
     "directHint": "La app se comunica directamente con el equipo. Es la conexión más rápida. El número indica el tiempo de respuesta.",
     "relay": "Indirecta · {{rtt}} ms",
     "relayHint": "La conexión pasa por un servidor intermediario y puede ser un poco más lenta. El número indica el tiempo de respuesta."
+  },
+  "popout": {
+    "chatFallbackTitle": "Ventana de chat",
+    "connecting": "Conectando...",
+    "focusFailed": "No se pudo mostrar la ventana principal. Ábrela desde la bandeja del sistema.",
+    "focusMain": "Enfocar ventana principal",
+    "openChat": "Abrir en nueva ventana",
+    "openChatTooltip": "Abrir el chat en una nueva ventana",
+    "openFailed": "No se pudo abrir la nueva ventana. Inténtalo de nuevo.",
+    "openLive": "Abrir vista en vivo en nueva ventana",
+    "openLiveShort": "Separar",
+    "pinFailed": "No se pudo cambiar si esta ventana permanece en primer plano. Inténtalo de nuevo.",
+    "pinOnTop": "Fijar ventana siempre visible",
+    "unpinOnTop": "Desfijar ventana"
   },
   "profileShare": {
     "back": "Back",
@@ -5850,6 +5908,7 @@
         "ownAccount": "You need your own free AgentMail account. Praxi-Bot does not hold any key for you: paste the API key from your account.",
         "pricing": "See their pricing",
         "scopedKeyHint": "Esta clave pertenece a un solo buzón, así que no puede crear direcciones nuevas. Conecta en su lugar el buzón que ya tienes.",
+        "suggested": "Prueba con «{{name}}».",
         "title": "Give a bot its own address",
         "useExisting": "Conectar un buzón existente",
         "viaApi": "AgentMail inbox"
@@ -6077,6 +6136,7 @@
       "optOutPlaceholder": "ana@ejemplo.com o ejemplo.com",
       "optOutRemove": "Quitar {{value}}",
       "optOutTitle": "Personas a las que no escribiré",
+      "retry": "Reintentar",
       "save": "Guardar",
       "saved": "Guardado",
       "sentAnyway": "Enviado de todos modos",
@@ -6574,6 +6634,10 @@
     "switch": "Cambiar a este equipo"
   },
   "toolPacks": {
+    "ack": {
+      "label": "Lo entiendo",
+      "text": "Es un programa independiente con licencia {{license}}, descargado de su autor. Praxi no lo distribuye ni lo modifica."
+    },
     "back": "Atrás",
     "basicSet": "Elegir el conjunto básico",
     "button": "Herramientas",
@@ -6585,6 +6649,8 @@
     "dontClose": "Puede tardar unos minutos. Puedes seguir usando la aplicación.",
     "found": "Programas encontrados: {{n}}",
     "lead": "Programas que tus bots pueden usar en este servidor.",
+    "licenseMixed": "Licencias mixtas",
+    "licenseName": "Licencia {{name}}",
     "listLabel": "Paquetes de herramientas",
     "loading": "Mirando el servidor…",
     "noLogin": {
@@ -6612,6 +6678,11 @@
       "office": {
         "desc": "Word, Excel, PowerPoint y exportación a PDF, con fuentes turcas",
         "name": "Archivos de Office"
+      },
+      "scrape": {
+        "desc": "Lee las páginas con más limpieza y puede seguir algunos enlaces",
+        "name": "Extracción web",
+        "note": "No sirve para páginas que requieren iniciar sesión"
       }
     },
     "planning": "Comprobando qué cambiaría…",
@@ -6630,9 +6701,17 @@
         "body": "El servidor lo detuvo, por ejemplo porque el disco está lleno o hay otra actualización en curso. Tu servidor está bien; puedes intentarlo de nuevo.",
         "title": "No terminó"
       },
+      "needs_ack": {
+        "body": "Lee y confirma el aviso de licencia y vuelve a revisar.",
+        "title": "Confirma la licencia"
+      },
       "needs_admin": {
         "body": "Usa un acceso al servidor con derechos de administrador (sudo sin contraseña) y vuelve a intentarlo.",
         "title": "Este acceso no puede instalar software"
+      },
+      "needs_python": {
+        "body": "Instala primero «Herramientas de desarrollo» en este servidor y luego añade la extracción web.",
+        "title": "Primero se necesita Python"
       },
       "shared": {
         "body": "Praxi no las quita: tu servidor las necesita.",
@@ -6674,6 +6753,7 @@
     "safeRemove": "Solo se quitan estas herramientas",
     "safeRemoveBody": "Tus ajustes y el resto del software se quedan como están.",
     "size": "unos {{value}} {{unit}}",
+    "source": "Código fuente",
     "status": {
       "installed": "Instalado",
       "partial": "Incompleto"
@@ -6683,6 +6763,7 @@
     "title": "Herramientas",
     "titleFor": "Herramientas en {{name}}",
     "tryAgain": "Intentar de nuevo",
+    "versionLabel": "Versión {{version}}",
     "willInstall": "Se instalará",
     "willRemove": "Se quitará"
   },
@@ -7232,5 +7313,59 @@
     "tooFewSteps": "This run has fewer than two recordable steps.",
     "untrustedWarning": "This run read external or private content. Review every affected step before granting persistent automation.",
     "warnings": "Review notes"
+  },
+  "workspace": {
+    "botRowDesc": "Carpeta: {{folder}} · {{used}} ({{files}} archivos)",
+    "breadcrumbs": "Ruta de la carpeta de trabajo",
+    "cardDescription": "Consulta las carpetas de los bots, los límites opcionales, los avisos y las opciones de limpieza.",
+    "cardTitle": "Archivos de los bots y espacio en disco",
+    "cleanedSummary": "{{size}} liberados",
+    "cleanupDesc": "Solo se eliminan archivos antiguos de downloads/ y logs/, o carpetas de caché que se pueden regenerar.",
+    "cleanupHeading": "Limpieza y archivos grandes",
+    "cleanupTarget": {
+      "all_old": "Limpiar descargas y registros antiguos ({{size}})",
+      "daemon_cache": "Vaciar caché ({{size}})",
+      "old_downloads": "Limpiar descargas antiguas ({{size}})",
+      "old_logs": "Limpiar registros antiguos ({{size}})"
+    },
+    "delete": "Eliminar",
+    "deletedUndoLabel": "Se eliminó «{{name}}»",
+    "diskSummary": "Disco al {{percent}}% · {{free}} libres de {{total}} · Carpetas de los bots: {{botsTotal}}",
+    "download": "Descargar",
+    "downloadsDays": "Antigüedad máxima de las descargas (días)",
+    "emptyFolder": "Esta carpeta está vacía.",
+    "hardLimitGb": "Límite estricto (GB)",
+    "invalidLimitValue": "Introduce un número positivo en GB o déjalo vacío para desactivar.",
+    "invalidThresholds": "Los porcentajes deben aumentar entre 1 y 99, con un mínimo positivo de GB libres.",
+    "limitOff": "Desactivado",
+    "loading": "Cargando…",
+    "logsDays": "Antigüedad máxima de los registros (días)",
+    "manageStorage": "Ajustes de almacenamiento",
+    "minFreeGb": "Mínimo libre (GB)",
+    "noMatches": "No se encontraron archivos.",
+    "openFolder": "Abrir carpeta",
+    "preview": "Vista previa",
+    "rename": "Cambiar nombre",
+    "retentionDesc": "Los archivos más antiguos aparecen en las sugerencias de limpieza (vacío para desactivar).",
+    "retentionTitle": "Plazo de conservación",
+    "root": "Carpeta de trabajo",
+    "saved": "Guardado",
+    "searchPlaceholder": "Filtrar archivos…",
+    "sectionTitle": "Archivos de trabajo",
+    "softExceedsHard": "El límite de aviso no puede superar el límite estricto.",
+    "softLimitGb": "Límite de aviso (GB)",
+    "storageHeading": "Disco y carpetas de los bots",
+    "thresholdsDesc": "Avisar cuando el disco alcance estos porcentajes o el espacio libre baje del mínimo.",
+    "thresholdsTitle": "Avisos antes de llenar el disco",
+    "unconfiguredHint": "La carpeta de trabajo se creará automáticamente cuando los bots se ejecuten en este ordenador.",
+    "undo": "Deshacer",
+    "warnPct1": "Nivel de aviso 1 (%)",
+    "warnPct2": "Nivel de aviso 2 (%)",
+    "warnPct3": "Nivel de aviso 3 (%)",
+    "warningBigItem": "Archivo más grande: {{path}} ({{size}})",
+    "warningBotLimit": "La carpeta de un bot alcanzó el límite de aviso configurado.",
+    "warningCheckStorage": "Revisa las carpetas de los bots o ejecuta una limpieza.",
+    "warningLowFree": "Poco espacio en disco: quedan {{free}}",
+    "warningPercent": "El disco está al {{percent}}%"
   }
 }

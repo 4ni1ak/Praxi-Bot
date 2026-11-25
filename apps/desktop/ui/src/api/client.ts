@@ -191,7 +191,20 @@ import type {
   SkillsCatalog,
   StopRunsInput,
   StopRunsResponse,
-  Attachment
+  Attachment,
+  WorkspacesOverviewDto,
+  WorkspaceSettingsDto,
+  WorkspaceSettingsInput,
+  WorkspaceCleanupInput,
+  WorkspaceCleanupResultDto,
+  BotWorkspaceListDto,
+  WorkspaceRenameInput,
+  WorkspaceDeleteInput,
+  WorkspaceRestoreInput,
+  WorkspaceEntryDto,
+  WorkspaceTrashEntryDto,
+  BotWorkspaceLimitsInput,
+  BotWorkspaceSummaryDto
 } from "./types";
 
 export const LIVE_VIEW_MEDIA_TYPE = "application/vnd.praxi.live-view.v1";
@@ -766,8 +779,8 @@ export class ApiClient {
     return this.request("GET", `/hosts/setup/packs/${encodeURIComponent(hostId)}`);
   }
   /** Dry run: what installing or removing packs would do. Changes nothing (owner only; the owner key is added for the local daemon). */
-  planHostPacks(hostId: string, action: PackAction, packs: string[]): Promise<PackPlan> {
-    return this.request("POST", "/hosts/setup/packs/plan", { body: { host_id: hostId, action, packs } });
+  planHostPacks(hostId: string, action: PackAction, packs: string[], acknowledged: string[] = []): Promise<PackPlan> {
+    return this.request("POST", "/hosts/setup/packs/plan", { body: { host_id: hostId, action, packs, acknowledged } });
   }
   /** Run exactly the plan the owner saw (single use). Returns a job to poll with getHostSetup. */
   applyHostPacks(planId: string): Promise<HostSetupJob> {
@@ -1826,5 +1839,78 @@ export class ApiClient {
     body: { id?: string; name?: string } = {}
   ): Promise<ConnectionTestReport> {
     return this.request("POST", `/connection-test/${target}`, { body });
+  }
+
+  // ---- Persistent Bot Workspaces (owner-only) ----
+
+  listWorkspaces(): Promise<WorkspacesOverviewDto> {
+    return this.request("GET", "/workspaces");
+  }
+
+  updateWorkspaceSettings(input: WorkspaceSettingsInput): Promise<WorkspaceSettingsDto> {
+    return this.request("PUT", "/workspaces/settings", { body: input });
+  }
+
+  runWorkspaceCleanup(input: WorkspaceCleanupInput): Promise<WorkspaceCleanupResultDto> {
+    return this.request("POST", "/workspaces/cleanup", { body: input });
+  }
+
+  getBotWorkspace(
+    botId: string,
+    opts: { path?: string; q?: string } = {}
+  ): Promise<BotWorkspaceListDto> {
+    const query: Query = {};
+    if (opts.path) query.path = opts.path;
+    if (opts.q) query.q = opts.q;
+    return this.request("GET", `/bots/${encodeURIComponent(botId)}/workspace`, { query });
+  }
+
+  async getBotWorkspaceFile(
+    botId: string,
+    path: string,
+    download = false
+  ): Promise<Blob> {
+    const res = await this.send(
+      "GET",
+      `/bots/${encodeURIComponent(botId)}/workspace/file`,
+      { query: { path, ...(download ? { download: "true" } : {}) } }
+    );
+    return res.blob();
+  }
+
+  renameBotWorkspaceEntry(
+    botId: string,
+    input: WorkspaceRenameInput
+  ): Promise<WorkspaceEntryDto> {
+    return this.request("POST", `/bots/${encodeURIComponent(botId)}/workspace/rename`, {
+      body: input
+    });
+  }
+
+  deleteBotWorkspaceEntry(
+    botId: string,
+    input: WorkspaceDeleteInput
+  ): Promise<WorkspaceTrashEntryDto> {
+    return this.request("POST", `/bots/${encodeURIComponent(botId)}/workspace/delete`, {
+      body: input
+    });
+  }
+
+  restoreBotWorkspaceEntry(
+    botId: string,
+    input: WorkspaceRestoreInput
+  ): Promise<WorkspaceEntryDto> {
+    return this.request("POST", `/bots/${encodeURIComponent(botId)}/workspace/restore`, {
+      body: input
+    });
+  }
+
+  putBotWorkspaceLimits(
+    botId: string,
+    input: BotWorkspaceLimitsInput
+  ): Promise<BotWorkspaceSummaryDto> {
+    return this.request("PUT", `/bots/${encodeURIComponent(botId)}/workspace/limits`, {
+      body: input
+    });
   }
 }

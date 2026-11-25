@@ -14,6 +14,24 @@ pub fn packs_txt() -> String {
     lf(include_str!("../scripts/packs.txt"))
 }
 
+/// Licence facts of every pack (chip, source link, acknowledgement rule).
+pub fn pack_licenses_txt() -> String {
+    lf(include_str!("../scripts/pack-licenses.txt"))
+}
+
+/// The web scraping add-on's files (`packs/scrape/`): uploaded only for that pack.
+pub fn scrape_service_py() -> String {
+    lf(include_str!("../../../packs/scrape/praxi_scrape.py"))
+}
+
+pub fn scrape_lock() -> String {
+    lf(include_str!("../../../packs/scrape/requirements.lock"))
+}
+
+pub fn scrape_unit() -> String {
+    lf(include_str!("../../../packs/scrape/praxi-scrape.service"))
+}
+
 pub fn installer_sh() -> String {
     lf(include_str!("../../../scripts/install-linux.sh"))
 }

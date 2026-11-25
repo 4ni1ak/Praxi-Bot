@@ -1,9 +1,9 @@
 //! `/v1/fill-secrets*` and `/v1/fill-grants*`: the local owner's management of
 //! the secrets the fill tools may type (see [`secret_store::FillSecrets`]).
 //!
-//! * Local owner only. The peer router refuses both prefixes to every paired
-//!   device role for every method, and each handler refuses a non-local actor
-//!   again (defence in depth).
+//! * Owner only: the person at this computer, or the administrator desktop of
+//!   a host. The peer router refuses both prefixes to every other paired
+//!   device, and each handler refuses a non-owner actor again (defence in depth).
 //! * A value is write-only: no route returns it, and the list shows names and
 //!   allow-lists only.
 //! * An attributed audit record is written BEFORE each mutation (no record, no
@@ -261,7 +261,7 @@ pub(crate) fn service(
     s: &AppState,
     actor: &Actor,
 ) -> Result<std::sync::Arc<FillSecrets>, ApiError> {
-    if !actor.local {
+    if !actor.is_owner() {
         return Err(ApiError::forbidden(
             "fill secrets are managed by the local owner from this computer",
         ));
@@ -446,6 +446,13 @@ pub(crate) async fn reveal_fill_secret(
     ApiJson(input): ApiJson<RevealFillSecret>,
 ) -> Result<(HeaderMap, Json<RevealFillSecretResponse>), ApiError> {
     let svc = service(&s, &actor)?;
+    // The plaintext is shown only to the person at this computer's own app, never to a paired
+    // device, not even the host's administrator desktop (also on the never-list of the peer guard).
+    if !actor.local {
+        return Err(ApiError::forbidden(
+            "a stored secret is revealed only at this computer's own app",
+        ));
+    }
     if !input.confirm {
         return Err(ApiError::bad_request(
             "owner confirmation is required to reveal a secret",

@@ -2,6 +2,7 @@ import {
   Bell,
   BellOff,
   ChevronRight,
+  Lightbulb,
   Lock,
   PenLine,
   Plus,
@@ -22,7 +23,7 @@ import { type PermissionTone, permissionTone } from "../lib/botEditor";
 import { chatActivity, chatDateLabel } from "../lib/botLanding";
 import { CHAT_SEARCH_MIN_CHATS, filterChats } from "../lib/chatSearch";
 import type { PresetChoice } from "../lib/botProfile";
-import { modelLine } from "../lib/modelName";
+import { isLiteModel, modelLine } from "../lib/modelName";
 import { approvalHeadline, type T } from "../lib/approvalPlain";
 import { runNow } from "../lib/runNow";
 import { toolSentence } from "../lib/runSentence";
@@ -36,6 +37,7 @@ import styles from "./BotPanel.module.css";
 import { BotPanelMail } from "./BotPanelMail";
 import { BotPanelWebhooks } from "./BotPanelWebhooks";
 import { BotPanelSkills } from "./BotPanelSkills";
+import { BotPanelWorkspace } from "./BotPanelWorkspace";
 import { BrandMark } from "./BrandMark";
 import { ChatList } from "./ChatList";
 import { QuotaBlock } from "./QuotaRings";
@@ -117,6 +119,8 @@ export function BotPanel({
   visible = true,
   onClose,
   onOpenChat,
+  onPopOutChat,
+  onPopOutLive,
   onNewChat,
   onPatchChat,
   onDeleteChat,
@@ -149,6 +153,8 @@ export function BotPanel({
   visible?: boolean;
   onClose: () => void;
   onOpenChat: (chatId: string, messageId?: string) => void;
+  onPopOutChat?: (chatId: string, opts?: { nearCursor?: boolean }) => void;
+  onPopOutLive?: (opts?: { source?: "home" | "local"; nearCursor?: boolean; targetId?: string }) => void;
   onNewChat: () => void;
   onPatchChat: (chatId: string, patch: UpdateChatInput) => Promise<void>;
   onDeleteChat: (chatId: string) => Promise<void>;
@@ -229,6 +235,12 @@ export function BotPanel({
           <PermissionChip preset={preset} />
           {engineCli ? <span data-testid="bot-engine-label">{t("botEngine.label", { cli: engineCli })}</span> : null}
         </div>
+        {preset === "full" && isLiteModel(model) ? (
+          <p className={styles.liteHint} role="note" data-testid="bot-panel-lite-hint">
+            <Lightbulb aria-hidden="true" />
+            <span>{t("botPanel.liteFullHint")}</span>
+          </p>
+        ) : null}
         <div className={styles.actions}>
           <button
             type="button"
@@ -361,6 +373,7 @@ export function BotPanel({
                       mainBotName={mainBotName}
                       activity={now ? (now.approval ? t("botPanel.now.waiting") : now.step ? toolSentence(t, now.step) : t("botPanel.now.thinking")) : null}
                       visible={visible}
+                      onPopOut={onPopOutLive ? (side, opts) => onPopOutLive({ source: side === "mine" ? "local" : "home", ...opts }) : undefined}
                     />;
                 default:
                   return <QuotaBlock key={id} />;
@@ -376,6 +389,13 @@ export function BotPanel({
                 <BotPanelSkills skills={skills} onManage={onManageSkills} onAdd={onAddSkill} />
                 <BotPanelMail botId={bot.id} botName={bot.name} onOpenMail={onOpenMail} />
               </Fragment>
+            ) : id === "workspace" ? (
+              <section key={id} className={styles.section} aria-labelledby="bot-panel-workspace">
+                <h3 className={styles.label} id="bot-panel-workspace">
+                  {t("workspace.sectionTitle")}
+                </h3>
+                <BotPanelWorkspace botId={bot.id} active={visible && tab === "library"} />
+              </section>
             ) : (
               <div key={id}>
         <section className={styles.section} aria-labelledby="bot-panel-chats">
@@ -403,6 +423,7 @@ export function BotPanel({
             variant="panel"
             searchActive={chatQuery.trim().length > 0}
             onOpenChat={onOpenChat}
+            onPopOutChat={onPopOutChat}
             onPatchChat={onPatchChat}
             onDeleteChat={onDeleteChat}
           />

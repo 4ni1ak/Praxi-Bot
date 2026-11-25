@@ -733,7 +733,7 @@
         "failed": "The app list could not be refreshed: showing the saved one.",
         "offline": "No connection: showing the saved app list.",
         "rate_limited": "Composio is busy: showing the saved app list.",
-        "unauthorized": "Composio sign-in ran out: showing the saved app list."
+        "unauthorized": "Composio tidak lagi menerima login yang tersimpan: daftar aplikasi yang tersimpan ditampilkan."
       },
       "connectedSection": "Connected",
       "disable": "Turn off",
@@ -758,6 +758,7 @@
       "loading": "Loading apps…",
       "noResults": "No matching apps.",
       "openFailed": "The sign-in link was not opened because it is not a Composio link.",
+      "relogin": "Masuk ke Composio lagi",
       "retry": "Try again",
       "state": {
         "active": "Connected",
@@ -847,8 +848,11 @@
       "failed": {
         "app_link": "The page for {{name}} could not be prepared. Try again.",
         "app_open": "The page for {{name}} could not be opened.",
+        "login_expired": "Composio tidak lagi menerima login yang tersimpan, jadi {{name}} belum bisa dihubungkan. Masuk ke Composio lagi.",
         "login_failed": "The sign-in did not finish. Try again.",
-        "login_open": "The sign-in page could not be opened."
+        "login_open": "The sign-in page could not be opened.",
+        "rate_limited": "Composio sedang sibuk. Tunggu semenit, lalu coba {{name}} lagi.",
+        "upstream": "Composio tidak dapat dijangkau atau tidak menjawab. Periksa koneksi komputer tempat bot berjalan, lalu coba lagi."
       },
       "login": "The sign-in page opened in your browser. Finish it there and {{name}} opens next by itself.",
       "opened": "{{name}}'s page is open in your browser. Allow access there; it shows up as Connected here.",
@@ -1309,6 +1313,7 @@
     "computer": "Computer",
     "edit": "Edit bot",
     "isMain": "This is the main bot",
+    "liteFullHint": "Model ringan sedang dipilih. Untuk tugas panjang dengan banyak langkah, model yang lebih kuat bekerja lebih baik: model ini bisa berhenti untuk bertanya atau kehilangan arah. Anda bisa mengubahnya di pengaturan bot.",
     "mail": {
       "agentmail": "Own address",
       "check": "Check connection",
@@ -1570,6 +1575,7 @@
         "stillAsks": "It asks again for other programs, launching, commands, scripts, dragging, file dialogs, password fields and any other key. Terminals, browsers, launchers and remote-desktop viewers are recognised by file name only, which is a heuristic: a renamed copy is not recognised. The permission ends with the task and is withdrawn after any stopped or failed send."
       },
       "countdown": "Auto-deny in {{seconds}} s",
+      "decidedElsewhere": "Permintaan ini sudah ditangani atau sudah kedaluwarsa.",
       "deny": "Deny",
       "egress": {
         "hidden": "{{hidden}} invisible characters are shown as <U+XXXX>",
@@ -1958,6 +1964,7 @@
       "answer": "Answer",
       "answered": "You answered: {{answer}}",
       "closed": "This question is no longer open.",
+      "decidedElsewhere": "Pertanyaan ini sudah dijawab atau sudah kedaluwarsa.",
       "placeholder": "Type another answer…",
       "title": "The bot asks"
     },
@@ -2066,6 +2073,11 @@
         "done": "Clicked on a page",
         "failed": "Didn't click on a page",
         "running": "Clicking on a page"
+      },
+      "browser_dismiss_consent": {
+        "done": "Spanduk cookie di halaman ditutup",
+        "failed": "Tidak bisa menutup spanduk cookie",
+        "running": "Menutup spanduk cookie di halaman"
       },
       "browser_eval": {
         "done": "Ran a script in the browser",
@@ -2836,6 +2848,10 @@
         "hint": "Try again in a moment. If it keeps failing, reconnect the app.",
         "title": "Composio could not finish that"
       },
+      "composio_login_expired": {
+        "hint": "Buka Aplikasi dan tekan Masuk ke Composio lagi. Cukup satu klik di browser.",
+        "title": "Composio tidak lagi menerima login Anda"
+      },
       "composio_not_configured": {
         "hint": "Add your Composio key in Apps, then try again.",
         "title": "Composio is not set up yet"
@@ -2899,6 +2915,10 @@
       "host_setup_conflict": {
         "hint": "Wait for the current setup to finish, then try again.",
         "title": "That computer is already being set up"
+      },
+      "host_terminal_failed": {
+        "hint": "Komputer itu online dan menjawab, tetapi terminalnya melaporkan galat. Lihat detail di bawah, lalu coba lagi.",
+        "title": "Terminal gagal di komputer itu"
       },
       "host_unreachable": {
         "hint": "Its copy may still be running. Try again, or confirm to bring the schedule back anyway.",
@@ -3220,6 +3240,36 @@
       "title": "This only works in the desktop app"
     },
     "details": "Details",
+    "emailProvider": {
+      "auth": {
+        "hint": "Pastikan Anda menyalin seluruh kunci dari akun AgentMail, lalu coba lagi.",
+        "title": "AgentMail tidak menerima kunci API ini"
+      },
+      "forbidden": {
+        "hint": "Buat kunci di akun AgentMail yang boleh membuat kotak masuk.",
+        "title": "Kunci AgentMail ini tidak diizinkan melakukan itu"
+      },
+      "quota": {
+        "hint": "Hapus kotak masuk yang tidak dipakai atau tingkatkan paket di AgentMail, lalu coba lagi.",
+        "title": "Paket AgentMail Anda telah mencapai batasnya"
+      },
+      "rateLimited": {
+        "hint": "Tunggu semenit lalu coba lagi.",
+        "title": "AgentMail meminta Anda memperlambat"
+      },
+      "rejected": {
+        "hint": "Periksa kunci dan nama alamat (huruf, angka, tanda hubung), lalu coba lagi.",
+        "title": "AgentMail tidak menerima permintaan ini"
+      },
+      "taken": {
+        "hint": "Nama di agentmail.to dipakai bersama oleh semua orang. Pilih nama lain; nama yang tampaknya masih bebas sudah diisikan untuk Anda.",
+        "title": "Nama alamat itu sudah dipakai di AgentMail"
+      },
+      "transient": {
+        "hint": "Masalahnya ada di pihak mereka. Coba lagi dalam beberapa menit.",
+        "title": "AgentMail sedang tidak tersedia"
+      }
+    },
     "engineNeedsNative": {
       "hint": "It works with its own tools. Press Fix to allow that for this bot.",
       "title": "This model needs your OK first"
@@ -3870,7 +3920,7 @@
       "bots": "Bots are ready on this server.",
       "model": "A model is connected."
     },
-    "managedOnServer": "Keys, permissions, tools and pairing are managed on {{name}} itself. Here you can create and edit bots, chat and watch its screen.",
+    "managedOnServer": "Setelah komputer ini dikonfirmasi sebagai administrator di {{name}}, Anda juga mengelola kunci, izin, alat, dan email dari sini. Memasangkan perangkat dan memperbarui {{name}} tetap dilakukan di {{name}} sendiri.",
     "missing": {
       "bots": "No bots on this server yet.",
       "model": "No model connected on this server yet."
@@ -3885,24 +3935,17 @@
     },
     "newBotNeedsModel": "{{name}} has no model yet, so a bot cannot be created there. Connect a model on the server first.",
     "refusal": {
-      "adminRequired": "{{name}} has not confirmed this computer as its administrator yet. Run `bot host admin --all-desktops` once on {{name}}, then try again.",
-      "botPermissions": "A bot's permissions and tools are managed on {{name}} itself. Name, persona and model can be changed here.",
-      "composio": "App connections are managed on this computer's owner side, not on {{name}}.",
-      "connectionTest": "Key tests run on {{name}} itself and are not available from this app.",
-      "credentials": "This email or search setting is changed on {{name}} itself, not from this app.",
-      "generic": "{{name}} did not allow this: {{reason}}",
+      "adminRequired": "{{name}} belum mengonfirmasi komputer ini sebagai administrator. Jalankan `bot host admin --all-desktops` sekali di {{name}}, lalu coba lagi.",
+      "generic": "{{name}} tidak mengizinkan ini, jadi tidak ada yang berubah. Alasan teknisnya ada di Detail.",
+      "hostOnly": "Ini sengaja hanya dilakukan di {{name}} sendiri. Aplikasi ini tidak bisa melakukannya.",
       "hostTransfer": "Moving the host and pairing channels is done on {{name}} itself.",
-      "knowledge": "Knowledge settings are managed on {{name}} itself.",
-      "lifecycle": "Pairing and host updates are done on {{name}} itself.",
+      "lifecycle": "Memasangkan perangkat baru dan memperbarui {{name}} dilakukan di {{name}} sendiri dengan perintah `bot host`, dengan sengaja.",
       "localOnly": "Only the person at {{name}} can do this, not this app.",
-      "localProviders": "Local models and coding tools belong to the computer where the bot runs. Switch to This computer to set them up.",
+      "needsAdmin": "{{name}} tidak menerima ini dari aplikasi. Konfirmasi komputer ini sekali dengan `bot host admin --all-desktops` di {{name}}, perbarui {{name}} ke versi terbaru, lalu coba lagi.",
       "overlay": "Only the person at {{name}} can answer that prompt.",
       "ownerOnly": "This can only be done on {{name}} itself.",
-      "policy": "The execution policy is set on {{name}} itself, not from this app.",
       "role": "{{name}} does not allow this computer to do that.",
-      "screenInput": "{{name}} has not allowed this computer to control its screen. Allow it in Praxi on {{name}}.",
-      "secrets": "Keys and secrets are added on {{name}} itself, not from this app.",
-      "tools": "Tool servers and skills are managed on {{name}} itself."
+      "screenInput": "{{name}} has not allowed this computer to control its screen. Allow it in Praxi on {{name}}."
     },
     "state": {
       "connected": "Connected",
@@ -4494,6 +4537,7 @@
     "recent": "Recent",
     "reset": "Reset",
     "results": "Message results",
+    "retry": "Coba lagi",
     "searching": "Searching…",
     "title": "Search messages",
     "when": "Date",
@@ -4878,6 +4922,20 @@
     "directHint": "Direct: this app talks straight to the computer, which is the fastest way. The number is the delay.",
     "relay": "Relay · {{rtt}} ms",
     "relayHint": "Relayed: the connection goes through a helper server, so it can be a little slower. The number is the delay."
+  },
+  "popout": {
+    "chatFallbackTitle": "Jendela percakapan",
+    "connecting": "Menghubungkan…",
+    "focusFailed": "Jendela utama tidak dapat ditampilkan. Buka dari baki sistem.",
+    "focusMain": "Tampilkan jendela utama",
+    "openChat": "Buka di jendela baru",
+    "openChatTooltip": "Buka percakapan ini di jendela baru",
+    "openFailed": "Jendela baru tidak dapat dibuka. Silakan coba lagi.",
+    "openLive": "Buka tampilan langsung di jendela baru",
+    "openLiveShort": "Pisahkan jendela",
+    "pinFailed": "Pengaturan jendela agar selalu di depan tidak dapat diubah. Silakan coba lagi.",
+    "pinOnTop": "Selalu tampilkan jendela ini di depan",
+    "unpinOnTop": "Jangan selalu tampilkan di depan"
   },
   "profileShare": {
     "back": "Back",
@@ -5850,6 +5908,7 @@
         "ownAccount": "You need your own free AgentMail account. Praxi-Bot does not hold any key for you: paste the API key from your account.",
         "pricing": "See their pricing",
         "scopedKeyHint": "Kunci ini hanya milik satu kotak masuk, jadi tidak bisa membuat alamat baru. Hubungkan kotak masuk yang sudah kamu punya.",
+        "suggested": "Coba “{{name}}” sebagai gantinya.",
         "title": "Give a bot its own address",
         "useExisting": "Hubungkan kotak masuk yang sudah ada",
         "viaApi": "AgentMail inbox"
@@ -6077,6 +6136,7 @@
       "optOutPlaceholder": "ann@example.com or example.com",
       "optOutRemove": "Remove {{value}}",
       "optOutTitle": "People I will not write to",
+      "retry": "Coba lagi",
       "save": "Save",
       "saved": "Saved",
       "sentAnyway": "Sent anyway",
@@ -6574,6 +6634,10 @@
     "switch": "Switch to this computer"
   },
   "toolPacks": {
+    "ack": {
+      "label": "Saya mengerti",
+      "text": "Ini adalah perangkat lunak terpisah berlisensi {{license}}, diunduh dari penulisnya. Praxi tidak mendistribusikan atau mengubahnya."
+    },
     "back": "Back",
     "basicSet": "Select the basic set",
     "button": "Tools",
@@ -6585,6 +6649,8 @@
     "dontClose": "This can take a few minutes. You can keep using the app.",
     "found": "Programs found: {{n}}",
     "lead": "Programs your bots can use on this server.",
+    "licenseMixed": "Lisensi campuran",
+    "licenseName": "Lisensi {{name}}",
     "listLabel": "Tool packs",
     "loading": "Looking at the server…",
     "noLogin": {
@@ -6612,6 +6678,11 @@
       "office": {
         "desc": "Word, Excel, PowerPoint and PDF export, with Turkish fonts",
         "name": "Office files"
+      },
+      "scrape": {
+        "desc": "Membaca halaman dengan lebih bersih dan dapat mengikuti beberapa tautan",
+        "name": "Pengambilan data web",
+        "note": "Tidak untuk halaman yang memerlukan login"
       }
     },
     "planning": "Checking what would change…",
@@ -6630,9 +6701,17 @@
         "body": "The server stopped it, for example because the disk is full or another update is running. Your server is fine; you can try again.",
         "title": "It did not finish"
       },
+      "needs_ack": {
+        "body": "Baca dan konfirmasi pemberitahuan lisensi, lalu tinjau kembali.",
+        "title": "Harap konfirmasi lisensi"
+      },
       "needs_admin": {
         "body": "Use a server login with administrator rights (sudo without a password), then try again.",
         "title": "This login can't install software"
+      },
+      "needs_python": {
+        "body": "Instal “Developer tools” di server ini terlebih dahulu, lalu tambahkan pengambilan data web.",
+        "title": "Python diperlukan terlebih dahulu"
       },
       "shared": {
         "body": "Praxi does not remove these: your server needs them.",
@@ -6674,6 +6753,7 @@
     "safeRemove": "Only these tools are removed",
     "safeRemoveBody": "Your settings and other software stay as they are.",
     "size": "about {{value}} {{unit}}",
+    "source": "Sumber",
     "status": {
       "installed": "Installed",
       "partial": "Incomplete"
@@ -6683,6 +6763,7 @@
     "title": "Tools",
     "titleFor": "Tools on {{name}}",
     "tryAgain": "Try again",
+    "versionLabel": "Versi {{version}}",
     "willInstall": "Will be installed",
     "willRemove": "Will be removed"
   },
@@ -7232,5 +7313,59 @@
     "tooFewSteps": "This run has fewer than two recordable steps.",
     "untrustedWarning": "This run read external or private content. Review every affected step before granting persistent automation.",
     "warnings": "Review notes"
+  },
+  "workspace": {
+    "botRowDesc": "Folder: {{folder}} · {{used}} ({{files}} berkas)",
+    "breadcrumbs": "Jalur folder ruang kerja",
+    "cardDescription": "Periksa folder bot yang persisten, batas disk per bot (opsional), ambang peringatan, dan pembersihan yang aman.",
+    "cardTitle": "Ruang Kerja Bot & Disk",
+    "cleanedSummary": "{{size}} dibebaskan",
+    "cleanupDesc": "Hanya berkas lama di downloads/ dan logs/, atau folder cache yang dapat dibuat ulang, yang pernah dihapus.",
+    "cleanupHeading": "Pembersihan aman & berkas besar",
+    "cleanupTarget": {
+      "all_old": "Bersihkan unduhan & log lama ({{size}})",
+      "daemon_cache": "Kosongkan cache ({{size}})",
+      "old_downloads": "Bersihkan unduhan lama ({{size}})",
+      "old_logs": "Bersihkan log lama ({{size}})"
+    },
+    "delete": "Hapus",
+    "deletedUndoLabel": "\"{{name}}\" dihapus",
+    "diskSummary": "Disk terisi {{percent}}% · {{free}} bebas dari {{total}} · Ruang kerja: {{botsTotal}}",
+    "download": "Unduh",
+    "downloadsDays": "Usia maksimum unduhan (hari)",
+    "emptyFolder": "Folder ini kosong.",
+    "hardLimitGb": "Batas keras (GB)",
+    "invalidLimitValue": "Masukkan angka positif dalam GB, atau kosongkan untuk menonaktifkan.",
+    "invalidThresholds": "Persentase peringatan harus naik antara 1 dan 99, dengan ruang kosong minimum (GB) yang positif.",
+    "limitOff": "Nonaktif",
+    "loading": "Memuat…",
+    "logsDays": "Usia maksimum log (hari)",
+    "manageStorage": "Pengaturan penyimpanan",
+    "minFreeGb": "Ruang kosong minimum (GB)",
+    "noMatches": "Tidak ada berkas yang cocok.",
+    "openFolder": "Buka folder",
+    "preview": "Pratinjau",
+    "rename": "Ganti nama",
+    "retentionDesc": "Berkas yang lebih lama dari usia ini muncul di saran pembersihan (kosongkan untuk menonaktifkan).",
+    "retentionTitle": "Retensi pembersihan",
+    "root": "Ruang kerja",
+    "saved": "Tersimpan",
+    "searchPlaceholder": "Saring berkas ruang kerja…",
+    "sectionTitle": "Berkas ruang kerja",
+    "softExceedsHard": "Batas lunak tidak boleh melebihi batas keras.",
+    "softLimitGb": "Batas lunak (GB)",
+    "storageHeading": "Disk host & akar ruang kerja",
+    "thresholdsDesc": "Beri peringatan saat disk mencapai persentase ini atau ruang kosong turun di bawah minimum.",
+    "thresholdsTitle": "Ambang peringatan dini",
+    "unconfiguredHint": "Folder ruang kerja dibuat otomatis saat bot berjalan secara lokal.",
+    "undo": "Urungkan",
+    "warnPct1": "Tingkat peringatan 1 (%)",
+    "warnPct2": "Tingkat peringatan 2 (%)",
+    "warnPct3": "Tingkat peringatan 3 (%)",
+    "warningBigItem": "Berkas terbesar: {{path}} ({{size}})",
+    "warningBotLimit": "Ruang kerja sebuah bot mencapai batas lunak yang ditetapkan.",
+    "warningCheckStorage": "Periksa folder ruang kerja atau jalankan pembersihan yang aman.",
+    "warningLowFree": "Ruang disk menipis: tersisa {{free}}",
+    "warningPercent": "Disk terisi {{percent}}%"
   }
 }

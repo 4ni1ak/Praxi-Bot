@@ -69,8 +69,8 @@ test("sections without data are not rendered", () => {
     "upcoming",
     "quota"
   ]);
-  assert.deepEqual(librarySections({ chats: 0 }), ["skills"]);
-  assert.deepEqual(librarySections({ chats: 2 }), ["skills", "chats"]);
+  assert.deepEqual(librarySections({ chats: 0 }), ["skills", "workspace"]);
+  assert.deepEqual(librarySections({ chats: 2 }), ["skills", "workspace", "chats"]);
 
   const sched = (over: Partial<Schedule>): Schedule =>
     ({

@@ -1,4 +1,4 @@
-import { ArrowLeft, Globe, Info, Monitor, OctagonX, RefreshCw } from "lucide-react";
+import { ArrowLeft, ExternalLink, Globe, Info, Monitor, OctagonX, RefreshCw } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -56,6 +56,7 @@ import { explainScreen } from "../lib/screenReason";
 import { CopyBlock } from "./settings/HomeCards";
 import { useDaemon } from "../state/DaemonContext";
 import { LiveViewerChat, type LiveChatSlots } from "./LiveViewerChat";
+import { useDragPopOut } from "../components/useDragPopOut";
 import { useLiveView, useLocalLiveView } from "../state/LiveViewContext";
 import { requestStop } from "../state/appStop";
 import { liveViewErrorText } from "../lib/liveViewError";
@@ -117,13 +118,25 @@ export function LiveViewer({
   source = "home",
   botId = null,
   infoPanel,
-  onChatSlots
+  onChatSlots,
+  embedded = false,
+  onClose,
+  onStop,
+  onPopOut
 }: {
   source?: "home" | "local";
   /** The bot the chat belongs to: the chat's last state is remembered per bot. */
   botId?: string | null;
   infoPanel?: LiveInfoPanel;
   onChatSlots?: (slots: LiveChatSlots | null) => void;
+  /** Render inline inside a dedicated pop-out window instead of portalling over the whole app. */
+  embedded?: boolean;
+  /** Invoked after `closeViewer` finishes (used by the pop-out window shell). */
+  onClose?: () => void;
+  /** Custom emergency-stop handler (used in pop-out windows instead of main's stop ledger). */
+  onStop?: () => void;
+  /** Open the live view in its own pop-out window (supports button click or header drag-out). */
+  onPopOut?: (opts: { targetId?: string; nearCursor?: boolean }) => void;
 } = {}) {
   const { t } = useTranslation();
   const { bots, needs } = useDaemon();
@@ -161,6 +174,12 @@ export function LiveViewer({
     qualityMode,
     setQualityMode
   } = view;
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (viewerOpen) wasOpen.current = true;
+    // closeViewer keeps the screen open when returning control fails. Respect that result.
+    else if (wasOpen.current) onClose?.();
+  }, [viewerOpen, onClose]);
   const infoPanelRef = useRef(infoPanel);
   infoPanelRef.current = infoPanel;
 
@@ -173,6 +192,10 @@ export function LiveViewer({
   const [imeBuffer, setImeBuffer] = useState("");
   const [fit, setFit] = useState<FitMode>("fit");
   const { screenFit, toggleScreenFit } = useScreenFit();
+  const headerDrag = useDragPopOut({
+    onPopOut: onPopOut ? (opts) => onPopOut({ targetId: selectedTarget?.target_id, ...opts }) : undefined,
+    ignoreSelector: "button, a, input, select"
+  });
   // The latest "take over" ability for the key handler, which lives above the early return.
   const takeoverRef = useRef<(() => void) | null>(null);
   const [stageBox, setStageBox] = useState<{ w: number; h: number }>({
@@ -519,7 +542,7 @@ export function LiveViewer({
       style={{ "--live-panel-w": `${infoPanel?.open ? infoPanel.width : 0}px` } as CSSProperties}
       ref={backdropRef}
     >
-      <header className={styles.header}>
+      <header className={styles.header} {...headerDrag.dragProps}>
         <div className={styles.srOnly} role="status" aria-live="polite" data-testid="live-viewer-announce">
           {announceKey ? t(`liveView.announce.${announceKey}`) : ""}
         </div>
@@ -538,7 +561,7 @@ export function LiveViewer({
             data-testid="live-viewer-close"
           >
             <ArrowLeft />
-            <span>{t("liveView.backToChat")}</span>
+            <span>{embedded ? t("window.close") : t("liveView.backToChat")}</span>
           </Button>
         </div>
 
@@ -575,6 +598,18 @@ export function LiveViewer({
             <i className={styles.stateDot} aria-hidden="true" />
             <span>{badgeLabel}</span>
           </span>
+          {onPopOut ? (
+            <button
+              type="button"
+              className={styles.iconBtn}
+              title={t("popout.openLive")}
+              aria-label={t("popout.openLive")}
+              data-testid="live-viewer-popout"
+              onClick={() => onPopOut({ targetId: selectedTarget?.target_id })}
+            >
+              <ExternalLink />
+            </button>
+          ) : null}
           <LiveViewMenu
             quality={qualityMode}
             onQuality={setQualityMode}
@@ -591,7 +626,8 @@ export function LiveViewer({
               variant="danger"
               size="sm"
               onClick={() => {
-                requestStop("viewer");
+                if (onStop) onStop();
+                else requestStop("viewer");
               }}
               data-testid="live-viewer-stop"
             >
@@ -979,5 +1015,5 @@ export function LiveViewer({
     </div>
   );
 
-  return createPortal(content, document.body);
+  return embedded ? content : createPortal(content, document.body);
 }

@@ -31,6 +31,11 @@ impl From<ComposioControlError> for ApiError {
                 "composio_not_configured",
                 "Composio is not linked yet: start the one-time login first",
             ),
+            ComposioControlError::LoginExpired => Self::new(
+                StatusCode::CONFLICT,
+                "composio_login_expired",
+                "Composio no longer accepts the saved login: sign in to Composio again",
+            ),
             ComposioControlError::RateLimited(m) => {
                 Self::new(StatusCode::TOO_MANY_REQUESTS, "composio_rate_limited", m)
             }
@@ -217,7 +222,7 @@ pub(crate) async fn composio_get_app(
 #[utoipa::path(post, path = "/v1/composio/apps/{slug}/connect", tag = "composio",
     security(("bearer" = [])),
     params(("slug" = String, Path, description = "Toolkit slug")),
-    responses((status = 200, body = ComposioConnectDto), (status = 409, body = ErrorBody),
+    responses((status = 200, body = ComposioConnectDto), (status = 409, body = ErrorBody, description = "not linked, or the Composio login expired"),
               (status = 502, body = ErrorBody)))]
 pub(crate) async fn composio_connect(
     State(s): State<AppState>,

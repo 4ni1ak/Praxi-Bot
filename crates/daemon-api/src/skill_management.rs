@@ -141,8 +141,12 @@ pub struct DeleteSkillResult {
     pub used_by: Vec<SkillUsingBotDto>,
 }
 
-pub(crate) fn local_owner(peer: Option<&Extension<PeerIdentity>>) -> Result<(), ApiError> {
-    if peer.is_some() {
+pub(crate) fn local_owner(
+    s: &AppState,
+    peer: Option<&Extension<PeerIdentity>>,
+) -> Result<(), ApiError> {
+    // The host's administrator desktop is the owner there (`peer::admin_desktop_never`).
+    if s.bot_authority_peer(peer.map(|p| &p.0)).is_some() {
         Err(ApiError::forbidden(
             "only the local owner may manage shared skills",
         ))
@@ -239,7 +243,7 @@ pub(crate) async fn create(
     peer: Option<Extension<PeerIdentity>>,
     json: Result<Json<SkillDocumentInput>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ManagedSkillDto>), ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     let (prepared, _) = input(json)?.prepare()?;
     let dto = tokio::task::spawn_blocking(move || {
         let _guard = state.0.skill_mutations.lock();
@@ -261,7 +265,7 @@ pub(crate) async fn import(
     peer: Option<Extension<PeerIdentity>>,
     json: Result<Json<SkillImportInput>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ManagedSkillDto>), ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     let input = input(json)?;
     let dto = tokio::task::spawn_blocking(move || {
         let prepared = input.prepare()?;
@@ -285,7 +289,7 @@ pub(crate) async fn update(
     Path(name): Path<String>,
     json: Result<Json<SkillDocumentInput>, JsonRejection>,
 ) -> Result<Json<ManagedSkillDto>, ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     skills::owner::validate_owner_name(&name).map_err(owner_error)?;
     let (prepared, expected) = input(json)?.prepare()?;
     let dto = tokio::task::spawn_blocking(move || {
@@ -340,7 +344,7 @@ pub(crate) async fn delete(
     Path(name): Path<String>,
     query: Result<Query<DeleteSkillQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Response, ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     skills::owner::validate_owner_name(&name).map_err(owner_error)?;
     let Query(query) = query.map_err(|_| ApiError::bad_request("invalid skill query"))?;
     let (status, dto) = tokio::task::spawn_blocking(move || {

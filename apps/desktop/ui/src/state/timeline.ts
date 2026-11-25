@@ -598,6 +598,7 @@ function reduce(
     case "control_state_changed":
     case "view_targets_changed":
     case "mcp_server_changed":
+    case "workspace_warning":
       return state;
     case "handover_requested":
       return withRun(state, e.run_id, ts, (r) => {

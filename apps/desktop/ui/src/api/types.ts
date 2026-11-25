@@ -437,7 +437,8 @@ export type DaemonEvent =
       state: "succeeded" | "failed" | "cancelled" | "paused";
       summary: string;
       call_id?: string;
-    };
+    }
+  | { type: "workspace_warning"; warning: WorkspaceWarningEventDto };
 
 /** The two bots of an `ask_bot` hand-off (daemon-supplied). */
 export interface SubagentHelper {
@@ -570,3 +571,158 @@ export type DeleteSkillResult = S["DeleteSkillResult"];
 export type CliEngineDto = S["CliEngineDto"];
 export type BotEngineInput = S["BotEngineInput"];
 export type CliInstallApproval = S["CliInstallApproval"];
+
+// ---- Persistent Bot Workspaces (`/v1/workspaces*`, `/v1/bots/{id}/workspace*`) ----
+
+export interface DiskStatsDto {
+  total_bytes: number;
+  available_bytes: number;
+  used_bytes: number;
+  used_percent: number;
+}
+
+export interface WorkspaceSettingsDto {
+  warn_percent_1: number;
+  warn_percent_2: number;
+  warn_percent_3: number;
+  min_free_bytes: number;
+  downloads_max_age_days: number | null;
+  logs_max_age_days: number | null;
+}
+
+export type WorkspaceSettingsInput = WorkspaceSettingsDto;
+
+export interface BotWorkspaceSummaryDto {
+  bot_id: string;
+  bot_name: string;
+  folder_name: string;
+  workspace_path: string | null;
+  exists: boolean;
+  used_bytes: number;
+  file_count: number;
+  soft_limit_bytes: number | null;
+  hard_limit_bytes: number | null;
+  soft_limit_exceeded: boolean;
+  hard_limit_exceeded: boolean;
+}
+
+export interface WorkspaceBigItemDto {
+  bot_id: string | null;
+  bot_name: string | null;
+  folder_name: string;
+  relative_path: string;
+  size_bytes: number;
+  modified_at_ms: number;
+  category: string;
+}
+
+export type CleanupTarget = "old_downloads" | "old_logs" | "all_old" | "daemon_cache";
+
+export interface CleanupSuggestionDto {
+  target: CleanupTarget;
+  reclaimable_bytes: number;
+  file_count: number;
+}
+
+/**
+ * Payload of the SSE `workspace_warning` event. The stream is readable with any
+ * local token, so it carries numbers and bot ids only: names of bots, folders and
+ * files come from the owner-gated `GET /v1/workspaces` (`WorkspaceWarningDto`).
+ */
+export interface WorkspaceWarningEventDto {
+  severity: "warning" | "critical" | string;
+  threshold_percent: number | null;
+  below_min_free: boolean;
+  disk_used_percent: number | null;
+  available_bytes: number | null;
+  min_free_bytes: number;
+  soft_limit_bots: string[];
+}
+
+export interface WorkspaceWarningDto {
+  severity: "warning" | "critical" | string;
+  threshold_percent: number | null;
+  below_min_free: boolean;
+  disk_used_percent: number | null;
+  available_bytes: number | null;
+  min_free_bytes: number;
+  soft_limit_bots: string[];
+  largest_items: WorkspaceBigItemDto[];
+  suggestions: CleanupSuggestionDto[];
+}
+
+export interface WorkspacesOverviewDto {
+  configured: boolean;
+  root_path: string | null;
+  disk: DiskStatsDto | null;
+  total_workspace_bytes: number;
+  settings: WorkspaceSettingsDto;
+  bots: BotWorkspaceSummaryDto[];
+  largest_items: WorkspaceBigItemDto[];
+  suggestions: CleanupSuggestionDto[];
+  active_warning: WorkspaceWarningDto | null;
+}
+
+export interface WorkspaceCleanupInput {
+  target: CleanupTarget;
+  bot_id?: string | null;
+}
+
+export interface WorkspaceCleanupResultDto {
+  target: CleanupTarget;
+  deleted_files: number;
+  freed_bytes: number;
+}
+
+export type WorkspaceEntryKind = "directory" | "file";
+export type WorkspacePreviewKind = "none" | "text" | "image";
+
+export interface WorkspaceEntryDto {
+  name: string;
+  path: string;
+  kind: WorkspaceEntryKind;
+  size_bytes: number;
+  modified_at_ms: number;
+  preview_kind: WorkspacePreviewKind;
+}
+
+export interface WorkspaceTrashEntryDto {
+  undo_id: string;
+  name: string;
+  original_path: string;
+  size_bytes: number;
+  deleted_at_ms: number;
+}
+
+export interface BotWorkspaceListDto {
+  bot_id: string;
+  bot_name: string;
+  folder_name: string;
+  workspace_path: string | null;
+  current_path: string;
+  used_bytes: number;
+  soft_limit_bytes: number | null;
+  hard_limit_bytes: number | null;
+  soft_limit_exceeded: boolean;
+  hard_limit_exceeded: boolean;
+  entries: WorkspaceEntryDto[];
+  undo_items: WorkspaceTrashEntryDto[];
+}
+
+export interface WorkspaceRenameInput {
+  path: string;
+  new_name: string;
+}
+
+export interface WorkspaceDeleteInput {
+  path: string;
+}
+
+export interface WorkspaceRestoreInput {
+  undo_id: string;
+}
+
+export interface BotWorkspaceLimitsInput {
+  soft_limit_bytes: number | null;
+  hard_limit_bytes: number | null;
+}

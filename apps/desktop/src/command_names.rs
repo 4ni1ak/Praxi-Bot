@@ -35,6 +35,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "daemon_restart",
     "daemon_diagnostics",
     "open_log_folder",
+    "open_workspace_folder",
     "prereq_check",
     "open_webview_download",
     "providers_cli",
@@ -56,4 +57,9 @@ pub const COMMAND_NAMES: &[&str] = &[
     "quick_ask_connect",
     "quick_ask_hide",
     "quick_ask_open_in_app",
+    "open_popout_window",
+    "popout_connect",
+    "popout_owner_key",
+    "popout_set_always_on_top",
+    "popout_focus_main",
 ];

@@ -4,6 +4,7 @@ import {
   Check,
   Download,
   Sparkles,
+  ExternalLink,
   ChevronRight,
   LoaderCircle,
   MessageSquare,
@@ -28,6 +29,7 @@ import { Callout, ConfirmDialog } from "./DialogParts";
 import { Popover } from "./Popover";
 import { useContextMenu, useMenuTranslate } from "./ContextMenu";
 import { chatRowMenu } from "../lib/contextMenu";
+import { useDragPopOut } from "./useDragPopOut";
 import styles from "./ChatList.module.css";
 
 export interface ChatListItem {
@@ -49,8 +51,50 @@ export interface ChatListProps {
   loading?: boolean;
   searchActive?: boolean;
   onOpenChat: (chatId: string) => void;
+  onPopOutChat?: (chatId: string, opts?: { nearCursor?: boolean }) => void;
   onPatchChat: (chatId: string, patch: UpdateChatInput) => Promise<void>;
   onDeleteChat: (chatId: string) => Promise<void>;
+}
+
+function DraggableChatRow({
+  chatId,
+  className,
+  isActive,
+  pinned,
+  archived,
+  busy,
+  variant,
+  onPopOut,
+  children
+}: {
+  chatId: string;
+  className: string;
+  isActive: boolean;
+  pinned?: boolean;
+  archived?: boolean;
+  busy: boolean;
+  variant: "rail" | "panel";
+  onPopOut?: (opts?: { nearCursor?: boolean }) => void;
+  children: React.ReactNode;
+}) {
+  const { dragProps } = useDragPopOut({
+    onPopOut,
+    ignoreSelector: '[data-testid="chat-menu-trigger"]'
+  });
+  return (
+    <li
+      className={className}
+      data-active={isActive ? "true" : undefined}
+      data-pinned={pinned ? "true" : undefined}
+      data-archived={archived ? "true" : undefined}
+      data-busy={busy ? "true" : undefined}
+      data-chat-id={chatId}
+      data-testid={`chat-row-${variant}`}
+      {...dragProps}
+    >
+      {children}
+    </li>
+  );
 }
 
 /**
@@ -67,6 +111,7 @@ export function ChatList({
   loading = false,
   searchActive = false,
   onOpenChat,
+  onPopOutChat,
   onPatchChat,
   onDeleteChat
 }: ChatListProps) {
@@ -198,15 +243,16 @@ export function ChatList({
     }
 
     return (
-      <li
+      <DraggableChatRow
         key={c.id}
+        chatId={c.id}
         className={rowClass}
-        data-active={isActive ? "true" : undefined}
-        data-pinned={c.pinned ? "true" : undefined}
-        data-archived={c.archived ? "true" : undefined}
-        data-busy={busy ? "true" : undefined}
-        data-chat-id={c.id}
-        data-testid={`chat-row-${variant}`}
+        isActive={isActive}
+        pinned={c.pinned}
+        archived={c.archived}
+        busy={busy}
+        variant={variant}
+        onPopOut={onPopOutChat ? (opts) => onPopOutChat(c.id, opts) : undefined}
       >
         <button
           type="button"
@@ -257,7 +303,7 @@ export function ChatList({
         >
           {busy ? <LoaderCircle className={styles.spin} aria-hidden="true" /> : <MoreHorizontal aria-hidden="true" />}
         </button>
-      </li>
+      </DraggableChatRow>
     );
   };
 
@@ -279,6 +325,7 @@ export function ChatList({
       busy: pendingIds.has(chat.id),
       canExport: !!client,
       onOpen: () => onOpenChat(chat.id),
+      onPopOut: onPopOutChat ? () => onPopOutChat(chat.id) : undefined,
       onRename: () => beginRename(chat),
       onPin: () => void onPatchChat(chat.id, { pinned: !chat.pinned }),
       onExport: () => setExportTarget(chat),
@@ -321,6 +368,11 @@ export function ChatList({
       >
         {menuChat ? (
           <>
+            {onPopOutChat ? (
+              <button type="button" role="menuitem" className={styles.menuItem} data-testid="chat-action-popout" onClick={() => { closeMenu(); onPopOutChat(menuChat.id); }}>
+                <ExternalLink aria-hidden="true" /><span>{t("popout.openChat")}</span>
+              </button>
+            ) : null}
             <button type="button" role="menuitem" className={styles.menuItem} data-testid="chat-action-rename" onClick={() => beginRename(menuChat)}>
               <Pencil aria-hidden="true" /><span>{t("chatManage.rename")}</span>
             </button>

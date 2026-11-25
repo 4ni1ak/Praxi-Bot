@@ -80,6 +80,8 @@ pub mod codes {
     pub const HOST_OUTDATED: &str = "host_outdated";
     /// The host is online but refused this desktop for the terminal.
     pub const NOT_PERMITTED: &str = "host_not_permitted";
+    /// The host answered, but with an error of its own (not a refusal, not a missing route).
+    pub const HOST_FAILED: &str = "host_terminal_failed";
 }
 
 /// The terminal sessions of this daemon, by the key of the desktop that owns each.
@@ -157,7 +159,7 @@ mod pty {
     //! Pseudo-terminal plumbing: no `unsafe`. The controlling terminal is set up by
     //! `setsid -w -c` (util-linux), so the shell has job control.
     use std::ffi::OsString;
-    use std::fs::{File, OpenOptions};
+    use std::fs::File;
     use std::io::Write;
     use std::process::Stdio;
 
@@ -189,7 +191,7 @@ mod pty {
         Plain,
     }
 
-    fn open_pty(cols: u16, rows: u16) -> std::io::Result<(File, File)> {
+    pub(super) fn open_pty(cols: u16, rows: u16) -> std::io::Result<(File, File)> {
         let master =
             openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).map_err(std::io::Error::from)?;
         grantpt(&master).map_err(std::io::Error::from)?;
@@ -201,8 +203,19 @@ mod pty {
             .to_owned();
         let master = File::from(master);
         tcsetwinsize(&master, size(cols, rows)).map_err(std::io::Error::from)?;
-        let slave = OpenOptions::new().read(true).write(true).open(&name)?;
-        Ok((master, slave))
+        // `O_NOCTTY` is essential: the daemon runs as a systemd service, i.e. as a session leader
+        // with no controlling terminal, and opening a terminal device without it makes THIS pty
+        // the daemon's own controlling terminal. When the shell ends and the master is closed, the
+        // kernel then hangs the terminal up and sends SIGHUP to the daemon, which dies (systemd
+        // calls that a clean stop and starts it again), and `setsid -c` for the shell fails with
+        // EPERM because the terminal already belongs to the daemon's session.
+        let slave = rustix::fs::open(
+            name.as_str(),
+            rustix::fs::OFlags::RDWR | rustix::fs::OFlags::NOCTTY | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .map_err(std::io::Error::from)?;
+        Ok((master, File::from(slave)))
     }
 
     /// Whether `setsid -w -c` really works on this host, found by running it once on a throwaway
@@ -857,7 +870,10 @@ fn valid_host(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-/// A host's error, with the codes the desktop words; anything else is `host_link_failed`.
+/// A host's error, with the codes the desktop words. `host_link_failed` means the host did not
+/// answer (the link or a gateway in between failed: 502/503/504); a host that DID answer with
+/// something else is `host_terminal_failed`, so "unreachable" is never said of a computer that
+/// replied.
 fn host_error(status: u16, body: &serde_json::Value) -> ApiError {
     let code = body["error"]["code"].as_str().unwrap_or_default();
     let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
@@ -873,7 +889,8 @@ fn host_error(status: u16, body: &serde_json::Value) -> ApiError {
         _ if matches!(status.as_u16(), 404 | 405) => codes::HOST_OUTDATED,
         // The host refused this desktop (not its paired owner, or the route is closed).
         _ if matches!(status.as_u16(), 401 | 403) => codes::NOT_PERMITTED,
-        _ => "host_link_failed",
+        _ if matches!(status.as_u16(), 502..=504) => "host_link_failed",
+        _ => codes::HOST_FAILED,
     };
     // The desktop reads a 404 as "session gone": an outdated host is a gateway problem.
     let status = if known == codes::HOST_OUTDATED {
@@ -1045,7 +1062,12 @@ mod tests {
         let empty = serde_json::json!({});
         assert_eq!(host_error(404, &empty).code_str(), codes::HOST_OUTDATED);
         assert_eq!(host_error(403, &empty).code_str(), codes::NOT_PERMITTED);
-        assert_eq!(host_error(500, &empty).code_str(), "host_link_failed");
+        // The link or a gateway failed: the computer did not answer.
+        assert_eq!(host_error(502, &empty).code_str(), "host_link_failed");
+        assert_eq!(host_error(504, &empty).code_str(), "host_link_failed");
+        // The computer answered with an error of its own: not "unreachable".
+        assert_eq!(host_error(500, &empty).code_str(), codes::HOST_FAILED);
+        assert_eq!(host_error(429, &empty).code_str(), codes::HOST_FAILED);
         let gone = serde_json::json!({"error":{"code":codes::GONE}});
         assert_eq!(host_error(404, &gone).code_str(), codes::GONE);
     }
@@ -1106,6 +1128,50 @@ mod tests {
         assert_eq!(pty::probe("/nonexistent/setsid"), pty::Strategy::Plain);
         let fine = fake_setsid("fine", "exit 0");
         assert_eq!(pty::probe(&fine), pty::Strategy::Setsid);
+    }
+
+    /// The host bug: the daemon is a systemd service (a session leader without a controlling
+    /// terminal), and a pty slave opened without `O_NOCTTY` became ITS controlling terminal, so
+    /// closing the pty sent SIGHUP to the daemon (the host restarted at the first terminal). The
+    /// test runs the pty code in a child that is such a session leader (`setsid -w`).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_pty_never_becomes_the_controlling_terminal_of_the_daemon_that_opens_it() {
+        const HELPER: &str = "PRAXI_PTY_CTTY_HELPER";
+        const TEST: &str = "terminal::tests::a_pty_never_becomes_the_controlling_terminal_of_the_daemon_that_opens_it";
+        if std::env::var_os(HELPER).is_some() {
+            let (master, slave) = pty::open_pty(80, 24).expect("a pty");
+            let stat = std::fs::read_to_string("/proc/self/stat").unwrap();
+            // `pid (comm) state ppid pgrp session tty_nr ...`
+            let tty_nr: i64 = stat[stat.rfind(')').unwrap() + 1..]
+                .split_whitespace()
+                .nth(4)
+                .unwrap()
+                .parse()
+                .unwrap();
+            drop(slave);
+            drop(master);
+            // A hang-up of a controlling terminal would kill this process by now.
+            std::thread::sleep(Duration::from_millis(400));
+            println!("survived tty_nr={tty_nr}");
+            return;
+        }
+        let exe = std::env::current_exe().unwrap();
+        let Ok(out) = std::process::Command::new("setsid")
+            .arg("-w")
+            .arg(exe)
+            .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+            .env(HELPER, "1")
+            .output()
+        else {
+            return; // no util-linux setsid here
+        };
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && text.contains("survived tty_nr=0"),
+            "the pty became the daemon's controlling terminal ({:?}): {text}",
+            out.status
+        );
     }
 
     #[cfg(unix)]

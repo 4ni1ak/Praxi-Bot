@@ -238,6 +238,7 @@ export function approvalSentence(
   if (
     site &&
     (call.name === "web_extract" ||
+      call.name === "web_scrape" ||
       call.name === "web_feed" ||
       call.name === "web_metadata" ||
       call.name === "web_sitemap")

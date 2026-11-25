@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { modelDisplayName, modelLine } from "./modelName.ts";
+import { isLiteModel, modelDisplayName, modelLine } from "./modelName.ts";
 
 test("model ids become human names", () => {
   const cases: Array<[string, string]> = [
@@ -50,4 +50,30 @@ test("modelLine splits provider and model and names CLI defaults after the CLI",
   assert.equal(modelLine("claude-sonnet-5-5").provider, "");
   assert.deepEqual(modelLine(""), { name: "", provider: "", brand: "", isDefault: false });
   assert.deepEqual(modelLine(undefined), { name: "", provider: "", brand: "", isDefault: false });
+});
+
+test("light model tiers are recognised by the words of the id", () => {
+  for (const id of [
+    "gemini/gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite-preview",
+    "openai/gpt-5.1-mini",
+    "gpt-5-nano",
+    "anthropic/claude-haiku-5-5-latest",
+    "o3-mini"
+  ]) {
+    assert.equal(isLiteModel(id), true, id);
+  }
+  for (const id of [
+    "gemini/gemini-3.1-pro-preview",
+    "anthropic/claude-sonnet-5-5",
+    "claude-opus-4-1",
+    "ollama/llama3.2:3b",
+    "gpt-4o",
+    "geminimini-x",
+    "",
+    undefined,
+    null
+  ]) {
+    assert.equal(isLiteModel(id), false, String(id));
+  }
 });

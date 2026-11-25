@@ -139,6 +139,7 @@ async fn run_with_source(
         },
         data_dir: Some(data_dir),
         helper_bot: s.helper_bot.as_ref().map(|h| h.profile_toml.clone()),
+        owner_message: s.owner_message,
     };
     let trace = run_turn_ext(
         TurnConfig {
@@ -576,6 +577,24 @@ fn request_failures(e: &RequestExpect, requests: &[ChatRequest], out: &mut Vec<S
             ));
         }
     }
+    if !e.system_contains.is_empty() || !e.system_not_contains.is_empty() {
+        let system: String = messages
+            .iter()
+            .filter(|m| m.role == MessageRole::System)
+            .filter_map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for c in &e.system_contains {
+            if !system.contains(c.as_str()) {
+                out.push(format!("request {at}: the system message lacks {c:?}"));
+            }
+        }
+        for c in &e.system_not_contains {
+            if system.contains(c.as_str()) {
+                out.push(format!("request {at}: the system message contains {c:?}"));
+            }
+        }
+    }
     let offered: Vec<&str> = req
         .tools
         .iter()
@@ -593,6 +612,19 @@ fn request_failures(e: &RequestExpect, requests: &[ChatRequest], out: &mut Vec<S
             out.push(format!("request {at}: tool {t:?} must not be offered"));
         }
     }
+}
+
+/// The reply's last sentence is a question (`?` or the full-width question mark), ignoring
+/// closing quotes, brackets and emphasis marks after it.
+fn ends_with_question(text: &str) -> bool {
+    text.trim_end_matches(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '"' | '\'' | ')' | ']' | '*' | '_' | '\u{bb}' | '\u{201d}'
+            )
+    })
+    .ends_with(['?', '\u{ff1f}'])
 }
 
 /// Compare a finished turn against the expectations; returns the failures.
@@ -650,6 +682,12 @@ pub fn evaluate(
         if got != want {
             f.push(format!("permissions: got {got:?}, expected {want:?}"));
         }
+    }
+    if e.no_closing_question && ends_with_question(&trace.final_text) {
+        f.push(format!(
+            "final_text: the reply ends with a question instead of finishing the task: {:?}",
+            trace.final_text
+        ));
     }
     if let Some(m) = &e.final_text {
         evaluate_text("final_text", m, &trace.final_text, &mut f);

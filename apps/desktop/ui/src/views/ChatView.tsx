@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ArrowUp,
   Bookmark,
+  ExternalLink,
   Plus,
   Square,
   CalendarClock,
@@ -56,6 +57,7 @@ import { ApprovalDock, type DockPage } from "../components/ApprovalDock";
 import { runWasRedirected } from "../lib/approvalSkip";
 import { PendingDecisions, useDecisionActions } from "../components/PendingDecisions";
 import { HandoverCard } from "../components/HandoverCard";
+import { useDragPopOut } from "../components/useDragPopOut";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { PastedSecretWarning } from "../components/PastedSecretWarning";
 import { detectSecrets, kindsToWarn, planStore, removeSecrets } from "../lib/secretDetect";
@@ -115,7 +117,7 @@ import { activeRunAfterCancel, composerButton } from "../lib/composerRun";
 import { ATTACHMENT_ACCEPT, filesOf } from "../lib/attachments";
 import { AttachmentDraft } from "../lib/attachmentDraft";
 import { ComposerFiles } from "../components/Attachments";
-import { enqueue, putBack, removeQueued, takeForNow, takeForRunEnd } from "../lib/messageQueue";
+import { enqueue, putBack, queuesLocally, removeQueued, takeForNow, takeForRunEnd } from "../lib/messageQueue";
 import { groupPending, shouldBatch } from "../lib/approvalBatch";
 import { approvalHeadline, type T as PlainT } from "../lib/approvalPlain";
 import { useChatQueue } from "../state/useChatQueue";
@@ -247,7 +249,10 @@ export function ChatView({
   showAgentRoute = false,
   sendWith = "enter",
   messageTimes = "minutes",
-  liveChatSlots
+  liveChatSlots,
+  onPopOut,
+  onNativeStop,
+  hideHeader = false
 }: {
   chatId: string;
   external?: boolean;
@@ -267,6 +272,12 @@ export function ChatView({
   /** Settings, General: per-message times off / HH:mm / HH:mm:ss. */
   messageTimes?: MessageTimes;
   liveChatSlots?: LiveChatSlots | null;
+  /** Open this chat in a dedicated pop-out window (supports button click or header drag-out). */
+  onPopOut?: (opts?: { nearCursor?: boolean }) => void;
+  /** Custom native stop handler (used by pop-out windows). */
+  onNativeStop?: () => Promise<void> | void;
+  /** Hide the inner ChatView header bar (used when a pop-out shell renders its own header). */
+  hideHeader?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const toast = useToast();
@@ -904,8 +915,11 @@ export function ChatView({
     // as /stop still go straight to the daemon). It is delivered when the run ends or by "Simdi gonder".
     // While the run waits on an approval the message is not queued behind it: it goes to the daemon,
     // which skips the approval (a denial) and starts the next turn with this message.
-    const approvalWaits = pending.own.some((e) => e.kind === "approval");
-    if (active && !approvalWaits && !body.startsWith("/") && !hasFiles) {
+    // `waitLost`: the host says the run waits for the user but the card never reached this app (a paired
+    // host's events can lag or miss). The message must still go to the daemon, never sit in a local queue
+    // behind a run that will not move on its own.
+    const approvalWaits = pending.own.some((e) => e.kind === "approval") || waitLost;
+    if (queuesLocally({ runActive: active, approvalWaits, slashCommand: body.startsWith("/"), hasFiles })) {
       const id = crypto.randomUUID();
       queuedHere.current.add(id);
       updateQueue((q) => enqueue(q, body, id, Date.now()));
@@ -1073,7 +1087,12 @@ export function ChatView({
       );
     setStopPressed(true);
     if (nativeActive) {
-      requestStop("banner");
+      try {
+        if (onNativeStop) await onNativeStop();
+        else requestStop("banner");
+      } catch (e) {
+        setError(humanLine(e));
+      }
       return;
     }
     if (!client) {
@@ -1087,8 +1106,8 @@ export function ChatView({
       }
       return;
     }
-    cancelRun(activeRunId, hard ? { force: true } : undefined);
     try {
+      cancelRun(activeRunId, hard ? { force: true } : undefined);
       await refreshRuns();
     } catch (e) {
       setError(humanLine(e));
@@ -1439,6 +1458,11 @@ export function ChatView({
     await refreshRuns();
   };
 
+  const headerDrag = useDragPopOut({
+    onPopOut: onPopOut ? (opts) => onPopOut(opts) : undefined,
+    ignoreSelector: "button, a, input, textarea, select"
+  });
+
   const renderItem = (
     item: TimelineItem,
     runId: string
@@ -1571,12 +1595,28 @@ export function ChatView({
   const chatRoot = (
     <div className={styles.root} data-live-dock={liveChatSlots?.root ? "true" : undefined}>
       {/* v6: no title row (the chat is named in the sidebar); a back button only while a page to go back to exists. */}
-      {onBack && !liveChatSlots?.root ? (
-        <header className={styles.header}>
-          <Button size="sm" variant="ghost" className={styles.back} onClick={onBack}>
-            <ArrowLeft aria-hidden="true" />
-            {t("common.back")}
-          </Button>
+      {!hideHeader && (onBack || onPopOut) && !liveChatSlots?.root ? (
+        <header className={styles.header} {...headerDrag.dragProps}>
+          {onBack ? (
+            <Button size="sm" variant="ghost" className={styles.back} onClick={onBack}>
+              <ArrowLeft aria-hidden="true" />
+              {t("common.back")}
+            </Button>
+          ) : null}
+          {onPopOut ? (
+            <div className={styles.headerActions}>
+              <Button
+                size="sm"
+                variant="ghost"
+                title={t("popout.openChatTooltip")}
+                aria-label={t("popout.openChat")}
+                data-testid="chat-popout-button"
+                onClick={() => onPopOut()}
+              >
+                <ExternalLink aria-hidden="true" />
+              </Button>
+            </div>
+          ) : null}
         </header>
       ) : null}
 

@@ -405,6 +405,12 @@ pub(crate) fn map_status(
         }
         .into(),
         500..=599 => ProviderError::Transient.into(),
+        // A name that is already taken (or any other clash) is told apart from a malformed request.
+        409 => ProviderError::Rejected {
+            code: code.or_else(|| Some("conflict".to_owned())),
+            detail: None,
+        }
+        .into(),
         400 | 422 => {
             let detail = validation_detail(body);
             ProviderError::Rejected { code, detail }.into()

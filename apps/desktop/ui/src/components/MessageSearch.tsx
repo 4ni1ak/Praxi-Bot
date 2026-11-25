@@ -1,4 +1,4 @@
-import { Clock, FileText, Link2, Search, X } from "lucide-react";
+import { Clock, FileText, Link2, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -9,7 +9,7 @@ import { fetchHistoryPage, groupHistoryHits, historySnippetParts } from "../lib/
 import { botView } from "../lib/botProfile";
 import { chatTitleLabel } from "../lib/chatTitle";
 import { isTabStop, returnFocusTarget, trapTarget } from "../lib/focusTrap";
-import { humanLine } from "../lib/humanError";
+import { type HumanError, humanError } from "../lib/humanError";
 import { appInert } from "../lib/inertStack";
 import { layerStack } from "../lib/modalStack";
 import {
@@ -57,7 +57,7 @@ export function MessageSearch({
   const [page, setPage] = useState<SearchPage | null>(null);
   const [shown, setShown] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<HumanError | null>(null);
   const [recent, setRecent] = useState<string[]>(() => loadRecent());
   const [cursor, setCursor] = useState(0);
   const dialogRef = useRef<HTMLDivElement | null>(null);
@@ -109,7 +109,7 @@ export function MessageSearch({
       }));
       if (!offset) setCursor(0);
     } catch (e) {
-      if (!controller.signal.aborted) setError(humanLine(e));
+      if (!controller.signal.aborted) setError(humanError(e));
     } finally {
       if (!controller.signal.aborted) setBusy(false);
     }
@@ -283,9 +283,22 @@ export function MessageSearch({
           ) : null}
         </ul>
 
+        {error ? (
+          <div className={styles.errorState} role="alert" data-testid="message-search-error">
+            <TriangleAlert aria-hidden="true" className={styles.errorIcon} />
+            <div className={styles.errorText}>
+              <strong>{error.title}</strong>
+              {error.hint ? <span>{error.hint}</span> : null}
+            </div>
+            <button type="button" className={styles.retry} disabled={busy} onClick={() => void run(term, filters, 0)}>
+              <RefreshCw aria-hidden="true" />
+              {t("messageSearch.retry")}
+            </button>
+          </div>
+        ) : null}
+
         <div className={styles.status} role="status" aria-live="polite">
-          {error ? <span className={styles.error} role="alert">{error}</span>
-            : busy ? t("messageSearch.searching")
+          {busy ? t("messageSearch.searching")
             : showEmpty ? t("messageSearch.none")
             : !term && recent.length === 0 ? t("messageSearch.hint")
             : null}

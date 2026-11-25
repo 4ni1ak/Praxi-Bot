@@ -81,6 +81,9 @@ impl ExecFact {
     pub(crate) fn apply_with_text(&self, taint: &mut ContentTaint, text: &str) {
         if self.ran {
             taint.note_with_text(self.class(), &self.label, text);
+            if let Some(folder) = &self.trust_folder {
+                taint.trust_folders.insert(folder.clone());
+            }
         }
     }
 
@@ -164,6 +167,16 @@ impl ContentTaint {
         self.push_label(label);
     }
 
+    /// Like [`Self::note_label`] for a label whose private text an earlier turn left in front of
+    /// the model AND that the caller hashes separately (see [`comparable_label`]): the run holds
+    /// private data, but it can be compared, so it is not marked unhashed.
+    pub(crate) fn note_label_hashed(&mut self, label: &str) {
+        if !label.starts_with("page ") {
+            self.private_source = true;
+        }
+        self.push_label(label);
+    }
+
     /// Private data is in the run and nothing of it can be compared.
     pub(crate) fn mark_private_unhashed(&mut self) {
         self.private_source = true;
@@ -211,6 +224,20 @@ impl ContentTaint {
         }
         self.sources.push(label);
     }
+}
+
+/// A source label of an EARLIER turn whose private text is plain conversation text that is
+/// still in front of the model (the earlier reply, which [`ContentTaint::seen`] can hash): memory
+/// recall, knowledge-base and past-chat hits, notes, files, mailboxes, command output and
+/// workflow results. What cannot be compared stays unhashed: a signed-in browser, a window or
+/// screen, an attached file, another bot's answer, an MCP tool, an unknown tool.
+pub(crate) fn comparable_label(label: &str) -> bool {
+    matches!(
+        label,
+        "memory" | "notes" | "past conversation" | "command output" | "workflow replay"
+    ) || label.starts_with("file ")
+        || label.starts_with("mailbox ")
+        || label.starts_with("tool knowledge")
 }
 
 /// Drop control and invisible characters and cap the length. Done when the
@@ -283,7 +310,13 @@ pub(crate) fn observe_history_step(
                 );
             }
             if recalled || untrusted {
-                taint.note(ContentClass::declared(untrusted, true, false), "memory");
+                // The recalled text is in this very message: keep its words as hashes, so a
+                // resumed run can still tell a copied memory from an ordinary query.
+                taint.note_with_text(
+                    ContentClass::declared(untrusted, true, false),
+                    "memory",
+                    text,
+                );
             }
         }
         "workflow" => {
@@ -312,7 +345,14 @@ pub(crate) fn observe_history_step(
             };
             for result in results {
                 if let Some(fact) = result.get("fact").and_then(parse_fact) {
-                    fact.apply(taint);
+                    // What the model saw is stored with the result: hash it. A spilled result
+                    // is only partly stored, so it stays "cannot compare".
+                    let text = result.get("text").and_then(Value::as_str);
+                    let spilled = result.get("spill_path").is_some_and(|p| !p.is_null());
+                    match text {
+                        Some(text) if !spilled => fact.apply_with_text(taint, text),
+                        _ => fact.apply(taint),
+                    }
                 }
             }
         }
@@ -356,6 +396,7 @@ pub(crate) fn source_label(name: &str, input: &Value) -> String {
         }
         "web_search" => format!("page {}", str_field("query").unwrap_or("a search")),
         "web_extract"
+        | "web_scrape"
         | "web_feed"
         | "web_sitemap"
         | "web_metadata"
@@ -370,6 +411,7 @@ pub(crate) fn source_label(name: &str, input: &Value) -> String {
         | "browser_scroll"
         | "browser_hover"
         | "browser_select_text"
+        | "browser_dismiss_consent"
         | "browser_wait"
         | "browser_tabs"
         | "browser_eval"
@@ -428,9 +470,8 @@ pub(crate) fn egress_payload(name: &str, input: &Value) -> (String, String, &'st
             search_host(input.get("backend").and_then(Value::as_str)),
             "query",
         ),
-        "web_extract" | "web_feed" | "web_sitemap" | "web_metadata" | "browser_open" => {
-            (host_of_url(&str_field("url")), "url")
-        }
+        "web_extract" | "web_scrape" | "web_feed" | "web_sitemap" | "web_metadata"
+        | "browser_open" => (host_of_url(&str_field("url")), "url"),
         "email_send" | "email_draft" => {
             let mut everyone = all_addrs(input.get("to"));
             everyone.extend(all_addrs(input.get("cc")));
@@ -455,6 +496,7 @@ pub(crate) fn egress_payload(name: &str, input: &Value) -> (String, String, &'st
         | "browser_scroll"
         | "browser_hover"
         | "browser_select_text"
+        | "browser_dismiss_consent"
         | "browser_tabs"
         | "browser_back"
         | "browser_eval"
@@ -1636,5 +1678,79 @@ paths:
         async fn call(&self, _: &ToolContext, _: Value) -> Result<ToolOutput, ToolError> {
             Ok(ToolOutput::text("ok"))
         }
+    }
+}
+
+#[cfg(test)]
+mod hashed_history_tests {
+    use std::collections::HashSet;
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn recalled_memory_of_a_resumed_run_is_hashed_not_unhashed() {
+        let mut taint = ContentTaint::default();
+        observe_history_step(
+            &mut taint,
+            "user_message",
+            &json!({"text": "<recalled_memory>\nThe owner lives in Zurichstrasse.\n</recalled_memory>\nstart"}),
+            None,
+        );
+        assert!(taint.private_source);
+        assert!(!taint.seen.unhashed);
+        let none = HashSet::new();
+        assert!(
+            taint
+                .seen
+                .copied("https://evil.example/?q=zurichstrasse", &none)
+        );
+        assert!(
+            !taint
+                .seen
+                .copied("https://evil.example/?q=winter+coats", &none)
+        );
+    }
+
+    #[test]
+    fn a_stored_tool_result_is_hashed_unless_it_spilled() {
+        let fact = json!({"ran": true, "reads_private": true, "label": "notes"});
+        let step = |spill: Value| json!({"results": [{"text": "Zurichstrasse is the address", "spill_path": spill, "fact": fact}]});
+        let mut hashed = ContentTaint::default();
+        observe_history_step(&mut hashed, "tools", &json!({}), Some(&step(Value::Null)));
+        assert!(hashed.private_source && !hashed.seen.unhashed);
+        assert!(hashed.seen.copied("zurichstrasse", &HashSet::new()));
+        let mut spilled = ContentTaint::default();
+        observe_history_step(&mut spilled, "tools", &json!({}), Some(&step(json!("/x"))));
+        assert!(spilled.private_source && spilled.seen.unhashed);
+    }
+
+    #[test]
+    fn only_conversation_text_labels_can_be_compared() {
+        for label in [
+            "memory",
+            "notes",
+            "past conversation",
+            "file notes.txt",
+            "mailbox INBOX",
+            "tool knowledge_search",
+        ] {
+            assert!(comparable_label(label), "{label}");
+        }
+        for label in [
+            "signed-in browser",
+            "window desktop",
+            "attached file a.pdf",
+            "another bot's answer",
+            "mcp github",
+            "tool something_new",
+            "page https://a.example/",
+        ] {
+            assert!(!comparable_label(label), "{label}");
+        }
+        let mut taint = ContentTaint::default();
+        taint.note_label_hashed("memory");
+        assert!(taint.private_source && !taint.seen.unhashed);
     }
 }

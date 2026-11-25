@@ -691,6 +691,7 @@
     "headings": [
       "What protects you",
       "What it does not protect you from",
+      "Who counts as the owner on a host",
       "Daemon process guard (defence in depth)",
       "Good practice",
       "Reporting a vulnerability",
@@ -823,6 +824,19 @@
       "Privacy and safety"
     ],
     "summary": "Voice call mode in the desktop app lets you talk to a bot without typing. You"
+  },
+  {
+    "doc": "web-scraping.md",
+    "title": "Web scraping add-on (optional)",
+    "headings": [
+      "Add or remove it",
+      "What the install does",
+      "What the add-on does and does not do",
+      "Licences",
+      "Personal data",
+      "The local interface (for developers)"
+    ],
+    "summary": "The built-in web tools read most pages already. The web scraping"
   },
   {
     "doc": "web.md",

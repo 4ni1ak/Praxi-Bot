@@ -5,7 +5,9 @@ import {
   CircleDashed,
   CircleX,
   Clapperboard,
+  ExternalLink,
   FileText,
+  Globe,
   Loader2,
   type LucideIcon,
   Plus,
@@ -19,15 +21,20 @@ import { Button } from "ui";
 import { ApiError } from "../api/client";
 import { isMockMode } from "../api/mockMode";
 import type { HostPackInfo, HostPacks, HostSetupJob, PackAction, PackPlan } from "../api/types";
+import { openExternal } from "../lib/externalLink";
 import { humanLine } from "../lib/humanError";
 import {
   isPackId,
   jobFailure,
+  licenseIsMixed,
   missingBase,
+  NOTED_PACKS,
+  needsAck,
   type RowState,
   reasonKey,
   rowStates,
   runnableItems,
+  safeSourceUrl,
   sizeParts,
   sortedPacks,
   statusOf,
@@ -46,7 +53,8 @@ const ICONS: Record<string, LucideIcon> = {
   docs: BookOpenText,
   ocr: ScanText,
   media: Clapperboard,
-  dev: SquareTerminal
+  dev: SquareTerminal,
+  scrape: Globe
 };
 
 type Phase = "loading" | "list" | "planning" | "preview" | "running" | "done" | "failed" | "nologin";
@@ -90,6 +98,7 @@ function Content({ hostId, planBase, onClose }: { hostId: string; planBase: bool
   const [phase, setPhase] = useState<Phase>("loading");
   const [facts, setFacts] = useState<HostPacks | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
+  const [acked, setAcked] = useState(false);
   const [action, setAction] = useState<PackAction>("install");
   const [plan, setPlan] = useState<PackPlan | null>(null);
   const [job, setJob] = useState<HostSetupJob | null>(null);
@@ -122,7 +131,11 @@ function Content({ hostId, planBase, onClose }: { hostId: string; planBase: bool
   }, [load]);
 
   const packs: HostPackInfo[] = facts ? sortedPacks(facts.packs) : [];
-  const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  const toggle = (id: string) => {
+    setAcked(false);
+    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  };
+  const ackNeeded = needsAck(packs, selected);
   const factsProblem = facts?.error ? reasonKey(facts.error) : null;
   const canChange = Boolean(facts) && factsProblem === null;
 
@@ -132,7 +145,7 @@ function Content({ hostId, planBase, onClose }: { hostId: string; planBase: bool
     setAction(act);
     setPhase("planning");
     try {
-      setPlan(await api.planHostPacks(hostId, act, ids));
+      setPlan(await api.planHostPacks(hostId, act, ids, act === "install" && acked ? needsAck(packs, ids).map((p) => p.id) : []));
       setPhase("preview");
     } catch (e) {
       setError(humanLine(e));
@@ -257,9 +270,13 @@ function Content({ hostId, planBase, onClose }: { hostId: string; planBase: bool
                       <span className={styles.text}>
                         <b>{isPackId(p.id) ? t(`toolPacks.packs.${p.id}.name`) : p.id}</b>
                         {isPackId(p.id) ? <small>{t(`toolPacks.packs.${p.id}.desc`)}</small> : null}
+                        {NOTED_PACKS.includes(p.id) && isPackId(p.id) ? (
+                          <small className={styles.noteLine}>{t(`toolPacks.packs.${p.id}.note`)}</small>
+                        ) : null}
                       </span>
                     </button>
                     <span className={styles.meta}>
+                      <LicenseBits pack={p} />
                       {status === "installed" ? (
                         <span className={styles.chip} data-tone="ok">
                           <Check aria-hidden="true" />
@@ -301,6 +318,15 @@ function Content({ hostId, planBase, onClose }: { hostId: string; planBase: bool
                   ))}
                 </div>
               </details>
+            ) : null}
+            {ackNeeded.length > 0 ? (
+              <label className={styles.ack} data-testid="pack-ack">
+                <input type="checkbox" checked={acked} onChange={(e) => setAcked(e.target.checked)} />
+                <span>
+                  {t("toolPacks.ack.text", { license: ackNeeded.map((p) => p.license).join(", ") })}
+                  <b>{t("toolPacks.ack.label")}</b>
+                </span>
+              </label>
             ) : null}
             {error ? (
               <p className={dialog.error} role="alert">
@@ -410,7 +436,7 @@ function Content({ hostId, planBase, onClose }: { hostId: string; planBase: bool
             </Button>
             <Button
               variant="primary"
-              disabled={selected.length === 0}
+              disabled={selected.length === 0 || (ackNeeded.length > 0 && !acked)}
               onClick={() => void review("install", selected)}
               data-testid="pack-review"
             >
@@ -457,6 +483,38 @@ function Content({ hostId, planBase, onClose }: { hostId: string; planBase: bool
         ) : null}
       </DialogFooter>
     </div>
+  );
+}
+
+/** Licence chip and source link of one pack: shown for every pack so nothing is installed unseen. */
+function LicenseBits({ pack }: { pack: HostPackInfo }) {
+  const { t } = useTranslation();
+  const href = safeSourceUrl(pack.source_url);
+  if (!pack.license) return null;
+  const mixed = licenseIsMixed(pack.license);
+  return (
+    <>
+      <span
+        className={styles.chip}
+        data-tone={pack.needs_ack ? "warn" : undefined}
+        title={pack.version ? `${pack.license} · ${t("toolPacks.versionLabel", { version: pack.version })}` : pack.license}
+        data-testid={`license-${pack.id}`}
+      >
+        {mixed ? t("toolPacks.licenseMixed") : pack.license}
+      </span>
+      {href ? (
+        <button
+          type="button"
+          className={styles.link}
+          onClick={() => openExternal(href)}
+          aria-label={`${t("toolPacks.source")}: ${isPackId(pack.id) ? t(`toolPacks.packs.${pack.id}.name`) : pack.id}`}
+          title={t("toolPacks.source")}
+          data-testid={`source-${pack.id}`}
+        >
+          <ExternalLink aria-hidden="true" className={styles.linkIcon} />
+        </button>
+      ) : null}
+    </>
   );
 }
 

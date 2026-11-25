@@ -741,6 +741,7 @@ pub(crate) fn is_page_action(name: &str) -> bool {
             | "browser_click"
             | "browser_select"
             | "browser_select_text"
+            | "browser_dismiss_consent"
             | "browser_act"
     )
 }
@@ -1059,6 +1060,9 @@ pub struct SkillHints {
     pub app: Option<String>,
 }
 
+/// Deduplication key `(bot_id, kind, threshold)` for workspace pre-fill warnings.
+pub(crate) type WorkspaceWarnKey = (Option<BotId>, &'static str, u8);
+
 pub(crate) struct Shared {
     pub usage: crate::usage::Ledger,
     pub storage: Arc<Storage>,
@@ -1170,6 +1174,12 @@ pub(crate) struct Shared {
     /// Cancellation tokens of the native-tools engine processes running per bot,
     /// so the owner's kill switch can end them at once.
     pub native_runs: Mutex<HashMap<BotId, Vec<(uuid::Uuid, tokio_util::sync::CancellationToken)>>>,
+    /// Root folder containing per-bot persistent workspaces (`None` = disabled).
+    pub workspaces_root: RwLock<Option<std::path::PathBuf>>,
+    /// Broadcast channel for pre-fill workspace disk warnings.
+    pub workspace_warnings: broadcast::Sender<WorkspaceWarningEvent>,
+    /// Cooldown map preventing duplicate warnings for the same `(bot, kind, threshold)`.
+    pub workspace_warned: Mutex<HashMap<WorkspaceWarnKey, std::time::Instant>>,
     /// Test-only: the drive task waits here after `conclude` and before it
     /// reaps its own [`JoinHandle`].
     #[cfg(test)]
@@ -1269,6 +1279,14 @@ impl RecentRuns {
 /// Test-only hook invoked under `exec_gate` before the pre-tool deny recheck.
 #[cfg(test)]
 pub(crate) type ExecCommitHook = Arc<dyn Fn(&Shared) + Send + Sync>;
+
+/// Emitted when a write approaches a host disk threshold or per-bot soft limit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceWarningEvent {
+    pub bot_id: Option<BotId>,
+    pub kind: builtin_tools::workspace::WriteWarningKind,
+    pub workspace_path: std::path::PathBuf,
+}
 
 /// What a schedule-started run does (see
 /// [`AgentLoop::run_scheduled`](crate::AgentLoop::run_scheduled)).
@@ -1464,6 +1482,25 @@ impl Shared {
         } else {
             builtin_tools::FsScope::Computer
         }
+    }
+
+    /// Ensure and return `bot_id`'s persistent workspace folder when workspaces
+    /// are enabled.
+    pub fn bot_workspace_dir(&self, bot_id: BotId) -> Option<std::path::PathBuf> {
+        let root = self.workspaces_root.read().clone()?;
+        let bot = self.storage.get_bot(bot_id).ok().flatten()?;
+        let preferred =
+            builtin_tools::workspace::sanitize_bot_folder_name(&bot.name, &bot.id.to_string());
+        let rec = self
+            .storage
+            .ensure_bot_workspace(bot.user_id, bot.id, &preferred)
+            .ok()?;
+        builtin_tools::workspace::ensure_bot_workspace_dir(
+            &root,
+            &rec.folder_name,
+            self.storage.data_dir(),
+        )
+        .ok()
     }
 
     /// The bot's memory settings, read from the bot row on every call (never
@@ -1982,8 +2019,19 @@ impl Shared {
             if prior.exposure.private && prior.sources.is_empty() {
                 taint.mark_private_unhashed();
             }
+            // What an earlier turn left in front of the model is its own reply text: words of
+            // that text are compared like any private result of this run. Labels that cannot be
+            // compared (a signed-in browser, a window, an attached file, another bot, an MCP
+            // tool) keep the run "unhashed": every new site then asks.
             for label in prior.sources {
-                taint.note_label(&label);
+                if taint::comparable_label(&label) {
+                    taint.note_label_hashed(&label);
+                } else {
+                    taint.note_label(&label);
+                }
+            }
+            for text in &prior.private_texts {
+                taint.seen.observe(text);
             }
             // Text read out of an attached file is untrusted data like any tool read.
             if let Some(name) = crate::history::text_attachment_source(&self.storage, run) {

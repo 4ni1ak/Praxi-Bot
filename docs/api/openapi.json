@@ -4286,6 +4286,510 @@
         ]
       }
     },
+    "/v1/bots/{id}/workspace": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Browse or search files strictly within a bot's own workspace directory.",
+        "operationId": "get_bot_workspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "description": "Relative subfolder path inside the bot workspace",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive filename search filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotWorkspaceListDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{id}/workspace/delete": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Delete a file or subfolder inside a bot's workspace, returning an undo token.",
+        "operationId": "delete_bot_workspace_entry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceDeleteInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceTrashEntryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{id}/workspace/file": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Read or download a single file strictly within a bot's workspace.",
+        "operationId": "get_bot_workspace_file",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "description": "Relative file path inside the bot workspace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "download",
+            "in": "query",
+            "description": "When true, send as attachment download",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File bytes with nosniff and sandbox headers",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{id}/workspace/limits": {
+      "put": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Set or clear optional soft/hard disk limits (bytes) on a single bot's workspace.",
+        "operationId": "put_bot_workspace_limits",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotWorkspaceLimitsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotWorkspaceSummaryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{id}/workspace/rename": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Rename a file or folder within the same parent directory inside a bot's workspace.",
+        "operationId": "rename_bot_workspace_entry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceRenameInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceEntryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{id}/workspace/restore": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Restore a recently deleted workspace entry from trash (`undo_id`).",
+        "operationId": "restore_bot_workspace_entry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceRestoreInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceEntryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/channels": {
       "get": {
         "tags": [
@@ -5676,7 +6180,7 @@
             }
           },
           "409": {
-            "description": "",
+            "description": "not linked, or the Composio login expired",
             "content": {
               "application/json": {
                 "schema": {
@@ -17257,6 +17761,164 @@
           }
         ]
       }
+    },
+    "/v1/workspaces": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Host disk stats, per-bot workspace usage, settings, and cleanup suggestions.",
+        "operationId": "list_workspaces",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspacesOverviewDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/cleanup": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Safely remove expired files in `downloads/`, `logs/`, or daemon cache dirs.",
+        "operationId": "run_workspace_cleanup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceCleanupInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceCleanupResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/settings": {
+      "put": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Update workspace disk warning thresholds and cleanup retention policy.",
+        "operationId": "put_workspace_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceSettingsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSettingsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -18412,6 +19074,170 @@
         ],
         "description": "Usage of one bot."
       },
+      "BotWorkspaceLimitsInput": {
+        "type": "object",
+        "description": "Request body of `PUT /v1/bots/{id}/workspace/limits`.",
+        "properties": {
+          "hard_limit_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "soft_limit_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "BotWorkspaceListDto": {
+        "type": "object",
+        "description": "Response of `GET /v1/bots/{id}/workspace`.",
+        "required": [
+          "bot_id",
+          "bot_name",
+          "folder_name",
+          "current_path",
+          "used_bytes",
+          "soft_limit_exceeded",
+          "hard_limit_exceeded",
+          "entries",
+          "undo_items"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "bot_name": {
+            "type": "string"
+          },
+          "current_path": {
+            "type": "string"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceEntryDto"
+            }
+          },
+          "folder_name": {
+            "type": "string"
+          },
+          "hard_limit_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "hard_limit_exceeded": {
+            "type": "boolean"
+          },
+          "soft_limit_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "soft_limit_exceeded": {
+            "type": "boolean"
+          },
+          "undo_items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceTrashEntryDto"
+            }
+          },
+          "used_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "workspace_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "BotWorkspaceSummaryDto": {
+        "type": "object",
+        "description": "Summary of one bot's persistent workspace directory.",
+        "required": [
+          "bot_id",
+          "bot_name",
+          "folder_name",
+          "exists",
+          "used_bytes",
+          "file_count",
+          "soft_limit_exceeded",
+          "hard_limit_exceeded"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "bot_name": {
+            "type": "string"
+          },
+          "exists": {
+            "type": "boolean"
+          },
+          "file_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "folder_name": {
+            "type": "string"
+          },
+          "hard_limit_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "hard_limit_exceeded": {
+            "type": "boolean"
+          },
+          "soft_limit_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "soft_limit_exceeded": {
+            "type": "boolean"
+          },
+          "used_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "workspace_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Button": {
         "type": "string",
         "enum": [
@@ -19042,6 +19868,40 @@
           "daemon_local"
         ]
       },
+      "CleanupSuggestionDto": {
+        "type": "object",
+        "description": "One-click cleanup suggestion showing reclaimable space.",
+        "required": [
+          "target",
+          "reclaimable_bytes",
+          "file_count"
+        ],
+        "properties": {
+          "file_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "reclaimable_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "target": {
+            "$ref": "#/components/schemas/CleanupTarget"
+          }
+        }
+      },
+      "CleanupTarget": {
+        "type": "string",
+        "description": "Allowed safe cleanup targets (`POST /v1/workspaces/cleanup`).",
+        "enum": [
+          "old_downloads",
+          "old_logs",
+          "all_old",
+          "daemon_cache"
+        ]
+      },
       "ClearCacheDto": {
         "type": "object",
         "description": "Result of \"Clear cache\".",
@@ -19593,6 +20453,10 @@
           "key_setup_url": {
             "type": "string",
             "description": "Where an owner who wants their own project key creates it (advanced)."
+          },
+          "login_expired": {
+            "type": "boolean",
+            "description": "Composio refused the saved credential (401/403) and nothing renewed it:\nthe owner has to sign in to Composio again, a retry cannot succeed."
           },
           "mode": {
             "$ref": "#/components/schemas/ComposioLinkMode",
@@ -20838,6 +21702,38 @@
           "not_accessible",
           "line_endings"
         ]
+      },
+      "DiskStatsDto": {
+        "type": "object",
+        "description": "Host filesystem usage statistics for the workspaces disk.",
+        "required": [
+          "total_bytes",
+          "available_bytes",
+          "used_bytes",
+          "used_percent"
+        ],
+        "properties": {
+          "available_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "used_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "used_percent": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
       },
       "DoctorReport": {
         "type": "object",
@@ -23489,16 +24385,50 @@
           "status",
           "size_mb",
           "base",
-          "removable"
+          "removable",
+          "license",
+          "copyleft",
+          "distro",
+          "needs_ack",
+          "source_url",
+          "notice_url",
+          "version"
         ],
         "properties": {
           "base": {
             "type": "boolean",
             "description": "Part of the wizard's one-switch basic set."
           },
+          "copyleft": {
+            "type": "boolean",
+            "description": "GPL/AGPL family."
+          },
+          "distro": {
+            "type": "boolean",
+            "description": "Installed from the server's own Debian/Ubuntu software sources (Praxi ships nothing)."
+          },
           "id": {
             "type": "string",
             "description": "Catalog id (`office`, `docs`, `ocr`, `media`, `dev`). The app shows its own localised name."
+          },
+          "license": {
+            "type": "string",
+            "description": "SPDX licence expression of the software the pack installs (shown as a chip for every pack)."
+          },
+          "lock_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "SHA-256 of the pinned requirements file, for packs that have one."
+          },
+          "needs_ack": {
+            "type": "boolean",
+            "description": "Separate copyleft software downloaded from its author: the owner must acknowledge the\nlicence notice (`PackPlanInput.acknowledged`) before it is installed."
+          },
+          "notice_url": {
+            "type": "string",
+            "description": "The licence text."
           },
           "removable": {
             "type": "boolean",
@@ -23510,9 +24440,17 @@
             "description": "Rough download size.",
             "minimum": 0
           },
+          "source_url": {
+            "type": "string",
+            "description": "Where the software's source lives."
+          },
           "status": {
             "type": "string",
             "description": "`installed`, `partial` (an interrupted install) or `missing`."
+          },
+          "version": {
+            "type": "string",
+            "description": "Pinned upstream version (empty for distribution packs)."
           }
         }
       },
@@ -28201,6 +29139,13 @@
           "packs"
         ],
         "properties": {
+          "acknowledged": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Catalog ids whose licence notice the owner has read and accepted. A pack that needs it\n(`HostPackInfo.needs_ack`) cannot be installed without its id here."
+          },
           "action": {
             "$ref": "#/components/schemas/PackAction"
           },
@@ -28233,7 +29178,7 @@
               "string",
               "null"
             ],
-            "description": "Why it cannot run: `shared`, `dependants`, `unavailable`, `needs_admin`, `unsupported`,\n`connection` or `failed`."
+            "description": "Why it cannot run: `shared`, `dependants`, `unavailable`, `needs_python`, `needs_ack`,\n`needs_admin`, `unsupported`, `connection` or `failed`."
           },
           "noop": {
             "type": "boolean",
@@ -32888,6 +33833,449 @@
             "format": "uuid"
           }
         }
+      },
+      "WorkspaceBigItemDto": {
+        "type": "object",
+        "description": "Largest item entry surfaced inside warnings and overview suggestions.",
+        "required": [
+          "folder_name",
+          "relative_path",
+          "size_bytes",
+          "modified_at_ms",
+          "category"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "bot_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "folder_name": {
+            "type": "string"
+          },
+          "modified_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "relative_path": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "WorkspaceCleanupInput": {
+        "type": "object",
+        "description": "Request body of `POST /v1/workspaces/cleanup`.",
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "target": {
+            "$ref": "#/components/schemas/CleanupTarget"
+          }
+        }
+      },
+      "WorkspaceCleanupResultDto": {
+        "type": "object",
+        "description": "Response of `POST /v1/workspaces/cleanup`.",
+        "required": [
+          "target",
+          "deleted_files",
+          "freed_bytes"
+        ],
+        "properties": {
+          "deleted_files": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "freed_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "target": {
+            "$ref": "#/components/schemas/CleanupTarget"
+          }
+        }
+      },
+      "WorkspaceDeleteInput": {
+        "type": "object",
+        "description": "Request body of `POST /v1/bots/{id}/workspace/delete`.",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkspaceEntryDto": {
+        "type": "object",
+        "description": "One file or directory inside a bot's workspace.",
+        "required": [
+          "name",
+          "path",
+          "kind",
+          "size_bytes",
+          "modified_at_ms",
+          "preview_kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/WorkspaceEntryKind"
+          },
+          "modified_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "preview_kind": {
+            "$ref": "#/components/schemas/WorkspacePreviewKind"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "WorkspaceEntryKind": {
+        "type": "string",
+        "description": "Kind of entry in a bot's workspace file browser.",
+        "enum": [
+          "directory",
+          "file"
+        ]
+      },
+      "WorkspacePreviewKind": {
+        "type": "string",
+        "description": "Preview kind supported safely by the UI.",
+        "enum": [
+          "none",
+          "text",
+          "image"
+        ]
+      },
+      "WorkspaceRenameInput": {
+        "type": "object",
+        "description": "Request body of `POST /v1/bots/{id}/workspace/rename`.",
+        "required": [
+          "path",
+          "new_name"
+        ],
+        "properties": {
+          "new_name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkspaceRestoreInput": {
+        "type": "object",
+        "description": "Request body of `POST /v1/bots/{id}/workspace/restore`.",
+        "required": [
+          "undo_id"
+        ],
+        "properties": {
+          "undo_id": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkspaceSettingsDto": {
+        "type": "object",
+        "description": "Editable disk-threshold and cleanup-age settings (`PUT /v1/workspaces/settings`).",
+        "required": [
+          "warn_percent_1",
+          "warn_percent_2",
+          "warn_percent_3",
+          "min_free_bytes"
+        ],
+        "properties": {
+          "downloads_max_age_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "logs_max_age_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "min_free_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "warn_percent_1": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "warn_percent_2": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "warn_percent_3": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "WorkspaceSettingsInput": {
+        "type": "object",
+        "description": "Request body of `PUT /v1/workspaces/settings`.",
+        "required": [
+          "warn_percent_1",
+          "warn_percent_2",
+          "warn_percent_3",
+          "min_free_bytes"
+        ],
+        "properties": {
+          "downloads_max_age_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "logs_max_age_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "min_free_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "warn_percent_1": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "warn_percent_2": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "warn_percent_3": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "WorkspaceTrashEntryDto": {
+        "type": "object",
+        "description": "Deleted entry held briefly in trash for Undo (`POST /v1/bots/{id}/workspace/restore`).",
+        "required": [
+          "undo_id",
+          "name",
+          "original_path",
+          "size_bytes",
+          "deleted_at_ms"
+        ],
+        "properties": {
+          "deleted_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "original_path": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "undo_id": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkspaceWarningDto": {
+        "type": "object",
+        "description": "Actionable disk/limit warning inside the owner-gated `GET /v1/workspaces`\n(the SSE `workspace_warning` event is the name-free [`WorkspaceWarningEventDto`]).",
+        "required": [
+          "severity",
+          "below_min_free",
+          "min_free_bytes",
+          "soft_limit_bots",
+          "largest_items",
+          "suggestions"
+        ],
+        "properties": {
+          "available_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "below_min_free": {
+            "type": "boolean"
+          },
+          "disk_used_percent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "largest_items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceBigItemDto"
+            }
+          },
+          "min_free_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "severity": {
+            "type": "string"
+          },
+          "soft_limit_bots": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CleanupSuggestionDto"
+            }
+          },
+          "threshold_percent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "WorkspacesOverviewDto": {
+        "type": "object",
+        "description": "Response of `GET /v1/workspaces`.",
+        "required": [
+          "configured",
+          "total_workspace_bytes",
+          "settings",
+          "bots",
+          "largest_items",
+          "suggestions"
+        ],
+        "properties": {
+          "active_warning": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WorkspaceWarningDto"
+              }
+            ]
+          },
+          "bots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BotWorkspaceSummaryDto"
+            }
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "disk": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DiskStatsDto"
+              }
+            ]
+          },
+          "largest_items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceBigItemDto"
+            }
+          },
+          "root_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "settings": {
+            "$ref": "#/components/schemas/WorkspaceSettingsDto"
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CleanupSuggestionDto"
+            }
+          },
+          "total_workspace_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -32973,6 +34361,9 @@
     },
     {
       "name": "web"
+    },
+    {
+      "name": "workspaces"
     },
     {
       "name": "connection-test"

@@ -733,7 +733,7 @@
         "failed": "Die App-Liste konnte nicht aktualisiert werden: Die gespeicherte wird angezeigt.",
         "offline": "Keine Verbindung: Die gespeicherte App-Liste wird angezeigt.",
         "rate_limited": "Composio ist ausgelastet: Die gespeicherte App-Liste wird angezeigt.",
-        "unauthorized": "Die Composio-Anmeldung ist abgelaufen: Die gespeicherte App-Liste wird angezeigt."
+        "unauthorized": "Composio akzeptiert die gespeicherte Anmeldung nicht mehr: Es wird die gespeicherte App-Liste angezeigt."
       },
       "connectedSection": "Verbunden",
       "disable": "Ausschalten",
@@ -758,6 +758,7 @@
       "loading": "Apps werden geladen …",
       "noResults": "Keine passenden Apps.",
       "openFailed": "Der Anmeldelink wurde nicht geöffnet, weil er kein Composio-Link ist.",
+      "relogin": "Erneut bei Composio anmelden",
       "retry": "Erneut versuchen",
       "state": {
         "active": "Verbunden",
@@ -847,8 +848,11 @@
       "failed": {
         "app_link": "Die Seite für {{name}} konnte nicht vorbereitet werden. Versuche es erneut.",
         "app_open": "Die Seite für {{name}} konnte nicht geöffnet werden.",
+        "login_expired": "Composio akzeptiert die gespeicherte Anmeldung nicht mehr, deshalb kann {{name}} noch nicht verbunden werden. Melde dich erneut bei Composio an.",
         "login_failed": "Die Anmeldung wurde nicht abgeschlossen. Versuche es erneut.",
-        "login_open": "Die Anmeldeseite konnte nicht geöffnet werden."
+        "login_open": "Die Anmeldeseite konnte nicht geöffnet werden.",
+        "rate_limited": "Composio ist gerade ausgelastet. Warte eine Minute und versuche es mit {{name}} erneut.",
+        "upstream": "Composio war nicht erreichbar oder hat nicht geantwortet. Prüfe die Verbindung des Computers, auf dem die Bots laufen, und versuche es erneut."
       },
       "login": "Die Anmeldeseite wurde in deinem Browser geöffnet. Schließe die Anmeldung dort ab, danach öffnet sich {{name}} von selbst.",
       "opened": "Die Seite von {{name}} ist in deinem Browser geöffnet. Erlaube dort den Zugriff; hier erscheint die App dann als „Verbunden“.",
@@ -1309,6 +1313,7 @@
     "computer": "Computer",
     "edit": "Bot bearbeiten",
     "isMain": "Das ist der Haupt-Bot",
+    "liteFullHint": "Es ist ein leichtes Modell eingestellt. Für lange Aufgaben mit vielen Schritten funktioniert ein stärkeres Modell besser: Dieses hält vielleicht an, um nachzufragen, oder verliert den Faden. Du kannst es in den Einstellungen des Bots ändern.",
     "mail": {
       "agentmail": "Eigene Adresse",
       "check": "Verbindung prüfen",
@@ -1570,6 +1575,7 @@
         "stillAsks": "Praxi fragt erneut bei anderen Programmen, beim Starten, bei Befehlen, Skripten, Ziehen, Dateidialogen, Passwortfeldern und jeder anderen Taste. Terminals, Browser, Launcher und Remote-Desktop-Viewer werden nur am Dateinamen erkannt, was eine Heuristik ist: Eine umbenannte Kopie wird nicht erkannt. Die Berechtigung endet mit der Aufgabe und wird nach jedem gestoppten oder fehlgeschlagenen Senden zurückgezogen."
       },
       "countdown": "Automatische Ablehnung in {{seconds}} s",
+      "decidedElsewhere": "Diese Anfrage wurde bereits bearbeitet oder ist abgelaufen.",
       "deny": "Ablehnen",
       "egress": {
         "hidden": "{{hidden}} unsichtbare Zeichen werden als <U+XXXX> angezeigt",
@@ -1958,6 +1964,7 @@
       "answer": "Antworten",
       "answered": "Du hast geantwortet: {{answer}}",
       "closed": "Diese Frage ist nicht mehr offen.",
+      "decidedElsewhere": "Diese Frage wurde bereits beantwortet oder ist abgelaufen.",
       "placeholder": "Andere Antwort eingeben …",
       "title": "Der Bot fragt"
     },
@@ -2066,6 +2073,11 @@
         "done": "Auf einer Seite geklickt",
         "failed": "Auf einer Seite wurde nicht geklickt",
         "running": "Klickt auf einer Seite"
+      },
+      "browser_dismiss_consent": {
+        "done": "Cookie-Banner auf einer Seite geschlossen",
+        "failed": "Cookie-Banner konnte nicht geschlossen werden",
+        "running": "Schließt ein Cookie-Banner auf einer Seite"
       },
       "browser_eval": {
         "done": "Ein Skript im Browser ausgeführt",
@@ -2836,6 +2848,10 @@
         "hint": "Versuche es gleich noch einmal. Wenn es weiter fehlschlägt, verbinde die App neu.",
         "title": "Composio konnte das nicht abschließen"
       },
+      "composio_login_expired": {
+        "hint": "Öffne Apps und tippe auf Erneut bei Composio anmelden. Im Browser genügt ein Klick.",
+        "title": "Composio akzeptiert deine Anmeldung nicht mehr"
+      },
       "composio_not_configured": {
         "hint": "Füge deinen Composio-Schlüssel unter Apps hinzu und versuche es dann erneut.",
         "title": "Composio ist noch nicht eingerichtet"
@@ -2899,6 +2915,10 @@
       "host_setup_conflict": {
         "hint": "Warte, bis die aktuelle Einrichtung abgeschlossen ist, und versuche es dann erneut.",
         "title": "Dieser Computer wird bereits eingerichtet"
+      },
+      "host_terminal_failed": {
+        "hint": "Der Computer ist online und hat geantwortet, aber sein Terminal meldete einen Fehler. Sieh dir unten die Details an und versuche es dann erneut.",
+        "title": "Das Terminal ist auf diesem Computer fehlgeschlagen"
       },
       "host_unreachable": {
         "hint": "Seine Kopie läuft möglicherweise noch. Versuche es erneut oder bestätige, den Zeitplan trotzdem zurückzuholen.",
@@ -3220,6 +3240,36 @@
       "title": "Das funktioniert nur in der Desktop-App"
     },
     "details": "Details",
+    "emailProvider": {
+      "auth": {
+        "hint": "Prüfe, ob du den ganzen Schlüssel aus deinem AgentMail-Konto kopiert hast, und versuche es erneut.",
+        "title": "AgentMail hat diesen API-Schlüssel nicht akzeptiert"
+      },
+      "forbidden": {
+        "hint": "Erstelle in deinem AgentMail-Konto einen Schlüssel, der Postfächer anlegen darf.",
+        "title": "Dieser AgentMail-Schlüssel darf das nicht"
+      },
+      "quota": {
+        "hint": "Lösche ein ungenutztes Postfach oder erhöhe den Tarif bei AgentMail und versuche es erneut.",
+        "title": "Dein AgentMail-Tarif hat sein Limit erreicht"
+      },
+      "rateLimited": {
+        "hint": "Warte eine Minute und versuche es erneut.",
+        "title": "AgentMail bittet dich, langsamer zu machen"
+      },
+      "rejected": {
+        "hint": "Prüfe den Schlüssel und den Adressnamen (Buchstaben, Zahlen, Bindestriche) und versuche es erneut.",
+        "title": "AgentMail hat diese Anfrage nicht akzeptiert"
+      },
+      "taken": {
+        "hint": "Die Namen auf agentmail.to teilen sich alle. Wähle einen anderen Namen; ein vermutlich freier ist schon eingetragen.",
+        "title": "Dieser Adressname ist bei AgentMail schon vergeben"
+      },
+      "transient": {
+        "hint": "Das Problem liegt bei AgentMail. Versuche es in ein paar Minuten erneut.",
+        "title": "AgentMail ist gerade nicht erreichbar"
+      }
+    },
     "engineNeedsNative": {
       "hint": "Es arbeitet mit seinen eigenen Werkzeugen. Drücke „Beheben“, um das für diesen Bot zu erlauben.",
       "title": "Dieses Modell braucht zuerst dein OK"
@@ -3870,7 +3920,7 @@
       "bots": "Auf diesem Server sind Bots bereit.",
       "model": "Ein Modell ist verbunden."
     },
-    "managedOnServer": "Schlüssel, Berechtigungen, Werkzeuge und Kopplung werden auf {{name}} selbst verwaltet. Hier kannst du Bots erstellen und bearbeiten, chatten und seinen Bildschirm beobachten.",
+    "managedOnServer": "Sobald dieser Computer auf {{name}} als Administrator bestätigt ist, verwaltest du Schlüssel, Berechtigungen, Werkzeuge und E-Mail auch von hier. Gerätekopplung und Updates von {{name}} bleiben auf {{name}} selbst.",
     "missing": {
       "bots": "Auf diesem Server gibt es noch keine Bots.",
       "model": "Auf diesem Server ist noch kein Modell verbunden."
@@ -3886,23 +3936,16 @@
     "newBotNeedsModel": "{{name}} hat noch kein Modell, daher kann dort kein Bot erstellt werden. Verbinde zuerst ein Modell auf dem Server.",
     "refusal": {
       "adminRequired": "{{name}} hat diesen Computer noch nicht als Administrator bestätigt. Führe einmalig `bot host admin --all-desktops` auf {{name}} aus und versuche es dann erneut.",
-      "botPermissions": "Berechtigungen und Werkzeuge eines Bots werden auf {{name}} selbst verwaltet. Name, Persona und Modell können hier geändert werden.",
-      "composio": "App-Verbindungen werden auf der Besitzerseite dieses Computers verwaltet, nicht auf {{name}}.",
-      "connectionTest": "Schlüsseltests laufen auf {{name}} selbst und sind in dieser App nicht möglich.",
-      "credentials": "Diese E-Mail- oder Suchoption wird auf {{name}} selbst geändert, nicht in dieser App.",
-      "generic": "{{name}} hat das nicht erlaubt: {{reason}}",
+      "generic": "{{name}} hat das nicht erlaubt, es wurde nichts geändert. Den technischen Grund findest du unter Details.",
+      "hostOnly": "Das wird absichtlich nur auf {{name}} selbst erledigt. Diese App kann es nicht.",
       "hostTransfer": "Das Verschieben des Hosts und der Kopplungskanäle erfolgt auf {{name}} selbst.",
-      "knowledge": "Wissenseinstellungen werden auf {{name}} selbst verwaltet.",
-      "lifecycle": "Kopplung und Host-Updates erfolgen auf {{name}} selbst.",
+      "lifecycle": "Neue Geräte koppeln und {{name}} aktualisieren erfolgt absichtlich auf {{name}} selbst mit den `bot host`-Befehlen.",
       "localOnly": "Das kann nur die Person an {{name}} tun, nicht diese App.",
-      "localProviders": "Lokale Modelle und Programmier-Tools gehören zu dem Computer, auf dem der Bot läuft. Wechsle zu Dieser Computer, um sie einzurichten.",
+      "needsAdmin": "{{name}} hat das von der App nicht akzeptiert. Bestätige diesen Computer einmalig mit `bot host admin --all-desktops` auf {{name}}, aktualisiere {{name}} auf die neueste Version und versuche es dann erneut.",
       "overlay": "Nur die Person an {{name}} kann diese Aufforderung beantworten.",
       "ownerOnly": "Das kann nur auf {{name}} selbst erledigt werden.",
-      "policy": "Die Ausführungsrichtlinie wird auf {{name}} selbst festgelegt, nicht über diese App.",
       "role": "{{name}} erlaubt diesem Computer das nicht.",
-      "screenInput": "{{name}} hat diesem Computer die Steuerung des Bildschirms nicht erlaubt. Erlaube sie in Praxi auf {{name}}.",
-      "secrets": "Schlüssel und Zugangsdaten werden auf {{name}} selbst hinzugefügt, nicht über diese App.",
-      "tools": "Werkzeugserver und Skills werden auf {{name}} selbst verwaltet."
+      "screenInput": "{{name}} hat diesem Computer die Steuerung des Bildschirms nicht erlaubt. Erlaube sie in Praxi auf {{name}}."
     },
     "state": {
       "connected": "Verbunden",
@@ -4494,6 +4537,7 @@
     "recent": "Zuletzt gesucht",
     "reset": "Zurücksetzen",
     "results": "Nachrichtentreffer",
+    "retry": "Erneut versuchen",
     "searching": "Suche läuft…",
     "title": "Nachrichten durchsuchen",
     "when": "Datum",
@@ -4878,6 +4922,20 @@
     "directHint": "Direkt: Die App spricht unmittelbar mit dem Computer, das ist der schnellste Weg. Die Zahl ist die Verzögerung.",
     "relay": "Relay · {{rtt}} ms",
     "relayHint": "Über Relay: Die Verbindung läuft über einen Hilfsserver und kann etwas langsamer sein. Die Zahl ist die Verzögerung."
+  },
+  "popout": {
+    "chatFallbackTitle": "Chatfenster",
+    "connecting": "Verbindung wird hergestellt...",
+    "focusFailed": "Das Hauptfenster konnte nicht angezeigt werden. Öffne es über den Infobereich.",
+    "focusMain": "Hauptfenster fokussieren",
+    "openChat": "In neuem Fenster öffnen",
+    "openChatTooltip": "Chat in neuem Fenster öffnen",
+    "openFailed": "Das neue Fenster konnte nicht geöffnet werden. Bitte versuche es erneut.",
+    "openLive": "Live-Ansicht in neuem Fenster öffnen",
+    "openLiveShort": "Abdocken",
+    "pinFailed": "Die Einstellung „Immer im Vordergrund“ konnte nicht geändert werden. Bitte versuche es erneut.",
+    "pinOnTop": "Fenster immer im Vordergrund",
+    "unpinOnTop": "Vordergrund-Fixierung aufheben"
   },
   "profileShare": {
     "back": "Zurück",
@@ -5850,6 +5908,7 @@
         "ownAccount": "Du brauchst dein eigenes kostenloses AgentMail-Konto. Praxi-Bot verwahrt keinen Schlüssel für dich: Füge den API-Schlüssel aus deinem Konto ein.",
         "pricing": "Preise ansehen",
         "scopedKeyHint": "Dieser Schlüssel gehört zu einem einzelnen Postfach und kann deshalb keine neuen Adressen erstellen. Verbinde stattdessen das Postfach, das du bereits hast.",
+        "suggested": "Versuche stattdessen „{{name}}“.",
         "title": "Einem Bot eine eigene Adresse geben",
         "useExisting": "Vorhandenes Postfach verbinden",
         "viaApi": "AgentMail-Postfach"
@@ -6077,6 +6136,7 @@
       "optOutPlaceholder": "anna@beispiel.de oder beispiel.de",
       "optOutRemove": "{{value}} entfernen",
       "optOutTitle": "Personen, die ich nicht anschreibe",
+      "retry": "Erneut versuchen",
       "save": "Speichern",
       "saved": "Gespeichert",
       "sentAnyway": "Trotzdem gesendet",
@@ -6574,6 +6634,10 @@
     "switch": "Zu diesem Computer wechseln"
   },
   "toolPacks": {
+    "ack": {
+      "label": "Verstanden",
+      "text": "Das ist eine eigenständige Software unter {{license}}, vom Autor heruntergeladen. Praxi liefert sie nicht mit und ändert sie nicht."
+    },
     "back": "Zurück",
     "basicSet": "Basis-Set auswählen",
     "button": "Werkzeuge",
@@ -6585,6 +6649,8 @@
     "dontClose": "Das kann ein paar Minuten dauern. Du kannst die App weiter benutzen.",
     "found": "Gefundene Programme: {{n}}",
     "lead": "Programme, die deine Bots auf diesem Server nutzen können.",
+    "licenseMixed": "Gemischte Lizenzen",
+    "licenseName": "Lizenz {{name}}",
     "listLabel": "Werkzeugpakete",
     "loading": "Server wird angesehen…",
     "noLogin": {
@@ -6612,6 +6678,11 @@
       "office": {
         "desc": "Word, Excel, PowerPoint und PDF-Export, mit türkischen Schriften",
         "name": "Office-Dateien"
+      },
+      "scrape": {
+        "desc": "Liest Seiten sauberer und kann einigen Links folgen",
+        "name": "Web-Scraping",
+        "note": "Nicht für Seiten mit Anmeldung"
       }
     },
     "planning": "Es wird geprüft, was sich ändern würde…",
@@ -6630,9 +6701,17 @@
         "body": "Der Server hat es abgebrochen, zum Beispiel weil die Platte voll ist oder gerade ein anderes Update läuft. Dein Server ist in Ordnung; du kannst es erneut versuchen.",
         "title": "Nicht abgeschlossen"
       },
+      "needs_ack": {
+        "body": "Lesen und bestätigen Sie den Lizenzhinweis, prüfen Sie dann erneut.",
+        "title": "Bitte bestätigen Sie die Lizenz"
+      },
       "needs_admin": {
         "body": "Nimm einen Serverzugang mit Administratorrechten (sudo ohne Passwort) und versuche es erneut.",
         "title": "Mit diesem Zugang lässt sich keine Software installieren"
+      },
+      "needs_python": {
+        "body": "Installieren Sie zuerst „Entwicklerwerkzeuge“ auf diesem Server und fügen Sie dann Web-Scraping hinzu.",
+        "title": "Zuerst wird Python benötigt"
       },
       "shared": {
         "body": "Praxi entfernt diese nicht: Dein Server braucht sie.",
@@ -6674,6 +6753,7 @@
     "safeRemove": "Nur diese Werkzeuge werden entfernt",
     "safeRemoveBody": "Deine Einstellungen und andere Software bleiben unverändert.",
     "size": "etwa {{value}} {{unit}}",
+    "source": "Quelle",
     "status": {
       "installed": "Installiert",
       "partial": "Unvollständig"
@@ -6683,6 +6763,7 @@
     "title": "Werkzeuge",
     "titleFor": "Werkzeuge auf {{name}}",
     "tryAgain": "Erneut versuchen",
+    "versionLabel": "Version {{version}}",
     "willInstall": "Wird installiert",
     "willRemove": "Wird entfernt"
   },
@@ -7232,5 +7313,59 @@
     "tooFewSteps": "Dieser Lauf hat weniger als zwei aufzeichnungsfähige Schritte.",
     "untrustedWarning": "Dieser Lauf hat externe oder private Inhalte gelesen. Prüfe jeden betroffenen Schritt, bevor du eine dauerhafte Automatisierung freigibst.",
     "warnings": "Hinweise zur Prüfung"
+  },
+  "workspace": {
+    "botRowDesc": "Ordner: {{folder}} · {{used}} ({{files}} Dateien)",
+    "breadcrumbs": "Arbeitsbereich-Pfad",
+    "cardDescription": "Dauerhafte Bot-Ordner, optionale Limits je Bot, Warnschwellen und sichere Bereinigung verwalten.",
+    "cardTitle": "Bot-Arbeitsordner & Speicher",
+    "cleanedSummary": "{{size}} freigegeben",
+    "cleanupDesc": "Es werden nur alte Dateien in downloads/ und logs/ oder regenerierbare Caches entfernt.",
+    "cleanupHeading": "Sichere Bereinigung & große Dateien",
+    "cleanupTarget": {
+      "all_old": "Alte Downloads & Logs löschen ({{size}})",
+      "daemon_cache": "Cache leeren ({{size}})",
+      "old_downloads": "Alte Downloads löschen ({{size}})",
+      "old_logs": "Alte Logs löschen ({{size}})"
+    },
+    "delete": "Löschen",
+    "deletedUndoLabel": "\"{{name}}\" gelöscht",
+    "diskSummary": "Datenträger {{percent}}% belegt · {{free}} von {{total}} frei · Arbeitsordner: {{botsTotal}}",
+    "download": "Herunterladen",
+    "downloadsDays": "Downloads-Aufbewahrung (Tage)",
+    "emptyFolder": "Dieser Ordner ist leer.",
+    "hardLimitGb": "Hartes Limit (GB)",
+    "invalidLimitValue": "Positive Zahl in GB eingeben oder zum Deaktivieren leer lassen.",
+    "invalidThresholds": "Warnschwellen müssen zwischen 1 und 99 steigen und mindestens 1 GB frei bleiben.",
+    "limitOff": "Aus",
+    "loading": "Wird geladen…",
+    "logsDays": "Log-Aufbewahrung (Tage)",
+    "manageStorage": "Speichereinstellungen",
+    "minFreeGb": "Min. frei (GB)",
+    "noMatches": "Keine passenden Dateien gefunden.",
+    "openFolder": "Ordner öffnen",
+    "preview": "Vorschau",
+    "rename": "Umbenennen",
+    "retentionDesc": "Ältere Dateien erscheinen als Bereinigungsvorschlag (leer = deaktiviert).",
+    "retentionTitle": "Aufbewahrungsfrist",
+    "root": "Arbeitsbereich",
+    "saved": "Gespeichert",
+    "searchPlaceholder": "Dateien filtern…",
+    "sectionTitle": "Arbeitsdateien",
+    "softExceedsHard": "Das weiche Limit darf das harte Limit nicht überschreiten.",
+    "softLimitGb": "Weiches Limit (GB)",
+    "storageHeading": "Laufwerk & Arbeitsstammordner",
+    "thresholdsDesc": "Warnen, wenn der Speicher diese Prozente erreicht oder unter das Minimum fällt.",
+    "thresholdsTitle": "Speicher-Warnschwellen",
+    "unconfiguredHint": "Der Arbeitsordner wird automatisch angelegt, sobald Bots lokal laufen.",
+    "undo": "Rückgängig",
+    "warnPct1": "Warnstufe 1 (%)",
+    "warnPct2": "Warnstufe 2 (%)",
+    "warnPct3": "Warnstufe 3 (%)",
+    "warningBigItem": "Größte Datei: {{path}} ({{size}})",
+    "warningBotLimit": "Ein Bot-Arbeitsordner hat sein weiches Limit erreicht.",
+    "warningCheckStorage": "Prüfe Arbeitsordner oder führe eine sichere Bereinigung aus.",
+    "warningLowFree": "Wenig Speicherplatz: nur noch {{free}} frei",
+    "warningPercent": "Datenträger ist zu {{percent}}% voll"
   }
 }

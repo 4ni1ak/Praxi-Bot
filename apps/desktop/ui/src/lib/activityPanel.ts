@@ -173,9 +173,9 @@ export function activitySections(have: {
   return out;
 }
 
-export type LibrarySection = "skills" | "chats";
+export type LibrarySection = "skills" | "workspace" | "chats";
 
-/** Skills stay (they carry the "add" entry); the chat list only exists with chats. */
+/** Skills and the persistent workspace stay; the chat list only exists with chats. */
 export function librarySections(have: { chats: number }): LibrarySection[] {
-  return have.chats > 0 ? ["skills", "chats"] : ["skills"];
+  return have.chats > 0 ? ["skills", "workspace", "chats"] : ["skills", "workspace"];
 }

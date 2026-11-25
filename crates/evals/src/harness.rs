@@ -79,6 +79,9 @@ pub struct TurnExtras {
     /// (extra profile TOML of that bot). The turn is started as the owner's own
     /// chat message, and the helper has the fixed id [`HELPER_BOT_ID`].
     pub helper_bot: Option<String>,
+    /// Start the turn as a message the owner typed in the desktop app (the Full level's
+    /// autonomy applies to such runs only).
+    pub owner_message: bool,
 }
 
 /// Stable id of the helper bot of a two-bot scenario, so scripts can name it.
@@ -441,7 +444,9 @@ pub async fn run_turn_ext(cfg: TurnConfig, extras: TurnExtras) -> Result<TurnTra
     let t0 = Instant::now();
     let run = match extras.initiator {
         // A two-bot scenario is the owner typing in their own app.
-        None | Some(protocol::InitiatorKind::Human) if extras.helper_bot.is_some() => {
+        None | Some(protocol::InitiatorKind::Human)
+            if extras.helper_bot.is_some() || extras.owner_message =>
+        {
             match lp.send_user_message_from(chat, &cfg.prompt, MessageMode::Queue, "owner")? {
                 Delivery::NewTurn(run) => run,
                 _ => return Err("the owner message did not start a turn".to_owned().into()),

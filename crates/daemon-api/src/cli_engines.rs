@@ -102,8 +102,10 @@ impl Default for InstallBook {
     }
 }
 
+/// The owner of this daemon: the person at its own app, or the administrator desktop of a host
+/// (which is the owner there, see `peer::admin_desktop_never`).
 pub(crate) fn local_owner(actor: &Actor) -> Result<(), ApiError> {
-    if actor.local {
+    if actor.is_owner() {
         Ok(())
     } else {
         Err(ApiError::forbidden("CLI settings require the local owner"))

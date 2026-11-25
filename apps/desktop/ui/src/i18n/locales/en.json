@@ -733,7 +733,7 @@
         "failed": "The app list could not be refreshed: showing the saved one.",
         "offline": "No connection: showing the saved app list.",
         "rate_limited": "Composio is busy: showing the saved app list.",
-        "unauthorized": "Composio sign-in ran out: showing the saved app list."
+        "unauthorized": "Composio no longer accepts the saved sign-in: showing the saved app list."
       },
       "connectedSection": "Connected",
       "disable": "Turn off",
@@ -758,6 +758,7 @@
       "loading": "Loading apps…",
       "noResults": "No matching apps.",
       "openFailed": "The sign-in link was not opened because it is not a Composio link.",
+      "relogin": "Sign in to Composio again",
       "retry": "Try again",
       "state": {
         "active": "Connected",
@@ -847,8 +848,11 @@
       "failed": {
         "app_link": "The page for {{name}} could not be prepared. Try again.",
         "app_open": "The page for {{name}} could not be opened.",
+        "login_expired": "Composio no longer accepts the saved sign-in, so {{name}} cannot be connected yet. Sign in to Composio again.",
         "login_failed": "The sign-in did not finish. Try again.",
-        "login_open": "The sign-in page could not be opened."
+        "login_open": "The sign-in page could not be opened.",
+        "rate_limited": "Composio is busy right now. Wait a minute, then try {{name}} again.",
+        "upstream": "Composio could not be reached or did not answer. Check the connection of the computer the bots run on, then try again."
       },
       "login": "The sign-in page opened in your browser. Finish it there and {{name}} opens next by itself.",
       "opened": "{{name}}'s page is open in your browser. Allow access there; it shows up as Connected here.",
@@ -1309,6 +1313,7 @@
     "computer": "Computer",
     "edit": "Edit bot",
     "isMain": "This is the main bot",
+    "liteFullHint": "A light model is set. For long multi-step tasks a stronger model works better: this one may stop to ask or lose track. You can change it in the bot's settings.",
     "mail": {
       "agentmail": "Own address",
       "check": "Check connection",
@@ -1570,6 +1575,7 @@
         "stillAsks": "It asks again for other programs, launching, commands, scripts, dragging, file dialogs, password fields and any other key. Terminals, browsers, launchers and remote-desktop viewers are recognised by file name only, which is a heuristic: a renamed copy is not recognised. The permission ends with the task and is withdrawn after any stopped or failed send."
       },
       "countdown": "Auto-deny in {{seconds}} s",
+      "decidedElsewhere": "This request has already been handled or has expired.",
       "deny": "Deny",
       "egress": {
         "hidden": "{{hidden}} invisible characters are shown as <U+XXXX>",
@@ -1958,6 +1964,7 @@
       "answer": "Answer",
       "answered": "You answered: {{answer}}",
       "closed": "This question is no longer open.",
+      "decidedElsewhere": "This question has already been answered or has expired.",
       "placeholder": "Type another answer…",
       "title": "The bot asks"
     },
@@ -2066,6 +2073,11 @@
         "done": "Clicked on a page",
         "failed": "Didn't click on a page",
         "running": "Clicking on a page"
+      },
+      "browser_dismiss_consent": {
+        "done": "Dismissed a cookie banner on a page",
+        "failed": "Couldn't dismiss the cookie banner",
+        "running": "Dismissing a cookie banner on a page"
       },
       "browser_eval": {
         "done": "Ran a script in the browser",
@@ -2836,6 +2848,10 @@
         "hint": "Try again in a moment. If it keeps failing, reconnect the app.",
         "title": "Composio could not finish that"
       },
+      "composio_login_expired": {
+        "hint": "Open Apps and press Sign in to Composio again. It takes one click in the browser.",
+        "title": "Composio no longer accepts your sign-in"
+      },
       "composio_not_configured": {
         "hint": "Add your Composio key in Apps, then try again.",
         "title": "Composio is not set up yet"
@@ -2899,6 +2915,10 @@
       "host_setup_conflict": {
         "hint": "Wait for the current setup to finish, then try again.",
         "title": "That computer is already being set up"
+      },
+      "host_terminal_failed": {
+        "hint": "The computer is online and answered, but its terminal reported an error. Open the details below, then try again.",
+        "title": "The terminal failed on that computer"
       },
       "host_unreachable": {
         "hint": "Its copy may still be running. Try again, or confirm to bring the schedule back anyway.",
@@ -3220,6 +3240,36 @@
       "title": "This only works in the desktop app"
     },
     "details": "Details",
+    "emailProvider": {
+      "auth": {
+        "hint": "Check that you copied the whole key from your AgentMail account, then try again.",
+        "title": "AgentMail did not accept this API key"
+      },
+      "forbidden": {
+        "hint": "Create a key that may create inboxes in your AgentMail account.",
+        "title": "This AgentMail key is not allowed to do that"
+      },
+      "quota": {
+        "hint": "Delete an unused inbox or upgrade the plan at AgentMail, then try again.",
+        "title": "Your AgentMail plan has reached its limit"
+      },
+      "rateLimited": {
+        "hint": "Wait a minute and try again.",
+        "title": "AgentMail asks you to slow down"
+      },
+      "rejected": {
+        "hint": "Check the key and the address name (letters, numbers, dashes), then try again.",
+        "title": "AgentMail did not accept this request"
+      },
+      "taken": {
+        "hint": "Names are shared by everyone on agentmail.to. Pick another name; a free-looking one is filled in for you.",
+        "title": "That address name is already taken at AgentMail"
+      },
+      "transient": {
+        "hint": "This is on their side. Try again in a few minutes.",
+        "title": "AgentMail is not available right now"
+      }
+    },
     "engineNeedsNative": {
       "hint": "It works with its own tools. Press Fix to allow that for this bot.",
       "title": "This model needs your OK first"
@@ -3870,7 +3920,7 @@
       "bots": "Bots are ready on this server.",
       "model": "A model is connected."
     },
-    "managedOnServer": "Keys, permissions, tools and pairing are managed on {{name}} itself. Here you can create and edit bots, chat and watch its screen.",
+    "managedOnServer": "Once this computer is confirmed as administrator on {{name}}, you manage keys, permissions, tools and mail from here too. Pairing devices and updating {{name}} stay on {{name}} itself.",
     "missing": {
       "bots": "No bots on this server yet.",
       "model": "No model connected on this server yet."
@@ -3886,23 +3936,16 @@
     "newBotNeedsModel": "{{name}} has no model yet, so a bot cannot be created there. Connect a model on the server first.",
     "refusal": {
       "adminRequired": "{{name}} has not confirmed this computer as its administrator yet. Run `bot host admin --all-desktops` once on {{name}}, then try again.",
-      "botPermissions": "A bot's permissions and tools are managed on {{name}} itself. Name, persona and model can be changed here.",
-      "composio": "App connections are managed on this computer's owner side, not on {{name}}.",
-      "connectionTest": "Key tests run on {{name}} itself and are not available from this app.",
-      "credentials": "This email or search setting is changed on {{name}} itself, not from this app.",
-      "generic": "{{name}} did not allow this: {{reason}}",
+      "generic": "{{name}} did not allow this, so nothing changed. The technical reason is under Details.",
+      "hostOnly": "This is only done on {{name}} itself, on purpose. This app cannot do it.",
       "hostTransfer": "Moving the host and pairing channels is done on {{name}} itself.",
-      "knowledge": "Knowledge settings are managed on {{name}} itself.",
-      "lifecycle": "Pairing and host updates are done on {{name}} itself.",
+      "lifecycle": "Pairing new devices and updating {{name}} are done on {{name}} itself with its `bot host` commands, on purpose.",
       "localOnly": "Only the person at {{name}} can do this, not this app.",
-      "localProviders": "Local models and coding tools belong to the computer where the bot runs. Switch to This computer to set them up.",
+      "needsAdmin": "{{name}} did not accept this from the app. Confirm this computer once with `bot host admin --all-desktops` on {{name}}, update {{name}} to the latest version, then try again.",
       "overlay": "Only the person at {{name}} can answer that prompt.",
       "ownerOnly": "This can only be done on {{name}} itself.",
-      "policy": "The execution policy is set on {{name}} itself, not from this app.",
       "role": "{{name}} does not allow this computer to do that.",
-      "screenInput": "{{name}} has not allowed this computer to control its screen. Allow it in Praxi on {{name}}.",
-      "secrets": "Keys and secrets are added on {{name}} itself, not from this app.",
-      "tools": "Tool servers and skills are managed on {{name}} itself."
+      "screenInput": "{{name}} has not allowed this computer to control its screen. Allow it in Praxi on {{name}}."
     },
     "state": {
       "connected": "Connected",
@@ -4494,6 +4537,7 @@
     "recent": "Recent",
     "reset": "Reset",
     "results": "Message results",
+    "retry": "Try again",
     "searching": "Searching…",
     "title": "Search messages",
     "when": "Date",
@@ -4878,6 +4922,20 @@
     "directHint": "Direct: this app talks straight to the computer, which is the fastest way. The number is the delay.",
     "relay": "Relay · {{rtt}} ms",
     "relayHint": "Relayed: the connection goes through a helper server, so it can be a little slower. The number is the delay."
+  },
+  "popout": {
+    "chatFallbackTitle": "Chat window",
+    "connecting": "Connecting...",
+    "focusFailed": "Could not show the main window. Open it from the tray.",
+    "focusMain": "Focus main window",
+    "openChat": "Open in new window",
+    "openChatTooltip": "Open chat in new window",
+    "openFailed": "Could not open the new window. Please try again.",
+    "openLive": "Open live view in new window",
+    "openLiveShort": "Pop out",
+    "pinFailed": "Could not change whether this window stays on top. Please try again.",
+    "pinOnTop": "Pin window on top",
+    "unpinOnTop": "Unpin window"
   },
   "profileShare": {
     "back": "Back",
@@ -5850,6 +5908,7 @@
         "ownAccount": "You need your own free AgentMail account. Praxi-Bot does not hold any key for you: paste the API key from your account.",
         "pricing": "See their pricing",
         "scopedKeyHint": "This key belongs to a single inbox, so it cannot create new addresses. Connect the inbox you already have instead.",
+        "suggested": "Try “{{name}}” instead.",
         "title": "Give a bot its own address",
         "useExisting": "Connect an existing inbox",
         "viaApi": "AgentMail inbox"
@@ -6077,6 +6136,7 @@
       "optOutPlaceholder": "ann@example.com or example.com",
       "optOutRemove": "Remove {{value}}",
       "optOutTitle": "People I will not write to",
+      "retry": "Try again",
       "save": "Save",
       "saved": "Saved",
       "sentAnyway": "Sent anyway",
@@ -6574,6 +6634,10 @@
     "switch": "Switch to this computer"
   },
   "toolPacks": {
+    "ack": {
+      "label": "I understand",
+      "text": "This is separate software under {{license}}, downloaded from its author. Praxi does not ship or change it."
+    },
     "back": "Back",
     "basicSet": "Select the basic set",
     "button": "Tools",
@@ -6585,6 +6649,8 @@
     "dontClose": "This can take a few minutes. You can keep using the app.",
     "found": "Programs found: {{n}}",
     "lead": "Programs your bots can use on this server.",
+    "licenseMixed": "Mixed licences",
+    "licenseName": "Licence {{name}}",
     "listLabel": "Tool packs",
     "loading": "Looking at the server…",
     "noLogin": {
@@ -6612,6 +6678,11 @@
       "office": {
         "desc": "Word, Excel, PowerPoint and PDF export, with Turkish fonts",
         "name": "Office files"
+      },
+      "scrape": {
+        "desc": "Reads pages more cleanly and can follow a few links",
+        "name": "Web scraping",
+        "note": "Not for pages you have to log in to"
       }
     },
     "planning": "Checking what would change…",
@@ -6630,9 +6701,17 @@
         "body": "The server stopped it, for example because the disk is full or another update is running. Your server is fine; you can try again.",
         "title": "It did not finish"
       },
+      "needs_ack": {
+        "body": "Read and confirm the licence notice, then review again.",
+        "title": "Please confirm the licence"
+      },
       "needs_admin": {
         "body": "Use a server login with administrator rights (sudo without a password), then try again.",
         "title": "This login can't install software"
+      },
+      "needs_python": {
+        "body": "Install “Developer tools” on this server first, then add Web scraping.",
+        "title": "Python is needed first"
       },
       "shared": {
         "body": "Praxi does not remove these: your server needs them.",
@@ -6674,6 +6753,7 @@
     "safeRemove": "Only these tools are removed",
     "safeRemoveBody": "Your settings and other software stay as they are.",
     "size": "about {{value}} {{unit}}",
+    "source": "Source",
     "status": {
       "installed": "Installed",
       "partial": "Incomplete"
@@ -6683,6 +6763,7 @@
     "title": "Tools",
     "titleFor": "Tools on {{name}}",
     "tryAgain": "Try again",
+    "versionLabel": "Version {{version}}",
     "willInstall": "Will be installed",
     "willRemove": "Will be removed"
   },
@@ -7232,5 +7313,59 @@
     "tooFewSteps": "This run has fewer than two recordable steps.",
     "untrustedWarning": "This run read external or private content. Review every affected step before granting persistent automation.",
     "warnings": "Review notes"
+  },
+  "workspace": {
+    "botRowDesc": "Folder: {{folder}} · {{used}} ({{files}} files)",
+    "breadcrumbs": "Workspace breadcrumbs",
+    "cardDescription": "Inspect persistent bot folders, optional per-bot disk limits, warning thresholds, and safe cleanup.",
+    "cardTitle": "Bot Workspaces & Disk",
+    "cleanedSummary": "Freed {{size}}",
+    "cleanupDesc": "Only old files in downloads/ and logs/, or regenerable cache folders, are ever removed.",
+    "cleanupHeading": "Safe cleanup & large files",
+    "cleanupTarget": {
+      "all_old": "Clean old downloads & logs ({{size}})",
+      "daemon_cache": "Clear cache ({{size}})",
+      "old_downloads": "Clean old downloads ({{size}})",
+      "old_logs": "Clean old logs ({{size}})"
+    },
+    "delete": "Delete",
+    "deletedUndoLabel": "Deleted \"{{name}}\"",
+    "diskSummary": "Disk {{percent}}% full · {{free}} free of {{total}} · Workspaces: {{botsTotal}}",
+    "download": "Download",
+    "downloadsDays": "Downloads max age (days)",
+    "emptyFolder": "This folder is empty.",
+    "hardLimitGb": "Hard limit (GB)",
+    "invalidLimitValue": "Enter a positive number in GB, or leave blank for off.",
+    "invalidThresholds": "Warning percentages must increase between 1 and 99, with positive minimum free GB.",
+    "limitOff": "Off",
+    "loading": "Loading…",
+    "logsDays": "Logs max age (days)",
+    "manageStorage": "Storage settings",
+    "minFreeGb": "Min free (GB)",
+    "noMatches": "No matching files found.",
+    "openFolder": "Open folder",
+    "preview": "Preview",
+    "rename": "Rename",
+    "retentionDesc": "Files older than these ages appear in cleanup suggestions (blank disables).",
+    "retentionTitle": "Cleanup retention",
+    "root": "Workspace",
+    "saved": "Saved",
+    "searchPlaceholder": "Filter workspace files…",
+    "sectionTitle": "Workspace files",
+    "softExceedsHard": "Soft limit cannot exceed hard limit.",
+    "softLimitGb": "Soft limit (GB)",
+    "storageHeading": "Host disk & workspaces root",
+    "thresholdsDesc": "Warn when disk reaches these percentages or free space drops below the minimum.",
+    "thresholdsTitle": "Pre-fill warning thresholds",
+    "unconfiguredHint": "Workspace folder will be created automatically when bots run locally.",
+    "undo": "Undo",
+    "warnPct1": "Warning level 1 (%)",
+    "warnPct2": "Warning level 2 (%)",
+    "warnPct3": "Warning level 3 (%)",
+    "warningBigItem": "Largest file: {{path}} ({{size}})",
+    "warningBotLimit": "A bot workspace reached its configured soft limit.",
+    "warningCheckStorage": "Review workspace folders or run a safe cleanup.",
+    "warningLowFree": "Disk space low: only {{free}} remaining",
+    "warningPercent": "Disk is {{percent}}% full"
   }
 }

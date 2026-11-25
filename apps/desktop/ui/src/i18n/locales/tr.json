@@ -733,7 +733,7 @@
         "failed": "Uygulama listesi yenilenemedi: kayıtlı liste gösteriliyor.",
         "offline": "Bağlantı yok: kayıtlı uygulama listesi gösteriliyor.",
         "rate_limited": "Composio meşgul: kayıtlı uygulama listesi gösteriliyor.",
-        "unauthorized": "Composio girişinin süresi doldu: kayıtlı uygulama listesi gösteriliyor."
+        "unauthorized": "Composio kayıtlı girişi artık kabul etmiyor: kayıtlı uygulama listesi gösteriliyor."
       },
       "connectedSection": "Bağlı",
       "disable": "Kapat",
@@ -758,6 +758,7 @@
       "loading": "Uygulamalar yükleniyor…",
       "noResults": "Eşleşen uygulama yok.",
       "openFailed": "Giriş bağlantısı Composio bağlantısı olmadığı için açılmadı.",
+      "relogin": "Composio'ya yeniden giriş yap",
       "retry": "Yeniden dene",
       "state": {
         "active": "Bağlı",
@@ -847,8 +848,11 @@
       "failed": {
         "app_link": "{{name}} sayfası hazırlanamadı. Yeniden dene.",
         "app_open": "{{name}} sayfası açılamadı.",
+        "login_expired": "Composio kayıtlı girişi artık kabul etmiyor, bu yüzden {{name}} henüz bağlanamıyor. Composio'ya yeniden giriş yap.",
         "login_failed": "Giriş tamamlanmadı. Yeniden dene.",
-        "login_open": "Giriş sayfası açılamadı."
+        "login_open": "Giriş sayfası açılamadı.",
+        "rate_limited": "Composio şu an meşgul. Bir dakika bekleyip {{name}} için yeniden dene.",
+        "upstream": "Composio'ya ulaşılamadı ya da yanıt vermedi. Botların çalıştığı bilgisayarın bağlantısını kontrol edip yeniden dene."
       },
       "login": "Giriş sayfası tarayıcında açıldı. Orada bitir; {{name}} sayfası ardından kendiliğinden açılır.",
       "opened": "{{name}} sayfası tarayıcında açık. Orada izin ver; burada Bağlı olarak görünür.",
@@ -1309,6 +1313,7 @@
     "computer": "Bilgisayar",
     "edit": "Botu düzenle",
     "isMain": "Bu, ana bot",
+    "liteFullHint": "Hafif bir model seçili. Uzun, çok adımlı işler için daha güçlü bir model daha iyi çalışır: bu model durup soru sorabilir ya da yolunu kaybedebilir. Botun ayarlarından değiştirebilirsin.",
     "mail": {
       "agentmail": "Kendi adresi",
       "check": "Bağlantıyı denetle",
@@ -1570,6 +1575,7 @@
         "stillAsks": "Şunlar için yine sorar: başka programlar, program başlatma, komutlar, betikler, sürükleme, dosya iletişim kutuları, parola alanları ve diğer tüm tuşlar. Terminaller, tarayıcılar, başlatıcılar ve uzak masaüstü görüntüleyicileri yalnızca dosya adına göre tanınır; bu bir tahmine dayanır, adı değiştirilmiş kopya tanınmaz. İzin görevle biter ve durdurulan veya başarısız olan her gönderimden sonra geri alınır."
       },
       "countdown": "{{seconds}} sn içinde otomatik reddedilir",
+      "decidedElsewhere": "Bu istek daha önce sonuçlandırıldı veya süresi doldu.",
       "deny": "Reddet",
       "egress": {
         "hidden": "{{hidden}} görünmeyen karakter <U+XXXX> olarak gösterilir",
@@ -1958,6 +1964,7 @@
       "answer": "Yanıtla",
       "answered": "Yanıtın: {{answer}}",
       "closed": "Bu soru artık açık değil.",
+      "decidedElsewhere": "Bu soru daha önce yanıtlandı veya süresi doldu.",
       "placeholder": "Başka bir yanıt yaz…",
       "title": "Bot soruyor"
     },
@@ -2066,6 +2073,11 @@
         "done": "Sayfada tıklandı",
         "failed": "Sayfada tıklanmadı",
         "running": "Sayfada tıklanıyor"
+      },
+      "browser_dismiss_consent": {
+        "done": "Sayfadaki çerez bildirimi kapatıldı",
+        "failed": "Çerez bildirimi kapatılamadı",
+        "running": "Sayfadaki çerez bildirimi kapatılıyor"
       },
       "browser_eval": {
         "done": "Tarayıcıda betik çalıştırıldı",
@@ -2836,6 +2848,10 @@
         "hint": "Biraz sonra yeniden dene. Sürerse uygulamayı yeniden bağla.",
         "title": "Composio bunu tamamlayamadı"
       },
+      "composio_login_expired": {
+        "hint": "Uygulamalar'ı aç ve Composio'ya yeniden giriş yap'a bas. Tarayıcıda tek tık yeter.",
+        "title": "Composio girişini artık kabul etmiyor"
+      },
       "composio_not_configured": {
         "hint": "Uygulamalar bölümünde Composio anahtarını ekleyip yeniden dene.",
         "title": "Composio henüz kurulmadı"
@@ -2899,6 +2915,10 @@
       "host_setup_conflict": {
         "hint": "Süren kurulumun bitmesini bekleyip yeniden dene.",
         "title": "O bilgisayar zaten kuruluyor"
+      },
+      "host_terminal_failed": {
+        "hint": "Bilgisayar çevrimiçi ve yanıt verdi, ama terminali bir hata bildirdi. Aşağıdaki ayrıntılara bak, sonra yeniden dene.",
+        "title": "Terminal o bilgisayarda çalışmadı"
       },
       "host_unreachable": {
         "hint": "Oradaki kopya hâlâ çalışıyor olabilir. Yeniden dene ya da yine de geri getirmeyi onayla.",
@@ -3220,6 +3240,36 @@
       "title": "Bu yalnızca masaüstü uygulamasında çalışır"
     },
     "details": "Ayrıntılar",
+    "emailProvider": {
+      "auth": {
+        "hint": "Anahtarın tamamını AgentMail hesabından kopyaladığını kontrol et, sonra tekrar dene.",
+        "title": "AgentMail bu API anahtarını kabul etmedi"
+      },
+      "forbidden": {
+        "hint": "AgentMail hesabında gelen kutusu oluşturabilen bir anahtar oluştur.",
+        "title": "Bu AgentMail anahtarının buna izni yok"
+      },
+      "quota": {
+        "hint": "Kullanmadığın bir gelen kutusunu sil ya da AgentMail'de planı yükselt, sonra tekrar dene.",
+        "title": "AgentMail planın sınırına ulaştı"
+      },
+      "rateLimited": {
+        "hint": "Bir dakika bekleyip tekrar dene.",
+        "title": "AgentMail yavaşlamanı istiyor"
+      },
+      "rejected": {
+        "hint": "Anahtarı ve adres adını (harf, rakam, tire) kontrol edip tekrar dene.",
+        "title": "AgentMail bu isteği kabul etmedi"
+      },
+      "taken": {
+        "hint": "agentmail.to üzerindeki adlar herkesle ortaktır. Başka bir ad seç; boş görünen bir ad senin için dolduruldu.",
+        "title": "Bu adres adı AgentMail'de zaten alınmış"
+      },
+      "transient": {
+        "hint": "Sorun onların tarafında. Birkaç dakika sonra tekrar dene.",
+        "title": "AgentMail şu anda kullanılamıyor"
+      }
+    },
     "engineNeedsNative": {
       "hint": "Kendi araçlarıyla çalışıyor. Bu bot için buna izin vermek için Düzelt'e bas.",
       "title": "Bu model için önce onayın gerekiyor"
@@ -3870,7 +3920,7 @@
       "bots": "Botlar bu sunucuda hazır.",
       "model": "Bir model bağlı."
     },
-    "managedOnServer": "Anahtarlar, izinler, araçlar ve eşleştirme {{name}} üzerinde yönetilir. Buradan bot oluşturup düzenleyebilir, sohbet edebilir ve ekranını izleyebilirsin.",
+    "managedOnServer": "Bu bilgisayar {{name}} üzerinde yönetici olarak onaylandıktan sonra anahtarları, izinleri, araçları ve e-postayı buradan da yönetirsin. Cihaz eşleştirme ve {{name}} güncellemesi {{name}} üzerinde kalır.",
     "missing": {
       "bots": "Bu sunucuda henüz bot yok.",
       "model": "Bu sunucuda henüz bağlı bir model yok."
@@ -3886,23 +3936,16 @@
     "newBotNeedsModel": "{{name}} sunucusunda henüz model yok, bu yüzden orada bot oluşturulamaz. Önce sunucuya bir model bağla.",
     "refusal": {
       "adminRequired": "{{name}} bu bilgisayarı henüz yönetici olarak onaylamadı. {{name}} üzerinde bir kez `bot host admin --all-desktops` çalıştır, sonra tekrar dene.",
-      "botPermissions": "Bir botun izinleri ve araçları {{name}} üzerinde yönetilir. Ad, kişilik ve model buradan değiştirilebilir.",
-      "composio": "Uygulama bağlantıları {{name}} üzerinde değil, bu bilgisayarın sahibi tarafında yönetilir.",
-      "connectionTest": "Anahtar testleri {{name}} üzerinde çalışır, bu uygulamadan yapılamaz.",
-      "credentials": "Bu e-posta ya da arama ayarı bu uygulamadan değil, {{name}} üzerinde değiştirilir.",
-      "generic": "{{name}} buna izin vermedi: {{reason}}",
+      "generic": "{{name}} buna izin vermedi, hiçbir şey değişmedi. Teknik neden Ayrıntılar bölümünde.",
+      "hostOnly": "Bu işlem bilerek yalnızca {{name}} üzerinde yapılır; bu uygulama yapamaz.",
       "hostTransfer": "Sunucuyu taşıma ve kanal eşleştirme {{name}} üzerinde yapılır.",
-      "knowledge": "Bilgi ayarları {{name}} üzerinde yönetilir.",
-      "lifecycle": "Eşleştirme ve sunucu güncellemeleri {{name}} üzerinde yapılır.",
+      "lifecycle": "Yeni cihaz eşleştirme ve {{name}} güncellemesi, bilerek {{name}} üzerinde `bot host` komutlarıyla yapılır.",
       "localOnly": "Bunu yalnızca {{name}} başındaki kişi yapabilir, bu uygulama yapamaz.",
-      "localProviders": "Yerel modeller ve kodlama araçları botun çalıştığı bilgisayara aittir. Kurmak için Bu bilgisayar'a geç.",
+      "needsAdmin": "{{name}} bunu uygulamadan kabul etmedi. {{name}} üzerinde bir kez `bot host admin --all-desktops` çalıştırarak bu bilgisayarı onayla, {{name}} sunucusunu son sürüme güncelle ve tekrar dene.",
       "overlay": "Bu soruyu yalnızca {{name}} başındaki kişi yanıtlayabilir.",
       "ownerOnly": "Bu yalnızca {{name}} üzerinde yapılabilir.",
-      "policy": "Çalıştırma politikası bu uygulamadan değil, {{name}} üzerinde ayarlanır.",
       "role": "{{name}} bu bilgisayarın bunu yapmasına izin vermiyor.",
-      "screenInput": "{{name}} bu bilgisayara ekranını denetleme izni vermedi. {{name}} üzerindeki Praxi'de izin ver.",
-      "secrets": "Anahtarlar ve gizli bilgiler bu uygulamadan değil, {{name}} üzerinde eklenir.",
-      "tools": "Araç sunucuları ve beceriler {{name}} üzerinde yönetilir."
+      "screenInput": "{{name}} bu bilgisayara ekranını denetleme izni vermedi. {{name}} üzerindeki Praxi'de izin ver."
     },
     "state": {
       "connected": "Bağlı",
@@ -4494,6 +4537,7 @@
     "recent": "Son aramalar",
     "reset": "Sıfırla",
     "results": "Mesaj sonuçları",
+    "retry": "Tekrar dene",
     "searching": "Aranıyor…",
     "title": "Mesajlarda ara",
     "when": "Tarih",
@@ -4878,6 +4922,20 @@
     "directHint": "Doğrudan: uygulama bilgisayarla birebir konuşuyor, en hızlı yol bu. Sayı gecikmedir.",
     "relay": "Röle · {{rtt}} ms",
     "relayHint": "Aktarmalı: bağlantı bir yardımcı sunucudan geçiyor, bu yüzden biraz yavaş olabilir. Sayı gecikmedir."
+  },
+  "popout": {
+    "chatFallbackTitle": "Sohbet penceresi",
+    "connecting": "Bağlanıyor...",
+    "focusFailed": "Ana pencere gösterilemedi. Sistem tepsisinden açın.",
+    "focusMain": "Ana pencereye geç",
+    "openChat": "Yeni pencerede aç",
+    "openChatTooltip": "Sohbeti yeni pencerede aç",
+    "openFailed": "Yeni pencere açılamadı. Lütfen yeniden deneyin.",
+    "openLive": "Canlı görünümü yeni pencerede aç",
+    "openLiveShort": "Ayır",
+    "pinFailed": "Pencerenin üstte kalma ayarı değiştirilemedi. Lütfen yeniden deneyin.",
+    "pinOnTop": "Pencereyi üstte tut",
+    "unpinOnTop": "Üstte tutmayı kaldır"
   },
   "profileShare": {
     "back": "Geri",
@@ -5850,6 +5908,7 @@
         "ownAccount": "Kendi ücretsiz AgentMail hesabın gerekir. Praxi-Bot senin yerine anahtar tutmaz: hesabındaki API anahtarını yapıştır.",
         "pricing": "Fiyat sayfasına bak",
         "scopedKeyHint": "Bu anahtar tek bir gelen kutusuna ait, bu yüzden yeni adres oluşturamaz. Bunun yerine zaten sahip olduğun gelen kutusunu bağla.",
+        "suggested": "Bunun yerine “{{name}}” adını dene.",
         "title": "Bota kendi adresini ver",
         "useExisting": "Mevcut bir gelen kutusunu bağla",
         "viaApi": "AgentMail gelen kutusu"
@@ -6077,6 +6136,7 @@
       "optOutPlaceholder": "ayse@ornek.com ya da ornek.com",
       "optOutRemove": "{{value}} kaydını kaldır",
       "optOutTitle": "Yazmayacağım kişiler",
+      "retry": "Tekrar dene",
       "save": "Kaydet",
       "saved": "Kaydedildi",
       "sentAnyway": "Yine de gönderildi",
@@ -6574,6 +6634,10 @@
     "switch": "Bu bilgisayara geç"
   },
   "toolPacks": {
+    "ack": {
+      "label": "Anladım",
+      "text": "Bu, yazarından indirilen ve {{license}} lisanslı ayrı bir yazılımdır. Praxi onu dağıtmaz ve değiştirmez."
+    },
     "back": "Geri",
     "basicSet": "Temel seti seç",
     "button": "Araçlar",
@@ -6585,6 +6649,8 @@
     "dontClose": "Birkaç dakika sürebilir. Uygulamayı kullanmaya devam edebilirsin.",
     "found": "Bulunan programlar: {{n}}",
     "lead": "Botlarının bu sunucuda kullanabileceği programlar.",
+    "licenseMixed": "Karışık lisanslar",
+    "licenseName": "Lisans {{name}}",
     "listLabel": "Araç paketleri",
     "loading": "Sunucuya bakılıyor…",
     "noLogin": {
@@ -6612,6 +6678,11 @@
       "office": {
         "desc": "Word, Excel, PowerPoint ve PDF çıktısı, Türkçe yazı tipleriyle",
         "name": "Ofis dosyaları"
+      },
+      "scrape": {
+        "desc": "Sayfaları daha temiz okur, birkaç bağlantıyı izleyebilir",
+        "name": "Web tarama",
+        "note": "Giriş yapmanız gereken sayfalar için değil"
       }
     },
     "planning": "Neyin değişeceği kontrol ediliyor…",
@@ -6630,9 +6701,17 @@
         "body": "Sunucu işlemi durdurdu; örneğin disk dolu ya da başka bir güncelleme sürüyor olabilir. Sunucun sağlam; tekrar deneyebilirsin.",
         "title": "Tamamlanamadı"
       },
+      "needs_ack": {
+        "body": "Lisans bildirimini okuyup onaylayın, sonra yeniden inceleyin.",
+        "title": "Lütfen lisansı onaylayın"
+      },
       "needs_admin": {
         "body": "Yönetici yetkisi olan bir sunucu girişi kullan (parolasız sudo), sonra tekrar dene.",
         "title": "Bu giriş yazılım kuramıyor"
+      },
+      "needs_python": {
+        "body": "Bu sunucuda önce “Geliştirici araçları”nı kurun, sonra Web taramayı ekleyin.",
+        "title": "Önce Python gerekli"
       },
       "shared": {
         "body": "Praxi bunları kaldırmaz: sunucunun bunlara ihtiyacı var.",
@@ -6674,6 +6753,7 @@
     "safeRemove": "Yalnızca bu araçlar kaldırılır",
     "safeRemoveBody": "Ayarların ve diğer yazılımlar olduğu gibi kalır.",
     "size": "yaklaşık {{value}} {{unit}}",
+    "source": "Kaynak",
     "status": {
       "installed": "Kurulu",
       "partial": "Eksik"
@@ -6683,6 +6763,7 @@
     "title": "Araçlar",
     "titleFor": "{{name}} sunucusundaki araçlar",
     "tryAgain": "Tekrar dene",
+    "versionLabel": "Sürüm {{version}}",
     "willInstall": "Kurulacak",
     "willRemove": "Kaldırılacak"
   },
@@ -7232,5 +7313,59 @@
     "tooFewSteps": "Bu çalışmada kaydedilebilir en az iki adım yok.",
     "untrustedWarning": "Bu çalışma dış veya özel içerik okudu. Kalıcı otomasyona izin vermeden önce etkilenen her adımı incele.",
     "warnings": "İnceleme notları"
+  },
+  "workspace": {
+    "botRowDesc": "Klasör: {{folder}} · {{used}} ({{files}} dosya)",
+    "breadcrumbs": "Çalışma alanı yolu",
+    "cardDescription": "Kalıcı bot klasörlerini, isteğe bağlı bot disk sınırlarını, uyarı eşiklerini ve güvenli temizliği yönet.",
+    "cardTitle": "Bot Çalışma Klasörleri ve Disk",
+    "cleanedSummary": "{{size}} yer açıldı",
+    "cleanupDesc": "Yalnızca downloads/ ve logs/ içindeki eski dosyalar veya yeniden üretilebilir önbellek temizlenir.",
+    "cleanupHeading": "Güvenli temizlik ve büyük dosyalar",
+    "cleanupTarget": {
+      "all_old": "Eski indirilenler ve günlükleri temizle ({{size}})",
+      "daemon_cache": "Önbelleği temizle ({{size}})",
+      "old_downloads": "Eski indirilenleri temizle ({{size}})",
+      "old_logs": "Eski günlükleri temizle ({{size}})"
+    },
+    "delete": "Sil",
+    "deletedUndoLabel": "\"{{name}}\" silindi",
+    "diskSummary": "Disk %{{percent}} dolu · {{total}} içinde {{free}} boş · Çalışma alanları: {{botsTotal}}",
+    "download": "İndir",
+    "downloadsDays": "İndirilenler saklama süresi (gün)",
+    "emptyFolder": "Bu klasör boş.",
+    "hardLimitGb": "Sert sınır (GB)",
+    "invalidLimitValue": "GB cinsinden pozitif bir sayı gir veya kapalı bırakmak için boş bırak.",
+    "invalidThresholds": "Uyarı yüzdeleri 1–99 arasında artan sırada ve en az boş alan pozitif olmalıdır.",
+    "limitOff": "Kapalı",
+    "loading": "Yükleniyor…",
+    "logsDays": "Günlük saklama süresi (gün)",
+    "manageStorage": "Depolama ayarları",
+    "minFreeGb": "En az boş alan (GB)",
+    "noMatches": "Eşleşen dosya bulunamadı.",
+    "openFolder": "Klasörü aç",
+    "preview": "Ön izle",
+    "rename": "Yeniden adlandır",
+    "retentionDesc": "Bu süreyi aşan dosyalar temizlik önerilerinde listelenir (boş bırakılırsa kapalıdır).",
+    "retentionTitle": "Temizlik saklama süresi",
+    "root": "Çalışma alanı",
+    "saved": "Kaydedildi",
+    "searchPlaceholder": "Dosyalarda ara…",
+    "sectionTitle": "Çalışma dosyaları",
+    "softExceedsHard": "Yumuşak sınır sert sınırı aşamaz.",
+    "softLimitGb": "Yumuşak sınır (GB)",
+    "storageHeading": "Disk durumu ve ana klasör",
+    "thresholdsDesc": "Disk bu yüzdelere ulaştığında veya boş alan sınırın altına düştüğünde uyar.",
+    "thresholdsTitle": "Doluluk uyarı eşikleri",
+    "unconfiguredHint": "Botlar yerel olarak çalıştığında çalışma klasörü otomatik oluşturulur.",
+    "undo": "Geri al",
+    "warnPct1": "Uyarı eşiği 1 (%)",
+    "warnPct2": "Uyarı eşiği 2 (%)",
+    "warnPct3": "Uyarı eşiği 3 (%)",
+    "warningBigItem": "En büyük dosya: {{path}} ({{size}})",
+    "warningBotLimit": "Bir bot çalışma klasörü belirlenen yumuşak sınıra ulaştı.",
+    "warningCheckStorage": "Çalışma klasörlerini gözden geçir veya güvenli temizlik yap.",
+    "warningLowFree": "Disk alanı azalıyor: yalnızca {{free}} kaldı",
+    "warningPercent": "Disk %{{percent}} dolu"
   }
 }

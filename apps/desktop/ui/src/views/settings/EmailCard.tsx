@@ -57,6 +57,7 @@ import {
 } from "../../lib/emailAccounts";
 import { useDaemon } from "../../state/DaemonContext";
 import styles from "./EmailCard.module.css";
+import { isTakenInboxError, suggestInboxName } from "../../lib/emailProvider";
 import { humanLine } from "../../lib/humanError";
 
 function errorText(e: unknown): string {
@@ -596,7 +597,14 @@ function AgentmailFlow({
       if (!connect && suggestsConnectExisting(e)) {
         setRefused(true);
       }
-      toast.show(errorText(e), "danger");
+      // The provider says the inbox name is taken: say so, and fill in a free-looking alternative.
+      if (isTakenInboxError(e)) {
+        const name = suggestInboxName(form.nameHint);
+        set({ nameHint: name });
+        toast.show(`${errorText(e)} ${t("settingsModal.email.agentmail.suggested", { name })}`, "danger");
+      } else {
+        toast.show(errorText(e), "danger");
+      }
     } finally {
       setBusy(false);
     }

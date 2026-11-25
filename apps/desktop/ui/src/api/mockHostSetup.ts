@@ -71,12 +71,15 @@ const FAILURES: Record<string, { at: number; step: HostSetupStep }> = {
   }
 };
 
+const SRC = "https://example.org/source";
+const BASE = { copyleft: false, distro: true, needs_ack: false, source_url: SRC, notice_url: SRC, version: "", lock_sha256: null };
 const MOCK_PACKS = [
-  { id: "office", status: "missing", size_mb: 700, base: true, removable: true },
-  { id: "docs", status: "installed", size_mb: 150, base: true, removable: true },
-  { id: "ocr", status: "missing", size_mb: 90, base: false, removable: true },
-  { id: "media", status: "partial", size_mb: 250, base: true, removable: true },
-  { id: "dev", status: "installed", size_mb: 250, base: true, removable: false }
+  { id: "office", status: "missing", size_mb: 700, base: true, removable: true, ...BASE, license: "MPL-2.0", source_url: "https://www.libreoffice.org/about-us/source-code/" },
+  { id: "docs", status: "installed", size_mb: 150, base: true, removable: true, ...BASE, copyleft: true, license: "GPL-2.0-or-later AND AGPL-3.0-or-later AND Apache-2.0", source_url: "https://github.com/jgm/pandoc" },
+  { id: "ocr", status: "missing", size_mb: 90, base: false, removable: true, ...BASE, license: "Apache-2.0", source_url: "https://github.com/tesseract-ocr/tesseract" },
+  { id: "media", status: "partial", size_mb: 250, base: true, removable: true, ...BASE, copyleft: true, license: "LGPL-2.1-or-later AND GPL-2.0-or-later", source_url: "https://ffmpeg.org/download.html" },
+  { id: "dev", status: "installed", size_mb: 250, base: true, removable: false, ...BASE, copyleft: true, license: "GPL-2.0-only AND MIT AND Apache-2.0", source_url: "https://git-scm.com/downloads" },
+  { id: "scrape", status: "missing", size_mb: 40, base: false, removable: true, ...BASE, distro: false, license: "Apache-2.0", version: "2.4.0", source_url: "https://github.com/adbar/trafilatura", lock_sha256: "0".repeat(64) }
 ];
 const MOCK_TOOLS = ["soffice", "pandoc", "pdftotext", "qpdf", "gs", "tesseract", "ffmpeg", "magick", "git", "gh", "rg", "jq", "python3", "node"];
 const MOCK_PRESENT = new Set(["pandoc", "pdftotext", "qpdf", "gs", "git", "gh", "rg", "jq", "python3", "node"]);

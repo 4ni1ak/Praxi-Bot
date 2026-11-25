@@ -15,6 +15,17 @@ export type MessageQueue = readonly QueuedMessage[];
 
 export const EMPTY_QUEUE: MessageQueue = [];
 
+/**
+ * Whether a message typed now waits in the local "Sirada" queue (true) or goes to the daemon at once.
+ * While the run waits for a tool approval it must go to the daemon: that is what skips the card and
+ * starts the next turn, so a local queue would hold it behind a run that cannot move. `approvalWaits`
+ * is true when a card is open here OR the daemon says the run waits and no card reached this app
+ * (a paired host's events can lag), so the decision never depends on the card having arrived.
+ */
+export function queuesLocally(a: { runActive: boolean; approvalWaits: boolean; slashCommand: boolean; hasFiles: boolean }): boolean {
+  return a.runActive && !a.approvalWaits && !a.slashCommand && !a.hasFiles;
+}
+
 /** A message typed during a run joins the end of the queue (blank text never does). */
 export function enqueue(queue: MessageQueue, text: string, id: string, now: number): MessageQueue {
   const body = text.trim();

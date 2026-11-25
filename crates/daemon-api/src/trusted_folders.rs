@@ -21,8 +21,9 @@ pub struct TrustFolderInput {
     pub path: String,
 }
 
-fn local_only(peer: Option<&Extension<crate::PeerIdentity>>) -> Result<(), ApiError> {
-    if peer.is_some() {
+fn local_only(s: &AppState, peer: Option<&Extension<crate::PeerIdentity>>) -> Result<(), ApiError> {
+    // The host's administrator desktop is the owner there (`peer::admin_desktop_never`).
+    if s.bot_authority_peer(peer.map(|p| &p.0)).is_some() {
         return Err(ApiError::forbidden("trusted folders are local only"));
     }
     Ok(())
@@ -41,7 +42,7 @@ pub(crate) async fn list(
     State(s): State<AppState>,
     peer: Option<Extension<crate::PeerIdentity>>,
 ) -> Result<Json<TrustedFoldersDto>, ApiError> {
-    local_only(peer.as_ref())?;
+    local_only(&s, peer.as_ref())?;
     list_of(&s)
 }
 
@@ -55,7 +56,7 @@ pub(crate) async fn add(
     headers: HeaderMap,
     ApiJson(input): ApiJson<TrustFolderInput>,
 ) -> Result<Json<TrustedFoldersDto>, ApiError> {
-    local_only(peer.as_ref())?;
+    local_only(&s, peer.as_ref())?;
     s.require_owner(&headers)?;
     let path = std::path::Path::new(&input.path);
     if !path.is_absolute() {
@@ -93,7 +94,7 @@ pub(crate) async fn remove(
     headers: HeaderMap,
     ApiJson(input): ApiJson<TrustFolderInput>,
 ) -> Result<Json<TrustedFoldersDto>, ApiError> {
-    local_only(peer.as_ref())?;
+    local_only(&s, peer.as_ref())?;
     s.require_owner(&headers)?;
     // The stored spelling (the list shows exactly it); a typed path is normalised too.
     let stored = builtin_tools::provenance::normalize(std::path::Path::new(&input.path));

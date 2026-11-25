@@ -282,10 +282,27 @@ On a host this guide installed by hand:
    `praxi host devices` lists device keys. `bot host add` records this grant
    itself while it pairs.
 
-On a host, a paired Desktop can operate bots, chats and runs and use the screen
-but cannot change secrets or provider keys, MCP servers, skills, email or web
-search credentials, Telegram pairing, or import/hand over state; do those on the
-host itself. An admin desktop that still holds screen-input permission can also
+On a host, an ordinary paired Desktop can operate bots, chats and runs and use
+the screen, but it is not the owner. A Desktop that the owner confirmed as
+**administrator** (the default for `sudo praxi host invite --role desktop`, or
+`bot host admin --all-desktops` for one paired earlier) IS the owner of that
+host: it can do what the owner can do there. That includes the execution
+policy, provider and mail/search/dictation keys (write-only: they are stored on
+the host and never shown again), secrets, MCP servers and skills, the mail
+channel and its guard, spending limits, a bot's permissions, engine and
+knowledge settings, searching and exporting the chat history, and reading the
+audit log. Each such change is recorded in the host's audit log with the
+desktop, the kind of change, the method and the path (never the content).
+
+What even an administrator desktop cannot do, on purpose, is done on the host
+itself: pairing devices and changing who is an administrator, standby,
+activation, updates, state import and hand over (`/v1/host…`); the host's own
+links to other computers (`/v1/hosts…`); credentials for the MCP facade;
+doctor repairs; pairing a Telegram account; the screen permissions of devices
+(`bot host screen`); and the signed webhook ingress.
+The owner key itself never travels over the link. Phones, nodes, other hosts
+and Desktops that are not confirmed get none of this; an unconfirmed Desktop is
+told to run `bot host admin --all-desktops` on the host. An admin desktop that still holds screen-input permission can also
 clear a paused screen takeover on the host from the desktop banner
 (`POST /v1/control/recover`) without losing its own input grant. Until the host
 has a model key of its own, the app says "this host has no model key yet": the

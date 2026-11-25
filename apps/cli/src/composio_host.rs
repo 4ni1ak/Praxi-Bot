@@ -116,9 +116,10 @@ fn map_err(e: ComposioError) -> ComposioControlError {
         ComposioError::Invalid(m) => ComposioControlError::Invalid(m),
         ComposioError::NotFound(m) => ComposioControlError::NotFound(m),
         e @ ComposioError::RateLimited { .. } => ComposioControlError::RateLimited(e.to_string()),
-        e @ (ComposioError::Unauthorized
-        | ComposioError::Upstream(_)
-        | ComposioError::Transport(_)) => ComposioControlError::Upstream(e.to_string()),
+        ComposioError::Unauthorized => ComposioControlError::LoginExpired,
+        e @ (ComposioError::Upstream(_) | ComposioError::Transport(_)) => {
+            ComposioControlError::Upstream(e.to_string())
+        }
         ComposioError::Internal(m) => ComposioControlError::Internal(m),
     }
 }
@@ -134,6 +135,7 @@ impl ComposioControl for ComposioHost {
                 Linkage::ProjectKey => ComposioLinkMode::ProjectKey,
             },
             key_setup_url: KEY_SETUP_URL.to_owned(),
+            login_expired: self.svc.login_expired(),
         }
     }
 

@@ -5,7 +5,7 @@ import { Button, Card } from "ui";
 import type { EmailGuardSettings, EmailOptOut, EmailSendLogEntry } from "../../api/types";
 import formStyles from "../../components/Form.module.css";
 import { useToast } from "../../components/Toast";
-import { humanLine } from "../../lib/humanError";
+import { type HumanError, humanError, humanLine } from "../../lib/humanError";
 import { formatDateTime } from "../../lib/messageTime";
 import { saveTextFile } from "../../lib/runReport";
 import { useDaemon } from "../../state/DaemonContext";
@@ -24,22 +24,33 @@ export function MailGuardCard() {
   const [domains, setDomains] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // The three parts load on their own: a part that cannot be read (an older host, a refused list)
+  // leaves a small note where it would be, it never blocks the settings or the other parts.
+  const [problems, setProblems] = useState<Record<"settings" | "optOuts" | "log", HumanError | null>>({
+    settings: null,
+    optOuts: null,
+    log: null
+  });
+
   const load = useCallback(async () => {
     if (!client) return;
-    try {
-      const [s, o, l] = await Promise.all([
-        client.getMailGuardSettings(),
-        client.listMailOptOuts(),
-        client.listMailSendLog(LOG_ROWS)
-      ]);
-      setSettings(s);
-      setDomains((s.verification_link_domains ?? []).join("\n"));
-      setOptOuts(o);
-      setLog(l);
-    } catch (e) {
-      toast.show(humanLine(e), "danger");
+    const [s, o, l] = await Promise.allSettled([
+      client.getMailGuardSettings(),
+      client.listMailOptOuts(),
+      client.listMailSendLog(LOG_ROWS)
+    ]);
+    if (s.status === "fulfilled") {
+      setSettings(s.value);
+      setDomains((s.value.verification_link_domains ?? []).join("\n"));
     }
-  }, [client, toast]);
+    if (o.status === "fulfilled") setOptOuts(o.value);
+    if (l.status === "fulfilled") setLog(l.value);
+    setProblems({
+      settings: s.status === "rejected" ? humanError(s.reason) : null,
+      optOuts: o.status === "rejected" ? humanError(o.reason) : null,
+      log: l.status === "rejected" ? humanError(l.reason) : null
+    });
+  }, [client]);
 
   useEffect(() => {
     void load();
@@ -58,7 +69,22 @@ export function MailGuardCard() {
 
   const number = (v: string) => Math.max(0, Math.min(100000, Number.parseInt(v, 10) || 0));
 
-  if (!settings) return <Card>{t("settingsModal.mailGuard.loading")}</Card>;
+  const note = (problem: HumanError | null, testId: string) =>
+    problem ? (
+      <p className={formStyles.hint} role="status" data-testid={testId}>
+        {problem.title}
+        {problem.hint ? ` ${problem.hint}` : ""}{" "}
+        <Button size="sm" variant="ghost" onClick={() => void load()}>{t("settingsModal.mailGuard.retry")}</Button>
+      </p>
+    ) : null;
+
+  if (!settings) {
+    return (
+      <Card>
+        {problems.settings ? note(problems.settings, "mail-guard-load-error") : t("settingsModal.mailGuard.loading")}
+      </Card>
+    );
+  }
   return (
     <Card>
       <div data-testid="mail-guard">
@@ -131,7 +157,8 @@ export function MailGuardCard() {
             {t("settingsModal.mailGuard.optOutAdd")}
           </Button>
         </div>
-        {optOuts.length === 0 ? <p className={formStyles.hint}>{t("settingsModal.mailGuard.optOutEmpty")}</p> : (
+        {note(problems.optOuts, "mail-guard-optouts-error")}
+        {problems.optOuts ? null : optOuts.length === 0 ? <p className={formStyles.hint}>{t("settingsModal.mailGuard.optOutEmpty")}</p> : (
           <ul data-testid="mail-guard-optouts">
             {optOuts.map((o) => (
               <li key={o.value}>
@@ -161,7 +188,8 @@ export function MailGuardCard() {
           })}>
           <Download size={14} aria-hidden /> {t("settingsModal.mailGuard.export")}
         </Button>
-        {log.length === 0 ? <p className={formStyles.hint}>{t("settingsModal.mailGuard.logEmpty")}</p> : (
+        {note(problems.log, "mail-guard-log-error")}
+        {problems.log ? null : log.length === 0 ? <p className={formStyles.hint}>{t("settingsModal.mailGuard.logEmpty")}</p> : (
           <table data-testid="mail-guard-log">
             <thead>
               <tr>
