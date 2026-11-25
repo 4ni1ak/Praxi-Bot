@@ -457,6 +457,61 @@ fn file_name(path: &str) -> String {
         .unwrap_or_else(|| path.to_owned())
 }
 
+impl EmailTool {
+    /// `email_send`: the guard checks, the opt-out line, the provider call and the log entry.
+    async fn send(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
+        let i: SendInput = parse(input)?;
+        let c = self.conn.scoped(ctx.bot_id.as_deref());
+        let plan = self.plan_send(ctx, &i)?;
+        let guard = self.conn.guard();
+        // Consumes the card the owner was shown. No argument of the model reaches this.
+        let overridden = guard.take_override(&plan.key, &plan.report);
+        if !plan.report.warnings.is_empty() && !overridden {
+            let why: Vec<&str> = plan
+                .report
+                .warnings
+                .iter()
+                .map(|w| w.text.as_str())
+                .collect();
+            return Err(ToolError::Execution(format!(
+                "Not sent. {} Only the owner can send past these warnings, by approving the \
+                     e-mail card that shows them (\"Send anyway\"). You cannot override this: \
+                     tell the owner in plain words and do not retry on your own.",
+                why.join(" ")
+            )));
+        }
+        let mut mail = i.mail.clone();
+        if let Some(f) = &plan.report.footer {
+            mail.body = guard::with_footer(&mail.body, f);
+        }
+        let receipt = c.send_receipt(i.account.as_deref(), &mail).await?;
+        guard.record(SendLogEntry {
+            at: guard::now_secs(),
+            at_utc: String::new(),
+            bot: ctx.bot_id.clone(),
+            run: ctx.run_id.clone(),
+            account: plan.account,
+            from: plan.from,
+            recipients: plan.recipients,
+            subject: i.mail.subject.clone(),
+            message_id: receipt.id.clone(),
+            opt_out_line: plan.line_on,
+            overridden: if overridden {
+                plan.report.codes()
+            } else {
+                Vec::new()
+            },
+        });
+        Ok(json_out(json!({
+            "sent": true,
+            "recipients": i.mail.to.len() + i.mail.cc.len() + i.mail.bcc.len(),
+            "opt_out_line_added": plan.line_on,
+            "owner_sent_anyway": overridden,
+            "server_response": receipt.id,
+        })))
+    }
+}
+
 #[async_trait]
 impl Tool for EmailTool {
     fn spec(&self) -> &ToolSpec {
@@ -635,56 +690,7 @@ impl Tool for EmailTool {
                     json!({"saved": true, "folder": folder, "sent": false}),
                 ))
             }
-            Kind::Send => {
-                let i: SendInput = parse(input)?;
-                let plan = self.plan_send(ctx, &i)?;
-                let guard = self.conn.guard();
-                // Consumes the card the owner was shown. No argument of the model reaches this.
-                let overridden = guard.take_override(&plan.key, &plan.report);
-                if !plan.report.warnings.is_empty() && !overridden {
-                    let why: Vec<&str> = plan
-                        .report
-                        .warnings
-                        .iter()
-                        .map(|w| w.text.as_str())
-                        .collect();
-                    return Err(ToolError::Execution(format!(
-                        "Not sent. {} Only the owner can send past these warnings, by approving the \
-                         e-mail card that shows them (\"Send anyway\"). You cannot override this: \
-                         tell the owner in plain words and do not retry on your own.",
-                        why.join(" ")
-                    )));
-                }
-                let mut mail = i.mail.clone();
-                if let Some(f) = &plan.report.footer {
-                    mail.body = guard::with_footer(&mail.body, f);
-                }
-                let receipt = c.send_receipt(i.account.as_deref(), &mail).await?;
-                guard.record(SendLogEntry {
-                    at: guard::now_secs(),
-                    at_utc: String::new(),
-                    bot: ctx.bot_id.clone(),
-                    run: ctx.run_id.clone(),
-                    account: plan.account,
-                    from: plan.from,
-                    recipients: plan.recipients,
-                    subject: i.mail.subject.clone(),
-                    message_id: receipt.id.clone(),
-                    opt_out_line: plan.line_on,
-                    overridden: if overridden {
-                        plan.report.codes()
-                    } else {
-                        Vec::new()
-                    },
-                });
-                Ok(json_out(json!({
-                    "sent": true,
-                    "recipients": i.mail.to.len() + i.mail.cc.len() + i.mail.bcc.len(),
-                    "opt_out_line_added": plan.line_on,
-                    "owner_sent_anyway": overridden,
-                    "server_response": receipt.id,
-                })))
-            }
+            Kind::Send => self.send(ctx, input).await,
         }
     }
 }
