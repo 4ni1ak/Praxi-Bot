@@ -161,6 +161,8 @@ impl AgentLoop {
                 #[cfg(test)]
                 exec_commit_hook: Mutex::new(None),
                 #[cfg(test)]
+                stop_split_hook: Mutex::new(None),
+                #[cfg(test)]
                 legacy_always: AtomicBool::new(false),
             }
         });
@@ -1856,15 +1858,19 @@ impl AgentLoop {
     /// `false` so a forced stop does not arm another supervisor.
     fn cancel_user(&self, run_id: RunId, supervise: bool) -> Result<()> {
         self.sh.user_stopped.lock().insert(run_id);
-        // Every open card of the run is denied now, before anything can clear
-        // the marker (a forced stop concludes before the aborted task unwinds).
-        self.sh.deny_open_for_stop(run_id);
         self.cancel_wait_pc_timer(run_id);
         self.sh.run_computers.lock().remove(&run_id);
         self.sh.directives.lock().remove(&run_id);
         let idle_paused = !self.sh.tasks.lock().contains_key(&run_id)
             && self.rt.state(run_id).ok() == Some(RunState::Paused);
+        // The token is cancelled first: releasing an approval wakes the step,
+        // and a woken step must already find the run stopped (no further model
+        // call). It also keeps this call from racing the drive task to the
+        // terminal state.
         let result = self.rt.cancel(run_id);
+        // Every open card of the run is denied now (a forced stop concludes
+        // before the aborted task unwinds; the denial is recorded once either way).
+        self.sh.deny_open_for_stop(run_id);
         // A cancelled parent takes its subagents with it.
         self.cancel_descendants(run_id, supervise);
         crate::usage::finish(&self.sh, run_id);

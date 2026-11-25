@@ -1120,6 +1120,10 @@ pub(crate) struct Shared {
     /// pre-tool deny recheck.
     #[cfg(test)]
     pub exec_commit_hook: Mutex<Option<ExecCommitHook>>,
+    /// Test-only: invoked at the end of `deny_open_for_stop`, after the run's cards
+    /// were released.
+    #[cfg(test)]
+    pub stop_split_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     /// Hosts the owner approved a navigation to (any scope), newest last, bounded. A favicon may
     /// be fetched for these and for hosts with a standing / chat grant, never for anything else.
     pub approved_hosts: Mutex<VecDeque<String>>,
