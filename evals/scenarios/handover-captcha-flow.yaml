@@ -15,7 +15,9 @@ expect:
   tool_runs: { browser_snapshot: 2, browser_handover: 1 }
   no_approval_tools: [browser_handover]
   permissions:
+    - { tool: browser_snapshot, decision: allowed }
     - { tool: browser_handover, decision: allowed }
+    - { tool: browser_snapshot, decision: allowed }
   requests:
     - { request: 2, tool_messages_contain: ["[Praxi notice]", "browser_handover"] }
     - { request: 3, tool_messages_contain: ["the owner solved the check"] }
