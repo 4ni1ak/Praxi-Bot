@@ -42,7 +42,7 @@ fn fixture() -> Fixture {
     let store: Arc<dyn SecretStore> = Arc::new(MemoryStore::new());
     let registry = ToolRegistry::new();
     let (host, added) = start_email(dir.path(), &registry, Some(&store)).unwrap();
-    assert_eq!(added, 6, "tools are registered even with no accounts");
+    assert_eq!(added, 7, "tools are registered even with no accounts");
     Fixture {
         dir,
         store,

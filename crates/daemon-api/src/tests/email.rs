@@ -60,6 +60,9 @@ impl FakeEmail {
                 .unwrap_or_else(|| "Drafts".into()),
             bot: input.bot.clone(),
             allowed_senders: input.allowed_senders.clone(),
+            shared_with: input.shared_with.clone(),
+            default_for: input.default_for.clone(),
+            send_mode: input.send_mode,
             password_set: input.password.is_some(),
             custom_ca: false,
         }

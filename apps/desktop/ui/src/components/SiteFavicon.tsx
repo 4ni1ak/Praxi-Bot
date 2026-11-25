@@ -35,11 +35,10 @@ function loadCachedFavicon(client: { faviconBlob(domain: string): Promise<Blob> 
 }
 
 /**
- * Renders a small site badge: fetched from the daemon's local favicon cache
- * (`GET /v1/favicons/{domain}`), falling back gracefully to a crisp initial tile
- * or globe icon using theme tokens.
+ * The local object URL of a site's icon, or null (not allowed, not available yet, or the daemon has
+ * none). `onError` flips `failed` when the image itself cannot be decoded, so the caller falls back.
  */
-export function SiteFavicon({ domain, size = 18, allowed = false }: SiteFaviconProps) {
+export function useFaviconUrl(domain: string, allowed: boolean): { src: string | null; failed: boolean; onError: () => void } {
   const client = useOptionalDaemonClient();
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -59,6 +58,17 @@ export function SiteFavicon({ domain, size = 18, allowed = false }: SiteFaviconP
     };
   }, [client, domain, allowed]);
 
+  return { src, failed, onError: () => setFailed(true) };
+}
+
+/**
+ * Renders a small site badge: fetched from the daemon's local favicon cache
+ * (`GET /v1/favicons/{domain}`), falling back gracefully to a crisp initial tile
+ * or globe icon using theme tokens.
+ */
+export function SiteFavicon({ domain, size = 18, allowed = false }: SiteFaviconProps) {
+  const { src, failed, onError } = useFaviconUrl(domain, allowed);
+
   const initial = domain.replace(/^www\./i, "").trim().charAt(0).toUpperCase();
   const boxStyle = { width: size, height: size };
 
@@ -72,7 +82,7 @@ export function SiteFavicon({ domain, size = 18, allowed = false }: SiteFaviconP
           width={size}
           height={size}
           draggable={false}
-          onError={() => setFailed(true)}
+          onError={onError}
         />
       </span>
     );

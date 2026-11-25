@@ -35,7 +35,7 @@ use futures_core::stream::BoxStream;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 
-use crate::config::normalize_sender;
+use crate::config::{AccountConfig, SendMode, normalize_sender};
 use crate::error::EmailError;
 use crate::guard::{self, MailFacts, MailGuard, SendLogEntry};
 use crate::imap::SearchQuery;
@@ -66,6 +66,9 @@ pub enum DeliveryOutcome {
     /// Failed [`MAX_DELIVERY_ATTEMPTS`] times: given up and committed, go on with the next mail.
     Skipped,
 }
+
+/// What the model is told when it proposes a reply from a draft-only account.
+const DRAFT_ONLY_REPLY: &str = "this mail account is set to draft only by the owner; replies are not sent from it. Tell the user you cannot reply from this address";
 
 /// The UID an event carries (`message_id` is the decimal UID).
 #[must_use]
@@ -110,6 +113,9 @@ struct Core {
     state: Mutex<State>,
     state_path: Option<PathBuf>,
     gate: Mutex<ReplyGate>,
+    /// The account is limited to drafts by the owner: nothing is queued or
+    /// sent from this channel.
+    draft_only: bool,
     /// The outgoing-mail guard and the account name its counts use (set by the host).
     guard: OnceLock<(Arc<MailGuard>, String)>,
 }
@@ -153,6 +159,7 @@ impl Core {
             state: Mutex::new(state),
             state_path,
             gate: Mutex::new(ReplyGate::default()),
+            draft_only: false,
             guard: OnceLock::new(),
         })
     }
@@ -415,6 +422,9 @@ impl Core {
             _ => ("Re:".to_owned(), msg.text.clone()),
         };
         let id = uuid::Uuid::now_v7().to_string();
+        if self.draft_only {
+            return Err(ChannelError::InvalidInput(DRAFT_ONLY_REPLY.into()));
+        }
         let recipient = to.0.trim().to_lowercase();
         let known = self
             .state
@@ -451,6 +461,9 @@ impl Core {
     pub async fn approve_reply(&self, id: &str) -> Result<Receipt, EmailError> {
         if !self.settings.replies_enabled {
             return Err(EmailError::Input("replies are switched off".into()));
+        }
+        if self.draft_only {
+            return Err(EmailError::Input("draft only".into()));
         }
         // The reply goes through the same guard and log as `email_send`. The owner approves a
         // reply from a list that shows no guard warnings, so here a hit is refused outright
@@ -552,6 +565,36 @@ impl EmailChannel {
                 settings,
                 state_path,
             )?),
+        })
+    }
+
+    /// Like [`Self::new`] for a configured account: replies name the
+    /// account's identity and mode, and an account the owner limited to
+    /// drafts never queues or sends a reply.
+    ///
+    /// # Errors
+    /// Invalid settings or sender entries.
+    pub fn for_account(
+        provider: Arc<dyn MailboxProvider>,
+        account: &AccountConfig,
+        settings: EmailChannelSettings,
+        state_path: Option<PathBuf>,
+    ) -> Result<Self, EmailError> {
+        let mut core = Core::new(
+            provider,
+            &account.address,
+            &account.allowed_senders,
+            settings,
+            state_path,
+        )?;
+        core.draft_only = account.identity.send_mode == SendMode::DraftOnly;
+        core.gate = Mutex::new(ReplyGate::for_sender(format!(
+            "{} (account: {})",
+            account.address.trim(),
+            account.name
+        )));
+        Ok(Self {
+            core: Arc::new(core),
         })
     }
 

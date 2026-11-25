@@ -19,8 +19,9 @@
   The downloaded installer, for example .\Praxi-0.1.0-alpha.4-setup.exe
 
 .PARAMETER Tag
-  The release you downloaded from, for example v0.1.0-alpha.4. When given, the provenance check
-  also insists that the file was built from exactly that tag. Recommended.
+  Required. The release you downloaded from, for example v0.1.0-alpha.4. The provenance check
+  insists that the file was built from exactly that tag, so a genuine build of some other
+  version cannot pass for this one. Without -Tag the script stops and tells you so.
 
 .PARAMETER ChecksumsPath
   SHA256SUMS.txt from the same release. Default: the file with that name next to the installer.
@@ -46,7 +47,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$InstallerPath,
-    [string]$Tag,
+    [string]$Tag,   # required: checked right after the parameters so the error message is plain in every host
     [string]$ChecksumsPath,
     [string]$BundlePath,
     [switch]$SkipProvenance,
@@ -76,6 +77,16 @@ function Read-ChecksumLines([string]$Path) {
         }
     }
     return $entries
+}
+
+function Stop-Usage([string]$Message) {
+    Write-Host ''
+    Write-Host "MISSING INFORMATION: $Message" -ForegroundColor Red
+    exit 2
+}
+
+if ([string]::IsNullOrWhiteSpace($Tag)) {
+    Stop-Usage 'Say which release you downloaded with -Tag, for example -Tag v0.1.0-alpha.4 (the tag is in the release page address and title). It is required so that a genuine build of a different version cannot pass for this one. Nothing was checked.'
 }
 
 if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
@@ -148,12 +159,8 @@ if ($BundlePath) {
 } else {
     Write-Host "No $DefaultBundleName next to the installer: asking GitHub online (needs 'gh auth login')."
 }
-if ($Tag) {
-    $verifyArgs += @('--source-ref', "refs/tags/$Tag")
-    Write-Host "Required source: tag $Tag"
-} else {
-    Write-Host 'No -Tag given: the file must come from this project''s release workflow, but not necessarily from one particular release.' -ForegroundColor Yellow
-}
+$verifyArgs += @('--source-ref', "refs/tags/$Tag")
+Write-Host "Required source: tag $Tag"
 
 & gh @verifyArgs
 if ($LASTEXITCODE -ne 0) {

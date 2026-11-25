@@ -35,7 +35,7 @@ For those you can only compute the file's hash yourself and ask the project to c
 ## The easy way: one script
 
 Open **PowerShell** in the folder with the downloaded files and run (replace the file name and
-the tag with yours):
+the tag with yours; `-Tag` is required, and the script stops with a clear message without it):
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\verify-windows.ps1 `

@@ -1,0 +1,11 @@
+# Praxi capability pack catalog (Debian/Ubuntu). One pack per line:
+#   id|base|removable|size_mb|apt packages (space separated)|tools to look for (space separated; a/b = either)
+# The app embeds this file, uploads it next to provision.sh and passes its SHA-256 on stdin; the
+# server script refuses to run if the staged copy differs. Packages come only from the server's own
+# signed apt sources: no third-party repository, no download-and-run. base=1: offered by the wizard's
+# one switch. removable=0: shared system tools that Praxi never removes.
+office|1|1|700|libreoffice-writer libreoffice-calc libreoffice-impress fonts-liberation fonts-noto-core fonts-dejavu-core|soffice
+docs|1|1|150|pandoc poppler-utils qpdf ghostscript|pandoc pdftotext qpdf gs
+ocr|0|1|90|tesseract-ocr tesseract-ocr-eng tesseract-ocr-tur|tesseract
+media|1|1|250|ffmpeg imagemagick|ffmpeg magick/convert
+dev|1|0|250|git gh ripgrep jq sqlite3 zip unzip curl python3 python3-venv nodejs|git gh rg jq sqlite3 zip unzip curl python3 node

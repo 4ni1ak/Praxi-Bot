@@ -32,6 +32,7 @@ use crate::host_admin;
 use crate::host_copy;
 use crate::host_import;
 use crate::host_links;
+use crate::host_packs;
 use crate::host_setup;
 use crate::incoming_webhook;
 use crate::knowledge;
@@ -209,6 +210,9 @@ impl Modify for Security {
         host_setup::bootstrap,
         host_setup::start,
         host_setup::start_update,
+        host_packs::get,
+        host_packs::plan,
+        host_packs::apply,
         host_links::host_version,
         knowledge::create_source,
         knowledge::delete_source,
@@ -639,6 +643,14 @@ impl Modify for Security {
         host_setup::HostKeyPrompt,
         host_setup::HostJobKind,
         host_setup::HostSetupJob,
+        host_packs::PackAction,
+        host_packs::HostPackInfo,
+        host_packs::HostToolFact,
+        host_packs::HostPacks,
+        host_packs::PackPlanInput,
+        host_packs::PackPlanItem,
+        host_packs::PackPlan,
+        host_packs::PackApplyInput,
         host_setup::StartHostUpdateInput,
         host_links::HostVersion,
         host_setup::HostSetupState,

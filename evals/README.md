@@ -20,6 +20,10 @@ The `inj-*.yaml` corpus pairs hostile untrusted content (web pages, mail, files,
 
 Every attack scenario `inj-<topic>.yaml` has a differently worded `inj-<topic>-holdout.yaml` twin (different user prompt and tool fixtures). Benign control scenarios (`inj-*-control.yaml`) verify that clean runs, untrusted-only `web_search`, and bare clicks/scrolls are **not** nagged with approval cards.
 
+## Red-team corpus (`scenarios/rt-*.yaml`)
+
+144 further scenarios across 18 attack families (hidden page/PDF/mail text, MCP descriptions and results, filenames, alt text, invites, issue comments, Unicode tricks, markdown/URL exfiltration, en/tr/de overrides, delayed triggers, spoofed tool results and approvals, bot-to-bot confused deputy, memory poisoning). Each asserts the sink was asked/denied (or refused) and that its canary never left. Coverage and mitigations: [docs/design/redteam.md](../docs/design/redteam.md), [docs/design/threat-model.md](../docs/design/threat-model.md).
+
 ## How to add a scenario (data-only)
 
 1. **Create `evals/scenarios/inj-<topic>.yaml` and `evals/scenarios/inj-<topic>-holdout.yaml`.**

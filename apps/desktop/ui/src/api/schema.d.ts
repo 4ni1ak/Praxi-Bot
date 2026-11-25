@@ -2388,6 +2388,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hosts/setup/packs/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_packs_apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup/packs/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_packs_plan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup/packs/{host_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_packs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/hosts/setup/ssh-keys": {
         parameters: {
             query?: never;
@@ -5987,6 +6035,8 @@ export interface components {
             bot?: string | null;
             /** @description Whether the account trusts an extra root certificate (a private CA). */
             custom_ca: boolean;
+            /** @description Bots that use this account as their default sender. */
+            default_for?: string[];
             /** @description Folder drafts are saved to. */
             drafts_folder: string;
             /** @description IMAP server (empty host for API-backed accounts). */
@@ -6002,6 +6052,10 @@ export interface components {
             password_set: boolean;
             /** @description Kind of mailbox. */
             provider: components["schemas"]["EmailProviderKind"];
+            /** @description Draft only, or ask the owner each time. */
+            send_mode?: components["schemas"]["EmailSendMode"];
+            /** @description Further bots (storage UUIDs) that may use the account besides `bot`. */
+            shared_with?: string[];
             /** @description SMTP server. */
             smtp: components["schemas"]["EmailSmtpServer"];
             /** @description Login name; empty = the address. */
@@ -6020,6 +6074,8 @@ export interface components {
             api_key?: string | null;
             /** @description Bot (storage UUID) that owns the account; absent / `null` = every bot. */
             bot?: string | null;
+            /** @description Bots that use this account as their default sender. */
+            default_for?: string[];
             /**
              * @description Custom (verified) domain for a new `agentmail` address; default the
              *     provider's shared domain.
@@ -6048,6 +6104,10 @@ export interface components {
              *     and `smtp` are not used and `api_key` is required.
              */
             provider?: components["schemas"]["EmailProviderKind"];
+            /** @description Draft only, or ask the owner each time (default). */
+            send_mode?: components["schemas"]["EmailSendMode"];
+            /** @description Further bots that may use the account besides `bot`. */
+            shared_with?: string[];
             /** @description SMTP server (`imap_smtp`). */
             smtp?: components["schemas"]["EmailSmtpServer"];
             /** @description Login name; default (empty) = the address. */
@@ -6068,11 +6128,16 @@ export interface components {
             api_key?: string | null;
             /** @description Owning bot; `null` = every bot; omit to keep. */
             bot?: string | null;
+            /** @description Bots that use this account as default sender; a present list replaces it. */
+            default_for?: string[] | null;
             /** @description Folder drafts are saved to. */
             drafts_folder?: string | null;
             imap?: null | components["schemas"]["EmailImapServer"];
             /** @description New password (write-only). */
             password?: string | null;
+            send_mode?: null | components["schemas"]["EmailSendMode"];
+            /** @description Further bots that may use the account; a present list replaces it. */
+            shared_with?: string[] | null;
             smtp?: null | components["schemas"]["EmailSmtpServer"];
             /** @description Login name; empty = the address. */
             username?: string | null;
@@ -6197,8 +6262,12 @@ export interface components {
              * @description When it was proposed (Unix ms).
              */
             created_ms: number;
+            /** @description The identity it is sent from: `address (account: name)`. */
+            from?: string;
             /** @description Id used to approve or deny. */
             id: string;
+            /** @description That identity's send mode (`ask`: the owner approves every send). */
+            send_mode?: string;
             /** @description Subject. */
             subject: string;
             /** @description Exact recipients. */
@@ -6247,6 +6316,12 @@ export interface components {
             /** @description First characters of the subject. */
             subject: string;
         };
+        /**
+         * @description What bots may do with a mail identity. Sending always needs the owner's
+         *     approval; this can only make it stricter.
+         * @enum {string}
+         */
+        EmailSendMode: "ask" | "draft_only";
         /** @description Answer of `POST /v1/email/accounts/{name}/send-test`. */
         EmailSendTestResponse: {
             /** @description The address the test message went to: always the mailbox's own address. */
@@ -6804,7 +6879,7 @@ export interface components {
          * @description What a job does on the server.
          * @enum {string}
          */
-        HostJobKind: "setup" | "update";
+        HostJobKind: "setup" | "update" | "packs";
         /** @description `POST /v1/hosts/setup/{job}/host-key`. */
         HostKeyAnswer: {
             accept: boolean;
@@ -6877,6 +6952,36 @@ export interface components {
         HostLinkState: "idle" | "connecting" | "connected" | "offline" | "unreachable";
         /** @enum {string} */
         HostMode: "standalone" | "host" | "client";
+        /** @description One pack on one server. */
+        HostPackInfo: {
+            /** @description Part of the wizard's one-switch basic set. */
+            base: boolean;
+            /** @description Catalog id (`office`, `docs`, `ocr`, `media`, `dev`). The app shows its own localised name. */
+            id: string;
+            /** @description False for shared system tools that Praxi never removes. */
+            removable: boolean;
+            /**
+             * Format: int32
+             * @description Rough download size.
+             */
+            size_mb: number;
+            /** @description `installed`, `partial` (an interrupted install) or `missing`. */
+            status: string;
+        };
+        /** @description `GET /v1/hosts/setup/packs/{host_id}`: the server's "installed tools" fact sheet. */
+        HostPacks: {
+            /** @description The saved login can install software without a password prompt. */
+            can_admin: boolean;
+            /** @description Set when the server could not be read: `connection`, `unsupported` or `failed`. */
+            error?: string | null;
+            /** @description Technical detail for "copy details" (sanitised, redacted). */
+            error_detail?: string | null;
+            host_id: string;
+            packs: components["schemas"]["HostPackInfo"][];
+            /** @description Debian and Ubuntu servers only. */
+            supported: boolean;
+            tools: components["schemas"]["HostToolFact"][];
+        };
         HostPeer: {
             /** @description The device holds host administration (may send keys and settings here). */
             admin: boolean;
@@ -6951,6 +7056,11 @@ export interface components {
             /** Format: int64 */
             total_ram_mb: number;
             version: string;
+        };
+        /** @description One program the fact sheet looked for. */
+        HostToolFact: {
+            name: string;
+            present: boolean;
         };
         /** @description `GET /v1/hosts/{id}/version`: what a paired server runs. */
         HostVersion: {
@@ -8468,6 +8578,59 @@ export interface components {
             /** @description Skill version string. */
             version: string;
         };
+        /**
+         * @description What the owner wants done with the chosen packs.
+         * @enum {string}
+         */
+        PackAction: "install" | "remove";
+        /** @description `POST /v1/hosts/setup/packs/apply`: run exactly the plan the owner saw. */
+        PackApplyInput: {
+            plan_id: string;
+        };
+        /** @description The dry-run preview the owner approves. `plan_id` is single use and expires. */
+        PackPlan: {
+            action: components["schemas"]["PackAction"];
+            /** Format: int32 */
+            expires_in_secs: number;
+            host_id: string;
+            items: components["schemas"]["PackPlanItem"][];
+            plan_id: string;
+            /** @description True when at least one item can run. */
+            runnable: boolean;
+            /**
+             * Format: int32
+             * @description Rough download size of what would be installed (0 for a removal).
+             */
+            size_mb: number;
+        };
+        /** @description `POST /v1/hosts/setup/packs/plan`. */
+        PackPlanInput: {
+            action: components["schemas"]["PackAction"];
+            /** @description Paired host id (`GET /v1/hosts`). */
+            host_id: string;
+            /** @description Catalog ids. Anything else is refused. */
+            packs: string[];
+        };
+        /** @description What would happen to one pack. Nothing has been changed yet. */
+        PackPlanItem: {
+            /**
+             * @description Why it cannot run: `shared`, `dependants`, `unavailable`, `needs_admin`, `unsupported`,
+             *     `connection` or `failed`.
+             */
+            blocked?: string | null;
+            /** @description Already as wanted: nothing to do. */
+            noop: boolean;
+            pack: string;
+            /** @description The catalog's packages that would be installed or removed. */
+            packages: string[];
+            /** Format: int32 */
+            size_mb: number;
+            /**
+             * Format: int32
+             * @description Packages apt would unpack in total, dependencies included (0 when unknown).
+             */
+            total_packages: number;
+        };
         /** @description A one-time pairing code (`POST /v1/channels/telegram/pair-code`). */
         PairCodeDto: {
             /** @description The 6-digit code the user sends as `/pair <code>`. */
@@ -9629,6 +9792,13 @@ export interface components {
         };
         /** @description `POST /v1/hosts/setup`. */
         StartHostSetupInput: {
+            /**
+             * @description The owner wants the basic tool set (office, documents, media, developer tools). This only
+             *     records the intent: nothing is installed by the setup. The job ends with a `packs.plan`
+             *     step (`plan_required`) and the app opens the tools plan, where the owner sees the dry run
+             *     and approves it (`/v1/hosts/setup/packs/plan` and `/apply`).
+             */
+            base_packs?: boolean;
             /** @description Host name or IP address of the server. */
             host: string;
             /**
@@ -16089,6 +16259,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BootstrapCommand"];
+                };
+            };
+        };
+    };
+    hosts_packs_apply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PackApplyInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSetupJob"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hosts_packs_plan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PackPlanInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackPlan"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hosts_packs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostPacks"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };

@@ -63,6 +63,12 @@ pub struct EmailPendingReplyDto {
     pub body: String,
     /// When it was proposed (Unix ms).
     pub created_ms: u64,
+    /// The identity it is sent from: `address (account: name)`.
+    #[serde(default)]
+    pub from: String,
+    /// That identity's send mode (`ask`: the owner approves every send).
+    #[serde(default)]
+    pub send_mode: String,
 }
 
 /// The e-mail channel as the app shows it.

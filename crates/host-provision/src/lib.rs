@@ -23,6 +23,7 @@
 pub mod engine;
 pub mod facts;
 pub mod known_hosts;
+pub mod packs;
 pub mod remote;
 pub mod result;
 pub mod ssh;

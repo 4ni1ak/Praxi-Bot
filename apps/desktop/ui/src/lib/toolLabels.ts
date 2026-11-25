@@ -162,6 +162,7 @@ const TABLE: Record<string, Entry> = {
   email_draft: { id: "email_draft", icon: "mail" },
   email_search: { id: "email_read", icon: "mail", chips: queryChip },
   email_read: { id: "email_read", icon: "mail" },
+  email_identities: { id: "email_identities", icon: "mail" },
   email_list_folders: { id: "email_read", icon: "mail" },
   email_mark_read: { id: "email_mark", icon: "mail" },
   spawn_subagent: { id: "agent", icon: "agent" },
