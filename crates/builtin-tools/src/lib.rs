@@ -1170,7 +1170,7 @@ mod tests {
         // Also test direct helper register_email_tools
         let reg2 = ToolRegistry::new();
         let registered = register_email_tools(&reg2, &connector);
-        assert_eq!(registered, 6);
+        assert_eq!(registered, 7);
         assert!(reg2.get(connector_email::tools::SEND).is_some());
     }
 

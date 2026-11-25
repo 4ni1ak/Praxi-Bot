@@ -17,7 +17,7 @@ use tool_registry::{
 };
 
 use crate::config::{AccountKind, SendMode};
-use crate::connector::EmailConnector;
+use crate::connector::{EmailConnector, Scoped};
 use crate::imap::{DEFAULT_LIMIT, MAX_LIMIT, SearchQuery};
 use crate::message::{DEFAULT_MAX_BODY_CHARS, MAX_BODY_CHARS};
 use crate::smtp::OutgoingMail;
@@ -121,7 +121,7 @@ mod class_tests {
 }
 
 /// The `email_identities` answer: local settings only, never a secret.
-fn identities_output(c: &crate::connector::Scoped<'_>) -> ToolOutput {
+fn identities_output(c: &Scoped<'_>) -> ToolOutput {
     let list: Vec<Value> = c
         .identities()
         .into_iter()
@@ -139,6 +139,44 @@ fn identities_output(c: &crate::connector::Scoped<'_>) -> ToolOutput {
         })
         .collect();
     json_out(json!({ "identities": list }))
+}
+
+/// `email_draft`: save a draft from the chosen identity.
+async fn draft_output(c: &Scoped<'_>, i: &MailInput) -> Result<ToolOutput, ToolError> {
+    let acct = c.resolve(i.account.as_deref())?;
+    let folder = c.save_draft(Some(&acct.name), &i.mail).await?;
+    Ok(json_out(json!({
+        "saved": true,
+        "folder": folder,
+        "sent": false,
+        "from": acct.address,
+        "account": acct.name,
+    })))
+}
+
+/// `email_send`: send from the chosen identity, or keep a draft when the
+/// owner limited that address to drafts.
+async fn send_output(c: &Scoped<'_>, i: &MailInput) -> Result<ToolOutput, ToolError> {
+    let acct = c.resolve(i.account.as_deref())?;
+    if acct.identity.send_mode == SendMode::DraftOnly {
+        let folder = c.save_draft(Some(&acct.name), &i.mail).await?;
+        return Ok(json_out(json!({
+            "sent": false,
+            "saved_as_draft": true,
+            "folder": folder,
+            "from": acct.address,
+            "account": acct.name,
+            "reason": "this address is set to draft only by the owner; tell the user the message is waiting in the drafts folder",
+        })));
+    }
+    let resp = c.send(Some(&acct.name), &i.mail).await?;
+    Ok(json_out(json!({
+        "sent": true,
+        "from": acct.address,
+        "account": acct.name,
+        "recipients": i.mail.to.len() + i.mail.cc.len() + i.mail.bcc.len(),
+        "server_response": resp,
+    })))
 }
 
 fn account_prop() -> Value {
@@ -533,40 +571,11 @@ impl Tool for EmailTool {
             }
             Kind::Draft => {
                 let i: MailInput = parse(input)?;
-                let acct = c.resolve(i.account.as_deref())?;
-                let folder = c.save_draft(Some(&acct.name), &i.mail).await?;
-                Ok(json_out(json!({
-                "saved": true,
-                "folder": folder,
-                "sent": false,
-                "from": acct.address,
-                "account": acct.name,
-                })))
+                draft_output(&c, &i).await
             }
             Kind::Send => {
                 let i: MailInput = parse(input)?;
-                let acct = c.resolve(i.account.as_deref())?;
-                if acct.identity.send_mode == SendMode::DraftOnly {
-                    // The owner limited this address to drafts: keep the work
-                    // as a draft and say so, never send.
-                    let folder = c.save_draft(Some(&acct.name), &i.mail).await?;
-                    return Ok(json_out(json!({
-                    "sent": false,
-                    "saved_as_draft": true,
-                    "folder": folder,
-                    "from": acct.address,
-                    "account": acct.name,
-                    "reason": "this address is set to draft only by the owner; tell the user the message is waiting in the drafts folder",
-                    })));
-                }
-                let resp = c.send(Some(&acct.name), &i.mail).await?;
-                Ok(json_out(json!({
-                "sent": true,
-                "from": acct.address,
-                "account": acct.name,
-                "recipients": i.mail.to.len() + i.mail.cc.len() + i.mail.bcc.len(),
-                "server_response": resp,
-                })))
+                send_output(&c, &i).await
             }
         }
     }
