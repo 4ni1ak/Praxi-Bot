@@ -1530,7 +1530,11 @@ paths:
                 &json!({"to": ["a@b.co"], "subject": "s", "body": "b"}),
             )
             .unwrap();
-        assert!(account.contains("account: test (default)"), "{account}");
+        assert!(
+            account.contains("from: user@example.com")
+                && account.contains("account: test) (default)"),
+            "{account}"
+        );
         let note = dir.join("note.txt");
         std::fs::write(&note, "abcd").unwrap();
         let attached = mail

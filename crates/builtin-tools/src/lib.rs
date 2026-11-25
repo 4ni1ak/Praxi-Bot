@@ -1146,7 +1146,7 @@ mod tests {
         cfg.browser = Some(Arc::new(browser::fake::FakeBrowser::default()));
         cfg.email = Some(connector.clone());
         let added = register_builtin_tools(&reg, cfg);
-        assert_eq!(added, 39 + 6 + 2 + 2);
+        assert_eq!(added, 39 + 7 + 2 + 2);
 
         // Verification of email tools and their effects
         let send_tool = reg

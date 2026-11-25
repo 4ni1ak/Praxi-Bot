@@ -78,13 +78,13 @@ fn spec(name: &str, description: &str, schema: Value, effect: Effect) -> ToolSpe
             // The call sends model-controlled fields (folder, query, ids) to
             // the mail server and the reply can be untrusted private mail.
             READ | SEARCH => ContentClass::all(),
-            // Local settings only: names, addresses and modes, no mail content.
-            IDENTITIES => ContentClass::none(),
             // Folder names come back; the account name is sent to the server.
             LIST_FOLDERS => ContentClass::declared(false, true, true),
             // mark_read does not return the message, but the folder and the
             // message id are sent to the remote mailbox, same as a draft or a send.
             DRAFT | SEND | MARK_READ => ContentClass::egress(),
+            // `email_identities` reads local settings only (names, addresses,
+            // modes): no mail content, nothing leaves.
             _ => ContentClass::none(),
         },
     }
@@ -118,6 +118,27 @@ mod class_tests {
         assert!(folders.reads_private);
         assert!(spec(SEND, "", schema, Effect::Write).content.egress);
     }
+}
+
+/// The `email_identities` answer: local settings only, never a secret.
+fn identities_output(c: &crate::connector::Scoped<'_>) -> ToolOutput {
+    let list: Vec<Value> = c
+        .identities()
+        .into_iter()
+        .map(|(a, default)| {
+            json!({
+                "account": a.name,
+                "address": a.address,
+                "kind": a.kind.as_str(),
+                "default": default,
+                "send_mode": match a.identity.send_mode {
+                    SendMode::Ask => "ask",
+                    SendMode::DraftOnly => "draft_only",
+                },
+            })
+        })
+        .collect();
+    json_out(json!({ "identities": list }))
 }
 
 fn account_prop() -> Value {
@@ -435,25 +456,7 @@ impl Tool for EmailTool {
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         let c = self.conn.scoped(ctx.bot_id.as_deref());
         match self.kind {
-            Kind::Identities => {
-                let list: Vec<Value> = c
-                    .identities()
-                    .into_iter()
-                    .map(|(a, default)| {
-                        json!({
-                        "account": a.name,
-                        "address": a.address,
-                        "kind": a.kind.as_str(),
-                        "default": default,
-                        "send_mode": match a.identity.send_mode {
-                        SendMode::Ask => "ask",
-                        SendMode::DraftOnly => "draft_only",
-                        },
-                        })
-                    })
-                    .collect();
-                Ok(json_out(json!({ "identities": list })))
-            }
+            Kind::Identities => Ok(identities_output(&c)),
             Kind::ListFolders => {
                 let i: AccountOnly = parse(input)?;
                 let kind = c.kind(i.account.as_deref())?;
