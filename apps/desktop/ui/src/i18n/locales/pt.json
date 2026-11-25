@@ -1690,13 +1690,13 @@
       },
       "reasonPlaceholder": "Reason for denying (optional)",
       "risk": {
-        "allowDelete": "Permitir exclusão",
-        "allowSend": "Permitir envio",
-        "change": "Faz alterações",
-        "delete": "Exclui",
-        "read": "Apenas olha",
-        "run": "Executa um comando",
-        "send": "Envia algo para fora"
+        "allowDelete": "Allow delete",
+        "allowSend": "Allow send",
+        "change": "Makes changes",
+        "delete": "Deletes",
+        "read": "Looks only",
+        "run": "Runs a command",
+        "send": "Sends something out"
       },
       "runTool": "Allow for this task",
       "schedule": {
@@ -1875,7 +1875,7 @@
       "viaLink": "Via link {{path}}"
     },
     "composerMenu": {
-      "label": "Adicionar ou anexar"
+      "label": "Add or attach"
     },
     "conversationLabel": "Today",
     "copyMessage": "Copy message",
