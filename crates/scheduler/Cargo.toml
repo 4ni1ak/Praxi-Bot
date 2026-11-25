@@ -14,7 +14,7 @@ workspace = true
 async-trait.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
-croner = "2"
+croner = "4"
 globset.workspace = true
 script-runtime = { path = "../script-runtime", version = "0.1.0" }
 hex = "0.4"
