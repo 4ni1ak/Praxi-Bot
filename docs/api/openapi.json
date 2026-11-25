@@ -3560,6 +3560,130 @@
         ]
       }
     },
+    "/v1/bots/{id}/page-reader": {
+      "get": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "A bot's page-reader setting.",
+        "operationId": "get_page_reader",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageReaderDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Change a bot's page-reader setting (owner only). Effective from the bot's next tool result.",
+        "operationId": "put_page_reader",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutPageReaderInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageReaderDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/bots/{id}/site-rules": {
       "get": {
         "tags": [
@@ -27242,6 +27366,19 @@
           }
         }
       },
+      "PageReaderDto": {
+        "type": "object",
+        "description": "How outside text reaches a bot.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "description": "`off`: the bot reads pages itself (inside a data block). `auto`: through the reader\nwhile the run holds private data (files, mail, memory). `always`: every page."
+          }
+        }
+      },
       "PairCodeDto": {
         "type": "object",
         "description": "A one-time pairing code (`POST /v1/channels/telegram/pair-code`).",
@@ -27781,6 +27918,20 @@
           "limits": {
             "$ref": "#/components/schemas/BotLimitsDto",
             "description": "The new limits; every field left `null` is unlimited. Replaces all previous values."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PutPageReaderInput": {
+        "type": "object",
+        "description": "`PUT /v1/bots/{id}/page-reader`.",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "description": "`off`, `auto` or `always`."
           }
         },
         "additionalProperties": false
