@@ -138,6 +138,7 @@ import type {
   Run,
   Schedule,
   ScheduleHistoryEntry,
+  HandoverAnswer,
   SecretRequestAnswer,
   FillSecretInfo,
   CreateFillSecretInput,
@@ -914,6 +915,29 @@ export class ApiClient {
       query: force ? { force: "true" } : undefined
     });
   }
+  /** "Save as skill": a proposal built from the chat's last finished run. Nothing is saved. */
+  skillDraftFromChat(chatId: string): Promise<import("./types").SkillDraft> {
+    return this.request("POST", `/chats/${encodeURIComponent(chatId)}/skill-draft`, { body: {} });
+  }
+  /** Scan an edited draft again. Nothing is saved. */
+  skillDraftPreview(skillMd: string): Promise<import("./types").SkillDraftPreview> {
+    return this.request("POST", "/skills/draft/preview", { body: { skill_md: skillMd } });
+  }
+  /**
+   * Save the reviewed draft; `accept` is the fingerprint of the scan the owner confirmed and
+   * `acknowledged` the tick for a run that read outside content or a scan with warnings (the
+   * daemon re-checks both for `chatId`).
+   */
+  skillDraftInstall(
+    chatId: string,
+    skillMd: string,
+    accept: string,
+    acknowledged: boolean
+  ): Promise<{ name: string }> {
+    return this.request("POST", "/skills/draft/install", {
+      body: { skill_md: skillMd, accept, chat_id: chatId, acknowledged }
+    });
+  }
   getBotSkills(botId: string): Promise<BotSkills> {
     return this.request("GET", `/bots/${encodeURIComponent(botId)}/skills`);
   }
@@ -1098,6 +1122,23 @@ export class ApiClient {
     body: { value?: string; username?: string; password?: string; origins: string[]; programs: string[] }
   ): Promise<SecretRequestAnswer> {
     return this.request("POST", `/secret-requests/${encodeURIComponent(callId)}`, { body });
+  }
+
+  /**
+   * Answer a bot's one-time-code card: the daemon types the code into the page and forgets it;
+   * the run only learns `done`. Owner-only. The code is never logged here.
+   */
+  submitHandoverCode(callId: string, code: string): Promise<HandoverAnswer> {
+    return this.request("POST", `/handovers/${encodeURIComponent(callId)}/code`, { body: { code } });
+  }
+
+  /** The owner solved the CAPTCHA: the daemon checks that the page moved on, then the run resumes. */
+  finishHandover(callId: string): Promise<HandoverAnswer> {
+    return this.request("POST", `/handovers/${encodeURIComponent(callId)}/done`);
+  }
+
+  cancelHandover(callId: string): Promise<HandoverAnswer> {
+    return this.request("POST", `/handovers/${encodeURIComponent(callId)}/cancel`);
   }
 
   cancelSecretRequest(callId: string): Promise<SecretRequestAnswer> {

@@ -23,6 +23,8 @@ struct Page {
     typed_text: Mutex<Vec<String>>,
     snapshot_text: Mutex<String>,
     echo: bool,
+    url: Mutex<Option<String>>,
+    snapshot_pause: Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
 }
 
 fn target(frame: &str) -> FieldTarget {
@@ -68,7 +70,15 @@ impl BrowserDriver for Page {
     async fn open(&self, _: &str, _: Option<&str>) -> Result<String, String> {
         Ok("opened".into())
     }
+    async fn current_url(&self) -> Option<String> {
+        self.url.lock().clone()
+    }
     async fn snapshot(&self, _: bool) -> Result<String, String> {
+        let pause = self.snapshot_pause.lock().take();
+        if let Some((entered, resume)) = pause {
+            entered.notify_one();
+            resume.notified().await;
+        }
         Ok(self.snapshot_text.lock().clone())
     }
     async fn click(&self, _: &str) -> Result<String, String> {
@@ -658,6 +668,49 @@ async fn the_model_can_list_secret_names_but_never_values() {
         "{result}"
     );
     assert!(!result.contains(VALUE));
+}
+
+#[tokio::test]
+async fn stop_after_handover_claim_cancels_inflight_typing_before_releasing_approval() {
+    let r = rig(
+        Policy::full(),
+        false,
+        vec![
+            calls(&[("c1", "browser_handover", json!({"kind":"code"}))]),
+            text("done"),
+        ],
+    );
+    *r.page.url.lock() = Some(format!("{GITHUB}/2fa"));
+    *r.page.snapshot_text.lock() = "# Verify\n  [e5] textbox \"Verification code\"".into();
+    let mut rx = r.lp.subscribe();
+    let run = r.lp.run_turn(r.env.chat, "sign in").unwrap();
+    let Event::HandoverRequested(card) =
+        until(&mut rx, |e| matches!(e, Event::HandoverRequested(_))).await
+    else {
+        unreachable!()
+    };
+    assert!(r.lp.claim_handover(card.call_id).is_some());
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let resume = Arc::new(tokio::sync::Notify::new());
+    *r.page.snapshot_pause.lock() = Some((entered.clone(), resume.clone()));
+    let typing = tokio::spawn(async move {
+        builtin_tools::handover_hub()
+            .type_code(&run.to_string(), "123456")
+            .await
+    });
+    entered.notified().await;
+    r.lp.cancel(run).unwrap();
+    assert!(
+        builtin_tools::handover_hub()
+            .type_code(&run.to_string(), "123456")
+            .await
+            .is_err()
+    );
+    resume.notify_one();
+    assert!(typing.await.unwrap().is_err());
+    assert!(r.page.typed_secrets.lock().is_empty());
+    assert_eq!(r.lp.wait(run).await.unwrap(), RunState::Cancelled);
+    assert_eq!(r.fake.requests.lock().len(), 1);
 }
 
 /// Guard: the password the DAEMON generated for `account_register` is really typed

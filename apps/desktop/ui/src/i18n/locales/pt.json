@@ -2077,6 +2077,11 @@
         "failed": "Didn't fill in a field",
         "running": "Filling in a field"
       },
+      "browser_handover": {
+        "done": "Passou uma etapa para você",
+        "failed": "Não foi possível passar uma etapa para você",
+        "running": "Pedindo uma etapa a você"
+      },
       "browser_hover": {
         "done": "Hovered over something on a page",
         "failed": "Couldn't hover on a page",
@@ -2337,7 +2342,10 @@
     "stopped": "Stopped the running turn.",
     "subagent": {
       "cancel": "Cancel",
+      "cancelHelper": "Parar o bot ajudante",
       "cancelLabel": "Cancel subagent: {{task}}",
+      "helperLimit": "O bot ajudante não pode fazer, nesta tarefa, mais do que {{caller}} pode. A resposta dele conta como texto não confiável.",
+      "helperTitle": "{{caller}} pediu ajuda a {{helper}}",
       "status": {
         "cancelled": "Cancelled",
         "failed": "Failed",
@@ -2420,6 +2428,7 @@
     "renameEmpty": "Enter a title.",
     "renameInputLabel": "Chat title",
     "renameTooLong": "Keep the title under {{max}} characters.",
+    "saveAsSkill": "Guardar como skill…",
     "unarchive": "Unarchive",
     "unpin": "Unpin"
   },
@@ -2859,6 +2868,14 @@
         "hint": "This action is only available on the computer that runs the bot.",
         "title": "You are not allowed to do that here"
       },
+      "handover_gone": {
+        "hint": "Ela foi respondida, cancelada ou expirou. Peça ao bot para tentar de novo, se ainda for necessário.",
+        "title": "Esse pedido não está mais aberto"
+      },
+      "handover_not_ready": {
+        "hint": "Olhe a página e tente de novo. Nada foi digitado que você não tenha digitado. Se um cartão de CAPTCHA disser que a verificação ainda está lá e você tiver certeza de que ela foi resolvida, toque em Concluído uma segunda vez para continuar mesmo assim.",
+        "title": "A página ainda não pode aceitar isso"
+      },
       "host_admin_forbidden": {
         "hint": "Only the owner's paired desktop can change the server's setup.",
         "title": "This computer may not manage that server"
@@ -3078,6 +3095,22 @@
       "skill_contains_secret": {
         "hint": "Remove the secret from its files, then add it again.",
         "title": "The skill seems to contain a password or key"
+      },
+      "skill_draft_ack_required": {
+        "hint": "Esta skill vem de uma tarefa que leu conteúdo externo, ou a verificação encontrou avisos. Marque a caixa para confirmar e salve de novo.",
+        "title": "Confirme que você revisou"
+      },
+      "skill_draft_changed": {
+        "hint": "Verifique-a novamente antes de guardar.",
+        "title": "A skill mudou desde a verificação"
+      },
+      "skill_draft_no_run": {
+        "hint": "Termine primeiro uma tarefa com o bot neste chat e tente de novo.",
+        "title": "Nenhuma tarefa concluída para guardar"
+      },
+      "skill_draft_no_steps": {
+        "hint": "A última tarefa não usou nenhuma ferramenta, por isso não há passos para transformar numa skill.",
+        "title": "Nada para guardar"
       },
       "skill_index_invalid": {
         "hint": "Check the address, or go back to the list that comes with Praxi.",
@@ -3589,6 +3622,27 @@
     "stateDone": "done",
     "stateOpen": "not done yet",
     "title": "Getting started"
+  },
+  "handover": {
+    "cancel": "Cancelar",
+    "cancelled": "Cancelado. O bot foi avisado de que esta etapa não foi concluída.",
+    "captchaBody": "O bot não conseguiu passar por esta verificação sozinho. Assuma o controle do navegador, resolva-a e toque em Concluído. O Praxi confere que a página avançou antes de o bot continuar.",
+    "captchaTitle": "{{bot}}: este site quer uma prova de que você é humano",
+    "closed": "Este pedido não está mais aberto.",
+    "codeBody": "Digite o código recebido no celular ou por e-mail. O Praxi o digita na página. O bot nunca o vê e o Praxi não o guarda.",
+    "codeLabel": "Código",
+    "codeTitle": "{{bot}} precisa de um código seu",
+    "done": "Concluído. O bot continua.",
+    "doneButton": "Concluído",
+    "expired": "Este pedido esgotou o tempo. O bot foi avisado de que esta etapa não foi concluída.",
+    "expiresIn": "Tempo restante para responder",
+    "notConnected": "Sem conexão com o serviço. Nada foi enviado e o que você digitou continua aqui.",
+    "siteLabel": "Site:",
+    "submit": "Enviar código",
+    "takeControl": "Assumir o controle",
+    "takeControlHint": "Na visualização, toque no botão de assumir o controle, resolva a verificação, volte aqui e toque em Concluído. Se a página continuar igual e você tiver certeza de que foi resolvido, toque em Concluído uma segunda vez para continuar mesmo assim.",
+    "untrusted": "Esta execução leu conteúdo de fora. Uma página pode fingir que pede um código. Digite apenas um código que você acabou de pedir a este site.",
+    "wrongFormat": "Um código tem de 4 a 12 letras ou dígitos."
   },
   "health": {
     "connected": "Local service running",
@@ -6265,6 +6319,31 @@
     "unread": "Unread message",
     "unreadBot": "New messages from this bot",
     "usage": "Usage"
+  },
+  "skillFromChat": {
+    "ack": "Li o texto e a verificação de segurança e quero guardar esta skill.",
+    "editTitle": "Texto da skill (pode editá-lo)",
+    "effect": {
+      "destructive": "pode apagar ou enviar coisas",
+      "read": "só lê",
+      "unknown": "ferramenta desconhecida",
+      "write": "pode alterar coisas"
+    },
+    "loading": "A ler o que o bot fez…",
+    "permsLead": "Estas ferramentas são usadas. As suas definições de permissões continuam a aplicar-se: os passos arriscados perguntam-lhe primeiro.",
+    "permsTitle": "O que vai usar",
+    "recheck": "Verificar de novo",
+    "recheckFirst": "Carregue em «Verificar de novo» antes de guardar as suas alterações.",
+    "save": "Guardar skill",
+    "saved": "Skill «{{name}}» guardada.",
+    "stepsTitle": "O que a skill vai fazer",
+    "subtitle": "Transforme a última tarefa concluída deste chat numa skill que o bot possa reutilizar.",
+    "tainted": "O bot leu conteúdo externo ou privado durante esta tarefa. Leia com atenção o texto abaixo antes de guardar.",
+    "tickFirst": "Marque a caixa acima para guardar.",
+    "title": "Guardar como skill",
+    "withheld": "{{count}} valores do chat foram omitidos porque podem ser privados. A skill pede-os de cada vez.",
+    "withheld_one": "{{count}} valor do chat foi omitido porque pode ser privado. A skill pede-o de cada vez.",
+    "withheld_other": "{{count}} valores do chat foram omitidos porque podem ser privados. A skill pede-os de cada vez."
   },
   "skillMarket": {
     "acceptMore": "I accept that the new version asks for more than the one I have.",

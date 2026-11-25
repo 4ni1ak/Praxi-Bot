@@ -175,8 +175,8 @@ impl browser::BrowserDriver for Leaky {
     async fn open(&self, _: &str, _: Option<&str>) -> Result<String, String> {
         unreachable!()
     }
-    async fn snapshot(&self, _: bool) -> Result<String, String> {
-        unreachable!()
+    async fn snapshot(&self, interactive: bool) -> Result<String, String> {
+        self.0.snapshot(interactive).await
     }
     async fn click(&self, _: &str) -> Result<String, String> {
         unreachable!()

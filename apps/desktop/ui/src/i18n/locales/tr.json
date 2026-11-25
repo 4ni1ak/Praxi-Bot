@@ -2077,6 +2077,11 @@
         "failed": "Alan doldurulmadı",
         "running": "Alan dolduruluyor"
       },
+      "browser_handover": {
+        "done": "Bir adımı sana devretti",
+        "failed": "Bir adım devredilemedi",
+        "running": "Senden bir adım istiyor"
+      },
       "browser_hover": {
         "done": "Sayfada bir öğenin üzerine gelindi",
         "failed": "Sayfada üzerine gelinemedi",
@@ -2337,7 +2342,10 @@
     "stopped": "Çalışan tur durduruldu.",
     "subagent": {
       "cancel": "İptal",
+      "cancelHelper": "Yardımcı botu durdur",
       "cancelLabel": "Alt ajanı iptal et: {{task}}",
+      "helperLimit": "Yardımcı bot, bu görevde {{caller}} botunun yapabildiğinden fazlasını yapamaz. Cevabı güvenilmeyen metin sayılır.",
+      "helperTitle": "{{caller}}, {{helper}} adlı bottan yardım istedi",
       "status": {
         "cancelled": "İptal edildi",
         "failed": "Başarısız",
@@ -2420,6 +2428,7 @@
     "renameEmpty": "Bir başlık yaz.",
     "renameInputLabel": "Sohbet başlığı",
     "renameTooLong": "Başlık en fazla {{max}} karakter olabilir.",
+    "saveAsSkill": "Beceri olarak kaydet…",
     "unarchive": "Arşivden çıkar",
     "unpin": "Sabitlemeyi kaldır"
   },
@@ -2859,6 +2868,14 @@
         "hint": "Bu işlem yalnızca botun çalıştığı bilgisayarda yapılabilir.",
         "title": "Burada buna izin yok"
       },
+      "handover_gone": {
+        "hint": "Yanıtlandı, iptal edildi ya da süresi doldu. Hâlâ gerekiyorsa botun yeniden denemesini iste.",
+        "title": "Bu istek artık açık değil"
+      },
+      "handover_not_ready": {
+        "hint": "Sayfaya bak, sonra yeniden dene. Senin girmediğin hiçbir şey yazılmadı. CAPTCHA kartı doğrulamanın hâlâ orada olduğunu söylüyorsa ve çözdüğünden eminsen, yine de devam etmek için Bitti'ye ikinci kez bas.",
+        "title": "Sayfa bunu şu an alamıyor"
+      },
       "host_admin_forbidden": {
         "hint": "Sunucunun kurulumunu yalnızca sahibinin eşleşmiş masaüstü uygulaması değiştirebilir.",
         "title": "Bu bilgisayar o sunucuyu yönetemez"
@@ -3078,6 +3095,22 @@
       "skill_contains_secret": {
         "hint": "Gizli bilgiyi dosyalardan çıkarıp yeniden ekle.",
         "title": "Becerinin içinde parola ya da anahtar var gibi"
+      },
+      "skill_draft_ack_required": {
+        "hint": "Bu beceri dışarıdan içerik okuyan bir görevden geliyor ya da kontrol uyarı buldu. Kutuyu işaretleyip onayla, sonra kaydet.",
+        "title": "Önce incelediğini onaylamalısın"
+      },
+      "skill_draft_changed": {
+        "hint": "Kaydetmeden önce yeniden denetle.",
+        "title": "Beceri denetimden sonra değişti"
+      },
+      "skill_draft_no_run": {
+        "hint": "Önce bu sohbette botla bir işi bitir, sonra tekrar dene.",
+        "title": "Kaydedilecek tamamlanmış iş yok"
+      },
+      "skill_draft_no_steps": {
+        "hint": "Son iş hiçbir araç kullanmadı; beceriye dönüştürülecek adım yok.",
+        "title": "Kaydedilecek bir şey yok"
       },
       "skill_index_invalid": {
         "hint": "Adresi denetle ya da Praxi ile gelen listeye dön.",
@@ -3589,6 +3622,27 @@
     "stateDone": "tamam",
     "stateOpen": "henüz yapılmadı",
     "title": "Başlangıç"
+  },
+  "handover": {
+    "cancel": "Vazgeç",
+    "cancelled": "Vazgeçildi. Bota bu adımın yapılmadığı söylendi.",
+    "captchaBody": "Bot bu doğrulamayı kendi başına geçemedi. Tarayıcının kontrolünü al, doğrulamayı çöz, sonra Bitti'ye bas. Bot devam etmeden önce Praxi sayfanın ilerlediğini kontrol eder.",
+    "captchaTitle": "{{bot}}: bu site insan olduğunu kanıtlamanı istiyor",
+    "closed": "Bu istek artık açık değil.",
+    "codeBody": "Telefonuna veya e-postana gelen kodu gir. Praxi onu sayfaya yazar. Bot kodu hiç görmez ve Praxi onu saklamaz.",
+    "codeLabel": "Kod",
+    "codeTitle": "{{bot}} senden bir kod istiyor",
+    "done": "Tamam. Bot devam ediyor.",
+    "doneButton": "Bitti",
+    "expired": "Bu isteğin süresi doldu. Bota bu adımın yapılmadığı söylendi.",
+    "expiresIn": "Yanıt için kalan süre",
+    "notConnected": "Hizmetle bağlantı yok. Hiçbir şey gönderilmedi, yazdığın hâlâ burada.",
+    "siteLabel": "Site:",
+    "submit": "Kodu gönder",
+    "takeControl": "Kontrolü al",
+    "takeControlHint": "Görünümde devralma düğmesine bas, doğrulamayı çöz, sonra buraya dönüp Bitti'ye bas. Sayfa hâlâ aynı görünüyorsa ve çözdüğünden eminsen, yine de devam etmek için Bitti'ye ikinci kez bas.",
+    "untrusted": "Bu çalışma dışarıdan içerik okudu. Bir sayfa kod istiyormuş gibi davranabilir. Yalnızca bu siteden az önce kendin istediğin bir kodu gir.",
+    "wrongFormat": "Kod 4 ile 12 arasında harf veya rakamdan oluşur."
   },
   "health": {
     "connected": "Yerel servis çalışıyor",
@@ -6265,6 +6319,31 @@
     "unread": "Okunmamış mesaj",
     "unreadBot": "Bu bottan yeni mesajlar var",
     "usage": "Kullanım"
+  },
+  "skillFromChat": {
+    "ack": "Metni ve güvenlik denetimini okudum, bu beceriyi kaydetmek istiyorum.",
+    "editTitle": "Beceri metni (düzenleyebilirsin)",
+    "effect": {
+      "destructive": "bir şeyleri silebilir veya gönderebilir",
+      "read": "yalnızca okur",
+      "unknown": "bilinmeyen araç",
+      "write": "bir şeyleri değiştirebilir"
+    },
+    "loading": "Botun yaptıkları okunuyor…",
+    "permsLead": "Bu araçlar kullanılır. İzin ayarların yine geçerli: riskli adımlar önce sana sorar.",
+    "permsTitle": "Neleri kullanacak",
+    "recheck": "Yeniden denetle",
+    "recheckFirst": "Değişikliklerini kaydetmeden önce \"Yeniden denetle\"ye bas.",
+    "save": "Beceriyi kaydet",
+    "saved": "\"{{name}}\" becerisi kaydedildi.",
+    "stepsTitle": "Beceri ne yapacak",
+    "subtitle": "Bu sohbetteki son tamamlanan işi, botun yeniden kullanabileceği bir beceriye dönüştür.",
+    "tainted": "Bot bu iş sırasında dışarıdan veya özel içerik okudu. Kaydetmeden önce aşağıdaki metni dikkatle oku.",
+    "tickFirst": "Kaydetmek için yukarıdaki kutuyu işaretle.",
+    "title": "Beceri olarak kaydet",
+    "withheld": "Sohbetteki {{count}} değer özel olabileceği için dışarıda bırakıldı. Beceri bunları her seferinde senden ister.",
+    "withheld_one": "Sohbetteki {{count}} değer özel olabileceği için dışarıda bırakıldı. Beceri bunu her seferinde senden ister.",
+    "withheld_other": "Sohbetteki {{count}} değer özel olabileceği için dışarıda bırakıldı. Beceri bunları her seferinde senden ister."
   },
   "skillMarket": {
     "acceptMore": "Yeni sürümün, elimdekinden daha fazlasını istediğini kabul ediyorum.",
