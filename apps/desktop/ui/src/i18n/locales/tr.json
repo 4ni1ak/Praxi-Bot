@@ -3238,6 +3238,36 @@
       "title": "Bu yalnızca masaüstü uygulamasında çalışır"
     },
     "details": "Ayrıntılar",
+    "emailProvider": {
+      "auth": {
+        "hint": "Anahtarın tamamını AgentMail hesabından kopyaladığını kontrol et, sonra tekrar dene.",
+        "title": "AgentMail bu API anahtarını kabul etmedi"
+      },
+      "forbidden": {
+        "hint": "AgentMail hesabında gelen kutusu oluşturabilen bir anahtar oluştur.",
+        "title": "Bu AgentMail anahtarının buna izni yok"
+      },
+      "quota": {
+        "hint": "Kullanmadığın bir gelen kutusunu sil ya da AgentMail'de planı yükselt, sonra tekrar dene.",
+        "title": "AgentMail planın sınırına ulaştı"
+      },
+      "rateLimited": {
+        "hint": "Bir dakika bekleyip tekrar dene.",
+        "title": "AgentMail yavaşlamanı istiyor"
+      },
+      "rejected": {
+        "hint": "Anahtarı ve adres adını (harf, rakam, tire) kontrol edip tekrar dene.",
+        "title": "AgentMail bu isteği kabul etmedi"
+      },
+      "taken": {
+        "hint": "agentmail.to üzerindeki adlar herkesle ortaktır. Başka bir ad seç; boş görünen bir ad senin için dolduruldu.",
+        "title": "Bu adres adı AgentMail'de zaten alınmış"
+      },
+      "transient": {
+        "hint": "Sorun onların tarafında. Birkaç dakika sonra tekrar dene.",
+        "title": "AgentMail şu anda kullanılamıyor"
+      }
+    },
     "engineNeedsNative": {
       "hint": "Kendi araçlarıyla çalışıyor. Bu bot için buna izin vermek için Düzelt'e bas.",
       "title": "Bu model için önce onayın gerekiyor"
@@ -3888,7 +3918,7 @@
       "bots": "Botlar bu sunucuda hazır.",
       "model": "Bir model bağlı."
     },
-    "managedOnServer": "Anahtarlar, izinler, araçlar ve eşleştirme {{name}} üzerinde yönetilir. Buradan bot oluşturup düzenleyebilir, sohbet edebilir ve ekranını izleyebilirsin.",
+    "managedOnServer": "Bu bilgisayar {{name}} üzerinde yönetici olarak onaylandıktan sonra anahtarları, izinleri, araçları ve e-postayı buradan da yönetirsin. Cihaz eşleştirme ve {{name}} güncellemesi {{name}} üzerinde kalır.",
     "missing": {
       "bots": "Bu sunucuda henüz bot yok.",
       "model": "Bu sunucuda henüz bağlı bir model yok."
@@ -3904,23 +3934,16 @@
     "newBotNeedsModel": "{{name}} sunucusunda henüz model yok, bu yüzden orada bot oluşturulamaz. Önce sunucuya bir model bağla.",
     "refusal": {
       "adminRequired": "{{name}} bu bilgisayarı henüz yönetici olarak onaylamadı. {{name}} üzerinde bir kez `bot host admin --all-desktops` çalıştır, sonra tekrar dene.",
-      "botPermissions": "Bir botun izinleri ve araçları {{name}} üzerinde yönetilir. Ad, kişilik ve model buradan değiştirilebilir.",
-      "composio": "Uygulama bağlantıları {{name}} üzerinde değil, bu bilgisayarın sahibi tarafında yönetilir.",
-      "connectionTest": "Anahtar testleri {{name}} üzerinde çalışır, bu uygulamadan yapılamaz.",
-      "credentials": "Bu e-posta ya da arama ayarı bu uygulamadan değil, {{name}} üzerinde değiştirilir.",
-      "generic": "{{name}} buna izin vermedi: {{reason}}",
+      "generic": "{{name}} buna izin vermedi, hiçbir şey değişmedi. Teknik neden Ayrıntılar bölümünde.",
+      "hostOnly": "Bu işlem bilerek yalnızca {{name}} üzerinde yapılır; bu uygulama yapamaz.",
       "hostTransfer": "Sunucuyu taşıma ve kanal eşleştirme {{name}} üzerinde yapılır.",
-      "knowledge": "Bilgi ayarları {{name}} üzerinde yönetilir.",
-      "lifecycle": "Eşleştirme ve sunucu güncellemeleri {{name}} üzerinde yapılır.",
+      "lifecycle": "Yeni cihaz eşleştirme ve {{name}} güncellemesi, bilerek {{name}} üzerinde `bot host` komutlarıyla yapılır.",
       "localOnly": "Bunu yalnızca {{name}} başındaki kişi yapabilir, bu uygulama yapamaz.",
-      "localProviders": "Yerel modeller ve kodlama araçları botun çalıştığı bilgisayara aittir. Kurmak için Bu bilgisayar'a geç.",
+      "needsAdmin": "{{name}} bunu uygulamadan kabul etmedi. {{name}} üzerinde bir kez `bot host admin --all-desktops` çalıştırarak bu bilgisayarı onayla, {{name}} sunucusunu son sürüme güncelle ve tekrar dene.",
       "overlay": "Bu soruyu yalnızca {{name}} başındaki kişi yanıtlayabilir.",
       "ownerOnly": "Bu yalnızca {{name}} üzerinde yapılabilir.",
-      "policy": "Çalıştırma politikası bu uygulamadan değil, {{name}} üzerinde ayarlanır.",
       "role": "{{name}} bu bilgisayarın bunu yapmasına izin vermiyor.",
-      "screenInput": "{{name}} bu bilgisayara ekranını denetleme izni vermedi. {{name}} üzerindeki Praxi'de izin ver.",
-      "secrets": "Anahtarlar ve gizli bilgiler bu uygulamadan değil, {{name}} üzerinde eklenir.",
-      "tools": "Araç sunucuları ve beceriler {{name}} üzerinde yönetilir."
+      "screenInput": "{{name}} bu bilgisayara ekranını denetleme izni vermedi. {{name}} üzerindeki Praxi'de izin ver."
     },
     "state": {
       "connected": "Bağlı",
@@ -4512,6 +4535,7 @@
     "recent": "Son aramalar",
     "reset": "Sıfırla",
     "results": "Mesaj sonuçları",
+    "retry": "Tekrar dene",
     "searching": "Aranıyor…",
     "title": "Mesajlarda ara",
     "when": "Tarih",
@@ -5857,6 +5881,7 @@
         "noColdOutreach": "Ortak agentmail.to alan adında istenmeyen tanıtım ve toplu e-posta göndermek yasaktır. Yalnızca senin ya da botunun gerçekten göndermesi gereken e-postalar için kullan.",
         "ownAccount": "Kendi ücretsiz AgentMail hesabın gerekir. Praxi-Bot senin yerine anahtar tutmaz: hesabındaki API anahtarını yapıştır.",
         "pricing": "Fiyat sayfasına bak",
+        "suggested": "Bunun yerine “{{name}}” adını dene.",
         "title": "Bota kendi adresini ver",
         "viaApi": "AgentMail gelen kutusu"
       },
@@ -6076,6 +6101,7 @@
       "optOutPlaceholder": "ayse@ornek.com ya da ornek.com",
       "optOutRemove": "{{value}} kaydını kaldır",
       "optOutTitle": "Yazmayacağım kişiler",
+      "retry": "Tekrar dene",
       "save": "Kaydet",
       "saved": "Kaydedildi",
       "sentAnyway": "Yine de gönderildi",

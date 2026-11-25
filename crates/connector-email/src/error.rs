@@ -97,3 +97,45 @@ impl From<EmailError> for ToolError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ProviderError;
+
+    /// The desktop app turns these exact sentences into plain words (`emailProviderKind` in the
+    /// UI): changing one here without changing it there makes a refusal look like "host silent".
+    #[test]
+    fn provider_error_sentences_are_pinned_for_the_desktop() {
+        assert_eq!(
+            ProviderError::Auth.to_string(),
+            "the provider rejected the API key"
+        );
+        assert_eq!(
+            ProviderError::Forbidden.to_string(),
+            "the API key is not allowed to do this"
+        );
+        assert_eq!(
+            ProviderError::Quota.to_string(),
+            "a limit of the provider plan was reached"
+        );
+        assert_eq!(
+            ProviderError::RateLimited {
+                retry_after_secs: Some(7)
+            }
+            .to_string(),
+            "rate limited by the provider, retry after 7s"
+        );
+        assert_eq!(
+            ProviderError::Transient.to_string(),
+            "the provider is temporarily unavailable"
+        );
+        assert_eq!(
+            ProviderError::Rejected {
+                code: Some("already_exists".into()),
+                detail: None,
+            }
+            .to_string(),
+            "the provider rejected the request (already_exists)"
+        );
+    }
+}

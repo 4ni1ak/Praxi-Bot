@@ -226,7 +226,7 @@ pub(crate) async fn hub_preview(
     peer: Option<Extension<PeerIdentity>>,
     json: Result<Json<HubSourceInput>, JsonRejection>,
 ) -> Result<Json<HubPreviewDto>, ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     let body = input(json)?;
     let source = source_of(body.url, body.rev, body.subdir)?;
     let dto = tokio::task::spawn_blocking(move || preview_with(&state, &hub_for(&state), &source))
@@ -246,7 +246,7 @@ pub(crate) async fn hub_install(
     peer: Option<Extension<PeerIdentity>>,
     json: Result<Json<HubInstallInput>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ManagedSkillDto>), ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     let body = input(json)?;
     let source = source_of(body.url, body.rev, body.subdir)?;
     let accept = body.accept;

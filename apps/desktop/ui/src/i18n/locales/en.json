@@ -3238,6 +3238,36 @@
       "title": "This only works in the desktop app"
     },
     "details": "Details",
+    "emailProvider": {
+      "auth": {
+        "hint": "Check that you copied the whole key from your AgentMail account, then try again.",
+        "title": "AgentMail did not accept this API key"
+      },
+      "forbidden": {
+        "hint": "Create a key that may create inboxes in your AgentMail account.",
+        "title": "This AgentMail key is not allowed to do that"
+      },
+      "quota": {
+        "hint": "Delete an unused inbox or upgrade the plan at AgentMail, then try again.",
+        "title": "Your AgentMail plan has reached its limit"
+      },
+      "rateLimited": {
+        "hint": "Wait a minute and try again.",
+        "title": "AgentMail asks you to slow down"
+      },
+      "rejected": {
+        "hint": "Check the key and the address name (letters, numbers, dashes), then try again.",
+        "title": "AgentMail did not accept this request"
+      },
+      "taken": {
+        "hint": "Names are shared by everyone on agentmail.to. Pick another name; a free-looking one is filled in for you.",
+        "title": "That address name is already taken at AgentMail"
+      },
+      "transient": {
+        "hint": "This is on their side. Try again in a few minutes.",
+        "title": "AgentMail is not available right now"
+      }
+    },
     "engineNeedsNative": {
       "hint": "It works with its own tools. Press Fix to allow that for this bot.",
       "title": "This model needs your OK first"
@@ -3888,7 +3918,7 @@
       "bots": "Bots are ready on this server.",
       "model": "A model is connected."
     },
-    "managedOnServer": "Keys, permissions, tools and pairing are managed on {{name}} itself. Here you can create and edit bots, chat and watch its screen.",
+    "managedOnServer": "Once this computer is confirmed as administrator on {{name}}, you manage keys, permissions, tools and mail from here too. Pairing devices and updating {{name}} stay on {{name}} itself.",
     "missing": {
       "bots": "No bots on this server yet.",
       "model": "No model connected on this server yet."
@@ -3904,23 +3934,16 @@
     "newBotNeedsModel": "{{name}} has no model yet, so a bot cannot be created there. Connect a model on the server first.",
     "refusal": {
       "adminRequired": "{{name}} has not confirmed this computer as its administrator yet. Run `bot host admin --all-desktops` once on {{name}}, then try again.",
-      "botPermissions": "A bot's permissions and tools are managed on {{name}} itself. Name, persona and model can be changed here.",
-      "composio": "App connections are managed on this computer's owner side, not on {{name}}.",
-      "connectionTest": "Key tests run on {{name}} itself and are not available from this app.",
-      "credentials": "This email or search setting is changed on {{name}} itself, not from this app.",
-      "generic": "{{name}} did not allow this: {{reason}}",
+      "generic": "{{name}} did not allow this, so nothing changed. The technical reason is under Details.",
+      "hostOnly": "This is only done on {{name}} itself, on purpose. This app cannot do it.",
       "hostTransfer": "Moving the host and pairing channels is done on {{name}} itself.",
-      "knowledge": "Knowledge settings are managed on {{name}} itself.",
-      "lifecycle": "Pairing and host updates are done on {{name}} itself.",
+      "lifecycle": "Pairing new devices and updating {{name}} are done on {{name}} itself with its `bot host` commands, on purpose.",
       "localOnly": "Only the person at {{name}} can do this, not this app.",
-      "localProviders": "Local models and coding tools belong to the computer where the bot runs. Switch to This computer to set them up.",
+      "needsAdmin": "{{name}} did not accept this from the app. Confirm this computer once with `bot host admin --all-desktops` on {{name}}, update {{name}} to the latest version, then try again.",
       "overlay": "Only the person at {{name}} can answer that prompt.",
       "ownerOnly": "This can only be done on {{name}} itself.",
-      "policy": "The execution policy is set on {{name}} itself, not from this app.",
       "role": "{{name}} does not allow this computer to do that.",
-      "screenInput": "{{name}} has not allowed this computer to control its screen. Allow it in Praxi on {{name}}.",
-      "secrets": "Keys and secrets are added on {{name}} itself, not from this app.",
-      "tools": "Tool servers and skills are managed on {{name}} itself."
+      "screenInput": "{{name}} has not allowed this computer to control its screen. Allow it in Praxi on {{name}}."
     },
     "state": {
       "connected": "Connected",
@@ -4512,6 +4535,7 @@
     "recent": "Recent",
     "reset": "Reset",
     "results": "Message results",
+    "retry": "Try again",
     "searching": "Searching…",
     "title": "Search messages",
     "when": "Date",
@@ -5857,6 +5881,7 @@
         "noColdOutreach": "Cold outreach and bulk mailing are prohibited on the shared agentmail.to domain. Use it for mail you or your bot have a reason to send.",
         "ownAccount": "You need your own free AgentMail account. Praxi-Bot does not hold any key for you: paste the API key from your account.",
         "pricing": "See their pricing",
+        "suggested": "Try “{{name}}” instead.",
         "title": "Give a bot its own address",
         "viaApi": "AgentMail inbox"
       },
@@ -6076,6 +6101,7 @@
       "optOutPlaceholder": "ann@example.com or example.com",
       "optOutRemove": "Remove {{value}}",
       "optOutTitle": "People I will not write to",
+      "retry": "Try again",
       "save": "Save",
       "saved": "Saved",
       "sentAnyway": "Sent anyway",

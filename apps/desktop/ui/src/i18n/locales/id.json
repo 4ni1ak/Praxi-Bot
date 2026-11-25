@@ -3238,6 +3238,36 @@
       "title": "This only works in the desktop app"
     },
     "details": "Details",
+    "emailProvider": {
+      "auth": {
+        "hint": "Pastikan Anda menyalin seluruh kunci dari akun AgentMail, lalu coba lagi.",
+        "title": "AgentMail tidak menerima kunci API ini"
+      },
+      "forbidden": {
+        "hint": "Buat kunci di akun AgentMail yang boleh membuat kotak masuk.",
+        "title": "Kunci AgentMail ini tidak diizinkan melakukan itu"
+      },
+      "quota": {
+        "hint": "Hapus kotak masuk yang tidak dipakai atau tingkatkan paket di AgentMail, lalu coba lagi.",
+        "title": "Paket AgentMail Anda telah mencapai batasnya"
+      },
+      "rateLimited": {
+        "hint": "Tunggu semenit lalu coba lagi.",
+        "title": "AgentMail meminta Anda memperlambat"
+      },
+      "rejected": {
+        "hint": "Periksa kunci dan nama alamat (huruf, angka, tanda hubung), lalu coba lagi.",
+        "title": "AgentMail tidak menerima permintaan ini"
+      },
+      "taken": {
+        "hint": "Nama di agentmail.to dipakai bersama oleh semua orang. Pilih nama lain; nama yang tampaknya masih bebas sudah diisikan untuk Anda.",
+        "title": "Nama alamat itu sudah dipakai di AgentMail"
+      },
+      "transient": {
+        "hint": "Masalahnya ada di pihak mereka. Coba lagi dalam beberapa menit.",
+        "title": "AgentMail sedang tidak tersedia"
+      }
+    },
     "engineNeedsNative": {
       "hint": "It works with its own tools. Press Fix to allow that for this bot.",
       "title": "This model needs your OK first"
@@ -3888,7 +3918,7 @@
       "bots": "Bots are ready on this server.",
       "model": "A model is connected."
     },
-    "managedOnServer": "Keys, permissions, tools and pairing are managed on {{name}} itself. Here you can create and edit bots, chat and watch its screen.",
+    "managedOnServer": "Setelah komputer ini dikonfirmasi sebagai administrator di {{name}}, Anda juga mengelola kunci, izin, alat, dan email dari sini. Memasangkan perangkat dan memperbarui {{name}} tetap dilakukan di {{name}} sendiri.",
     "missing": {
       "bots": "No bots on this server yet.",
       "model": "No model connected on this server yet."
@@ -3903,24 +3933,17 @@
     },
     "newBotNeedsModel": "{{name}} has no model yet, so a bot cannot be created there. Connect a model on the server first.",
     "refusal": {
-      "adminRequired": "{{name}} has not confirmed this computer as its administrator yet. Run `bot host admin --all-desktops` once on {{name}}, then try again.",
-      "botPermissions": "A bot's permissions and tools are managed on {{name}} itself. Name, persona and model can be changed here.",
-      "composio": "App connections are managed on this computer's owner side, not on {{name}}.",
-      "connectionTest": "Key tests run on {{name}} itself and are not available from this app.",
-      "credentials": "This email or search setting is changed on {{name}} itself, not from this app.",
-      "generic": "{{name}} did not allow this: {{reason}}",
+      "adminRequired": "{{name}} belum mengonfirmasi komputer ini sebagai administrator. Jalankan `bot host admin --all-desktops` sekali di {{name}}, lalu coba lagi.",
+      "generic": "{{name}} tidak mengizinkan ini, jadi tidak ada yang berubah. Alasan teknisnya ada di Detail.",
+      "hostOnly": "Ini sengaja hanya dilakukan di {{name}} sendiri. Aplikasi ini tidak bisa melakukannya.",
       "hostTransfer": "Moving the host and pairing channels is done on {{name}} itself.",
-      "knowledge": "Knowledge settings are managed on {{name}} itself.",
-      "lifecycle": "Pairing and host updates are done on {{name}} itself.",
+      "lifecycle": "Memasangkan perangkat baru dan memperbarui {{name}} dilakukan di {{name}} sendiri dengan perintah `bot host`, dengan sengaja.",
       "localOnly": "Only the person at {{name}} can do this, not this app.",
-      "localProviders": "Local models and coding tools belong to the computer where the bot runs. Switch to This computer to set them up.",
+      "needsAdmin": "{{name}} tidak menerima ini dari aplikasi. Konfirmasi komputer ini sekali dengan `bot host admin --all-desktops` di {{name}}, perbarui {{name}} ke versi terbaru, lalu coba lagi.",
       "overlay": "Only the person at {{name}} can answer that prompt.",
       "ownerOnly": "This can only be done on {{name}} itself.",
-      "policy": "The execution policy is set on {{name}} itself, not from this app.",
       "role": "{{name}} does not allow this computer to do that.",
-      "screenInput": "{{name}} has not allowed this computer to control its screen. Allow it in Praxi on {{name}}.",
-      "secrets": "Keys and secrets are added on {{name}} itself, not from this app.",
-      "tools": "Tool servers and skills are managed on {{name}} itself."
+      "screenInput": "{{name}} has not allowed this computer to control its screen. Allow it in Praxi on {{name}}."
     },
     "state": {
       "connected": "Connected",
@@ -4512,6 +4535,7 @@
     "recent": "Recent",
     "reset": "Reset",
     "results": "Message results",
+    "retry": "Coba lagi",
     "searching": "Searching…",
     "title": "Search messages",
     "when": "Date",
@@ -5857,6 +5881,7 @@
         "noColdOutreach": "Cold outreach and bulk mailing are prohibited on the shared agentmail.to domain. Use it for mail you or your bot have a reason to send.",
         "ownAccount": "You need your own free AgentMail account. Praxi-Bot does not hold any key for you: paste the API key from your account.",
         "pricing": "See their pricing",
+        "suggested": "Coba “{{name}}” sebagai gantinya.",
         "title": "Give a bot its own address",
         "viaApi": "AgentMail inbox"
       },
@@ -6076,6 +6101,7 @@
       "optOutPlaceholder": "ann@example.com or example.com",
       "optOutRemove": "Remove {{value}}",
       "optOutTitle": "People I will not write to",
+      "retry": "Coba lagi",
       "save": "Save",
       "saved": "Saved",
       "sentAnyway": "Sent anyway",

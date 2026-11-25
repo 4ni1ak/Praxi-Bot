@@ -308,6 +308,18 @@ async fn provider_errors_map_to_coarse_classes_without_the_providers_text() {
         "{e}"
     );
 
+    // A name that is already taken is a conflict the person can fix, not a quota.
+    let e = failing(409, None, body("already_exists")).await;
+    assert!(
+        matches!(&e, EmailError::Provider(ProviderError::Rejected { code: Some(c), .. }) if c == "already_exists"),
+        "{e}"
+    );
+    let e = failing(409, None, json!({"name":"E"})).await;
+    assert!(
+        matches!(&e, EmailError::Provider(ProviderError::Rejected { code: Some(c), .. }) if c == "conflict"),
+        "{e}"
+    );
+
     let e = failing(404, None, body("not_found")).await;
     assert!(matches!(e, EmailError::NotFound(_)), "{e}");
 

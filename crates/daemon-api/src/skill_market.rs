@@ -641,7 +641,7 @@ pub(crate) async fn market_index(
     peer: Option<Extension<PeerIdentity>>,
     json: Result<Json<MarketIndexInput>, JsonRejection>,
 ) -> Result<Json<MarketIndexDto>, ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     let body = input(json)?;
     let dto = blocking(move || index_with(&state, &market_hub(&state), body.url)).await?;
     Ok(Json(dto))
@@ -658,7 +658,7 @@ pub(crate) async fn market_preview(
     peer: Option<Extension<PeerIdentity>>,
     json: Result<Json<MarketPreviewInput>, JsonRejection>,
 ) -> Result<Json<MarketPreviewResponse>, ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     let body = input(json)?;
     let dto = blocking(move || preview_market(&state, &market_hub(&state), &body)).await?;
     Ok(Json(dto))
@@ -675,7 +675,7 @@ pub(crate) async fn market_install(
     peer: Option<Extension<PeerIdentity>>,
     json: Result<Json<MarketInstallInput>, JsonRejection>,
 ) -> Result<(StatusCode, Json<MarketInstalledDto>), ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     let body = input(json)?;
     let dto = blocking(move || {
         let _guard = state.0.skill_mutations.lock();
@@ -692,7 +692,7 @@ pub(crate) async fn market_installed(
     State(state): State<AppState>,
     peer: Option<Extension<PeerIdentity>>,
 ) -> Result<Json<Vec<MarketInstalledDto>>, ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     let dto = blocking(move || list_installed(&state, &market_hub(&state))).await?;
     Ok(Json(dto))
 }
@@ -743,7 +743,7 @@ pub(crate) async fn market_uninstall(
     Path(name): Path<String>,
     query: Result<Query<DeleteSkillQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Response, ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     skills::owner::validate_owner_name(&name).map_err(owner_error)?;
     let Query(query) = query.map_err(|_| ApiError::bad_request("invalid skill query"))?;
     let (status, dto) = blocking(move || {

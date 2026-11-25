@@ -4,6 +4,7 @@ import {
   EMPTY_QUEUE,
   enqueue,
   putBack,
+  queuesLocally,
   removeQueued,
   takeForNow,
   takeForRunEnd
@@ -54,4 +55,17 @@ test("the round button is a stop while the bot works and the box is empty, an ar
   assert.equal(sendButtonDisabled({ mode: "stop", sending: false, stopping: true }), true);
   assert.equal(sendButtonDisabled({ mode: "stop", sending: true, stopping: false }), false);
   assert.equal(sendButtonDisabled({ mode: "send", sending: true, stopping: false }), true);
+});
+
+test("a message typed while the run waits for an approval goes to the daemon, also when the card never arrived", () => {
+  const typed = { runActive: true, slashCommand: false, hasFiles: false };
+  // Plain work in progress: the message waits in the local queue.
+  assert.equal(queuesLocally({ ...typed, approvalWaits: false }), true);
+  // An approval is open (card shown, or the paired host says the run waits and no card reached this app):
+  // the daemon must get the message so it can skip the card and start the next turn.
+  assert.equal(queuesLocally({ ...typed, approvalWaits: true }), false);
+  // Nothing running, commands and attachments never queue locally.
+  assert.equal(queuesLocally({ ...typed, runActive: false, approvalWaits: false }), false);
+  assert.equal(queuesLocally({ ...typed, slashCommand: true, approvalWaits: false }), false);
+  assert.equal(queuesLocally({ ...typed, hasFiles: true, approvalWaits: false }), false);
 });

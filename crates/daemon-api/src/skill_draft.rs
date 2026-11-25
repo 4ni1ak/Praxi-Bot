@@ -282,7 +282,7 @@ pub(crate) async fn draft_from_chat(
     peer: Option<Extension<PeerIdentity>>,
     Path(chat_id): Path<Uuid>,
 ) -> Result<Json<SkillDraftDto>, ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     state.require_owner(&headers)?;
     let dto = tokio::task::spawn_blocking(move || draft_for_chat(&state, chat_id))
         .await
@@ -300,7 +300,7 @@ pub(crate) async fn draft_preview(
     peer: Option<Extension<PeerIdentity>>,
     json: Result<Json<DraftTextInput>, JsonRejection>,
 ) -> Result<Json<HubPreviewDto>, ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     let body = input(json)?;
     let dto = tokio::task::spawn_blocking(move || {
         state.agent().refresh_external_redactor();
@@ -322,7 +322,7 @@ pub(crate) async fn draft_install(
     peer: Option<Extension<PeerIdentity>>,
     json: Result<Json<DraftInstallInput>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ManagedSkillDto>), ApiError> {
-    local_owner(peer.as_ref())?;
+    local_owner(&state, peer.as_ref())?;
     let body = input(json)?;
     let dto = tokio::task::spawn_blocking(move || {
         let _guard = state.0.skill_mutations.lock();

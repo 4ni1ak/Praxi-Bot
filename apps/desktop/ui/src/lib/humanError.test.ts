@@ -195,8 +195,9 @@ test("takeover and pause failures name their real reason, never the generic sent
       layer.humanError({ status: 409, code: "conflict", message: "release request conflict" }).code,
       "takeoverRequestConflict"
     );
-    // The unknown host refusal keeps the daemon's reason in the sentence.
-    assert.match(layer.humanLine(cases[1][0]), /some brand new refusal/);
+    // An unknown host refusal never shows the daemon's English reason; it stays in the details.
+    assert.doesNotMatch(layer.humanLine(cases[1][0]), /some brand new refusal/);
+    assert.match(layer.humanError(cases[1][0]).details, /some brand new refusal/);
   }
   await i18n.changeLanguage("en");
 });
@@ -275,4 +276,45 @@ test("humanError handles non-object inputs, circular objects, status fallbacks a
   const missingCmd = layer.humanError("command not found: `ffmpeg`");
   assert.equal(missingCmd.code, "toolMissingProgram");
   assert.match(missingCmd.title, /ffmpeg/);
+});
+
+test("a host that asks for the owner key gives one actionable sentence in every language, never English fragments", async () => {
+  const raw =
+    "this needs the owner key: start Praxi from the desktop app, or run it on the host with its owner key";
+  for (const lng of ["en", "tr", "de", "es", "fr", "pt"]) {
+    await i18n.changeLanguage(lng);
+    for (const err of [
+      { status: 403, code: "owner_key_required", host: "Praxi host", message: raw },
+      { status: 403, code: "forbidden", host: "Praxi host", message: "a brand new refusal nobody mapped" }
+    ]) {
+      const h = layer.humanError(err);
+      assert.equal(h.code, "host_refusal", lng);
+      assert.match(h.title, /Praxi host/, lng);
+      assert.doesNotMatch(h.title, /owner key|brand new/i, lng);
+      assert.match(h.details, /owner key|brand new/, lng);
+    }
+    const needs = layer.humanError({ status: 403, code: "owner_key_required", host: "Praxi host", message: raw });
+    assert.match(needs.title, /bot host admin --all-desktops/, lng);
+  }
+  await i18n.changeLanguage("en");
+});
+
+test("a provider's refusal behind a 502 is worded by what the provider said, never as a silent host", async () => {
+  const cases: Array<[string, RegExp]> = [
+    ["mailbox provider: the provider rejected the API key", /API key|API-Schl|clé|chave|clave|anahtar/i],
+    ["mailbox provider: the provider rejected the request (already_exists)", /taken|vergeben|ocupado|pris|uso|alınmış/i],
+    ["mailbox provider: a limit of the provider plan was reached", /limit|límite|limite|sınır/i],
+    ["mailbox provider: the provider is temporarily unavailable", /not available|nicht erreichbar|no está disponible|pas disponible|não está disponível|kullanılamıyor/i]
+  ];
+  for (const lng of ["en", "tr", "de", "es", "fr", "pt"]) {
+    await i18n.changeLanguage(lng);
+    for (const [message, expected] of cases) {
+      const h = layer.humanError({ status: 502, code: "email_provider_error", host: "Praxi host", message });
+      assert.equal(h.code, "email_provider_error", `${lng} ${message}`);
+      assert.notEqual(h.code, "host_silent");
+      assert.match(`${h.title} ${h.hint}`, expected, `${lng} ${message}`);
+      assert.doesNotMatch(h.title, /^errors\./, lng);
+    }
+  }
+  await i18n.changeLanguage("en");
 });

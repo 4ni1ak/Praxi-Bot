@@ -343,6 +343,13 @@ impl LeaderControl {
         Ok(())
     }
 
+    /// Tests: forget the calls counted so far, so a long matrix of administrator
+    /// requests is judged by what the guard decides, not by the minute budget.
+    #[cfg(test)]
+    pub(crate) fn reset_admin_budget(&self) {
+        self.0.admin_calls.lock().clear();
+    }
+
     /// Whether the paired device `key` currently holds host administration.
     /// Read from the pairing store on every call: a revoke or a withdrawn
     /// grant takes effect on the very next request of a live connection.

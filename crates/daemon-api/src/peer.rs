@@ -155,54 +155,118 @@ pub(crate) fn protect_execution_config(
     Ok(())
 }
 
-/// The "accounts and keys" settings a paired desktop that holds host
-/// administration (`Device::admin`, granted by the host's owner) may change on
-/// the host it controls. This is the ONLY allow-list for that: nothing outside
-/// it is opened, and every route in it is exact (no prefixes, no wildcards):
+/// THE principle: a paired desktop that holds host administration
+/// (`Device::admin`, granted by the host's owner, re-read on every request) IS
+/// the owner of that host. It already opens a terminal there and signs the
+/// coding CLIs in, so it is let through everything the owner gate and the peer
+/// gate refuse to other peers, EXCEPT this list. The list is short on purpose,
+/// every row has a reason, and `admin_desktop_never_is_exact` pins it.
 ///
-/// * mail accounts: create, replace, delete, test (`POST /v1/email/accounts`,
-///   `PUT|DELETE /v1/email/accounts/{name}`, `POST /v1/email/test`,
-///   `POST /v1/email/accounts/{name}/test|send-test`);
-/// * web search: `PUT /v1/web/search`, `POST /v1/web/search/test`;
-/// * dictation service and key: `PUT /v1/voice`.
+/// An administrator desktop must never be able to
 ///
-/// Secrets in these bodies are write-only (the handlers store them in the
-/// host's secret store and never return them). Unconfirmed desktops are told
-/// how to get confirmed, phones, nodes and other hosts never reach this
-/// function (the role checks above refuse them), and the rest of
-/// [`host_mode_desktop_denial`] (policy, secrets, tool servers, skills, mail
-/// channel and guard, pairing) stays closed to every desktop.
-fn host_admin_settings_class(method: &Method, check_path: &str) -> Option<&'static str> {
-    let account = |rest: &str| !rest.is_empty() && !rest.contains('/');
-    let account_path = check_path.strip_prefix("/v1/email/accounts/");
-    match (method, check_path) {
-        (&Method::POST, "/v1/email/accounts" | "/v1/email/test") => Some("mail-account"),
-        (&Method::PUT | &Method::DELETE, _) if account_path.is_some_and(account) => {
-            Some("mail-account")
-        }
-        (&Method::POST, _)
-            if account_path
-                .and_then(|rest| {
-                    rest.strip_suffix("/test")
-                        .or_else(|| rest.strip_suffix("/send-test"))
-                })
-                .is_some_and(account) =>
-        {
-            Some("mail-account")
-        }
-        (&Method::PUT, "/v1/web/search") | (&Method::POST, "/v1/web/search/test") => {
-            Some("web-search")
-        }
-        (&Method::PUT, "/v1/voice") => Some("dictation"),
-        _ => None,
+/// 1. mint or change administrators or leave the host in a new state: pairing
+///    invites, revoking devices, granting or withdrawing administration,
+///    standby/activate/update, state import and hand over (`/v1/host…`, any
+///    method except reads);
+/// 2. use THIS host as a springboard to a third computer: the host's own
+///    outgoing links, their terminals and copy-setup (`/v1/hosts…`);
+/// 3. create credentials for the MCP facade (`/v1/mcp-server…`), which other
+///    programs on the host present as their own identity;
+/// 4. run host repairs or read the host's diagnostics (`/v1/doctor…`);
+/// 5. pair a chat channel account (`/v1/channels/telegram/pair-code`): that
+///    hands bot control to another person's account;
+/// 6. use the signed ingress of an incoming webhook (`/v1/incoming-webhooks…`):
+///    its credential is the HMAC secret, never a paired device;
+/// 7. grant or withdraw the screen permissions of paired devices
+///    (`/v1/view/privileges…`): that is `bot host screen` on the host;
+/// 8. reveal the plaintext of a stored fill secret (`POST /v1/fill-secrets/reveal`):
+///    a login, password or card is typed by the bot on the host and never needs
+///    to be read over the link, so a stolen administrator desktop cannot drain
+///    the vault (the handler also insists on the person at the host's own app).
+///
+/// No other route returns secret material: the API token and the owner key are
+/// never an output, provider/mail/search/voice keys and secrets are write-only,
+/// MCP facade tokens and host copy-setup are on this list (3, 2), and the one
+/// open route that shows a credential once is creating an incoming webhook
+/// (its HMAC secret, intended: see `docs/guide/security.md`).
+///
+/// Two more refusals hold for every peer and are checked elsewhere: answering
+/// an overlay question of the host's own screen (`answers_overlay_question`)
+/// and the owner key itself (it is never an input or an output of any route;
+/// the guard strips it from what a peer sends).
+pub(crate) fn admin_desktop_never(method: &Method, check_path: &str) -> Option<&'static str> {
+    if is_mutating(method) && under(check_path, "/v1/host") {
+        return Some("pairing and host lifecycle are managed on the host itself");
     }
+    if under(check_path, "/v1/hosts") {
+        return Some("host links are managed by the local user only");
+    }
+    if under(check_path, "/v1/mcp-server") {
+        return Some("the MCP server facade is host-local and requires scoped credentials");
+    }
+    if under(check_path, "/v1/doctor") {
+        return Some("host-local diagnostics are not allowed for peers");
+    }
+    if *method == Method::POST && check_path == "/v1/channels/telegram/pair-code" {
+        return Some("host transfer and channel pairing are done on the host itself");
+    }
+    if under(check_path, "/v1/incoming-webhooks") {
+        return Some("the signed ingress of an incoming webhook is not a peer path");
+    }
+    if under(check_path, "/v1/view/privileges") {
+        return Some("screen permissions of devices are granted on the host itself");
+    }
+    if *method == Method::POST && check_path == "/v1/fill-secrets/reveal" {
+        return Some("revealing a stored secret is done at the host's own app");
+    }
+    None
 }
 
-/// What a Desktop peer may NOT administer on a daemon that runs as an
-/// always-on host (`mode = host`). On such a host the desktop is an operator
-/// of bots, runs, chats and the screen, not an administrator of credentials,
-/// tool servers, skills or pairing: those stay with the host's own local user
-/// (CLI on the host). Returns the refusal reason for `method path`.
+/// A read of a sensitive collection by the administrator desktop (the audit
+/// trail, a chat export, the list of stored secret names, the mail send log,
+/// the usage export): attributed like a change, path and method only.
+fn sensitive_read(method: &Method, check_path: &str) -> bool {
+    if !matches!(*method, Method::GET | Method::HEAD) {
+        return false;
+    }
+    matches!(
+        check_path,
+        "/v1/audit"
+            | "/v1/audit/export"
+            | "/v1/fill-secrets"
+            | "/v1/email/guard/send-log"
+            | "/v1/email/guard/send-log.csv"
+            | "/v1/usage/export"
+    ) || check_path
+        .strip_prefix("/v1/chats/")
+        .and_then(|rest| rest.strip_suffix("/export"))
+        .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+}
+
+/// The name an audit row gives the kind of owner action: the first path segment
+/// after `/v1` (and the sub-resource of a bot), never an id, a name or a body.
+fn audit_class(check_path: &str) -> String {
+    let mut parts = check_path
+        .trim_start_matches('/')
+        .split('/')
+        .skip(1)
+        .filter(|segment| !segment.is_empty());
+    let first = parts.next().unwrap_or("-");
+    if first == "bots" {
+        return match parts.nth(1) {
+            Some(sub) => format!("bots/{sub}"),
+            None => "bots".to_owned(),
+        };
+    }
+    first.to_owned()
+}
+
+/// What an ORDINARY Desktop peer may not change on a daemon that runs as an
+/// always-on host (`mode = host`): there it is an operator of bots, runs, chats
+/// and the screen. Credentials, tool servers, skills and the policy are the
+/// owner's, and the host's administrator desktop is the owner
+/// (`admin_desktop_never` lists what even that desktop may not do). Returns
+/// the refusal reason for `method path`.
 fn host_mode_desktop_denial(method: &Method, check_path: &str) -> Option<&'static str> {
     let mutating = is_mutating(method);
     let under = |prefix: &str| under(check_path, prefix);
@@ -589,6 +653,30 @@ fn audit_chat_start(
         .map(|_| ())
 }
 
+/// Why an ORDINARY peer (not the host's administrator desktop) is refused
+/// `method path` as an owner action, if it is: the owner settings
+/// (`host_local_denial`, `host_mode_desktop_denial`) and every owner-gated
+/// route that is not one a paired device may call
+/// (`crate::owner::peer_may_call`). A desktop of a daemon that is not an
+/// always-on host keeps its older, wider reach.
+fn owner_denial(
+    method: &Method,
+    check_path: &str,
+    role: PeerRole,
+    host_mode: bool,
+) -> Option<&'static str> {
+    if let Some(why) = host_local_denial(method, check_path) {
+        return Some(why);
+    }
+    if !host_mode && role == PeerRole::Desktop {
+        return None;
+    }
+    host_mode_desktop_denial(method, check_path).or_else(|| {
+        (!crate::owner::peer_may_call(role, method.as_str(), check_path))
+            .then_some("peer role does not allow this operation")
+    })
+}
+
 #[allow(clippy::too_many_lines)] // one ordered chain of guard checks; order is the contract
 async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let Some(peer) = req.extensions().get::<PeerIdentity>().cloned() else {
@@ -601,8 +689,37 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         Err(_) => return ApiError::forbidden("invalid path").into_response(),
     };
     let check_path = normalize_deny_path(&path);
-    if let Some(why) = host_local_denial(req.method(), &check_path) {
-        return ApiError::forbidden(why).into_response();
+    let method = req.method().clone();
+    let host_mode = state.leader().config().mode == crate::host::HostMode::Host;
+    let desktop_on_host = host_mode && peer.role == PeerRole::Desktop;
+    // THE principle (see `admin_desktop_never`): the host's administrator
+    // desktop is the owner. It is let through the owner settings and the
+    // owner-gated routes that every other peer is refused, minus a short list.
+    let admin = desktop_on_host && state.is_host_admin(Some(&peer));
+    let owner_denied = owner_denial(&method, &check_path, peer.role, host_mode);
+    let mut owner_action = false;
+    if desktop_on_host
+        && (admin || owner_denied.is_some())
+        && let Some(never) = admin_desktop_never(&method, &check_path)
+    {
+        return ApiError::forbidden(never).into_response();
+    }
+    match owner_denied {
+        None => {}
+        Some(why) if !desktop_on_host => return ApiError::forbidden(why).into_response(),
+        // An ordinary desktop is told what to do, not just "no".
+        Some(_) if !admin => {
+            return ApiError::new(
+                axum::http::StatusCode::FORBIDDEN,
+                crate::host_admin::codes::REQUIRED,
+                format!(
+                    "the owner must confirm this desktop on the host: run `{}`",
+                    crate::host_admin::CONFIRM_COMMAND
+                ),
+            )
+            .into_response();
+        }
+        Some(_) => owner_action = true,
     }
     if is_components_path(&check_path) && peer.role != PeerRole::Desktop {
         return ApiError::forbidden("components are managed by the owner's desktop only")
@@ -630,9 +747,6 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
             // have no read, proposal, mutation or replay access.
             || check_path == "/v1/workflows"
             || check_path.starts_with("/v1/workflows/")
-            // Mail / search / dictation accounts and keys: a desktop only (and
-            // on a host only a confirmed one, below). A phone never.
-            || host_admin_settings_class(req.method(), &check_path).is_some()
             || check_path.ends_with("/workflow-proposal")
             || (req.method() == Method::POST
                 && PHONE_DENIED_POST_PATHS.contains(&check_path.as_str()))
@@ -643,48 +757,16 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     if denied || stop_refused(req.method(), &check_path, peer.role) {
         return ApiError::forbidden("peer role does not allow this operation").into_response();
     }
-    if state.leader().config().mode == crate::host::HostMode::Host {
+    if host_mode {
         // Pairing and the host lifecycle (invite, revoke, standby, activate,
         // update, import, handover) are done on the host itself: a paired
-        // peer, whatever its role, cannot mint tickets, revoke devices or
-        // change who leads.
+        // peer, whatever its role and even as administrator, cannot mint
+        // tickets, revoke devices or change who leads.
         if is_mutating(req.method()) && under(&check_path, "/v1/host") {
             return ApiError::forbidden(
                 "pairing and host lifecycle are managed on the host itself",
             )
             .into_response();
-        }
-        if peer.role == PeerRole::Desktop
-            && let Some(class) = host_admin_settings_class(req.method(), &check_path)
-        {
-            if !state.is_host_admin(Some(&peer)) {
-                return ApiError::new(
-                    axum::http::StatusCode::FORBIDDEN,
-                    crate::host_admin::codes::REQUIRED,
-                    format!(
-                        "the owner must confirm this desktop on the host: run `{}`",
-                        crate::host_admin::CONFIRM_COMMAND
-                    ),
-                )
-                .into_response();
-            }
-            // Same budget as the other administration calls, and the change is
-            // attributed before it runs (fail closed). Never the body.
-            if let Err(error) = state.leader().admit_admin_call() {
-                return error.into_response();
-            }
-            if let Err(error) = crate::host_admin::audit(
-                &state,
-                &crate::host_admin::admin_for(&peer.key),
-                "host.admin.settings",
-                &serde_json::json!({"class": class, "method": req.method().as_str(), "path": check_path}),
-            ) {
-                return error.into_response();
-            }
-        } else if peer.role == PeerRole::Desktop
-            && let Some(why) = host_mode_desktop_denial(req.method(), &check_path)
-        {
-            return ApiError::forbidden(why).into_response();
         }
     }
     if req.method() == Method::POST && answers_overlay_question(&check_path) {
@@ -696,6 +778,43 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     }
     req.extensions_mut()
         .insert(crate::live_view::Actor::peer_for(&state, &peer));
+    // The owner key is never something a peer brings. The administrator desktop
+    // of a host is the owner there, so the handlers that check for the owner
+    // (they only see headers) are shown this host's own key; nobody else gets it.
+    req.headers_mut().remove(crate::owner::OWNER_HEADER);
+    if admin
+        && let Some(key) = state.owner_key()
+        && let Ok(mut value) = axum::http::HeaderValue::from_str(&key)
+    {
+        value.set_sensitive(true);
+        req.headers_mut().insert(crate::owner::OWNER_HEADER, value);
+    }
+    // An owner change made by the administrator desktop is attributed before it
+    // runs (fail closed) and shares the administration budget. Class, method
+    // and path only, never the body. Decisions have their own rows below.
+    let decision = path.starts_with("/v1/approvals/")
+        || path.starts_with("/v1/questions/")
+        || path.starts_with("/v1/control/");
+    let policy_before = (admin && method == Method::PUT && check_path == "/v1/policy")
+        .then(|| crate::routes::coarse_policy_level(&state));
+    if admin
+        && !decision
+        && ((is_mutating(&method)
+            && (owner_action || crate::owner::is_owner_route(method.as_str(), &check_path)))
+            || sensitive_read(&method, &check_path))
+    {
+        if let Err(error) = state.leader().admit_admin_call() {
+            return error.into_response();
+        }
+        if let Err(error) = crate::host_admin::audit(
+            &state,
+            &crate::host_admin::admin_for(&peer.key),
+            "host.admin.settings",
+            &serde_json::json!({"class": audit_class(&check_path), "method": method.as_str(), "path": check_path}),
+        ) {
+            return error.into_response();
+        }
+    }
     // New schedule source/read capabilities remain local-owner only even on
     // encoded or slash-normalized aliases. Existing plain timer requests keep
     // their earlier peer policy; handlers also guard already-configured rows.
@@ -790,6 +909,20 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         return ApiError::internal(error).into_response();
     }
     let response = next.run(req).await;
+    // The policy is the one change whose size matters at a glance: the coarse level (a preset name
+    // or `custom`) before and after, never the body.
+    if let Some(before) = policy_before
+        && response.status().is_success()
+        && let Err(error) = crate::host_admin::audit(
+            &state,
+            &crate::host_admin::admin_for(&peer.key),
+            "host.admin.settings",
+            &serde_json::json!({"class": "policy", "method": "PUT", "path": "/v1/policy",
+                "level_before": before, "level_after": crate::routes::coarse_policy_level(&state)}),
+        )
+    {
+        return error.into_response();
+    }
     if let Some(actor) = audit_actor
         && let Err(error) = state.storage().append_audit(
             state.user_id(), None, &actor, "peer.decision_completed",
@@ -826,51 +959,165 @@ mod tests {
         }
     }
 
+    /// The short list of what even the host's administrator desktop may not do:
+    /// every row, and the neighbours that must stay open.
     #[test]
-    fn the_admin_settings_allow_list_is_exact() {
-        for (method, path, class) in [
-            (Method::POST, "/v1/email/accounts", "mail-account"),
-            (Method::PUT, "/v1/email/accounts/work", "mail-account"),
-            (Method::DELETE, "/v1/email/accounts/work", "mail-account"),
-            (Method::POST, "/v1/email/test", "mail-account"),
-            (Method::POST, "/v1/email/accounts/work/test", "mail-account"),
-            (
-                Method::POST,
-                "/v1/email/accounts/work/send-test",
-                "mail-account",
-            ),
-            (Method::PUT, "/v1/web/search", "web-search"),
-            (Method::POST, "/v1/web/search/test", "web-search"),
-            (Method::PUT, "/v1/voice", "dictation"),
+    fn admin_desktop_never_is_exact() {
+        for (method, path) in [
+            // 1. administrators and the host's lifecycle
+            (Method::POST, "/v1/host/invite"),
+            (Method::DELETE, "/v1/host/devices/abc"),
+            (Method::PUT, "/v1/host/devices/abc/admin"),
+            (Method::POST, "/v1/host/standby"),
+            (Method::POST, "/v1/host/activate"),
+            (Method::POST, "/v1/host/update"),
+            (Method::POST, "/v1/host/import"),
+            (Method::POST, "/v1/host/handover"),
+            // 2. the host's own links to other computers
+            (Method::GET, "/v1/hosts"),
+            (Method::POST, "/v1/hosts/pair"),
+            (Method::POST, "/v1/hosts/abc/terminal"),
+            (Method::POST, "/v1/hosts/abc/copy-setup"),
+            (Method::PUT, "/v1/hosts/abc/computer-access"),
+            // 3. MCP facade credentials
+            (Method::POST, "/v1/mcp-server/tokens"),
+            (Method::DELETE, "/v1/mcp-server/tokens/abc"),
+            // 4. repairs and diagnostics
+            (Method::GET, "/v1/doctor"),
+            (Method::POST, "/v1/doctor/repair/x"),
+            // 5. chat channel pairing
+            (Method::POST, "/v1/channels/telegram/pair-code"),
+            // 6. the signed webhook ingress
+            (Method::POST, "/v1/incoming-webhooks/abc"),
+            // 7. screen permissions of devices
+            (Method::PUT, "/v1/view/privileges/abc"),
+            // 8. plaintext of a stored secret
+            (Method::POST, "/v1/fill-secrets/reveal"),
         ] {
-            assert_eq!(
-                host_admin_settings_class(&method, path),
-                Some(class),
+            assert!(
+                admin_desktop_never(&method, path).is_some(),
                 "{method} {path}"
             );
         }
         for (method, path) in [
-            (Method::GET, "/v1/email/accounts"),
-            (Method::HEAD, "/v1/email/accounts"),
-            (Method::PATCH, "/v1/email/accounts/work"),
-            (Method::PUT, "/v1/email/accounts/"),
-            (Method::PUT, "/v1/email/accounts/a/b"),
-            (Method::POST, "/v1/email/accounts//test"),
+            // reads of the host's own state stay open
+            (Method::GET, "/v1/host"),
+            (Method::GET, "/v1/host/screen"),
+            // owner settings are the administrator's
+            (Method::PUT, "/v1/policy"),
+            (Method::POST, "/v1/secrets/provider/key"),
+            (Method::POST, "/v1/mcp/servers"),
+            (Method::PUT, "/v1/mcp/servers/x"),
+            (Method::POST, "/v1/skills"),
+            (Method::GET, "/v1/fill-secrets"),
+            (Method::POST, "/v1/fill-secrets"),
+            (Method::DELETE, "/v1/fill-secrets/site/login"),
+            (Method::POST, "/v1/fill-secrets/reveal/more"),
             (Method::PUT, "/v1/email/channel"),
             (Method::PUT, "/v1/email/guard/settings"),
-            (Method::POST, "/v1/email/channel/replies/1/approve"),
-            (Method::POST, "/v1/voice"),
-            (Method::POST, "/v1/voice/local/install"),
-            (Method::PUT, "/v1/web/search/other"),
-            (Method::POST, "/v1/connection-test/email"),
-            (Method::POST, "/v1/secrets/x"),
+            (Method::POST, "/v1/connection-test/provider"),
+            (Method::GET, "/v1/audit"),
+            (Method::GET, "/v1/chats/search"),
+            (Method::PUT, "/v1/web/search"),
+            (Method::PUT, "/v1/voice"),
+            (Method::PUT, "/v1/spend-limit"),
+            (Method::POST, "/v1/bots/abc/incoming-webhooks"),
+            (Method::GET, "/v1/channels/telegram"),
+            // a path that only starts like a listed one
+            (Method::POST, "/v1/hostage"),
+            (Method::GET, "/v1/mcp-servers"),
+            (Method::POST, "/v1/doctors"),
+        ] {
+            assert_eq!(admin_desktop_never(&method, path), None, "{method} {path}");
+        }
+    }
+
+    #[test]
+    fn sensitive_reads_of_the_admin_desktop_are_attributed() {
+        for path in [
+            "/v1/audit",
+            "/v1/audit/export",
+            "/v1/fill-secrets",
+            "/v1/email/guard/send-log.csv",
+            "/v1/usage/export",
+            "/v1/chats/0190f/export",
+        ] {
+            assert!(sensitive_read(&Method::GET, path), "{path}");
+            assert!(sensitive_read(&Method::HEAD, path), "{path}");
+            assert!(!sensitive_read(&Method::POST, path), "{path}");
+        }
+        for path in [
+            "/v1/chats",
+            "/v1/chats/x/y/export",
+            "/v1/policy",
+            "/v1/bots",
+        ] {
+            assert!(!sensitive_read(&Method::GET, path), "{path}");
+        }
+    }
+
+    #[test]
+    fn an_audit_class_names_the_kind_of_change_and_never_an_id() {
+        for (path, class) in [
+            ("/v1/policy", "policy"),
+            ("/v1/email/accounts/work", "email"),
+            ("/v1/web/search", "web"),
+            ("/v1/voice", "voice"),
+            ("/v1/bots/0190f/engine", "bots/engine"),
+            ("/v1/bots/0190f/knowledge/sources/s1", "bots/knowledge"),
+            ("/v1/bots/0190f", "bots"),
+            ("/v1/secrets/provider/key", "secrets"),
+        ] {
+            assert_eq!(audit_class(path), class, "{path}");
+        }
+    }
+
+    #[test]
+    fn an_ordinary_peer_is_refused_every_owner_route_that_is_not_a_device_task() {
+        // A phone decides approvals and runs timers; it never changes the policy.
+        for (role, method, path, refused) in [
+            (PeerRole::Phone, Method::POST, "/v1/approvals/x", false),
+            (PeerRole::Phone, Method::POST, "/v1/schedules", false),
+            (PeerRole::Phone, Method::PUT, "/v1/policy", true),
+            (PeerRole::Phone, Method::PUT, "/v1/spend-limit", true),
+            (
+                PeerRole::Phone,
+                Method::POST,
+                "/v1/voice/local/install",
+                true,
+            ),
+            (PeerRole::Phone, Method::GET, "/v1/workflows", true),
+            (
+                PeerRole::Phone,
+                Method::POST,
+                "/v1/channels/telegram/pair-code",
+                true,
+            ),
+            // An ordinary desktop of a host keeps its operator tasks, not the settings.
+            (PeerRole::Desktop, Method::POST, "/v1/approvals/x", false),
+            (PeerRole::Desktop, Method::GET, "/v1/workflows", false),
+            (PeerRole::Desktop, Method::PUT, "/v1/composio/key", false),
+            (PeerRole::Desktop, Method::PUT, "/v1/policy", true),
+            (PeerRole::Desktop, Method::PUT, "/v1/spend-limit", true),
+            (PeerRole::Desktop, Method::GET, "/v1/chats/search", true),
+            (PeerRole::Desktop, Method::GET, "/v1/usage/export", true),
+            (PeerRole::Desktop, Method::PUT, "/v1/bots/x/files", true),
+            (
+                PeerRole::Desktop,
+                Method::POST,
+                "/v1/chats/x/skill-draft",
+                true,
+            ),
         ] {
             assert_eq!(
-                host_admin_settings_class(&method, path),
-                None,
-                "{method} {path}"
+                owner_denial(&method, path, role, true).is_some(),
+                refused,
+                "{role:?} {method} {path}"
             );
         }
+        // A desktop of a daemon that is not a host keeps its older reach.
+        assert!(owner_denial(&Method::PUT, "/v1/policy", PeerRole::Desktop, false).is_none());
+        assert!(owner_denial(&Method::PUT, "/v1/policy", PeerRole::Phone, false).is_some());
     }
 
     #[test]

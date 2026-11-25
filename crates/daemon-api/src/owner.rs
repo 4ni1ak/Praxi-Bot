@@ -394,6 +394,63 @@ pub const TOKEN_OK_ROUTES: &[(&str, &str)] = &[
     ("DELETE", "/v1/admin/providers/{}"),
 ];
 
+/// Routes of [`OWNER_ROUTES`] that EVERY paired device (phone or desktop) may
+/// still call without being the owner's administrator: what a device does for
+/// the owner every day. Everything else in [`OWNER_ROUTES`] is refused to a
+/// paired peer (see [`peer_may_call`]) unless it is the administrator desktop
+/// of a host, which is the owner (`peer.rs`, `admin_desktop_never`).
+///
+/// * deciding an approval or a question (audited as `peer.decision_requested`);
+/// * the screen takeover buttons (the live-view grants decide, not this table);
+/// * timers (the handlers refuse triggers and prechecks from a peer).
+pub const PEER_OK_ROUTES: &[(&str, &str)] = &[
+    ("POST", "/v1/approvals/{}"),
+    ("POST", "/v1/questions/{}"),
+    ("POST", "/v1/control/{}"),
+    ("POST", "/v1/control/takeover"),
+    ("POST", "/v1/control/override"),
+    ("POST", "/v1/control/recover"),
+    ("POST", "/v1/control/release"),
+    ("POST", "/v1/schedules"),
+    ("PUT", "/v1/schedules/{}"),
+    ("DELETE", "/v1/schedules/{}"),
+    ("POST", "/v1/schedules/{}/run-now"),
+    ("POST", "/v1/schedules/{}/occurrences/{}/retry"),
+    ("POST", "/v1/schedules/{}/reclaim"),
+    // Pairing and who leads, on a daemon that is not an always-on host (a phone may manage
+    // ownership there; the handlers decide what each role may do). On a HOST no peer reaches
+    // any of these: `peer::guard` refuses every `/v1/host` write to every paired device.
+    ("POST", "/v1/host/invite"),
+    ("DELETE", "/v1/host/devices/{}"),
+    ("PUT", "/v1/host/devices/{}/admin"),
+    ("POST", "/v1/host/standby"),
+    ("POST", "/v1/host/activate"),
+    ("POST", "/v1/host/update"),
+];
+
+/// Further [`OWNER_ROUTES`] that a paired DESKTOP (not a phone) may call without
+/// administration, because the desktop of a person acts for them there: recorded
+/// workflows, local components, the Composio connections and reading the mail
+/// channel. These were never closed to a desktop; the table only writes it down.
+pub const PEER_OK_DESKTOP_ROUTES: &[(&str, &str)] = &[
+    ("POST", "/v1/runs/{}/workflow-proposal"),
+    ("POST", "/v1/workflows"),
+    ("DELETE", "/v1/workflows/{}"),
+    ("POST", "/v1/workflows/{}/run"),
+    ("GET", "/v1/workflows"),
+    ("GET", "/v1/workflows/{}"),
+    ("POST", "/v1/components/{}/install"),
+    ("GET", "/v1/email/channel"),
+    ("GET", "/v1/email/channel/replies"),
+    ("GET", "/v1/email/accounts/{}/messages"),
+    ("PUT", "/v1/composio/key"),
+    ("DELETE", "/v1/composio/key"),
+    ("POST", "/v1/composio/login"),
+    ("DELETE", "/v1/composio/apps/{}"),
+    ("POST", "/v1/composio/apps/{}/connect"),
+    ("PUT", "/v1/composio/apps/{}/enabled"),
+];
+
 fn pattern_matches(pattern: &str, path: &str) -> bool {
     let mut want = pattern.split('/');
     let mut have = path.split('/');
@@ -439,6 +496,20 @@ pub fn is_owner_route(method: &str, path: &str) -> bool {
 #[must_use]
 pub fn is_token_ok_route(method: &str, path: &str) -> bool {
     in_table(TOKEN_OK_ROUTES, method, path)
+}
+
+/// Whether a paired device that is NOT the owner's administrator desktop may
+/// call `method path` although it is an owner route (see [`PEER_OK_ROUTES`]).
+/// A path that is not an owner route is not this function's business: it
+/// returns `true`.
+#[must_use]
+pub(crate) fn peer_may_call(role: crate::PeerRole, method: &str, path: &str) -> bool {
+    if !is_owner_route(method, path) {
+        return true;
+    }
+    let path = path.split_once('?').map_or(path, |(p, _)| p);
+    in_table(PEER_OK_ROUTES, method, path)
+        || (role == crate::PeerRole::Desktop && in_table(PEER_OK_DESKTOP_ROUTES, method, path))
 }
 
 /// The one guard of every owner route: runs after bearer authentication on the
