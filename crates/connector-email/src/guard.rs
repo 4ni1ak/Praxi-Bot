@@ -14,7 +14,7 @@
 //! State is a JSON settings file, a JSON opt-out file and an append-only JSONL send log under one
 //! directory (or memory only, for tests).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
@@ -34,6 +34,10 @@ const SUBJECT_KEEP: usize = 120;
 pub const MAX_FOOTER_CHARS: usize = 1000;
 /// Most opt-out entries the list may hold.
 pub const MAX_OPT_OUTS: usize = 20_000;
+/// Most send-log entries kept in memory (and scanned by every check). Older ones stay on disk.
+pub const DEFAULT_LOG_MEMORY: usize = 20_000;
+/// The active log file is moved aside (`send-log.<unix ts>.<n>.jsonl`) once it is this big.
+pub const DEFAULT_LOG_ROTATE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// The sentence shown once in a warning that is about opt-out rights.
 pub const LEGAL_NOTICE: &str = "Ignoring someone's opt-out on commercial e-mail can be unlawful \
@@ -41,7 +45,10 @@ pub const LEGAL_NOTICE: &str = "Ignoring someone's opt-out on commercial e-mail 
 This is not legal advice.";
 
 /// Default opt-out line (Turkish first, English second). `{sender}` is the sending address.
-pub const DEFAULT_FOOTER: &str = "Bu iletiyi almak istemiyorsanız, bu e-postayı \"ÇIKMAK İSTİYORUM\" yazarak yanıtlayın; {sender} adresinden size bir daha yazılmaz.\nIf you do not want to receive e-mail from {sender}, reply with the words \"UNSUBSCRIBE\" and we will not write to you again.";
+/// Replies are not read by the program: the owner removes the person by hand (Settings, opt-out
+/// list), so the text says so and does not promise an automatic stop.
+pub const DEFAULT_FOOTER: &str = "Bu iletiyi almak istemiyorsanız, bu e-postayı \"DURDUR\" yazarak yanıtlayın; kaydınızı {sender} sahibi elle listeden çıkarır (otomatik değildir, birkaç gün sürebilir).
+If you do not want to receive e-mail from {sender}, reply with the word \"STOP\"; the owner removes you from the list by hand (it is not automatic and can take a few days).";
 
 /// Owner-changeable values.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,7 +191,7 @@ pub struct MailFacts<'a> {
     pub account: &'a str,
     /// Sending address.
     pub from: &'a str,
-    /// Normalized recipients (lowercase plain addresses).
+    /// Recipients exactly as the SMTP envelope / provider gets them (see [`canonical_address`]).
     pub recipients: &'a [String],
     /// Whether the opt-out line stays on (`false` only when the model asked to drop it).
     pub opt_out_line: bool,
@@ -200,14 +207,42 @@ struct Frozen {
 struct State {
     settings: GuardSettings,
     opt_outs: Vec<OptOut>,
+    /// Lookup built from `opt_outs`: the full and the `+tag`-free key of every address entry.
+    opt_addrs: HashSet<String>,
+    /// Domain entries (each also covers its subdomains).
+    opt_domains: Vec<String>,
     log: Vec<SendLogEntry>,
     frozen: HashMap<String, Frozen>,
+    /// Saved files that could not be read at start (set aside as `<name>.bad-<ts>`).
+    load_errors: Vec<&'static str>,
+    /// `opt-out.json` was unreadable AND could not be set aside: saving would destroy it.
+    opt_out_locked: bool,
+}
+
+impl State {
+    fn set_opt_outs(&mut self, list: Vec<OptOut>) {
+        self.opt_addrs.clear();
+        self.opt_domains.clear();
+        for o in &list {
+            if o.kind == "domain" {
+                self.opt_domains.push(o.value.clone());
+            } else {
+                // Someone who opted out as `a+t@x.com` is the person behind `a@x.com` too.
+                let k = key_of(&o.value);
+                self.opt_addrs.insert(k.full);
+                self.opt_addrs.insert(k.base);
+            }
+        }
+        self.opt_outs = list;
+    }
 }
 
 /// The guard. Cheap to share behind an `Arc`.
 pub struct MailGuard {
     dir: Option<PathBuf>,
     state: Mutex<State>,
+    log_memory: usize,
+    log_rotate_bytes: u64,
 }
 
 /// Seconds since the Unix epoch.
@@ -241,24 +276,73 @@ pub fn utc_text(secs: u64) -> String {
     )
 }
 
-/// Lowercase plain address from `Name <a@b>` or `a@b`; `None` when it has no `@`.
+/// The keys one mailbox is matched under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddressKeys {
+    /// `local@domain`: local part lowercase, domain IDNA-ASCII (punycode) lowercase, no trailing dot.
+    pub full: String,
+    /// `full` with a `+tag` removed from the local part (the same mailbox at most providers).
+    pub base: String,
+    /// The domain part of `full`.
+    pub domain: String,
+}
+
+/// Lowercase IDNA-ASCII form of a domain without a trailing dot; `None` when it is not a domain.
 #[must_use]
-pub fn plain_address(s: &str) -> Option<String> {
+pub fn canonical_domain(d: &str) -> Option<String> {
+    let d = d.trim().trim_end_matches('.');
+    if d.is_empty() || d.contains(['@', '/', '\\']) || d.contains(char::is_whitespace) {
+        return None;
+    }
+    idna::domain_to_ascii(d).ok().filter(|x| !x.is_empty())
+}
+
+/// The keys of `a@b`, `Name <a@b>` or `"Name" <a@b>`; `None` when there is no usable address.
+/// Callers that deliver mail pass the address the SMTP envelope uses (`smtp::envelope_address`),
+/// so the guard and the delivery read the same recipient.
+#[must_use]
+pub fn canonical_address(s: &str) -> Option<AddressKeys> {
     let t = s.trim();
     let inner = match (t.rfind('<'), t.rfind('>')) {
         (Some(a), Some(b)) if a < b => &t[a + 1..b],
         _ => t,
     };
-    let inner = inner.trim().to_ascii_lowercase();
-    (inner.contains('@') && !inner.contains(char::is_whitespace)).then_some(inner)
+    let inner = inner.trim();
+    if inner.contains(char::is_whitespace) {
+        return None;
+    }
+    let (local, domain) = inner.rsplit_once('@')?;
+    let local = local.to_lowercase();
+    if local.is_empty() {
+        return None;
+    }
+    let domain = canonical_domain(domain)?;
+    let base_local = match local.split_once('+') {
+        Some((head, _)) if !head.is_empty() => head,
+        _ => local.as_str(),
+    };
+    Some(AddressKeys {
+        base: format!("{base_local}@{domain}"),
+        full: format!("{local}@{domain}"),
+        domain,
+    })
 }
 
-/// Normalize an owner-typed opt-out entry (`a@b.c`, `@b.c` or `b.c`).
+/// Whether a domain entry `entry` covers `domain` (itself or any subdomain).
+fn domain_covers(entry: &str, domain: &str) -> bool {
+    domain == entry
+        || domain
+            .strip_suffix(entry)
+            .is_some_and(|rest| rest.ends_with('.'))
+}
+
+/// Normalize an owner-typed opt-out entry (`a@b.c`, `@b.c` or `b.c`) the way recipients are
+/// normalized: IDNA domain, lowercase, no trailing dot.
 ///
 /// # Errors
 /// A short plain sentence.
 pub fn normalize_opt_out(raw: &str) -> Result<(String, &'static str), String> {
-    let t = raw.trim().to_ascii_lowercase();
+    let t = raw.trim();
     if t.is_empty() || t.len() > 254 || t.contains(char::is_whitespace) || t.contains(['<', '>']) {
         return Err(
             "enter one e-mail address (ann@example.com) or one domain (example.com)".into(),
@@ -268,31 +352,168 @@ pub fn normalize_opt_out(raw: &str) -> Result<(String, &'static str), String> {
         return domain_entry(domain);
     }
     if t.contains('@') {
-        let (local, domain) = t.rsplit_once('@').unwrap_or(("", ""));
-        if local.is_empty() || !domain.contains('.') {
-            return Err("that does not look like an e-mail address".into());
-        }
-        return Ok((t, "address"));
+        let keys = canonical_address(t)
+            .filter(|k| k.domain.contains('.'))
+            .ok_or("that does not look like an e-mail address")?;
+        return Ok((keys.full, "address"));
     }
-    domain_entry(&t)
+    domain_entry(t)
 }
 
 fn domain_entry(d: &str) -> Result<(String, &'static str), String> {
+    let bad = || "that does not look like a domain (example.com)".to_owned();
+    let d = d.trim_end_matches('.');
     if d.contains('@')
         || !d.contains('.')
         || d.starts_with('.')
-        || d.ends_with('.')
         || !d
             .chars()
             .all(|c| c.is_alphanumeric() || c == '.' || c == '-')
     {
-        return Err("that does not look like a domain (example.com)".into());
+        return Err(bad());
     }
-    Ok((d.to_owned(), "domain"))
+    let ascii = canonical_domain(d).ok_or_else(bad)?;
+    if !ascii.contains('.') || ascii.contains("..") {
+        return Err(bad());
+    }
+    Ok((ascii, "domain"))
 }
+
+/// Keys of a stored or planned recipient; a string that is not an address keeps its lowercase self.
+fn key_of(r: &str) -> AddressKeys {
+    canonical_address(r).unwrap_or_else(|| {
+        let l = r.trim().to_lowercase();
+        AddressKeys {
+            domain: l
+                .rsplit_once('@')
+                .map_or_else(String::new, |(_, d)| d.to_owned()),
+            base: l.clone(),
+            full: l,
+        }
+    })
+}
+
+/// The warning shown while a saved guard file could not be read.
+fn unreadable_warning(load_errors: &[&'static str]) -> Option<Warning> {
+    if load_errors.is_empty() {
+        return None;
+    }
+    Some(Warning {
+        code: "guard_unreadable".into(),
+        text: format!(
+            "The mail guard could not read its saved {} (the damaged file was set aside,              not deleted). Opt-outs may be missing, so nobody is checked against them.",
+            load_errors.join(" and ")
+        ),
+        addresses: load_errors.iter().map(|s| (*s).to_owned()).collect(),
+        count: 0,
+        limit: 0,
+    })
+}
+
+const OPT_OUT_LOCKED: &str = "the saved opt-out list could not be read and could not be set aside; \
+fix or move opt-out.json in the e-mail guard folder first";
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// What reading one saved JSON file gave.
+enum Loaded<T> {
+    Missing,
+    Ok(T),
+    /// Unreadable; `set_aside` is `false` when the bad file could not be moved away.
+    Bad {
+        set_aside: bool,
+    },
+}
+
+/// Read `dir/name`. A file that cannot be read or parsed is renamed to `<name>.bad-<unix ts>`
+/// BEFORE anything else happens, so a later save can never overwrite it.
+fn load_json<T: serde::de::DeserializeOwned>(
+    dir: &std::path::Path,
+    name: &str,
+    accept: impl Fn(&T) -> bool,
+) -> Loaded<T> {
+    let path = dir.join(name);
+    let parsed = match std::fs::read_to_string(&path) {
+        Ok(t) => serde_json::from_str::<T>(&t).ok().filter(|v| accept(v)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Loaded::Missing,
+        Err(_) => None,
+    };
+    if let Some(v) = parsed {
+        return Loaded::Ok(v);
+    }
+    let bad = dir.join(format!("{name}.bad-{}", now_secs()));
+    let set_aside = std::fs::rename(&path, &bad).is_ok();
+    log::error!(
+        "email: {name} could not be read; {}",
+        if set_aside {
+            "it was set aside as a .bad file"
+        } else {
+            "it could NOT be set aside, saving is blocked"
+        }
+    );
+    Loaded::Bad { set_aside }
+}
+
+/// Parse the send-log lines (a damaged line is skipped) and keep the last `keep` entries.
+fn parse_log(text: &str, keep: usize) -> Vec<SendLogEntry> {
+    let mut v: Vec<SendLogEntry> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<SendLogEntry>(l).ok())
+        .collect();
+    if v.len() > keep {
+        v.drain(..v.len() - keep);
+    }
+    v
+}
+
+/// The send-log files under `dir`, oldest first: `send-log.<ts>.<n>.jsonl` archives, then the
+/// active `send-log.jsonl`.
+fn log_files(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|d| d.path())
+        .filter(|p| {
+            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                n.starts_with("send-log.")
+                    && std::path::Path::new(n)
+                        .extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("jsonl"))
+            })
+        })
+        .collect();
+    files.sort_by_key(|p| {
+        let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        (n == "send-log.jsonl", n.to_owned())
+    });
+    files
+}
+
+fn csv_row(e: &SendLogEntry) -> String {
+    fn cell(s: &str) -> String {
+        let s = if s.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+            format!("'{s}")
+        } else {
+            s.to_owned()
+        };
+        format!("\"{}\"", s.replace('"', "\"\""))
+    }
+    let row = [
+        cell(&e.at_utc),
+        cell(e.bot.as_deref().unwrap_or("")),
+        cell(&e.run),
+        cell(&e.account),
+        cell(&e.from),
+        cell(&e.recipients.join("; ")),
+        cell(&e.subject),
+        cell(&e.message_id),
+        cell(if e.opt_out_line { "yes" } else { "no" }),
+        cell(&e.overridden.join("; ")),
+    ];
+    format!("{}\r\n", row.join(","))
 }
 
 impl MailGuard {
@@ -302,45 +523,100 @@ impl MailGuard {
         Self {
             dir: None,
             state: Mutex::new(State::default()),
+            log_memory: DEFAULT_LOG_MEMORY,
+            log_rotate_bytes: DEFAULT_LOG_ROTATE_BYTES,
         }
     }
 
-    /// Load (or start) the files under `dir`. Unreadable files are treated as empty and the
-    /// problem is logged: a damaged log must not stop the owner's mail, but it must not be
-    /// silently overwritten either (the damaged line is skipped, the rest is kept).
+    /// Load (or start) the files under `dir` with the default log limits.
     #[must_use]
     pub fn open(dir: PathBuf) -> Self {
+        Self::open_with_limits(dir, DEFAULT_LOG_MEMORY, DEFAULT_LOG_ROTATE_BYTES)
+    }
+
+    /// Load (or start) the files under `dir`. At most `log_memory` send-log entries are kept in
+    /// memory (and scanned by checks); the log file moves aside once it passes `rotate_bytes`.
+    ///
+    /// A settings or opt-out file that cannot be read is renamed to `<name>.bad-<unix ts>` before
+    /// anything else, the guard remembers it (every mail card then carries a warning) and the
+    /// damaged content is never overwritten. A damaged send-log line is skipped.
+    #[must_use]
+    pub fn open_with_limits(dir: PathBuf, log_memory: usize, rotate_bytes: u64) -> Self {
         let mut st = State::default();
-        if let Ok(t) = std::fs::read_to_string(dir.join("guard-settings.json")) {
-            match serde_json::from_str::<GuardSettings>(&t) {
-                Ok(s) if s.validate().is_ok() => st.settings = s,
-                _ => log::warn!("email: guard-settings.json is invalid, using defaults"),
+        match load_json::<GuardSettings>(&dir, "guard-settings.json", |s| s.validate().is_ok()) {
+            Loaded::Ok(s) => st.settings = s,
+            Loaded::Missing => {}
+            Loaded::Bad { .. } => st.load_errors.push("settings"),
+        }
+        match load_json::<Vec<OptOut>>(&dir, "opt-out.json", |_| true) {
+            Loaded::Ok(v) => {
+                let list = v
+                    .into_iter()
+                    .map(|mut o| {
+                        if let Ok((value, kind)) = normalize_opt_out(&o.value) {
+                            o.value = value;
+                            o.kind = kind.into();
+                        }
+                        o
+                    })
+                    .collect();
+                st.set_opt_outs(list);
+            }
+            Loaded::Missing => {}
+            Loaded::Bad { set_aside } => {
+                st.load_errors.push("opt-out list");
+                st.opt_out_locked = !set_aside;
             }
         }
-        if let Ok(t) = std::fs::read_to_string(dir.join("opt-out.json")) {
-            match serde_json::from_str::<Vec<OptOut>>(&t) {
-                Ok(v) => st.opt_outs = v,
-                Err(_) => log::warn!("email: opt-out.json is unreadable, the list starts empty"),
+        // The newest `log_memory` entries, reaching back into moved-aside files when the active
+        // one is short (right after a rotation).
+        let keep = log_memory.max(1);
+        for f in log_files(&dir).iter().rev() {
+            if st.log.len() >= keep {
+                break;
             }
-        }
-        if let Ok(t) = std::fs::read_to_string(dir.join("send-log.jsonl")) {
-            st.log = t
-                .lines()
-                .filter_map(|l| serde_json::from_str::<SendLogEntry>(l).ok())
-                .collect();
+            if let Ok(t) = std::fs::read_to_string(f) {
+                let mut older = parse_log(&t, keep - st.log.len());
+                older.append(&mut st.log);
+                st.log = older;
+            }
         }
         Self {
             dir: Some(dir),
             state: Mutex::new(st),
+            log_memory: log_memory.max(1),
+            log_rotate_bytes: rotate_bytes,
         }
     }
 
+    /// Names of saved files that could not be read at start (empty when all is well).
+    #[must_use]
+    pub fn load_errors(&self) -> Vec<&'static str> {
+        lock(&self.state).load_errors.clone()
+    }
+
+    /// Atomic save: temp file in the same folder, flushed to disk, then renamed over the old one,
+    /// so a crash leaves either the old or the new file, never a truncated one.
     fn write_json(&self, name: &str, text: &str) -> Result<(), String> {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let Some(dir) = &self.dir else { return Ok(()) };
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot save: {e}"))?;
-        let tmp = dir.join(format!("{name}.tmp"));
-        std::fs::write(&tmp, text).map_err(|e| format!("cannot save: {e}"))?;
-        std::fs::rename(&tmp, dir.join(name)).map_err(|e| format!("cannot save: {e}"))
+        let err = |e: std::io::Error| format!("cannot save: {e}");
+        std::fs::create_dir_all(dir).map_err(err)?;
+        let tmp = dir.join(format!(
+            "{name}.{}.tmp",
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let res = (|| {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(text.as_bytes())?;
+            f.sync_all()?;
+            drop(f);
+            std::fs::rename(&tmp, dir.join(name))
+        })();
+        if res.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        res.map_err(err)
     }
 
     /// Current settings.
@@ -376,6 +652,9 @@ impl MailGuard {
     pub fn add_opt_out(&self, raw: &str, note: &str) -> Result<OptOut, String> {
         let (value, kind) = normalize_opt_out(raw)?;
         let mut st = lock(&self.state);
+        if st.opt_out_locked {
+            return Err(OPT_OUT_LOCKED.into());
+        }
         if let Some(e) = st.opt_outs.iter().find(|o| o.value == value) {
             return Ok(e.clone());
         }
@@ -392,7 +671,7 @@ impl MailGuard {
         next.push(entry.clone());
         let text = serde_json::to_string_pretty(&next).map_err(|e| e.to_string())?;
         self.write_json("opt-out.json", &text)?;
-        st.opt_outs = next;
+        st.set_opt_outs(next);
         Ok(entry)
     }
 
@@ -401,8 +680,14 @@ impl MailGuard {
     /// # Errors
     /// A failed save.
     pub fn remove_opt_out(&self, raw: &str) -> Result<bool, String> {
-        let want = raw.trim().trim_start_matches('@').to_ascii_lowercase();
+        let want = normalize_opt_out(raw).map_or_else(
+            |_| raw.trim().trim_start_matches('@').to_lowercase(),
+            |(v, _)| v,
+        );
         let mut st = lock(&self.state);
+        if st.opt_out_locked {
+            return Err(OPT_OUT_LOCKED.into());
+        }
         let next: Vec<OptOut> = st
             .opt_outs
             .iter()
@@ -414,7 +699,7 @@ impl MailGuard {
         }
         let text = serde_json::to_string_pretty(&next).map_err(|e| e.to_string())?;
         self.write_json("opt-out.json", &text)?;
-        st.opt_outs = next;
+        st.set_opt_outs(next);
         Ok(true)
     }
 
@@ -430,36 +715,30 @@ impl MailGuard {
             .collect()
     }
 
-    /// The whole log as CSV (oldest first), for the owner's export. Cells that start with a
-    /// formula character are prefixed so a spreadsheet never runs them.
+    /// The whole log as CSV (oldest first), for the owner's export: moved-aside log files first,
+    /// then the active one (memory only when there is no folder). Cells that start with a formula
+    /// character are prefixed so a spreadsheet never runs them.
     #[must_use]
     pub fn export_csv(&self) -> String {
-        fn cell(s: &str) -> String {
-            let s = if s.starts_with(['=', '+', '-', '@', '\t', '\r']) {
-                format!("'{s}")
-            } else {
-                s.to_owned()
-            };
-            format!("\"{}\"", s.replace('"', "\"\""))
-        }
         let mut out = String::from(
             "time_utc,bot,run,account,from,recipients,subject,message_id,opt_out_line,send_anyway\r\n",
         );
-        for e in &lock(&self.state).log {
-            let row = [
-                cell(&e.at_utc),
-                cell(e.bot.as_deref().unwrap_or("")),
-                cell(&e.run),
-                cell(&e.account),
-                cell(&e.from),
-                cell(&e.recipients.join("; ")),
-                cell(&e.subject),
-                cell(&e.message_id),
-                cell(if e.opt_out_line { "yes" } else { "no" }),
-                cell(&e.overridden.join("; ")),
-            ];
-            out.push_str(&row.join(","));
-            out.push_str("\r\n");
+        let Some(dir) = &self.dir else {
+            for e in &lock(&self.state).log {
+                out.push_str(&csv_row(e));
+            }
+            return out;
+        };
+        let files = log_files(dir);
+        for f in files {
+            if let Ok(t) = std::fs::read_to_string(&f) {
+                for e in t
+                    .lines()
+                    .filter_map(|l| serde_json::from_str::<SendLogEntry>(l).ok())
+                {
+                    out.push_str(&csv_row(&e));
+                }
+            }
         }
         out
     }
@@ -471,17 +750,20 @@ impl MailGuard {
         let now = now_secs();
         let mut warnings = Vec::new();
 
-        let hits: Vec<String> = facts
-            .recipients
+        let keyed: Vec<(&String, AddressKeys)> =
+            facts.recipients.iter().map(|r| (r, key_of(r))).collect();
+        let hits: Vec<String> = keyed
             .iter()
-            .filter(|r| {
-                let domain = r.rsplit_once('@').map_or("", |(_, d)| d);
-                st.opt_outs
-                    .iter()
-                    .any(|o| o.value == **r || (o.kind == "domain" && o.value == domain))
+            .filter(|(_, k)| {
+                st.opt_addrs.contains(&k.full)
+                    || st.opt_addrs.contains(&k.base)
+                    || st.opt_domains.iter().any(|d| domain_covers(d, &k.domain))
             })
-            .cloned()
+            .map(|(r, _)| (*r).clone())
             .collect();
+        if let Some(w) = unreadable_warning(&st.load_errors) {
+            warnings.push(w);
+        }
         let mut legal = false;
         if !hits.is_empty() {
             legal = true;
@@ -522,15 +804,16 @@ impl MailGuard {
         let days = st.settings.same_recipient_days;
         if days > 0 {
             let since = now.saturating_sub(u64::from(days) * 86_400);
-            let repeat: Vec<String> = facts
-                .recipients
+            let seen: HashSet<String> = st
+                .log
                 .iter()
-                .filter(|r| {
-                    st.log
-                        .iter()
-                        .any(|e| e.at >= since && e.recipients.iter().any(|x| x == *r))
-                })
-                .cloned()
+                .filter(|e| e.at >= since)
+                .flat_map(|e| e.recipients.iter().map(|x| key_of(x).base))
+                .collect();
+            let repeat: Vec<String> = keyed
+                .iter()
+                .filter(|(_, k)| seen.contains(&k.base))
+                .map(|(r, _)| (*r).clone())
                 .collect();
             if !repeat.is_empty() {
                 warnings.push(Warning {
@@ -606,22 +889,71 @@ impl MailGuard {
         f.at.elapsed() < FREEZE_TTL && current.iter().all(|c| f.codes.contains(c))
     }
 
-    /// Append a sent mail to the log (memory first, then the file).
+    /// Log a mail the program sent on its own for the owner (not a bot's `email_send`), e.g. the
+    /// "send a test message" button: `run` says what it was.
+    pub fn record_system_mail(
+        &self,
+        run: &str,
+        account: &str,
+        from: &str,
+        to: &str,
+        subject: &str,
+        message_id: &str,
+    ) {
+        self.record(SendLogEntry {
+            at: now_secs(),
+            at_utc: String::new(),
+            bot: None,
+            run: run.to_owned(),
+            account: account.to_owned(),
+            from: from.to_owned(),
+            recipients: vec![key_of(to).full],
+            subject: subject.to_owned(),
+            message_id: message_id.to_owned(),
+            opt_out_line: false,
+            overridden: Vec::new(),
+        });
+    }
+
+    /// Append a sent mail to the log (memory first, then the file). Memory keeps only the last
+    /// `log_memory` entries; the file moves aside when it grows past the rotation size.
     pub fn record(&self, mut entry: SendLogEntry) {
         entry.subject = entry.subject.chars().take(SUBJECT_KEEP).collect();
         entry.at_utc = utc_text(entry.at);
         let line = serde_json::to_string(&entry).unwrap_or_default();
-        lock(&self.state).log.push(entry);
+        {
+            let mut st = lock(&self.state);
+            st.log.push(entry);
+            if st.log.len() > self.log_memory {
+                let extra = st.log.len() - self.log_memory;
+                st.log.drain(..extra);
+            }
+        }
         if let Some(dir) = &self.dir {
+            let active = dir.join("send-log.jsonl");
             let res = std::fs::create_dir_all(dir).and_then(|()| {
                 let mut f = std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open(dir.join("send-log.jsonl"))?;
-                writeln!(f, "{line}")
+                    .open(&active)?;
+                writeln!(f, "{line}")?;
+                f.sync_data()
             });
             if let Err(e) = res {
                 log::warn!("email: could not write the send log: {e}");
+            }
+            if std::fs::metadata(&active).is_ok_and(|m| m.len() > self.log_rotate_bytes) {
+                // Never overwrite an older archive made in the same second.
+                let ts = now_secs();
+                let mut n = 0;
+                let mut old = dir.join(format!("send-log.{ts}.{n:04}.jsonl"));
+                while old.exists() {
+                    n += 1;
+                    old = dir.join(format!("send-log.{ts}.{n:04}.jsonl"));
+                }
+                if let Err(e) = std::fs::rename(&active, old) {
+                    log::warn!("email: could not rotate the send log: {e}");
+                }
             }
         }
     }
@@ -731,5 +1063,116 @@ mod tests {
         assert_eq!(again.log(10).len(), 1);
         assert_eq!(again.opt_outs().len(), 1);
         assert!(again.remove_opt_out("b@x.io").unwrap());
+    }
+
+    #[test]
+    fn address_keys_cover_case_tag_idn_display_name_and_trailing_dot() {
+        let k = canonical_address("\"Ann\" <A+Promo@X.com.>").unwrap();
+        assert_eq!(
+            (k.full.as_str(), k.base.as_str()),
+            ("a+promo@x.com", "a@x.com")
+        );
+        let u = canonical_address("ann@MÜNCHEN.de").unwrap();
+        assert_eq!(u.full, "ann@xn--mnchen-3ya.de");
+        assert_eq!(canonical_address("ann@xn--mnchen-3ya.de").unwrap(), u);
+        assert_eq!(canonical_address("+x@a.com").unwrap().base, "+x@a.com");
+        assert!(canonical_address("nobody").is_none());
+        assert_eq!(
+            normalize_opt_out("Ann@Münchén.DE.").unwrap(),
+            ("ann@xn--mnchn-esa3k.de".to_owned(), "address")
+        );
+        assert!(domain_covers("x.com", "shop.x.com"));
+        assert!(!domain_covers("x.com", "notx.com"));
+    }
+
+    #[test]
+    fn opt_out_matches_both_keys_and_subdomains_and_the_other_checks_use_them() {
+        let g = MailGuard::in_memory();
+        g.add_opt_out("a@x.com", "").unwrap();
+        g.add_opt_out("@blocked.org", "").unwrap();
+        for r in ["A@X.com", "a+t@x.com", "a@x.com.", "u@sub.blocked.org"] {
+            let rep = g.check(&facts(&[r.to_owned()], true));
+            assert_eq!(rep.codes(), vec!["opt_out_listed"], "{r}");
+        }
+        assert_eq!(
+            g.check(&facts(&["b@x.com".into()], true)).codes(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            g.check(&facts(&["u@notblocked.org".into()], true)).codes(),
+            Vec::<String>::new()
+        );
+        // same-recipient wait: a +tag variant of a logged mailbox is the same recipient
+        g.record(entry(&["c@y.io"], now_secs()));
+        let rep = g.check(&facts(&["C+news@y.io".into()], true));
+        assert_eq!(rep.codes(), vec!["same_recipient"]);
+    }
+
+    #[test]
+    fn a_corrupt_opt_out_file_is_kept_warned_about_and_never_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let junk = "[{\"value\":\"ann@x.com\",\"kind\":\"add";
+        std::fs::write(dir.path().join("opt-out.json"), junk).unwrap();
+        std::fs::write(dir.path().join("guard-settings.json"), "{not json").unwrap();
+        let g = MailGuard::open(dir.path().to_path_buf());
+        assert_eq!(g.load_errors(), vec!["settings", "opt-out list"]);
+        let rep = g.check(&facts(&["ann@x.com".into()], true));
+        assert!(
+            rep.codes().contains(&"guard_unreadable".to_owned()),
+            "{rep:?}"
+        );
+        // the owner adds an entry: the damaged content must still be on disk
+        g.add_opt_out("bob@x.com", "").unwrap();
+        let bad: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("opt-out.json.bad-"))
+            .collect();
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(&bad[0])).unwrap(),
+            junk
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().flatten().any(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("guard-settings.json.bad-")
+        }));
+        // saves leave no temp file behind and the new list is readable
+        assert!(
+            !std::fs::read_dir(dir.path())
+                .unwrap()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        );
+        assert_eq!(
+            MailGuard::open(dir.path().to_path_buf()).opt_outs().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_log_in_memory_is_capped_and_the_file_rotates_but_the_export_keeps_everything() {
+        let dir = tempfile::tempdir().unwrap();
+        let g = MailGuard::open_with_limits(dir.path().to_path_buf(), 3, 400);
+        for i in 0..12 {
+            g.record(entry(&[&format!("u{i}@x.io")], 1_000 + i));
+        }
+        assert_eq!(g.log(100).len(), 3, "memory is capped");
+        assert_eq!(g.log(1)[0].recipients, ["u11@x.io"]);
+        let csv = g.export_csv();
+        for i in 0..12 {
+            assert!(
+                csv.contains(&format!("u{i}@x.io")),
+                "u{i} missing from export"
+            );
+        }
+        assert_eq!(
+            MailGuard::open_with_limits(dir.path().to_path_buf(), 3, 400)
+                .log(100)
+                .len(),
+            3
+        );
     }
 }

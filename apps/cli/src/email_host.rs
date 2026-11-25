@@ -1027,11 +1027,22 @@ impl EmailControl for EmailHost {
             body: TEST_BODY.to_owned(),
             ..OutgoingMail::default()
         };
-        self.connector
+        let receipt = self
+            .connector
             .scoped(account.bot.as_deref())
-            .send(Some(name), &mail)
+            .send_receipt(Some(name), &mail)
             .await
             .map_err(|e| mailbox_error(&e, name))?;
+        // A test mail is a send like any other: it goes in the send log. It is addressed to the
+        // account's own address with fixed text, so it needs no opt-out line or card.
+        self.connector.guard().record_system_mail(
+            "send-test",
+            &account.name,
+            &own,
+            &own,
+            TEST_SUBJECT,
+            &receipt.id,
+        );
         Ok(own)
     }
 

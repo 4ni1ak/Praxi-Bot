@@ -1585,6 +1585,7 @@
         "to": "To",
         "warning": {
           "daily_limit": "This would be {{count}} e-mails from this account in 24 hours. Your limit is {{limit}}.",
+          "guard_unreadable": "The mail guard could not read its saved {{list}}. The damaged file was set aside, not deleted, so opt-outs may be missing and nobody is checked against them.",
           "no_opt_out_line": "This e-mail would go out without the line that lets people opt out.",
           "opt_out_listed": "These people asked not to be written to: {{list}}.",
           "same_recipient": "You already wrote to {{list}} in the last {{days}} days."
@@ -5841,7 +5842,7 @@
       "description": "Limits, an opt-out list and a log of every e-mail your bots send.",
       "export": "Export as CSV",
       "footer": "Text of the opt-out line",
-      "footerHint": "{sender} is replaced by the sending address. The line is added by the app, not by the bot, and the bot cannot remove it. You can send one e-mail without it by approving it on the card, which shows a warning.",
+      "footerHint": "{sender} is replaced by the sending address. The line is added by the app, not by the bot, and the bot cannot remove it. You can send one e-mail without it by approving it on the card, which shows a warning. The program does not read replies: when someone answers “STOP”, add their address to the opt-out list here yourself.",
       "footerPlaceholder": "Leave empty to use the built-in text (Turkish and English)",
       "intro": "Every e-mail a bot sends still asks you first. These settings only decide when the question carries a warning. A warning never blocks you: you can always choose \"Send anyway\", and that choice is written to the log.",
       "kindAddress": "address",

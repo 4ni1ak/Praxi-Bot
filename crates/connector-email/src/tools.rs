@@ -385,10 +385,12 @@ impl EmailTool {
             .map_err(|e| ToolError::InvalidInput(e.to_string()))?;
         let mut recipients = Vec::new();
         for a in i.mail.to.iter().chain(&i.mail.cc).chain(&i.mail.bcc) {
-            recipients.push(
-                guard::plain_address(a)
-                    .ok_or_else(|| ToolError::InvalidInput(format!("invalid address {a:?}")))?,
-            );
+            // The same parse that builds the SMTP envelope, then the guard's canonical form.
+            let email = crate::smtp::envelope_address(a)
+                .map_err(|e| ToolError::InvalidInput(e.to_string()))?;
+            let keys = guard::canonical_address(&email)
+                .ok_or_else(|| ToolError::InvalidInput(format!("invalid address {a:?}")))?;
+            recipients.push(keys.full);
         }
         recipients.sort();
         recipients.dedup();

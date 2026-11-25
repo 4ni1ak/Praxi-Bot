@@ -1585,6 +1585,7 @@
         "to": "An",
         "warning": {
           "daily_limit": "Damit wären es {{count}} E-Mails von diesem Konto in 24 Stunden. Ihr Limit liegt bei {{limit}}.",
+          "guard_unreadable": "Der E-Mail-Schutz konnte seine gespeicherte Datei ({{list}}) nicht lesen. Die beschädigte Datei wurde beiseitegelegt, nicht gelöscht; Abmeldungen können daher fehlen und niemand wird dagegen geprüft.",
           "no_opt_out_line": "Diese E-Mail würde ohne die Zeile zum Abmelden verschickt.",
           "opt_out_listed": "Diese Personen möchten nicht angeschrieben werden: {{list}}.",
           "same_recipient": "Sie haben {{list}} in den letzten {{days}} Tagen bereits geschrieben."
@@ -5841,7 +5842,7 @@
       "description": "Grenzen, eine Sperrliste und ein Protokoll jeder E-Mail, die Ihre Bots senden.",
       "export": "Als CSV exportieren",
       "footer": "Text der Abmeldezeile",
-      "footerHint": "{sender} wird durch die Absenderadresse ersetzt. Die Zeile fügt die App hinzu, nicht der Bot, und der Bot kann sie nicht entfernen. Eine einzelne E-Mail ohne Zeile können Sie auf der Karte freigeben; dort erscheint eine Warnung.",
+      "footerHint": "{sender} wird durch die Absenderadresse ersetzt. Die Zeile fügt die App hinzu, nicht der Bot, und der Bot kann sie nicht entfernen. Eine einzelne E-Mail ohne Zeile können Sie auf der Karte freigeben; dort erscheint eine Warnung. Das Programm liest keine Antworten: Wenn jemand „STOP“ antwortet, tragen Sie die Adresse hier selbst in die Sperrliste ein.",
       "footerPlaceholder": "Leer lassen für den eingebauten Text (Türkisch und Englisch)",
       "intro": "Jede E-Mail eines Bots wird Ihnen weiterhin zuerst vorgelegt. Diese Einstellungen bestimmen nur, wann die Rückfrage eine Warnung enthält. Eine Warnung blockiert Sie nie: Sie können immer \"Trotzdem senden\" wählen, und diese Wahl wird im Protokoll festgehalten.",
       "kindAddress": "Adresse",

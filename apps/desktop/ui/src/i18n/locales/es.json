@@ -1585,6 +1585,7 @@
         "to": "Para",
         "warning": {
           "daily_limit": "Con esto serían {{count}} correos desde esta cuenta en 24 horas. Su límite es {{limit}}.",
+          "guard_unreadable": "La protección de correo no pudo leer su archivo guardado ({{list}}). El archivo dañado se apartó, no se borró; por eso pueden faltar bajas y nadie se comprueba contra ellas.",
           "no_opt_out_line": "Este correo saldría sin la línea que permite darse de baja.",
           "opt_out_listed": "Estas personas pidieron que no se les escriba: {{list}}.",
           "same_recipient": "Ya escribió a {{list}} en los últimos {{days}} días."
@@ -5841,7 +5842,7 @@
       "description": "Límites, una lista de bajas y un registro de cada correo que envían sus bots.",
       "export": "Exportar como CSV",
       "footer": "Texto de la línea de baja",
-      "footerHint": "{sender} se sustituye por la dirección remitente. La línea la añade la aplicación, no el bot, y el bot no puede quitarla. Puede enviar un correo sin ella aprobándolo en la tarjeta, que muestra una advertencia.",
+      "footerHint": "{sender} se sustituye por la dirección remitente. La línea la añade la aplicación, no el bot, y el bot no puede quitarla. Puede enviar un correo sin ella aprobándolo en la tarjeta, que muestra una advertencia. El programa no lee las respuestas: si alguien responde «STOP», añada usted mismo su dirección a la lista de bajas aquí.",
       "footerPlaceholder": "Déjelo vacío para usar el texto integrado (turco e inglés)",
       "intro": "Cada correo que envía un bot sigue pidiéndole permiso primero. Estos ajustes solo deciden cuándo la pregunta lleva una advertencia. Una advertencia nunca le bloquea: siempre puede elegir \"Enviar de todos modos\", y esa elección queda en el registro.",
       "kindAddress": "dirección",

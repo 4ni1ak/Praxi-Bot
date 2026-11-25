@@ -91,7 +91,12 @@ async fn a_clean_send_gets_the_opt_out_line_in_code_and_is_logged() {
     let bodies = sent_bodies(&server).await;
     assert!(bodies[0].starts_with("Offer text"), "{}", bodies[0]);
     assert!(bodies[0].contains("-- \n"), "{}", bodies[0]);
-    assert!(bodies[0].contains("UNSUBSCRIBE"), "{}", bodies[0]);
+    assert!(bodies[0].contains("STOP"), "{}", bodies[0]);
+    assert!(
+        !bodies[0].contains("UNSUBSCRIBE") && !bodies[0].contains("will not write to you again"),
+        "the line must not promise an automatic stop: {}",
+        bodies[0]
+    );
     assert!(bodies[0].contains(INBOX), "sender is named in the line");
     let log = conn.guard().log(10);
     assert_eq!(log.len(), 1);
@@ -141,7 +146,7 @@ async fn the_owner_can_send_anyway_once_and_it_is_logged() {
     assert_eq!(d["send_anyway"], true);
     assert_eq!(d["warnings"][0]["code"], "opt_out_listed");
     assert!(d["legal_notice"].as_str().unwrap().contains("6563"));
-    assert!(d["body"].as_str().unwrap().contains("UNSUBSCRIBE"));
+    assert!(d["body"].as_str().unwrap().contains("STOP"));
     // Owner clicked "Send anyway": the call matching that card goes through, once.
     t.call(&ctx(), input.clone()).await.unwrap();
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
@@ -177,4 +182,69 @@ async fn the_daily_count_warns_but_the_owner_may_still_send() {
     );
     t.call(&ctx(), second).await.unwrap();
     assert_eq!(conn.guard().log(10).len(), 2);
+}
+
+/// The warning codes the owner's card would show for a mail to `to`.
+async fn card_codes(t: &Arc<dyn Tool>, to: Value) -> Vec<String> {
+    let input = json!({"to": to, "subject":"Hello","body":"Offer text"});
+    let d = t.approval_details(&ctx(), &input).await.unwrap().unwrap();
+    d["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["code"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn spelling_variants_of_an_opted_out_mailbox_still_warn() {
+    let (_server, conn) = setup().await;
+    conn.guard().add_opt_out("ann@example.com", "").unwrap();
+    conn.guard().add_opt_out("Bücher.example", "").unwrap();
+    let t = send_tool(&conn);
+    for to in [
+        "ANN@EXAMPLE.COM",
+        "ann+promo@example.com",
+        "\"Ann\" <Ann+x@Example.com>",
+        "Ann <ann@example.com>",
+        "ann@xn--bcher-kva.example",
+        "ann@Bücher.example",
+        "ann@shop.xn--bcher-kva.example",
+    ] {
+        assert_eq!(
+            card_codes(&t, json!([to])).await,
+            ["opt_out_listed"],
+            "{to}"
+        );
+    }
+    // A trailing dot is the same host for DNS; if the address parser refuses it, nothing is sent.
+    if let Ok(codes) = {
+        let input = json!({"to":["ann@example.com."],"subject":"s","body":"b"});
+        t.approval_details(&ctx(), &input).await
+    } {
+        assert_eq!(codes.unwrap()["warnings"][0]["code"], "opt_out_listed");
+    }
+    assert_eq!(
+        card_codes(&t, json!(["bob@example.com"])).await,
+        Vec::<String>::new()
+    );
+}
+
+#[tokio::test]
+async fn the_same_recipient_wait_and_opt_out_by_unicode_entry_match_the_other_spelling() {
+    let (_server, conn) = setup().await;
+    conn.guard().add_opt_out("ann@münchen.de", "").unwrap();
+    let t = send_tool(&conn);
+    assert_eq!(
+        card_codes(&t, json!(["ann@xn--mnchen-3ya.de"])).await,
+        ["opt_out_listed"]
+    );
+    let (_s2, conn2) = setup().await;
+    let t2 = send_tool(&conn2);
+    t2.call(&ctx(), mail("tom@example.com")).await.unwrap();
+    // `tom+2@` is the same mailbox: the same-recipient wait applies.
+    assert_eq!(
+        card_codes(&t2, json!(["Tom+2@Example.com"])).await,
+        ["same_recipient"]
+    );
 }

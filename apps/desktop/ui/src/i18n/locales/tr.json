@@ -1585,6 +1585,7 @@
         "to": "Kime",
         "warning": {
           "daily_limit": "Bu işlemle bu hesaptan 24 saatte {{count}} e-posta gitmiş olacak. Sınırınız {{limit}}.",
+          "guard_unreadable": "E-posta koruması kayıtlı {{list}} dosyasını okuyamadı. Bozuk dosya silinmedi, kenara alındı; bu yüzden çıkma kayıtları eksik olabilir ve kimse bu listeye karşı denetlenmiyor.",
           "no_opt_out_line": "Bu e-posta, kişilerin listeden çıkmasını sağlayan satır olmadan gidecek.",
           "opt_out_listed": "Bu kişiler kendilerine yazılmamasını istedi: {{list}}.",
           "same_recipient": "{{list}} adresine son {{days}} gün içinde zaten yazdınız."
@@ -5841,7 +5842,7 @@
       "description": "Sınırlar, bir çıkış listesi ve botlarınızın gönderdiği her e-postanın günlüğü.",
       "export": "CSV olarak dışa aktar",
       "footer": "Çıkış satırının metni",
-      "footerHint": "{sender} gönderen adresle değiştirilir. Satırı bot değil uygulama ekler ve bot onu silemez. Bir e-postayı satırsız göndermek için kartta onaylayabilirsiniz; kartta bir uyarı görünür.",
+      "footerHint": "{sender} gönderen adresle değiştirilir. Satırı bot değil uygulama ekler ve bot onu silemez. Bir e-postayı satırsız göndermek için kartta onaylayabilirsiniz; kartta bir uyarı görünür. Program yanıtları okumaz: biri “DURDUR” diye yanıtlarsa adresini bu listeye kendiniz ekleyin.",
       "footerPlaceholder": "Boş bırakırsanız yerleşik metin kullanılır (Türkçe ve İngilizce)",
       "intro": "Bir botun göndereceği her e-posta yine önce size sorulur. Bu ayarlar yalnızca sorunun ne zaman uyarıyla geldiğini belirler. Uyarı sizi hiçbir zaman engellemez: her zaman \"Yine de gönder\" diyebilirsiniz ve bu seçim günlüğe yazılır.",
       "kindAddress": "adres",
