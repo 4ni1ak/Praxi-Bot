@@ -243,6 +243,11 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("GET", "/v1/email/accounts/{}/messages"),
     ("POST", "/v1/email/accounts/{}/send-test"),
     // outgoing-mail guard: recipients in the log, who may be written to, the limits
+    // axum also serves HEAD for a GET handler
+    ("HEAD", "/v1/email/guard/settings"),
+    ("HEAD", "/v1/email/guard/opt-out"),
+    ("HEAD", "/v1/email/guard/send-log"),
+    ("HEAD", "/v1/email/guard/send-log.csv"),
     ("GET", "/v1/email/guard/settings"),
     ("PUT", "/v1/email/guard/settings"),
     ("GET", "/v1/email/guard/opt-out"),

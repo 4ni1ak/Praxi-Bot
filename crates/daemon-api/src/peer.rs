@@ -293,6 +293,11 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
     if under(check_path, "/v1/audit") {
         return Some("the audit log is available only to the local owner");
     }
+    if under(check_path, "/v1/email/guard") {
+        return Some(
+            "the outgoing-mail guard (send log, opt-out list, limits) is an owner action on this host",
+        );
+    }
     if under(check_path, "/v1/connection-test") {
         return Some("connection tests spend this host's stored keys and are an owner action");
     }
@@ -670,6 +675,30 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peers_never_touch_the_mail_guard_routes() {
+        for path in [
+            "/v1/email/guard/settings",
+            "/v1/email/guard/opt-out",
+            "/v1/email/guard/opt-out/ann%40x.com",
+            "/v1/email/guard/send-log",
+            "/v1/email/guard/send-log.csv",
+        ] {
+            for method in [
+                Method::GET,
+                Method::HEAD,
+                Method::POST,
+                Method::PUT,
+                Method::DELETE,
+            ] {
+                assert!(
+                    host_local_denial(&method, path).is_some(),
+                    "{method} {path}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn peers_never_change_a_bots_engine() {
