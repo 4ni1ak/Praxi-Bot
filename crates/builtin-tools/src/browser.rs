@@ -28,6 +28,8 @@ use crate::fill_secret::{Source, names_a_secret, refused, scrub, source};
 use crate::util::{exec_err, finish_text, parse, save_file, spec};
 
 mod act;
+#[cfg(test)]
+mod reopen_tests;
 pub use act::{can_egress as act_can_egress, summary as act_summary};
 
 pub use browser_cdp::FieldTarget;
@@ -38,6 +40,7 @@ const NO_SECRET_FILL: &str = "this browser backend cannot tell which page frame 
 const NO_SMART_SCROLL: &str = "this browser backend only scrolls by pixels: use dy (positive = down) and, if you need to reach something, snapshot again";
 const NO_HOVER: &str = "this browser backend cannot hover: click the element instead";
 const NO_SELECT_TEXT: &str = "this browser backend cannot select text";
+const NO_CONSENT: &str = "this browser backend cannot dismiss a consent dialog by itself: use browser_snapshot and click its reject / necessary-only button";
 
 /// What `browser_scroll` was asked to do. At most one of `dx`/`dy`, `pages`, `to`, `into_view`.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -180,6 +183,13 @@ pub trait BrowserDriver: Send + Sync {
     async fn select_text(&self, o: &SelectOpts) -> Result<String, String> {
         let _ = o;
         Err(NO_SELECT_TEXT.into())
+    }
+    /// Click the cookie / consent dialog's privacy-preserving button (reject non-essential,
+    /// necessary only; accept only when nothing narrower is offered) in the page's own frame.
+    /// Never follows a link, never clicks inside another frame. Returns what was clicked and
+    /// the page after it, or says that no dialog was found.
+    async fn dismiss_consent(&self) -> Result<String, String> {
+        Err(NO_CONSENT.into())
     }
     /// Wait for a condition.
     async fn wait(&self, cond: Wait, timeout: Option<Duration>) -> Result<String, String>;
@@ -967,6 +977,28 @@ impl BrowserDriver for CdpDriver {
         self.click_opts(r, None, None).await
     }
 
+    async fn dismiss_consent(&self) -> Result<String, String> {
+        let feel = self.feel();
+        let outcome = with_session!(self, None, |sess| {
+            sess.page
+                .dismiss_consent(expected_input_origin().as_deref(), feel)
+                .await
+        })?;
+        let Some((choice, cmp, label)) = outcome.clicked else {
+            return Ok(outcome.note.unwrap_or_default());
+        };
+        let mut text = format!(
+            "Consent dialog dismissed: clicked \"{}\" ({}; {cmp}).",
+            sanitize_dialog_message(&label),
+            choice.as_str()
+        );
+        if let Some(acted) = &outcome.action {
+            text.push('\n');
+            text.push_str(&render_action(acted)?);
+        }
+        Ok(text)
+    }
+
     async fn fill(&self, r: &str, text: &str) -> Result<String, String> {
         // The value is still set in one step on the approved element (so a page that steals
         // focus cannot receive it); only a short beat before it looks natural.
@@ -1252,6 +1284,7 @@ enum Op {
     Scroll,
     Hover,
     SelectText,
+    DismissConsent,
     Wait,
     Back,
     Tabs,
@@ -1272,6 +1305,10 @@ struct Shared {
     server_epochs: ServerEpochs,
     /// Owner-stored secrets the fill tool may type; `None` refuses `secret`.
     fill_secrets: Option<Arc<FillSecrets>>,
+    /// The last `browser_open`: (address asked for, address the page ended on), both as
+    /// [`same_page_key`]. A redirect (`/signup` to `/signup/step-1`) must not make the same
+    /// request look like a new page.
+    last_open: parking_lot::Mutex<Option<(String, String)>>,
 }
 
 type ServerEpochs =
@@ -1343,6 +1380,7 @@ impl Shared {
                 observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 server_epochs: ServerEpochs::default(),
                 fill_secrets: self.fill_secrets.clone(),
+                last_open: parking_lot::Mutex::default(),
             })
         })))
     }
@@ -1500,6 +1538,7 @@ fn tools_with_pool(
         observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         server_epochs: ServerEpochs::default(),
         fill_secrets,
+        last_open: parking_lot::Mutex::default(),
     });
     let b = PermissionCategory::Browser;
     let ref_prop =
@@ -1509,9 +1548,10 @@ fn tools_with_pool(
             Op::Open,
             spec(
                 "browser_open",
-                "Open a URL in the assistant's own managed browser and return the page snapshot. Use this only when a real page is needed (logging in, clicking, forms, pages that need scripts, or the user wants to watch); to read or look something up use web_search and web_extract first, they are faster and need no browser. The result ends with a [view: ...] line saying whether the user can see the page. This is not the user's browser; to see what the user has open, use desktop_list_apps. Example: {\"url\":\"https://example.com\"}",
+                "Open a URL in the assistant's own managed browser and return the page snapshot. Use this only when a real page is needed (logging in, clicking, forms, pages that need scripts, or the user wants to watch); to read or look something up use web_search and web_extract first, they are faster and need no browser. The result ends with a [view: ...] line saying whether the user can see the page. This is not the user's browser; to see what the user has open, use desktop_list_apps. If the page you ask for is ALREADY the open page it is NOT reloaded (a reload would throw away what you typed): you get the current page back with a note, and you continue with browser_click / browser_fill / browser_snapshot. Pass reload:true only when you really want it loaded again. A cookie or consent dialog is not a reason to reopen the page: use browser_dismiss_consent. Example: {\"url\":\"https://example.com\"}",
                 json!({"type":"object","properties":{
                     "url":{"type":"string","description":"Full URL."},
+                    "reload":{"type":"boolean","description":"Load the page again even though it is already open (loses typed input). Default false."},
                     "profile":{"type":"string","description":"Profile name, or 'isolated' for a disposable profile. Omit to use the configured per-bot default. Only honoured when the browser starts."},
                     "dialog":{"type":"string","enum":["accept","dismiss"],"description":"How to handle any dialog (e.g. beforeunload) during navigation. Default is dismiss (alerts are still accepted)."},
                     "prompt_text":{"type":"string","description":"Optional text to enter when accepting a prompt dialog."}
@@ -1625,6 +1665,16 @@ fn tools_with_pool(
                     "text":{"type":"string","description":"Visible text to select, as the page shows it."},
                     "mode":{"type":"string","enum":["range","word","paragraph"],"description":"range (drag, default), word (double click) or paragraph (triple click)."}
                 }}),
+                Effect::Write,
+                b,
+            ),
+        ),
+        (
+            Op::DismissConsent,
+            spec(
+                "browser_dismiss_consent",
+                "Close the cookie / consent dialog of the page that is open, like a person would: it finds the dialog (OneTrust, Cookiebot, Didomi, Quantcast, TrustArc, Usercentrics, Klaro, or a banner that talks about cookies) and clicks the most privacy-preserving button (Reject all, Only necessary, Reddet, Alle ablehnen, Tout refuser, Rechazar ...); only when the dialog offers nothing narrower does it click Accept. It never follows a link and never clicks inside another site's frame. Use it whenever a cookie or consent banner is in the way, INSTEAD of reloading or reopening the page (that throws away what you typed). If it says nothing was found, carry on with the task. Takes no arguments. Example: {}",
+                json!({"type":"object","properties":{}}),
                 Effect::Write,
                 b,
             ),
@@ -1757,6 +1807,9 @@ struct OpenIn {
     profile: Option<String>,
     dialog: Option<String>,
     prompt_text: Option<String>,
+    /// Load the page again even though it is the one that is open.
+    #[serde(default)]
+    reload: bool,
 }
 
 #[derive(Deserialize)]
@@ -2053,6 +2106,7 @@ impl BrowserTool {
                 ),
                 server_epochs: ServerEpochs::default(),
                 fill_secrets: None,
+                last_open: parking_lot::Mutex::default(),
             }));
         }
         let mut shared = self.shared.for_bot(ctx.bot_id.as_deref())?;
@@ -2073,6 +2127,7 @@ impl BrowserTool {
                 observed_epoch: shared.observed_epoch.clone(),
                 server_epochs: ServerEpochs::default(),
                 fill_secrets: shared.fill_secrets.clone(),
+                last_open: parking_lot::Mutex::default(),
             });
         }
         Ok(shared)
@@ -2304,6 +2359,11 @@ impl BrowserTool {
                     .as_ref()
                     .is_some_and(|g| g.remote_browser_for_run(run_id).is_some());
                 check_open_url(&i.url, served)?;
+                if !i.reload
+                    && let Some(kept) = self.already_open(&d, &i.url).await?
+                {
+                    return Ok(kept);
+                }
                 let permit = self.gate(run_id, "open", i.url.clone()).await?;
                 if permit.needs_observation()
                     || self
@@ -2330,7 +2390,9 @@ impl BrowserTool {
                         "Human intervention completed; previous action discarded. Fresh observation:\n{fresh}"
                     ));
                 }
-                permit
+                let asked = i.url.clone();
+                let driver = Arc::clone(&d);
+                let opened = permit
                     .protect(async move {
                         d.open_opts(
                             &i.url,
@@ -2341,7 +2403,14 @@ impl BrowserTool {
                         .await
                     })
                     .await
-                    .map_err(exec_err)?
+                    .map_err(exec_err)?;
+                if opened.is_ok() {
+                    // Remember where this address ended up, so asking for it again while the
+                    // page still sits there is recognised even after a redirect.
+                    let landed = driver.current_url().await.and_then(|u| same_page_key(&u));
+                    *self.shared.last_open.lock() = same_page_key(&asked).zip(landed);
+                }
+                opened
             }
             Op::Snapshot => {
                 let i: SnapIn = parse(input)?;
@@ -2596,6 +2665,18 @@ impl BrowserTool {
                     .await
                     .map_err(exec_err)?
             }
+            Op::DismissConsent => {
+                let permit = self
+                    .gate(run_id, "click", "consent dialog".to_owned())
+                    .await?;
+                if let Some(fresh) = self.discard_if_stale(&permit, &d).await? {
+                    return Ok(fresh);
+                }
+                permit
+                    .protect(async move { d.dismiss_consent().await })
+                    .await
+                    .map_err(exec_err)?
+            }
             Op::Wait => {
                 let i: WaitIn = parse(input)?;
                 let given = usize::from(i.text.is_some())
@@ -2742,7 +2823,96 @@ impl BrowserTool {
     }
 }
 
+/// Said when `browser_open` is asked for the page that is already open.
+const ALREADY_OPEN: &str = "[Praxi notice] This page is already open (not reloaded), so what you typed or chose on it is kept. Carry on with browser_click / browser_fill / browser_snapshot on the page below. A cookie or consent banner: browser_dismiss_consent. Pass reload:true to browser_open only if you really want the page loaded again.";
+
+/// Query parameters that only say where a visitor came from.
+fn is_tracking_param(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.starts_with("utm_")
+        || matches!(
+            n.as_str(),
+            "gclid"
+                | "dclid"
+                | "gbraid"
+                | "wbraid"
+                | "fbclid"
+                | "msclkid"
+                | "yclid"
+                | "igshid"
+                | "mc_cid"
+                | "mc_eid"
+                | "_ga"
+                | "_gl"
+                | "ref_src"
+        )
+}
+
+/// What identifies WHICH page an http(s) address is: scheme, lower-case host without a trailing
+/// dot, port (default made explicit), path without a trailing slash and the query without
+/// tracking parameters; the fragment is dropped. `None` for anything that is not http(s).
+#[must_use]
+pub fn same_page_key(raw: &str) -> Option<String> {
+    let url = url::Url::parse(raw.trim()).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = url.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+    let path = url.path().trim_end_matches('/');
+    let mut key = format!(
+        "{}://{host}:{}{path}",
+        url.scheme(),
+        url.port_or_known_default()?
+    );
+    let query: Vec<String> = url
+        .query_pairs()
+        .filter(|(name, _)| !is_tracking_param(name))
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect();
+    if !query.is_empty() {
+        key.push('?');
+        key.push_str(&query.join("&"));
+    }
+    Some(key)
+}
+
 impl BrowserTool {
+    /// `browser_open` of the address the browser is already on: the page is read, not loaded
+    /// again (a reload empties every field the model typed). `None`: it is a different page,
+    /// or the browser cannot say where it is.
+    async fn already_open(
+        &self,
+        d: &Arc<dyn BrowserDriver>,
+        url: &str,
+    ) -> Result<Option<String>, ToolError> {
+        let Some(asked) = same_page_key(url) else {
+            return Ok(None);
+        };
+        let Some(current) = d.current_url().await.and_then(|u| same_page_key(&u)) else {
+            return Ok(None);
+        };
+        let redirected_here = self
+            .shared
+            .last_open
+            .lock()
+            .as_ref()
+            .is_some_and(|(req, landed)| *req == asked && *landed == current);
+        if current != asked && !redirected_here {
+            return Ok(None);
+        }
+        self.refuse_observation_while_latched()?;
+        let epoch = self
+            .shared
+            .control
+            .as_ref()
+            .map_or(0, |gate| gate.observation_epoch());
+        let snapshot = d.snapshot(false).await.map_err(exec_err)?;
+        self.shared
+            .observed_epoch
+            .store(epoch, std::sync::atomic::Ordering::SeqCst);
+        Ok(Some(format!("{ALREADY_OPEN}\n{snapshot}")))
+    }
+
     /// Tell the model, in the daemon's own words, that the page shows a CAPTCHA or a
     /// one-time-code prompt and what it may do about it (see `handover`).
     fn append_challenge_notice(ctx: &ToolContext, origin: Option<&str>, text: &mut String) {
@@ -2828,11 +2998,25 @@ impl BrowserTool {
         // Only the actions that act on the page that is open now (not open/eval/tabs/back).
         if !matches!(
             self.op,
-            Op::Click | Op::Fill | Op::Select | Op::Press | Op::Act | Op::SelectText
+            Op::Click
+                | Op::Fill
+                | Op::Select
+                | Op::Press
+                | Op::Act
+                | Op::SelectText
+                | Op::DismissConsent
         ) {
             return None;
         }
         let shared = self.select_shared(ctx).ok()?;
+        if self.op == Op::DismissConsent {
+            // No ref: the dialog belongs to the page itself, so the page's own origin counts.
+            return shared
+                .driver
+                .current_url()
+                .await
+                .and_then(|u| origin_of(&u));
+        }
         let batch_ref = if self.op == Op::Act {
             act::first_ref(input)
         } else {
@@ -2932,7 +3116,13 @@ impl BrowserTool {
         if let Some(expected) = &ctx.expected_origin
             && matches!(
                 self.op,
-                Op::Click | Op::Fill | Op::Select | Op::Press | Op::Act | Op::SelectText
+                Op::Click
+                    | Op::Fill
+                    | Op::Select
+                    | Op::Press
+                    | Op::Act
+                    | Op::SelectText
+                    | Op::DismissConsent
             )
         {
             let now = self.current_origin(ctx, &input).await;
@@ -3803,6 +3993,7 @@ mod tests {
             fill_secrets: None,
             observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             server_epochs: ServerEpochs::default(),
+            last_open: parking_lot::Mutex::default(),
         });
         assert!(
             registry.targets().is_empty(),
@@ -3844,6 +4035,7 @@ mod tests {
             control: None,
             observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             server_epochs: ServerEpochs::default(),
+            last_open: parking_lot::Mutex::default(),
             fill_secrets: None,
         });
         let a = shared.for_bot(Some("bot-a")).unwrap();
@@ -4009,6 +4201,7 @@ mod tests {
                 control: Some(Arc::new(Remote(Arc::new(FakeBrowser::default())))),
                 observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 server_epochs: ServerEpochs::default(),
+                last_open: parking_lot::Mutex::default(),
                 fill_secrets: None,
             }),
         };
@@ -5120,6 +5313,7 @@ mod tests {
             fill_secrets: None,
             observed_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             server_epochs: ServerEpochs::default(),
+            last_open: parking_lot::Mutex::default(),
         });
         for n in 0..20u128 {
             let id = uuid::Uuid::from_u128(0x0194_a1c2_0000_7000_8000_0000_0000_0000 + n);

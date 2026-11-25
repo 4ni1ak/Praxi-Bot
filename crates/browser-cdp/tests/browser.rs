@@ -10,6 +10,8 @@ use browser_cdp::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+mod common;
+
 fn data_url(html: &str) -> String {
     format!(
         "data:text/html;base64,{}",
@@ -820,5 +822,139 @@ async fn snapshot_cache_hits_when_unchanged_and_invalidates_on_dom_mutation() {
         "cache served stale snapshot after DOM/value mutation:\n{}",
         s3.render()
     );
+    let _ = b.close().await;
+}
+
+/// Cookie / consent banners: four layouts that must be answered with the privacy-preserving
+/// button, one that only offers "accept", and a page without a banner.
+const CONSENT_FIXTURES: [(&str, &str, &str, &str); 5] = [
+    (
+        "onetrust",
+        r#"<html><head><title>start</title></head><body><p>Shop</p>
+<div id="onetrust-banner-sdk" style="position:fixed;bottom:0;left:0;right:0;height:120px;background:#ddd">
+<button id="onetrust-accept-btn-handler" onclick="document.title='accepted'">Accept All Cookies</button>
+<button id="onetrust-reject-all-handler" onclick="document.title='rejected';this.parentNode.remove()">Reject All</button></div></body></html>"#,
+        "rejected",
+        "OneTrust",
+    ),
+    (
+        "cookiebot",
+        r#"<html><head><title>start</title></head><body><p>News</p>
+<div id="CybotCookiebotDialog" style="position:fixed;top:20%;left:20%;width:60%;height:200px;background:#ddd">
+<button id="CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll" onclick="document.title='accepted'">Allow all</button>
+<button id="CybotCookiebotDialogBodyButtonDecline" onclick="document.title='rejected'">Use necessary cookies only</button></div></body></html>"#,
+        "rejected",
+        "Cookiebot",
+    ),
+    (
+        "usercentrics-shadow",
+        r#"<html><head><title>start</title></head><body><p>Blog</p><div id="usercentrics-root"></div>
+<script>const r=document.getElementById('usercentrics-root').attachShadow({mode:'open'});
+r.innerHTML='<div style="position:fixed;bottom:0;left:0;right:0;height:100px;background:#ddd"><button data-testid="uc-accept-all-button" onclick="document.title=\'accepted\'">Accept all</button><button data-testid="uc-deny-all-button" onclick="document.title=\'rejected\'">Deny</button></div>';
+</script></body></html>"#,
+        "rejected",
+        "Usercentrics",
+    ),
+    (
+        "generic-turkish",
+        r#"<html><head><meta charset="utf-8"><title>start</title></head><body><p>Magaza</p>
+<div class="uyari" style="position:fixed;bottom:0;left:0;right:0;height:100px;background:#ddd">Bu site cerez kullanir (cookie).
+<a href="https://elsewhere.invalid/politika" onclick="document.title='followed'">Cerez politikasi</a>
+<button onclick="document.title='accepted'">Tümünü kabul et</button>
+<button onclick="document.title='rejected'">Yalnızca gerekli</button></div></body></html>"#,
+        "rejected",
+        "generic",
+    ),
+    (
+        "accept-only",
+        r#"<html><head><title>start</title></head><body><p>Docs</p>
+<div role="dialog" style="position:fixed;bottom:0;left:0;right:0;height:100px;background:#ddd">We use cookies and similar tools.
+<a href="https://elsewhere.invalid/privacy" onclick="document.title='followed'">Privacy policy</a>
+<button onclick="document.title='accepted'">Accept</button></div></body></html>"#,
+        "accepted",
+        "generic",
+    ),
+];
+
+#[tokio::test]
+#[ignore = "needs Chrome/Edge"]
+async fn dismiss_consent_picks_the_privacy_preserving_button_in_each_layout() {
+    use browser_cdp::{ConsentChoice, Feel};
+    let b = Browser::launch(LaunchOptions::default()).await.unwrap();
+    for (name, html, title, cmp) in CONSENT_FIXTURES {
+        let p = open(&b, html).await;
+        let outcome = p.dismiss_consent(None, Feel::Instant).await.unwrap();
+        let (choice, found_cmp, label) = outcome
+            .clicked
+            .clone()
+            .unwrap_or_else(|| panic!("{name}: nothing clicked: {:?}", outcome.note));
+        assert_eq!(found_cmp, cmp, "{name}");
+        let want = if title == "rejected" {
+            ConsentChoice::Reject
+        } else {
+            ConsentChoice::Accept
+        };
+        assert_eq!(choice, want, "{name}: clicked {label:?}");
+        assert_eq!(
+            p.evaluate("document.title").await.unwrap(),
+            serde_json::json!(title),
+            "{name}: clicked {label:?}"
+        );
+    }
+    let _ = b.close().await;
+}
+
+#[tokio::test]
+#[ignore = "needs Chrome/Edge"]
+async fn dismiss_consent_does_nothing_on_a_page_without_a_banner() {
+    use browser_cdp::Feel;
+    let b = Browser::launch(LaunchOptions::default()).await.unwrap();
+    let p = open(
+        &b,
+        r#"<html><head><title>start</title></head><body><h1>Plain</h1>
+<button onclick="document.title='clicked'">Accept the invitation</button>
+<button onclick="document.title='clicked'">Decline the invitation</button></body></html>"#,
+    )
+    .await;
+    let outcome = p.dismiss_consent(None, Feel::Instant).await.unwrap();
+    assert!(outcome.clicked.is_none(), "{outcome:?}");
+    assert!(
+        outcome
+            .note
+            .unwrap()
+            .contains("No cookie or consent dialog")
+    );
+    assert_eq!(
+        p.evaluate("document.title").await.unwrap(),
+        serde_json::json!("start")
+    );
+    let _ = b.close().await;
+}
+
+#[tokio::test]
+#[ignore = "needs Chrome/Edge"]
+async fn dismiss_consent_refuses_a_page_on_another_origin_than_the_approved_one() {
+    use browser_cdp::Feel;
+    let b = Browser::launch(LaunchOptions::default()).await.unwrap();
+    let port = common::serve().await;
+    let p = b
+        .new_page(&format!("http://127.0.0.1:{port}/consent"))
+        .await
+        .unwrap();
+    let err = p
+        .dismiss_consent(Some("https://example.com"), Feel::Instant)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("origin changed"), "{err}");
+    assert_eq!(
+        p.evaluate("document.title").await.unwrap(),
+        serde_json::json!("consent-start")
+    );
+    // The right origin goes through.
+    let outcome = p
+        .dismiss_consent(Some(&format!("http://127.0.0.1:{port}")), Feel::Instant)
+        .await
+        .unwrap();
+    assert!(outcome.clicked.is_some(), "{outcome:?}");
     let _ = b.close().await;
 }

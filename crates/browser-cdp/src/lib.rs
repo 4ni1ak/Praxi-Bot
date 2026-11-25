@@ -42,6 +42,7 @@ pub use actions::{
     ActionResult, FieldTarget, FrameIdentity, KeySpec, ScreenshotOptions, ScreenshotTarget,
     StepGuard, WaitCondition, parse_key,
 };
+pub use actions::{ConsentChoice, ConsentOutcome};
 pub use actions::{ScrollRequest, ScrollTo, SelectUnit, TextSelection};
 pub use browser::{Browser, TargetInfo};
 pub use client::{

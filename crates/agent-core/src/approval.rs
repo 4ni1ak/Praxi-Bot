@@ -71,7 +71,7 @@ const FULL_BROWSE_REASON: &str = "mode.full.owner_browse";
 /// open, go back, click, type, select, press, select text, tabs and the batch. NOT
 /// `browser_eval` (a page script can send anything anywhere) and not the user's own computer
 /// (`pc_*`).
-const FULL_BROWSER_CALLS: [&str; 9] = [
+const FULL_BROWSER_CALLS: [&str; 10] = [
     "browser_open",
     "browser_back",
     "browser_click",
@@ -79,6 +79,7 @@ const FULL_BROWSER_CALLS: [&str; 9] = [
     "browser_select",
     "browser_press",
     "browser_select_text",
+    "browser_dismiss_consent",
     "browser_tabs",
     "browser_act",
 ];

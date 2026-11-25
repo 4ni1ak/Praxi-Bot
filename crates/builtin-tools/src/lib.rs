@@ -584,6 +584,7 @@ mod tests {
             ("browser_scroll", R, B),
             ("browser_hover", R, B),
             ("browser_select_text", W, B),
+            ("browser_dismiss_consent", W, B),
             ("browser_wait", R, B),
             ("browser_back", W, B),
             ("browser_tabs", W, B),
@@ -1200,7 +1201,7 @@ mod tests {
         cfg.browser = Some(Arc::new(browser::fake::FakeBrowser::default()));
         cfg.email = Some(connector.clone());
         let added = register_builtin_tools(&reg, cfg);
-        assert_eq!(added, 40 + 7 + 2 + 2 + 1 + 1);
+        assert_eq!(added, 41 + 7 + 2 + 2 + 1 + 1);
 
         // Verification of email tools and their effects
         let send_tool = reg

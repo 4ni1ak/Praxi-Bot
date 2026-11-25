@@ -1,13 +1,15 @@
 ---
 name: cookie-consent-banners
 description: Dismiss cookie and consent banners choosing the most privacy-preserving option.
-version: 0.1.0
+version: 0.2.0
 when:
   keywords: [cookie, consent, gdpr, privacy banner, accept all, reject all]
 ---
 # Cookie and consent banners
 
 Goal: get the banner out of the way while sharing as little as possible.
+
+Fastest way: call `browser_dismiss_consent` (no arguments). It finds the dialog (OneTrust, Cookiebot, Didomi, Quantcast, TrustArc, Usercentrics, Klaro or a generic cookie banner) and clicks the privacy-preserving button itself: reject all or necessary only first, accept only when nothing narrower is offered. Never reload or reopen the page to get rid of a banner: that throws away what you typed. If the tool says nothing was found or the dialog only offers settings, do it by hand as below.
 
 Preference order:
 1. "Reject all", "Decline", "Only necessary", "Essential only".

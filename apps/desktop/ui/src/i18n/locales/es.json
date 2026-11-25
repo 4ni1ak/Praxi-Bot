@@ -2067,6 +2067,11 @@
         "failed": "No pudo hacer clic en la página",
         "running": "Haciendo clic en una página"
       },
+      "browser_dismiss_consent": {
+        "done": "Cerró el aviso de cookies de una página",
+        "failed": "No pudo cerrar el aviso de cookies",
+        "running": "Cerrando el aviso de cookies de una página"
+      },
       "browser_eval": {
         "done": "Ejecutó un script en el navegador",
         "failed": "No pudo ejecutar el script en el navegador",

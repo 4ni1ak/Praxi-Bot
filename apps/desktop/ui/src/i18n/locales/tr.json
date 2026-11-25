@@ -2067,6 +2067,11 @@
         "failed": "Sayfada tıklanmadı",
         "running": "Sayfada tıklanıyor"
       },
+      "browser_dismiss_consent": {
+        "done": "Sayfadaki çerez bildirimi kapatıldı",
+        "failed": "Çerez bildirimi kapatılamadı",
+        "running": "Sayfadaki çerez bildirimi kapatılıyor"
+      },
       "browser_eval": {
         "done": "Tarayıcıda betik çalıştırıldı",
         "failed": "Tarayıcıda betik çalıştırılmadı",

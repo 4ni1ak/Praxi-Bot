@@ -2065,6 +2065,11 @@
         "failed": "Didn't click on a page",
         "running": "Clicking on a page"
       },
+      "browser_dismiss_consent": {
+        "done": "Spanduk cookie di halaman ditutup",
+        "failed": "Tidak bisa menutup spanduk cookie",
+        "running": "Menutup spanduk cookie di halaman"
+      },
       "browser_eval": {
         "done": "Ran a script in the browser",
         "failed": "Didn't run a script in the browser",
