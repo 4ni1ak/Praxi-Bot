@@ -15,8 +15,6 @@
 //!   "always allow" grants: audited by construction, durable, and not part of the bot
 //!   profile file, so profile sharing / export can never carry them.
 
-use std::collections::HashMap;
-
 use permission_engine::{
     Capability, ProfileAction, ProfileRule, Subject, SubjectKind, Verdict, evaluate, normalize_app,
     site_of_url,
@@ -234,7 +232,8 @@ pub(crate) fn recent_subjects(
         .list_audit_action_since(user, "approval.approved", since)
         .unwrap_or_default();
     entries.reverse();
-    let mut seen: HashMap<(SubjectKind, String, Capability), ()> = HashMap::new();
+    let mut seen: std::collections::HashSet<(SubjectKind, String, Capability)> =
+        std::collections::HashSet::new();
     let mut out = Vec::new();
     for e in entries {
         if e.detail["bot_id"].as_str() != Some(&bot.to_string()) {
@@ -255,10 +254,7 @@ pub(crate) fn recent_subjects(
         let Some(key) = s["key"].as_str() else {
             continue;
         };
-        if seen
-            .insert((kind, key.to_owned(), capability), ())
-            .is_none()
-        {
+        if seen.insert((kind, key.to_owned(), capability)) {
             out.push(ApprovalSubject {
                 kind,
                 key: key.to_owned(),
