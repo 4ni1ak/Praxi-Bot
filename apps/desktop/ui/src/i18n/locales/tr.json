@@ -1572,8 +1572,10 @@
         "shortened": "Kısaltıldı: yalnızca ilk {{shown}} karakter gösteriliyor."
       },
       "mail": {
+        "another": "Başka adresten gönder…",
         "bcc": "Gizli bilgi",
         "cc": "Bilgi",
+        "draftOnly": "Yalnızca taslak",
         "from": "Kimden",
         "legal": "Listeden çıkmak isteyen birine yazmak ya da çıkış satırı olmadan ticari e-posta göndermek hukuka aykırı olabilir (Türkiye'de 6563 sayılı ETK) ve para cezasına yol açabilir. Bu hukuki tavsiye değildir.",
         "optOutOff": "Bu e-postaya çıkış satırı eklenmeyecek.",
@@ -1581,8 +1583,10 @@
         "ownerOnly": "Buna yalnızca siz karar verebilirsiniz. Bot bu uyarıları kendi başına aşıp e-posta gönderemez.",
         "sendAnyway": "Yine de gönder",
         "subject": "Konu",
+        "switchLabel": "Başka adresten gönder",
         "title": "Bu e-posta gönderilsin mi?",
         "to": "Kime",
+        "useThis": "Bu adresi kullan",
         "warning": {
           "daily_limit": "Bu işlemle bu hesaptan 24 saatte {{count}} e-posta gitmiş olacak. Sınırınız {{limit}}.",
           "guard_unreadable": "E-posta koruması kayıtlı {{list}} dosyasını okuyamadı. Bozuk dosya silinmedi, kenara alındı; bu yüzden çıkma kayıtları eksik olabilir ve kimse bu listeye karşı denetlenmiyor.",
@@ -2115,6 +2119,11 @@
         "done": "E-posta taslağı hazırlandı",
         "failed": "E-posta taslağı hazırlanmadı",
         "running": "E-posta taslağı hazırlanıyor"
+      },
+      "email_identities": {
+        "done": "E-posta adreslerine baktı",
+        "failed": "E-posta adreslerine bakılamadı",
+        "running": "Kullanabileceği e-posta adreslerine bakıyor"
       },
       "email_mark": {
         "done": "E-postanın okundu durumu değişti",
@@ -5681,10 +5690,12 @@
         "own": "Kendi posta kutumu bağla",
         "ownText": "Zaten sahip olduğun bir posta kutusunu (Gmail, Outlook, iCloud, kendi sunucun) IMAP ve SMTP ile kullan."
       },
+      "defaultTag": "{{count}} bot için varsayılan",
       "delete": "Sil",
       "deleteConfirm": "Bu posta kutusu silinsin mi?",
       "deletedBot": "silinmiş bot",
       "description": "Botlarının okuyup yazabileceği posta kutuları. Bir posta kutusu tek bir bota ait olabilir.",
+      "draftOnlyTag": "Yalnızca taslak",
       "edit": "Düzenle",
       "empty": "Henüz posta kutusu yok.",
       "errors": {
@@ -5707,6 +5718,8 @@
         },
         "address": "E-posta adresi",
         "create": "Posta kutusu ekle",
+        "defaultFor": "Varsayılan gönderici olduğu botlar",
+        "defaultForHint": "Bot bir adres belirtmezse bu adresten gönderir.",
         "imapHost": "IMAP sunucusu",
         "implicit": "TLS",
         "name": "Ad",
@@ -5725,6 +5738,13 @@
         },
         "save": "Kaydet",
         "security": "SMTP güvenliği",
+        "sendMode": {
+          "ask": "Her seferinde bana sor",
+          "askHint": "Her ileti önce sana gösterilir: Kimden, Kime, konu ve metin.",
+          "draftOnly": "Yalnızca taslak",
+          "draftOnlyHint": "Botlar bu adresten taslak yazabilir ama asla göndermez.",
+          "label": "Gönderim"
+        },
         "senders": "İzinli gönderenler",
         "sendersHint": "Adresler veya @alan adları, her satıra bir tane. Yakında eklenecek gelen posta özelliği için saklanır; şimdilik gelen e-postalara tepki verilmez.",
         "smtpHost": "SMTP sunucusu",
@@ -5756,6 +5776,7 @@
         "tls": "TLS başarısız",
         "unreachable": "Bağlanılamıyor"
       },
+      "sharedDomain": "Bu ortak adres toplu ya da soğuk e-posta için uygun değil. Tanıtım için kendi alan adını kullan.",
       "test": "Bağlantıyı dene",
       "testing": "Deneniyor…",
       "title": "E-posta",
@@ -5775,6 +5796,7 @@
       "enable": "E-posta kanalını aç",
       "folder": "İzlenecek klasör",
       "folderHint": "Genellikle INBOX. Yalnızca bunu açtıktan sonra gelen postalar iletilir.",
+      "fromLine": "Gönderen: {{from}}. Gönderim modu: her gönderim onayınızı gerektirir.",
       "full": "Bota her postanın özetini değil tüm metnini göster",
       "noAccount": "Önce yukarıdan bir posta kutusu ekleyin.",
       "note": "Postaları başkaları yazar; bu yüzden bot onları emir değil bilgi olarak ele alır. Varsayılan olarak yalnızca göndereni, konuyu ve ilk birkaç satırı görür. Ekler hiçbir zaman açılmaz. Yanıtlara izin verip her birini burada onaylamadıkça hiçbir şey gönderilmez.",

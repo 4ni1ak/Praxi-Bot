@@ -1572,8 +1572,10 @@
         "shortened": "Shortened: only the first {{shown}} characters are shown."
       },
       "mail": {
+        "another": "Send from another address…",
         "bcc": "Bcc",
         "cc": "Cc",
+        "draftOnly": "Drafts only",
         "from": "From",
         "legal": "Writing to someone who opted out, or sending commercial e-mail without an opt-out line, can be unlawful (in Turkey: Law 6563, ETK) and can lead to fines. This is not legal advice.",
         "optOutOff": "No opt-out line will be added to this e-mail.",
@@ -1581,8 +1583,10 @@
         "ownerOnly": "Only you can decide this. The bot cannot send past these warnings on its own.",
         "sendAnyway": "Send anyway",
         "subject": "Subject",
+        "switchLabel": "Send from another address",
         "title": "Send this e-mail?",
         "to": "To",
+        "useThis": "Use this address",
         "warning": {
           "daily_limit": "This would be {{count}} e-mails from this account in 24 hours. Your limit is {{limit}}.",
           "guard_unreadable": "The mail guard could not read its saved {{list}}. The damaged file was set aside, not deleted, so opt-outs may be missing and nobody is checked against them.",
@@ -2115,6 +2119,11 @@
         "done": "Drafted an email",
         "failed": "Didn't draft an email",
         "running": "Drafting an email"
+      },
+      "email_identities": {
+        "done": "Checked the mail addresses",
+        "failed": "Couldn't check the mail addresses",
+        "running": "Checking which mail addresses it can use"
       },
       "email_mark": {
         "done": "Changed the read state of email",
@@ -5681,10 +5690,12 @@
         "own": "Connect my own mailbox",
         "ownText": "Use a mailbox you already have (Gmail, Outlook, iCloud, your own server) over IMAP and SMTP."
       },
+      "defaultTag": "Default for {{count}}",
       "delete": "Delete",
       "deleteConfirm": "Delete this mailbox?",
       "deletedBot": "deleted bot",
       "description": "Mailboxes your bots can read and write with. A mailbox can belong to one bot.",
+      "draftOnlyTag": "Drafts only",
       "edit": "Edit",
       "empty": "No mailboxes yet.",
       "errors": {
@@ -5707,6 +5718,8 @@
         },
         "address": "E-mail address",
         "create": "Add mailbox",
+        "defaultFor": "Default sender for",
+        "defaultForHint": "When the bot does not name an address, it sends from this one.",
         "imapHost": "IMAP server",
         "implicit": "TLS",
         "name": "Name",
@@ -5725,6 +5738,13 @@
         },
         "save": "Save",
         "security": "SMTP security",
+        "sendMode": {
+          "ask": "Ask me each time",
+          "askHint": "Every message is shown to you first: From, To, subject and text.",
+          "draftOnly": "Drafts only",
+          "draftOnlyHint": "Bots can write drafts from this address, but never send.",
+          "label": "Sending"
+        },
         "senders": "Allowed senders",
         "sendersHint": "Addresses or @domains, one per line. Stored for the coming inbound-mail feature; nothing reacts to incoming mail yet.",
         "smtpHost": "SMTP server",
@@ -5756,6 +5776,7 @@
         "tls": "TLS failed",
         "unreachable": "Cannot connect"
       },
+      "sharedDomain": "This shared address is not suitable for cold mail. Use your own domain for outreach.",
       "test": "Test connection",
       "testing": "Testing…",
       "title": "Email",
@@ -5775,6 +5796,7 @@
       "enable": "Switch on the e-mail channel",
       "folder": "Folder to watch",
       "folderHint": "Usually INBOX. Only mail that arrives after you switch this on is passed on.",
+      "fromLine": "From: {{from}}. Send mode: every send needs your approval.",
       "full": "Show the bot the whole text of each mail, not just a summary",
       "noAccount": "Add a mailbox above first.",
       "note": "Mail is written by other people, so the bot treats it as information, never as orders. By default it only sees the sender, the subject and the first few lines. Attachments are never opened. Nothing is sent unless you allow replies and then approve each one here.",

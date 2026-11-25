@@ -16,8 +16,8 @@ use tool_registry::{
     ToolOutput, ToolSpec,
 };
 
-use crate::config::AccountKind;
-use crate::connector::EmailConnector;
+use crate::config::{AccountKind, SendMode};
+use crate::connector::{EmailConnector, Scoped};
 use crate::guard::{self, GuardReport, MailFacts, SendLogEntry};
 use crate::imap::{DEFAULT_LIMIT, MAX_LIMIT, SearchQuery};
 use crate::message::{DEFAULT_MAX_BODY_CHARS, MAX_BODY_CHARS};
@@ -36,11 +36,23 @@ pub const DRAFT: &str = "email_draft";
 /// `email_send`.
 pub const SEND: &str = "email_send";
 
+/// `email_identities`.
+pub const IDENTITIES: &str = "email_identities";
+
 /// All tool names, in registration order.
-pub const TOOL_NAMES: [&str; 6] = [LIST_FOLDERS, SEARCH, READ, MARK_READ, DRAFT, SEND];
+pub const TOOL_NAMES: [&str; 7] = [
+    IDENTITIES,
+    LIST_FOLDERS,
+    SEARCH,
+    READ,
+    MARK_READ,
+    DRAFT,
+    SEND,
+];
 
 #[derive(Clone, Copy)]
 enum Kind {
+    Identities,
     ListFolders,
     Search,
     Read,
@@ -72,6 +84,8 @@ fn spec(name: &str, description: &str, schema: Value, effect: Effect) -> ToolSpe
             // mark_read does not return the message, but the folder and the
             // message id are sent to the remote mailbox, same as a draft or a send.
             DRAFT | SEND | MARK_READ => ContentClass::egress(),
+            // `email_identities` reads local settings only (names, addresses,
+            // modes): no mail content, nothing leaves.
             _ => ContentClass::none(),
         },
     }
@@ -107,8 +121,61 @@ mod class_tests {
     }
 }
 
+/// The `email_identities` answer: local settings only, never a secret.
+fn identities_output(c: &Scoped<'_>) -> ToolOutput {
+    let list: Vec<Value> = c
+        .identities()
+        .into_iter()
+        .map(|(a, default)| {
+            json!({
+                "account": a.name,
+                "address": a.address,
+                "kind": a.kind.as_str(),
+                "default": default,
+                "send_mode": match a.identity.send_mode {
+                    SendMode::Ask => "ask",
+                    SendMode::DraftOnly => "draft_only",
+                },
+            })
+        })
+        .collect();
+    json_out(json!({ "identities": list }))
+}
+
+/// `email_draft`: save a draft from the chosen identity.
+async fn draft_output(c: &Scoped<'_>, i: &MailInput) -> Result<ToolOutput, ToolError> {
+    let acct = c.resolve(i.account.as_deref())?;
+    let folder = c.save_draft(Some(&acct.name), &i.mail).await?;
+    Ok(json_out(json!({
+        "saved": true,
+        "folder": folder,
+        "sent": false,
+        "from": acct.address,
+        "account": acct.name,
+    })))
+}
+
+/// `email_send` on an identity the owner limited to drafts: keep a draft, send
+/// nothing, say so. Runs before the guard and before any send call (which
+/// refuses draft-only identities on its own as a second line of defence).
+async fn draft_fallback(
+    c: &Scoped<'_>,
+    acct: &crate::config::AccountConfig,
+    mail: &OutgoingMail,
+) -> Result<ToolOutput, ToolError> {
+    let folder = c.save_draft(Some(&acct.name), mail).await?;
+    Ok(json_out(json!({
+        "sent": false,
+        "saved_as_draft": true,
+        "folder": folder,
+        "from": acct.address,
+        "account": acct.name,
+        "reason": "this address is set to draft only by the owner; tell the user the message is waiting in the drafts folder",
+    })))
+}
+
 fn account_prop() -> Value {
-    json!({"type":"string","description":"Account name. Optional: a bot's own account is used by default, else the only available one."})
+    json!({"type":"string","description":"Mail identity (account name), see email_identities. Optional: the bot's default identity is used, else its own, else the only available one. When the user names an address (\"from my work address\"), pick the matching identity and say which one you used."})
 }
 
 fn mail_props() -> Value {
@@ -134,6 +201,15 @@ fn send_props() -> Value {
 
 fn specs() -> Vec<(Kind, ToolSpec)> {
     vec![
+        (
+            Kind::Identities,
+            spec(
+                IDENTITIES,
+                "List the mail identities (addresses) this bot may use: name, address, kind, whether it is the default and its send mode (`ask` = every send needs the owner's approval, `draft_only` = drafts only). Call it before sending when the user names a sender, then pass the matching `account` to email_send / email_draft and tell the user which identity you used. Example: {}",
+                json!({"type":"object","properties":{}}),
+                Effect::Read,
+            ),
+        ),
         (
             Kind::ListFolders,
             spec(
@@ -464,6 +540,12 @@ impl EmailTool {
     async fn send(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         let i: SendInput = parse(input)?;
         let c = self.conn.scoped(ctx.bot_id.as_deref());
+        let chosen = c
+            .resolve(i.account.as_deref())
+            .map_err(|e| ToolError::InvalidInput(e.to_string()))?;
+        if chosen.identity.send_mode == SendMode::DraftOnly {
+            return draft_fallback(&c, &chosen, &i.mail).await;
+        }
         let plan = self.plan_send(ctx, &i)?;
         let guard = self.conn.guard();
         // Consumes the card the owner was shown. No argument of the model reaches this.
@@ -486,7 +568,7 @@ impl EmailTool {
         if let Some(f) = &plan.report.footer {
             mail.body = guard::with_footer(&mail.body, f);
         }
-        let receipt = c.send_receipt(i.account.as_deref(), &mail).await?;
+        let receipt = c.send_receipt(Some(&plan.account), &mail).await?;
         guard.record(SendLogEntry {
             at: guard::now_secs(),
             at_utc: String::new(),
@@ -583,10 +665,17 @@ impl Tool for EmailTool {
                 lines.push(format!("opt-out line added by the system: {f}"));
             }
         }
-        if input.get("account").and_then(Value::as_str).is_none()
-            && let Ok(name) = self.conn.scoped(ctx.bot_id.as_deref()).resolve_name(None)
-        {
-            lines.push(format!("account: {name} (default)"));
+        // The sender is always named, whether the model passed it or not.
+        let named = input.get("account").and_then(Value::as_str);
+        if let Ok(acct) = self.conn.scoped(ctx.bot_id.as_deref()).resolve(named) {
+            let default = if named.is_none() { " (default)" } else { "" };
+            lines.push(format!(
+                "from: {} (account: {}){default}",
+                acct.address, acct.name
+            ));
+            if matches!(self.kind, Kind::Send) && acct.identity.send_mode == SendMode::DraftOnly {
+                lines.push("send mode: draft only, saved as a draft and not sent".to_owned());
+            }
         }
         if let Some(items) = input.get("attachments").and_then(Value::as_array) {
             for item in items {
@@ -597,7 +686,10 @@ impl Tool for EmailTool {
         if lines.is_empty() {
             None
         } else {
-            Some(lines.join("\n"))
+            Some(lines.join(
+                "
+",
+            ))
         }
     }
 
@@ -611,6 +703,7 @@ impl Tool for EmailTool {
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         let c = self.conn.scoped(ctx.bot_id.as_deref());
         match self.kind {
+            Kind::Identities => Ok(identities_output(&c)),
             Kind::ListFolders => {
                 let i: AccountOnly = parse(input)?;
                 let kind = c.kind(i.account.as_deref())?;
@@ -687,10 +780,7 @@ impl Tool for EmailTool {
             }
             Kind::Draft => {
                 let i: MailInput = parse(input)?;
-                let folder = c.save_draft(i.account.as_deref(), &i.mail).await?;
-                Ok(json_out(
-                    json!({"saved": true, "folder": folder, "sent": false}),
-                ))
+                draft_output(&c, &i).await
             }
             Kind::Send => self.send(ctx, input).await,
         }

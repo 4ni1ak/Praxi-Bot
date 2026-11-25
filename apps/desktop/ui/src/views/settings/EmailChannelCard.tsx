@@ -206,6 +206,11 @@ export function EmailChannelCard() {
               <p className={styles.recipients}>
                 {t("settingsModal.emailChannel.to", { to: r.to.join(", ") })}
               </p>
+              {r.from ? (
+                <p className={formStyles.hint} data-testid={`email-reply-from-${r.id}`}>
+                  {t("settingsModal.emailChannel.fromLine", { from: r.from })}
+                </p>
+              ) : null}
               <p className={formStyles.hint}>
                 {t("settingsModal.emailChannel.subject", { subject: r.subject })}
               </p>

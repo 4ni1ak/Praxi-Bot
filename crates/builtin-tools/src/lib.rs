@@ -1135,6 +1135,7 @@ mod tests {
             timeout_secs: 30,
             bot: None,
             allowed_senders: Vec::new(),
+            identity: connector_email::IdentitySettings::default(),
             kind: connector_email::AccountKind::ImapSmtp,
             inbox_id: None,
         };
@@ -1145,7 +1146,7 @@ mod tests {
         cfg.browser = Some(Arc::new(browser::fake::FakeBrowser::default()));
         cfg.email = Some(connector.clone());
         let added = register_builtin_tools(&reg, cfg);
-        assert_eq!(added, 39 + 6 + 2 + 2);
+        assert_eq!(added, 39 + 7 + 2 + 2);
 
         // Verification of email tools and their effects
         let send_tool = reg
@@ -1169,7 +1170,7 @@ mod tests {
         // Also test direct helper register_email_tools
         let reg2 = ToolRegistry::new();
         let registered = register_email_tools(&reg2, &connector);
-        assert_eq!(registered, 6);
+        assert_eq!(registered, 7);
         assert!(reg2.get(connector_email::tools::SEND).is_some());
     }
 

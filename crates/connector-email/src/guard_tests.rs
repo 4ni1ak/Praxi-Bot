@@ -15,38 +15,49 @@ const BOT: &str = "11111111-1111-4111-8111-111111111111";
 const INBOX: &str = "bot@agentmail.to";
 
 async fn setup() -> (MockServer, Arc<EmailConnector>) {
+    setup_with(&[("work", INBOX)]).await
+}
+
+/// One `AgentMail` mock server and one account per `(name, inbox)`, all bound to [`BOT`].
+async fn setup_with(accounts: &[(&str, &str)]) -> (MockServer, Arc<EmailConnector>) {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(format!("/v0/inboxes/{INBOX}/messages/send")))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({"message_id":"sent1","thread_id":"t"})),
-        )
-        .mount(&server)
-        .await;
     let store = Arc::new(MemoryStore::new());
-    let acct = AccountConfig {
-        name: "work".into(),
-        address: INBOX.into(),
-        username: String::new(),
-        password: SecretRef::new("email/work/api_key").unwrap(),
-        imap: crate::ImapSettings::default(),
-        smtp: crate::SmtpSettings::default(),
-        drafts_folder: "Drafts".into(),
-        extra_root_pem: None,
-        timeout_secs: 30,
-        bot: Some(BOT.into()),
-        allowed_senders: Vec::new(),
-        kind: AccountKind::AgentMail,
-        inbox_id: Some(INBOX.into()),
-    };
-    store
-        .set(acct.password.name(), "am_guard_test_KEY_77aa")
-        .unwrap();
+    let mut list = Vec::new();
+    for (name, inbox) in accounts {
+        Mock::given(method("POST"))
+            .and(path(format!("/v0/inboxes/{inbox}/messages/send")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"message_id":"sent1","thread_id":"t"})),
+            )
+            .mount(&server)
+            .await;
+        let acct = AccountConfig {
+            name: (*name).into(),
+            address: (*inbox).into(),
+            username: String::new(),
+            password: SecretRef::new(format!("email/{name}/api_key")).unwrap(),
+            imap: crate::ImapSettings::default(),
+            smtp: crate::SmtpSettings::default(),
+            drafts_folder: "Drafts".into(),
+            extra_root_pem: None,
+            timeout_secs: 30,
+            bot: Some(BOT.into()),
+            allowed_senders: Vec::new(),
+            kind: AccountKind::AgentMail,
+            inbox_id: Some((*inbox).into()),
+            identity: crate::IdentitySettings::default(),
+        };
+        store
+            .set(acct.password.name(), "am_guard_test_KEY_77aa")
+            .unwrap();
+        list.push(acct);
+    }
     let c = EmailConnector::reloadable_with(
         store,
         AgentMailEndpoint::loopback_mock_for_tests(&server.uri()).unwrap(),
     );
-    c.replace_accounts(vec![acct]).unwrap();
+    c.replace_accounts(list).unwrap();
     (server, Arc::new(c))
 }
 
@@ -247,4 +258,50 @@ async fn the_same_recipient_wait_and_opt_out_by_unicode_entry_match_the_other_sp
         card_codes(&t2, json!(["Tom+2@Example.com"])).await,
         ["same_recipient"]
     );
+}
+
+#[tokio::test]
+async fn the_guard_runs_again_for_the_identity_chosen_on_the_card() {
+    const ALT: &str = "alt@agentmail.to";
+    let (server, conn) = setup_with(&[("work", INBOX), ("alt", ALT)]).await;
+    let mut s = conn.guard().settings();
+    s.daily_limit = 1;
+    s.same_recipient_days = 0;
+    conn.guard().set_settings(s).unwrap();
+    conn.guard()
+        .add_opt_out("ann@example.com", "asked")
+        .unwrap();
+    let t = send_tool(&conn);
+    let with = |account: &str, to: &str| json!({"account": account, "to": [to], "subject": "Hello", "body": "Offer text"});
+    // One mail from "work" uses up its daily count.
+    t.call(&ctx(), with("work", "a@example.com")).await.unwrap();
+    // The card for "work" warns about the count; the card for "alt" (a fresh identity) does not.
+    let work = with("work", "b@example.com");
+    let d = t.approval_details(&ctx(), &work).await.unwrap().unwrap();
+    assert_eq!(d["account"], "work");
+    assert_eq!(d["warnings"][0]["code"], "daily_limit");
+    let alt = with("alt", "b@example.com");
+    let d = t.approval_details(&ctx(), &alt).await.unwrap().unwrap();
+    assert_eq!(d["account"], "alt");
+    assert_eq!(d["from"], ALT);
+    assert!(d["warnings"].as_array().unwrap().is_empty(), "{d}");
+    // The opt-out list applies whichever address is chosen (switching From is no way around it).
+    for who in ["work", "alt"] {
+        let input = with(who, "ann@example.com");
+        let d = t.approval_details(&ctx(), &input).await.unwrap().unwrap();
+        assert_eq!(d["warnings"][0]["code"], "opt_out_listed", "{who}");
+        t.approval_closed(&ctx(), &input, d["approval_ref"].as_str());
+    }
+    // The owner's "send anyway" for the card of "work" does not carry over to "alt" or back.
+    t.approval_details(&ctx(), &work).await.unwrap();
+    let mut other = work.clone();
+    other["account"] = json!("alt");
+    other["to"] = json!(["ann@example.com"]);
+    assert!(
+        t.call(&ctx(), other).await.is_err(),
+        "no approval for this identity"
+    );
+    t.call(&ctx(), work).await.unwrap();
+    assert_eq!(conn.guard().log(10)[0].account, "work");
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }

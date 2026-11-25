@@ -76,6 +76,8 @@ async fn settings_and_reply_approval_are_owner_only() {
             subject: "Re: hi".into(),
             body: "See you Tuesday".into(),
             created_ms: 1,
+            from: "me@example.com (account: main)".into(),
+            send_mode: "ask".into(),
         }]),
         sent: Mutex::new(Vec::new()),
     });

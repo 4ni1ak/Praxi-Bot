@@ -1,5 +1,6 @@
 import type { Bot, EmailAccount, EmailProbeStatus, EmailTestReport } from "../api/types.ts";
 import type { PatchOp } from "./botPatch.ts";
+import { usableBy } from "./mailIdentity.ts";
 
 /** The glob a profile uses to hand a bot the whole `email_*` tool family. */
 export const MAIL_TOOL_GLOB = "email_*";
@@ -7,10 +8,9 @@ export const MAIL_TOOL_GLOB = "email_*";
 /** Dispatched when a mailbox is added, changed or removed, so open panels reload. */
 export const MAIL_CHANGED_EVENT = "praxi:mail-changed";
 
-/** The mailboxes a bot may use: its own, and the ones any bot may use. */
+/** The mailboxes a bot may use: its own, those shared with it, and the ones any bot may use. */
 export function accountsForBot(accounts: readonly EmailAccount[], botId: string): EmailAccount[] {
-  const id = botId.toLowerCase();
-  return accounts.filter((a) => a.bot === null || a.bot === undefined || a.bot.toLowerCase() === id);
+  return accounts.filter((a) => usableBy(a, botId));
 }
 
 function list(config: unknown, key: "allow" | "exclude"): string[] {

@@ -1572,8 +1572,10 @@
         "shortened": "Gekürzt: Es werden nur die ersten {{shown}} Zeichen angezeigt."
       },
       "mail": {
+        "another": "Von anderer Adresse senden…",
         "bcc": "Bcc",
         "cc": "Cc",
+        "draftOnly": "Nur Entwürfe",
         "from": "Von",
         "legal": "Jemanden anzuschreiben, der sich abgemeldet hat, oder Werbe-E-Mails ohne Abmeldezeile zu senden, kann rechtswidrig sein (in der Türkei: Gesetz Nr. 6563, ETK) und zu Bußgeldern führen. Das ist keine Rechtsberatung.",
         "optOutOff": "Dieser E-Mail wird keine Abmeldezeile hinzugefügt.",
@@ -1581,8 +1583,10 @@
         "ownerOnly": "Das können nur Sie entscheiden. Der Bot kann diese Warnungen nicht selbst übergehen.",
         "sendAnyway": "Trotzdem senden",
         "subject": "Betreff",
+        "switchLabel": "Von anderer Adresse senden",
         "title": "Diese E-Mail senden?",
         "to": "An",
+        "useThis": "Diese Adresse verwenden",
         "warning": {
           "daily_limit": "Damit wären es {{count}} E-Mails von diesem Konto in 24 Stunden. Ihr Limit liegt bei {{limit}}.",
           "guard_unreadable": "Der E-Mail-Schutz konnte seine gespeicherte Datei ({{list}}) nicht lesen. Die beschädigte Datei wurde beiseitegelegt, nicht gelöscht; Abmeldungen können daher fehlen und niemand wird dagegen geprüft.",
@@ -2115,6 +2119,11 @@
         "done": "Eine E-Mail entworfen",
         "failed": "Eine E-Mail wurde nicht entworfen",
         "running": "Entwirft eine E-Mail"
+      },
+      "email_identities": {
+        "done": "E-Mail-Adressen geprüft",
+        "failed": "E-Mail-Adressen konnten nicht geprüft werden",
+        "running": "Prüft, welche E-Mail-Adressen er nutzen kann"
       },
       "email_mark": {
         "done": "Den Lesestatus von E-Mails geändert",
@@ -5681,10 +5690,12 @@
         "own": "Mein eigenes Postfach verbinden",
         "ownText": "Nutze ein bereits vorhandenes Postfach (Gmail, Outlook, iCloud, dein eigener Server) über IMAP und SMTP."
       },
+      "defaultTag": "Standard für {{count}}",
       "delete": "Löschen",
       "deleteConfirm": "Dieses Postfach löschen?",
       "deletedBot": "gelöschter Bot",
       "description": "Postfächer, mit denen deine Bots lesen und schreiben können. Ein Postfach kann zu einem Bot gehören.",
+      "draftOnlyTag": "Nur Entwürfe",
       "edit": "Bearbeiten",
       "empty": "Noch keine Postfächer.",
       "errors": {
@@ -5707,6 +5718,8 @@
         },
         "address": "E-Mail-Adresse",
         "create": "Postfach hinzufügen",
+        "defaultFor": "Standardabsender für",
+        "defaultForHint": "Nennt der Bot keine Adresse, sendet er von dieser.",
         "imapHost": "IMAP-Server",
         "implicit": "TLS",
         "name": "Name",
@@ -5725,6 +5738,13 @@
         },
         "save": "Speichern",
         "security": "SMTP-Sicherheit",
+        "sendMode": {
+          "ask": "Jedes Mal fragen",
+          "askHint": "Jede Nachricht wird dir zuerst gezeigt: Von, An, Betreff und Text.",
+          "draftOnly": "Nur Entwürfe",
+          "draftOnlyHint": "Bots können von dieser Adresse Entwürfe schreiben, aber nie senden.",
+          "label": "Versand"
+        },
         "senders": "Erlaubte Absender",
         "sendersHint": "Adressen oder @Domains, eine pro Zeile. Für die kommende Funktion für eingehende E-Mails gespeichert; bisher reagiert nichts auf eingehende E-Mails.",
         "smtpHost": "SMTP-Server",
@@ -5756,6 +5776,7 @@
         "tls": "TLS fehlgeschlagen",
         "unreachable": "Verbindung nicht möglich"
       },
+      "sharedDomain": "Diese gemeinsame Adresse eignet sich nicht für Kaltakquise. Nutze dafür deine eigene Domain.",
       "test": "Verbindung testen",
       "testing": "Wird getestet …",
       "title": "E-Mail",
@@ -5775,6 +5796,7 @@
       "enable": "E-Mail-Kanal einschalten",
       "folder": "Ordner, der beobachtet wird",
       "folderHint": "Meist INBOX. Nur Mails, die nach dem Einschalten eintreffen, werden weitergegeben.",
+      "fromLine": "Von: {{from}}. Sendemodus: Jedes Senden braucht Ihre Freigabe.",
       "full": "Dem Bot den ganzen Text jeder Mail zeigen, nicht nur eine Zusammenfassung",
       "noAccount": "Fügen Sie zuerst oben ein Postfach hinzu.",
       "note": "Mails stammen von anderen Personen, deshalb behandelt der Bot sie als Information, nie als Anweisung. Standardmäßig sieht er nur Absender, Betreff und die ersten Zeilen. Anhänge werden nie geöffnet. Es wird nichts gesendet, außer Sie erlauben Antworten und bestätigen jede einzelne hier.",

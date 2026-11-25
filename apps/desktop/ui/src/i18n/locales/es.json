@@ -1572,8 +1572,10 @@
         "shortened": "Texto abreviado: solo se muestran los primeros {{shown}} caracteres."
       },
       "mail": {
+        "another": "Enviar desde otra dirección…",
         "bcc": "Cco",
         "cc": "Cc",
+        "draftOnly": "Solo borradores",
         "from": "De",
         "legal": "Escribir a alguien que se dio de baja, o enviar correo comercial sin línea de baja, puede ser ilegal (en Turquía: Ley 6563, ETK) y acarrear multas. Esto no es asesoramiento jurídico.",
         "optOutOff": "No se añadirá ninguna línea de baja a este correo.",
@@ -1581,8 +1583,10 @@
         "ownerOnly": "Solo usted puede decidirlo. El bot no puede saltarse estas advertencias por su cuenta.",
         "sendAnyway": "Enviar de todos modos",
         "subject": "Asunto",
+        "switchLabel": "Enviar desde otra dirección",
         "title": "¿Enviar este correo?",
         "to": "Para",
+        "useThis": "Usar esta dirección",
         "warning": {
           "daily_limit": "Con esto serían {{count}} correos desde esta cuenta en 24 horas. Su límite es {{limit}}.",
           "guard_unreadable": "La protección de correo no pudo leer su archivo guardado ({{list}}). El archivo dañado se apartó, no se borró; por eso pueden faltar bajas y nadie se comprueba contra ellas.",
@@ -2115,6 +2119,11 @@
         "done": "Redactó un correo",
         "failed": "No pudo redactar el correo",
         "running": "Redactando un correo"
+      },
+      "email_identities": {
+        "done": "Direcciones de correo comprobadas",
+        "failed": "No se pudieron comprobar las direcciones de correo",
+        "running": "Comprueba qué direcciones de correo puede usar"
       },
       "email_mark": {
         "done": "Cambió el estado de lectura de un correo",
@@ -5681,10 +5690,12 @@
         "own": "Connect my own mailbox",
         "ownText": "Use a mailbox you already have (Gmail, Outlook, iCloud, your own server) over IMAP and SMTP."
       },
+      "defaultTag": "Predeterminada de {{count}}",
       "delete": "Delete",
       "deleteConfirm": "Delete this mailbox?",
       "deletedBot": "deleted bot",
       "description": "Mailboxes your bots can read and write with. A mailbox can belong to one bot.",
+      "draftOnlyTag": "Solo borradores",
       "edit": "Edit",
       "empty": "No mailboxes yet.",
       "errors": {
@@ -5707,6 +5718,8 @@
         },
         "address": "E-mail address",
         "create": "Add mailbox",
+        "defaultFor": "Remitente predeterminado de",
+        "defaultForHint": "Si el bot no indica una dirección, envía desde esta.",
         "imapHost": "IMAP server",
         "implicit": "TLS",
         "name": "Name",
@@ -5725,6 +5738,13 @@
         },
         "save": "Save",
         "security": "SMTP security",
+        "sendMode": {
+          "ask": "Preguntarme cada vez",
+          "askHint": "Cada mensaje se te muestra primero: De, Para, asunto y texto.",
+          "draftOnly": "Solo borradores",
+          "draftOnlyHint": "Los bots pueden escribir borradores desde esta dirección, pero nunca enviar.",
+          "label": "Envío"
+        },
         "senders": "Allowed senders",
         "sendersHint": "Addresses or @domains, one per line. Stored for the coming inbound-mail feature; nothing reacts to incoming mail yet.",
         "smtpHost": "SMTP server",
@@ -5756,6 +5776,7 @@
         "tls": "TLS failed",
         "unreachable": "Cannot connect"
       },
+      "sharedDomain": "Esta dirección compartida no sirve para correo en frío. Usa tu propio dominio para la prospección.",
       "test": "Test connection",
       "testing": "Testing…",
       "title": "Correo",
@@ -5775,6 +5796,7 @@
       "enable": "Activar el canal de correo",
       "folder": "Carpeta que se vigila",
       "folderHint": "Normalmente INBOX. Solo se pasa el correo que llega después de activarlo.",
+      "fromLine": "De: {{from}}. Modo de envío: cada envío necesita tu aprobación.",
       "full": "Mostrar al bot el texto completo de cada correo, no solo un resumen",
       "noAccount": "Primero añade un buzón arriba.",
       "note": "El correo lo escriben otras personas, así que el bot lo trata como información, nunca como órdenes. Por defecto solo ve el remitente, el asunto y las primeras líneas. Los adjuntos no se abren nunca. No se envía nada a menos que permitas las respuestas y apruebes cada una aquí.",

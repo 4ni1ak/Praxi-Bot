@@ -19834,6 +19834,13 @@
             "type": "boolean",
             "description": "Whether the account trusts an extra root certificate (a private CA)."
           },
+          "default_for": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Bots that use this account as their default sender."
+          },
           "drafts_folder": {
             "type": "string",
             "description": "Folder drafts are saved to."
@@ -19860,6 +19867,17 @@
           "provider": {
             "$ref": "#/components/schemas/EmailProviderKind",
             "description": "Kind of mailbox."
+          },
+          "send_mode": {
+            "$ref": "#/components/schemas/EmailSendMode",
+            "description": "Draft only, or ask the owner each time."
+          },
+          "shared_with": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Further bots (storage UUIDs) that may use the account besides `bot`."
           },
           "smtp": {
             "$ref": "#/components/schemas/EmailSmtpServer",
@@ -19903,6 +19921,13 @@
             ],
             "description": "Bot (storage UUID) that owns the account; absent / `null` = every bot."
           },
+          "default_for": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Bots that use this account as their default sender."
+          },
           "domain": {
             "type": [
               "string",
@@ -19942,6 +19967,17 @@
           "provider": {
             "$ref": "#/components/schemas/EmailProviderKind",
             "description": "Kind of mailbox; default `imap_smtp`. For `agentmail` the inbox is\ncreated at the provider (its address is returned); `address`, `imap`\nand `smtp` are not used and `api_key` is required."
+          },
+          "send_mode": {
+            "$ref": "#/components/schemas/EmailSendMode",
+            "description": "Draft only, or ask the owner each time (default)."
+          },
+          "shared_with": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Further bots that may use the account besides `bot`."
           },
           "smtp": {
             "$ref": "#/components/schemas/EmailSmtpServer",
@@ -19991,6 +20027,16 @@
             ],
             "description": "Owning bot; `null` = every bot; omit to keep."
           },
+          "default_for": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Bots that use this account as default sender; a present list replaces it."
+          },
           "drafts_folder": {
             "type": [
               "string",
@@ -20015,6 +20061,27 @@
               "null"
             ],
             "description": "New password (write-only)."
+          },
+          "send_mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EmailSendMode",
+                "description": "Draft only, or ask each time."
+              }
+            ]
+          },
+          "shared_with": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Further bots that may use the account; a present list replaces it."
           },
           "smtp": {
             "oneOf": [
@@ -20276,9 +20343,17 @@
             "description": "When it was proposed (Unix ms).",
             "minimum": 0
           },
+          "from": {
+            "type": "string",
+            "description": "The identity it is sent from: `address (account: name)`."
+          },
           "id": {
             "type": "string",
             "description": "Id used to approve or deny."
+          },
+          "send_mode": {
+            "type": "string",
+            "description": "That identity's send mode (`ask`: the owner approves every send)."
           },
           "subject": {
             "type": "string",
@@ -20393,6 +20468,14 @@
             "description": "First characters of the subject."
           }
         }
+      },
+      "EmailSendMode": {
+        "type": "string",
+        "description": "What bots may do with a mail identity. Sending always needs the owner's\napproval; this can only make it stricter.",
+        "enum": [
+          "ask",
+          "draft_only"
+        ]
       },
       "EmailSendTestResponse": {
         "type": "object",
