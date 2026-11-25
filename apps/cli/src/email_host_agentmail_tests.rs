@@ -552,7 +552,7 @@ fn connect_input(name: &str, inbox: &str, bot: Option<&str>) -> EmailAccountInpu
 async fn an_existing_inbox_connects_with_a_scoped_key_and_nothing_is_created() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/v0/inboxes/praxi@agentmail.to"))
+        .and(path("/v0/inboxes/praxi%40agentmail.to"))
         .and(header(
             "authorization",
             format!("Bearer {SCOPED_KEY}").as_str(),
@@ -606,21 +606,21 @@ async fn an_existing_inbox_connects_with_a_scoped_key_and_nothing_is_created() {
 async fn connecting_an_existing_inbox_reports_a_forbidden_or_unknown_inbox_without_saving() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/v0/inboxes/other@agentmail.to"))
+        .and(path("/v0/inboxes/other%40agentmail.to"))
         .respond_with(ResponseTemplate::new(403).set_body_json(json!({
             "name": "ForbiddenError", "message": format!("key {SCOPED_KEY} may not")
         })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/v0/inboxes/missing@agentmail.to"))
+        .and(path("/v0/inboxes/missing%40agentmail.to"))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({
             "name": "NotFoundError", "message": format!("no inbox for {SCOPED_KEY}")
         })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/v0/inboxes/revoked@agentmail.to"))
+        .and(path("/v0/inboxes/revoked%40agentmail.to"))
         .respond_with(ResponseTemplate::new(401).set_body_json(json!({"code": "unknown_api_key"})))
         .mount(&server)
         .await;
