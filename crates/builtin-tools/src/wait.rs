@@ -79,25 +79,42 @@ impl WaitTool {
 
     /// Reserve `secs` of the run's budget; returns the run's token.
     fn reserve(run_id: &str, secs: u64) -> Result<CancellationToken, ToolError> {
-        let mut runs = RUNS.lock();
-        if runs.len() >= MAX_TRACKED_RUNS && !runs.contains_key(run_id) {
-            let idle: Vec<String> = runs.keys().take(MAX_TRACKED_RUNS / 4).cloned().collect();
-            for k in idle {
-                runs.remove(&k);
-            }
+        reserve_run_secs(run_id, secs)
+    }
+}
+
+/// Reserve `secs` of the run's waiting budget (shared by `wait` and
+/// `email_wait_for`) and return the token that ends every wait of the run when
+/// it is stopped.
+///
+/// # Errors
+/// The run was stopped, or its budget is used up.
+pub(crate) fn reserve_run_secs(run_id: &str, secs: u64) -> Result<CancellationToken, ToolError> {
+    let mut runs = RUNS.lock();
+    if runs.len() >= MAX_TRACKED_RUNS && !runs.contains_key(run_id) {
+        let idle: Vec<String> = runs.keys().take(MAX_TRACKED_RUNS / 4).cloned().collect();
+        for k in idle {
+            runs.remove(&k);
         }
-        let w = runs.entry(run_id.to_owned()).or_default();
-        if w.token.is_cancelled() {
-            return Err(ToolError::Execution("the run was stopped".into()));
-        }
-        if w.used_secs + secs > MAX_RUN_WAIT_SECS {
-            return Err(ToolError::InvalidInput(format!(
-                "this run already waited {} s of the {} s allowed; finish up or report what is done so far",
-                w.used_secs, MAX_RUN_WAIT_SECS
-            )));
-        }
-        w.used_secs += secs;
-        Ok(w.token.clone())
+    }
+    let w = runs.entry(run_id.to_owned()).or_default();
+    if w.token.is_cancelled() {
+        return Err(ToolError::Execution("the run was stopped".into()));
+    }
+    if w.used_secs + secs > MAX_RUN_WAIT_SECS {
+        return Err(ToolError::InvalidInput(format!(
+            "this run already waited {} s of the {} s allowed; finish up or report what is done so far",
+            w.used_secs, MAX_RUN_WAIT_SECS
+        )));
+    }
+    w.used_secs += secs;
+    Ok(w.token.clone())
+}
+
+/// Give back reserved seconds that were not used (a wait that ended early).
+pub(crate) fn refund_run_secs(run_id: &str, secs: u64) {
+    if let Some(w) = RUNS.lock().get_mut(run_id) {
+        w.used_secs = w.used_secs.saturating_sub(secs);
     }
 }
 

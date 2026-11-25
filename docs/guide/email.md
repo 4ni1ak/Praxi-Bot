@@ -156,7 +156,7 @@ allowed_senders = ["alice@example.com", "@corp.example"]   # who may reach a bot
 
 ## Available tools
 
-Once enabled, seven tools are registered under the `Messaging` permission category:
+Once enabled, eight tools are registered under the `Messaging` permission category (seven from the connector, plus `email_wait_for` from the built-in tools):
 
 | Tool | Effect | Description |
 | --- | --- | --- |
@@ -167,6 +167,7 @@ Once enabled, seven tools are registered under the `Messaging` permission catego
 | `email_mark_read` | Write | Set or clear the Seen flag on a message |
 | `email_draft` | Write | Save a message as a draft in the drafts folder (never contacts SMTP) |
 | `email_send` | Destructive | Send an e-mail immediately over SMTP (**requires human approval**) |
+| `email_wait_for` | Read | Wait up to 10 minutes for ONE expected mail (a verification mail) in the bot's **own** inbox; returns sender, subject, time, codes and the links it may follow |
 
 ## Several mail identities
 
@@ -179,6 +180,19 @@ You can add several mailboxes (your own IMAP/SMTP mailbox, an AgentMail address 
 The bot lists its identities with `email_identities`, picks one from the task ("send from my work address") and says which one it used. The approval card always shows **From**, To, subject and text; choose another address on the card and the bot is asked to send the same message from it, so you read the new card in full before anything leaves. Passwords and API keys stay in the secret store and are never shown to the model.
 
 The shared `agentmail.to` domain is not suitable for cold mail; use an address on your own domain for outreach.
+
+## Sign-ups: a bot with its own address
+
+A bot that has a mail identity of its own (an address bound to it or shared with it, such as an AgentMail address) is told so at the start of every run: its address, that verification mails for sign-ups arrive in that inbox, and which mail tools it may use (the block is fixed text built by the app from your settings, never from a page or a mail). A bot with no identity of its own gets no such block, and never sees another bot's address.
+
+For "sign up to these sites" the bot uses:
+
+1. `account_register`: the app makes the password (the bot never sees it), keeps it in the vault for that site and that bot, signs up with the bot's address (the login is the address unless the site wants a user name) and records **which mail identity** the account was registered with.
+2. `email_wait_for`: after the form is submitted the bot waits (up to 10 minutes; Stop cancels at once) for the verification mail. The filters the bot passes (sender domain, subject, keyword) are applied inside the app to what the inbox returns: nothing the bot wrote is sent to the mail server. The answer is short and labelled untrusted: sender, subject, time, one-time codes, and links.
+3. A link is returned as **followable** only when it is `https`, has no user name or IP address in it, and is on the same registrable domain as the page the browser is really on (asked from the browser, not from the page or the model) or on a domain you listed in Settings > Mail > Safe sending ("Extra sites a verification e-mail may link to"). Every other link is listed by host only as "external link, not followed"; plain `http` is refused.
+4. The bot opens a followable link with `browser_open`, confirms it is signed in, and reports. CAPTCHA, phone or two-factor steps go to you through **Take control**. The playbook is the bundled skill `signup-to-site`.
+
+Permissions: reading the bot's **own** inbox (`email_search`, `email_read`, `email_list_folders`, `email_wait_for`) and opening a link `email_wait_for` returned as followable run **without a card** only for a run **you started** by hand, on a bot at the **Full** level. A run started by mail, a webhook, a schedule, a channel or an imported chat keeps asking, as before. An inbox every bot may use (an unbound account) and your personal mailbox are never "the bot's own". Sending is unchanged: `email_send` always asks, and a draft-only address only saves drafts.
 
 ## Approvals and security
 

@@ -53,6 +53,21 @@ pub enum CatalogCmd {
         #[arg(long)]
         metadata: Option<PathBuf>,
     },
+    /// Fetch the signed, newer model catalog and install it (daily this also runs by itself).
+    ///
+    /// The only request is a GET of a fixed https address; nothing about you is sent.
+    /// The file is used only if its signature matches the key built into this app.
+    Update {
+        /// Only look: report whether a newer catalog exists, install nothing.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Turn the automatic daily catalog update on or off (default: on).
+    AutoUpdate {
+        /// `on`, `off` or `status`.
+        #[arg(value_parser = ["on", "off", "status"])]
+        state: String,
+    },
     /// Print the Markdown provider table generated from `model_metadata.json`.
     RenderDocs {
         /// Path to a `model_metadata.json` file (defaults to the embedded catalog table).
@@ -178,6 +193,71 @@ pub fn run_offline(
             writeln!(out, "{}", render_docs_table(&table))?;
             Ok(())
         }
+        CatalogCmd::Update { .. } | CatalogCmd::AutoUpdate { .. } => {
+            Err("update commands must be dispatched through run_update".into())
+        }
+    }
+}
+
+/// `bot catalog update [--check]` and `bot catalog auto-update on|off|status`.
+/// The update talks to the network (a GET of a fixed https URL); nothing else does.
+///
+/// # Errors
+/// The refusal reason when the download is missing, unsigned, tampered, too big
+/// or older than what is installed.
+pub fn run_update(
+    action: &CatalogCmd,
+    data_dir: &Path,
+    json_out: bool,
+    out: &mut dyn Write,
+) -> Result<()> {
+    use provider_catalog::catalog_update::{CatalogStore, UpdateOutcome, check_for_update};
+    let store = CatalogStore::new(data_dir);
+    match action {
+        CatalogCmd::AutoUpdate { state } => {
+            match state.as_str() {
+                "on" => store.set_auto_update(true)?,
+                "off" => store.set_auto_update(false)?,
+                _ => {}
+            }
+            let on = store.auto_update_enabled();
+            writeln!(
+                out,
+                "Automatic catalog updates are {}.",
+                if on { "ON (at most once a day)" } else { "OFF" }
+            )?;
+            Ok(())
+        }
+        CatalogCmd::Update { check } => {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let outcome = rt.block_on(check_for_update(&store, SystemTime::now(), !check))?;
+            if json_out {
+                writeln!(out, "{}", serde_json::to_string_pretty(&outcome)?)?;
+            } else {
+                match outcome {
+                    UpdateOutcome::UpToDate { installed } => {
+                        writeln!(out, "Catalog is up to date ({installed}).")?;
+                    }
+                    UpdateOutcome::Newer {
+                        from,
+                        to,
+                        installed,
+                    } => writeln!(
+                        out,
+                        "{} {from} -> {to}.",
+                        if installed {
+                            "Catalog updated:"
+                        } else {
+                            "A newer catalog is available (nothing installed):"
+                        }
+                    )?,
+                }
+            }
+            Ok(())
+        }
+        _ => Err("not an update command".into()),
     }
 }
 

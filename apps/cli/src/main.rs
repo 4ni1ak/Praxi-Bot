@@ -740,6 +740,18 @@ fn run() -> Result<()> {
     match command {
         Command::Completions { shell } => return Ok(cli_artifacts::completions(*shell)?),
         Command::ManPages { output_dir } => return Ok(cli_artifacts::man_pages(output_dir)?),
+        Command::Catalog {
+            action:
+                action @ (catalog_cmd::CatalogCmd::Update { .. }
+                | catalog_cmd::CatalogCmd::AutoUpdate { .. }),
+        } => {
+            return catalog_cmd::run_update(
+                action,
+                &data_dir(&cli)?,
+                cli.json,
+                &mut std::io::stdout().lock(),
+            );
+        }
         Command::Catalog { action }
             if !matches!(action, catalog_cmd::CatalogCmd::Diff { live: true, .. }) =>
         {

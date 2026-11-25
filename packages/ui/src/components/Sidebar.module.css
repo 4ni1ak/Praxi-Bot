@@ -71,7 +71,7 @@
 .sectionLabel {
   padding: var(--space-1) var(--space-2);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-muted);
 
   letter-spacing: var(--letter-spacing-wide);
@@ -103,8 +103,13 @@
     color var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
+/* State layer: the same translucent tint on every surface (see --state-hover). */
 .item:hover {
-  background-color: var(--color-surface-elevated);
+  background-color: var(--state-hover);
+}
+
+.item:active {
+  background-color: var(--state-pressed);
 }
 
 .item:focus-visible {
@@ -115,7 +120,7 @@
 .itemActive {
   background-color: var(--color-surface-elevated);
   border-color: var(--color-border);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
 }
 
 .footer {
@@ -145,7 +150,7 @@
 .header { padding: var(--space-5) var(--space-4) var(--space-3); border: none; }
 .section { padding: var(--space-3); gap: var(--space-2); }
 .item { padding: var(--space-2); gap: var(--space-2); border: none; min-height: var(--space-16); }
-.itemActive { background: var(--color-surface); }
+.itemActive, .itemActive:hover, .itemActive:active { background: var(--color-surface); }
 .footer { border: none; padding: var(--space-4); }
 
 /* Floating panels: shown over a backdrop or in the glass style (data attributes set by applyTheme). */
@@ -192,7 +197,7 @@
   transition:
     width var(--motion-duration-slow) var(--motion-easing-standard),
     margin var(--motion-duration-slow) var(--motion-easing-standard),
-    opacity var(--motion-duration-normal) ease-out;
+    opacity var(--motion-duration-normal) var(--motion-easing-out);
   opacity: 0;
 }
 
@@ -256,7 +261,7 @@
   pointer-events: none;
   transition:
     transform var(--motion-duration-normal) var(--motion-easing-standard),
-    opacity var(--motion-duration-normal) ease-out,
+    opacity var(--motion-duration-normal) var(--motion-easing-out),
     visibility var(--motion-duration-normal) step-end;
 }
 
@@ -265,7 +270,7 @@
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
-  transition-timing-function: var(--motion-easing-standard), ease-out, step-start;
+  transition-timing-function: var(--motion-easing-standard), var(--motion-easing-out), step-start;
   background-color: var(--color-background);
   box-shadow: var(--shadow-overlay);
 }
