@@ -11,7 +11,7 @@
 
 .pill { display: inline-flex; align-items: center; gap: var(--space-2); height: var(--size-control-md); padding: var(--space-0) var(--space-4); border: var(--size-border) solid var(--color-border); border-radius: var(--radius-pill); background-color: var(--color-surface-active); color: var(--color-text); font: inherit; font-size: var(--font-size-ui); font-weight: var(--font-weight-medium); white-space: nowrap; cursor: pointer; transition: border-color var(--motion-duration-fast) var(--motion-easing-standard); }
 .pill svg { width: var(--size-icon-sm); height: var(--size-icon-sm); }
-.pill:hover { border-color: var(--color-border-strong); }
+.pill:hover { border-color: var(--color-border-hover); }
 .pill:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
 .pillOn { border-color: var(--color-accent); }
 

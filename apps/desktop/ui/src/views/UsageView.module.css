@@ -22,8 +22,9 @@
 
 .title {
   margin: var(--space-0);
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-display);
   color: var(--color-text);
 }
 
@@ -124,8 +125,9 @@
 }
 
 .statValue {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-display);
   font-variant-numeric: tabular-nums;
   color: var(--color-text);
 }
@@ -172,7 +174,7 @@
 
 .table thead th {
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-muted);
 }
 

@@ -75,6 +75,7 @@ mod bot_limits_routes;
 mod data_routes;
 mod embeddings_routes;
 mod incoming_webhook;
+mod page_reader_routes;
 mod routes;
 mod schedule;
 mod schedule_tools;
@@ -1421,6 +1422,10 @@ fn api_routes() -> Router<AppState> {
             "/v1/bots/{id}/spend-limits",
             get(bot_limits_routes::get_bot_spend_limits)
                 .put(bot_limits_routes::put_bot_spend_limits),
+        )
+        .route(
+            "/v1/bots/{id}/page-reader",
+            get(page_reader_routes::get_page_reader).put(page_reader_routes::put_page_reader),
         )
         .route(
             "/v1/bots/{id}/incoming-webhooks",

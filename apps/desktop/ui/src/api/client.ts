@@ -28,6 +28,7 @@ import type {
   MemoryPreview,
   BotMemorySettings,
   BotMemorySettingsInput,
+  PageReader,
   MemoryEmbedding,
   MemoryEmbeddingInput,
   IncomingWebhook,
@@ -401,6 +402,15 @@ export class ApiClient {
 
   putBotMemorySettings(bot: string, body: BotMemorySettingsInput): Promise<BotMemorySettings> {
     return this.request("PUT", `/bots/${encodeURIComponent(bot)}/memory/settings`, { body });
+  }
+
+  /** How outside text (pages, mail) reaches one bot: off, auto or always. Owner-only to change. */
+  getPageReader(bot: string): Promise<PageReader> {
+    return this.request("GET", `/bots/${encodeURIComponent(bot)}/page-reader`);
+  }
+
+  putPageReader(bot: string, mode: PageReader["mode"]): Promise<PageReader> {
+    return this.request("PUT", `/bots/${encodeURIComponent(bot)}/page-reader`, { body: { mode } });
   }
 
   /** Basic (word match) or Smart (meaning) recall and the re-index progress. */

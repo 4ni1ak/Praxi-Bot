@@ -252,7 +252,11 @@ fn engine_in_profile() -> ApiError {
 
 /// A JSON patch may not touch the tables only an owner endpoint writes.
 fn owner_tables_unchanged(next: &Value, stored: &Value) -> Result<(), String> {
-    for (table, endpoint) in [("engine", "engine"), ("memory", "memory settings")] {
+    for (table, endpoint) in [
+        ("engine", "engine"),
+        ("memory", "memory settings"),
+        ("browser", "page reader"),
+    ] {
         if next.get(table) != stored.get(table) {
             return Err(format!(
                 "bad_patch:the {table} settings change only through the {endpoint} endpoint"
@@ -262,12 +266,57 @@ fn owner_tables_unchanged(next: &Value, stored: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// The `browser` table (`browser.reader`, the page quarantine) is written only by
+/// `PUT /v1/bots/{id}/page-reader`, which is owner-only and audited.
+fn browser_in_profile() -> ApiError {
+    ApiError::bad_request(
+        "the browser reader setting changes only through the page reader endpoint (owner only)",
+    )
+}
+
 fn memory_in_profile() -> ApiError {
     ApiError::new(
         StatusCode::FORBIDDEN,
         "memory_owner_only",
         "memory settings can only be changed by the local owner through the memory settings endpoint",
     )
+}
+
+/// A whole-profile edit never changes the tables that only an owner endpoint writes: a
+/// different `engine` table (who runs files and shell) is refused (`PUT /v1/bots/{id}/engine`),
+/// as is a different `memory` table or `browser` table (the page reader switch); each one
+/// keeps its stored value.
+fn keep_owner_tables(config: &mut Value, stored: &Value) -> Result<(), ApiError> {
+    match (config.get("engine"), stored.get("engine")) {
+        (Some(sent), now) if Some(sent) != now => return Err(engine_in_profile()),
+        _ => {}
+    }
+    match (config.get("memory"), stored.get("memory")) {
+        (Some(sent), now) if !sent.is_null() && Some(sent) != now => {
+            return Err(memory_in_profile());
+        }
+        _ => {}
+    }
+    match (config.get("browser"), stored.get("browser")) {
+        (Some(sent), now) if !sent.is_null() && Some(sent) != now => {
+            return Err(browser_in_profile());
+        }
+        _ => {}
+    }
+    let obj = config
+        .as_object_mut()
+        .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?;
+    for table in ["engine", "memory", "browser"] {
+        match stored.get(table) {
+            Some(v) => {
+                obj.insert(table.into(), v.clone());
+            }
+            None => {
+                obj.remove(table);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Validate a bot definition; returns `(name, config json)`.
@@ -408,6 +457,9 @@ pub(crate) async fn create_bot(
             "configure knowledge through the bot knowledge settings endpoint",
         ));
     }
+    if config.get("browser").is_some_and(|b| !b.is_null()) {
+        return Err(browser_in_profile());
+    }
     let bot = Bot {
         id: BotId::new(),
         user_id: s.user_id(),
@@ -528,41 +580,9 @@ pub(crate) async fn update_bot(
     if peer.is_none() && crate::owner::execution_changed(Some(&bot.config), &config) {
         s.require_owner(&headers)?;
     }
-    // Engine settings (who runs files and shell) change only through
-    // `PUT /v1/bots/{id}/engine`: an edit keeps the stored table, and a profile
-    // that carries a different one is refused.
-    match (config.get("engine"), bot.config.get("engine")) {
-        (Some(sent), stored) if Some(sent) != stored => return Err(engine_in_profile().into()),
-        _ => {}
-    }
-    // Same for the memory table: an edit keeps the stored one.
-    match (config.get("memory"), bot.config.get("memory")) {
-        (Some(sent), stored) if !sent.is_null() && Some(sent) != stored => {
-            return Err(memory_in_profile().into());
-        }
-        _ => {}
-    }
-    {
-        let obj = config
-            .as_object_mut()
-            .ok_or_else(|| ApiError::bad_request("bot config must be an object"))?;
-        match bot.config.get("engine") {
-            Some(engine) => {
-                obj.insert("engine".into(), engine.clone());
-            }
-            None => {
-                obj.remove("engine");
-            }
-        }
-        match bot.config.get("memory") {
-            Some(memory) => {
-                obj.insert("memory".into(), memory.clone());
-            }
-            None => {
-                obj.remove("memory");
-            }
-        }
-    }
+    // The tables only an owner endpoint writes (engine, memory, browser reader) keep their
+    // stored value on an edit, and an edit that carries a different one is refused.
+    keep_owner_tables(&mut config, &bot.config)?;
     let after: BotProfile = serde_json::from_value(config.clone()).map_err(|e| {
         ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,

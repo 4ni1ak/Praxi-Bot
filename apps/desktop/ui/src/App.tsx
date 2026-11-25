@@ -1,4 +1,4 @@
-import { BellDot, BellRing, Bot, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2 } from "lucide-react";
+import { BellDot, BellRing, Bot, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Plus, Search, Server, ServerOff, Settings2 } from "lucide-react";
 import { effectiveWallpaperMotion } from "./lib/accessibility";
 import { unreadBotIds } from "./lib/unread";
 import { useReadState } from "./store/readStateStore";
@@ -127,7 +127,7 @@ import { useBotSkills } from "./state/useBotSkills";
 import { BotEditModal } from "./views/BotEditModal";
 import { BotEmptyView } from "./views/BotEmptyView";
 import { ErrorNotice } from "./components/ErrorNotice";
-import { StartupProblem } from "./components/StartupProblem";
+import { StartingNotice, StartupProblem } from "./components/StartupProblem";
 import { humanService } from "./lib/humanError";
 import { FinishSetupHint } from "./components/FinishSetupHint";
 import { BotProfileModal } from "./views/BotProfileModal";
@@ -1453,13 +1453,19 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
                 <StartupProblem startup={startup} raw={daemonError ?? ""} />
               ) : phase === "error" ? (
                 <div className={styles.selectedBotContent} data-testid="daemon-offline-empty-state">
-                  <span className={`${styles.stateIcon} ${styles.stateIconDanger}`}><ServerOff /></span>
-                  <ErrorNotice error={humanService(serviceProblem ?? "down", daemonError ?? "")} />
+                  <span className={`${styles.stateIcon} ${serviceProblem === "starting" ? "" : styles.stateIconDanger}`}>
+                    {serviceProblem === "starting" ? <Server /> : <ServerOff />}
+                  </span>
+                  {serviceProblem === "starting" ? (
+                    <StartingNotice />
+                  ) : (
+                    <ErrorNotice error={humanService(serviceProblem ?? "down", daemonError ?? "")} />
+                  )}
                   {retryInSeconds ? (
                     <p className={styles.emptyStateDescription}>{t("errors.retrying", { seconds: retryInSeconds })}</p>
                   ) : null}
                   <div className={styles.optionRow}>
-                    <Button variant="primary" onClick={() => void restartDaemon(undefined, "owner-offline-screen")}>
+                    <Button variant={serviceProblem === "starting" ? "secondary" : "primary"} onClick={() => void restartDaemon(undefined, "owner-offline-screen")}>
                       {t("errors.restartService")}
                     </Button>
                     <Button variant="secondary" onClick={retry}>

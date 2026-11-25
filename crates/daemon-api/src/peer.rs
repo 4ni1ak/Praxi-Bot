@@ -431,16 +431,31 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
     {
         return Some("personal memory is managed by the local owner");
     }
-    if is_bot_memory_settings_path(check_path) && *method != Method::GET {
-        return Some("a bot's memory settings can only be changed at this computer");
-    }
-    if is_bot_engine_path(check_path) && *method != Method::GET {
-        return Some("a bot's engine settings can only be changed at this computer");
-    }
-    if is_bot_spend_limits_path(check_path) && *method != Method::GET {
-        return Some("a bot's spending limits can only be changed at this computer");
+    if let Some(why) = bot_setting_denial(method, check_path) {
+        return Some(why);
     }
     is_doctor_path(check_path).then_some("host-local diagnostics are not allowed for peers")
+}
+
+/// A write to one of a bot's own safety settings (memory, engine, spending limits, page reader):
+/// only this computer may change them.
+fn bot_setting_denial(method: &Method, check_path: &str) -> Option<&'static str> {
+    if *method == Method::GET {
+        return None;
+    }
+    if is_bot_memory_settings_path(check_path) {
+        return Some("a bot's memory settings can only be changed at this computer");
+    }
+    if is_bot_engine_path(check_path) {
+        return Some("a bot's engine settings can only be changed at this computer");
+    }
+    if is_bot_spend_limits_path(check_path) {
+        return Some("a bot's spending limits can only be changed at this computer");
+    }
+    if is_bot_page_reader_path(check_path) {
+        return Some("a bot's page reader setting can only be changed at this computer");
+    }
+    None
 }
 
 /// An encoded `/` (`%2F`) inside a path that is under `/v1/mcp`.
@@ -513,6 +528,13 @@ fn is_incoming_webhook_path(path: &str) -> bool {
 fn is_bot_spend_limits_path(path: &str) -> bool {
     path.strip_prefix("/v1/bots/")
         .and_then(|rest| rest.strip_suffix("/spend-limits"))
+        .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+}
+
+/// `/v1/bots/{id}/page-reader`: the protection between a page and the bot.
+fn is_bot_page_reader_path(path: &str) -> bool {
+    path.strip_prefix("/v1/bots/")
+        .and_then(|rest| rest.strip_suffix("/page-reader"))
         .is_some_and(|id| !id.is_empty() && !id.contains('/'))
 }
 
@@ -892,6 +914,15 @@ mod tests {
         }
         assert!(host_local_denial(&Method::GET, path).is_none());
         assert!(host_local_denial(&Method::PUT, "/v1/bots/abc").is_none());
+    }
+
+    #[test]
+    fn peers_never_change_a_bots_page_reader() {
+        let path = "/v1/bots/abc/page-reader";
+        for method in [Method::PUT, Method::POST, Method::DELETE, Method::PATCH] {
+            assert!(host_local_denial(&method, path).is_some(), "{method}");
+        }
+        assert!(host_local_denial(&Method::GET, path).is_none());
     }
 
     #[test]

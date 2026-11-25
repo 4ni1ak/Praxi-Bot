@@ -40,6 +40,8 @@ pub enum CallPurpose {
     Subagent,
     /// One attempt by the optional decision pool.
     Decider,
+    /// The quarantined page reader: a tool-less call that extracts facts from page text.
+    Reader,
 }
 
 impl CallPurpose {
@@ -54,6 +56,7 @@ impl CallPurpose {
             Self::Memory => "memory",
             Self::Subagent => "subagent",
             Self::Decider => "decider",
+            Self::Reader => "reader",
         }
     }
 }

@@ -7,10 +7,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createServer, type ViteDevServer } from "vite";
 import type { ApprovalCardProps } from "../components/ChatCards.tsx";
 import type { DockPage } from "../components/ApprovalDock.tsx";
+import { approvalKeyAction } from "./approvalKeys.ts";
 
 let server: ViteDevServer;
 let ApprovalCard: ComponentType<ApprovalCardProps>;
 let ApprovalDock: ComponentType<{ pages: readonly DockPage[] }>;
+let enterMayAllow: (tool: ApprovalCardProps["tool"]) => boolean;
 
 before(async () => {
   server = await createServer({
@@ -21,7 +23,7 @@ before(async () => {
     ssr: { noExternal: ["ui", "@tauri-apps/api"] }
   });
   await server.ssrLoadModule("/src/i18n/index.ts");
-  ({ ApprovalCard } = await server.ssrLoadModule("/src/components/ChatCards.tsx"));
+  ({ ApprovalCard, enterMayAllow } = await server.ssrLoadModule("/src/components/ChatCards.tsx"));
   ({ ApprovalDock } = await server.ssrLoadModule("/src/components/ApprovalDock.tsx"));
 });
 after(async () => {
@@ -110,4 +112,55 @@ test("the card shows how much the call can change: a calm chip to look, a red on
   assert.match(del, /data-risk="delete"/);
   assert.ok(del.includes("Allow delete"), "the delete card names what Allow does");
   assert.ok(del.includes("Deletes"), "and carries the tier chip");
+});
+
+const page_body = { tagName: "BODY", closest: () => null };
+const enter = { key: "Enter", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, target: page_body };
+const escape = { ...enter, key: "Escape" };
+/** What the Enter key does for a card once it is armed (the card on screen at keypress time). */
+const enterOn = (card: ApprovalCardProps["tool"]) => approvalKeyAction(enter, { armed: true, canAllow: enterMayAllow(card) });
+
+test("Enter never allows a delete, a shell command or a program start: only a click on Allow does", () => {
+  assert.equal(enterOn(tool("d1", "fs_delete", { path: "./drafts/old" })), null);
+  assert.equal(enterOn(tool("d2", "pc_fs_delete", { path: "./drafts/old" })), null);
+  assert.equal(enterOn(tool("s1", "shell_run", { command: "rm -rf ./drafts" })), null);
+  assert.equal(enterOn(tool("s2", "pc_shell_run", { command: "ls" })), null);
+  assert.equal(enterOn(tool("p1", "desktop_launch", { executable: "notepad.exe" })), null);
+  assert.equal(enterOn(tool("p2", "pc_desktop_launch", { executable: "cmd.exe", args: ["/c", "del x"] })), null);
+  assert.equal(enterOn(tool("p3", "use_tool", { name: "shell_run", input: { command: "ls" } })), null);
+});
+
+test("Enter does not allow a change, a send, a payment, a secret or a tool the tiers do not know", () => {
+  assert.equal(enterOn(tool("w1", "fs_write", { path: "a.txt", content: "x" })), null);
+  assert.equal(enterOn(tool("e1", "email_send", { to: "a@b.c", subject: "x" })), null);
+  assert.equal(enterOn(tool("y1", "payment_create", {})), null);
+  assert.equal(enterOn(tool("k1", "secret_read", { name: "x" })), null);
+  assert.equal(enterOn(tool("u1", "some_new_tool", {})), null);
+});
+
+test("Enter still allows a look-only card once it is armed, never before, and Esc denies every card", () => {
+  const look = tool("l1", "browser_navigate", { url: "https://webioo.com.tr" });
+  assert.equal(enterOn(look), "allow");
+  assert.equal(enterOn(tool("l2", "fs_read", { path: "notes.txt" })), "allow");
+  assert.equal(approvalKeyAction(enter, { armed: false, canAllow: enterMayAllow(look) }), null, "not before the arming delay");
+  for (const card of [
+    look,
+    tool("d1", "fs_delete", { path: "a" }),
+    tool("s1", "shell_run", { command: "ls" }),
+    tool("p1", "desktop_launch", { executable: "notepad.exe" }),
+    tool("e1", "email_send", { to: "a@b.c", subject: "x" })
+  ]) {
+    assert.equal(approvalKeyAction(escape, { armed: false, canAllow: enterMayAllow(card) }), "deny", card.name);
+  }
+});
+
+test("the dock hint advertises Enter only for pages Enter may answer, and the keys are bound to the card shown", () => {
+  const view = readFileSync(new URL("../views/ChatView.tsx", import.meta.url), "utf8");
+  assert.match(view, /keys: enterMayAllow\(tool\) \? "both" : "deny"/, "the hint follows the same rule as the key");
+  assert.match(view, /key: entry\.callId,/, "one page per call id");
+  assert.match(view, /onDecide=\{decisions\.decide\(entry\.callId\)\}/, "the answer goes to that card's call id");
+  const del: DockPage = { ...page("c8", "fs_delete"), keys: enterMayAllow(tool("c8", "fs_delete", { path: "a" })) ? "both" : "deny" };
+  const html = renderToStaticMarkup(createElement(ApprovalDock, { pages: [del] }));
+  assert.ok(!html.includes("Allow once</span>"), "a delete card shows no Enter hint");
+  assert.ok(html.includes("Deny</span>"), "Esc hint stays");
 });

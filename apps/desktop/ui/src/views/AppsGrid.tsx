@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import type { ComposioApp, ComposioToolkit } from "../api/types";
 import { AppLogo } from "../components/AppLogo";
+import { Skeleton, SkeletonLines } from "../components/Skeleton";
 import { GROUPS, composioTileState, tileAction, type TileState } from "../lib/appTiles";
 import styles from "./AppsModal.module.css";
 import own from "./AppsGrid.module.css";
@@ -111,7 +112,14 @@ export function SkeletonTiles({ count = 8 }: { count?: number }) {
   return (
     <ul className={styles.grid} aria-busy="true" aria-label={t("apps.composio.loading")}>
       {Array.from({ length: count }, (_, i) => (
-        <li key={i} className={`${styles.cell} ${own.skeleton}`} aria-hidden="true" />
+        <li key={i} className={styles.cell} aria-hidden="true">
+          <div className={styles.cellRow}>
+            <Skeleton shape="circle" width="var(--size-avatar-md)" height="var(--size-avatar-md)" />
+            <div className={styles.cellText}>
+              <SkeletonLines count={2} />
+            </div>
+          </div>
+        </li>
       ))}
     </ul>
   );

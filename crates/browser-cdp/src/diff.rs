@@ -131,6 +131,7 @@ mod tests {
                 node(0, Some("e1"), "link", "Go"),
                 node(0, None, "text", "hi"),
             ],
+            hidden_removed: 0,
         };
         let b = Snapshot {
             url: "https://b".into(),
@@ -139,6 +140,7 @@ mod tests {
                 node(0, None, "text", "hi"),
                 node(0, Some("e2"), "button", "Buy"),
             ],
+            hidden_removed: 0,
         };
         let d = diff(&a, &b);
         assert_eq!(d.url_changed.as_deref(), Some("https://b"));

@@ -3412,7 +3412,7 @@
       "createFailed": "Dein Bot konnte nicht erstellt werden. Es wurde nichts gespeichert. Versuche es gleich noch einmal.",
       "defaultName": "Praxi",
       "noService": "Der Hintergrunddienst von Praxi läuft noch nicht. Warte ein paar Sekunden und versuche es erneut.",
-      "recap": "Gehirn: {{model}} · Freiheit: {{level}}",
+      "recap": "KI: {{model}} · Freiheit: {{level}}",
       "subtitle": "Gib ihm einen Namen und ein Aussehen. Beides kannst du später ändern.",
       "title": "Lerne deinen Bot kennen",
       "tryTitle": "Probiere zuerst das",
@@ -3421,11 +3421,10 @@
       "whereTitle": "Wo dein Bot läuft"
     },
     "brain": {
-      "another": "Ein anderes Gehirn wählen",
-      "apiTitle": "Dein eigenes KI-Konto nutzen",
-      "apiTitleAfter": "Oder dein eigenes KI-Konto nutzen",
+      "another": "Eine andere wählen",
       "change": "Ändern",
       "checking": "Wird geprüft …",
+      "choices": "Wie möchtest du starten?",
       "cliReady": "{{name}} ist bereit",
       "cliSub": "Dein Abonnement · kein Schlüssel nötig",
       "cliSubAccount": "{{account}} · kein Schlüssel nötig",
@@ -3433,7 +3432,6 @@
       "connected": "Verbunden",
       "connectedModel": "Verbunden · {{count}} Modell",
       "connectedModels": "Verbunden · {{count}} Modelle",
-      "easyTitle": "Der einfachste Weg",
       "foundTitle": "Bereits auf diesem Computer",
       "freeSteps": {
         "one": "Drücke „Meinen Schlüssel holen“. Im Browser öffnet sich eine Google-Seite.",
@@ -3444,6 +3442,10 @@
       "freeTitle": "Ein kostenloses Modell nutzen",
       "getFreeKey": "Meinen Schlüssel holen",
       "getKey": "Schlüssel holen",
+      "here": {
+        "sub": "{{names}} · kein Schlüssel nötig",
+        "title": "Das nutzen, was schon auf diesem Computer ist"
+      },
       "hide": "Schlüssel verbergen",
       "keyHint": "Im Schlüsselbund deines Systems gespeichert. Er wird nie wieder angezeigt.",
       "keyLabel": "{{name}}-API-Schlüssel",
@@ -3463,6 +3465,14 @@
       "localTitle": "Läuft außerdem auf diesem Computer",
       "looking": "Suche nach dem, was schon auf diesem Computer vorhanden ist …",
       "model": "Modell",
+      "more": {
+        "hint": "Modelle, die ohne Internet auf diesem Computer laufen.",
+        "toggle": "Weitere Möglichkeiten"
+      },
+      "own": {
+        "sub": "Von Anthropic, OpenAI, OpenRouter oder DeepSeek.",
+        "title": "Ich habe einen Zugangsschlüssel"
+      },
       "paste": "Einfügen",
       "providers": {
         "anthropic": {
@@ -3489,8 +3499,8 @@
       },
       "recommended": "Empfohlen",
       "show": "Schlüssel anzeigen",
-      "subtitle": "Das ist das Modell, das für deinen Bot denkt. Du kannst es jederzeit ändern.",
-      "title": "Wähle ein Gehirn",
+      "subtitle": "Diese KI übernimmt das Denken für deinen Bot. Du kannst sie später jederzeit ändern.",
+      "title": "Eine KI verbinden",
       "useCli": "{{name}} verwenden"
     },
     "creating": "Wird erstellt …",
@@ -3558,7 +3568,7 @@
     "start": "Starten",
     "steps": {
       "bot": "Dein Bot",
-      "brain": "Gehirn",
+      "brain": "Verbinden",
       "freedom": "Freiheit"
     }
   },
@@ -4151,9 +4161,9 @@
         "release": "Bildschirm verlassen, um die Schaltflächen zu nutzen",
         "takeover": "Steuerung übernehmen"
       },
-      "more": "Weitere Optionen",
       "shortcuts": "Tastenkürzel",
-      "takeoverHint": "Übernimm diesen Bildschirm selbst (Strg+Umschalt+D). Die Bots pausieren, bis du ihn zurückgibst."
+      "takeoverHint": "Übernimm diesen Bildschirm selbst (Strg+Umschalt+D). Die Bots pausieren, bis du ihn zurückgibst.",
+      "view": "Ansicht"
     },
     "viewOnly": "Nur ansehen",
     "watchAction": "Kontrolle übernehmen"
@@ -4540,7 +4550,7 @@
       "auto": "Frei",
       "balanced": "Ausgewogen"
     },
-    "brain": "Gehirn",
+    "brain": "KI",
     "brainAuto": "Automatisch",
     "brainHint": "Das kannst du später im Chat ändern",
     "create": "Erstellen",
@@ -4694,6 +4704,24 @@
     "humanDrivingHint": "Desktop-Aktionen des Bots werden abgelehnt, solange du steuerst. Klicke im Mini-Widget auf „Zurückgeben“, um fortzufahren.",
     "typingPreview": "Tippen",
     "youAreInControl": "Du hast die Kontrolle"
+  },
+  "pageReader": {
+    "bot": "Bot",
+    "description": "Wie ein Bot Webseiten, E-Mails und andere Texte von Fremden liest.",
+    "legend": "Seitenleser",
+    "mode": {
+      "always": "Immer",
+      "auto": "Automatisch (empfohlen)",
+      "off": "Aus"
+    },
+    "modeHint": {
+      "always": "Ein separates Hilfsmodell liest jede Seite zuerst, auch wenn keine privaten Daten im Spiel sind. Langsamer und etwas mehr Verbrauch deines Kontingents.",
+      "auto": "Arbeitet der Bot mit deinen privaten Dateien, Mails oder Erinnerungen, liest zuerst ein separates Hilfsmodell jede Seite und gibt nur die Fakten weiter. Sonst liest der Bot Seiten selbst.",
+      "off": "Der Bot liest Seiten selbst. Seitentext kommt immer als Daten von außen markiert an, alles, was ein Mensch nicht sehen kann, ist vorher entfernt."
+    },
+    "noBot": "Lege zuerst einen Bot an.",
+    "note": "Das Hilfsmodell ist das günstige Hilfsmodell dieses Bots (sein Klassifikator) und kann bei einem anderen Anbieter laufen als der Bot selbst: Der Seitentext wird dorthin gesendet. Es hat keine Werkzeuge und sieht deine privaten Daten nie. Eine Seite kann es trotzdem täuschen wollen, deshalb gelten die Freigaben für Senden und Löschen weiter. Ist kein Hilfsmodell verfügbar, werden Seiten zurückgehalten, statt ungeprüft weitergegeben zu werden.",
+    "title": "Webseiten sicher lesen"
   },
   "pairHost": {
     "failed": "Kopplung fehlgeschlagen. Prüfe, ob der Host an ist und das Ticket neu ist.",
