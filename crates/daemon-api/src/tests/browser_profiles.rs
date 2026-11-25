@@ -26,7 +26,56 @@ async fn profile_routes_require_owner_key_and_check_bot_ownership() {
         StatusCode::NOT_FOUND
     );
     assert_eq!(
+        call(&t, Method::POST, &format!("{path}/finish-sign-in"), None)
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+    let bad_domain = call(
+        &t,
+        Method::POST,
+        &format!("{path}/forget-site"),
+        Some(json!({"domain": "../escape"})),
+    )
+    .await;
+    assert_eq!(bad_domain.status, StatusCode::CONFLICT);
+    assert_eq!(bad_domain.json()["error"]["code"], "browser_profile_error");
+    assert_eq!(
+        call(
+            &t,
+            Method::POST,
+            &format!("{path}/forget-site"),
+            Some(json!({"domain": "example.org", "extra": 1})),
+        )
+        .await
+        .status,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
         call(&t, Method::DELETE, &path, None).await.status,
         StatusCode::NO_CONTENT
     );
+
+    let remote_toml = format!(
+        "{PROFILE}\n[runtime]\ncomputer = \"server:{}\"\n",
+        uuid::Uuid::new_v4()
+    );
+    let remote = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({ "profile_toml": remote_toml })),
+    )
+    .await;
+    assert_eq!(remote.status, StatusCode::CREATED, "{:?}", remote.json());
+    let remote_id = remote.json()["id"].as_str().unwrap();
+    let remote_resp = call(
+        &t,
+        Method::GET,
+        &format!("/v1/bots/{remote_id}/browser-profile"),
+        None,
+    )
+    .await;
+    assert_eq!(remote_resp.status, StatusCode::CONFLICT);
+    assert_eq!(remote_resp.json()["error"]["code"], "browser_profile_error");
 }

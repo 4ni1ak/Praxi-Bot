@@ -57,7 +57,6 @@ export function BotBrowserProfile({ botId }: { botId: string }) {
       <p>{t("browserProfile.intro")}</p>
       <p className={styles.warning}>{t("browserProfile.warning")}</p>
       <p>{t("browserProfile.isolation")}</p>
-      <p>{t(profile?.directory_encrypted ? "browserProfile.encrypted" : "browserProfile.protection")}</p>
       <div className={styles.actions}>
         <Button disabled={!client || busy || !profile} onClick={() => {
           if (!client) return;
@@ -73,6 +72,7 @@ export function BotBrowserProfile({ botId }: { botId: string }) {
       {profile?.signing_in ? <p role="status">{t("browserProfile.manualHint")}</p> : null}
       {error && forget === null ? <ErrorNotice error={error} compact /> : null}
       {profile ? <>
+        <p>{t(profile.directory_encrypted ? "browserProfile.encrypted" : "browserProfile.protection")}</p>
         <p>{t("browserProfile.size", { bytes: profile.size_bytes.toLocaleString(i18n.language) })}</p>
         <h4>{t("browserProfile.sites")}</h4>
         <p>{t("browserProfile.siteHint")}</p>

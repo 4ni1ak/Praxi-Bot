@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ApiClient } from "./client.ts";
+import { MockApiClient } from "./mock.ts";
 
 test("browser profile actions stay bound to the selected bot and send no login credentials", async () => {
   const original = globalThis.fetch;
@@ -28,4 +29,24 @@ test("browser profile actions stay bound to the selected bot and send no login c
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test("MockApiClient isolates browser profiles per bot and tracks sign-in and forget actions", async () => {
+  const mock = new MockApiClient();
+  const bots = await mock.listBots();
+  const [first, second] = bots;
+  const initial = await mock.browserProfile(first.id);
+  assert.deepEqual(initial.domains, ["github.com"]);
+  assert.equal((await mock.browserProfile(second.id)).domains.length, 0);
+
+  await mock.startBrowserSignIn(first.id);
+  assert.equal((await mock.browserProfile(first.id)).signing_in, true);
+  await assert.rejects(() => mock.forgetBrowserSite(first.id, "github.com"));
+  await mock.finishBrowserSignIn(first.id);
+  assert.equal((await mock.browserProfile(first.id)).signing_in, false);
+
+  await mock.forgetBrowserSite(first.id, "github.com");
+  assert.deepEqual((await mock.browserProfile(first.id)).domains, []);
+  await mock.forgetBrowserProfile(first.id);
+  assert.equal((await mock.browserProfile(first.id)).size_bytes, 0);
 });

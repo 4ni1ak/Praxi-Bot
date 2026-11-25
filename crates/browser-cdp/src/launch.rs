@@ -472,9 +472,16 @@ mod tests {
 
     #[test]
     fn persistent_profiles_keep_native_cookie_protection() {
-        let opts = LaunchOptions { user_data_dir: Some("/managed/profile".into()), ..Default::default() };
+        let opts = LaunchOptions {
+            user_data_dir: Some("/managed/profile".into()),
+            ..Default::default()
+        };
         let args = build_args_for_host(&opts, Path::new("/managed/profile"), false, true, false);
-        assert!(!args.iter().any(|a| a == "--password-store=basic" || a == "--use-mock-keychain"));
+        assert!(
+            !args
+                .iter()
+                .any(|a| a == "--password-store=basic" || a == "--use-mock-keychain")
+        );
     }
 
     #[test]

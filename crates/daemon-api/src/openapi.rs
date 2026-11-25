@@ -439,6 +439,8 @@ impl Modify for Security {
         workspace_routes::run_workspace_cleanup,
     ),
     components(schemas(
+        crate::browser_profiles::BrowserProfileStatus,
+        crate::browser_profiles::ForgetBrowserSite,
         ::live_view::FrameMetadata,
         ::live_view::RecordHeader,
         ::live_view::ScreenStatus,
