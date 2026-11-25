@@ -39,7 +39,7 @@ Bir bota özel kurallar vermediysen botlar üç düzeyden birine uyar:
 | --- | --- | --- |
 | **Dikkatli** | Dosya okur, bir şeyleri araştırır, metin taslağı hazırlar. | Dosya düzenler ya da kaydeder, mesaj ya da e-posta gönderir, web sayfası açar, komut çalıştırır. |
 | **Dengeli** (önerilen) | Okur, gezinir, çalışma alanındaki dosyaları düzenler. | Bir şeyleri siler, mesaj ya da e-posta gönderir, para harcar, senin bilgisayarını kullanır. |
-| **Serbest** | Silme ve gönderme dahil hemen her şeyi. | Para harcama, tehlikeli komutlar ve güvenilmeyen bir sayfa okunduktan sonraki her şey. |
+| **Serbest** | Silme ve gönderme dahil hemen her şeyi. Kendi başlattığın bir çalışmada bir sayfa okuduktan sonra bile sormadan web'de gezer, tıklar ve yazar. | Para harcama, tehlikeli komutlar, kayıtlı bir sırrı yazmak, e-posta göndermek ve güvenilmeyen bir sayfa okunduktan sonra program çalıştırmak. Çalışma ayrıca özel verini (dosya, posta, hafıza) tutuyorsa, bunlardan bir parçayı içeren yeni bir site ya da form. |
 
 Bunlar daemon'un `read-and-draft`, `approve-destructive` ve `full` hazır ayarlarıdır. Eski "Salt okunur" hazır ayarı
 ile kategoriye göre kurallar, aynı sayfada **Gelişmiş** altında durmaya devam eder.
