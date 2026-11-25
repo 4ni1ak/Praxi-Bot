@@ -7,6 +7,7 @@ import {
   Clock,
   ShieldAlert,
   ShieldCheck,
+  TriangleAlert,
   Wrench
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -35,6 +36,8 @@ import {
   brainDetails,
   memoryOffer,
   scheduleDetails,
+  mailSendDetails,
+  type MailSendApprovalDetails,
   type ControlGrantDetails,
   type EgressApprovalDetails,
   type ScheduleApprovalDetails
@@ -51,6 +54,7 @@ import {
   INPUT_LIMIT,
   actionArguments,
   actionCommand,
+  escapeInvisible,
   approvalCompactPreview,
   approvalHeadline,
   approvalTargetDomain,
@@ -374,6 +378,61 @@ function ControlGrantBody({ d }: { d: ControlGrantDetails }) {
   );
 }
 
+/** Every guard warning about an outgoing e-mail, always visible next to the buttons. */
+function MailWarnings({ d }: { d: MailSendApprovalDetails }) {
+  const { t } = useTranslation();
+  if (d.warnings.length === 0) return null;
+  return (
+    <div role="alert" data-testid="approval-mail-warnings">
+      <p className={styles.approvalSummary}>
+        <TriangleAlert size={16} aria-hidden /> {t("chat.approval.mail.warningsTitle")}
+      </p>
+      <ul>
+        {d.warnings.map((w) => (
+          <li key={w.code}>
+            {t(`chat.approval.mail.warning.${w.code}`, {
+              defaultValue: w.text,
+              list: escapeInvisible(w.addresses.join(", ")),
+              count: w.count,
+              limit: w.limit,
+              days: w.limit
+            })}
+          </li>
+        ))}
+      </ul>
+      {d.legalNotice ? <p className={styles.bodyLabel}>{t("chat.approval.mail.legal")}</p> : null}
+      <p className={styles.bodyLabel}>{t("chat.approval.mail.ownerOnly")}</p>
+    </div>
+  );
+}
+
+/** The exact e-mail, including the opt-out line the system adds, before the owner approves. */
+function MailSendBody({ d }: { d: MailSendApprovalDetails }) {
+  const { t } = useTranslation();
+  // Invisible and bidi characters are written out, like on every other send card.
+  const list = (addresses: string[]) => escapeInvisible(addresses.join(", "));
+  const rows: [string, string][] = [
+    [t("chat.approval.mail.from"), escapeInvisible(d.from)],
+    [t("chat.approval.mail.to"), list(d.to)],
+    ...(d.cc.length ? [[t("chat.approval.mail.cc"), list(d.cc)] as [string, string]] : []),
+    ...(d.bcc.length ? [[t("chat.approval.mail.bcc"), list(d.bcc)] as [string, string]] : []),
+    [t("chat.approval.mail.subject"), escapeInvisible(d.subject)]
+  ];
+  return (
+    <div className={styles.scheduleBody} data-testid="approval-mail">
+      {rows.map(([label, value]) => (
+        <p key={label} className={styles.bodyText}>
+          <strong>{label}:</strong> {value}
+        </p>
+      ))}
+      <pre className={styles.code} tabIndex={0} data-testid="approval-mail-body">{escapeInvisible(d.body)}</pre>
+      <p className={styles.bodyLabel}>
+        {t(d.optOutLine ? "chat.approval.mail.optOutOn" : "chat.approval.mail.optOutOff")}
+      </p>
+    </div>
+  );
+}
+
 /** The complete profile a bot-made bot will have (or loses), shown before the user approves. */
 function BotApprovalBody({ d }: { d: BotApprovalDetails }) {
   const { t } = useTranslation();
@@ -475,6 +534,7 @@ export function ApprovalCard({
   const bot = botDetails(tool.details);
   const remaining = useCountdown(expiresAtMs);
   const schedule = scheduleDetails(tool.details);
+  const mail = mailSendDetails(tool.details);
   const egress = egressDetails(tool.details);
   const computer = computerDetails(tool.details);
   const control = controlGrantDetails(tool.details);
@@ -549,7 +609,8 @@ export function ApprovalCard({
     memory?.kind === "origin"
       ? t("chat.approval.compact.alwaysSite")
       : t("chat.approval.compact.alwaysTool");
-  const openDetailsByDefault = egress?.reviewFullPayload === true || (app ? app.count <= 1000 : false);
+  const openDetailsByDefault =
+    egress?.reviewFullPayload === true || mail !== null || (app ? app.count <= 1000 : false);
 
   return (
     <div
@@ -578,6 +639,7 @@ export function ApprovalCard({
               </span>
             ) : null}
           </div>
+          {mail ? <MailWarnings d={mail} /> : null}
           {compactPreview ? (
             <p className={styles.compactPreview} data-testid="approval-compact-preview">
               {compactPreview.text}
@@ -590,7 +652,7 @@ export function ApprovalCard({
               disabled={disabled || reviewPending || unrenderable}
               onClick={() => void decide("approve", "once")}
             >
-              {t("chat.approval.compact.allow")}
+              {mail?.sendAnyway ? t("chat.approval.mail.sendAnyway") : t("chat.approval.compact.allow")}
             </Button>
             {showAlways ? (
               <Button
@@ -652,6 +714,13 @@ export function ApprovalCard({
               {brain.sources.length ? <ul aria-label={t("knowledge.brainSources")}>{brain.sources.map((source) => <li key={source.id}>{source.label} · {source.id} · v{source.revision}</li>)}</ul> : null}
               <pre className={styles.brainContent}>{brain.content}</pre>
             </section>
+          ) : mail ? (
+            <>
+              <MailSendBody d={mail} />
+              <div className={styles.approvalMeta}>
+                <span className={styles.approvalTool}>{tool.name}</span>
+              </div>
+            </>
           ) : schedule ? (
             <>
               <ScheduleApprovalBody d={schedule} />

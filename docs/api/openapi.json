@@ -7197,6 +7197,329 @@
         ]
       }
     },
+    "/v1/email/guard/opt-out": {
+      "get": {
+        "tags": [
+          "email"
+        ],
+        "summary": "The opt-out list (owner only).",
+        "operationId": "list_opt_outs",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EmailOptOutDto"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "email"
+        ],
+        "summary": "Add an address or domain to the opt-out list (owner only).",
+        "operationId": "add_opt_out",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailOptOutInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailOptOutDto"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/email/guard/opt-out/{value}": {
+      "delete": {
+        "tags": [
+          "email"
+        ],
+        "summary": "Remove an entry from the opt-out list (owner only).",
+        "operationId": "remove_opt_out",
+        "parameters": [
+          {
+            "name": "value",
+            "in": "path",
+            "description": "The address or domain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/email/guard/send-log": {
+      "get": {
+        "tags": [
+          "email"
+        ],
+        "summary": "The send log, newest first (owner only: it lists recipients).",
+        "operationId": "get_send_log",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "path",
+            "description": "How many lines, newest first (default 200, at most 5000).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EmailSendLogDto"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/email/guard/send-log.csv": {
+      "get": {
+        "tags": [
+          "email"
+        ],
+        "summary": "The whole send log as a CSV file (owner only).",
+        "operationId": "export_send_log",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/email/guard/settings": {
+      "get": {
+        "tags": [
+          "email"
+        ],
+        "summary": "The values the outgoing-mail guard uses (owner only).",
+        "operationId": "get_guard_settings",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailGuardSettingsDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "email"
+        ],
+        "summary": "Change the guard values (owner only).",
+        "operationId": "put_guard_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailGuardSettingsDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailGuardSettingsDto"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/email/test": {
       "post": {
         "tags": [
@@ -19748,6 +20071,38 @@
           }
         }
       },
+      "EmailGuardSettingsDto": {
+        "type": "object",
+        "description": "Outgoing-mail guard values the owner can change (`GET`/`PUT /v1/email/guard/settings`).",
+        "required": [
+          "daily_limit",
+          "same_recipient_days",
+          "opt_out_line",
+          "footer"
+        ],
+        "properties": {
+          "daily_limit": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Warn above this many sends per account in 24 hours (`0` = no warning). Default 20.",
+            "minimum": 0
+          },
+          "footer": {
+            "type": "string",
+            "description": "Text of the opt-out line (`{sender}` = the sending address); empty = built-in text."
+          },
+          "opt_out_line": {
+            "type": "boolean",
+            "description": "Add the opt-out line to outgoing mail by default."
+          },
+          "same_recipient_days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Warn when a recipient got mail within this many days (`0` = no warning). Default 14.",
+            "minimum": 0
+          }
+        }
+      },
       "EmailImapServer": {
         "type": "object",
         "description": "An IMAP server (always implicit TLS).",
@@ -19801,6 +20156,54 @@
             "description": "Not read yet."
           }
         }
+      },
+      "EmailOptOutDto": {
+        "type": "object",
+        "description": "One address or domain the owner will not write to.",
+        "required": [
+          "value",
+          "kind",
+          "added_at",
+          "note"
+        ],
+        "properties": {
+          "added_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix seconds when it was added.",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "description": "`address` or `domain`."
+          },
+          "note": {
+            "type": "string",
+            "description": "The owner's note."
+          },
+          "value": {
+            "type": "string",
+            "description": "`ann@example.com` or `example.com`."
+          }
+        }
+      },
+      "EmailOptOutInput": {
+        "type": "object",
+        "description": "Body of `POST /v1/email/guard/opt-out`.",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "note": {
+            "type": "string",
+            "description": "Optional note (at most 200 characters are kept)."
+          },
+          "value": {
+            "type": "string",
+            "description": "An address (`ann@example.com`) or a domain (`example.com`)."
+          }
+        },
+        "additionalProperties": false
       },
       "EmailPendingReplyDto": {
         "type": "object",
@@ -19867,6 +20270,79 @@
           "implicit",
           "start_tls"
         ]
+      },
+      "EmailSendLogDto": {
+        "type": "object",
+        "description": "One sent mail in the send log.",
+        "required": [
+          "at",
+          "at_utc",
+          "run",
+          "account",
+          "from",
+          "recipients",
+          "subject",
+          "message_id",
+          "opt_out_line",
+          "send_anyway"
+        ],
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account name."
+          },
+          "at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix seconds.",
+            "minimum": 0
+          },
+          "at_utc": {
+            "type": "string",
+            "description": "The same moment in UTC."
+          },
+          "bot": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Bot that sent it."
+          },
+          "from": {
+            "type": "string",
+            "description": "Sending address."
+          },
+          "message_id": {
+            "type": "string",
+            "description": "Provider message id."
+          },
+          "opt_out_line": {
+            "type": "boolean",
+            "description": "The opt-out line was added."
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All recipients."
+          },
+          "run": {
+            "type": "string",
+            "description": "Run that sent it."
+          },
+          "send_anyway": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Warnings the owner sent past with \"Send anyway\" (empty = none)."
+          },
+          "subject": {
+            "type": "string",
+            "description": "First characters of the subject."
+          }
+        }
       },
       "EmailSendTestResponse": {
         "type": "object",

@@ -246,6 +246,71 @@ async fn email_routes_need_the_bearer_token_and_a_good_origin() {
     }
 }
 
+/// The guard routes carry every recipient the bots wrote to and switch the safeguards off, so no
+/// paired peer (any role) may read or change them, and the owner key gates them locally.
+#[tokio::test]
+async fn paired_peers_are_denied_on_every_mail_guard_route() {
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+    let t = setup();
+    let routes = [
+        "/v1/email/guard/settings",
+        "/v1/email/guard/opt-out",
+        "/v1/email/guard/opt-out/ann%40x.com",
+        "/v1/email/guard/send-log",
+        "/v1/email/guard/send-log.csv",
+    ];
+    for p in routes.into_iter().filter(|p| !p.contains("opt-out/")) {
+        for m in [Method::GET, Method::HEAD] {
+            assert!(
+                crate::owner::is_owner_route(m.as_str(), p),
+                "{m} {p} must need the owner key"
+            );
+        }
+    }
+    for (m, p) in [
+        ("PUT", "/v1/email/guard/settings"),
+        ("POST", "/v1/email/guard/opt-out"),
+        ("DELETE", "/v1/email/guard/opt-out/ann%40x.com"),
+    ] {
+        assert!(crate::owner::is_owner_route(m, p), "{m} {p}");
+    }
+    for role in [
+        crate::PeerRole::Phone,
+        crate::PeerRole::Desktop,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for p in routes {
+            for m in [
+                Method::GET,
+                Method::HEAD,
+                Method::POST,
+                Method::PUT,
+                Method::DELETE,
+            ] {
+                let req = Request::builder()
+                    .method(m.clone())
+                    .uri(p)
+                    .header("content-type", "application/json")
+                    .extension(crate::PeerIdentity {
+                        key: "peer-key".into(),
+                        role,
+                    })
+                    .body(Body::empty())
+                    .unwrap();
+                let status = crate::peer_router(t.state.clone())
+                    .oneshot(req)
+                    .await
+                    .unwrap()
+                    .status();
+                assert_eq!(status, StatusCode::FORBIDDEN, "{role:?} {m} {p}");
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn without_an_embedder_the_routes_answer_503() {
     let t = setup();

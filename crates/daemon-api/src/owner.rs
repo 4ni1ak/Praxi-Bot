@@ -242,6 +242,19 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     // reads headers of a mailbox / sends from it: the owner's own action, never a token's
     ("GET", "/v1/email/accounts/{}/messages"),
     ("POST", "/v1/email/accounts/{}/send-test"),
+    // outgoing-mail guard: recipients in the log, who may be written to, the limits
+    // axum also serves HEAD for a GET handler
+    ("HEAD", "/v1/email/guard/settings"),
+    ("HEAD", "/v1/email/guard/opt-out"),
+    ("HEAD", "/v1/email/guard/send-log"),
+    ("HEAD", "/v1/email/guard/send-log.csv"),
+    ("GET", "/v1/email/guard/settings"),
+    ("PUT", "/v1/email/guard/settings"),
+    ("GET", "/v1/email/guard/opt-out"),
+    ("POST", "/v1/email/guard/opt-out"),
+    ("DELETE", "/v1/email/guard/opt-out/{}"),
+    ("GET", "/v1/email/guard/send-log"),
+    ("GET", "/v1/email/guard/send-log.csv"),
     ("PUT", "/v1/web/search"),
     ("PUT", "/v1/voice"),
     // downloads hundreds of MB onto the owner's disk

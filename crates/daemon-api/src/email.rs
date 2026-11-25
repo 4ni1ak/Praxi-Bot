@@ -277,6 +277,70 @@ pub struct EmailSendTestResponse {
     pub sent_to: String,
 }
 
+/// Outgoing-mail guard values the owner can change (`GET`/`PUT /v1/email/guard/settings`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct EmailGuardSettingsDto {
+    /// Warn above this many sends per account in 24 hours (`0` = no warning). Default 20.
+    pub daily_limit: u32,
+    /// Warn when a recipient got mail within this many days (`0` = no warning). Default 14.
+    pub same_recipient_days: u32,
+    /// Add the opt-out line to outgoing mail by default.
+    pub opt_out_line: bool,
+    /// Text of the opt-out line (`{sender}` = the sending address); empty = built-in text.
+    pub footer: String,
+}
+
+/// One address or domain the owner will not write to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct EmailOptOutDto {
+    /// `ann@example.com` or `example.com`.
+    pub value: String,
+    /// `address` or `domain`.
+    pub kind: String,
+    /// Unix seconds when it was added.
+    pub added_at: u64,
+    /// The owner's note.
+    pub note: String,
+}
+
+/// Body of `POST /v1/email/guard/opt-out`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EmailOptOutInput {
+    /// An address (`ann@example.com`) or a domain (`example.com`).
+    pub value: String,
+    /// Optional note (at most 200 characters are kept).
+    #[serde(default)]
+    pub note: String,
+}
+
+/// One sent mail in the send log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct EmailSendLogDto {
+    /// Unix seconds.
+    pub at: u64,
+    /// The same moment in UTC.
+    pub at_utc: String,
+    /// Bot that sent it.
+    pub bot: Option<String>,
+    /// Run that sent it.
+    pub run: String,
+    /// Account name.
+    pub account: String,
+    /// Sending address.
+    pub from: String,
+    /// All recipients.
+    pub recipients: Vec<String>,
+    /// First characters of the subject.
+    pub subject: String,
+    /// Provider message id.
+    pub message_id: String,
+    /// The opt-out line was added.
+    pub opt_out_line: bool,
+    /// Warnings the owner sent past with "Send anyway" (empty = none).
+    pub send_anyway: Vec<String>,
+}
+
 /// Why an [`EmailControl`] operation failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmailControlError {
@@ -383,6 +447,62 @@ pub trait EmailControl: Send + Sync {
             "sending a test message is not supported here".into(),
         ))
     }
+    /// The outgoing-mail guard values.
+    ///
+    /// # Errors
+    /// The default says the embedder does not support it.
+    fn guard_settings(&self) -> Result<EmailGuardSettingsDto, EmailControlError> {
+        Err(guard_unsupported())
+    }
+    /// Replace the guard values.
+    ///
+    /// # Errors
+    /// [`EmailControlError::Invalid`] for unusable values.
+    fn set_guard_settings(
+        &self,
+        settings: EmailGuardSettingsDto,
+    ) -> Result<EmailGuardSettingsDto, EmailControlError> {
+        let _ = settings;
+        Err(guard_unsupported())
+    }
+    /// The opt-out list, newest first.
+    ///
+    /// # Errors
+    /// Default: unsupported.
+    fn opt_outs(&self) -> Result<Vec<EmailOptOutDto>, EmailControlError> {
+        Err(guard_unsupported())
+    }
+    /// Add an opt-out entry.
+    ///
+    /// # Errors
+    /// [`EmailControlError::Invalid`] for a malformed entry.
+    fn add_opt_out(&self, input: EmailOptOutInput) -> Result<EmailOptOutDto, EmailControlError> {
+        let _ = input;
+        Err(guard_unsupported())
+    }
+    /// Remove an opt-out entry.
+    ///
+    /// # Errors
+    /// [`EmailControlError::NotFound`] when it is not on the list.
+    fn remove_opt_out(&self, value: &str) -> Result<(), EmailControlError> {
+        let _ = value;
+        Err(guard_unsupported())
+    }
+    /// The send log, newest first.
+    ///
+    /// # Errors
+    /// Default: unsupported.
+    fn send_log(&self, limit: usize) -> Result<Vec<EmailSendLogDto>, EmailControlError> {
+        let _ = limit;
+        Err(guard_unsupported())
+    }
+    /// The whole send log as CSV.
+    ///
+    /// # Errors
+    /// Default: unsupported.
+    fn send_log_csv(&self) -> Result<String, EmailControlError> {
+        Err(guard_unsupported())
+    }
     /// A bot was deleted: remove the accounts bound to it (and the passwords
     /// they owned). **Never** turn a bound account into an unbound one: that
     /// would widen who may use it. Returns how many accounts were removed.
@@ -390,4 +510,8 @@ pub trait EmailControl: Send + Sync {
     /// # Errors
     /// The first [`EmailControlError`] (the remaining accounts are still tried).
     async fn forget_bot(&self, bot_id: &str) -> Result<usize, EmailControlError>;
+}
+
+fn guard_unsupported() -> EmailControlError {
+    EmailControlError::Invalid("the mail guard is not available here".into())
 }

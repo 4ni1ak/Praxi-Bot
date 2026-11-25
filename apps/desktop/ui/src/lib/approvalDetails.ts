@@ -364,3 +364,55 @@ export function memoryOffer(details: unknown): MemoryOffer | null {
   const plain = pattern.replace(/[\p{Cc}\p{Cf}]/gu, "");
   return plain === pattern ? { kind, pattern } : null;
 }
+
+export interface MailWarning {
+  code: string;
+  text: string;
+  addresses: string[];
+  count: number;
+  limit: number;
+}
+
+/** What `email_send` asks approval for: the exact mail, the code-added opt-out line and the guard warnings. */
+export interface MailSendApprovalDetails {
+  account: string;
+  from: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  /** The body as it will go out, opt-out line included. */
+  body: string;
+  optOutLine: boolean;
+  warnings: MailWarning[];
+  legalNotice: string | null;
+  /** At least one warning: the approve button says "Send anyway". */
+  sendAnyway: boolean;
+}
+
+/** Parse `details` of an approval; `null` when it is not an e-mail send card. */
+export function mailSendDetails(details: unknown): MailSendApprovalDetails | null {
+  if (!isObject(details) || details.kind !== "mail_send") return null;
+  const warnings = Array.isArray(details.warnings)
+    ? details.warnings.filter(isObject).map((w) => ({
+        code: text(w.code),
+        text: text(w.text),
+        addresses: strings(w.addresses),
+        count: typeof w.count === "number" ? w.count : 0,
+        limit: typeof w.limit === "number" ? w.limit : 0
+      }))
+    : [];
+  return {
+    account: text(details.account),
+    from: text(details.from),
+    to: strings(details.to),
+    cc: strings(details.cc),
+    bcc: strings(details.bcc),
+    subject: text(details.subject),
+    body: text(details.body),
+    optOutLine: details.opt_out_line === true,
+    warnings,
+    legalNotice: typeof details.legal_notice === "string" ? details.legal_notice : null,
+    sendAnyway: warnings.length > 0
+  };
+}

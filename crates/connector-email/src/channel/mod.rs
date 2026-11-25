@@ -17,7 +17,7 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::normalize_sender;
 use crate::error::EmailError;
+use crate::guard::{self, MailFacts, MailGuard, SendLogEntry};
 use crate::imap::SearchQuery;
 use crate::message::MAX_MESSAGE_BYTES;
 use crate::provider::{MailboxProvider, Receipt, SearchRequest};
@@ -79,6 +80,8 @@ struct Core {
     state: Mutex<State>,
     state_path: Option<PathBuf>,
     gate: Mutex<ReplyGate>,
+    /// The outgoing-mail guard and the account name its counts use (set by the host).
+    guard: OnceLock<(Arc<MailGuard>, String)>,
 }
 
 impl Core {
@@ -119,6 +122,7 @@ impl Core {
             state: Mutex::new(state),
             state_path,
             gate: Mutex::new(ReplyGate::default()),
+            guard: OnceLock::new(),
         })
     }
 
@@ -332,12 +336,66 @@ impl Core {
         if !self.settings.replies_enabled {
             return Err(EmailError::Input("replies are switched off".into()));
         }
+        // The reply goes through the same guard and log as `email_send`. The owner approves a
+        // reply from a list that shows no guard warnings, so here a hit is refused outright
+        // (the reply stays waiting): an opt-out entry, an unreadable guard file or the daily limit.
+        let guarded = self.guard.get().map(|(g, account)| {
+            let recipients = self
+                .pending_replies()
+                .into_iter()
+                .find(|p| p.id == id)
+                .map(|p| reply_recipients(&p.to))
+                .unwrap_or_default();
+            (g, account, recipients)
+        });
+        if let Some((g, account, recipients)) = &guarded {
+            let report = g.check(&MailFacts {
+                bot: None,
+                account,
+                from: &self.own_address,
+                recipients,
+                opt_out_line: true,
+            });
+            let blocking: Vec<&str> = report
+                .warnings
+                .iter()
+                .filter(|w| {
+                    matches!(
+                        w.code.as_str(),
+                        "opt_out_listed" | "guard_unreadable" | "daily_limit"
+                    )
+                })
+                .map(|w| w.text.as_str())
+                .collect();
+            if !blocking.is_empty() {
+                return Err(EmailError::Input(format!(
+                    "Not sent. {} Change the opt-out list or the limit in Settings, or write to                      this person yourself.",
+                    blocking.join(" ")
+                )));
+            }
+        }
         let reply = self
             .gate
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take_for_send(now_ms(), id)?;
-        self.provider.send(&reply.mail()).await
+        let receipt = self.provider.send(&reply.mail()).await?;
+        if let Some((g, account, recipients)) = guarded {
+            g.record(SendLogEntry {
+                at: guard::now_secs(),
+                at_utc: String::new(),
+                bot: None,
+                run: "email-channel-reply".into(),
+                account: account.clone(),
+                from: self.own_address.clone(),
+                recipients,
+                subject: reply.subject.clone(),
+                message_id: receipt.id.clone(),
+                opt_out_line: false,
+                overridden: Vec::new(),
+            });
+        }
+        Ok(receipt)
     }
 
     /// Drop a waiting reply. `true` when it existed.
@@ -379,6 +437,12 @@ impl EmailChannel {
                 state_path,
             )?),
         })
+    }
+
+    /// Route approved replies through the outgoing-mail guard and send log (`account` is the
+    /// name the guard's daily count uses). Set once; later calls are ignored.
+    pub fn attach_guard(&self, guard: Arc<MailGuard>, account: &str) {
+        let _ = self.core.guard.set((guard, account.to_owned()));
     }
 
     /// Look once for new mail (see the module docs); oldest first.
@@ -470,3 +534,15 @@ impl Channel for EmailChannel {
 
 #[cfg(test)]
 mod tests;
+
+/// Recipients of a reply in the guard's canonical form (the same parse the envelope uses).
+fn reply_recipients(to: &[String]) -> Vec<String> {
+    to.iter()
+        .map(|a| {
+            crate::smtp::envelope_address(a)
+                .ok()
+                .and_then(|e| guard::canonical_address(&e))
+                .map_or_else(|| a.to_lowercase(), |k| k.full)
+        })
+        .collect()
+}

@@ -118,14 +118,17 @@ impl EmailChannelHost {
             ));
         }
         let provider = Arc::new(ImapSmtpProvider::new(acct.clone(), self.email.secrets()));
-        EmailChannel::new(
+        let channel = EmailChannel::new(
             provider,
             &acct.address,
             &acct.allowed_senders,
             s.clone(),
             Some(self.data_dir.join(STATE_FILE)),
         )
-        .map_err(|e| EmailControlError::Invalid(e.to_string()))
+        .map_err(|e| EmailControlError::Invalid(e.to_string()))?;
+        // Approved replies use the same guard (opt-out list, limits) and send log as email_send.
+        channel.attach_guard(self.email.connector().guard(), &acct.name);
+        Ok(channel)
     }
 
     fn halt(&self) {

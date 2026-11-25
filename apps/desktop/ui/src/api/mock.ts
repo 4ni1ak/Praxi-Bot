@@ -24,6 +24,8 @@ import type {
   GrantTarget,
   EmailAccount,
   EmailAccountInput,
+  EmailGuardSettings,
+  EmailOptOut,
   EmailChannelSettings,
   EmailPendingReply,
   InputBatch,
@@ -2338,8 +2340,49 @@ export class MockApiClient extends ApiClient {
     return this.getBotSkillsState(botId);
   }
 
+  private mailGuardSettings: EmailGuardSettings = {
+    daily_limit: 20,
+    same_recipient_days: 14,
+    opt_out_line: true,
+    footer: ""
+  };
+  private mailOptOuts: EmailOptOut[] = [];
+
+  private mailGuard(method: string, name: string | undefined, action: string | undefined, body: unknown): unknown {
+    if (name === "settings") {
+      if (method === "PUT") {
+        this.mailGuardSettings = { ...(body as EmailGuardSettings) };
+      }
+      return this.mailGuardSettings;
+    }
+    if (name === "opt-out") {
+      if (method === "DELETE") {
+        this.mailOptOuts = this.mailOptOuts.filter((o) => o.value !== action);
+        return undefined;
+      }
+      if (method === "POST") {
+        const input = body as { value: string; note?: string };
+        const value = input.value.trim().toLowerCase().replace(/^@/, "");
+        const entry: EmailOptOut = { value, kind: value.includes("@") ? "address" : "domain", added_at: 1_795_000_000, note: input.note ?? "" };
+        this.mailOptOuts = [entry, ...this.mailOptOuts.filter((o) => o.value !== value)];
+        return entry;
+      }
+      return this.mailOptOuts;
+    }
+    if (name === "send-log.csv") {
+      return "time_utc,bot,run,account,from,recipients,subject,message_id,opt_out_line,send_anyway\r\n";
+    }
+    if (name === "send-log") {
+      return [];
+    }
+    throw new ApiError(404, "not_found", "mock email guard");
+  }
+
   private email(method: string, seg: string[], body: unknown): unknown {
     const [, sub, name, action] = seg;
+    if (sub === "guard") {
+      return this.mailGuard(method, name, action, body);
+    }
     if (sub === "test") {
       const draft = (body ?? {}) as EmailAccountInput;
       return draft.provider === "agentmail"

@@ -1571,6 +1571,27 @@
         "label": "Lo que recibirá {{name}} exactamente",
         "shortened": "Texto abreviado: solo se muestran los primeros {{shown}} caracteres."
       },
+      "mail": {
+        "bcc": "Cco",
+        "cc": "Cc",
+        "from": "De",
+        "legal": "Escribir a alguien que se dio de baja, o enviar correo comercial sin línea de baja, puede ser ilegal (en Turquía: Ley 6563, ETK) y acarrear multas. Esto no es asesoramiento jurídico.",
+        "optOutOff": "No se añadirá ninguna línea de baja a este correo.",
+        "optOutOn": "El sistema añade al final una línea de baja (se ve arriba).",
+        "ownerOnly": "Solo usted puede decidirlo. El bot no puede saltarse estas advertencias por su cuenta.",
+        "sendAnyway": "Enviar de todos modos",
+        "subject": "Asunto",
+        "title": "¿Enviar este correo?",
+        "to": "Para",
+        "warning": {
+          "daily_limit": "Con esto serían {{count}} correos desde esta cuenta en 24 horas. Su límite es {{limit}}.",
+          "guard_unreadable": "La protección de correo no pudo leer su archivo guardado ({{list}}). El archivo dañado se apartó, no se borró; por eso pueden faltar bajas y nadie se comprueba contra ellas.",
+          "no_opt_out_line": "Este correo saldría sin la línea que permite darse de baja.",
+          "opt_out_listed": "Estas personas pidieron que no se les escriba: {{list}}.",
+          "same_recipient": "Ya escribió a {{list}} en los últimos {{days}} días."
+        },
+        "warningsTitle": "Revise antes de enviar"
+      },
       "memory": {
         "always": "Permitir siempre {{target}} para este bot",
         "target": {
@@ -5809,6 +5830,39 @@
           "title": "Safe mode"
         }
       }
+    },
+    "mailGuard": {
+      "colBot": "Bot",
+      "colNote": "Nota",
+      "colSubject": "Asunto",
+      "colTime": "Cuándo",
+      "colTo": "Para",
+      "daily": "Avisar por encima de este número de correos al día, por buzón (0 = nunca)",
+      "days": "Avisar si ya escribí a alguien dentro de este número de días (0 = nunca)",
+      "description": "Límites, una lista de bajas y un registro de cada correo que envían sus bots.",
+      "export": "Exportar como CSV",
+      "footer": "Texto de la línea de baja",
+      "footerHint": "{sender} se sustituye por la dirección remitente. La línea la añade la aplicación, no el bot, y el bot no puede quitarla. Puede enviar un correo sin ella aprobándolo en la tarjeta, que muestra una advertencia. El programa no lee las respuestas: si alguien responde «STOP», añada usted mismo su dirección a la lista de bajas aquí.",
+      "footerPlaceholder": "Déjelo vacío para usar el texto integrado (turco e inglés)",
+      "intro": "Cada correo que envía un bot sigue pidiéndole permiso primero. Estos ajustes solo deciden cuándo la pregunta lleva una advertencia. Una advertencia nunca le bloquea: siempre puede elegir \"Enviar de todos modos\", y esa elección queda en el registro.",
+      "kindAddress": "dirección",
+      "kindDomain": "dominio entero",
+      "loading": "Cargando…",
+      "logEmpty": "Todavía no se ha enviado ningún correo.",
+      "logHint": "Quién recibió un correo, cuándo y desde qué bot. Solo aparecen los correos realmente enviados.",
+      "logTitle": "Registro de correos enviados",
+      "optOutAdd": "Añadir",
+      "optOutEmpty": "Todavía no hay nadie en la lista.",
+      "optOutHint": "Añada una dirección (ana@ejemplo.com) o un dominio entero (ejemplo.com). Si un bot intenta escribirles, verá una advertencia en su tarjeta de aprobación.",
+      "optOutLine": "Añadir por defecto una línea de baja a los correos",
+      "optOutPlaceholder": "ana@ejemplo.com o ejemplo.com",
+      "optOutRemove": "Quitar {{value}}",
+      "optOutTitle": "Personas a las que no escribiré",
+      "save": "Guardar",
+      "saved": "Guardado",
+      "sentAnyway": "Enviado de todos modos",
+      "softHint": "Estos dos son advertencias, no bloqueos.",
+      "title": "Envío seguro"
     },
     "mode": {
       "moreHint": "Opciones adicionales",
