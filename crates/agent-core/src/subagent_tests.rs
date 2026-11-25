@@ -1605,7 +1605,7 @@ async fn a_child_read_the_parent_surface_cannot_resolve_still_gates_egress() {
         recorded["text"]
             .as_str()
             .unwrap()
-            .starts_with("Permission denied"),
+            .contains("Permission denied"),
         "{recorded}"
     );
     assert_eq!(recorded["fact"]["ran"], true, "{recorded}");

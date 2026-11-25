@@ -30,6 +30,7 @@ mod knowledge;
 mod ledger;
 mod memory;
 mod mention;
+pub mod page_guard;
 mod profile;
 mod router;
 mod schedule_precheck;

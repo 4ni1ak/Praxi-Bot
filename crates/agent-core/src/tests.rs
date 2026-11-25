@@ -8,6 +8,7 @@ mod c812;
 mod composio_approvals;
 mod external_agent;
 mod fill_secret;
+mod page_guard;
 mod planning_pause;
 mod secret_request;
 mod tiering;

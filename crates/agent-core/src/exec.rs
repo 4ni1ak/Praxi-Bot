@@ -1764,6 +1764,39 @@ impl TurnExecutor {
                 is_error = text == crate::knowledge::RETRIEVAL_UNAVAILABLE;
             }
             let output_preview = preview(&text);
+            // Judged on the tool's own text, before it is framed or read.
+            let outcome = crate::ledger::classify(is_error, &text, Some(fact.ran));
+            // Everything the daemon classes as outside content reaches the model in ONE fixed
+            // data block (and, for a run that holds private data, only as the result of the
+            // quarantined reader). A knowledge result keeps its own budgeted JSON.
+            let (text, own_spill) =
+                if !is_error && fact.ran && fact.ingests_untrusted && knowledge_request.is_none() {
+                    let mode = crate::page_guard::ReaderMode::from_bot_config(
+                        &self
+                            .sh
+                            .storage
+                            .get_bot(run.bot_id)
+                            .ok()
+                            .flatten()
+                            .map(|b| b.config)
+                            .unwrap_or_default(),
+                    );
+                    let framed = crate::page_guard::frame_tool_result(
+                        &self.sh,
+                        &ctx,
+                        mode,
+                        &call.name,
+                        &fact.label,
+                        text,
+                    )
+                    .await;
+                    // The reader's result replaces the page: the tool's own spill file holds
+                    // the raw page, and its path is no longer in the text.
+                    let kept_spill = own_spill.filter(|_| framed.contains("[full output"));
+                    (framed, kept_spill)
+                } else {
+                    (text, own_spill)
+                };
             // A tool that already spilled its own output is not spilled again.
             let (mut text, spill_path) = if own_spill.is_some() {
                 (text, own_spill)
@@ -1772,7 +1805,6 @@ impl TurnExecutor {
             };
             // Keep a knowledge result valid, budgeted JSON. The existing hard
             // repeat-stop guard still applies; no unbudgeted footer is appended.
-            let outcome = crate::ledger::classify(is_error, &text, Some(fact.ran));
             if outcome == crate::ledger::Outcome::TimedOut && knowledge_request.is_none() {
                 // A timeout is never swallowed: the model is told what is
                 // unknown and what to do next.
