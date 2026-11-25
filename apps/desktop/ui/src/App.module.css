@@ -437,11 +437,6 @@
 .brandMark { display: inline-flex; align-items: center; justify-content: center; width: var(--size-avatar-sm); height: var(--size-avatar-sm); border-radius: var(--radius-md); background: var(--color-accent); color: var(--color-accent-contrast); box-shadow: var(--shadow-sm); }
 .emptyIcon { width: var(--space-10); height: var(--space-10); color: var(--color-accent-text); margin-bottom: var(--space-3); }
 
-.botSearch { width: 100%; margin-top: var(--space-3); padding: var(--space-2); border: none; border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); font-size: var(--font-size-ui); }
-/* Search while the rail is collapsed only by fitting: the field lives in a body-level Popover, the stored width stays. */
-.botSearchPopover { width: 100%; box-sizing: border-box; padding: var(--space-2); border: none; border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); font-size: var(--font-size-ui); }
-.botSearch:focus-visible,
-.botSearchPopover:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
 .botRole { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-ui); font-weight: var(--font-weight-regular); }
 
 .emptyStateCard { border: none; box-shadow: none; background: transparent; }

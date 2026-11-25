@@ -2333,17 +2333,6 @@
     "steps": "Steps the bot took",
     "title": "Export chat"
   },
-  "chatHistory": {
-    "count": "{{count}} matching messages",
-    "count_one": "{{count}} matching message",
-    "count_other": "{{count}} matching messages",
-    "more": "More results",
-    "noneYet": "No visible matches on this page yet",
-    "results": "Message search results",
-    "search": "Search all chat messages…",
-    "searching": "Searching messages…",
-    "submit": "Search messages"
-  },
   "chatManage": {
     "allArchived": "All chats are archived.",
     "archive": "Archive",
@@ -3580,6 +3569,8 @@
     "menuDismiss": "Close the menu",
     "menuMove": "Move through the slash / mention menu",
     "menuNav": "Move through popup menus",
+    "messageSearch": "Search all messages",
+    "messageSearchMove": "Message search: move and open",
     "newline": "New line",
     "openHelp": "Show this list (when no text field has focus)",
     "palette": "Command palette",
@@ -4327,6 +4318,31 @@
       "m": "min",
       "s": "s"
     }
+  },
+  "messageSearch": {
+    "allBots": "All bots",
+    "bot": "Bot",
+    "clear": "Clear",
+    "clearRecent": "Clear",
+    "filters": "Filters",
+    "hasFile": "File",
+    "hasLink": "Link",
+    "hint": "Type to search every chat",
+    "keywords": "find messages history chats",
+    "more": "More results",
+    "none": "No messages found",
+    "open": "Search messages",
+    "placeholder": "Search all messages",
+    "recent": "Recent",
+    "reset": "Reset",
+    "results": "Message results",
+    "searching": "Searching…",
+    "title": "Search messages",
+    "when": "Date",
+    "when_any": "Any time",
+    "when_day": "Past day",
+    "when_month": "Past month",
+    "when_week": "Past week"
   },
   "modelPicker": {
     "addEngines": "Add a coding CLI",
@@ -6022,7 +6038,6 @@
     "reorderHint": "Drag the row, or focus this handle and press the up/down arrow",
     "reorderMoved": "{{name}} moved to position {{pos}}",
     "schedules": "Scheduled tasks",
-    "searchBots": "Search bots",
     "settings": "Settings",
     "unread": "Unread message",
     "unreadBot": "New messages from this bot",

@@ -2333,17 +2333,6 @@
     "steps": "Botun attığı adımlar",
     "title": "Sohbeti dışa aktar"
   },
-  "chatHistory": {
-    "count": "{{count}} eşleşen mesaj",
-    "count_one": "{{count}} eşleşen mesaj",
-    "count_other": "{{count}} eşleşen mesaj",
-    "more": "Daha fazla sonuç",
-    "noneYet": "Bu sayfada henüz görünen eşleşme yok",
-    "results": "Mesaj arama sonuçları",
-    "search": "Tüm sohbet mesajlarında ara…",
-    "searching": "Mesajlar aranıyor…",
-    "submit": "Mesajlarda ara"
-  },
   "chatManage": {
     "allArchived": "Tüm sohbetler arşivlendi.",
     "archive": "Arşivle",
@@ -3580,6 +3569,8 @@
     "menuDismiss": "Menüyü kapat",
     "menuMove": "Eğik çizgi / anma menüsünde gezin",
     "menuNav": "Açılır menülerde gezin",
+    "messageSearch": "Tüm mesajlarda ara",
+    "messageSearchMove": "Mesaj araması: gez ve aç",
     "newline": "Yeni satır",
     "openHelp": "Bu listeyi göster (metin alanı seçili değilken)",
     "palette": "Komut paleti",
@@ -4327,6 +4318,31 @@
       "m": "dk",
       "s": "sn"
     }
+  },
+  "messageSearch": {
+    "allBots": "Tüm botlar",
+    "bot": "Bot",
+    "clear": "Temizle",
+    "clearRecent": "Temizle",
+    "filters": "Filtreler",
+    "hasFile": "Dosya",
+    "hasLink": "Bağlantı",
+    "hint": "Tüm sohbetlerde aramak için yazın",
+    "keywords": "mesaj ara geçmiş sohbet bul",
+    "more": "Daha fazla sonuç",
+    "none": "Mesaj bulunamadı",
+    "open": "Mesajlarda ara",
+    "placeholder": "Tüm mesajlarda ara",
+    "recent": "Son aramalar",
+    "reset": "Sıfırla",
+    "results": "Mesaj sonuçları",
+    "searching": "Aranıyor…",
+    "title": "Mesajlarda ara",
+    "when": "Tarih",
+    "when_any": "Her zaman",
+    "when_day": "Son 24 saat",
+    "when_month": "Son 30 gün",
+    "when_week": "Son 7 gün"
   },
   "modelPicker": {
     "addEngines": "Kodlama CLI'ı ekle",
@@ -6022,7 +6038,6 @@
     "reorderHint": "Satırı sürükle ya da bu tutamaca odaklanıp yukarı/aşağı ok tuşuna bas",
     "reorderMoved": "{{name}} {{pos}}. sıraya taşındı",
     "schedules": "Zamanlanmış görevler",
-    "searchBots": "Botlarda ara",
     "settings": "Ayarlar",
     "unread": "Okunmamış mesaj",
     "unreadBot": "Bu bottan yeni mesajlar var",

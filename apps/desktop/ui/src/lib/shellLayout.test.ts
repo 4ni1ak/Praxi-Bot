@@ -8,7 +8,6 @@ import {
   MAIN_MIN,
   normalizeShellLayout,
   railAfterStep,
-  searchPlan,
   panelMax,
   panelWidthFromPointer,
   railTier,
@@ -120,16 +119,4 @@ test("keyboard steps start from the displayed (fitted) rail, not the stored one"
   // A rail the user collapsed, with room: widening expands it.
   const roomy = (c: number) => fitRail(1400, c, 320, true, true);
   assert.equal(railAfterStep(RAIL_MINI, RAIL_MINI, 1, roomy), RAIL_MIN);
-});
-
-test("Search in a fitted mini rail is a popover and keeps the stored width", () => {
-  // Collapsed only by fitting (stored 264, displayed 68): popover, no expansion of the stored width.
-  assert.deepEqual(searchPlan(264, RAIL_MINI, false), { expandStored: false, popover: true, open: true });
-  assert.deepEqual(searchPlan(264, RAIL_MINI, true), { expandStored: false, popover: true, open: false });
-  // Collapsed by the user: expands as before.
-  assert.deepEqual(searchPlan(RAIL_MINI, RAIL_MINI, false), { expandStored: true, popover: false, open: true });
-  assert.deepEqual(searchPlan(RAIL_MINI, RAIL_MINI, true), { expandStored: true, popover: false, open: true });
-  // A normal rail: plain toggle.
-  assert.deepEqual(searchPlan(264, 264, false), { expandStored: false, popover: false, open: true });
-  assert.deepEqual(searchPlan(264, 264, true), { expandStored: false, popover: false, open: false });
 });

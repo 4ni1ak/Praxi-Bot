@@ -153,21 +153,6 @@ export function railAfterStep(
   return fitted(next) === displayed && next !== displayed ? stored : next;
 }
 
-/**
- * The Search button.  A rail the user collapsed (stored width = icons) expands as before; a rail that is
- * only collapsed by fitting keeps the stored preference and shows the field as a compact popover.
- */
-export function searchPlan(
-  storedRail: number,
-  displayedRail: number,
-  searchOpen: boolean
-): { expandStored: boolean; popover: boolean; open: boolean } {
-  const userMini = isMiniRail(storedRail);
-  const displayedMini = isMiniRail(displayedRail);
-  const expandStored = displayedMini && userMini;
-  return { expandStored, popover: displayedMini && !userMini, open: !searchOpen || expandStored };
-}
-
 /** Panel width for a pointer at `x`, measured from the window's right edge. */
 export function panelWidthFromPointer(
   x: number,

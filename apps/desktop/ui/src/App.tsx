@@ -33,7 +33,6 @@ import {
   loadShellLayout,
   fitRail,
   railAfterStep,
-  searchPlan,
   FLOAT_PAD,
   isFloatShell,
   panelMax,
@@ -58,7 +57,7 @@ import {
 } from "./lib/sidePanelState";
 import { useMcp } from "./state/useMcp";
 import { AccountMenu, type AccountAction } from "./components/AccountMenu";
-import { Popover } from "./components/Popover";
+import { MessageSearch } from "./components/MessageSearch";
 import { HealthIndicator } from "./components/HealthIndicator";
 import { ServiceBanner } from "./components/ServiceBanner";
 import { ServiceStateProvider } from "./state/ServiceState";
@@ -81,9 +80,8 @@ import { BOT_COLORS, botView, draftFromBot } from "./lib/botProfile";
 import { isBotMuted, setBotMuted } from "./lib/botMute";
 import { makeBotMain } from "./lib/botOrder";
 import { botRowMenu } from "./lib/contextMenu";
-import { SEARCH_ALL_CHATS_EVENT } from "./lib/chatSearchRequest";
+import { SEARCH_ALL_CHATS_EVENT, type SearchRequest, takeSearchRequest } from "./lib/chatSearchRequest";
 import { useContextMenu, useMenuTranslate } from "./components/ContextMenu";
-import { filterBots } from "./lib/botSearch";
 import {
   backFromChatOpensPanel,
   botChats,
@@ -337,7 +335,8 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
   }, []);
   const [newChatBusy, setNewChatBusy] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
-  const [botSearch, setBotSearch] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchSeed, setSearchSeed] = useState<SearchRequest | null>(null);
   const { servers: appServers } = useMcp(true);
   const [helpOpen, setHelpOpen] = useState(false);
   // The offline demo: `null` task = closed. It lives only here, never as a chat.
@@ -849,6 +848,18 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Ctrl/Cmd + Shift + F searches the message history of every bot.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // A bare `?` (no text field focused) opens the shortcuts dialog.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -970,9 +981,14 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
     else setBotEditOpen(true);
     setPendingBotDialog(null);
   }, [pendingBotDialog, dialogBotId]);
-  // "Search all chats" from a right-click menu needs the bot panel on screen.
+  // "Search all chats" from a right-click menu opens the message search with the phrase filled in.
   useEffect(() => {
-    const open = () => setPanelOpen(true);
+    const open = () => {
+      const request = takeSearchRequest();
+      if (!request) return;
+      setSearchSeed(request);
+      setSearchOpen(true);
+    };
     window.addEventListener(SEARCH_ALL_CHATS_EVENT, open);
     return () => window.removeEventListener(SEARCH_ALL_CHATS_EVENT, open);
   }, []);
@@ -1025,13 +1041,10 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
   const panelReserve = usePanelReserve(panelDocked);
   const railWidth = fitRail(viewportWidth, layout.rail, panelWidth, float, panelReserve);
   const fitStored = (candidate: number) => fitRail(viewportWidth, candidate, panelWidth, float, panelReserve);
-  const search = searchPlan(layout.rail, railWidth, botSearch !== null);
-  const searchButtonRef = useRef<HTMLButtonElement | null>(null);
-  const closeSearch = useCallback(() => setBotSearch(null), []);
-  // A dialog opened by a shortcut sits above the Search popover: close the popover instead of leaving it beneath.
+  // A dialog opened by a shortcut sits above the message search: close the search instead of leaving it beneath.
   const dialogOpen = settingsOpen !== null || appsOpen || newBotOpen || helpOpen || botEditOpen || botProfileOpen || skillsOpen || addSkillOpen || marketOpen;
   useEffect(() => {
-    if (dialogOpen) setBotSearch(null);
+    if (dialogOpen) setSearchOpen(false);
   }, [dialogOpen]);
 
   // "What's new": bundled notes of the installed version, shown once per version (never blocks, no network).
@@ -1099,7 +1112,7 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
       dismissOverlayPanel();
     };
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented && botSearch === null && !helpOpen) {
+      if (e.key === "Escape" && !e.defaultPrevented && !helpOpen) {
         e.preventDefault();
         leave.attempt(() => {
           setPanelOpen(false);
@@ -1122,7 +1135,6 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
     viewerOpen,
     dialogOpen,
     demo,
-    botSearch,
     helpOpen,
     dismissOverlayPanel,
     leave,
@@ -1301,23 +1313,17 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
               <b className={styles.brandName}>{PRODUCT_CONFIG.appName}</b>
               <div className={styles.topActions}>
                 <button className={styles.iconButton} title={t("myBots.title")} aria-label={t("myBots.title")} aria-current={route.kind === "myBots" ? "page" : undefined} data-testid="my-bots-button" onClick={() => go({ kind: "myBots" })}><Bot /></button>
-                <button ref={searchButtonRef} className={styles.iconButton} title={t("sidebar.searchBots")} aria-label={t("sidebar.searchBots")} onClick={() => { if (search.expandStored) setRail(RAIL_MIN); setBotSearch(search.open ? "" : null); }}><Search /></button>
+                <button className={styles.iconButton} title={t("messageSearch.open")} aria-label={t("messageSearch.open")} aria-keyshortcuts="Control+Shift+F Meta+Shift+F" data-testid="message-search-button" onClick={() => setSearchOpen(true)}><Search /></button>
                 <button className={styles.iconButton} title={t("sidebar.newBot")} aria-label={t("sidebar.newBot")} data-testid="new-bot-button" onClick={() => setNewBotOpen(true)}><Plus /></button>
               </div>
             </div>
-            {botSearch !== null && !mini ? <input className={styles.botSearch} autoFocus value={botSearch} onChange={e => setBotSearch(e.target.value)} aria-label={t("sidebar.searchBots")} placeholder={t("sidebar.searchBots")} /> : null}
-            {search.popover ? (
-              <Popover open={botSearch !== null} anchor={searchButtonRef} onClose={closeSearch} placement="bottom-start" role="dialog" label={t("sidebar.searchBots")} width={240}>
-                <input className={styles.botSearchPopover} value={botSearch ?? ""} onChange={e => setBotSearch(e.target.value)} aria-label={t("sidebar.searchBots")} placeholder={t("sidebar.searchBots")} />
-              </Popover>
-            ) : null}
           </SidebarHeader>
           <SidebarSection>
             <span className={styles.srOnly} role="status" aria-live="polite">{orderNote}</span>
             <div ref={reorder.containerRef} className={styles.botList} data-stale={homeStale ? "true" : undefined}>
             {needs.length > 0 ? <SidebarItem className={styles.railItem} active={route.kind === "needs"} title={t("sidebar.needsYou")} aria-label={mini ? t("sidebar.needsYouCount", { count: needs.length }) : undefined} onClick={openNeeds}><BellDot /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.needsYou")}</span><span className={styles.needsBadge} data-testid="needs-you-badge" aria-label={t("sidebar.needsYouCount", { count: needs.length })}>{needs.length}</span></SidebarItem> : null}
             {notifyHistory.length > 0 || route.kind === "notifications" ? <SidebarItem className={styles.railItem} active={route.kind === "notifications"} title={t("sidebar.notifications")} aria-label={mini && notifyActionCount > 0 ? t("sidebar.notificationsCount", { count: notifyActionCount }) : mini ? t("sidebar.notifications") : undefined} onClick={() => go({ kind: "notifications" })} data-testid="sidebar-notifications"><BellRing /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.notifications")}</span>{notifyActionCount > 0 ? <span className={styles.notifyBadge} data-testid="notify-history-badge" aria-label={t("sidebar.notificationsCount", { count: notifyActionCount })}>{notifyActionCount}</span> : null}</SidebarItem> : null}
-            {filterBots(bots, botSearch).map((bot) => {
+            {bots.map((bot) => {
               const view = botView(bot);
               const latest = botChats(chats, bot.id).find((c) => !c.archived);
               const config = bot.config as { bot?: { preview?: string; state?: string; unread?: boolean } };
@@ -1325,7 +1331,7 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
               const state = needs.some(n => n.botId === bot.id) || live?.state === "waiting_approval" ? "waiting-approval" : live ? "working" : isMockMode() ? config.bot?.state : "idle";
               const avatarState = state === "thinking" || state === "working" || state === "waiting-approval" || state === "error" ? state : "idle";
               const index = botIds.indexOf(bot.id);
-              const canReorder = botSearch === null || botSearch === "";
+              const canReorder = true;
               const drag = reorder.drag;
               const dropEdge = drag && drag.id !== bot.id && drag.over === index ? (drag.over < drag.from ? "before" : "after") : undefined;
               const rowMenu = botMenu.bind(() => botRowMenu({
@@ -1622,7 +1628,9 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
         onChat={(chatId, botId) => go({ kind: "chat", chatId, botId })}
         onSettingsPage={(page) => setSettingsOpen(page)}
         onHelp={() => setHelpOpen(true)}
+        onSearch={() => setSearchOpen(true)}
       />
+      {searchOpen ? <MessageSearch seed={searchSeed} onClose={() => setSearchOpen(false)} onOpenChat={openChat} /> : null}
       <SettingsModal
         open={settingsOpen !== null}
         initialSection={settingsOpen ?? "general"}
