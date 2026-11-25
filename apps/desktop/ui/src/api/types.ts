@@ -441,6 +441,10 @@ export interface GlobalEnvelope extends Envelope {
 // ---- Credential requests and the vault (`/v1/secret-requests/*`, `/v1/fill-secrets`) -----
 export type SecretRequestAnswer = S["SecretRequestAnswer"];
 export type FillSecretInfo = S["FillSecretDto"];
+export type VaultKind = S["VaultKindDto"];
+export type CreateFillSecretInput = S["CreateFillSecret"];
+export type UpdateFillSecretInput = S["UpdateFillSecret"];
+export type RevealFillSecretResponse = S["RevealFillSecretResponse"];
 
 // ---- MCP management API (`/v1/mcp/*`, `/v1/secrets/*`) ---------------------
 

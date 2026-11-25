@@ -668,6 +668,8 @@ pub(crate) enum Verdict {
 pub struct SecretRequestInfo {
     /// The run that asked.
     pub run_id: RunId,
+    /// The bot that asked (receives initial Vault scope when stored).
+    pub bot_id: BotId,
     /// Entry name (after `fill/`).
     pub name: String,
     /// One value or username + password.

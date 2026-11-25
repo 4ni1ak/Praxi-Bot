@@ -36,10 +36,15 @@ const MAX_NAME_BYTES: usize = 64;
 const MAX_SECRETS: usize = 256;
 const MAX_ORIGINS: usize = 32;
 const MAX_PROGRAMS: usize = 32;
+const MAX_BOTS: usize = 64;
 const MAX_GRANTS: usize = 512;
 const MAX_ORIGIN_BYTES: usize = 256;
 const MAX_PROGRAM_BYTES: usize = 200;
-const META_VERSION: u32 = 1;
+const MAX_BOT_ID_BYTES: usize = 64;
+const MAX_SITE_NAME_CHARS: usize = 80;
+const MAX_LOGIN_ID_CHARS: usize = 160;
+const MAX_NOTE_CHARS: usize = 1024;
+const META_VERSION: u32 = 2;
 
 /// First path segments that name other parts of the store. A fill name can
 /// never start with one (it could not collide anyway, because the store key is
@@ -108,23 +113,46 @@ pub struct FillGrant {
     pub created_at_ms: u64,
 }
 
+/// Kind of Vault entry (for grouping in the UI; never affects security boundaries).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VaultKind {
+    /// A website or application login (username/email + password).
+    #[default]
+    Login,
+    /// Any other owner-stored fill secret (API key, card field, PIN, etc.).
+    Other,
+}
+
 /// What the owner sees about one secret. Never the value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FillSecretInfo {
     /// Name as the model writes it in `secret`.
     pub name: String,
+    /// Category (`login` or `other`).
+    pub kind: VaultKind,
+    /// Human-friendly site or service label (never secret).
+    pub site_name: Option<String>,
+    /// Non-secret login identifier (e-mail or username).
+    pub login_id: Option<String>,
+    /// Owner-only note (never sent to models).
+    pub note: Option<String>,
     /// Exact origins the secret may be typed on.
     pub origins: Vec<String>,
     /// Verified desktop program identities the secret may be typed into.
     pub programs: Vec<String>,
+    /// Bot ids allowed to use this secret. Empty = NO bot may use it (fail-closed).
+    pub bot_ids: Vec<String>,
+    /// Whether the bot must ask the owner before typing this secret.
+    pub ask_before_use: bool,
     /// Whether the store holds a value for it.
     pub has_value: bool,
     /// Last change, ms since the epoch.
     pub updated_at_ms: u64,
 }
 
-/// Account facts of a secret a bot registered. Absent on older entries, which
-/// stay usable by every bot.
+/// Account facts of a secret a bot registered. Absent on the owner's own
+/// secrets, which are scoped by `Entry::bot_ids` (none until the owner grants).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct AccountMeta {
     site: String,
@@ -146,7 +174,34 @@ struct AccountMeta {
     first_used_at_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Fields supplied when creating or updating a Vault / fill secret.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FillSecretUpdate<'a> {
+    /// Secret value (required for new entries, optional on update).
+    pub value: Option<&'a str>,
+    /// Replaces allowed origins when `Some`.
+    pub origins: Option<&'a [String]>,
+    /// Replaces allowed desktop programs when `Some`.
+    pub programs: Option<&'a [String]>,
+    /// Replaces allowed bot ids when `Some`. Defaults to empty (`[]`) on create.
+    pub bot_ids: Option<&'a [String]>,
+    /// Replaces item kind when `Some`.
+    pub kind: Option<VaultKind>,
+    /// Replaces site name when `Some` (empty string clears it).
+    pub site_name: Option<&'a str>,
+    /// Replaces login identifier when `Some` (empty string clears it).
+    pub login_id: Option<&'a str>,
+    /// Replaces note when `Some` (empty string clears it).
+    pub note: Option<&'a str>,
+    /// Replaces `ask_before_use` when `Some` (defaults to `true` on create).
+    pub ask_before_use: Option<bool>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Entry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     account: Option<AccountMeta>,
@@ -154,8 +209,40 @@ struct Entry {
     origins: Vec<String>,
     #[serde(default)]
     programs: Vec<String>,
+    /// Per-bot scope: empty means NO bot may use this secret. Entries from
+    /// before per-bot scope (version 1) start empty (fail-closed): the owner
+    /// grants bot access in the Vault.
+    #[serde(default)]
+    bot_ids: Vec<String>,
+    #[serde(default)]
+    kind: Option<VaultKind>,
+    #[serde(default)]
+    site_name: Option<String>,
+    #[serde(default)]
+    login_id: Option<String>,
+    #[serde(default)]
+    note: Option<String>,
+    #[serde(default = "default_true")]
+    ask_before_use: bool,
     #[serde(default)]
     updated_at_ms: u64,
+}
+
+impl Default for Entry {
+    fn default() -> Self {
+        Self {
+            account: None,
+            origins: Vec::new(),
+            programs: Vec::new(),
+            bot_ids: Vec::new(),
+            kind: None,
+            site_name: None,
+            login_id: None,
+            note: None,
+            ask_before_use: true,
+            updated_at_ms: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -313,6 +400,88 @@ fn clean_programs(list: &[String]) -> Result<Vec<String>, FillError> {
     Ok(set.into_iter().collect())
 }
 
+fn clean_bot_id(raw: &str) -> Result<String, FillError> {
+    let t = raw.trim();
+    if t.is_empty()
+        || t.len() > MAX_BOT_ID_BYTES
+        || !t
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+    {
+        return Err(FillError::InvalidEntry(format!(
+            "`{}`: a bot id is 1 to 64 ASCII letters, digits, '-' or '_'",
+            sanitize_label(raw, 40)
+        )));
+    }
+    Ok(t.to_owned())
+}
+
+fn clean_bot_ids(list: &[String]) -> Result<Vec<String>, FillError> {
+    if list.len() > MAX_BOTS {
+        return Err(FillError::Invalid("at most 64 bots per secret".into()));
+    }
+    let set: BTreeSet<String> = list
+        .iter()
+        .map(|b| clean_bot_id(b))
+        .collect::<Result<_, _>>()?;
+    Ok(set.into_iter().collect())
+}
+
+fn clean_optional_label(raw: &str, cap: usize) -> Option<String> {
+    let cleaned = sanitize_label(raw, cap);
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+fn clean_optional_note(raw: &str, cap: usize) -> Option<String> {
+    let mut out = String::new();
+    let mut prev_nl = false;
+    for c in raw.chars() {
+        if c == '\r' {
+            continue;
+        }
+        if c == '\n' {
+            if !out.is_empty() && !prev_nl {
+                out.push('\n');
+                prev_nl = true;
+            }
+            continue;
+        }
+        let hidden = c.is_control()
+            || matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}');
+        if hidden {
+            continue;
+        }
+        prev_nl = false;
+        out.push(c);
+    }
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.chars().count() > cap {
+        let mut cut: String = trimmed.chars().take(cap.saturating_sub(1)).collect();
+        cut.push('…');
+        Some(cut)
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn effective_kind(name: &str, e: &Entry) -> VaultKind {
+    if let Some(kind) = e.kind {
+        return kind;
+    }
+    if !e.origins.is_empty() || e.login_id.is_some() || name.starts_with("login/") {
+        VaultKind::Login
+    } else {
+        VaultKind::Other
+    }
+}
+
 fn check_value_size(v: &str) -> Result<(), FillError> {
     if v.is_empty() || v.len() > MAX_FILL_VALUE_BYTES {
         return Err(FillError::Invalid(
@@ -462,7 +631,7 @@ impl FillSecrets {
     /// parsed (fail closed: no fill secret is usable until it is repaired).
     pub fn open(store: Arc<dyn SecretStore>, data_dir: &Path) -> Result<Self, FillError> {
         let path = metadata_path(data_dir);
-        let meta = match std::fs::read(&path) {
+        let mut meta = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice::<Meta>(&bytes)
                 .map_err(|_| unavailable("the metadata file is not valid JSON"))?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Meta::default(),
@@ -470,6 +639,20 @@ impl FillSecrets {
         };
         if meta.version > META_VERSION {
             return Err(unavailable("the metadata file is from a newer version"));
+        }
+        // Migrating v1 -> v2 (fail-closed per-bot scope): the owner's secrets
+        // keep `bot_ids: []`, so no bot may use them until the owner picks the
+        // bots in the Vault (nothing recorded which bot used a secret). A secret
+        // that already had standing grants keeps `ask_before_use = false`, so the
+        // owner's "do not ask again" choice survives once a bot is allowed.
+        if meta.version < META_VERSION {
+            let granted: BTreeSet<String> = meta.grants.iter().map(|g| g.secret.clone()).collect();
+            for (name, entry) in &mut meta.secrets {
+                if granted.contains(name) {
+                    entry.ask_before_use = false;
+                }
+            }
+            meta.version = META_VERSION;
         }
         Ok(Self {
             store,
@@ -527,41 +710,85 @@ impl FillSecrets {
     fn info(name: &str, e: &Entry, present: &BTreeSet<String>) -> FillSecretInfo {
         FillSecretInfo {
             name: name.to_owned(),
+            kind: if e.account.is_some() {
+                e.kind.unwrap_or(VaultKind::Login)
+            } else {
+                effective_kind(name, e)
+            },
+            site_name: e.site_name.clone(),
+            login_id: e
+                .login_id
+                .clone()
+                .or_else(|| e.account.as_ref().map(|a| a.login_id.clone())),
+            note: e
+                .note
+                .clone()
+                .or_else(|| e.account.as_ref().and_then(|a| a.note.clone())),
             origins: e.origins.clone(),
             programs: e.programs.clone(),
+            bot_ids: Self::scoped_bots(e),
+            ask_before_use: e.ask_before_use,
             has_value: present.contains(&store_key(name)),
             updated_at_ms: e.updated_at_ms,
         }
     }
 
-    /// Create or update a secret. `value` is write-only: required when the
-    /// secret is new, optional (keep the stored value) on update. `origins` /
-    /// `programs` replace the allow-lists when given.
+    fn sync_grants_for_entry(meta: &mut Meta, name: &str) -> Result<(), FillError> {
+        let Some(entry) = meta.secrets.get(name).cloned() else {
+            return Ok(());
+        };
+        if entry.ask_before_use {
+            meta.grants.retain(|g| g.secret != name);
+            return Ok(());
+        }
+        // A grant is only valid while its origin stays on the allow-list.
+        let allowed: BTreeSet<String> = entry.origins.iter().cloned().collect();
+        meta.grants
+            .retain(|g| g.secret != name || allowed.contains(&g.origin));
+        for origin in &entry.origins {
+            let exists = meta.grants.iter().any(|g| {
+                g.secret == name && g.origin == *origin && g.kind == GRANT_KIND_BROWSER_FILL
+            });
+            if !exists {
+                if meta.grants.len() >= MAX_GRANTS {
+                    return Err(FillError::Invalid("too many standing grants".into()));
+                }
+                meta.grants.push(FillGrant {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    secret: name.to_owned(),
+                    origin: origin.clone(),
+                    kind: GRANT_KIND_BROWSER_FILL.to_owned(),
+                    created_at_ms: now_ms(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Create or update a secret with optional Vault metadata and bot access.
+    /// `value` is write-only: required when the secret is new, optional (keep
+    /// the stored value) on update. `bot_ids` defaults to empty (`[]`, no bot)
+    /// on creation.
     ///
     /// # Errors
     /// Invalid name / entries / value, a limit, or a backend failure.
-    pub fn upsert(
+    pub fn upsert_with(
         &self,
         name: &str,
-        value: Option<&str>,
-        origins: Option<&[String]>,
-        programs: Option<&[String]>,
+        update: FillSecretUpdate<'_>,
     ) -> Result<FillSecretInfo, FillError> {
         validate_fill_name(name)?;
-        if let Some(v) = value
-            && (v.is_empty() || v.len() > MAX_FILL_VALUE_BYTES)
-        {
-            return Err(FillError::Invalid(
-                "the value must be between 1 byte and 64 KiB".into(),
-            ));
+        if let Some(v) = update.value {
+            check_value_size(v)?;
         }
-        let origins = origins.map(clean_origins).transpose()?;
-        let programs = programs.map(clean_programs).transpose()?;
+        let origins = update.origins.map(clean_origins).transpose()?;
+        let programs = update.programs.map(clean_programs).transpose()?;
+        let bot_ids = update.bot_ids.map(clean_bot_ids).transpose()?;
 
         let mut meta = self.meta.lock();
         let existed = meta.secrets.contains_key(name);
         if !existed {
-            if value.is_none() {
+            if update.value.is_none() {
                 return Err(FillError::Invalid("a new fill secret needs a value".into()));
             }
             if meta.secrets.len() >= MAX_SECRETS {
@@ -569,7 +796,14 @@ impl FillSecrets {
             }
         }
         let before = meta.clone();
-        if let Some(v) = value {
+        let previous_value = if update.value.is_some() && existed {
+            self.store
+                .get(&store_key(name))
+                .map_err(|_| unavailable("the secret store cannot be read"))?
+        } else {
+            None
+        };
+        if let Some(v) = update.value {
             self.store
                 .set(&store_key(name), v)
                 .map_err(|_| unavailable("the secret store rejected the write"))?;
@@ -582,14 +816,52 @@ impl FillSecrets {
         if let Some(p) = programs {
             entry.programs = p;
         }
+        if let Some(b) = bot_ids {
+            if let Some(a) = entry.account.as_mut() {
+                a.bot_ids.clone_from(&b);
+            }
+            entry.bot_ids = b;
+        }
+        if let Some(k) = update.kind {
+            entry.kind = Some(k);
+        }
+        if let Some(s) = update.site_name {
+            entry.site_name = clean_optional_label(s, MAX_SITE_NAME_CHARS);
+        }
+        if let Some(l) = update.login_id {
+            entry.login_id = clean_optional_label(l, MAX_LOGIN_ID_CHARS);
+        }
+        if let Some(n) = update.note {
+            entry.note = clean_optional_note(n, MAX_NOTE_CHARS);
+        }
+        if let Some(ask) = update.ask_before_use {
+            entry.ask_before_use = ask;
+        }
         entry.updated_at_ms = now_ms();
-        // A grant is only valid while its origin stays on the allow-list.
-        let allowed: BTreeSet<String> = entry.origins.iter().cloned().collect();
-        meta.grants
-            .retain(|g| g.secret != name || allowed.contains(&g.origin));
+
+        let sync_res = if update.ask_before_use.is_some() {
+            Self::sync_grants_for_entry(&mut meta, name)
+        } else {
+            // Keep standing grants valid only for still-allowed origins.
+            let allowed: BTreeSet<String> = entry.origins.iter().cloned().collect();
+            meta.grants
+                .retain(|g| g.secret != name || allowed.contains(&g.origin));
+            Ok(())
+        };
+        if let Err(e) = sync_res {
+            *meta = before;
+            if let Some(prev) = previous_value {
+                let _ = self.store.set(&store_key(name), prev.expose());
+            } else if !existed && update.value.is_some() {
+                let _ = self.store.delete(&store_key(name));
+            }
+            return Err(e);
+        }
         if let Err(e) = self.persist(&meta) {
             *meta = before;
-            if !existed && value.is_some() {
+            if let Some(prev) = previous_value {
+                let _ = self.store.set(&store_key(name), prev.expose());
+            } else if !existed && update.value.is_some() {
                 let _ = self.store.delete(&store_key(name));
             }
             return Err(e);
@@ -599,14 +871,36 @@ impl FillSecrets {
         Ok(Self::info(name, &entry, &present))
     }
 
-    /// Write several entries as one unit (a login: username and password):
-    /// everything is validated first, and when any write or the metadata save
-    /// fails the previous values and metadata are put back, so the vault never
-    /// holds a mix of old and new. Returns whether an existing entry was replaced.
+    /// Create or update a secret. `value` is write-only: required when the
+    /// secret is new, optional (keep the stored value) on update. `origins` /
+    /// `programs` replace the allow-lists when given. New secrets start with no
+    /// bot access (`bot_ids = []`) until the owner grants it.
     ///
     /// # Errors
-    /// [`FillError::Exists`] when a name exists and `replace` is false (checked
-    /// under the same lock as the write); invalid input; a backend failure.
+    /// Invalid name / entries / value, a limit, or a backend failure.
+    pub fn upsert(
+        &self,
+        name: &str,
+        value: Option<&str>,
+        origins: Option<&[String]>,
+        programs: Option<&[String]>,
+    ) -> Result<FillSecretInfo, FillError> {
+        self.upsert_with(
+            name,
+            FillSecretUpdate {
+                value,
+                origins,
+                programs,
+                ..FillSecretUpdate::default()
+            },
+        )
+    }
+
+    /// Write several entries as one unit (a login: username and password),
+    /// with no bot access (see [`Self::upsert_all_for_bots`]).
+    ///
+    /// # Errors
+    /// As [`Self::upsert_all_for_bots`].
     pub fn upsert_all(
         &self,
         items: &[(String, String)],
@@ -614,7 +908,7 @@ impl FillSecrets {
         programs: &[String],
         replace: bool,
     ) -> Result<bool, FillError> {
-        self.upsert_all_scoped(items, origins, programs, replace, WriteScope::Owner)
+        self.upsert_all_scoped(items, origins, programs, &[], None, replace, WriteScope::Owner)
     }
 
     /// [`Self::upsert_all`] for a write that a BOT asked for (a `secret_request` the
@@ -622,6 +916,7 @@ impl FillSecrets {
     /// ([`FillError::NotAllowed`]) before anything is written, under the same lock as
     /// the write, so bot B cannot get the owner to overwrite bot A's account value
     /// whatever the form said. Owner-made entries (no account facts) stay replaceable.
+    /// The written entries are scoped to `bot` (none when `bot` is `None`).
     ///
     /// # Errors
     /// As [`Self::upsert_all`], plus [`FillError::NotAllowed`] for another bot's account.
@@ -633,15 +928,59 @@ impl FillSecrets {
         replace: bool,
         bot: Option<&str>,
     ) -> Result<bool, FillError> {
-        self.upsert_all_scoped(items, origins, programs, replace, WriteScope::Bot(bot))
+        let bots: Vec<String> = bot.map(str::to_owned).into_iter().collect();
+        self.upsert_all_scoped(
+            items,
+            origins,
+            programs,
+            &bots,
+            None,
+            replace,
+            WriteScope::Bot(bot),
+        )
     }
 
-    /// `scope`: who the write is for (see [`WriteScope`]).
+    /// [`Self::upsert_all_for_bot`] with an explicit per-bot scope `bot_ids` and the
+    /// non-secret `login_id` shown in the Vault; `requested_by` is the bot the
+    /// request came from (see [`Self::upsert_all_for_bot`] for the refusal rule).
+    ///
+    /// # Errors
+    /// As [`Self::upsert_all_for_bot`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn upsert_all_for_bots(
+        &self,
+        items: &[(String, String)],
+        origins: &[String],
+        programs: &[String],
+        bot_ids: &[String],
+        login_id: Option<&str>,
+        replace: bool,
+        requested_by: Option<&str>,
+    ) -> Result<bool, FillError> {
+        self.upsert_all_scoped(
+            items,
+            origins,
+            programs,
+            bot_ids,
+            login_id,
+            replace,
+            WriteScope::Bot(requested_by),
+        )
+    }
+
+    /// Write several entries as one unit (a login: username and password):
+    /// everything is validated first, and when any write or the metadata save
+    /// fails the previous values and metadata are put back, so the vault never
+    /// holds a mix of old and new. Returns whether an existing entry was
+    /// replaced. `scope`: who the write is for (see [`WriteScope`]).
+    #[allow(clippy::too_many_arguments)]
     fn upsert_all_scoped(
         &self,
         items: &[(String, String)],
         origins: &[String],
         programs: &[String],
+        bot_ids: &[String],
+        login_id: Option<&str>,
         replace: bool,
         scope: WriteScope<'_>,
     ) -> Result<bool, FillError> {
@@ -651,10 +990,14 @@ impl FillSecrets {
         }
         let origins = clean_origins(origins)?;
         let programs = clean_programs(programs)?;
+        let bot_ids = clean_bot_ids(bot_ids)?;
+        let login_id = login_id.and_then(|l| clean_optional_label(l, MAX_LOGIN_ID_CHARS));
         let mut meta = self.meta.lock();
         if let WriteScope::Bot(bot) = scope {
             for (n, _) in items {
-                if let Some(e) = meta.secrets.get(n) {
+                // Only another bot's ACCOUNT is protected here: the owner answering a
+                // request may replace one of their own entries.
+                if let Some(e) = meta.secrets.get(n).filter(|e| e.account.is_some()) {
                     Self::scope_check(n, e, bot)?;
                 }
             }
@@ -702,6 +1045,13 @@ impl FillSecrets {
             let entry = meta.secrets.entry(n.clone()).or_default();
             entry.origins.clone_from(&origins);
             entry.programs.clone_from(&programs);
+            entry.bot_ids.clone_from(&bot_ids);
+            if let Some(a) = entry.account.as_mut() {
+                a.bot_ids.clone_from(&bot_ids);
+            }
+            if login_id.is_some() {
+                entry.login_id.clone_from(&login_id);
+            }
             entry.updated_at_ms = now_ms();
             let allowed: BTreeSet<String> = entry.origins.iter().cloned().collect();
             meta.grants
@@ -765,7 +1115,9 @@ impl FillSecrets {
             }),
             origins: vec![site],
             programs: Vec::new(),
+            bot_ids: vec![new.bot_id.to_owned()],
             updated_at_ms: now,
+            ..Entry::default()
         };
         meta.secrets.insert(new.name.to_owned(), entry.clone());
         if let Err(e) = self.persist(&meta) {
@@ -845,14 +1197,32 @@ impl FillSecrets {
         self.delete_locked(&mut meta, name).map(|_| ())
     }
 
-    /// Whether `bot` may use the secret. Entries without account facts (the
-    /// owner's own secrets) stay open to every bot as before; an account is open
-    /// only to the bots listed on it, never to a caller without a bot id.
-    fn bot_may_use(e: &Entry, bot: Option<&str>) -> bool {
-        match &e.account {
-            None => true,
-            Some(a) => bot.is_some_and(|b| a.bot_ids.iter().any(|x| x == b)),
+    /// The bots that may use an entry (the owner's pick in the Vault, plus the
+    /// bot that registered an account).
+    fn scoped_bots(e: &Entry) -> Vec<String> {
+        let mut bots = e.bot_ids.clone();
+        if let Some(a) = &e.account {
+            for b in &a.bot_ids {
+                if !bots.contains(b) {
+                    bots.push(b.clone());
+                }
+            }
         }
+        bots.sort();
+        bots
+    }
+
+    /// Whether `bot` may use the secret: only a bot the owner (or, for its own
+    /// account, the bot itself) put on the entry's list. No bot id, or an empty
+    /// list, means no. This is the single gate every read and check goes through.
+    fn bot_may_use(e: &Entry, bot: Option<&str>) -> bool {
+        let Some(bot) = bot.map(str::trim).filter(|b| !b.is_empty()) else {
+            return false;
+        };
+        e.bot_ids.iter().any(|x| x == bot)
+            || e.account
+                .as_ref()
+                .is_some_and(|a| a.bot_ids.iter().any(|x| x == bot))
     }
 
     /// Refuse use of a bot-scoped account by a bot that does not own it.
@@ -872,7 +1242,7 @@ impl FillSecrets {
             Ok(())
         } else {
             Err(FillError::NotAllowed(format!(
-                "the secret `{}` belongs to another bot",
+                "the secret `{}` is not enabled for this bot; only the owner can allow it in the Vault",
                 sanitize_label(name, 80)
             )))
         }
@@ -986,6 +1356,9 @@ impl FillSecrets {
             created_at_ms: now_ms(),
         };
         let before = meta.clone();
+        if let Some(e) = meta.secrets.get_mut(secret) {
+            e.ask_before_use = false;
+        }
         meta.grants.push(grant.clone());
         if let Err(e) = self.persist(&meta) {
             *meta = before;
@@ -1007,9 +1380,20 @@ impl FillSecrets {
     pub fn grant_revoke(&self, id: &str) -> Result<bool, FillError> {
         let mut meta = self.meta.lock();
         let before = meta.clone();
+        let revoked_secret = meta
+            .grants
+            .iter()
+            .find(|g| g.id == id)
+            .map(|g| g.secret.clone());
         let n = meta.grants.len();
         meta.grants.retain(|g| g.id != id);
         let removed = meta.grants.len() != n;
+        if let Some(secret) = revoked_secret
+            && !meta.grants.iter().any(|g| g.secret == secret)
+            && let Some(e) = meta.secrets.get_mut(&secret)
+        {
+            e.ask_before_use = true;
+        }
         if removed && let Err(e) = self.persist(&meta) {
             *meta = before;
             return Err(e);
@@ -1043,7 +1427,8 @@ impl FillSecrets {
     /// Whether the secret may be typed on the page origin `live_origin` (the
     /// origin of the FRAME that holds the receiving field, as the browser
     /// reports it). `Ok(None)` = allowed, ask the owner; `Ok(Some(id))` = a
-    /// standing grant that matches this exact secret, origin and kind covers it.
+    /// standing grant that matches this exact secret, origin and kind covers it
+    /// (only when `ask_before_use` is off).
     ///
     /// # Errors
     /// [`FillError::NotAllowed`] / [`FillError::Unknown`]: refuse before any
@@ -1073,6 +1458,9 @@ impl FillSecrets {
             return Err(FillError::NotAllowed(format!(
                 "refused: `{name}` is not allowed on {origin}; only the owner can add an origin to it"
             )));
+        }
+        if entry.ask_before_use {
+            return Ok(None);
         }
         Ok(meta
             .grants
@@ -1118,8 +1506,7 @@ impl FillSecrets {
     /// The only read path to a value: `fill/<name>`. Call after the approval,
     /// hold the result in memory only. `bot` is the acting bot: a bot-scoped
     /// account is refused for any other bot and for `None`, so no caller can
-    /// read or type a secret scoped to another bot. Owner-made secrets without
-    /// account facts stay open to every caller.
+    /// read or type a secret the owner has not allowed that bot to use.
     ///
     /// # Errors
     /// Unknown name, another bot's account, no stored value, or a backend failure.
@@ -1132,6 +1519,25 @@ impl FillSecrets {
         match self.meta.lock().secrets.get(name) {
             None => return Err(FillError::Unknown(name.to_owned())),
             Some(e) => Self::scope_check(name, e, bot)?,
+        }
+        let value = self
+            .store
+            .get(&store_key(name))
+            .map_err(|_| unavailable("the secret store cannot be read"))?
+            .ok_or_else(|| FillError::MissingValue(name.to_owned()))?;
+        self.registered(value.expose());
+        Ok(value)
+    }
+
+    /// Owner-only read path to a value (`POST /v1/fill-secrets/reveal` after
+    /// owner confirmation and audit). Never call from a bot tool or replay.
+    ///
+    /// # Errors
+    /// Unknown name, no stored value, or a backend failure.
+    pub fn resolve_value_for_owner(&self, name: &str) -> Result<SecretValue, FillError> {
+        validate_fill_name(name)?;
+        if !self.meta.lock().secrets.contains_key(name) {
+            return Err(FillError::Unknown(name.to_owned()));
         }
         let value = self
             .store

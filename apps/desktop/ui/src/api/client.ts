@@ -139,6 +139,9 @@ import type {
   ScheduleHistoryEntry,
   SecretRequestAnswer,
   FillSecretInfo,
+  CreateFillSecretInput,
+  UpdateFillSecretInput,
+  RevealFillSecretResponse,
   ScheduleInput,
   Scope,
   ScreenPrivilegesInput,
@@ -1091,9 +1094,29 @@ export class ApiClient {
     return this.request("POST", `/secret-requests/${encodeURIComponent(callId)}/cancel`);
   }
 
+  /** List Vault / fill secrets (metadata and allow-lists only; never values). */
+  listFillSecrets(): Promise<FillSecretInfo[]> {
+    return this.request("GET", "/fill-secrets");
+  }
+
   /** Store a value the owner typed or pasted in the vault (`POST /v1/fill-secrets`, write-only). */
-  createFillSecret(input: { name: string; value: string; origins?: string[]; programs?: string[] }): Promise<FillSecretInfo> {
+  createFillSecret(input: CreateFillSecretInput): Promise<FillSecretInfo> {
     return this.request("POST", "/fill-secrets", { body: input });
+  }
+
+  /** Update a Vault item's metadata, allow-lists, bot scope, or value (`PUT /v1/fill-secrets/{name}`). */
+  updateFillSecret(name: string, input: UpdateFillSecretInput): Promise<FillSecretInfo> {
+    return this.request("PUT", `/fill-secrets/${name.split("/").map(encodeURIComponent).join("/")}`, { body: input });
+  }
+
+  /** Delete a Vault item, its stored value, and any standing grants. */
+  deleteFillSecret(name: string): Promise<void> {
+    return this.request("DELETE", `/fill-secrets/${name.split("/").map(encodeURIComponent).join("/")}`);
+  }
+
+  /** Reveal a Vault item's secret value after explicit owner confirmation. */
+  revealFillSecret(name: string): Promise<RevealFillSecretResponse> {
+    return this.request("POST", "/fill-secrets/reveal", { body: { name, confirm: true } });
   }
 
   listSchedules(): Promise<Schedule[]> {

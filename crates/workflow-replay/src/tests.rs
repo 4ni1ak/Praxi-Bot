@@ -1375,11 +1375,14 @@ mod secret_steps {
         let store: Arc<dyn SecretStore> = Arc::new(MemoryStore::new());
         let secrets = Arc::new(FillSecrets::in_memory(store));
         secrets
-            .upsert(
+            .upsert_with(
                 "login/github",
-                Some(VALUE),
-                Some(&[GITHUB.to_owned()]),
-                None,
+                secret_store::FillSecretUpdate {
+                    value: Some(VALUE),
+                    origins: Some(&[GITHUB.to_owned()]),
+                    bot_ids: Some(&["bot-1".to_owned()]),
+                    ..secret_store::FillSecretUpdate::default()
+                },
             )
             .unwrap();
         secrets
@@ -1399,6 +1402,7 @@ mod secret_steps {
         );
         let secrets = secrets();
         let mut opts = ReplayOptions::instant();
+        opts.bot_id = Some("bot-1".to_owned());
         opts.fill_secrets = Some(Arc::clone(&secrets));
         let h = handles(None, Some(browser.clone()));
         (browser, secrets, replayer(h, opts))

@@ -225,9 +225,14 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/doctor/repair/{}"),
     // secrets and credentials
     ("POST", "/v1/secrets/*"),
+    ("GET", "/v1/fill-secrets"),
+    ("HEAD", "/v1/fill-secrets"),
     ("POST", "/v1/fill-secrets"),
+    ("POST", "/v1/fill-secrets/reveal"),
     ("PUT", "/v1/fill-secrets/*"),
     ("DELETE", "/v1/fill-secrets/*"),
+    ("GET", "/v1/fill-grants"),
+    ("HEAD", "/v1/fill-grants"),
     ("POST", "/v1/fill-grants"),
     ("DELETE", "/v1/fill-grants/{}"),
     // a bot's credential request: the value is typed by the owner, never a token holder

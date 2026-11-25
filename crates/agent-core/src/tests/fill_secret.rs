@@ -127,12 +127,19 @@ fn rig(policy: Policy, echo: bool, replies: Vec<Reply>) -> Rig {
         FillSecrets::in_memory(store.clone() as Arc<dyn SecretStore>)
             .with_value_hook(Arc::new(move |v: &str| hook.register(v))),
     );
+    let mut config = cfg(policy);
+    config.redactor = Some(redactor.clone());
+    let fake = Fake::new(replies);
+    let lp = make_loop(&env.storage, env.bot, &fake, &[], profile(""), config);
     secrets
-        .upsert(
+        .upsert_with(
             "login/github",
-            Some(VALUE),
-            Some(&[GITHUB.to_owned()]),
-            None,
+            secret_store::FillSecretUpdate {
+                value: Some(VALUE),
+                origins: Some(&[GITHUB.to_owned()]),
+                bot_ids: Some(&[env.bot.to_string()]),
+                ..secret_store::FillSecretUpdate::default()
+            },
         )
         .unwrap();
     let page = Arc::new(Page {
@@ -140,10 +147,6 @@ fn rig(policy: Policy, echo: bool, replies: Vec<Reply>) -> Rig {
         ..Page::default()
     });
     page.targets.lock().insert("e5".into(), target(GITHUB));
-    let fake = Fake::new(replies);
-    let mut config = cfg(policy);
-    config.redactor = Some(redactor.clone());
-    let lp = make_loop(&env.storage, env.bot, &fake, &[], profile(""), config);
     for t in builtin_tools::browser::tools_with_secrets(
         page.clone(),
         &env.dir.path().join("bt"),
@@ -598,6 +601,45 @@ async fn an_echoed_value_is_masked_by_the_production_redactor() {
     fresh.refresh_from_store(Some(&*r.store), &[]).unwrap();
     assert_eq!(fresh.redact(&format!("x {VALUE} y")), "x [REDACTED] y");
     assert!(!r.redactor.redact(VALUE).contains("Correct"));
+}
+
+/// Guard: bot B cannot fill or list a secret scoped only to bot A.
+#[tokio::test]
+async fn bot_b_cannot_fill_or_list_secret_scoped_to_bot_a() {
+    let r = rig(
+        Policy::full(),
+        false,
+        vec![
+            calls(&[("c1", "secrets_list", json!({}))]),
+            fill_secret_call(),
+            text("done"),
+        ],
+    );
+    // Re-scope the secret exclusively to a different bot id.
+    let other_bot = BotId(uuid::Uuid::now_v7());
+    r.secrets
+        .upsert_with(
+            "login/github",
+            secret_store::FillSecretUpdate {
+                bot_ids: Some(&[other_bot.to_string()]),
+                ..secret_store::FillSecretUpdate::default()
+            },
+        )
+        .unwrap();
+    let mut rx = r.lp.subscribe();
+    let run = r.lp.run_turn(r.env.chat, "use github secret").unwrap();
+    assert_eq!(r.lp.wait(run).await.unwrap(), RunState::Succeeded);
+    while let Ok(i) = rx.try_recv() {
+        assert!(
+            !matches!(i.envelope.event, Event::ApprovalNeeded(_)),
+            "no approval card may be offered for another bot's secret"
+        );
+    }
+    assert!(r.page.typed_secrets.lock().is_empty());
+    let listed = tool_messages(&r.fake.request(1)).join("\n");
+    assert!(!listed.contains("login/github"), "{listed}");
+    let fill_err = tool_messages(&r.fake.request(2)).join("\n");
+    assert!(fill_err.contains("not enabled for this bot"), "{fill_err}");
 }
 
 /// Guard: the model can learn names and allowed origins, and only those.

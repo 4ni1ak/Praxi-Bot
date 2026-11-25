@@ -1771,6 +1771,7 @@ fn api_routes() -> Router<AppState> {
             "/v1/fill-secrets",
             get(f::list_fill_secrets).post(f::create_fill_secret),
         )
+        .route("/v1/fill-secrets/reveal", post(f::reveal_fill_secret))
         .route(
             "/v1/fill-secrets/{*name}",
             put(f::update_fill_secret).delete(f::delete_fill_secret),

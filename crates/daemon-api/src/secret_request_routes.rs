@@ -194,6 +194,10 @@ async fn store(
     if existing && !info.replace {
         return Err(exists());
     }
+    let bot_ids = vec![info.bot_id.to_string()];
+    let login_id = (info.fields == SecretFields::Login)
+        .then(|| input.username.clone())
+        .flatten();
     audit(
         s,
         actor,
@@ -204,6 +208,7 @@ async fn store(
             "replaces_existing": existing,
             "origins": input.origins,
             "programs": input.programs,
+            "bot_ids": bot_ids,
         }),
     )?;
     // One all-or-nothing operation: validated first, and a failed write puts the
@@ -218,7 +223,15 @@ async fn store(
         info.bot_id.clone(),
     );
     let done = tokio::task::spawn_blocking(move || {
-        svc2.upsert_all_for_bot(&items, &origins, &programs, replace, Some(&bot))
+        svc2.upsert_all_for_bots(
+            &items,
+            &origins,
+            &programs,
+            &bot_ids,
+            login_id.as_deref(),
+            replace,
+            Some(&bot),
+        )
     })
     .await
     .map_err(ApiError::internal)?;
