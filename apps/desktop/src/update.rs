@@ -702,7 +702,9 @@ pub fn spawn_startup_watch<R: Runtime>(app: &AppHandle<R>) {
 /// The updater plugin and the shared state for `run()`. Updates stay off
 /// (empty key, no feed) unless a signing key and an https feed were built in.
 #[must_use]
-pub fn init() -> (
+pub fn init(
+    current_version: &str,
+) -> (
     tauri::plugin::TauriPlugin<tauri::Wry, tauri_plugin_updater::Config>,
     UpdateRuntime,
 ) {
@@ -711,7 +713,7 @@ pub fn init() -> (
         .as_ref()
         .map(|s| s.pubkey.clone())
         .unwrap_or_default();
-    let runtime = UpdateRuntime::start(settings, env!("CARGO_PKG_VERSION"));
+    let runtime = UpdateRuntime::start(settings, current_version);
     (
         tauri_plugin_updater::Builder::new().pubkey(pubkey).build(),
         runtime,

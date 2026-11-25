@@ -41,6 +41,11 @@ Updates page says so, no request is made, nothing can be installed.
    one `<!-- lang: xx -->` block per language; text before the first marker is the default.
    Notes are shown as plain text.
 
+   Tagged installer builds use the complete release version (including `-alpha.2`,
+   for example) in Tauri and the signed update metadata. The updater and About use
+   that same packaged version, so successive previews of one numeric version can
+   update correctly and each release gets its own “What's new” dismissal.
+
 ## Channels and release notes
 
 About shows the app version, source build ID, channel and last attempted check time.

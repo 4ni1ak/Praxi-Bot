@@ -67,7 +67,12 @@ fn mock_server(version: &'static str) -> (Url, Arc<AtomicUsize>, Arc<AtomicUsize
 }
 
 fn mock_app() -> tauri::App<tauri::test::MockRuntime> {
+    mock_app_version("0.1.0")
+}
+
+fn mock_app_version(version: &str) -> tauri::App<tauri::test::MockRuntime> {
     let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.package_info_mut().version = version.parse().expect("version");
     context.config_mut().plugins.0.insert(
         "updater".into(),
         serde_json::json!({
@@ -140,13 +145,13 @@ async fn rollback_only_goes_to_an_older_version() {
 
 #[tokio::test]
 async fn preview_requires_opt_in_and_checks_and_skips_never_download() {
-    let app = mock_app();
+    let app = mock_app_version("0.1.0-alpha.1");
     // Even a misconfigured stable feed cannot offer a prerelease.
-    let (stable, stable_downloads, _) = mock_server("99.0.0-beta.1");
-    let (preview, preview_downloads, preview_hits) = mock_server("99.0.0-beta.2");
+    let (stable, stable_downloads, _) = mock_server("0.1.0-alpha.2");
+    let (preview, preview_downloads, preview_hits) = mock_server("0.1.0-alpha.3");
     let mut s = settings(stable);
     s.preview_endpoint = Some(preview);
-    let mut rt = UpdateRuntime::detached(Some(s), "0.1.0");
+    let mut rt = UpdateRuntime::detached(Some(s), "0.1.0-alpha.1");
     assert_eq!(status(&rt, "en").unwrap().channel, UpdateChannel::Stable);
     assert!(
         check_for_update(app.handle(), &rt, "en")
@@ -167,13 +172,13 @@ async fn preview_requires_opt_in_and_checks_and_skips_never_download() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(found.version, "99.0.0-beta.2");
+        assert_eq!(found.version, "0.1.0-alpha.3");
         assert_eq!(found.notes, expected);
     }
     skip_version(&rt).unwrap();
     assert_eq!(
         status(&rt, "en").unwrap().skipped_version.as_deref(),
-        Some("99.0.0-beta.2")
+        Some("0.1.0-alpha.3")
     );
     assert!(
         check_for_update(app.handle(), &rt, "en")
@@ -181,7 +186,7 @@ async fn preview_requires_opt_in_and_checks_and_skips_never_download() {
             .unwrap()
             .is_none()
     );
-    let (newer, newer_downloads, _) = mock_server("99.0.1-beta.1");
+    let (newer, newer_downloads, _) = mock_server("0.1.0-alpha.4");
     rt.settings.as_mut().unwrap().preview_endpoint = Some(newer);
     assert_eq!(
         check_for_update(app.handle(), &rt, "en")
@@ -189,7 +194,7 @@ async fn preview_requires_opt_in_and_checks_and_skips_never_download() {
             .unwrap()
             .unwrap()
             .version,
-        "99.0.1-beta.1"
+        "0.1.0-alpha.4"
     );
     assert_eq!(newer_downloads.load(Ordering::SeqCst), 0);
     let (invalid, _, _) = mock_server("invalid-version");
