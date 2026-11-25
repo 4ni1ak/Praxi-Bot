@@ -159,8 +159,16 @@ fn detects_captchas_codes_and_ignores_look_alikes() {
 fn own_captcha_attempts_are_capped_at_two_then_the_notice_says_hand_over() {
     let hub = HandoverHub::default();
     let c = Challenge::Captcha { hard: false };
-    let seen: Vec<u32> = (0..3).map(|_| hub.note_captcha("run-cap")).collect();
-    assert_eq!(seen, [1, 2, 3]);
+    let site = Some("https://shop.example");
+    let spent: Vec<bool> = (0..3)
+        .map(|_| hub.captcha_action("run-cap", site, RECAPTCHA_PAGE).is_ok())
+        .collect();
+    assert_eq!(spent, [true, true, false]);
+    assert_eq!(hub.next_captcha_attempt("run-cap", site), 3);
+    assert_eq!(
+        hub.next_captcha_attempt("run-cap", Some("https://other.example")),
+        1
+    );
     assert!(notice(&c, 1).contains("attempt 1 of 2"));
     assert!(notice(&c, 2).contains("attempt 2 of 2"));
     let third = notice(&c, 3);
@@ -170,7 +178,7 @@ fn own_captcha_attempts_are_capped_at_two_then_the_notice_says_hand_over() {
     );
     assert!(notice(&Challenge::Captcha { hard: true }, 1).contains("must not try"));
     hub.forget("run-cap");
-    assert_eq!(hub.note_captcha("run-cap"), 1);
+    assert_eq!(hub.next_captcha_attempt("run-cap", site), 1);
 }
 
 #[tokio::test]
@@ -306,37 +314,77 @@ async fn a_captcha_handover_finishes_only_when_the_check_is_gone() {
 }
 
 #[tokio::test]
-async fn regression_third_captcha_action_refused_and_new_challenge_resets() {
+async fn regression_third_captcha_action_refused_and_leaving_never_gives_tries_back() {
     let page = Page::new(RECAPTCHA_PAGE, "https://shop.example/signup");
     let click = tool(&page, "browser_click");
+    let open = tool(&page, "browser_open");
+    let snapshot = tool(&page, "browser_snapshot");
     let context = ctx("regression-cap");
-    for _ in 0..2 {
-        click.call(&context, json!({"ref":"e2"})).await.unwrap();
-    }
-    // Refreshing/navigating while the challenge remains cannot restore tries.
+    // One own attempt, then the model leaves for an unrelated site and comes back.
+    click.call(&context, json!({"ref":"e2"})).await.unwrap();
+    page.show(LOGIN_PAGE, "https://example.com/");
+    open.call(&context, json!({"url":"https://example.com/"}))
+        .await
+        .unwrap();
+    snapshot.call(&context, json!({})).await.unwrap();
+    page.show(RECAPTCHA_PAGE, "https://shop.example/signup");
+    open.call(&context, json!({"url":"https://shop.example/signup"}))
+        .await
+        .unwrap();
+    // Same site: the second attempt is the last, the third is refused.
+    click.call(&context, json!({"ref":"e2"})).await.unwrap();
+    // Even a challenge-free page of the same site seen in between gives nothing back.
+    page.show(LOGIN_PAGE, "https://shop.example/account");
+    snapshot.call(&context, json!({})).await.unwrap();
     page.show(RECAPTCHA_PAGE, "https://shop.example/signup?retry=1");
-    let err = click.call(&context, json!({"ref":"e2"})).await.unwrap_err();
-    assert!(err.to_string().contains("browser_handover"));
-    assert!(
-        tool(&page, "browser_open")
-            .call(&context, json!({"url":"https://shop.example/next"}))
-            .await
-            .is_err(),
-        "navigation cannot bypass an exhausted challenge budget"
-    );
+    for _ in 0..2 {
+        let err = click.call(&context, json!({"ref":"e2"})).await.unwrap_err();
+        assert!(err.to_string().contains("browser_handover"), "{err}");
+    }
+    // Cancelling a card cannot restore attempts either.
     handover_hub().disarm(&context.run_id);
-    assert!(
-        click.call(&context, json!({"ref":"e2"})).await.is_err(),
-        "cancelling a card cannot restore attempts"
-    );
+    assert!(click.call(&context, json!({"ref":"e2"})).await.is_err());
+    // Another site has its own budget.
+    page.show(RECAPTCHA_PAGE, "https://other.example/signup");
+    click.call(&context, json!({"ref":"e2"})).await.unwrap();
+    // Only the owner's verified "Done" on that site gives it back.
+    page.show(RECAPTCHA_PAGE, "https://shop.example/signup");
+    tool(&page, "browser_handover")
+        .call(&context, json!({"kind":"captcha"}))
+        .await
+        .unwrap();
+    page.show(LOGIN_PAGE, "https://shop.example/signup");
+    handover_hub().verify_solved(&context.run_id).await.unwrap();
+    page.show(RECAPTCHA_PAGE, "https://shop.example/signup");
+    click.call(&context, json!({"ref":"e2"})).await.unwrap();
+    handover_hub().forget(&context.run_id);
+}
+
+#[tokio::test]
+async fn an_unresolved_captcha_is_visible_to_the_desktop_tools_until_seen_gone() {
+    let page = Page::new(RECAPTCHA_PAGE, "https://shop.example/signup");
+    let context = ctx("regression-desktop-gate");
+    let hub = handover_hub();
+    assert!(!hub.captcha_unresolved(&context.run_id));
+    tool(&page, "browser_snapshot")
+        .call(&context, json!({}))
+        .await
+        .unwrap();
+    assert!(hub.captcha_unresolved(&context.run_id));
+    // Another site's page does not say the challenge is gone.
+    page.show(LOGIN_PAGE, "https://example.com/");
+    tool(&page, "browser_snapshot")
+        .call(&context, json!({}))
+        .await
+        .unwrap();
+    assert!(hub.captcha_unresolved(&context.run_id));
     page.show(LOGIN_PAGE, "https://shop.example/account");
     tool(&page, "browser_snapshot")
         .call(&context, json!({}))
         .await
         .unwrap();
-    page.show(RECAPTCHA_PAGE, "https://shop.example/signup");
-    click.call(&context, json!({"ref":"e2"})).await.unwrap();
-    handover_hub().forget(&context.run_id);
+    assert!(!hub.captcha_unresolved(&context.run_id));
+    hub.forget(&context.run_id);
 }
 
 #[tokio::test]
@@ -399,5 +447,80 @@ async fn regression_screenshot_refused_after_code_is_typed() {
             .await
             .is_err()
     );
+    handover_hub().forget(&context.run_id);
+}
+
+fn desktop_tool(name: &str) -> Arc<dyn Tool> {
+    let dir = tempfile::tempdir().unwrap();
+    let backend = Arc::new(crate::desktop::fake::FakeDesktop::new(false));
+    crate::desktop::tools(
+        backend,
+        None,
+        dir.path(),
+        crate::desktop::DesktopSettings::default(),
+        None,
+    )
+    .into_iter()
+    .find(|t| t.spec().name == name)
+    .unwrap()
+}
+
+#[tokio::test]
+async fn regression_desktop_input_is_refused_while_a_captcha_is_unresolved() {
+    let page = Page::new(RECAPTCHA_PAGE, "https://shop.example/signup");
+    let context = ctx("regression-desktop-captcha");
+    tool(&page, "browser_snapshot")
+        .call(&context, json!({}))
+        .await
+        .unwrap();
+    for (name, input) in [
+        ("desktop_click", json!({"x": 10, "y": 10})),
+        ("desktop_type", json!({"text": "x"})),
+        ("desktop_key", json!({"keys": ["Enter"]})),
+    ] {
+        let err = desktop_tool(name).call(&context, input).await.unwrap_err();
+        assert!(
+            err.to_string().contains("browser_handover"),
+            "{name}: {err}"
+        );
+    }
+    // Once the page is seen without the challenge the desktop works again (here: it gets as
+    // far as its own "no observation" refusal, not ours).
+    page.show(LOGIN_PAGE, "https://shop.example/account");
+    tool(&page, "browser_snapshot")
+        .call(&context, json!({}))
+        .await
+        .unwrap();
+    let err = desktop_tool("desktop_click")
+        .call(&context, json!({"x": 10, "y": 10}))
+        .await
+        .unwrap_err();
+    assert!(!err.to_string().contains("browser_handover"), "{err}");
+    handover_hub().forget(&context.run_id);
+}
+
+#[tokio::test]
+async fn regression_desktop_is_not_read_while_a_typed_code_is_on_screen() {
+    let page = Page::new(CODE_PAGE, "https://bank.example/2fa");
+    let context = ctx("regression-desktop-code");
+    tool(&page, "browser_handover")
+        .call(&context, json!({"kind":"code"}))
+        .await
+        .unwrap();
+    handover_hub()
+        .type_code(&context.run_id, "123456")
+        .await
+        .unwrap();
+    let err = desktop_tool("desktop_get_state")
+        .call(&context, json!({}))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("one-time code"), "{err}");
+    // The page moved on (a navigation changes the document identity): reads work again.
+    page.show(LOGIN_PAGE, "https://bank.example/home");
+    desktop_tool("desktop_get_state")
+        .call(&context, json!({}))
+        .await
+        .unwrap();
     handover_hub().forget(&context.run_id);
 }

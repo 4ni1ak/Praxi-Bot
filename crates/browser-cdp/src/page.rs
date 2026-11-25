@@ -106,6 +106,15 @@ pub(crate) fn default_accepts_dialog(kind: &str) -> bool {
     matches!(kind, "alert")
 }
 
+/// A secret typed into the page: valid while the main document it was typed into stays.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SecretLatch {
+    /// Navigation generation of the document that holds the secret.
+    pub nav: u64,
+    /// `(session, backend node id)` of every field that received a secret in that document.
+    pub fields: Vec<(Option<String>, i64)>,
+}
+
 /// Shared with the background event watcher.
 pub(crate) struct Shared {
     /// Frame id -> flattened session of out-of-process iframes.
@@ -128,8 +137,9 @@ pub(crate) struct Shared {
     pub last_net: StdMutex<Option<Instant>>,
     /// Incremented on every main-frame navigation; invalidates refs.
     pub nav_gen: AtomicU64,
-    /// Navigation generation holding a visible secret; capture fails closed until navigation.
-    pub secret_capture: StdMutex<Option<u64>>,
+    /// Navigation generation holding a visible secret (and the fields that received it);
+    /// capture fails closed and those fields are masked until navigation.
+    pub secret_capture: StdMutex<Option<SecretLatch>>,
     /// Incremented on DOM/AX/frame/network-completion mutations and page actions; invalidates snapshot cache.
     pub dom_gen: AtomicU64,
     /// Timestamp of the latest main-frame `Page.frameNavigated`.
@@ -148,6 +158,39 @@ pub(crate) struct Shared {
     pub live_view_strong_hooks: StdMutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
     /// Where the pointer last was (top-level viewport coordinates), so the next move starts there.
     pub pointer: StdMutex<Option<(f64, f64)>>,
+}
+
+impl Shared {
+    /// The secret latch of the current document, if a secret was typed into it.
+    pub(crate) fn secret_latch(&self) -> Option<SecretLatch> {
+        let nav = self.nav_gen.load(Ordering::SeqCst);
+        self.secret_capture
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .filter(|l| l.nav == nav)
+    }
+
+    /// Remember that `field` of the current document now holds a secret.
+    pub(crate) fn latch_secret(&self, nav: u64, field: (Option<String>, i64)) {
+        let mut latch = self
+            .secret_capture
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match latch.as_mut() {
+            Some(l) if l.nav == nav => {
+                if !l.fields.contains(&field) {
+                    l.fields.push(field);
+                }
+            }
+            _ => {
+                *latch = Some(SecretLatch {
+                    nav,
+                    fields: vec![field],
+                });
+            }
+        }
+    }
 }
 
 impl Default for Shared {
@@ -841,6 +884,7 @@ impl Page {
             {
                 if st.gen_seen == nav_now
                     && st.opts == *opts
+                    && self.shared.secret_latch().is_none()
                     && let Some(last) = st.last.clone()
                 {
                     st.cached = Some(cached);
@@ -850,6 +894,8 @@ impl Page {
                     st.refs.clear();
                 }
                 st.gen_seen = nav_now;
+                st.refs
+                    .set_masked(self.shared.secret_latch().map(|l| l.fields));
                 let nodes = build_snapshot(&cached.frames, opts, &mut st.refs);
                 let snap = Snapshot {
                     url: cached.url.clone(),
@@ -869,6 +915,8 @@ impl Page {
             st.refs.clear();
         }
         st.gen_seen = gen_now;
+        st.refs
+            .set_masked(self.shared.secret_latch().map(|l| l.fields));
         let nodes = build_snapshot(&frames, opts, &mut st.refs);
         let snap = Snapshot {
             url: url.clone(),
@@ -1392,6 +1440,76 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     use super::*;
+    use crate::snapshot::SnapNode;
+
+    /// A code field the page named like any ordinary field (nothing OTP-like): its value is
+    /// plain in a snapshot, so the latch has to mask it by node.
+    fn plain_code_field(value: &str) -> FrameInput {
+        let ax = json!([
+            {"nodeId":"1","role":{"value":"RootWebArea"},"childIds":["2","3"],"backendDOMNodeId":1},
+            {"nodeId":"2","parentId":"1","role":{"value":"textbox"},"name":{"value":"Enter code"},
+             "value":{"value":value},"childIds":["4"],"backendDOMNodeId":2},
+            {"nodeId":"4","parentId":"2","role":{"value":"StaticText"},"name":{"value":value},"childIds":[]},
+            {"nodeId":"3","parentId":"1","role":{"value":"textbox"},"name":{"value":"Nickname"},
+             "value":{"value":"visible-other"},"childIds":[],"backendDOMNodeId":3}
+        ]);
+        FrameInput {
+            frame_id: "main".into(),
+            loader_id: Some("L1".into()),
+            ax_nodes: ax.as_array().unwrap().clone(),
+            extras: [2, 3]
+                .map(|backend_id| DomExtra {
+                    backend_id,
+                    tag: "input".into(),
+                    input_type: Some("text".into()),
+                    autocomplete: Some("off".into()),
+                    name_hints: vec!["code".into()],
+                    ..Default::default()
+                })
+                .into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_latched_field_is_masked_in_snapshots_even_with_an_ordinary_name() {
+        let frame = plain_code_field("123456");
+        let render = |refs: &mut RefMap| {
+            build_snapshot(
+                std::slice::from_ref(&frame),
+                &SnapshotOptions::default(),
+                refs,
+            )
+            .iter()
+            .map(SnapNode::line)
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            )
+        };
+        let plain = render(&mut RefMap::new());
+        assert!(
+            plain.contains("123456"),
+            "the page's own naming does not hide it: {plain}"
+        );
+        let shared = Shared::default();
+        shared.latch_secret(0, (None, 2));
+        let mut refs = RefMap::new();
+        refs.set_masked(shared.secret_latch().map(|l| l.fields));
+        let text = render(&mut refs);
+        assert!(
+            !text.contains("123456"),
+            "value and the text child are both hidden: {text}"
+        );
+        assert!(
+            text.contains("visible-other"),
+            "other fields stay readable: {text}"
+        );
+        // A navigation releases it.
+        shared.nav_gen.fetch_add(1, Ordering::SeqCst);
+        assert!(shared.secret_latch().is_none());
+    }
 
     #[test]
     fn stop_on_drop_fires_only_when_the_wait_is_dropped() {

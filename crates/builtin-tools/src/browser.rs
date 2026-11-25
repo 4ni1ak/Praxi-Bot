@@ -2088,13 +2088,8 @@ impl BrowserTool {
                 // A navigation has no receiving element to inspect. Do not probe
                 // a remote URL here: Option cannot distinguish a refusal from
                 // an unopened browser, and a refusal must never cause a retry.
-                if crate::handover::handover_hub().next_captcha_attempt(run_id)
-                    > crate::handover::CAPTCHA_OWN_ATTEMPTS
-                {
-                    return Err(exec_err(
-                        "CAPTCHA own attempts exhausted: hand over with browser_handover(kind: captcha) before navigating",
-                    ));
-                }
+                // Leaving or reloading a challenge page gives no attempts back:
+                // the budget belongs to the site, not to the page.
                 return Ok(permit);
             }
             self.refuse_observation_while_latched()?;
@@ -2109,8 +2104,14 @@ impl BrowserTool {
                     "CAPTCHA scripts cannot be bounded to two attempts: hand over with browser_handover(kind: captcha)",
                 ));
             }
+            let origin = self
+                .shared
+                .driver
+                .current_url()
+                .await
+                .and_then(|u| origin_of(&u));
             crate::handover::handover_hub()
-                .captcha_action(run_id, &snapshot)
+                .captcha_action(run_id, origin.as_deref(), &snapshot)
                 .map_err(exec_err)?;
         }
         Ok(permit)
@@ -2670,15 +2671,14 @@ impl BrowserTool {
 impl BrowserTool {
     /// Tell the model, in the daemon's own words, that the page shows a CAPTCHA or a
     /// one-time-code prompt and what it may do about it (see `handover`).
-    fn append_challenge_notice(ctx: &ToolContext, text: &mut String) {
+    fn append_challenge_notice(ctx: &ToolContext, origin: Option<&str>, text: &mut String) {
+        let hub = crate::handover::handover_hub();
+        hub.observed(&ctx.run_id, origin, text);
         let Some(challenge) = crate::handover::detect(text) else {
-            if crate::handover::rendered_page(text) {
-                crate::handover::handover_hub().clear_captcha(&ctx.run_id);
-            }
             return;
         };
         let seen = if matches!(challenge, crate::handover::Challenge::Captcha { .. }) {
-            crate::handover::handover_hub().next_captcha_attempt(&ctx.run_id)
+            hub.next_captcha_attempt(&ctx.run_id, origin)
         } else {
             0
         };
@@ -2885,7 +2885,13 @@ impl BrowserTool {
             )
             .await?;
         if matches!(self.op, Op::Open | Op::Snapshot) {
-            Self::append_challenge_notice(ctx, &mut text);
+            let origin = selected
+                .shared
+                .driver
+                .current_url()
+                .await
+                .and_then(|u| origin_of(&u));
+            Self::append_challenge_notice(ctx, origin.as_deref(), &mut text);
         }
         let view = selected.shared.driver.live_view_attached();
         let mut out = finish_text(ctx, &self.shared.data_dir.join("spill"), text);

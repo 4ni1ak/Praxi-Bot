@@ -317,6 +317,45 @@ async fn iframes_including_out_of_process() {
 
 #[tokio::test]
 #[ignore = "needs Chrome/Edge"]
+async fn a_typed_secret_stays_out_of_every_page_read_until_navigation() {
+    let b = Browser::launch(LaunchOptions::default()).await.unwrap();
+    let p = open(
+        &b,
+        r#"<html><body><label>Enter code <input name=code aria-label="Enter code" autocomplete=off type=text></label>
+<button id=go>Next</button><p>plain</p></body></html>"#,
+    )
+    .await;
+    let snap = p.snapshot(&SnapshotOptions::default()).await.unwrap();
+    let field = ref_of(&snap, "textbox", "Enter code");
+    let button = ref_of(&snap, "button", "Next");
+    p.fill_secret(&field, "834512", |_| true).await.unwrap();
+    // A fresh snapshot, a cached one and the page text an action returns all hide the digits.
+    for _ in 0..2 {
+        let text = p
+            .snapshot(&SnapshotOptions::default())
+            .await
+            .unwrap()
+            .render();
+        assert!(!text.contains("834512"), "{text}");
+        assert!(text.contains("[masked]"), "{text}");
+    }
+    let after = p.click(&button).await.unwrap();
+    let rendered = after.snapshot.render();
+    assert!(!rendered.contains("834512"), "{rendered}");
+    assert!(
+        p.screenshot(&ScreenshotOptions::default()).await.is_err(),
+        "screenshots stay refused"
+    );
+    // The digits really are in the field: only the reads are masked.
+    let typed = p
+        .evaluate("document.querySelector('input').value")
+        .await
+        .unwrap();
+    assert_eq!(typed.as_str(), Some("834512"));
+}
+
+#[tokio::test]
+#[ignore = "needs Chrome/Edge"]
 async fn field_that_turns_into_a_password_after_the_check_is_refused() {
     let b = Browser::launch(LaunchOptions::default()).await.unwrap();
     let p = open(

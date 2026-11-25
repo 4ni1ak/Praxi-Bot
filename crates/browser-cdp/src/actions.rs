@@ -1222,7 +1222,8 @@ impl Page {
                 return Err(Error::Element("the secret request was cancelled; nothing was typed".into()));
             }
             if !refuse_sensitive {
-                *self.shared.secret_capture.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(nav);
+                self.shared
+                    .latch_secret(nav, (e.session_id.clone(), e.backend_id));
             }
             // Written THROUGH the approved node itself (resolved by its backend
             // id in its own frame), never with tab-wide `Input.insertText`, so a
@@ -1846,12 +1847,7 @@ impl Page {
 
     /// A typed secret remains visually private until a browser-reported navigation.
     pub(crate) fn refuse_secret_capture(&self) -> Result<()> {
-        let latch = self
-            .shared
-            .secret_capture
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *latch == Some(self.shared.nav_gen.load(Ordering::SeqCst)) {
+        if self.shared.secret_latch().is_some() {
             return Err(Error::Element(
                 "observation refused while a typed secret is visible; submit or navigate first"
                     .into(),

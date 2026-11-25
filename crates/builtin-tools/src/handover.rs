@@ -20,7 +20,7 @@
 //! the card names the site the BROWSER reports and warns when the run has read
 //! untrusted content.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
@@ -376,9 +376,18 @@ struct Armed {
     cancelled: Arc<AtomicBool>,
 }
 
+/// What the daemon remembers about CAPTCHAs one run met.
+///
+/// The attempt budget belongs to a SITE (origin), never to a page or a moment: leaving
+/// the page, opening another site, coming back or refreshing does not give tries back.
+/// Only the owner's verified "Done" ([`HandoverHub::verify_solved`]) or the end of the run
+/// clears it.
 #[derive(Default)]
 struct CaptchaBudget {
-    attempts: u32,
+    /// Own actions spent, per origin (`""` when the browser did not report one).
+    attempts: HashMap<String, u32>,
+    /// Origins whose challenge is still unresolved (seen on the page, not seen gone).
+    active: HashSet<String>,
 }
 
 fn fingerprint(snapshot: &str) -> u64 {
@@ -418,53 +427,111 @@ fn clean_code(raw: &str) -> Result<String, HandoverError> {
 }
 
 impl HandoverHub {
-    /// Count one more look at a CAPTCHA by `run_id` and return the total.
-    pub fn note_captcha(&self, run_id: &str) -> u32 {
+    fn with_budget<T>(&self, run_id: &str, f: impl FnOnce(&mut CaptchaBudget) -> T) -> T {
         let mut seen = self
             .seen
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let n = seen.entry(run_id.to_owned()).or_default();
-        n.attempts += 1;
-        n.attempts
+        f(seen.entry(run_id.to_owned()).or_default())
     }
 
-    /// Clear the attempt budget once the challenge has left the page.
-    pub fn clear_captcha(&self, run_id: &str) {
-        self.seen
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(run_id);
+    /// Record what an observation of the page at `origin` showed. A challenge marks the
+    /// site as unresolved; a rendered page WITHOUT it clears only that mark, never the
+    /// attempts already spent there, and nothing at all for any other origin.
+    pub fn observed(&self, run_id: &str, origin: Option<&str>, snapshot: &str) {
+        let key = origin.unwrap_or_default().to_owned();
+        let challenge = matches!(detect(snapshot), Some(Challenge::Captcha { .. }));
+        if challenge || rendered_page(snapshot) {
+            self.with_budget(run_id, |b| {
+                if challenge {
+                    b.active.insert(key);
+                } else {
+                    b.active.remove(&key);
+                }
+            });
+        }
     }
 
-    /// Admit one own action, never an unbounded batch or a third attempt.
+    /// Clear the budget of one site after the owner's verified "Done".
+    fn clear_captcha(&self, run_id: &str, origin: &str) {
+        self.with_budget(run_id, |b| {
+            b.attempts.remove(origin);
+            b.active.remove(origin);
+        });
+    }
+
+    /// Admit one own action on the page at `origin`, never an unbounded batch or a third attempt.
     ///
     /// # Errors
-    /// Refuses hard challenges and actions after the second own attempt.
-    pub fn captcha_action(&self, run_id: &str, snapshot: &str) -> Result<(), String> {
+    /// Refuses hard challenges and actions after the second own attempt at this site.
+    pub fn captcha_action(
+        &self,
+        run_id: &str,
+        origin: Option<&str>,
+        snapshot: &str,
+    ) -> Result<(), String> {
+        let key = origin.unwrap_or_default();
         if let Some(Challenge::Captcha { hard }) = detect(snapshot) {
-            let mut seen = self
-                .seen
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let n = seen.entry(run_id.to_owned()).or_default();
-            if hard || n.attempts >= CAPTCHA_OWN_ATTEMPTS {
-                return Err("CAPTCHA own attempts exhausted: hand over with browser_handover(kind: captcha) before any further browser action".into());
-            }
-            n.attempts += 1;
-        } else if rendered_page(snapshot) {
-            self.clear_captcha(run_id);
+            return self.with_budget(run_id, |b| {
+                b.active.insert(key.to_owned());
+                let n = b.attempts.entry(key.to_owned()).or_default();
+                if hard || *n >= CAPTCHA_OWN_ATTEMPTS {
+                    return Err("CAPTCHA own attempts exhausted: hand over with browser_handover(kind: captcha) before any further browser action".to_owned());
+                }
+                *n += 1;
+                Ok(())
+            });
         }
+        self.observed(run_id, origin, snapshot);
         Ok(())
     }
 
-    /// Number of the next permitted own attempt (observations do not consume it).
-    pub fn next_captcha_attempt(&self, run_id: &str) -> u32 {
-        self.seen
+    /// Number of the next permitted own attempt at `origin` (observations do not consume it).
+    pub fn next_captcha_attempt(&self, run_id: &str, origin: Option<&str>) -> u32 {
+        self.with_budget(run_id, |b| {
+            b.attempts
+                .get(origin.unwrap_or_default())
+                .copied()
+                .unwrap_or(0)
+                + 1
+        })
+    }
+
+    /// Whether this run met a CAPTCHA it has not seen gone, or has a CAPTCHA handover
+    /// waiting. The desktop input tools refuse then: a visible browser window could be
+    /// clicked through them without the attempt cap.
+    pub fn captcha_unresolved(&self, run_id: &str) -> bool {
+        let armed = self
+            .armed
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(run_id)
-            .map_or(1, |b| b.attempts + 1)
+            .is_some_and(|a| a.kind == HandoverKind::Captcha);
+        armed
+            || self
+                .seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(run_id)
+                .is_some_and(|b| !b.active.is_empty())
+    }
+
+    /// Whether any browser holds a freshly typed code on its page right now.
+    pub async fn typed_secret_visible(&self) -> bool {
+        let drivers: Vec<Arc<dyn BrowserDriver>> = {
+            let mut captures = self
+                .captures
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            captures.retain(|(d, _)| d.strong_count() > 0);
+            captures.iter().filter_map(|(d, _)| d.upgrade()).collect()
+        };
+        for d in &drivers {
+            if self.capture_latched(d).await {
+                return true;
+            }
+        }
+        false
     }
 
     /// Suppress visual observations of a driver holding a freshly typed code.
@@ -524,7 +591,10 @@ impl HandoverHub {
     /// Drop run state after Stop or run completion.
     pub fn forget(&self, run_id: &str) {
         self.disarm(run_id);
-        self.clear_captcha(run_id);
+        self.seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(run_id);
     }
 
     fn get(&self, run_id: &str, kind: HandoverKind) -> Result<Armed, HandoverError> {
@@ -646,7 +716,7 @@ impl HandoverHub {
         {
             Err(HandoverError::StillThere)
         } else {
-            self.clear_captcha(run_id);
+            self.clear_captcha(run_id, &origin);
             Ok(())
         }
     }

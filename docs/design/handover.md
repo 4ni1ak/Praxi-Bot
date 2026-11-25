@@ -13,6 +13,10 @@ Built on the same pattern as `secret_request` (see `secret-request.md`).
   control** (opens the existing live view, where the owner takes over as usual) and **Done**. Done
   hands control back, the daemon re-reads the page and only resumes the run when the check is gone;
   otherwise the card stays open and says the page still shows it.
+  The attempt budget belongs to the **site** (origin) for the whole run: leaving the page, opening
+  another site, coming back or refreshing gives no attempt back; only the owner's verified Done (or the
+  end of the run) clears it, and another site has its own budget. While a CAPTCHA is unresolved the
+  `desktop_*` input tools refuse too, so a visible browser window cannot be clicked around the cap.
 * **One-time code.** The bot calls `browser_handover` with `kind: code`. A small card names the site
   (the origin the *browser* reports), shows a countdown and a paste-friendly field (spaces and dashes
   are removed). The daemon types the code into the page's code field; the model only hears `done`.
@@ -42,6 +46,9 @@ is fixed app text.
   than the approval timeout).
 * A page can imitate a 2FA prompt to phish a code. The card therefore names the browser-reported site,
   and shows a stronger warning when the run has read untrusted content.
+* After a code is typed, the field is latched until the next main-frame navigation: screenshots, `eval`,
+  live-view frames and desktop reads are refused, and every page read (`browser_snapshot` and the page text
+  that actions return) shows that field's value as `[masked]` whatever the page named it.
 * Category `meta`, effect `read`: the card IS the decision, so there is no second approval card.
 
 ## Not done

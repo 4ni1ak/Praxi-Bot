@@ -370,12 +370,7 @@ struct SessionBinding {
 
 impl SessionBinding {
     fn capture_latched(&self) -> bool {
-        *self
-            .page_shared
-            .secret_capture
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            == Some(self.page_shared.nav_gen.load(Ordering::SeqCst))
+        self.page_shared.secret_latch().is_some()
     }
 
     fn is_alive(&self) -> bool {
@@ -1869,12 +1864,7 @@ impl WorkerState {
         cause: Cause,
         action_seq: Option<u64>,
     ) {
-        let page_shared = self.binding.page_shared.clone();
-        let latch = page_shared
-            .secret_capture
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *latch == Some(page_shared.nav_gen.load(Ordering::SeqCst)) {
+        if self.binding.capture_latched() {
             self.cached_frame = None;
             self.pending_emit = None;
             self.core.watch_tx.send_replace(None);
@@ -1920,12 +1910,7 @@ impl WorkerState {
     }
 
     fn publish_repeated_idle(&mut self, mark_stale_timeout: bool) {
-        let page_shared = self.binding.page_shared.clone();
-        let latch = page_shared
-            .secret_capture
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *latch == Some(page_shared.nav_gen.load(Ordering::SeqCst)) {
+        if self.binding.capture_latched() {
             self.cached_frame = None;
             self.pending_emit = None;
             self.core.watch_tx.send_replace(None);
@@ -2851,7 +2836,7 @@ mod tests {
         let page = Page::attach(binding.client.clone(), "secret-target")
             .await
             .unwrap();
-        *page.shared.secret_capture.lock().unwrap() = Some(0);
+        page.shared.latch_secret(0, (None, 1));
         let err = page
             .screenshot(&crate::ScreenshotOptions::default())
             .await
@@ -2895,7 +2880,7 @@ mod tests {
         };
         ws.publish_fresh(decoded.clone(), Cause::Idle, None);
         assert_eq!(ws.core.state.lock().unwrap().frames_emitted, 1);
-        *ws.binding.page_shared.secret_capture.lock().unwrap() = Some(0);
+        ws.binding.page_shared.latch_secret(0, (None, 1));
         ws.publish_repeated_idle(false);
         ws.publish_fresh(decoded.clone(), Cause::Idle, None);
         assert_eq!(ws.core.state.lock().unwrap().frames_emitted, 1);

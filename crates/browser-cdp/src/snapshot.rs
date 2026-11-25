@@ -66,7 +66,7 @@ const NAME_FROM_CONTENT: &[&str] = &[
 ];
 
 const MAX_TEXT: usize = 160;
-const MASK: &str = "[masked]";
+pub(crate) const MASK: &str = "[masked]";
 
 /// Options for [`crate::Page::snapshot`] and [`build_snapshot`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -394,9 +394,17 @@ pub struct RefMap {
     prev_keys: HashMap<RefKey, u64>,
     keys: HashMap<RefKey, u64>,
     entries: HashMap<String, RefEntry>,
+    /// `(session, backend node id)` of fields that hold a secret typed by the daemon:
+    /// their value and the text the browser exposes under them are never rendered.
+    masked: Vec<(Option<String>, i64)>,
 }
 
 impl RefMap {
+    /// Fields whose content must not be rendered in the next snapshots (`None`: none).
+    pub(crate) fn set_masked(&mut self, fields: Option<Vec<(Option<String>, i64)>>) {
+        self.masked = fields.unwrap_or_default();
+    }
+
     /// Empty map.
     pub fn new() -> Self {
         Self::default()
@@ -961,7 +969,14 @@ impl Builder<'_, '_> {
         // facts): a contenteditable editor or a native <select> cannot be a password field.
         let unknown_sensitivity =
             self.ctx.frames[f].extras_failed && FREE_TEXT_ROLES.contains(&role);
-        let is_secret = extra.is_some_and(DomExtra::is_sensitive);
+        let latched = node.backend.is_some_and(|b| {
+            let session = self.ctx.frames[f].session_id.as_ref();
+            self.refs
+                .masked
+                .iter()
+                .any(|(s, id)| *id == b && s.as_ref() == session)
+        });
+        let is_secret = latched || extra.is_some_and(DomExtra::is_sensitive);
         if (is_secret || unknown_sensitivity) && value.is_some() {
             value = Some(MASK.to_string());
         }
@@ -989,7 +1004,9 @@ impl Builder<'_, '_> {
         self.cur_sensitive = false;
         // Interactive leaves with the same text children would only repeat the name.
         let parent = if skip_line { parent_name } else { label };
-        for &c in &node.children {
+        // The browser exposes a field's text as a child of the field: a latched field
+        // shows nothing of its content there either.
+        for &c in node.children.iter().filter(|_| !latched) {
             self.emit_node(f, c, child_depth, parent, nest + 1);
         }
         if is_iframe && let Some(b) = node.backend {
