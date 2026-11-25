@@ -23482,16 +23482,50 @@
           "status",
           "size_mb",
           "base",
-          "removable"
+          "removable",
+          "license",
+          "copyleft",
+          "distro",
+          "needs_ack",
+          "source_url",
+          "notice_url",
+          "version"
         ],
         "properties": {
           "base": {
             "type": "boolean",
             "description": "Part of the wizard's one-switch basic set."
           },
+          "copyleft": {
+            "type": "boolean",
+            "description": "GPL/AGPL family."
+          },
+          "distro": {
+            "type": "boolean",
+            "description": "Installed from the server's own Debian/Ubuntu software sources (Praxi ships nothing)."
+          },
           "id": {
             "type": "string",
             "description": "Catalog id (`office`, `docs`, `ocr`, `media`, `dev`). The app shows its own localised name."
+          },
+          "license": {
+            "type": "string",
+            "description": "SPDX licence expression of the software the pack installs (shown as a chip for every pack)."
+          },
+          "lock_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "SHA-256 of the pinned requirements file, for packs that have one."
+          },
+          "needs_ack": {
+            "type": "boolean",
+            "description": "Separate copyleft software downloaded from its author: the owner must acknowledge the\nlicence notice (`PackPlanInput.acknowledged`) before it is installed."
+          },
+          "notice_url": {
+            "type": "string",
+            "description": "The licence text."
           },
           "removable": {
             "type": "boolean",
@@ -23503,9 +23537,17 @@
             "description": "Rough download size.",
             "minimum": 0
           },
+          "source_url": {
+            "type": "string",
+            "description": "Where the software's source lives."
+          },
           "status": {
             "type": "string",
             "description": "`installed`, `partial` (an interrupted install) or `missing`."
+          },
+          "version": {
+            "type": "string",
+            "description": "Pinned upstream version (empty for distribution packs)."
           }
         }
       },
@@ -28194,6 +28236,13 @@
           "packs"
         ],
         "properties": {
+          "acknowledged": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Catalog ids whose licence notice the owner has read and accepted. A pack that needs it\n(`HostPackInfo.needs_ack`) cannot be installed without its id here."
+          },
           "action": {
             "$ref": "#/components/schemas/PackAction"
           },
@@ -28226,7 +28275,7 @@
               "string",
               "null"
             ],
-            "description": "Why it cannot run: `shared`, `dependants`, `unavailable`, `needs_admin`, `unsupported`,\n`connection` or `failed`."
+            "description": "Why it cannot run: `shared`, `dependants`, `unavailable`, `needs_python`, `needs_ack`,\n`needs_admin`, `unsupported`, `connection` or `failed`."
           },
           "noop": {
             "type": "boolean",

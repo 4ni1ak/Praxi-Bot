@@ -33,13 +33,13 @@ pub use extract::{ExtractOptions, Extracted, Link, html_to_markdown};
 pub use http::{Fetched, GetOptions, HttpConfig, HttpFetcher};
 pub use metadata::{FeedLink, PageMetadata, extract_metadata};
 pub use policy::{DefaultUrlPolicy, PolicyViolation, TrustedHostPolicy, UrlPolicy};
+pub use scrape::{SCRAPE_TOOL, ScrapeConfig};
 pub use search::{
     BING_ENDPOINT, BRAVE_ENDPOINT, BingBackend, BraveBackend, DEFAULT_CHALLENGE_COOLDOWN,
     DEFAULT_SEARCH_TIMEOUT, DUCKDUCKGO_ENDPOINT, DUCKDUCKGO_LITE_ENDPOINT, DuckDuckGoBackend,
     DuckDuckGoLiteBackend, KNOWN_BACKENDS, MultiSearch, SearchBackend, SearchConfig, SearchOutcome,
     SearchQuery, SearchResult, SearxngBackend, TAVILY_ENDPOINT, TavilyBackend,
 };
-pub use scrape::{SCRAPE_TOOL, ScrapeConfig};
 pub use tools::{TOOL_NAMES, WebToolsConfig, register, tools};
 pub use xmlfeed::{
     Feed, FeedEntry, FeedKind, Sitemap, SitemapEntry, SitemapKind, parse_feed, parse_sitemap,

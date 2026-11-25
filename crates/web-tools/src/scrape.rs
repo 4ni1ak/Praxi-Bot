@@ -135,7 +135,10 @@ pub(crate) fn tool(
 ) -> Result<Arc<dyn Tool>, WebError> {
     let base =
         Url::parse(&cfg.base_url).map_err(|e| WebError::Config(format!("scrape url: {e}")))?;
-    let local = matches!(base.host_str(), Some("127.0.0.1" | "localhost" | "[::1]" | "::1"));
+    let local = matches!(
+        base.host_str(),
+        Some("127.0.0.1" | "localhost" | "[::1]" | "::1")
+    );
     let port = base.port_or_known_default();
     let (true, Some(port)) = (local && base.scheme() == "http", port) else {
         return Err(WebError::Config(
@@ -271,7 +274,9 @@ impl ScrapeTool {
             return Err(ToolError::Execution(plain("too_large")));
         }
         let reply: Reply = serde_json::from_slice(&fetched.body).map_err(|_| {
-            ToolError::Execution("The web scraping add-on sent an answer that could not be understood.".into())
+            ToolError::Execution(
+                "The web scraping add-on sent an answer that could not be understood.".into(),
+            )
         })?;
         if let Some(code) = reply.error.as_deref().filter(|c| !c.is_empty()) {
             return Err(ToolError::Execution(plain(code)));
@@ -298,11 +303,20 @@ impl ScrapeTool {
         }
         let mut text = format!("{}\nURL: {shown}\n", notice(&shown));
         if !r.title.is_empty() {
-            let _ = writeln!(text, "Title: {}", r.title.chars().take(300).collect::<String>());
+            let _ = writeln!(
+                text,
+                "Title: {}",
+                r.title.chars().take(300).collect::<String>()
+            );
         }
         let _ = writeln!(text, "Status: {}", r.status);
         if !r.robots.is_empty() {
-            let robots: String = r.robots.chars().filter(char::is_ascii_lowercase).take(12).collect();
+            let robots: String = r
+                .robots
+                .chars()
+                .filter(char::is_ascii_lowercase)
+                .take(12)
+                .collect();
             let _ = writeln!(text, "robots.txt: {robots}");
         }
         if !r.fetched_at.is_empty() {

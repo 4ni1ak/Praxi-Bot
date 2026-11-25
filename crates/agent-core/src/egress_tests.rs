@@ -184,7 +184,12 @@ async fn email_read_then_scrape_shows_the_url_like_web_extract() {
     let card = card_of(&until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await);
     assert_eq!(card["payload_kind"], "url");
     assert_eq!(card["host"], "evil.example");
-    assert!(card["payload"].as_str().unwrap().contains("evil.example/hook"));
+    assert!(
+        card["payload"]
+            .as_str()
+            .unwrap()
+            .contains("evil.example/hook")
+    );
     assert!(card["reason"].as_str().unwrap().contains("mailbox INBOX"));
     assert_eq!(scrape.count.load(Ordering::SeqCst), 0);
     lp.cancel(run).unwrap();
@@ -206,7 +211,11 @@ async fn scraped_page_then_email_send_asks() {
         ContentClass::egress(),
     );
     let fake = Fake::new(vec![
-        calls(&[("c1", "web_scrape", json!({"url": "https://news.example/story"}))]),
+        calls(&[(
+            "c1",
+            "web_scrape",
+            json!({"url": "https://news.example/story"}),
+        )]),
         calls(&[(
             "c2",
             "email_send",

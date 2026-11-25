@@ -896,7 +896,10 @@ install
     fn every_pack_has_licence_facts_and_nothing_copyleft_is_pinned_from_upstream() {
         let cat = catalog();
         for p in &cat {
-            let l = p.license.as_ref().unwrap_or_else(|| panic!("{} has no licence", p.id));
+            let l = p
+                .license
+                .as_ref()
+                .unwrap_or_else(|| panic!("{} has no licence", p.id));
             assert!(!l.spdx.is_empty(), "{}", p.id);
             assert!(l.source_url.starts_with("https://"), "{}", p.id);
             assert!(l.notice_url.starts_with("https://"), "{}", p.id);
@@ -917,7 +920,14 @@ install
         let pins = lock.lines().filter(|l| l.contains("==")).count();
         assert!(pins >= 5 && lock.matches("--hash=sha256:").count() >= pins);
         assert!(lock.contains(&format!("trafilatura=={}", l.version)));
-        for banned in ["firecrawl", "scrapy", "mysql-connector", "pyqt", "pymupdf", "ghostscript"] {
+        for banned in [
+            "firecrawl",
+            "scrapy",
+            "mysql-connector",
+            "pyqt",
+            "pymupdf",
+            "ghostscript",
+        ] {
             assert!(!lock.to_lowercase().contains(banned), "{banned}");
         }
         assert_eq!(scrape_lock_sha().len(), 64);
@@ -925,21 +935,31 @@ install
 
     #[test]
     fn a_separate_copyleft_pack_cannot_be_installed_without_the_acknowledgement() {
-        let text = "agpltool|AGPL-3.0-only|1|0|https://example.org/src|https://example.org/lic|1.2.3
+        let text =
+            "agpltool|AGPL-3.0-only|1|0|https://example.org/src|https://example.org/lic|1.2.3
                     distrotool|GPL-2.0-only|1|1|https://example.org/src|https://example.org/lic|
 ";
         let ls = parse_licenses(text);
-        let mut pack = parse_catalog("agpltool|0|1|10|foo|foo
-").remove(0);
+        let mut pack = parse_catalog(
+            "agpltool|0|1|10|foo|foo
+",
+        )
+        .remove(0);
         pack.license = Some(ls[0].1.clone());
-        assert_eq!(pack.installable(false), Err(PackError::NeedsAcknowledgement));
+        assert_eq!(
+            pack.installable(false),
+            Err(PackError::NeedsAcknowledgement)
+        );
         assert_eq!(pack.installable(true), Ok(()));
         // GPL software that the server's own distribution ships needs no extra step
         pack.license = Some(ls[1].1.clone());
         assert_eq!(pack.installable(false), Ok(()));
         // a pack with no licence record at all is never silently installable
         pack.license = None;
-        assert_eq!(pack.installable(false), Err(PackError::NeedsAcknowledgement));
+        assert_eq!(
+            pack.installable(false),
+            Err(PackError::NeedsAcknowledgement)
+        );
     }
 
     #[test]
@@ -958,7 +978,11 @@ unavailable=
         assert_eq!(plan.packages, ["praxi-scrape"]);
         p.apply(SCRAPE, Action::Install, &plan.list_sha).unwrap();
         let up = t.uploaded.borrow();
-        for f in [StageFile::ScrapeService, StageFile::ScrapeLock, StageFile::ScrapeUnit] {
+        for f in [
+            StageFile::ScrapeService,
+            StageFile::ScrapeLock,
+            StageFile::ScrapeUnit,
+        ] {
             assert!(up.contains(&f), "{f:?}");
         }
         let ran = t.ran.borrow();
@@ -970,12 +994,16 @@ unavailable=
             assert!(stdin.contains(key), "{key}");
         }
         // a python-less server is explained, not reported as "not offered by the software sources"
-        let t = Fake::new(|_| ok("pack=scrape
+        let t = Fake::new(|_| {
+            ok("pack=scrape
 action=install
 missing=
 unavailable=python3-venv
-"));
-        let plan = Packs { transport: &t }.plan(SCRAPE, Action::Install).unwrap();
+")
+        });
+        let plan = Packs { transport: &t }
+            .plan(SCRAPE, Action::Install)
+            .unwrap();
         assert_eq!(plan.blocked, Some(Blocked::NeedsPython));
     }
 

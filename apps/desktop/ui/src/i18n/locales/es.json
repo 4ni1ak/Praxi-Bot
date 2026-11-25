@@ -6555,6 +6555,10 @@
     "switch": "Cambiar a este equipo"
   },
   "toolPacks": {
+    "ack": {
+      "label": "Lo entiendo",
+      "text": "Es un programa independiente con licencia {{license}}, descargado de su autor. Praxi no lo distribuye ni lo modifica."
+    },
     "back": "Atrás",
     "basicSet": "Elegir el conjunto básico",
     "button": "Herramientas",
@@ -6566,6 +6570,8 @@
     "dontClose": "Puede tardar unos minutos. Puedes seguir usando la aplicación.",
     "found": "Programas encontrados: {{n}}",
     "lead": "Programas que tus bots pueden usar en este servidor.",
+    "licenseMixed": "Licencias mixtas",
+    "licenseName": "Licencia {{name}}",
     "listLabel": "Paquetes de herramientas",
     "loading": "Mirando el servidor…",
     "noLogin": {
@@ -6593,6 +6599,11 @@
       "office": {
         "desc": "Word, Excel, PowerPoint y exportación a PDF, con fuentes turcas",
         "name": "Archivos de Office"
+      },
+      "scrape": {
+        "desc": "Lee las páginas con más limpieza y puede seguir algunos enlaces",
+        "name": "Extracción web",
+        "note": "No sirve para páginas que requieren iniciar sesión"
       }
     },
     "planning": "Comprobando qué cambiaría…",
@@ -6611,9 +6622,17 @@
         "body": "El servidor lo detuvo, por ejemplo porque el disco está lleno o hay otra actualización en curso. Tu servidor está bien; puedes intentarlo de nuevo.",
         "title": "No terminó"
       },
+      "needs_ack": {
+        "body": "Lee y confirma el aviso de licencia y vuelve a revisar.",
+        "title": "Confirma la licencia"
+      },
       "needs_admin": {
         "body": "Usa un acceso al servidor con derechos de administrador (sudo sin contraseña) y vuelve a intentarlo.",
         "title": "Este acceso no puede instalar software"
+      },
+      "needs_python": {
+        "body": "Instala primero «Herramientas de desarrollo» en este servidor y luego añade la extracción web.",
+        "title": "Primero se necesita Python"
       },
       "shared": {
         "body": "Praxi no las quita: tu servidor las necesita.",
@@ -6655,6 +6674,7 @@
     "safeRemove": "Solo se quitan estas herramientas",
     "safeRemoveBody": "Tus ajustes y el resto del software se quedan como están.",
     "size": "unos {{value}} {{unit}}",
+    "source": "Código fuente",
     "status": {
       "installed": "Instalado",
       "partial": "Incompleto"
@@ -6664,6 +6684,7 @@
     "title": "Herramientas",
     "titleFor": "Herramientas en {{name}}",
     "tryAgain": "Intentar de nuevo",
+    "versionLabel": "Versión {{version}}",
     "willInstall": "Se instalará",
     "willRemove": "Se quitará"
   },

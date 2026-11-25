@@ -312,5 +312,16 @@
       "Hata raporu için bilgi toplama"
     ],
     "summary": "Önce bot status komutunu çalıştır. Arka plan servisinin (daemon) çalıştığını, anahtarının kabul edildiğini ve kaç onayın seni beklediğini gösterir. Terminal kullanmıyorsan önce sade dille yazılmış Sı…"
+  },
+  {
+    "doc": "tr/web-scraping.md",
+    "title": "Web tarama eklentisi (isteğe bağlı)",
+    "headings": [
+      "Ekleme ve kaldırma",
+      "Eklenti ne yapar, ne yapmaz",
+      "Lisanslar",
+      "Kişisel veriler"
+    ],
+    "summary": "Yerleşik web araçları çoğu sayfayı zaten okur. Web tarama eklentisi,"
   }
 ]
