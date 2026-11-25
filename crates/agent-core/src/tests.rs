@@ -297,7 +297,8 @@ pub(crate) fn setup() -> Env {
             id: bot,
             user_id: user,
             name: "b".into(),
-            config: json!({}),
+            // Scripted models answer in order: no page reader call unless a test asks for it.
+            config: json!({"browser": {"reader": "off"}}),
             created_at_ms: now_ms(),
         })
         .unwrap();

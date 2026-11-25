@@ -230,14 +230,13 @@ fn is_page_text_tool(name: &str, label: &str, text: &str) -> bool {
         || label.starts_with("mailbox ")
 }
 
-/// Whether the run holds the owner's private data: something private was read that was not
-/// just a web page (pages are untrusted, the owner asked for them, and are not private). The
-/// same classification the Full-level rule uses (`private_source` in the Full-mode change);
-/// it is derived here from the recorded source labels so this layer does not depend on it.
+/// Whether the run holds the owner's private data: the same bit the Full-level rule reads
+/// (`private_source`: files, mail, memory, screens, an MCP result, an earlier turn, the
+/// owner's signed-in browser or a local page; never a plain public page). It is persisted with
+/// the run's steps and does not depend on the capped list of source labels.
 #[must_use]
 pub(crate) fn run_holds_private_data(ctx: &RunCtx) -> bool {
-    let t = ctx.taint.lock();
-    t.exposure.private && t.sources().iter().any(|l| !l.starts_with("page "))
+    ctx.taint.lock().private_source
 }
 
 /// What to do with one page-text tool result.
