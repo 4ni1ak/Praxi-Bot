@@ -629,7 +629,7 @@ impl EmailHost {
             timeout_secs: 30,
             bot: input.bot.clone(),
             allowed_senders,
-            identity: identity_in(input),
+            identity: identity_in(&input),
             kind: AccountKind::AgentMail,
             inbox_id: Some(inbox.inbox_id.clone()),
         };
