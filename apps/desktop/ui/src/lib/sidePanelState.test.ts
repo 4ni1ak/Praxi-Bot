@@ -40,7 +40,8 @@ test("arriving inline-answerable approval keeps panel hidden and flowWidth 0", (
         runId: "r1",
         chatId: "chat-1",
         botId: "bot-1",
-        title: "Run shell"
+        title: "Run shell",
+        sinceMs: 0
       }
     ]
   });
@@ -61,7 +62,8 @@ test("unanswerable need opens panel as overlay with flowWidth 0 (no chat or scre
         runId: "r1",
         chatId: "chat-9",
         botId: "bot-1",
-        title: "Choose folder"
+        title: "Choose folder",
+        sinceMs: 0
       }
     ]
   });
