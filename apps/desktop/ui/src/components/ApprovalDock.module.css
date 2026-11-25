@@ -12,7 +12,23 @@
   background-color: var(--color-surface-elevated-opaque);
   background-image: var(--surface-sheen);
   box-shadow: var(--shadow-card);
-  animation: dockIn var(--motion-duration-normal) var(--motion-easing-standard);
+  animation: dockIn var(--motion-duration-normal) var(--motion-easing-out);
+}
+
+/* A call that changes or sends tints the dock's edge warm; one that deletes tints it red. Nothing else
+   about the dock changes (the card inside carries the tier chip and the icon tone). */
+.dock:has([data-risk="change"], [data-risk="run"], [data-risk="send"]) {
+  border-color: color-mix(in srgb, var(--color-warning) 38%, var(--color-border));
+}
+
+.dock:has([data-risk="delete"]) {
+  border-color: color-mix(in srgb, var(--color-danger) 45%, var(--color-border));
+}
+
+/* Answered: it fades and sinks into the composer, shorter than it came in. */
+.dock[data-state="closing"] {
+  pointer-events: none;
+  animation: dockOut var(--motion-duration-exit) var(--motion-easing-in) forwards;
 }
 
 .stack {
@@ -45,7 +61,7 @@
 }
 
 .step:hover:not(:disabled) {
-  background-color: var(--color-surface-active);
+  background-color: var(--state-hover);
   color: var(--color-text);
 }
 
@@ -86,6 +102,7 @@
   border: var(--size-border) solid var(--color-border);
   border-radius: var(--radius-sm);
   background-color: var(--color-surface);
+  font-size: var(--font-size-2xs);
 }
 
 @keyframes dockIn {
@@ -95,8 +112,16 @@
   }
 }
 
+@keyframes dockOut {
+  to {
+    opacity: 0;
+    transform: translateY(var(--space-1));
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .dock {
+  .dock,
+  .dock[data-state="closing"] {
     animation: none;
   }
 }

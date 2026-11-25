@@ -83,7 +83,10 @@ try {
   await remove.focus(); await remove.press('Enter');
   assert.equal(await input.evaluate((el) => el === document.activeElement), true);
   const chooser = page.waitForEvent('filechooser');
-  const picker = page.getByRole('button', { name: 'Attach files or images', exact: true });
+  // Attaching lives in the composer's "+" menu (keyboard: Enter on the button, then on the row).
+  const plus = page.getByRole('button', { name: 'Add or attach', exact: true });
+  await plus.focus(); await plus.press('Enter');
+  const picker = page.getByRole('menuitem', { name: 'Attach files or images', exact: true });
   await picker.focus(); await picker.press('Enter');
   await (await chooser).setFiles([{ name: 'picked.txt', mimeType: 'text/plain', buffer: Buffer.from('fixture text') }]);
   await list.getByText('picked.txt', { exact: true }).waitFor();

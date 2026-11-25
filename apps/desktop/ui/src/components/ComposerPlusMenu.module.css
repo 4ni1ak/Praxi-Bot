@@ -1,0 +1,57 @@
+/* The menu surface is the generic Popover; only the rows are styled here. */
+.menu {
+  min-width: calc(var(--size-widget-width) * 0.8);
+  padding: var(--space-1);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--size-control-md);
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-ui);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.item > svg {
+  flex: none;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  color: var(--color-text-muted);
+}
+
+.item:hover:not(:disabled),
+.item:focus-visible {
+  background-color: var(--state-hover);
+}
+
+.item:active:not(:disabled) {
+  background-color: var(--state-pressed);
+}
+
+.item:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.item:disabled,
+.item[aria-disabled="true"] {
+  opacity: var(--state-disabled-opacity);
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .item {
+    transition: none;
+  }
+}

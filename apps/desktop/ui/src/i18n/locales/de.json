@@ -1689,6 +1689,15 @@
         }
       },
       "reasonPlaceholder": "Grund für die Ablehnung (optional)",
+      "risk": {
+        "allowDelete": "Löschen erlauben",
+        "allowSend": "Senden erlauben",
+        "change": "Nimmt Änderungen vor",
+        "delete": "Löscht",
+        "read": "Schaut nur nach",
+        "run": "Führt einen Befehl aus",
+        "send": "Sendet etwas nach außen"
+      },
       "runTool": "Für diese Aufgabe erlauben",
       "schedule": {
         "allowed": "Ohne Nachfrage erlaubt: {{list}}.",
@@ -1864,6 +1873,9 @@
       "undoFile": "Rückgängig",
       "undoUndo": "Rückgängigmachen aufheben",
       "viaLink": "Über Link {{path}}"
+    },
+    "composerMenu": {
+      "label": "Hinzufügen"
     },
     "conversationLabel": "Heute",
     "copyMessage": "Nachricht kopieren",

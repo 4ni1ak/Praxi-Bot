@@ -1689,6 +1689,15 @@
         }
       },
       "reasonPlaceholder": "Motivo del rechazo (opcional)",
+      "risk": {
+        "allowDelete": "Permitir eliminar",
+        "allowSend": "Permitir enviar",
+        "change": "Hace cambios",
+        "delete": "Elimina",
+        "read": "Solo mira",
+        "run": "Ejecuta un comando",
+        "send": "Envía algo al exterior"
+      },
       "runTool": "Permitir durante esta tarea",
       "schedule": {
         "allowed": "Permitido sin preguntar: {{list}}.",
@@ -1864,6 +1873,9 @@
       "undoFile": "Deshacer",
       "undoUndo": "Revertir esta restauración",
       "viaLink": "A través del enlace {{path}}"
+    },
+    "composerMenu": {
+      "label": "Añadir"
     },
     "conversationLabel": "Hoy",
     "copyMessage": "Copiar mensaje",

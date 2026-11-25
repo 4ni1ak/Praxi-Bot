@@ -1689,6 +1689,15 @@
         }
       },
       "reasonPlaceholder": "Reddetme gerekçesi (isteğe bağlı)",
+      "risk": {
+        "allowDelete": "Silmeye izin ver",
+        "allowSend": "Göndermeye izin ver",
+        "change": "Değişiklik yapar",
+        "delete": "Siler",
+        "read": "Sadece bakar",
+        "run": "Komut çalıştırır",
+        "send": "Dışarı bir şey gönderir"
+      },
       "runTool": "Bu görev için izin ver",
       "schedule": {
         "allowed": "Sormadan izin verilenler: {{list}}.",
@@ -1864,6 +1873,9 @@
       "undoFile": "Geri al",
       "undoUndo": "Bu geri almayı geri al",
       "viaLink": "Bağlantı üzerinden: {{path}}"
+    },
+    "composerMenu": {
+      "label": "Ekle"
     },
     "conversationLabel": "Bugün",
     "copyMessage": "Mesajı kopyala",
