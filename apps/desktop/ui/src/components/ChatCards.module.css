@@ -227,6 +227,48 @@
   --approval-tone: var(--color-danger);
 }
 
+/* Risk tiers (look only): a call that just looks stays calm; one that changes, runs or sends is warm;
+   one that deletes is red.  The tone colours the icon and the chip; the card itself stays quiet. */
+.approval[data-risk="read"] {
+  --approval-tone: var(--color-text-muted);
+}
+
+.approval[data-risk="change"],
+.approval[data-risk="run"],
+.approval[data-risk="send"] {
+  --approval-tone: var(--color-warning);
+}
+
+.approval[data-risk="delete"],
+.approval.outbound[data-risk] {
+  --approval-tone: var(--color-danger);
+}
+
+.riskChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background-color: color-mix(in srgb, var(--approval-tone) 12%, transparent);
+  color: var(--approval-tone);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-ui);
+  white-space: nowrap;
+}
+
+.riskChip[data-risk="read"] {
+  background-color: var(--state-hover);
+}
+
+.riskChip > svg {
+  width: var(--font-size-xs);
+  height: var(--font-size-xs);
+  flex: none;
+}
+
 .approvalIcon {
   display: inline-flex;
   align-items: center;
@@ -260,11 +302,11 @@
   margin: var(--space-0);
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
-  background-color: var(--color-surface-opaque);
+  background-color: var(--color-code-bg);
   border: var(--size-border) solid var(--color-border);
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -365,9 +407,9 @@
 
 .approvalHead {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
+  gap: var(--space-1) var(--space-2);
 }
 
 .approvalTitle {
@@ -377,17 +419,21 @@
 }
 
 .countdown {
+  margin-left: auto;
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
   color: var(--color-danger);
 }
 
 .approvalSummary {
   margin: var(--space-0);
+  min-width: var(--space-0);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   color: var(--color-text);
+  overflow-wrap: anywhere;
 }
 
 .approvalMeta {

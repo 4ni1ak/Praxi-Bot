@@ -3,8 +3,6 @@ import {
   ArrowLeft,
   ArrowUp,
   Bookmark,
-  Paperclip,
-  Phone,
   Plus,
   Square,
   CalendarClock,
@@ -72,6 +70,7 @@ import { FoldedBody } from "../components/UserBubble";
 import { UserMessageRow, AssistantMessageRow } from "../components/ChatMessageRow";
 import { MessageTime } from "../components/MessageTime";
 import { ModelPicker } from "../components/ModelPicker";
+import { ComposerPlusMenu } from "../components/ComposerPlusMenu";
 import { DictateButton } from "../components/DictateButton";
 import { useVoiceCall } from "../components/voiceCall/useVoiceCall";
 import { VoiceCallPanel } from "../components/voiceCall/VoiceCallPanel";
@@ -1574,8 +1573,9 @@ export function ChatView({
       {/* v6: no title row (the chat is named in the sidebar); a back button only while a page to go back to exists. */}
       {onBack && !liveChatSlots?.root ? (
         <header className={styles.header}>
-          <Button size="sm" variant="ghost" title={t("common.back")} aria-label={t("common.back")} onClick={onBack}>
-            <ArrowLeft />
+          <Button size="sm" variant="ghost" className={styles.back} onClick={onBack}>
+            <ArrowLeft aria-hidden="true" />
+            {t("common.back")}
           </Button>
         </header>
       ) : null}
@@ -1994,7 +1994,7 @@ export function ChatView({
           />
         </div>
         <div className={styles.boxWrap} data-docked={approvalDocked ? "true" : undefined}>
-          {approvalDocked ? <ApprovalDock pages={dockPages} /> : null}
+          <ApprovalDock pages={dockPages} />
           {menuOpen ? (
             <div
               className={styles.menu}
@@ -2144,22 +2144,28 @@ export function ChatView({
           />
           </div>
           <div className={styles.tools}>
-            <Button
-              variant="ghost"
-              size="sm"
+            <ComposerPlusMenu
               className={styles.plus}
-              title={t("chat.addCommand")}
-              aria-label={t("chat.addCommand")}
-              onClick={() => {
+              attachDisabled={!client || sending}
+              attachTitle={`${t("chat.attach.add")} — ${t("chat.attach.limits")}`}
+              onCommands={() => {
                 if (text === "") {
                   setText("/");
                   setCaret(1);
                 }
                 inputRef.current?.focus();
               }}
-            >
-              <Plus />
-            </Button>
+              onAttach={() => fileInputRef.current?.click()}
+              voiceTitle={t(voiceCall.blockedReason ?? "voice.call.start")}
+              voiceBlocked={(voiceCall.state.phase === "idle" || voiceCall.state.phase === "failed") && Boolean(voiceCall.blockedReason)}
+              voiceNotice={voiceCall.state.notice ? t(voiceCall.state.notice) : voiceCall.blockedReason ? t(voiceCall.blockedReason) : undefined}
+              voiceExpanded={voiceCall.state.phase !== "idle"}
+              voiceControls={voiceCall.state.phase !== "idle" ? "voice-call-panel" : undefined}
+              onVoice={() => {
+                if (voiceCall.state.phase === "idle" || voiceCall.state.phase === "failed") voiceCall.start();
+                else document.querySelector<HTMLElement>('[data-testid="voice-call"]')?.focus();
+              }}
+            />
             <input
               ref={fileInputRef}
               type="file"
@@ -2173,17 +2179,6 @@ export function ChatView({
                 e.target.value = "";
               }}
             />
-            <Button
-              variant="ghost"
-              size="sm"
-              className={styles.plus}
-              title={`${t("chat.attach.add")} — ${t("chat.attach.limits")}`}
-              aria-label={t("chat.attach.add")}
-              disabled={!client || sending}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Paperclip />
-            </Button>
             <DictateButton
               className={styles.plus}
               onText={(dictated) => {
@@ -2191,24 +2186,6 @@ export function ChatView({
                 inputRef.current?.focus();
               }}
             />
-            <Button
-              variant="ghost"
-              size="sm"
-              className={styles.plus}
-              title={t(voiceCall.blockedReason ?? "voice.call.start")}
-              aria-label={t("voice.call.start")}
-              aria-disabled={(voiceCall.state.phase === "idle" || voiceCall.state.phase === "failed") && voiceCall.blockedReason ? true : undefined}
-              aria-description={voiceCall.state.notice ? t(voiceCall.state.notice) : voiceCall.blockedReason ? t(voiceCall.blockedReason) : undefined}
-              aria-expanded={voiceCall.state.phase !== "idle"}
-              aria-controls={voiceCall.state.phase !== "idle" ? "voice-call-panel" : undefined}
-              data-testid="voice-call-start"
-              onClick={() => {
-                if (voiceCall.state.phase === "idle" || voiceCall.state.phase === "failed") voiceCall.start();
-                else document.querySelector<HTMLElement>('[data-testid="voice-call"]')?.focus();
-              }}
-            >
-              <Phone aria-hidden="true" />
-            </Button>
             {bot ? (
               <div className={styles.modelSlot}>
                 <ModelPicker

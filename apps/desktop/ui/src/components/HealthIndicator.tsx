@@ -55,7 +55,7 @@ export function HealthIndicator() {
   }
 
   return (
-    <div className={styles.root} role="status" title={title}>
+    <div className={styles.root} role="status" title={title} data-level={level}>
       <span
         className={[styles.dot, styles[level]].join(" ")}
         aria-hidden="true"

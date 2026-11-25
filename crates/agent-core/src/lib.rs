@@ -14,6 +14,7 @@ mod agent;
 mod approval;
 pub mod attachments;
 pub mod bot_limits;
+pub mod browser_profile;
 mod browser_url;
 mod cli;
 mod compaction;
@@ -25,6 +26,7 @@ mod discovery;
 mod discovery_prompt;
 mod embedding;
 mod exec;
+mod full_autonomy;
 mod history;
 mod knowledge;
 mod ledger;
@@ -58,6 +60,8 @@ mod cancel_supervisor;
 mod control_grant_tests;
 #[cfg(test)]
 mod egress_tests;
+#[cfg(test)]
+mod full_mode_tests;
 #[cfg(test)]
 mod mail_tests;
 #[cfg(test)]

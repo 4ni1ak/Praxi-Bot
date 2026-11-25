@@ -84,7 +84,30 @@ test("the chat asks approvals only in the dock: no inline card, no second strip,
   // The strip that repeated it is not drawn while the dock asks.
   assert.match(view, /approvalDocked && barModel\?\.kind === "waiting"/);
   // The dock sits in the composer wrapper, directly above the box.
-  assert.match(view, /<div className=\{styles\.boxWrap\}[^>]*>\s*\{approvalDocked \? <ApprovalDock/);
+  // (It is always mounted so it can fade out after the last answer; it renders nothing without pages.)
+  assert.match(view, /<div className=\{styles\.boxWrap\}[^>]*>\s*<ApprovalDock pages=\{dockPages\}/);
   // A message typed while an approval waits goes to the daemon (which skips the approval).
   assert.match(view, /active && !approvalWaits && !body\.startsWith\("\/"\)/);
+});
+
+test("the card shows how much the call can change: a calm chip to look, a red one and its own words to delete", () => {
+  const one = (name: string, input: unknown) =>
+    renderToStaticMarkup(
+      createElement(ApprovalDock, {
+        pages: [
+          {
+            key: "r1",
+            render: (active) =>
+              createElement(ApprovalCard, { tool: tool("r1", name, input), variant: "dock", keyboard: active, onDecide: async () => {} })
+          }
+        ]
+      })
+    );
+  const site = one("browser_navigate", { url: "https://webioo.com.tr" });
+  assert.match(site, /data-risk="read"/);
+  assert.ok(site.includes(">Allow</button>") || site.includes(">Allow<"), "a read keeps the plain Allow");
+  const del = one("fs_delete", { path: "./drafts/old" });
+  assert.match(del, /data-risk="delete"/);
+  assert.ok(del.includes("Allow delete"), "the delete card names what Allow does");
+  assert.ok(del.includes("Deletes"), "and carries the tier chip");
 });

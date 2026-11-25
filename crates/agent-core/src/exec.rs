@@ -563,9 +563,10 @@ impl TurnExecutor {
                     let untrusted = mems
                         .iter()
                         .any(|mem| mem.trust == memory_store::Trust::Untrusted);
-                    ctx.taint.lock().note(
+                    ctx.taint.lock().note_with_text(
                         tool_registry::ContentClass::declared(untrusted, true, false),
                         "memory",
+                        &memory_store::render_recall_block(&mems),
                     );
                 }
                 memory_store::prepend_to_user_message(
@@ -1758,6 +1759,14 @@ impl TurnExecutor {
                     if let Err(reason) = commit_or_deny(permit) {
                         return (user_denied(reason), true, None, None, not_run);
                     }
+                    let typed_secret = (tool.spec().name == "browser_fill")
+                        .then(|| {
+                            input
+                                .get("secret")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned)
+                        })
+                        .flatten();
                     let (text, is_error, duration_ms, own_spill, exposure) = self
                         .run_tool(
                             run,
@@ -1776,18 +1785,52 @@ impl TurnExecutor {
                     // exposure, when the tool set one, replaces it: that
                     // is how discovery carries the metadata it actually
                     // returned. Neither value is read from the result text.
+                    // A browser whose profile holds the owner's own state (a takeover, a login of
+                    // his): what its pages show is private, not "a page".
+                    let signed_in = tool.spec().name.starts_with("browser_")
+                        && crate::browser_profile::is_private(
+                            self.sh.storage.data_dir(),
+                            &ctx_ref.bot_id.to_string(),
+                        );
+                    let label = if signed_in {
+                        "signed-in browser".to_owned()
+                    } else {
+                        class.label
+                    };
                     let fact = match &exposure {
-                        Some(exposure) => taint::ExecFact::from_exposure(exposure, &class.label),
+                        Some(exposure) => taint::ExecFact::from_exposure(exposure, &label),
                         None => taint::ExecFact::ran(
                             tool_registry::ContentClass::declared(
                                 class.ingests_untrusted,
                                 class.reads_private,
                                 false,
                             ),
-                            class.label,
+                            label,
                         ),
                     };
-                    fact_note(ctx_ref, &fact);
+                    // The owner typed one of his own secrets into the bot's browser: its
+                    // profile may now be signed in to his accounts.
+                    if let Some(name) = typed_secret
+                        && !is_error
+                        && let Some(secrets) = self.sh.fill_secrets.get()
+                        && crate::browser_profile::is_owner_secret(
+                            secrets,
+                            &ctx_ref.bot_id.to_string(),
+                            &name,
+                        )
+                    {
+                        let _ = crate::browser_profile::mark_private(
+                            self.sh.storage.data_dir(),
+                            &ctx_ref.bot_id.to_string(),
+                        );
+                    }
+                    // The words of a private result are kept as hashes (never the text) so a
+                    // later call that copies them can be recognised.
+                    if fact.ran && exposure.is_none() {
+                        fact.apply_with_text(&mut ctx_ref.taint.lock(), &text);
+                    } else {
+                        fact_note(ctx_ref, &fact);
+                    }
                     (text, is_error, duration_ms, own_spill, fact)
                 }
             }

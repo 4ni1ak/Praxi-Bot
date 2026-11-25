@@ -53,11 +53,12 @@
 }
 
 .h1 {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-title);
+  letter-spacing: var(--letter-spacing-tight);
 }
 
 .h2 {
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-chat);
 }
 
 .h3,
@@ -209,12 +210,21 @@
 
 .tableWrap { border: var(--size-border) solid var(--color-border); border-radius: var(--radius-card); background: var(--color-surface); }
 .table { width: 100%; font-size: var(--font-size-ui); }
-.table th, .table td { border: none; padding: var(--space-3) var(--space-4); }
+.table th, .table td { border: none; padding: var(--space-2) var(--space-4); font-variant-numeric: tabular-nums; }
 .table tr + tr td { border-top: var(--size-border) solid var(--color-border); }
 .table th { color: var(--color-text-secondary); background: var(--color-surface-elevated); font-weight: var(--font-weight-medium); }
 .codeBlock { border-radius: var(--radius-card); background: var(--color-surface); }
-.codeBar { background: transparent; border-color: var(--color-border); padding: var(--space-2) var(--space-4); }
+.codeBar { background: transparent; border-color: var(--color-border); padding: var(--space-1) var(--space-4); }
 .pre { padding: var(--space-3) var(--space-4); font-size: var(--font-size-ui); }
+
+/* Inside a boxed answer bubble (soft / glass / line) the table and the code block must not draw a second
+   outline: the bubble is the box, they are recessed panels in it.  With the plain bubble they ARE the
+   only containers, so they keep their hairline. */
+:global(:root:not([data-bubble="plain"])) :global([data-message-body]) .tableWrap,
+:global(:root:not([data-bubble="plain"])) :global([data-message-body]) .codeBlock {
+  border-color: transparent;
+  background: var(--color-code-bg);
+}
 
 /* ---- Polish (c450) ---- */
 .md li::marker {

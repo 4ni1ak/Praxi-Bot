@@ -38,7 +38,34 @@
   font-weight: var(--font-weight-semibold);
 }
 
-.root { margin: var(--space-1) var(--space-5); padding: var(--space-2) var(--space-3); background: var(--color-warning-subtle); border-radius: var(--radius-md); }
+/* The strip under the title bar: calm and neutral while the service is only starting or reconnecting,
+   danger-tinted once it failed. */
+.root {
+  margin: var(--space-1) var(--space-5);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-elevated);
+}
 
-.fakeOnly { position: absolute; top: var(--space-2); left: var(--space-4); z-index: 5; margin: var(--space-0); padding: var(--space-0); background: transparent; }
-.fakeOnly .tag { background-color: var(--color-surface-elevated); color: var(--color-text-muted); font-weight: var(--font-weight-medium); }
+.root[data-level="bad"] {
+  background-color: var(--color-danger-subtle);
+}
+
+/* Fake provider, nothing else to say: a quiet tag at the header's left edge, clear of the Back slot,
+   and never in the way of dragging the window. */
+.fakeOnly {
+  position: absolute;
+  top: var(--space-3);
+  left: calc(var(--space-5) + var(--size-control-md) + var(--space-2));
+  z-index: 5;
+  margin: var(--space-0);
+  padding: var(--space-0);
+  background: transparent;
+  pointer-events: none;
+}
+
+.fakeOnly .tag {
+  background-color: var(--color-surface-elevated);
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
+}
