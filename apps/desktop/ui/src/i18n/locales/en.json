@@ -6270,6 +6270,7 @@
     "tainted": "The bot read outside or private content during this task. Read the text below carefully before you save it.",
     "tickFirst": "Tick the box above to save.",
     "title": "Save as skill",
+    "withheld": "{{count}} values from the chat were left out because they may be private. The skill asks for them each time instead.",
     "withheld_one": "{{count}} value from the chat was left out because it may be private. The skill asks for it each time instead.",
     "withheld_other": "{{count}} values from the chat were left out because they may be private. The skill asks for them each time instead."
   },

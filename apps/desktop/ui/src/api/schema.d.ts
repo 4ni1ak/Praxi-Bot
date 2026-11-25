@@ -1109,6 +1109,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/chats/{id}/skill-draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Propose a skill from the newest successful run of a chat. Read-only. */
+        post: operations["draft_from_chat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/components": {
         parameters: {
             query?: never;
@@ -3969,6 +3986,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/skills/draft/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install the reviewed draft when its fingerprint is the one the owner confirmed. */
+        post: operations["draft_install"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/draft/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Scan an edited draft; nothing is installed. */
+        post: operations["draft_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/skills/hub/install": {
         parameters: {
             query?: never;
@@ -6038,6 +6089,30 @@ export interface components {
             checks: components["schemas"]["Check"][];
             /** @description `false` when any check failed. */
             ok: boolean;
+        };
+        /** @description Install request: the reviewed text plus the fingerprint the owner confirmed. */
+        DraftInstallInput: {
+            /** @description `fingerprint` of the preview the owner confirmed. */
+            accept: string;
+            skill_md: string;
+        };
+        /** @description A value the skill asks for each time it runs. */
+        DraftParamDto: {
+            /** @description A harmless example; absent when the real value was not saved. */
+            example?: string | null;
+            name: string;
+            /** @description True when the value looked private and was left out. */
+            withheld: boolean;
+        };
+        /** @description An edited draft to scan or install. */
+        DraftTextInput: {
+            skill_md: string;
+        };
+        /** @description A tool the draft needs, with what it can do. */
+        DraftToolDto: {
+            /** @description `read`, `write`, `destructive` or `unknown`. */
+            effect: string;
+            name: string;
         };
         /** @description A bot's permission picture (`GET /v1/bots/{id}`). */
         EffectivePolicyDto: {
@@ -9759,6 +9834,23 @@ export interface components {
             instructions: string;
             /** @description Safe lowercase skill name. */
             name: string;
+        };
+        /** @description The proposed skill plus its safety scan. */
+        SkillDraftDto: {
+            description: string;
+            keywords: string[];
+            name: string;
+            parameters: components["schemas"]["DraftParamDto"][];
+            preview: components["schemas"]["HubPreviewDto"];
+            /** @description Complete SKILL.md the owner can edit. */
+            skill_md: string;
+            steps: string[];
+            /** @description True when the run had read untrusted or private content. */
+            tainted: boolean;
+            /** @description Permissions the skill will rely on. */
+            tools: components["schemas"]["DraftToolDto"][];
+            /** @description How many argument values were left out because they looked private. */
+            withheld: number;
         };
         /** @description Hub lockfile metadata for a shared skill installed via `SkillHub`. */
         SkillHubInfoDto: {
@@ -13659,6 +13751,60 @@ export interface operations {
                 };
             };
             /** @description Turn cannot be edited */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    draft_from_chat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Chat id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillDraftDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -19870,6 +20016,92 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    draft_install: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftInstallInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedSkillDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    draft_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftTextInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HubPreviewDto"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

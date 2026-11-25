@@ -6270,6 +6270,7 @@
     "tainted": "Bot bu iş sırasında dışarıdan veya özel içerik okudu. Kaydetmeden önce aşağıdaki metni dikkatle oku.",
     "tickFirst": "Kaydetmek için yukarıdaki kutuyu işaretle.",
     "title": "Beceri olarak kaydet",
+    "withheld": "Sohbetteki {{count}} değer özel olabileceği için dışarıda bırakıldı. Beceri bunları her seferinde senden ister.",
     "withheld_one": "Sohbetteki {{count}} değer özel olabileceği için dışarıda bırakıldı. Beceri bunu her seferinde senden ister.",
     "withheld_other": "Sohbetteki {{count}} değer özel olabileceği için dışarıda bırakıldı. Beceri bunları her seferinde senden ister."
   },

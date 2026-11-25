@@ -6270,6 +6270,7 @@
     "tainted": "Der Bot hat bei dieser Aufgabe fremde oder private Inhalte gelesen. Lies den Text unten sorgfältig, bevor du speicherst.",
     "tickFirst": "Setze oben das Häkchen, um zu speichern.",
     "title": "Als Skill speichern",
+    "withheld": "{{count}} Werte aus dem Chat wurden weggelassen, weil sie privat sein könnten. Der Skill fragt sie stattdessen jedes Mal ab.",
     "withheld_one": "{{count}} Wert aus dem Chat wurde weggelassen, weil er privat sein könnte. Der Skill fragt ihn stattdessen jedes Mal ab.",
     "withheld_other": "{{count}} Werte aus dem Chat wurden weggelassen, weil sie privat sein könnten. Der Skill fragt sie stattdessen jedes Mal ab."
   },
