@@ -197,6 +197,27 @@ Be realistic about the limits:
 - **Early development.** The code is young and unaudited. Do not rely on it for
   high-stakes automation yet.
 
+## Who counts as the owner on a host
+
+On your own computer the owner is the person at the keyboard (the desktop app
+holds a per-launch owner key). On an always-on host there is no keyboard, so the
+host trusts one kind of paired device as the owner: a **Desktop that you
+confirmed as administrator** (`sudo praxi host invite --role desktop` makes one;
+`bot host admin --all-desktops` confirms desktops paired earlier). It is read
+from the pairing store on every request, so a revoke or a withdrawn grant works
+at once. It is one rule in one place: an administrator Desktop passes every
+owner-only route, minus a short never-list. The never-list is the part to
+audit: pairing and administrators, the host's lifecycle and state import and
+hand over, the host's links to other computers, MCP facade credentials, doctor
+repairs, Telegram pairing and the signed webhook ingress. Every change it makes
+is written to the audit log (desktop, kind of change, method, path; never the
+body), and the owner key itself is never sent over the link.
+
+Phones, nodes, other hosts and Desktops that are not confirmed are never the
+owner: of the owner-only routes they keep only what a device does every day
+(deciding approvals and questions, the screen takeover buttons, timers), and a
+header they send cannot make them the owner.
+
 ## Daemon process guard (defence in depth)
 
 At startup the daemon restricts its own process so that a child running as the

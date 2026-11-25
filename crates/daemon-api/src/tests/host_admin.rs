@@ -6,12 +6,12 @@ use peer_network::{PairTicket, PeerConfig, PeerNetwork, RelayConfig, Role};
 const KEY: &str = "sk-SECRET-VALUE-0123456789";
 const OWNER: &str = super::OWNER_KEY;
 
-struct Rig {
-    t: T,
-    net: PeerNetwork,
+pub(super) struct Rig {
+    pub(super) t: T,
+    pub(super) net: PeerNetwork,
     store: Arc<secret_store::MemoryStore>,
-    admin_key: String,
-    legacy_key: String,
+    pub(super) admin_key: String,
+    pub(super) legacy_key: String,
     _joiners: Vec<PeerNetwork>,
 }
 
@@ -31,7 +31,7 @@ async fn joiner(t: &T, name: &str, admin: bool, net: &PeerNetwork) -> (PeerNetwo
     (j, key)
 }
 
-async fn rig() -> Rig {
+pub(super) async fn rig() -> Rig {
     let t = setup_with(|data| {
         HostConfig {
             mode: HostMode::Host,
@@ -66,7 +66,7 @@ async fn rig() -> Rig {
     }
 }
 
-async fn peer_call(
+pub(super) async fn peer_call(
     t: &T,
     peer: Option<(&str, crate::PeerRole)>,
     method: Method,
@@ -2069,23 +2069,30 @@ async fn phones_nodes_and_hosts_never_change_mail_search_or_dictation_settings()
     r.net.shutdown().await;
 }
 
+/// The confirmed desktop is the owner of its host (card c860): the owner settings that used to be
+/// closed to it are open now, and the never-list stays closed (see `peer_owner.rs` for the matrix).
 #[tokio::test]
-async fn a_confirmed_desktop_still_cannot_reach_the_rest_of_the_owner_only_routes() {
+async fn a_confirmed_desktop_reaches_the_owner_settings_but_not_the_never_list() {
     let r = rig().await;
     let admin = Some((r.admin_key.as_str(), crate::PeerRole::Desktop));
     for (method, path) in [
         (Method::PUT, "/v1/email/channel"),
-        (Method::POST, "/v1/email/channel/replies/1/approve"),
         (Method::PUT, "/v1/email/guard/settings"),
         (Method::GET, "/v1/email/guard/send-log"),
         (Method::HEAD, "/v1/email/guard/settings"),
-        (Method::PATCH, "/v1/email/accounts/agent"),
         (Method::POST, "/v1/connection-test/email"),
-        (Method::POST, "/v1/connection-test/web"),
         (Method::POST, "/v1/mcp/servers"),
         (Method::PUT, "/v1/policy"),
         (Method::POST, "/v1/secrets/provider/key"),
+    ] {
+        r.t.state.leader().reset_admin_budget();
+        let resp = peer_call(&r.t, admin, method.clone(), path, Some(json!({}))).await;
+        assert_ne!(resp.status, StatusCode::FORBIDDEN, "{method} {path}");
+    }
+    for (method, path) in [
         (Method::POST, "/v1/host/invite"),
+        (Method::POST, "/v1/hosts/pair"),
+        (Method::POST, "/v1/mcp-server/tokens"),
     ] {
         let resp = peer_call(&r.t, admin, method.clone(), path, Some(json!({}))).await;
         assert_eq!(resp.status, StatusCode::FORBIDDEN, "{method} {path}");

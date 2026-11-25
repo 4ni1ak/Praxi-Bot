@@ -16,15 +16,20 @@
 //! audited or kept in `providers.toml` (which only names the secret). The
 //! audit rows carry the provider id and whether a key was set, nothing else.
 //!
-//! The accounts and keys of mail (`/v1/email/accounts`), web search
-//! (`/v1/web/search`) and dictation (`/v1/voice`) are administered the same way
-//! (exact routes in `peer::host_admin_settings_class`; each change is audited
-//! as `host.admin.settings`, secrets are write-only).
+//! The administrator desktop IS the owner of the host: every owner setting
+//! (execution policy, accounts and keys of mail, web search and dictation,
+//! tool servers, skills, the mail channel and guard, fill secrets, spending
+//! limits, bot engine and knowledge settings, audit and log reads) is open to
+//! it, one principle in one place (`peer::guard`; the owner-gated handlers are
+//! shown the host's own owner key for such a caller). Secrets in those
+//! requests are write-only. Each change is audited as `host.admin.settings`
+//! (class, method and path, never a body).
 //!
-//! Not administrable from here (stays with the host's own user): the global
-//! execution policy (`/v1/policy`), stdio tool servers and skills, the mail
-//! channel and guard, pairing and the host lifecycle, a bot's external
-//! engine and its knowledge settings.
+//! Short, explicit never-list (`peer::admin_desktop_never`): minting or
+//! changing administrators and the host's lifecycle (`/v1/host…`), the host's
+//! own links to other computers (`/v1/hosts…`), MCP facade credentials,
+//! diagnostics and repairs, chat-channel pairing and the signed webhook
+//! ingress. The owner key itself never crosses the link.
 
 use axum::{
     Extension, Json,

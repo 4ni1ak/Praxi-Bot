@@ -437,9 +437,9 @@ pub(crate) async fn create_bot(
     if config.get("memory").is_some_and(|m| !m.is_null()) {
         return Err(memory_in_profile());
     }
-    crate::peer::protect_knowledge_config(peer.as_ref().map(|peer| &peer.0), None, &mut config)?;
     // The owner's desktop with host administration acts as the owner here.
     let owner = s.bot_authority_peer(peer.as_ref().map(|peer| &peer.0));
+    crate::peer::protect_knowledge_config(owner, None, &mut config)?;
     crate::peer::protect_execution_config(
         owner,
         s.leader().config().mode == crate::host::HostMode::Host,
@@ -564,12 +564,8 @@ pub(crate) async fn update_bot(
     let bot = s.bot_of_user(bot.id)?;
     let preserve_runtime = input.runtime.is_none();
     let (name, mut config) = resolve_bot(input)?;
-    crate::peer::protect_knowledge_config(
-        peer.as_ref().map(|peer| &peer.0),
-        bot.config.get("knowledge"),
-        &mut config,
-    )?;
     let owner = s.bot_authority_peer(peer.as_ref().map(|peer| &peer.0));
+    crate::peer::protect_knowledge_config(owner, bot.config.get("knowledge"), &mut config)?;
     crate::peer::protect_execution_config(
         owner,
         s.leader().config().mode == crate::host::HostMode::Host,
@@ -815,7 +811,7 @@ pub(crate) async fn patch_bot(
                 s.require_owner(&headers)?;
             }
             crate::peer::protect_knowledge_config(
-                peer.as_ref().map(|peer| &peer.0),
+                s.bot_authority_peer(peer.as_ref().map(|peer| &peer.0)),
                 bot.config.get("knowledge"),
                 &mut next,
             )?;
@@ -854,8 +850,12 @@ pub(crate) async fn patch_bot(
                 }
             };
             let peer_id = peer.as_ref().map(|p| &p.0);
-            crate::peer::protect_knowledge_config(peer_id, config.get("knowledge"), &mut next)
-                .map_err(refused)?;
+            crate::peer::protect_knowledge_config(
+                s.bot_authority_peer(peer_id),
+                config.get("knowledge"),
+                &mut next,
+            )
+            .map_err(refused)?;
             crate::peer::protect_execution_config(
                 s.bot_authority_peer(peer_id),
                 host_mode,
