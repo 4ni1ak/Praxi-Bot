@@ -785,7 +785,7 @@ async fn redteam_corpus_covers_every_family_and_holds() {
         *per_family.entry(family).or_default() += 1;
         assert!(!s.secrets.is_empty(), "{} has no canary", s.name);
         assert!(!s.unsafe_tools.is_empty(), "{} names no sink", s.name);
-        assert!(!a.gate.is_empty());
+        assert!(!a.gate.trim().is_empty(), "{} names no gate", s.name);
     }
     for needed in [
         "web-hidden",
