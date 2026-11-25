@@ -308,6 +308,13 @@
     },
     "noDaemon": "The local Praxi service is not running. Restart the app and try again.",
     "noKeys": "No key file found in your .ssh folder. Type the path of the key file you downloaded.",
+    "packs": {
+      "body": "Pick it to be shown the plan after the server is added: {{list}}; {{size}} in total. Nothing is installed until you have seen exactly what would change and confirmed.",
+      "planBody": "The server is added. Review exactly what would be installed and confirm it to start.",
+      "planOpen": "Review the plan",
+      "planTitle": "Tools are not installed yet",
+      "title": "Prepare the basic tools after adding"
+    },
     "pairChecks": {
       "models": {
         "fix": "Not allowed yet. On the server, run: bot host admin --all-desktops . You can send models later from the server's page.",
@@ -6303,6 +6310,119 @@
   "thisComputerOnly": {
     "body": "Local models run on the computer where the bot runs. {{name}} is a server, so set them up on This computer.",
     "switch": "Switch to this computer"
+  },
+  "toolPacks": {
+    "back": "Back",
+    "basicSet": "Select the basic set",
+    "button": "Tools",
+    "confirmInstall": "Install",
+    "confirmRemove": "Remove",
+    "doneInstall": "Tools installed",
+    "doneInstallBody": "Your bots on this server can use them now.",
+    "doneRemove": "Tools removed",
+    "dontClose": "This can take a few minutes. You can keep using the app.",
+    "found": "Programs found: {{n}}",
+    "lead": "Programs your bots can use on this server.",
+    "listLabel": "Tool packs",
+    "loading": "Looking at the server…",
+    "noLogin": {
+      "body": "Praxi installs tools over your own SSH login. Add the server again with “Advanced: use SSH”, or install the tools on the server yourself.",
+      "title": "This server was added without a login"
+    },
+    "nothingToDo": "Already done",
+    "packs": {
+      "dev": {
+        "desc": "git, GitHub, Python, Node and fast search",
+        "name": "Developer tools"
+      },
+      "docs": {
+        "desc": "Convert documents, read and merge PDFs",
+        "name": "Documents and PDF"
+      },
+      "media": {
+        "desc": "Convert, cut and resize media",
+        "name": "Audio, video and images"
+      },
+      "ocr": {
+        "desc": "Read text in scans and photos (Turkish, English)",
+        "name": "Text from images"
+      },
+      "office": {
+        "desc": "Word, Excel, PowerPoint and PDF export, with Turkish fonts",
+        "name": "Office files"
+      }
+    },
+    "planning": "Checking what would change…",
+    "previewLabel": "What would change",
+    "progress": "Progress",
+    "reason": {
+      "connection": {
+        "body": "Check that the server is on and reachable, then try again.",
+        "title": "Praxi could not reach the server"
+      },
+      "dependants": {
+        "body": "Something else on the server uses these tools, so they stay.",
+        "title": "Other software needs it"
+      },
+      "failed": {
+        "body": "The server stopped it, for example because the disk is full or another update is running. Your server is fine; you can try again.",
+        "title": "It did not finish"
+      },
+      "needs_admin": {
+        "body": "Use a server login with administrator rights (sudo without a password), then try again.",
+        "title": "This login can't install software"
+      },
+      "shared": {
+        "body": "Praxi does not remove these: your server needs them.",
+        "title": "Shared system tools"
+      },
+      "unavailable": {
+        "body": "The server's software sources do not have this tool.",
+        "title": "Not offered by this server"
+      },
+      "unknown_pack": {
+        "body": "Update the app and try again.",
+        "title": "Unknown tool pack"
+      },
+      "unsupported": {
+        "body": "On other systems, install the tools on the server yourself.",
+        "title": "Only Debian and Ubuntu servers are supported"
+      }
+    },
+    "remove": "Remove",
+    "removeWarning": "These programs may also be used by other software or things you set up yourself on this server. Removing them takes them away for everything, not only for Praxi.",
+    "review": "Review ({{size}})",
+    "reviewNone": "Review",
+    "rowState": {
+      "install": {
+        "done": "Installed",
+        "failed": "Did not finish",
+        "pending": "Waiting",
+        "running": "Installing…"
+      },
+      "remove": {
+        "done": "Removed",
+        "failed": "Did not finish",
+        "pending": "Waiting",
+        "running": "Removing…"
+      }
+    },
+    "safeInstall": "Nothing else changes",
+    "safeInstallBody": "Tools come from your server's own software sources. This needs a login with administrator rights.",
+    "safeRemove": "Only these tools are removed",
+    "safeRemoveBody": "Your settings and other software stay as they are.",
+    "size": "about {{value}} {{unit}}",
+    "status": {
+      "installed": "Installed",
+      "partial": "Incomplete"
+    },
+    "stop": "Stop after this one",
+    "thisServer": "this server",
+    "title": "Tools",
+    "titleFor": "Tools on {{name}}",
+    "tryAgain": "Try again",
+    "willInstall": "Will be installed",
+    "willRemove": "Will be removed"
   },
   "tray": {
     "needs": "Needs you ({n})",

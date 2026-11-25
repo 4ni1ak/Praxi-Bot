@@ -10,6 +10,8 @@
 #   install     run install-linux.sh --version <tag> --host-mode [--with-desktop-session]
 #   invite|devices|screen|revoke   `bot host ...` as the unprivileged praxi user
 #   uninstall|purge                install-linux.sh --uninstall [--purge]
+#   packs-facts|packs-plan         capability packs (packs.txt): facts and dry run, no root needed
+#   pack-install|pack-remove       install or remove one catalog pack (root, apt only)
 set -euo pipefail
 
 STAGE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -203,6 +205,164 @@ cmd_revoke() {
 cmd_uninstall() { need_root; bash "${STAGE}/install-linux.sh" --uninstall; }
 cmd_purge() { need_root; bash "${STAGE}/install-linux.sh" --uninstall --purge; }
 
+# ---- capability packs ---------------------------------------------------------------------------
+# The catalog (packs.txt) is uploaded by the app; its SHA-256 arrives as `catalog=` and must match
+# the staged copy, so a changed file in the staging directory is never executed as root.
+CATALOG="${STAGE}/packs.txt"
+PACK_ID="" PACK_PKGS="" PACK_REMOVABLE=0
+
+catalog_check() {
+  [[ -f "${CATALOG}" ]] || die "not-available: the pack catalog was not uploaded"
+  local want="${P[catalog]:-}" have
+  [[ "${want}" =~ ^[0-9a-f]{64}$ ]] || die "bad catalog checksum"
+  have="$(sha256sum "${CATALOG}" | awk '{print $1}')"
+  [[ "${have}" == "${want}" ]] || die "catalog-mismatch: the staged pack catalog does not match the app's"
+}
+
+# pack_load id: fill PACK_* from the catalog (only a catalog id is ever accepted).
+pack_load() {
+  local want="$1" id rem pkgs p
+  [[ "${want}" =~ ^[a-z]{2,16}$ ]] || die "bad pack id"
+  while IFS='|' read -r id _ rem _ pkgs _; do
+    [[ "${id}" == "${want}" ]] || continue
+    for p in ${pkgs}; do [[ "${p}" =~ ^[a-z0-9][a-z0-9+.-]{1,60}$ ]] || die "bad package name in catalog"; done
+    PACK_ID="${id}"; PACK_PKGS="${pkgs}"; PACK_REMOVABLE="${rem}"
+    return 0
+  done < <(grep -v '^#' "${CATALOG}")
+  die "unknown pack"
+}
+
+pkg_installed() { dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null | grep -q '^ii'; }
+have_apt() { command -v apt-get >/dev/null 2>&1 && command -v dpkg-query >/dev/null 2>&1; }
+need_apt() { have_apt || die "not-available: only Debian and Ubuntu servers are supported"; }
+has_candidate() { apt-cache policy "$1" 2>/dev/null | grep -q 'Candidate: [^(]'; }
+
+pack_status() {
+  local p have=0 total=0
+  for p in ${PACK_PKGS}; do
+    total=$((total + 1))
+    if pkg_installed "${p}"; then have=$((have + 1)); fi
+  done
+  if [[ "${have}" -eq "${total}" ]]; then printf installed
+  elif [[ "${have}" -eq 0 ]]; then printf missing
+  else printf partial; fi
+}
+
+# What the pack's own packages would drag out with them on `apt-get remove`. Fails CLOSED: when the
+# simulation itself fails the answer is unknown, so nothing is removed.
+remove_outsiders() {
+  local line sim
+  sim="$(apt-get -s remove "$@" 2>&1)" || die "could not check what removing this pack would affect"
+  while IFS= read -r line; do
+    [[ "${line}" == Remv\ * ]] || continue
+    line="${line#Remv }"; line="${line%% *}"
+    case " ${PACK_PKGS} " in *" ${line} "*) ;; *) printf '%s' "${line}"; return 0 ;; esac
+  done <<<"${sim}"
+  return 0
+}
+
+# Hash of exactly what a pack operation touches: pack id, action and the package list. The app
+# computes the same value for the dry-run plan the owner approves and sends it back with the
+# install/remove; a different list never runs.
+pack_list_sha() {
+  local joined="" p
+  for p in ${PACK_PKGS}; do joined="${joined:+${joined} }${p}"; done
+  printf '%s
+%s
+%s
+' "${PACK_ID}" "$1" "${joined}" | sha256sum | awk '{print $1}'
+}
+
+plan_check() {
+  local want="${P[plan]:-}"
+  [[ "${want}" =~ ^[0-9a-f]{64}$ ]] || die "plan-required: this change needs the approved plan"
+  [[ "$(pack_list_sha "$1")" == "${want}" ]] || die "plan-mismatch: the package list differs from the plan that was approved"
+}
+
+cmd_packs_facts() {
+  [[ -f "${CATALOG}" ]] || die "not-available: the pack catalog was not uploaded"
+  local id pkgs tools t alt found
+  if have_apt; then kv apt 1; else kv apt 0; fi
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]] || sudo -n true >/dev/null 2>&1; then kv admin 1; else kv admin 0; fi
+  # shellcheck disable=SC1091
+  kv os_id "$( (. /etc/os-release 2>/dev/null && printf '%s' "${ID:-}") || true)"
+  while IFS='|' read -r id _ _ _ pkgs tools; do
+    [[ "${id}" =~ ^[a-z]{2,16}$ ]] || continue
+    if have_apt; then PACK_PKGS="${pkgs}"; kv "pack_${id}" "$(pack_status)"; else kv "pack_${id}" missing; fi
+    for t in ${tools}; do
+      found=0
+      for alt in ${t//\// }; do if command -v "${alt}" >/dev/null 2>&1; then found=1; fi; done
+      kv "tool_${t%%/*}" "${found}"
+    done
+  done < <(grep -v '^#' "${CATALOG}")
+}
+
+# Dry run: changes nothing. Prints what would be installed or removed so the owner can approve it.
+cmd_packs_plan() {
+  read_params
+  catalog_check; need_apt; pack_load "${P[pack]:-}"
+  local action="${P[action]:-install}" p missing="" unavailable="" have="" outsider="" n
+  kv pack "${PACK_ID}"; kv action "${action}"
+  case "${action}" in
+    install)
+      for p in ${PACK_PKGS}; do
+        if pkg_installed "${p}"; then continue; fi
+        missing="${missing:+${missing},}${p}"
+        if ! has_candidate "${p}"; then unavailable="${unavailable:+${unavailable},}${p}"; fi
+      done
+      kv missing "${missing}"; kv unavailable "${unavailable}"
+      if [[ -n "${missing}" && -z "${unavailable}" ]]; then
+        # shellcheck disable=SC2086
+        n="$(apt-get -s install --no-install-recommends ${missing//,/ } 2>/dev/null | grep -c '^Inst ' || true)"
+        kv new_packages "${n}"
+      fi ;;
+    remove)
+      if [[ "${PACK_REMOVABLE}" != "1" ]]; then kv blocked shared; return 0; fi
+      for p in ${PACK_PKGS}; do
+        if pkg_installed "${p}"; then have="${have:+${have} }${p}"; fi
+      done
+      kv missing "${have// /,}"
+      if [[ -n "${have}" ]]; then
+        # shellcheck disable=SC2086
+        outsider="$(remove_outsiders ${have})"
+        if [[ -n "${outsider}" ]]; then kv blocked dependants; fi
+      fi ;;
+    *) die "bad action" ;;
+  esac
+}
+
+cmd_pack_install() {
+  need_root; read_params
+  catalog_check; need_apt; pack_load "${P[pack]:-}"; plan_check install
+  local p
+  apt_without_restarts update -qq || log "apt update reported a problem; trying with the known package lists"
+  for p in ${PACK_PKGS}; do
+    has_candidate "${p}" || die "not-available: package ${p} is not offered by this server's software sources"
+  done
+  # shellcheck disable=SC2086
+  apt_without_restarts install -y --no-install-recommends ${PACK_PKGS}
+  kv "pack_${PACK_ID}" "$(pack_status)"
+}
+
+cmd_pack_remove() {
+  need_root; read_params
+  catalog_check; need_apt; pack_load "${P[pack]:-}"
+  [[ "${PACK_REMOVABLE}" == "1" ]] || die "blocked: this pack holds shared system tools and is not removed"
+  plan_check remove
+  local p have="" outsider
+  for p in ${PACK_PKGS}; do
+    if pkg_installed "${p}"; then have="${have:+${have} }${p}"; fi
+  done
+  if [[ -z "${have}" ]]; then kv "pack_${PACK_ID}" missing; return 0; fi
+  # shellcheck disable=SC2086
+  outsider="$(remove_outsiders ${have})"
+  [[ -z "${outsider}" ]] || die "blocked: other software on this server depends on it (${outsider})"
+  # Plain `remove` only: settings and unrelated packages stay untouched.
+  # shellcheck disable=SC2086
+  apt_without_restarts remove -y ${have}
+  kv "pack_${PACK_ID}" "$(pack_status)"
+}
+
 case "${1:-}" in
   preflight) cmd_preflight ;;
   status) cmd_status ;;
@@ -216,5 +376,9 @@ case "${1:-}" in
   revoke) cmd_revoke ;;
   uninstall) cmd_uninstall ;;
   purge) cmd_purge ;;
+  packs-facts) cmd_packs_facts ;;
+  packs-plan) cmd_packs_plan ;;
+  pack-install) cmd_pack_install ;;
+  pack-remove) cmd_pack_remove ;;
   *) die "unknown subcommand" ;;
 esac

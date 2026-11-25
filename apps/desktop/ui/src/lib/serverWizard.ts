@@ -28,6 +28,11 @@ export interface WizardState {
   port: string;
   auth: AuthMode;
   keyPath: string;
+  /**
+   * Only an intent: the basic tool set is never installed by the wizard. When on, the app opens the
+   * Tools plan (dry run, then confirm) once the server is added. Off until the owner switches it on.
+   */
+  basePacks: boolean;
   /** Guide checklist ticks (ids from GUIDE_STEPS), for the guide that is open. */
   oracleDone: string[];
 }
@@ -40,6 +45,7 @@ export const initialWizard: WizardState = {
   port: "22",
   auth: "key",
   keyPath: "",
+  basePacks: false,
   oracleDone: []
 };
 
@@ -53,6 +59,7 @@ export type WizardAction =
   | { type: "back" }
   | { type: "set"; field: "host" | "user" | "port" | "keyPath"; value: string }
   | { type: "auth"; auth: AuthMode }
+  | { type: "basePacks"; on: boolean }
   | { type: "tick"; id: string }
   | { type: "run" }
   | { type: "checks" }
@@ -103,6 +110,8 @@ export function wizardReducer(s: WizardState, a: WizardAction): WizardState {
       return { ...s, [a.field]: a.value };
     case "auth":
       return { ...s, auth: a.auth };
+    case "basePacks":
+      return { ...s, basePacks: a.on };
     case "tick":
       return {
         ...s,
@@ -265,7 +274,8 @@ export function toInput(s: WizardState): StartHostSetupInput {
     host: s.host.trim(),
     user: s.user.trim() || "ubuntu",
     port: Number(s.port),
-    key_path: s.auth === "key" ? s.keyPath.trim() : null
+    key_path: s.auth === "key" ? s.keyPath.trim() : null,
+    base_packs: s.basePacks
   };
 }
 

@@ -9,6 +9,11 @@ pub fn provision_sh() -> String {
     lf(include_str!("../scripts/provision.sh"))
 }
 
+/// The capability pack catalog (also parsed by [`crate::packs`]).
+pub fn packs_txt() -> String {
+    lf(include_str!("../scripts/packs.txt"))
+}
+
 pub fn installer_sh() -> String {
     lf(include_str!("../../../scripts/install-linux.sh"))
 }

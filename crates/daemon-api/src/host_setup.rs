@@ -20,7 +20,11 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{ApiError, AppState, routes::ApiJson};
+use crate::{
+    ApiError, AppState,
+    host_packs::{HostPacks, PackApplyInput, PackPlan, PackPlanInput},
+    routes::ApiJson,
+};
 
 /// `POST /v1/hosts/setup`.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -40,6 +44,12 @@ pub struct StartHostSetupInput {
     /// Local name for the server (default: derived from the address).
     #[serde(default)]
     pub name: Option<String>,
+    /// The owner wants the basic tool set (office, documents, media, developer tools). This only
+    /// records the intent: nothing is installed by the setup. The job ends with a `packs.plan`
+    /// step (`plan_required`) and the app opens the tools plan, where the owner sees the dry run
+    /// and approves it (`/v1/hosts/setup/packs/plan` and `/apply`).
+    #[serde(default)]
+    pub base_packs: bool,
 }
 
 /// `POST /v1/hosts/setup/update`: update the program on a server this computer
@@ -59,6 +69,8 @@ pub enum HostJobKind {
     Setup,
     /// Update the program on a server that is already added.
     Update,
+    /// Install or remove capability packs on a server that is already added.
+    Packs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -181,6 +193,24 @@ pub trait HostSetup: Send + Sync {
     fn start_update(&self, _input: StartHostUpdateInput) -> Result<HostSetupJob, HostSetupError> {
         Err(HostSetupError::Invalid(
             "updating a server is not available in this daemon".into(),
+        ))
+    }
+    /// The "installed tools" fact sheet of an added server (SSH, read-only).
+    fn packs(&self, _host_id: &str) -> Result<HostPacks, HostSetupError> {
+        Err(HostSetupError::Invalid(
+            "tool packs are not available in this daemon".into(),
+        ))
+    }
+    /// Dry run: what installing or removing packs would do. Changes nothing.
+    fn packs_plan(&self, _input: PackPlanInput) -> Result<PackPlan, HostSetupError> {
+        Err(HostSetupError::Invalid(
+            "tool packs are not available in this daemon".into(),
+        ))
+    }
+    /// Run a plan the owner approved (single use, expires): a job to poll.
+    fn packs_apply(&self, _input: PackApplyInput) -> Result<HostSetupJob, HostSetupError> {
+        Err(HostSetupError::Invalid(
+            "tool packs are not available in this daemon".into(),
         ))
     }
     fn job(&self, id: &str) -> Option<HostSetupJob>;

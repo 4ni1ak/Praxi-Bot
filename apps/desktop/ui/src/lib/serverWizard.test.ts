@@ -11,6 +11,7 @@ import {
   logLines,
   progressPercent,
   saveWizard,
+  toInput,
   wizardReducer,
   type WizardState
 } from "./serverWizard.ts";
@@ -127,4 +128,12 @@ test("the pairing code is found among other pasted console lines", () => {
   assert.equal(extractTicket("  bot-pair:ABC234  "), "bot-pair:ABC234");
   assert.equal(extractTicket("sudo bash -s"), null);
   assert.equal(extractTicket(""), null);
+});
+
+test("the basic tool set is an explicit opt-in: off by default, in a fresh and in a restored wizard", () => {
+  assert.equal(initialWizard.basePacks, false);
+  assert.equal(toInput({ ...initialWizard, host: "h", keyPath: "k" }).base_packs, false);
+  assert.equal(toInput({ ...initialWizard, basePacks: true, host: "h", keyPath: "k" }).base_packs, true);
+  const store = { getItem: () => JSON.stringify({ page: "form", basePacks: true }), setItem: () => undefined, removeItem: () => undefined };
+  assert.equal(loadWizard(store).basePacks, false, "a stale saved state cannot switch it on");
 });

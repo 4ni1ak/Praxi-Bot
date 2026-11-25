@@ -308,6 +308,13 @@
     },
     "noDaemon": "Yerel Praxi servisi çalışmıyor. Uygulamayı yeniden başlatıp yeniden dene.",
     "noKeys": ".ssh klasöründe anahtar dosyası bulunamadı. İndirdiğin anahtar dosyasının yolunu yaz.",
+    "packs": {
+      "body": "Sunucu eklendikten sonra planı görmek için aç: {{list}}; toplam {{size}}. Neyin değişeceğini görüp onaylamadan hiçbir şey kurulmaz.",
+      "planBody": "Sunucu eklendi. Tam olarak nelerin kurulacağını incele ve başlatmak için onayla.",
+      "planOpen": "Planı incele",
+      "planTitle": "Araçlar henüz kurulmadı",
+      "title": "Eklemeden sonra temel araçları hazırla"
+    },
     "pairChecks": {
       "models": {
         "fix": "Henüz izin yok. Sunucuda şunu çalıştır: bot host admin --all-desktops . Modelleri sonra sunucunun sayfasından gönderebilirsin.",
@@ -6303,6 +6310,119 @@
   "thisComputerOnly": {
     "body": "Yerel modeller botun çalıştığı bilgisayarda çalışır. {{name}} bir sunucu, bu yüzden bunları Bu bilgisayar'da kur.",
     "switch": "Bu bilgisayara geç"
+  },
+  "toolPacks": {
+    "back": "Geri",
+    "basicSet": "Temel seti seç",
+    "button": "Araçlar",
+    "confirmInstall": "Kur",
+    "confirmRemove": "Kaldır",
+    "doneInstall": "Araçlar kuruldu",
+    "doneInstallBody": "Bu sunucudaki botların artık bunları kullanabilir.",
+    "doneRemove": "Araçlar kaldırıldı",
+    "dontClose": "Birkaç dakika sürebilir. Uygulamayı kullanmaya devam edebilirsin.",
+    "found": "Bulunan programlar: {{n}}",
+    "lead": "Botlarının bu sunucuda kullanabileceği programlar.",
+    "listLabel": "Araç paketleri",
+    "loading": "Sunucuya bakılıyor…",
+    "noLogin": {
+      "body": "Praxi araçları senin kendi SSH girişin üzerinden kurar. Sunucuyu “Gelişmiş: SSH kullan” ile yeniden ekle ya da araçları sunucuda kendin kur.",
+      "title": "Bu sunucu girişsiz eklenmiş"
+    },
+    "nothingToDo": "Zaten tamam",
+    "packs": {
+      "dev": {
+        "desc": "git, GitHub, Python, Node ve hızlı arama",
+        "name": "Geliştirici araçları"
+      },
+      "docs": {
+        "desc": "Belgeleri dönüştür, PDF oku ve birleştir",
+        "name": "Belgeler ve PDF"
+      },
+      "media": {
+        "desc": "Medyayı dönüştür, kes ve yeniden boyutlandır",
+        "name": "Ses, video ve görüntü"
+      },
+      "ocr": {
+        "desc": "Tarama ve fotoğraflardaki yazıyı oku (Türkçe, İngilizce)",
+        "name": "Görsellerden metin"
+      },
+      "office": {
+        "desc": "Word, Excel, PowerPoint ve PDF çıktısı, Türkçe yazı tipleriyle",
+        "name": "Ofis dosyaları"
+      }
+    },
+    "planning": "Neyin değişeceği kontrol ediliyor…",
+    "previewLabel": "Neler değişecek",
+    "progress": "İlerleme",
+    "reason": {
+      "connection": {
+        "body": "Sunucunun açık ve erişilebilir olduğundan emin ol, sonra tekrar dene.",
+        "title": "Praxi sunucuya ulaşamadı"
+      },
+      "dependants": {
+        "body": "Sunucudaki başka bir şey bu araçları kullanıyor, bu yüzden kalıyorlar.",
+        "title": "Başka yazılımlar buna ihtiyaç duyuyor"
+      },
+      "failed": {
+        "body": "Sunucu işlemi durdurdu; örneğin disk dolu ya da başka bir güncelleme sürüyor olabilir. Sunucun sağlam; tekrar deneyebilirsin.",
+        "title": "Tamamlanamadı"
+      },
+      "needs_admin": {
+        "body": "Yönetici yetkisi olan bir sunucu girişi kullan (parolasız sudo), sonra tekrar dene.",
+        "title": "Bu giriş yazılım kuramıyor"
+      },
+      "shared": {
+        "body": "Praxi bunları kaldırmaz: sunucunun bunlara ihtiyacı var.",
+        "title": "Ortak sistem araçları"
+      },
+      "unavailable": {
+        "body": "Sunucunun yazılım kaynaklarında bu araç yok.",
+        "title": "Bu sunucu bunu sunmuyor"
+      },
+      "unknown_pack": {
+        "body": "Uygulamayı güncelle ve tekrar dene.",
+        "title": "Bilinmeyen araç paketi"
+      },
+      "unsupported": {
+        "body": "Başka sistemlerde araçları sunucuda kendin kur.",
+        "title": "Yalnızca Debian ve Ubuntu sunucular destekleniyor"
+      }
+    },
+    "remove": "Kaldır",
+    "removeWarning": "Bu programlar bu sunucuda başka yazılımlar veya senin kurduğun şeyler tarafından da kullanılıyor olabilir. Kaldırmak onları yalnızca Praxi için değil, her şey için kaldırır.",
+    "review": "Gözden geçir ({{size}})",
+    "reviewNone": "Gözden geçir",
+    "rowState": {
+      "install": {
+        "done": "Kuruldu",
+        "failed": "Tamamlanamadı",
+        "pending": "Sırada",
+        "running": "Kuruluyor…"
+      },
+      "remove": {
+        "done": "Kaldırıldı",
+        "failed": "Tamamlanamadı",
+        "pending": "Sırada",
+        "running": "Kaldırılıyor…"
+      }
+    },
+    "safeInstall": "Başka hiçbir şey değişmez",
+    "safeInstallBody": "Araçlar sunucunun kendi yazılım kaynaklarından gelir. Yönetici yetkisi olan bir giriş gerekir.",
+    "safeRemove": "Yalnızca bu araçlar kaldırılır",
+    "safeRemoveBody": "Ayarların ve diğer yazılımlar olduğu gibi kalır.",
+    "size": "yaklaşık {{value}} {{unit}}",
+    "status": {
+      "installed": "Kurulu",
+      "partial": "Eksik"
+    },
+    "stop": "Bunun ardından dur",
+    "thisServer": "bu sunucu",
+    "title": "Araçlar",
+    "titleFor": "{{name}} sunucusundaki araçlar",
+    "tryAgain": "Tekrar dene",
+    "willInstall": "Kurulacak",
+    "willRemove": "Kaldırılacak"
   },
   "tray": {
     "needs": "Senden bekleyenler ({n})",

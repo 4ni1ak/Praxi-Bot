@@ -874,6 +874,7 @@ export class MockApiClient extends ApiClient {
   readonly repairs: string[] = [];
   private readonly liveView = new MockLiveViewService();
   private readonly hostSetup = new MockHostSetup();
+  private lastPlan: import("./types.ts").PackPlan | null = null;
   private webSearchConfig: WebSearchConfig = {
     order: ["searxng", "brave", "tavily", "duckduckgo", "duckduckgo_lite", "bing"],
     active_backends: ["duckduckgo", "duckduckgo_lite", "bing"],
@@ -1095,6 +1096,15 @@ export class MockApiClient extends ApiClient {
       if (!seg[2] && method === "POST") return ok(this.hostSetup.start(opts.body as never));
       if (seg[2] === "update" && method === "POST") return ok(this.hostSetup.startUpdate((opts.body as { host_id: string }).host_id));
       if (seg[2] === "ssh-keys") return ok({ keys: this.hostSetup.keys() });
+      if (seg[2] === "packs") {
+        if (seg[3] === "plan") {
+          const b = opts.body as { host_id: string; action: "install" | "remove"; packs: string[] };
+          this.lastPlan = this.hostSetup.plan(b.host_id, b.action, b.packs);
+          return ok(this.lastPlan);
+        }
+        if (seg[3] === "apply") return ok(this.hostSetup.startPacks((opts.body as { plan_id: string }).plan_id, this.lastPlan));
+        return ok(this.hostSetup.packs(seg[3]));
+      }
       if (seg[2] === "bootstrap") {
         const command = ["S=; [ \"$(id -u)\" -eq 0 ] || S=sudo; $S bash -s <<'PRAXI_SETUP'", "PRAXI_TAG=v0.1.0", "# (mock)", "praxi_main </dev/null", "PRAXI_SETUP", ""].join("\n");
         return ok({ release_tag: "v0.1.0", command, ticket_minutes: 30, published: true });

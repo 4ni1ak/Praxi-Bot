@@ -82,6 +82,9 @@ import type {
   HostStatus,
   PcRequestList,
   HostSetupJob,
+  HostPacks,
+  PackAction,
+  PackPlan,
   HostVersion,
   SshKeyHint,
   StartHostSetupInput,
@@ -734,6 +737,18 @@ export class ApiClient {
   /** Update the program on a server this computer added (owner only; its stored SSH details are used). */
   startHostUpdate(hostId: string): Promise<HostSetupJob> {
     return this.request("POST", "/hosts/setup/update", { body: { host_id: hostId } });
+  }
+  /** What a server has installed and what each tool pack would add (owner only; SSH, read-only). */
+  getHostPacks(hostId: string): Promise<HostPacks> {
+    return this.request("GET", `/hosts/setup/packs/${encodeURIComponent(hostId)}`);
+  }
+  /** Dry run: what installing or removing packs would do. Changes nothing (owner only; the owner key is added for the local daemon). */
+  planHostPacks(hostId: string, action: PackAction, packs: string[]): Promise<PackPlan> {
+    return this.request("POST", "/hosts/setup/packs/plan", { body: { host_id: hostId, action, packs } });
+  }
+  /** Run exactly the plan the owner saw (single use). Returns a job to poll with getHostSetup. */
+  applyHostPacks(planId: string): Promise<HostSetupJob> {
+    return this.request("POST", "/hosts/setup/packs/apply", { body: { plan_id: planId } });
   }
   /** The version a paired server runs (fails when it is off). */
   getHostVersion(hostId: string): Promise<HostVersion> {
