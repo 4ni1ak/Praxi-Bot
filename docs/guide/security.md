@@ -213,6 +213,20 @@ repairs, Telegram pairing and the signed webhook ingress. Every change it makes
 is written to the audit log (desktop, kind of change, method, path; never the
 body), and the owner key itself is never sent over the link.
 
+Secrets never travel back over that link. Keys and passwords are write-only,
+the owner key and the API token are never an output, and an administrator
+Desktop cannot reveal the plaintext of a stored login, password or card
+(`POST /v1/fill-secrets/reveal` is on the never-list and the handler also
+insists on the person at the host's own app), so a stolen administrator Desktop
+cannot drain the vault. One route shows a credential once on purpose: creating
+an incoming webhook for a bot (`POST /v1/bots/{id}/incoming-webhooks`) returns
+its HMAC secret in that one answer, because whoever sets the webhook up must
+paste it into the sending service; it is the owner's job and is audited.
+Reads of sensitive collections by an administrator Desktop (audit export, chat
+export, the list of stored secret names, the mail send log, the usage export)
+are written to the audit log like changes, and a policy change also records the
+coarse level before and after (never the body).
+
 Phones, nodes, other hosts and Desktops that are not confirmed are never the
 owner: of the owner-only routes they keep only what a device does every day
 (deciding approvals and questions, the screen takeover buttons, timers), and a

@@ -446,6 +446,13 @@ pub(crate) async fn reveal_fill_secret(
     ApiJson(input): ApiJson<RevealFillSecret>,
 ) -> Result<(HeaderMap, Json<RevealFillSecretResponse>), ApiError> {
     let svc = service(&s, &actor)?;
+    // The plaintext is shown only to the person at this computer's own app, never to a paired
+    // device, not even the host's administrator desktop (also on the never-list of the peer guard).
+    if !actor.local {
+        return Err(ApiError::forbidden(
+            "a stored secret is revealed only at this computer's own app",
+        ));
+    }
     if !input.confirm {
         return Err(ApiError::bad_request(
             "owner confirmation is required to reveal a secret",

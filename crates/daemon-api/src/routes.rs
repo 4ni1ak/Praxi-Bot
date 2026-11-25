@@ -1755,6 +1755,13 @@ fn level_name(l: &Level) -> &'static str {
     }
 }
 
+/// The global policy as one coarse word for an audit row: a preset name, or `custom`.
+pub(crate) fn coarse_policy_level(s: &AppState) -> String {
+    policy_dto(&s.agent().global_policy())
+        .preset
+        .unwrap_or_else(|| "custom".to_owned())
+}
+
 fn policy_dto(p: &Policy) -> PolicyDto {
     let preset = ["read-only", "approve-destructive", "read-and-draft", "full"]
         .into_iter()

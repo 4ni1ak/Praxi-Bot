@@ -178,7 +178,17 @@ pub(crate) fn protect_execution_config(
 /// 6. use the signed ingress of an incoming webhook (`/v1/incoming-webhooks…`):
 ///    its credential is the HMAC secret, never a paired device;
 /// 7. grant or withdraw the screen permissions of paired devices
-///    (`/v1/view/privileges…`): that is `bot host screen` on the host.
+///    (`/v1/view/privileges…`): that is `bot host screen` on the host;
+/// 8. reveal the plaintext of a stored fill secret (`POST /v1/fill-secrets/reveal`):
+///    a login, password or card is typed by the bot on the host and never needs
+///    to be read over the link, so a stolen administrator desktop cannot drain
+///    the vault (the handler also insists on the person at the host's own app).
+///
+/// No other route returns secret material: the API token and the owner key are
+/// never an output, provider/mail/search/voice keys and secrets are write-only,
+/// MCP facade tokens and host copy-setup are on this list (3, 2), and the one
+/// open route that shows a credential once is creating an incoming webhook
+/// (its HMAC secret, intended: see `docs/guide/security.md`).
 ///
 /// Two more refusals hold for every peer and are checked elsewhere: answering
 /// an overlay question of the host's own screen (`answers_overlay_question`)
@@ -206,7 +216,31 @@ pub(crate) fn admin_desktop_never(method: &Method, check_path: &str) -> Option<&
     if under(check_path, "/v1/view/privileges") {
         return Some("screen permissions of devices are granted on the host itself");
     }
+    if *method == Method::POST && check_path == "/v1/fill-secrets/reveal" {
+        return Some("revealing a stored secret is done at the host's own app");
+    }
     None
+}
+
+/// A read of a sensitive collection by the administrator desktop (the audit
+/// trail, a chat export, the list of stored secret names, the mail send log,
+/// the usage export): attributed like a change, path and method only.
+fn sensitive_read(method: &Method, check_path: &str) -> bool {
+    if !matches!(*method, Method::GET | Method::HEAD) {
+        return false;
+    }
+    matches!(
+        check_path,
+        "/v1/audit"
+            | "/v1/audit/export"
+            | "/v1/fill-secrets"
+            | "/v1/email/guard/send-log"
+            | "/v1/email/guard/send-log.csv"
+            | "/v1/usage/export"
+    ) || check_path
+        .strip_prefix("/v1/chats/")
+        .and_then(|rest| rest.strip_suffix("/export"))
+        .is_some_and(|id| !id.is_empty() && !id.contains('/'))
 }
 
 /// The name an audit row gives the kind of owner action: the first path segment
@@ -748,10 +782,13 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
     let decision = path.starts_with("/v1/approvals/")
         || path.starts_with("/v1/questions/")
         || path.starts_with("/v1/control/");
+    let policy_before = (admin && method == Method::PUT && check_path == "/v1/policy")
+        .then(|| crate::routes::coarse_policy_level(&state));
     if admin
-        && is_mutating(&method)
         && !decision
-        && (owner_action || crate::owner::is_owner_route(method.as_str(), &check_path))
+        && ((is_mutating(&method)
+            && (owner_action || crate::owner::is_owner_route(method.as_str(), &check_path)))
+            || sensitive_read(&method, &check_path))
     {
         if let Err(error) = state.leader().admit_admin_call() {
             return error.into_response();
@@ -859,6 +896,20 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
         return ApiError::internal(error).into_response();
     }
     let response = next.run(req).await;
+    // The policy is the one change whose size matters at a glance: the coarse level (a preset name
+    // or `custom`) before and after, never the body.
+    if let Some(before) = policy_before
+        && response.status().is_success()
+        && let Err(error) = crate::host_admin::audit(
+            &state,
+            &crate::host_admin::admin_for(&peer.key),
+            "host.admin.settings",
+            &serde_json::json!({"class": "policy", "method": "PUT", "path": "/v1/policy",
+                "level_before": before, "level_after": crate::routes::coarse_policy_level(&state)}),
+        )
+    {
+        return error.into_response();
+    }
     if let Some(actor) = audit_actor
         && let Err(error) = state.storage().append_audit(
             state.user_id(), None, &actor, "peer.decision_completed",
@@ -927,6 +978,8 @@ mod tests {
             (Method::POST, "/v1/incoming-webhooks/abc"),
             // 7. screen permissions of devices
             (Method::PUT, "/v1/view/privileges/abc"),
+            // 8. plaintext of a stored secret
+            (Method::POST, "/v1/fill-secrets/reveal"),
         ] {
             assert!(
                 admin_desktop_never(&method, path).is_some(),
@@ -943,6 +996,10 @@ mod tests {
             (Method::POST, "/v1/mcp/servers"),
             (Method::PUT, "/v1/mcp/servers/x"),
             (Method::POST, "/v1/skills"),
+            (Method::GET, "/v1/fill-secrets"),
+            (Method::POST, "/v1/fill-secrets"),
+            (Method::DELETE, "/v1/fill-secrets/site/login"),
+            (Method::POST, "/v1/fill-secrets/reveal/more"),
             (Method::PUT, "/v1/email/channel"),
             (Method::PUT, "/v1/email/guard/settings"),
             (Method::POST, "/v1/connection-test/provider"),
@@ -959,6 +1016,30 @@ mod tests {
             (Method::POST, "/v1/doctors"),
         ] {
             assert_eq!(admin_desktop_never(&method, path), None, "{method} {path}");
+        }
+    }
+
+    #[test]
+    fn sensitive_reads_of_the_admin_desktop_are_attributed() {
+        for path in [
+            "/v1/audit",
+            "/v1/audit/export",
+            "/v1/fill-secrets",
+            "/v1/email/guard/send-log.csv",
+            "/v1/usage/export",
+            "/v1/chats/0190f/export",
+        ] {
+            assert!(sensitive_read(&Method::GET, path), "{path}");
+            assert!(sensitive_read(&Method::HEAD, path), "{path}");
+            assert!(!sensitive_read(&Method::POST, path), "{path}");
+        }
+        for path in [
+            "/v1/chats",
+            "/v1/chats/x/y/export",
+            "/v1/policy",
+            "/v1/bots",
+        ] {
+            assert!(!sensitive_read(&Method::GET, path), "{path}");
         }
     }
 

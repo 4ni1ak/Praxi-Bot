@@ -76,6 +76,8 @@ const REFUSALS: ReadonlyArray<readonly [needle: string, key: string]> = [
   ["host-local diagnostics are not allowed", "hostOnly"],
   ["not a peer path", "hostOnly"],
   ["screen permissions of devices are granted on the host", "hostOnly"],
+  ["revealing a stored secret is done at the host", "hostOnly"],
+  ["a stored secret is revealed only at this computer", "hostOnly"],
   ["composio connections are managed by the owner", "ownerOnly"],
   ["only the local user answers overlay questions", "overlay"],
   ["only the local user may do this", "localOnly"],

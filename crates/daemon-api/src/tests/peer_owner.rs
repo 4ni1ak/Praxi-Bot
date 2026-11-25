@@ -335,8 +335,18 @@ async fn the_admin_desktop_changes_the_policy_searches_messages_and_sets_the_lim
         .collect();
     assert!(classes.contains(&"policy"), "{classes:?}");
     assert!(classes.contains(&"spend-limit"), "{classes:?}");
+    // The policy row also says how big the change was: coarse level before and after, nothing else.
+    let policy_row = rows
+        .iter()
+        .find(|a| a.detail["level_after"].is_string())
+        .expect("a policy row with the levels");
+    assert_eq!(policy_row.detail["level_after"], "read-only");
+    assert_ne!(
+        policy_row.detail["level_before"],
+        policy_row.detail["level_after"]
+    );
     assert!(
-        !format!("{audit:?}").contains("read-only"),
+        !format!("{audit:?}").contains("\"preset\""),
         "never the body"
     );
 
@@ -525,5 +535,58 @@ async fn peer_call_helper_still_reaches_the_same_router() {
     )
     .await;
     assert_eq!(ok.status, StatusCode::OK);
+    r.net.shutdown().await;
+}
+
+/// Revealing a stored secret never works over the link, also for the administrator desktop, and
+/// the refusal leaves no `fill_secret.reveal` row (it never reached the vault).
+#[tokio::test]
+async fn the_admin_desktop_cannot_reveal_a_stored_secret() {
+    let r = rig().await;
+    let admin = (r.admin_key.as_str(), PeerRole::Desktop);
+    let resp = peer_request(
+        &r.t,
+        admin,
+        Method::POST,
+        "/v1/fill-secrets/reveal",
+        &[("x-praxi-owner-key", OWNER)],
+        Some(json!({"name": "site/login", "confirm": true})),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::FORBIDDEN, "{:?}", resp.json());
+    let audit = r.t.state.storage().list_audit(r.t.state.user_id()).unwrap();
+    assert!(!audit.iter().any(|a| a.action == "fill_secret.reveal"));
+    assert!(!audit.iter().any(|a| a.action == "host.admin.settings"));
+    r.net.shutdown().await;
+}
+
+/// Reads of sensitive collections by the administrator desktop are attributed (path and method).
+#[tokio::test]
+async fn an_admin_read_of_a_sensitive_collection_leaves_an_audit_row() {
+    let r = rig().await;
+    let admin = (r.admin_key.as_str(), PeerRole::Desktop);
+    for path in [
+        "/v1/audit/export",
+        "/v1/usage/export",
+        "/v1/email/guard/send-log.csv",
+    ] {
+        peer_request(&r.t, admin, Method::GET, path, &[], None).await;
+    }
+    // An ordinary read is not a row.
+    peer_request(&r.t, admin, Method::GET, "/v1/policy", &[], None).await;
+    let audit = r.t.state.storage().list_audit(r.t.state.user_id()).unwrap();
+    let paths: Vec<&str> = audit
+        .iter()
+        .filter(|a| a.action == "host.admin.settings")
+        .filter_map(|a| a.detail["path"].as_str())
+        .collect();
+    for path in [
+        "/v1/audit/export",
+        "/v1/usage/export",
+        "/v1/email/guard/send-log.csv",
+    ] {
+        assert!(paths.contains(&path), "{path} in {paths:?}");
+    }
+    assert!(!paths.contains(&"/v1/policy"));
     r.net.shutdown().await;
 }
