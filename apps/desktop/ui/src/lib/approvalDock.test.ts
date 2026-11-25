@@ -90,7 +90,7 @@ test("the chat asks approvals only in the dock: no inline card, no second strip,
   assert.match(view, /<div className=\{styles\.boxWrap\}[^>]*>\s*<ApprovalDock pages=\{dockPages\}/);
   // A message typed while an approval waits goes to the daemon (which skips the approval).
   // (`queuesLocally` is false while `approvalWaits`, which also holds when the host says the run waits but no card arrived.)
-  assert.match(view, /queuesLocally\(\{ runActive: active, approvalWaits, slashCommand: body\.startsWith\("\/"\), hasFiles \}\)/);
+  assert.match(view, /queuesLocally\(\{ runActive: active \|\| offline, approvalWaits: approvalWaits && !offline, slashCommand: body\.startsWith\("\/"\), hasFiles \}\)/);
   assert.match(view, /approvalWaits = pending\.own\.some\(\(e\) => e\.kind === "approval"\) \|\| waitLost/);
 });
 

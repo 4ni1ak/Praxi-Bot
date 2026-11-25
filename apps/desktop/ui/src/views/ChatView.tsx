@@ -117,7 +117,8 @@ import { activeRunAfterCancel, composerButton } from "../lib/composerRun";
 import { ATTACHMENT_ACCEPT, filesOf } from "../lib/attachments";
 import { AttachmentDraft } from "../lib/attachmentDraft";
 import { ComposerFiles } from "../components/Attachments";
-import { enqueue, putBack, queuesLocally, removeQueued, takeForNow, takeForRunEnd } from "../lib/messageQueue";
+import { canAutoDeliver, enqueue, queuesLocally, removeQueued, takeForRunEnd, type QueuedMessage } from "../lib/messageQueue";
+import { createQueueDelivery } from "../lib/queueDelivery";
 import { groupPending, shouldBatch } from "../lib/approvalBatch";
 import { approvalHeadline, type T as PlainT } from "../lib/approvalPlain";
 import { useChatQueue } from "../state/useChatQueue";
@@ -152,6 +153,9 @@ import {
 import { useDaemon } from "../state/DaemonContext";
 import { appLedger, cancelRun, requestStop, useLedgerVersion } from "../state/appStop";
 import { useProviders } from "../state/useProviders";
+import { useConnectivity } from "../state/useConnectivity";
+import { canAnswer } from "../lib/connectivity";
+import { queueHasRoom } from "../lib/messageQueue";
 import {
   assignChildRuns,
   itemTs,
@@ -293,12 +297,16 @@ export function ChatView({
     refreshBots,
     restartDaemon,
     ensureHostOnline,
+    activeComputerId,
     hostStarting
   } = useDaemon();
   const chat = chats.find((c) => c.id === chatId);
   const bot = bots.find((b) => b.id === chat?.bot_id);
   const view = bot ? botView(bot) : null;
   const { dto: providersDto } = useProviders();
+  const { report: connectionReport, state: connectionState } = useConnectivity();
+  const modelChain = bot ? [botView(bot).executor, ...draftFromBot(bot).fallback.split(",").map((s) => s.trim()).filter(Boolean)] : [];
+  const offline = connectionState === "host_unreachable" || !canAnswer(connectionReport, modelChain);
   const { askEngine, applyEngine, fixBotEngine } = useEngineConsent();
   // Only the internal validation-only provider exists: nothing can answer yet. Sending shows a
   // friendly "connect a model" card instead of a failed run.
@@ -353,7 +361,11 @@ export function ChatView({
   draftRef.current = text;
   // A pasted credential found in the draft before send (kinds only; the value stays in `text`).
   const [secretKinds, setSecretKinds] = useState<string[] | null>(null);
-  const [queue, updateQueue] = useChatQueue(chatId);
+  const [queue, updateQueue] = useChatQueue(`${activeComputerId}:${chatId}`);
+  const offlineSending = useRef(false);
+  const queueSending = useRef(false);
+  const delivery = useMemo(() => createQueueDelivery(updateQueue), [updateQueue]);
+  const queuedRun = useRef<string | null>(null);
   /** Messages queued in this view. A chat opened from a link delivers only these at run end. */
   const queuedHere = useRef(new Set<string>());
   // Up / Down recall this chat's earlier messages; the draft is kept (lib/composerHistory).
@@ -911,18 +923,26 @@ export function ChatView({
         return;
       }
     }
+    if (offline && (hasFiles || (body.startsWith("/") && parseSlashInput(body)?.name !== "stop"))) {
+      toast.show(t("offline.keepDraft"), "info");
+      return;
+    }
     // A message typed while the bot works joins the queue as a "Sirada." bubble (slash commands such
     // as /stop still go straight to the daemon). It is delivered when the run ends or by "Simdi gonder".
     // While the run waits on an approval the message is not queued behind it: it goes to the daemon,
     // which skips the approval (a denial) and starts the next turn with this message.
     // `waitLost`: the host says the run waits for the user but the card never reached this app (a paired
     // host's events can lag or miss). The message must still go to the daemon, never sit in a local queue
-    // behind a run that will not move on its own.
+    // behind a run that will not move on its own. Offline, nothing can reach the daemon: queue instead.
     const approvalWaits = pending.own.some((e) => e.kind === "approval") || waitLost;
-    if (queuesLocally({ runActive: active, approvalWaits, slashCommand: body.startsWith("/"), hasFiles })) {
+    if (queuesLocally({ runActive: active || offline, approvalWaits: approvalWaits && !offline, slashCommand: body.startsWith("/"), hasFiles })) {
+      if (!queueHasRoom(queue, body)) {
+        toast.show(t("offline.full"), "info");
+        return;
+      }
       const id = crypto.randomUUID();
       queuedHere.current.add(id);
-      updateQueue((q) => enqueue(q, body, id, Date.now()));
+      updateQueue((q) => enqueue(q, body, id, Date.now(), offline, appLedger().stopEpoch()));
       setText("");
       scrollToEnd();
       return;
@@ -1142,18 +1162,43 @@ export function ChatView({
       : "none";
   // Queued messages: delivered when the run ends (the daemon's queue path), or at once by "Simdi gonder"
   // (its steer path). A Stop pressed here holds them, so nothing new starts right after a Stop.
-  const deliverQueued = async (message: { id: string; text: string; createdMs: number }, how: "queue" | "steer") => {
-    if (!client) {
-      return;
-    }
-    try {
-      await client.sendMessage(chatId, message.text, how, await ownerKey(client.baseUrl));
-      await Promise.all([loadMessages(), refreshRuns()]);
-    } catch (e) {
-      updateQueue((q) => putBack(q, message));
-      setSendFailure(humanError(e));
-    }
-  };
+  // The message leaves the queue only when its delivery starts (atomically, see queueDelivery) and only
+  // that delivery puts it back. Returns whether a delivery started; otherwise the queue is untouched.
+  const deliverQueued = (message: QueuedMessage, how: "queue" | "steer"): boolean =>
+    delivery.deliver(message, !!client && !offline && !queueSending.current, async (m, hold) => {
+      queueSending.current = true;
+      setSending(true);
+      const epoch = appLedger().stopEpoch();
+      try {
+        const key = await ownerKey(client!.baseUrl);
+        if (epoch !== appLedger().stopEpoch()) {
+          hold({ stopEpoch: epoch });
+          return;
+        }
+        const response = await client!.sendMessage(chatId, m.text, how, key);
+        queuedRun.current = response.run_id ?? null;
+        if (response.run_id) setAckedRunId(response.run_id);
+        if (stopWhileSending.current || epoch !== appLedger().stopEpoch()) {
+          stopWhileSending.current = false;
+          setStopPending(false);
+          const victim = response.run_id ?? activeRunIdRef.current;
+          if (victim) cancelRun(victim);
+        }
+        await Promise.all([loadMessages(), refreshRuns()]);
+      } catch (e) {
+        // A timeout may have delivered the message. Keep it for a deliberate retry;
+        // never automatically replay an uncertain send after the next health check.
+        hold({ offline: false, stopEpoch: -1 });
+        offlineSending.current = false;
+        stopWhileSending.current = false;
+        setStopPending(false);
+        setSendFailure(humanError(e));
+      } finally {
+        queueSending.current = false;
+        setSending(false);
+        setAckedRunId(null);
+      }
+    });
   /** Edit & resend (`text`) or regenerate the last turn: a new run; the old turn stays as "earlier version". */
   const resendTurn = async (text?: string) => {
     if (!client || !turn || resending) {
@@ -1209,24 +1254,35 @@ export function ChatView({
   useEffect(() => {
     const was = wasActive.current;
     wasActive.current = active;
+    if (active) offlineSending.current = false;
     if (was && !active && stoppedByUser.current) {
       stoppedByUser.current = false;
       return;
     }
     // A link only opens the chat: what was queued before it stays queued until the user acts.
-    const { message } = takeForRunEnd(queue, was, active, (m) => !external || queuedHere.current.has(m.id));
-    if (message) {
-      updateQueue((q) => removeQueued(q, message.id));
-      void deliverQueued(message, "queue");
-    }
+    if (offline) return;
+    const { message } = takeForRunEnd(queue, was, active, (m) => canAutoDeliver(m, appLedger().stopEpoch()) && (!external || queuedHere.current.has(m.id)));
+    if (message) deliverQueued(message, "queue");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, queue, external]);
-  const sendNow = (id: string) => {
-    const { message, rest } = takeForNow(queue, id);
-    if (message) {
-      updateQueue(() => rest);
-      void deliverQueued(message, "steer");
+  }, [active, queue, external, offline]);
+  useEffect(() => {
+    const message = queue[0];
+    if (queuedRun.current && serverRuns.some((r) => r.id === queuedRun.current && !isProcessingRunState(r.state))) {
+      offlineSending.current = false;
+      queuedRun.current = null;
     }
+    if (!connectionReport || offline || active || sending || offlineSending.current || stoppedByUser.current ||
+        !client || !message?.offline || !canAutoDeliver(message, appLedger().stopEpoch()) || (external && !queuedHere.current.has(message.id))) return;
+    // Only a delivery that really started blocks the next one; run end may have taken this message already.
+    offlineSending.current = true;
+    if (!deliverQueued(message, "queue")) offlineSending.current = false;
+    // A sent message waits for its run to become active before another can start.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionReport, offline, active, sending, queue, client, external, serverRuns]);
+  const sendNow = (id: string) => {
+    if (offline || sending || queueSending.current) return;
+    const message = queue.find((m) => m.id === id);
+    if (message) deliverQueued(message, "steer");
   };
   useLedgerVersion();
   const ledgerRun = activeRunId
@@ -1864,6 +1920,8 @@ export function ChatView({
           ) : null}
           <QueuedMessages
             queue={queue}
+            offline={offline}
+            stopEpoch={appLedger().stopEpoch()}
             onSendNow={sendNow}
             onRemove={(id) => updateQueue((q) => removeQueued(q, id))}
           />

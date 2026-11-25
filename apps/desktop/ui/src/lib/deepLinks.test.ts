@@ -254,5 +254,5 @@ test("desktop wiring keeps exact event history and forwards chat suppression wit
   assert.match(chatView, /followNewSince\.current === null && parseSlashInput\(body\)\?\.name === "new"/);
   // At run end a linked chat delivers only messages queued in this view, never ones queued before.
   assert.match(chatView, /queuedHere\.current\.add\(id\);\s*updateQueue\(\(q\) => enqueue\(q, body, id,/);
-  assert.match(chatView, /takeForRunEnd\(queue, was, active, \(m\) => !external \|\| queuedHere\.current\.has\(m\.id\)\)/);
+  assert.match(chatView, /takeForRunEnd\(queue, was, active, \(m\) => canAutoDeliver\(m, appLedger\(\)\.stopEpoch\(\)\) && \(!external \|\| queuedHere\.current\.has\(m\.id\)\)\)/);
 });

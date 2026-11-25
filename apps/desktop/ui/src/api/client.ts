@@ -299,6 +299,10 @@ function takeLeftoverViewSessions(): string[] {
 }
 
 export class ApiClient {
+  /** The selected host probes its model services; navigator.onLine is not consulted. */
+  connectivity(): Promise<import("../lib/connectivity").ConnectivityReport> {
+    return this.request("GET", "/connectivity");
+  }
   listKnowledgeEmailCaptures(bot: string): Promise<KnowledgeEmailCapture[]> {
     return this.request("GET", `/bots/${encodeURIComponent(bot)}/knowledge/email-captures`);
   }

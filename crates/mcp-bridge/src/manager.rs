@@ -458,6 +458,12 @@ impl Server {
                     return Err(e);
                 }
                 Err(e) => {
+                    if matches!(self.config.transport, McpTransport::Http { .. }) {
+                        // Offline HTTP endpoints fail once; callers may reconnect deliberately.
+                        // Keep local launcher backoff, which also covers cold npx/uvx startup.
+                        self.record_failure(&e);
+                        return Err(e);
+                    }
                     tracing::warn!(server = %self.config.id, attempt, error = %e, "MCP connect failed");
                     last = Some(e);
                     if attempt + 1 < attempts {

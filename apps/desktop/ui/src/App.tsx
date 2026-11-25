@@ -8,6 +8,7 @@ import { isMockMode } from "./api/mockMode";
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { ConnectivityNotice } from "./components/ConnectivityNotice";
 import {
   BotAvatar,
   Button,
@@ -1398,6 +1399,7 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
       }
     >
       <div id="main-content" tabIndex={-1} className={styles.mainColumn}>
+        <ConnectivityNotice />
         <div className={styles.titleBar} data-tauri-drag-region>
           {/* One place picker only (the one on the right). This cell is the header's leading slot (drag region, room for a Back button) and keeps the bot chip centred. */}
           <div className={styles.titleLead} id={TITLEBAR_LEAD_ID} data-tauri-drag-region />

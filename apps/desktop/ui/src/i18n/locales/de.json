@@ -3372,6 +3372,10 @@
       "hint": "Prüfe die Verbindung und versuche es erneut.",
       "title": "Deine Nachricht wurde nicht gesendet"
     },
+    "serviceConnection": {
+      "hint": "Prüfe deine Verbindung und versuche es erneut. Prüfe vor dem Wiederholen einer Aktion, ob sie bereits ausgeführt wurde.",
+      "title": "Dieser Dienst ist nicht erreichbar"
+    },
     "serviceDown": {
       "hint": "Starte ihn neu. Deine Bots und Chats sind sicher.",
       "title": "Der lokale Dienst von Praxi wurde gestoppt"
@@ -4813,6 +4817,22 @@
     "unread": "Ungelesen",
     "unreadCount": "{{count}} ungelesen",
     "unsnooze": "Zurückholen"
+  },
+  "offline": {
+    "detail": "Deine Modelldienste sind nicht erreichbar. Praxi prüft die Verbindung automatisch erneut.",
+    "full": "Die Warteschlange ist voll (20 Nachrichten oder 32.000 Zeichen). Brich eine wartende Nachricht ab oder behalte diesen Entwurf.",
+    "held": "Wartet darauf, dass du die Nachricht sendest",
+    "host": "Dein ausgewählter Computer ist nicht erreichbar.",
+    "hostDetail": "Praxi prüft die Verbindung automatisch erneut.",
+    "keepDraft": "Behalte diesen Entwurf und sende ihn, sobald die Verbindung wieder da ist. Dateien und Befehle werden offline nicht eingereiht.",
+    "localAnswer": "Vom lokalen Modell beantwortet",
+    "memory": "Wartende Nachrichten bleiben bis zum Senden oder Abbrechen in dieser App. Beim Schließen der App werden sie gelöscht.",
+    "queued": "Wird gesendet, sobald die Verbindung wieder da ist",
+    "scheduleRetry": "Der Modelldienst ist nach begrenzten Wiederholungen nicht erreichbar. Es wurde nichts gestartet. Versuche es erneut, sobald die Verbindung wieder da ist.",
+    "scheduleSkipped": "Der Modelldienst ist nicht erreichbar. Gemäß der Regel für verpasste Ausführungen übersprungen. Du kannst es bei wiederhergestellter Verbindung erneut versuchen.",
+    "scheduleWaiting": "Warte auf eine Verbindung zum Modelldienst. Der Zeitplan versucht es erneut, bevor eine Aufgabe gestartet wird.",
+    "title": "Du bist offline.",
+    "uncertain": "Möglicherweise bereits gesendet. Prüfe den Chat, bevor du es erneut versuchst."
   },
   "overlay": {
     "actions": {

@@ -3372,6 +3372,10 @@
       "hint": "Check the connection and try again.",
       "title": "Your message was not sent"
     },
+    "serviceConnection": {
+      "hint": "Vérifiez votre connexion et réessayez. Avant de répéter une action, vérifiez si elle a déjà eu lieu.",
+      "title": "Ce service est inaccessible"
+    },
     "serviceDown": {
       "hint": "Restart it. Your bots and chats are safe.",
       "title": "Praxi's local service stopped"
@@ -4813,6 +4817,22 @@
     "unread": "Unread",
     "unreadCount": "{{count}} unread",
     "unsnooze": "Bring back"
+  },
+  "offline": {
+    "detail": "Vos services de modèle sont inaccessibles. Praxi revérifie automatiquement.",
+    "full": "La file d’attente est pleine (20 messages ou 32 000 caractères). Annulez un message en attente ou gardez ce brouillon.",
+    "held": "En attente de votre envoi",
+    "host": "L’ordinateur sélectionné est inaccessible.",
+    "hostDetail": "Praxi revérifiera la connexion automatiquement.",
+    "keepDraft": "Gardez ce brouillon et envoyez-le quand la connexion reviendra. Les fichiers et les commandes ne sont pas mis en file d’attente hors ligne.",
+    "localAnswer": "Réponse du modèle local",
+    "memory": "Les messages en attente restent dans cette application jusqu’à leur envoi ou leur annulation. Fermer l’application les efface.",
+    "queued": "Sera envoyé au retour de la connexion",
+    "scheduleRetry": "Le service de modèle reste inaccessible après plusieurs tentatives. Rien n’a été démarré. Réessayez quand la connexion reviendra.",
+    "scheduleSkipped": "Le service de modèle est inaccessible. Ignoré selon la règle des exécutions manquées de cette planification. Vous pouvez réessayer quand la connexion reviendra.",
+    "scheduleWaiting": "En attente d’une connexion au service de modèle. Cette planification réessaiera avant de démarrer tout travail.",
+    "title": "Vous êtes hors ligne.",
+    "uncertain": "Peut-être déjà envoyé. Vérifiez la conversation avant de réessayer."
   },
   "overlay": {
     "actions": {

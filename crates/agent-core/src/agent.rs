@@ -599,6 +599,27 @@ impl AgentLoop {
         self.sh.providers.read().clone()
     }
 
+    /// Whether this bot has at least one reachable model in its configured chain.
+    /// Unknown/CLI endpoints remain eligible; this is an availability check, never permission.
+    ///
+    /// # Errors
+    /// Returns an error when the bot profile cannot be read.
+    pub async fn model_connection_available(
+        &self,
+        bot_id: BotId,
+    ) -> std::result::Result<bool, String> {
+        let profile = self.sh.profile_for(bot_id)?;
+        let providers = self.providers();
+        let rows = providers.connectivity.check().await;
+        Ok(std::iter::once(&profile.models.executor)
+            .chain(&profile.models.fallback)
+            .any(|model| {
+                let id = provider_catalog::ModelRef(model.clone());
+                let id = id.provider().unwrap_or(providers.default_id());
+                !rows.iter().any(|r| r.id == id && !r.reachable)
+            }))
+    }
+
     /// Replace the providers (after `POST /v1/providers/reload`); runs already
     /// streaming keep the provider they started with.
     pub fn set_providers(&self, providers: Providers) {

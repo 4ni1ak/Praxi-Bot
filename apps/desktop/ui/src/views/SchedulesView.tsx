@@ -673,7 +673,12 @@ export function SchedulesView({
                                 ) : null}
                                 {entry.error ? (
                                   <span className={styles.runError}>
-                                    {entry.error}
+                                    {entry.error.startsWith("The model service cannot be reached.")
+                                      ? t("offline.scheduleSkipped")
+                                      : entry.error.startsWith("The model service cannot be reached after bounded retries.")
+                                        ? t("offline.scheduleRetry")
+                                        : entry.error.startsWith("Waiting for a connection to the model service.")
+                                          ? t("offline.scheduleWaiting") : entry.error}
                                   </span>
                                 ) : null}
                                 {entry.chat_id ? (

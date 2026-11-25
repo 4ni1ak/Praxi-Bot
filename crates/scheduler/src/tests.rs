@@ -67,6 +67,54 @@ fn utc_ms(year: i32, month: u32, day: u32, hour: u32, min: u32, sec: u32) -> i64
         .timestamp_millis()
 }
 
+#[test]
+fn offline_skip_keeps_a_retryable_reason_and_successful_retry_clears_it() {
+    let store = ScheduleStore::open_in_memory().unwrap();
+    let schedule = Schedule::new(
+        BotId::new(),
+        None,
+        "offline",
+        ScheduleSpec::Every { seconds: 60 },
+        Payload::AgentPrompt { text: "go".into() },
+        MisfirePolicy::Skip,
+        0,
+    )
+    .unwrap();
+    store.insert(&schedule).unwrap();
+    let due = schedule.next_run_at.unwrap();
+    store
+        .reserve_occurrences(&schedule, &[due], Some(due + 60_000))
+        .unwrap();
+    store
+        .claim_occurrence(schedule.id, schedule.revision, due, due)
+        .unwrap()
+        .unwrap();
+    store.note_network_retry(schedule.id, due).unwrap();
+    assert!(
+        store
+            .occurrence_note(schedule.id, due)
+            .unwrap()
+            .unwrap()
+            .contains("Waiting")
+    );
+    store.note_offline(schedule.id, due, true).unwrap();
+    store.finish_occurrence(schedule.id, due, false).unwrap();
+    let row = store.get_occurrence(schedule.id, due).unwrap().unwrap();
+    assert_eq!(row.state, crate::OccurrenceState::Missed);
+    assert!(
+        store
+            .occurrence_note(schedule.id, due)
+            .unwrap()
+            .unwrap()
+            .contains("Skipped")
+    );
+    store
+        .claim_retry_occurrence(schedule.id, due, due + 30_000, &|_| crate::AttemptRun::None)
+        .unwrap();
+    store.finish_occurrence(schedule.id, due, true).unwrap();
+    assert!(store.occurrence_note(schedule.id, due).unwrap().is_none());
+}
+
 #[tokio::test]
 async fn cron_next_run_across_dst_spring_forward_and_fall_back() {
     // 1. Spring-forward in America/New_York:

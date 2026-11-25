@@ -3372,6 +3372,10 @@
       "hint": "Bağlantını kontrol edip yeniden dene.",
       "title": "Mesajın gönderilmedi"
     },
+    "serviceConnection": {
+      "hint": "Bağlantını kontrol edip yeniden dene. Bir işlemi tekrarlamadan önce gerçekleşip gerçekleşmediğini kontrol et.",
+      "title": "Bu servise ulaşılamıyor"
+    },
     "serviceDown": {
       "hint": "Yeniden başlat. Botların ve sohbetlerin güvende.",
       "title": "Praxi'nin yerel servisi durdu"
@@ -4813,6 +4817,22 @@
     "unread": "Okunmadı",
     "unreadCount": "{{count}} okunmamış",
     "unsnooze": "Geri getir"
+  },
+  "offline": {
+    "detail": "Model servislerine ulaşılamıyor. Praxi bağlantıyı kendiliğinden yeniden kontrol eder.",
+    "full": "Kuyruk dolu (20 mesaj veya 32.000 karakter). Sıradaki bir mesajı iptal et ya da bu taslağı sakla.",
+    "held": "Göndermeni bekliyor",
+    "host": "Seçili bilgisayarına ulaşılamıyor.",
+    "hostDetail": "Praxi bağlantıyı kendiliğinden yeniden kontrol edecek.",
+    "keepDraft": "Bu taslağı sakla ve bağlantı gelince gönder. Dosyalar ve komutlar çevrimdışıyken sıraya alınmaz.",
+    "localAnswer": "Yerel model yanıtladı",
+    "memory": "Sıradaki mesajlar gönderilene veya iptal edilene kadar bu uygulamada tutulur. Uygulama kapanınca silinir.",
+    "queued": "Bağlantı gelince gönderilecek",
+    "scheduleRetry": "Sınırlı sayıda yeniden denemeye rağmen model servisine ulaşılamıyor. Hiçbir işlem başlamadı. Bağlantı gelince yeniden dene.",
+    "scheduleSkipped": "Model servisine ulaşılamıyor. Planın kaçırılan çalışma kuralına göre atlandı. Bağlantı gelince yeniden deneyebilirsin.",
+    "scheduleWaiting": "Model servisine bağlanmak için bekleniyor. Plan, herhangi bir işe başlamadan önce yeniden deneyecek.",
+    "title": "Çevrimdışısın.",
+    "uncertain": "Gönderilmiş olabilir. Yeniden denemeden önce sohbeti kontrol et."
   },
   "overlay": {
     "actions": {

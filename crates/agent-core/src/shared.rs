@@ -222,6 +222,8 @@ pub struct StreamItem {
 /// Chat providers by id, with a default.
 #[derive(Clone)]
 pub struct Providers {
+    /// Text-free reachability of the configured HTTP providers, shared across snapshots.
+    pub connectivity: provider_catalog::connectivity::Connectivity,
     default: Option<Arc<dyn ChatProvider>>,
     /// Explicit default provider id (may refer to an HTTP provider or a `cli:*` engine).
     default_id: Option<String>,
@@ -244,6 +246,7 @@ impl Providers {
     #[must_use]
     pub fn unconfigured() -> Self {
         Self {
+            connectivity: provider_catalog::connectivity::Connectivity::default(),
             default: None,
             default_id: None,
             by_id: HashMap::new(),
@@ -269,6 +272,7 @@ impl Providers {
         let id = p.id().to_owned();
         by_id.insert(id.clone(), Arc::clone(&p));
         Self {
+            connectivity: provider_catalog::connectivity::Connectivity::default(),
             default: Some(p),
             default_id: Some(id),
             by_id,
@@ -513,6 +517,19 @@ pub fn build_providers(
     for cli_id in cli_built {
         providers = providers.with_cli(cli_id);
     }
+    providers.connectivity = provider_catalog::connectivity::Connectivity::new(
+        cfg.providers
+            .iter()
+            .filter(|p| p.enabled && providers.get(&p.id).is_some())
+            .filter_map(|p| {
+                let entry = p.custom.as_ref().or_else(|| catalog.get(&p.id))?;
+                Some(provider_catalog::connectivity::Target {
+                    id: p.id.clone(),
+                    url: entry.base_url.clone(),
+                })
+            })
+            .collect(),
+    );
     if let Some(def) = default_id
         && providers.ids().iter().any(|id| id == &def)
     {

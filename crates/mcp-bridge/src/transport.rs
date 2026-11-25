@@ -500,6 +500,11 @@ pub(crate) async fn open(
         external,
     );
     let config = config.clone();
+    let timeout = if matches!(config.transport, McpTransport::Http { .. }) {
+        timeout.min(Duration::from_secs(5))
+    } else {
+        timeout
+    };
     let secrets = secrets.clone();
     let stderr = Arc::clone(stderr);
     let diagnostics = tracing::dispatcher::get_default(Clone::clone);
@@ -532,12 +537,16 @@ pub(crate) async fn open(
                 }
             }
             McpTransport::Http { url, headers } => {
-                let transport = StreamableHttpClientTransport::from_config(http_config(
-                    id,
-                    url,
-                    headers,
-                    &secrets.headers,
-                )?);
+                // A disconnected service must fail before the long tool execution deadline.
+                // No whole-request timeout: legitimate tools and SSE can run for longer.
+                let client = reqwest::Client::builder()
+                    .connect_timeout(Duration::from_secs(3))
+                    .build()
+                    .map_err(|e| transport_err(id, e.without_url()))?;
+                let transport = StreamableHttpClientTransport::with_client(
+                    client,
+                    http_config(id, url, headers, &secrets.headers)?,
+                );
                 BridgeClient { signals }
                     .serve(transport)
                     .await
@@ -561,6 +570,31 @@ mod tests {
     use crate::error::McpErrorKind;
 
     use super::*;
+
+    #[tokio::test]
+    async fn silent_http_handshake_fails_fast() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let holding = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let cfg = McpServerConfig::http("offline", format!("http://{address}/mcp"));
+        let result = open(
+            &cfg,
+            &ResolvedSecrets::default(),
+            &Arc::default(),
+            Duration::from_secs(30),
+            None,
+            Arc::default(),
+        )
+        .await;
+        holding.abort();
+        assert!(
+            matches!(result, Err(McpError::Timeout { seconds: 5, .. })),
+            "{result:?}"
+        );
+    }
 
     #[test]
     fn http_headers_are_validated_and_marked_sensitive() {

@@ -27,6 +27,7 @@ pub mod components;
 pub mod composio;
 mod composio_routes;
 pub mod connection_test;
+mod connectivity;
 pub mod control;
 pub mod doctor;
 mod doctor_routes;
@@ -1627,6 +1628,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/events/status", get(sse::status))
         .route("/v1/policy", get(r::get_policy).put(r::put_policy))
         .route("/v1/providers", get(r::list_providers))
+        .route("/v1/connectivity", get(connectivity::get_connectivity))
         .route("/v1/providers/detected", get(r::detect_providers))
         .route("/v1/local-models", get(local_models::get_local_models))
         .route(

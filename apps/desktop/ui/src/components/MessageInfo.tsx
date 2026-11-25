@@ -42,7 +42,8 @@ export function MessageInfo({
   run,
   runDto,
   source,
-  computer = null
+  computer = null,
+  onLocalModel
 }: {
   client: ApiClient | null;
   side: "bot" | "me";
@@ -55,25 +56,32 @@ export function MessageInfo({
   source?: string | null;
   /** Name of the computer this run worked on, when known more precisely than the run record. */
   computer?: string | null;
+  /** Publish completed response provenance for the always-visible reply badge. */
+  onLocalModel?: (local: boolean) => void;
 }) {
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
   const [usage, setUsage] = useState<RunUsage | null>(null);
   const ref = useRef<HTMLButtonElement | null>(null);
-  // The usage record (model, tokens) is asked for once, the first time the popover opens.
+  // Load completed reply provenance once so the local-model chip is visible without opening the popover.
   useEffect(() => {
-    if (!open || side !== "bot" || !runId || usage || !client) {
+    if (side !== "bot" || !runId || usage || !client || (run && run.finishedMs === undefined)) {
       return undefined;
     }
     let live = true;
     client
       .getRunUsage(runId)
-      .then((u) => live && setUsage(u))
+      .then((u) => {
+        if (live) {
+          setUsage(u);
+          onLocalModel?.(u.local_model === true);
+        }
+      })
       .catch(() => undefined);
     return () => {
       live = false;
     };
-  }, [open, side, runId, usage, client]);
+  }, [open, side, runId, usage, client, run, onLocalModel]);
 
   const rows: InfoRow[] =
     side === "bot"
