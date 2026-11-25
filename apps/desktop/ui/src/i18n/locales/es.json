@@ -733,7 +733,7 @@
         "failed": "The app list could not be refreshed: showing the saved one.",
         "offline": "No connection: showing the saved app list.",
         "rate_limited": "Composio is busy: showing the saved app list.",
-        "unauthorized": "Composio sign-in ran out: showing the saved app list."
+        "unauthorized": "Composio ya no acepta el inicio de sesión guardado: se muestra la lista de apps guardada."
       },
       "connectedSection": "Connected",
       "disable": "Turn off",
@@ -758,6 +758,7 @@
       "loading": "Loading apps…",
       "noResults": "No matching apps.",
       "openFailed": "The sign-in link was not opened because it is not a Composio link.",
+      "relogin": "Iniciar sesión en Composio de nuevo",
       "retry": "Try again",
       "state": {
         "active": "Connected",
@@ -847,8 +848,11 @@
       "failed": {
         "app_link": "The page for {{name}} could not be prepared. Try again.",
         "app_open": "The page for {{name}} could not be opened.",
+        "login_expired": "Composio ya no acepta el inicio de sesión guardado, así que {{name}} aún no se puede conectar. Inicia sesión en Composio de nuevo.",
         "login_failed": "The sign-in did not finish. Try again.",
-        "login_open": "The sign-in page could not be opened."
+        "login_open": "The sign-in page could not be opened.",
+        "rate_limited": "Composio está ocupado ahora mismo. Espera un minuto y vuelve a intentar con {{name}}.",
+        "upstream": "No se pudo contactar con Composio o no respondió. Revisa la conexión del equipo donde se ejecutan los bots y vuelve a intentarlo."
       },
       "login": "The sign-in page opened in your browser. Finish it there and {{name}} opens next by itself.",
       "opened": "{{name}}'s page is open in your browser. Allow access there; it shows up as Connected here.",
@@ -2836,6 +2840,10 @@
       "composio_error": {
         "hint": "Try again in a moment. If it keeps failing, reconnect the app.",
         "title": "Composio could not finish that"
+      },
+      "composio_login_expired": {
+        "hint": "Abre Apps y pulsa Iniciar sesión en Composio de nuevo. Basta un clic en el navegador.",
+        "title": "Composio ya no acepta tu inicio de sesión"
       },
       "composio_not_configured": {
         "hint": "Add your Composio key in Apps, then try again.",

@@ -5676,7 +5676,7 @@
             }
           },
           "409": {
-            "description": "",
+            "description": "not linked, or the Composio login expired",
             "content": {
               "application/json": {
                 "schema": {
@@ -19593,6 +19593,10 @@
           "key_setup_url": {
             "type": "string",
             "description": "Where an owner who wants their own project key creates it (advanced)."
+          },
+          "login_expired": {
+            "type": "boolean",
+            "description": "Composio refused the saved credential (401/403) and nothing renewed it:\nthe owner has to sign in to Composio again, a retry cannot succeed."
           },
           "mode": {
             "$ref": "#/components/schemas/ComposioLinkMode",

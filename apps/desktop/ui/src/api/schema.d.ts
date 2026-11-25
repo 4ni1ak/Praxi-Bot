@@ -5708,6 +5708,11 @@ export interface components {
             configured: boolean;
             /** @description Where an owner who wants their own project key creates it (advanced). */
             key_setup_url: string;
+            /**
+             * @description Composio refused the saved credential (401/403) and nothing renewed it:
+             *     the owner has to sign in to Composio again, a retry cannot succeed.
+             */
+            login_expired?: boolean;
             /** @description How it is linked. */
             mode: components["schemas"]["ComposioLinkMode"];
         };
@@ -14421,6 +14426,7 @@ export interface operations {
                     "application/json": components["schemas"]["ComposioConnectDto"];
                 };
             };
+            /** @description not linked, or the Composio login expired */
             409: {
                 headers: {
                     [name: string]: unknown;

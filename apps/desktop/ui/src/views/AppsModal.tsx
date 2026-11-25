@@ -43,7 +43,7 @@ import { useMcp } from "../state/useMcp";
 import styles from "./AppsModal.module.css";
 import { AppTile, ComposioCell, GroupChips, SkeletonTiles } from "./AppsGrid";
 import { ConnectSheet } from "./ConnectSheet";
-import { type FlowCancel, type FlowState, runConnectFlow } from "../lib/connectFlow";
+import { type FlowCancel, type FlowState, classifyLinkFailure, runConnectFlow } from "../lib/connectFlow";
 import { ComposioAdvanced } from "./ComposioAdvanced";
 import { MissingComponent, componentFor } from "./MissingComponent";
 import { useComposio } from "../state/useComposio";
@@ -935,6 +935,8 @@ export function AppsModal({
     void runConnectFlow(
       {
         configured: () => c.status?.configured === true,
+        loginExpired: () => c.status?.login_expired === true,
+        classify: classifyLinkFailure,
         loginStart: () => client.composioLoginStart(),
         loginStatus: () => client.composioLoginStatus(),
         appConnect: (s) => client.composioConnect(s),
@@ -949,7 +951,7 @@ export function AppsModal({
           return;
         }
         setFlow(state);
-        if (state.step === "app") {
+        if (state.step === "app" || state.step === "failed") {
           void c.reloadStatus();
         }
         if (state.step === "opened") {
@@ -1333,9 +1335,22 @@ export function AppsModal({
                 {catalogError ? (
                   <p className={own.quiet} data-testid="apps-catalog-notice">
                     {t(`apps.composio.catalogError.${catalogError}`)}
-                    <Button size="sm" variant="ghost" onClick={() => void c.retryCatalog()}>
-                      {t("apps.composio.retry")}
-                    </Button>
+                    {catalogError === "unauthorized" ? (
+                      // A retry cannot succeed with a login Composio refuses: sign in again.
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        data-testid="apps-composio-relogin"
+                        disabled={c.login === "starting" || c.login === "waiting"}
+                        onClick={() => void c.startLogin(() => void c.retryCatalog())}
+                      >
+                        {c.login === "waiting" ? t("apps.composio.link.waiting") : t("apps.composio.relogin")}
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="ghost" onClick={() => void c.retryCatalog()}>
+                        {t("apps.composio.retry")}
+                      </Button>
+                    )}
                   </p>
                 ) : null}
                 <div className={styles.actions}>
