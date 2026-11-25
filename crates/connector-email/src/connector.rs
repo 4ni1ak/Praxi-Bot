@@ -188,6 +188,25 @@ impl EmailConnector {
         AgentMailProvider::new(self.agentmail_client()?, ApiKey::new(key)?, inbox)
     }
 
+    /// An `AgentMail` provider for `key`, bound to an inbox that already
+    /// exists (`inbox_id` is its id as the provider names it, normally the
+    /// address). Its address is learned from [`AgentMailProvider::get_inbox`].
+    ///
+    /// # Errors
+    /// [`EmailError::Input`] for a malformed key, [`EmailError::Config`] for an
+    /// invalid inbox id.
+    pub fn agentmail_for_inbox(
+        &self,
+        key: &str,
+        inbox_id: &str,
+    ) -> Result<AgentMailProvider, EmailError> {
+        AgentMailProvider::new(
+            self.agentmail_client()?,
+            ApiKey::new(key)?,
+            Some((inbox_id.to_owned(), String::new())),
+        )
+    }
+
     /// Atomically replace the whole account set (may be empty). Everything is
     /// validated first; on error the previous set stays in force.
     ///

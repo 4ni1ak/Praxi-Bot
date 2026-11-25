@@ -292,6 +292,16 @@
   color: var(--color-warning);
 }
 
+.toolsLine {
+  align-items: center;
+}
+
+.toolsLine svg {
+  flex: none;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
 .link {
   display: inline-flex;
   align-items: center;

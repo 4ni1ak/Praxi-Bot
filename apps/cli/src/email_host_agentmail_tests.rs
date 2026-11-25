@@ -537,3 +537,142 @@ async fn the_owner_lists_headers_and_sends_a_test_only_to_the_mailbox_itself() {
         Err(EmailControlError::NotFound(_))
     ));
 }
+
+const SCOPED_KEY: &str = "am_us_inbox_SCOPED_sentinel_9f3a";
+
+fn connect_input(name: &str, inbox: &str, bot: Option<&str>) -> EmailAccountInput {
+    serde_json::from_value(json!({
+        "name": name, "provider": "agentmail", "api_key": SCOPED_KEY,
+        "inbox": inbox, "bot": bot,
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn an_existing_inbox_connects_with_a_scoped_key_and_nothing_is_created() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v0/inboxes/praxi@agentmail.to"))
+        .and(header(
+            "authorization",
+            format!("Bearer {SCOPED_KEY}").as_str(),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(inbox_json("praxi@agentmail.to")))
+        .mount(&server)
+        .await;
+    let f = fixture(&server);
+    let dto = f
+        .host
+        .add(connect_input(
+            "praxi-mail",
+            "praxi@agentmail.to",
+            Some(BOT_A),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(dto.provider, EmailProviderKind::Agentmail);
+    assert_eq!(dto.address, "praxi@agentmail.to");
+    assert_eq!(dto.inbox_id.as_deref(), Some("praxi@agentmail.to"));
+    assert_eq!(dto.bot.as_deref(), Some(BOT_A));
+    assert!(dto.password_set);
+    // No create call, no delete call: only the one read.
+    let reqs = server.received_requests().await.unwrap();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].method.as_str(), "GET");
+    // The key is in the secret store only, never in the file, the list or a restart's view.
+    assert_eq!(
+        secret(&f, "email/praxi-mail/api_key").as_deref(),
+        Some(SCOPED_KEY)
+    );
+    let text = toml_of(&f);
+    assert!(text.contains("inbox_id = \"praxi@agentmail.to\""), "{text}");
+    assert!(!text.contains(SCOPED_KEY), "{text}");
+    assert!(
+        !serde_json::to_string(&f.host.list())
+            .unwrap()
+            .contains(SCOPED_KEY)
+    );
+    // Connecting the same inbox twice is refused without another account.
+    let e = f
+        .host
+        .add(connect_input("again", "praxi@agentmail.to", None))
+        .await
+        .unwrap_err();
+    assert!(matches!(e, EmailControlError::Conflict(_)), "{e:?}");
+    assert_eq!(f.host.list().len(), 1);
+}
+
+#[tokio::test]
+async fn connecting_an_existing_inbox_reports_a_forbidden_or_unknown_inbox_without_saving() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v0/inboxes/other@agentmail.to"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({
+            "name": "ForbiddenError", "message": format!("key {SCOPED_KEY} may not")
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v0/inboxes/missing@agentmail.to"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "name": "NotFoundError", "message": format!("no inbox for {SCOPED_KEY}")
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v0/inboxes/revoked@agentmail.to"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({"code": "unknown_api_key"})))
+        .mount(&server)
+        .await;
+    let f = fixture(&server);
+
+    let e = f
+        .host
+        .add(connect_input("a", "other@agentmail.to", None))
+        .await
+        .unwrap_err();
+    let EmailControlError::Upstream(m) = &e else {
+        panic!("{e:?}")
+    };
+    assert!(m.contains("not allowed"), "{m}");
+
+    let e = f
+        .host
+        .add(connect_input("b", "missing@agentmail.to", None))
+        .await
+        .unwrap_err();
+    let EmailControlError::Invalid(m) = &e else {
+        panic!("{e:?}")
+    };
+    assert!(m.contains("no inbox with that address"), "{m}");
+
+    let e = f
+        .host
+        .add(connect_input("c", "revoked@agentmail.to", None))
+        .await
+        .unwrap_err();
+    assert!(matches!(e, EmailControlError::Upstream(_)), "{e:?}");
+
+    // Whatever was refused, the key is in no error text and nothing was saved.
+    for name in ["a", "b", "c"] {
+        assert!(secret(&f, &format!("email/{name}/api_key")).is_none());
+    }
+    assert!(!f.dir.path().join(EMAIL_FILE).exists());
+    assert_eq!(f.host.list().len(), 0);
+    let reqs = server.received_requests().await.unwrap();
+    assert!(
+        reqs.iter().all(|r| r.method.as_str() == "GET"),
+        "never a create"
+    );
+}
+
+#[tokio::test]
+async fn an_unusable_existing_inbox_id_is_refused_before_any_request() {
+    let server = MockServer::start().await;
+    let f = fixture(&server);
+    for bad in ["a/b@agentmail.to", "x y@agentmail.to", "..", "a?b"] {
+        let e = f.host.add(connect_input("x", bad, None)).await.unwrap_err();
+        assert!(matches!(e, EmailControlError::Invalid(_)), "{bad}: {e:?}");
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+}

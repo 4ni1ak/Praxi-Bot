@@ -134,8 +134,16 @@ allowed_senders = ["alice@example.com", "@corp.example"]   # who may reach a bot
   by default when no `account` is given. Any other bot asking for it by name gets
   the same "unknown account" error as for a name that does not exist.
 - Accounts without `bot` keep working as before for every bot that has the
-  email tools enabled. Bots do not get the email tools by default: add `email_*`
-  to the bot's allowed tools.
+  email tools enabled. Bots do not get the email tools by default.
+- When you bind an account to a bot (`bot`, `shared_with` or `default_for`) in the
+  app, the bot gets the email tools by itself: `email_*` is added to its `[tools] allow`
+  list (or taken out of `exclude`) and the change is recorded in the profile as
+  `[tools.mail_auto]` and in the audit log. Settings, Mail shows "<bot> can now read and
+  search this inbox; sending always asks you" with a "Turn off" link. Removing the last
+  binding, or the account, takes back exactly what was added, never a tool you added
+  yourself; if you switched the tools off by hand an account edit does not switch them on
+  again. Only the app (with the owner key) can bind an account, so a bot cannot give
+  itself mail tools. Sending is unchanged: the identity's send mode and the approval card.
 - Deleting a bot **removes** the accounts bound to it, together with the
   passwords the daemon stored for them. They are never turned into shared
   accounts, which would give every bot access to that mailbox. If a stored
@@ -222,6 +230,11 @@ and API key. Praxi-Bot holds no key of its own and runs no relay.
   paste your API key, pick the bot (or any bot, explicitly) and, optionally, a name
   for the address. From the command line:
   `bot email add --provider agentmail --name helper --bot Atlas --api-key-env AGENTMAIL_KEY`.
+- A key that belongs to one inbox (`am_us_inbox_...`) cannot create inboxes. Choose
+  "Connect an existing inbox" in the same form, paste that key and the address of the
+  inbox: the key is checked with a read of that inbox (`GET /v0/inboxes/{id}`), nothing
+  is created, and the account works like any other AgentMail account. In the API this is
+  `POST /v1/email/accounts` with `"inbox": "praxi@agentmail.to"`.
 - The key is write-only: it goes to the secret store as `email/<account>/api_key`
   (excluded from state bundles unless you name it) and is only ever sent, in the
   `Authorization` header, to `api.agentmail.to` over HTTPS. Redirects are never followed.
