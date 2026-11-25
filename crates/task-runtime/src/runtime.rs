@@ -261,6 +261,21 @@ impl Runtime {
         Ok(())
     }
 
+    /// Signal the cancel token of a live run without touching its state (the
+    /// drive loop finishes it). Returns `false` when the run is not live. A
+    /// caller that is about to release something the run waits on (an approval)
+    /// calls this first, so the woken step can never be taken for a finished
+    /// one and followed by another model call.
+    pub fn signal_cancel(&self, run_id: RunId) -> bool {
+        let tokens = self.tokens.lock();
+        let Some(token) = tokens.get(&run_id) else {
+            return false;
+        };
+        self.pausing.lock().remove(&run_id);
+        token.cancel();
+        true
+    }
+
     /// Finish a run whose drive task was aborted (a hard stop): its token is
     /// dropped, unfinished steps become `Interrupted` and a non-terminal run is
     /// set to `Cancelled` without waiting for the task. Returns `true` when the
