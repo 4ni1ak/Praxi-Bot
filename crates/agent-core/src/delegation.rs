@@ -591,7 +591,7 @@ impl TurnExecutor {
             Ok(r) => (r?, false),
             Err(_) => {
                 // Out of time: stop the helper and everything under it.
-                lp.cancel_descendants(run.id);
+                lp.cancel_descendants(run.id, true);
                 let st = rt.state(child).map_err(|e| e.to_string())?;
                 (st, true)
             }
