@@ -451,7 +451,7 @@ async fn a_driver_that_cannot_report_the_frame_never_gets_a_secret() {
     // `e9` has no recorded target: field_target fails.
     let input = json!({"ref": "e9", "secret": "login/github"});
     let err = tool(&r.tools, "browser_fill")
-        .call(&ToolContext::default(), input)
+        .call(&bot_ctx(BOT_A), input)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("unknown ref"), "{err}");
@@ -714,7 +714,7 @@ async fn another_bots_account_is_not_typed_into_a_desktop_program() {
     for bot in [Some("bot-b"), None] {
         let ctx = ctx_for(bot);
         let e = ty.approval_details(&ctx, &input).await.unwrap_err();
-        assert!(e.to_string().contains("belongs to another bot"), "{e}");
+        assert!(e.to_string().contains("not enabled for this bot"), "{e}");
         assert!(ty.call(&ctx, input.clone()).await.is_err());
     }
     assert!(fake.typed.lock().is_empty());

@@ -1526,7 +1526,7 @@ mod secret_steps {
             assert!(browser.typed_secrets.lock().is_empty());
             assert!(gate.requests.lock().is_empty(), "no card for a refused use");
             let text = format!("{report:?}");
-            assert!(text.contains("belongs to another bot"), "{text}");
+            assert!(text.contains("not enabled for this bot"), "{text}");
             assert!(!text.contains(&pw));
         }
     }

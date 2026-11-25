@@ -908,7 +908,15 @@ impl FillSecrets {
         programs: &[String],
         replace: bool,
     ) -> Result<bool, FillError> {
-        self.upsert_all_scoped(items, origins, programs, &[], None, replace, WriteScope::Owner)
+        self.upsert_all_scoped(
+            items,
+            origins,
+            programs,
+            &[],
+            None,
+            replace,
+            WriteScope::Owner,
+        )
     }
 
     /// [`Self::upsert_all`] for a write that a BOT asked for (a `secret_request` the
@@ -1576,6 +1584,7 @@ impl FillSecrets {
 }
 
 #[cfg(test)]
+#[allow(clippy::assert_is_empty)]
 mod tests {
     use super::*;
     use crate::memory::MemoryStore;
@@ -1590,6 +1599,13 @@ mod tests {
     fn o(s: &str) -> Vec<String> {
         vec![s.to_owned()]
     }
+
+    fn b(s: &str) -> Vec<String> {
+        vec![s.to_owned()]
+    }
+
+    const BOT_A: &str = "bot-a";
+    const BOT_B: &str = "bot-b";
 
     /// A store whose second write fails: models a keychain error mid-login.
     struct FailSecondSet(MemoryStore, AtomicUsize);
@@ -1705,14 +1721,14 @@ mod tests {
         let listing = serde_json::to_string(&s.list().unwrap()).unwrap();
         assert!(!listing.contains("hunter2-correct"));
         assert_eq!(
-            s.resolve_value_for("login/github", None).unwrap().expose(),
+            s.resolve_value_for_owner("login/github").unwrap().expose(),
             "hunter2-correct"
         );
         // Update keeps the value when none is given.
         s.upsert("login/github", None, Some(&o("https://gitlab.com")), None)
             .unwrap();
         assert_eq!(
-            s.resolve_value_for("login/github", None).unwrap().expose(),
+            s.resolve_value_for_owner("login/github").unwrap().expose(),
             "hunter2-correct"
         );
     }
@@ -1722,12 +1738,21 @@ mod tests {
         let (store, s) = svc();
         store.set("composio/gmail", "composio-token-123").unwrap();
         for name in ["composio/gmail", "fill/../composio/gmail", "x"] {
-            assert!(s.resolve_value_for(name, None).is_err(), "{name}");
+            assert!(s.resolve_value_for_owner(name).is_err(), "{name}");
+            assert!(s.resolve_value_for(name, Some(BOT_A)).is_err(), "{name}");
         }
         // Even a registered name only ever reads `fill/<name>`.
-        s.upsert("work/a", Some("a-value-123"), None, None).unwrap();
+        s.upsert_with(
+            "work/a",
+            FillSecretUpdate {
+                value: Some("a-value-123"),
+                bot_ids: Some(&b(BOT_A)),
+                ..FillSecretUpdate::default()
+            },
+        )
+        .unwrap();
         assert_eq!(
-            s.resolve_value_for("work/a", None).unwrap().expose(),
+            s.resolve_value_for("work/a", Some(BOT_A)).unwrap().expose(),
             "a-value-123"
         );
     }
@@ -1735,15 +1760,18 @@ mod tests {
     #[test]
     fn browser_check_is_exact_and_fails_closed() {
         let (_s, s) = svc();
-        s.upsert(
+        s.upsert_with(
             "login/github",
-            Some("v-1234567"),
-            Some(&o("https://github.com")),
-            None,
+            FillSecretUpdate {
+                value: Some("v-1234567"),
+                origins: Some(&o("https://github.com")),
+                bot_ids: Some(&b(BOT_A)),
+                ..FillSecretUpdate::default()
+            },
         )
         .unwrap();
         assert!(
-            s.check_browser("login/github", Some("https://github.com"), None)
+            s.check_browser("login/github", Some("https://github.com"), Some(BOT_A))
                 .unwrap()
                 .is_none()
         );
@@ -1758,50 +1786,175 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    s.check_browser("login/github", live, None),
+                    s.check_browser("login/github", live, Some(BOT_A)),
                     Err(FillError::NotAllowed(_))
                 ),
                 "{live:?}"
             );
         }
         assert!(matches!(
-            s.check_browser("login/other", Some("https://github.com"), None),
+            s.check_browser("login/other", Some("https://github.com"), Some(BOT_A)),
             Err(FillError::Unknown(_))
         ));
     }
 
     #[test]
-    fn a_standing_grant_matches_only_its_secret_and_origin() {
+    fn per_bot_scope_defaults_empty_and_blocks_other_bots() {
         let (_s, s) = svc();
-        s.upsert(
-            "a/one",
-            Some("value-one-1"),
-            Some(&["https://one.test".into(), "https://two.test".into()]),
-            None,
+        // Default = no bot allowed (fail-closed).
+        let created = s
+            .upsert(
+                "login/default",
+                Some("v-default-1"),
+                Some(&o("https://example.com")),
+                None,
+            )
+            .unwrap();
+        assert!(created.bot_ids.is_empty());
+        assert!(created.ask_before_use);
+        assert!(s.list_for_bot(Some(BOT_A)).unwrap().is_empty());
+        assert!(s.list_for_bot(None).unwrap().is_empty());
+        assert!(matches!(
+            s.check_browser("login/default", Some("https://example.com"), Some(BOT_A)),
+            Err(FillError::NotAllowed(_))
+        ));
+        assert!(matches!(
+            s.check_browser("login/default", Some("https://example.com"), None),
+            Err(FillError::NotAllowed(_))
+        ));
+        assert!(matches!(
+            s.resolve_value_for("login/default", Some(BOT_A)),
+            Err(FillError::NotAllowed(_))
+        ));
+
+        // Grant only BOT_A: BOT_A works, BOT_B is refused everywhere.
+        s.upsert_with(
+            "login/default",
+            FillSecretUpdate {
+                bot_ids: Some(&b(BOT_A)),
+                ..FillSecretUpdate::default()
+            },
         )
         .unwrap();
-        s.upsert(
+        assert_eq!(s.list_for_bot(Some(BOT_A)).unwrap().len(), 1);
+        assert!(s.list_for_bot(Some(BOT_B)).unwrap().is_empty());
+        assert!(s.check_bot("login/default", Some(BOT_A)).is_ok());
+        assert!(s.check_bot("login/default", Some(BOT_B)).is_err());
+        assert!(s.check_bot("login/default", None).is_err());
+        assert!(
+            s.check_browser("login/default", Some("https://example.com"), Some(BOT_A))
+                .is_ok()
+        );
+        assert!(matches!(
+            s.check_browser("login/default", Some("https://example.com"), Some(BOT_B)),
+            Err(FillError::NotAllowed(_))
+        ));
+        assert!(matches!(
+            s.resolve_value_for("login/default", Some(BOT_B)),
+            Err(FillError::NotAllowed(_))
+        ));
+    }
+
+    #[test]
+    fn v1_metadata_migrates_with_empty_bot_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(MemoryStore::new());
+        store.set("fill/login/legacy", "legacy-pass-123").unwrap();
+        let v1_json = serde_json::json!({
+            "version": 1,
+            "secrets": {
+                "login/legacy": {
+                    "origins": ["https://legacy.test"],
+                    "programs": [],
+                    "updated_at_ms": 123
+                }
+            },
+            "grants": [
+                {
+                    "id": "g1",
+                    "secret": "login/legacy",
+                    "origin": "https://legacy.test",
+                    "kind": "browser_fill",
+                    "created_at_ms": 123
+                }
+            ]
+        });
+        std::fs::write(
+            metadata_path(dir.path()),
+            serde_json::to_vec_pretty(&v1_json).unwrap(),
+        )
+        .unwrap();
+
+        let s = FillSecrets::open(store, dir.path()).unwrap();
+        let list = s.list().unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(
+            list[0].bot_ids.is_empty(),
+            "migrated v1 secrets fail closed"
+        );
+        assert!(
+            !list[0].ask_before_use,
+            "existing v1 standing grant preserves ask_before_use=false"
+        );
+        assert_eq!(list[0].kind, VaultKind::Login);
+        assert!(matches!(
+            s.check_browser("login/legacy", Some("https://legacy.test"), Some(BOT_A)),
+            Err(FillError::NotAllowed(_))
+        ));
+        // Owner grants BOT_A in Vault -> existing grant takes effect.
+        s.upsert_with(
+            "login/legacy",
+            FillSecretUpdate {
+                bot_ids: Some(&b(BOT_A)),
+                ..FillSecretUpdate::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            s.check_browser("login/legacy", Some("https://legacy.test"), Some(BOT_A))
+                .unwrap(),
+            Some("g1".into())
+        );
+    }
+
+    #[test]
+    fn a_standing_grant_matches_only_its_secret_and_origin() {
+        let (_s, s) = svc();
+        s.upsert_with(
+            "a/one",
+            FillSecretUpdate {
+                value: Some("value-one-1"),
+                origins: Some(&["https://one.test".into(), "https://two.test".into()]),
+                bot_ids: Some(&b(BOT_A)),
+                ..FillSecretUpdate::default()
+            },
+        )
+        .unwrap();
+        s.upsert_with(
             "a/two",
-            Some("value-two-2"),
-            Some(&["https://one.test".into()]),
-            None,
+            FillSecretUpdate {
+                value: Some("value-two-2"),
+                origins: Some(&["https://one.test".into()]),
+                bot_ids: Some(&b(BOT_A)),
+                ..FillSecretUpdate::default()
+            },
         )
         .unwrap();
         // The origin must already be allowed.
         assert!(s.grant_create("a/one", "https://other.test").is_err());
         let g = s.grant_create("a/one", "https://one.test").unwrap();
         assert_eq!(
-            s.check_browser("a/one", Some("https://one.test"), None)
+            s.check_browser("a/one", Some("https://one.test"), Some(BOT_A))
                 .unwrap(),
             Some(g.id.clone())
         );
         assert_eq!(
-            s.check_browser("a/one", Some("https://two.test"), None)
+            s.check_browser("a/one", Some("https://two.test"), Some(BOT_A))
                 .unwrap(),
             None
         );
         assert_eq!(
-            s.check_browser("a/two", Some("https://one.test"), None)
+            s.check_browser("a/two", Some("https://one.test"), Some(BOT_A))
                 .unwrap(),
             None
         );
@@ -1813,10 +1966,38 @@ mod tests {
         assert!(s.grant_revoke(&g.id).unwrap());
         assert!(!s.grant_revoke(&g.id).unwrap());
         assert_eq!(
-            s.check_browser("a/one", Some("https://two.test"), None)
+            s.check_browser("a/one", Some("https://two.test"), Some(BOT_A))
                 .unwrap(),
             None
         );
+        // Toggling ask_before_use = false creates grants; toggling back true revokes them.
+        s.upsert_with(
+            "a/one",
+            FillSecretUpdate {
+                ask_before_use: Some(false),
+                ..FillSecretUpdate::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            s.check_browser("a/one", Some("https://two.test"), Some(BOT_A))
+                .unwrap()
+                .is_some()
+        );
+        s.upsert_with(
+            "a/one",
+            FillSecretUpdate {
+                ask_before_use: Some(true),
+                ..FillSecretUpdate::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            s.check_browser("a/one", Some("https://two.test"), Some(BOT_A))
+                .unwrap(),
+            None
+        );
+        assert_eq!(s.grants().len(), 0);
         // Delete removes grants too.
         let g = s.grant_create("a/one", "https://two.test").unwrap();
         assert!(s.delete("a/one").unwrap());
@@ -1824,22 +2005,33 @@ mod tests {
     }
 
     #[test]
-    fn desktop_needs_a_verified_identity_on_the_list() {
+    fn desktop_needs_a_verified_identity_and_bot_scope() {
         let (_s, s) = svc();
-        s.upsert(
+        s.upsert_with(
             "app/vpn",
-            Some("vpn-pass-123"),
-            None,
-            Some(&["win:sha256:abc".into()]),
+            FillSecretUpdate {
+                value: Some("vpn-pass-123"),
+                programs: Some(&["win:sha256:abc".into()]),
+                bot_ids: Some(&b(BOT_A)),
+                ..FillSecretUpdate::default()
+            },
         )
         .unwrap();
-        s.check_desktop("app/vpn", Some("win:sha256:abc"), None)
+        s.check_desktop("app/vpn", Some("win:sha256:abc"), Some(BOT_A))
             .unwrap();
         assert!(
-            s.check_desktop("app/vpn", Some("win:sha256:other"), None)
+            s.check_desktop("app/vpn", Some("win:sha256:other"), Some(BOT_A))
                 .is_err()
         );
-        assert!(s.check_desktop("app/vpn", None, None).is_err());
+        assert!(s.check_desktop("app/vpn", None, Some(BOT_A)).is_err());
+        assert!(
+            s.check_desktop("app/vpn", Some("win:sha256:abc"), Some(BOT_B))
+                .is_err()
+        );
+        assert!(
+            s.check_desktop("app/vpn", Some("win:sha256:abc"), None)
+                .is_err()
+        );
     }
 
     #[test]
@@ -1848,24 +2040,83 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         {
             let s = FillSecrets::open(store.clone(), dir.path()).unwrap();
-            s.upsert(
+            s.upsert_with(
                 "login/x",
-                Some("never-on-disk-123"),
-                Some(&o("https://x.test")),
-                None,
+                FillSecretUpdate {
+                    value: Some("never-on-disk-123"),
+                    origins: Some(&o("https://x.test")),
+                    bot_ids: Some(&b(BOT_A)),
+                    kind: Some(VaultKind::Login),
+                    site_name: Some("Example"),
+                    login_id: Some("alice@x.test"),
+                    note: Some("work account"),
+                    ask_before_use: Some(false),
+                    ..FillSecretUpdate::default()
+                },
             )
             .unwrap();
-            s.grant_create("login/x", "https://x.test").unwrap();
         }
         let raw = std::fs::read_to_string(metadata_path(dir.path())).unwrap();
         assert!(!raw.contains("never-on-disk-123"));
         assert!(raw.contains("login/x"));
         let s = FillSecrets::open(store, dir.path()).unwrap();
-        assert_eq!(s.list().unwrap().len(), 1);
+        let item = &s.list().unwrap()[0];
+        assert_eq!(item.site_name.as_deref(), Some("Example"));
+        assert_eq!(item.login_id.as_deref(), Some("alice@x.test"));
+        assert_eq!(item.note.as_deref(), Some("work account"));
+        assert_eq!(item.bot_ids, vec![BOT_A]);
+        assert!(!item.ask_before_use);
         assert_eq!(s.grants().len(), 1);
         // A corrupt file fails closed.
         std::fs::write(metadata_path(dir.path()), b"{not json").unwrap();
         assert!(FillSecrets::open(Arc::new(MemoryStore::new()), dir.path()).is_err());
+    }
+
+    #[test]
+    fn the_value_hook_sees_stored_and_resolved_values() {
+        let n = Arc::new(AtomicUsize::new(0));
+        let seen = n.clone();
+        let store = Arc::new(MemoryStore::new());
+        let s = FillSecrets::in_memory(store).with_value_hook(Arc::new(move |v| {
+            assert_eq!(v, "hooked-value-1");
+            seen.fetch_add(1, Ordering::SeqCst);
+        }));
+        s.upsert_with(
+            "h/one",
+            FillSecretUpdate {
+                value: Some("hooked-value-1"),
+                bot_ids: Some(&b(BOT_A)),
+                ..FillSecretUpdate::default()
+            },
+        )
+        .unwrap();
+        s.resolve_value_for("h/one", Some(BOT_A)).unwrap();
+        assert_eq!(n.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn labels_are_single_line_and_capped() {
+        assert_eq!(sanitize_label("a\nb\u{202e}c   d", 20), "a b c d");
+        let long = "x".repeat(100);
+        assert_eq!(sanitize_label(&long, 10).chars().count(), 10);
+    }
+
+    #[test]
+    fn config_cannot_reference_the_fill_namespace() {
+        use crate::{SecretError, SecretRef, resolve};
+        let store = MemoryStore::new();
+        store.set("fill/login/x", "some-secret-value").unwrap();
+        assert!(matches!(
+            SecretRef::new("fill/login/x"),
+            Err(SecretError::Reserved(_))
+        ));
+        assert!(matches!(
+            SecretRef::new("FILL/login/x"),
+            Err(SecretError::Reserved(_))
+        ));
+        // A reference that came from deserialisation skips `new`.
+        let r: SecretRef = serde_json::from_str("\"fill/login/x\"").unwrap();
+        assert!(matches!(resolve(&store, &r), Err(SecretError::Reserved(_))));
     }
 
     fn registered_account(s: &FillSecrets) -> &'static str {
@@ -1918,8 +2169,9 @@ mod tests {
     }
 
     #[test]
-    fn owner_made_secrets_stay_global() {
+    fn owner_made_secrets_are_closed_until_the_owner_allows_a_bot() {
         let s = FillSecrets::in_memory(Arc::new(MemoryStore::new()));
+        let site = Some("https://example.com");
         s.upsert(
             "login/owner",
             Some("owner-value-123"),
@@ -1928,31 +2180,28 @@ mod tests {
         )
         .unwrap();
         for bot in [Some("bot-a"), Some("bot-b"), None] {
-            assert!(s.resolve_value_for("login/owner", bot).is_ok());
-            assert!(
-                s.check_browser("login/owner", Some("https://example.com"), bot)
-                    .is_ok()
-            );
+            assert!(s.resolve_value_for("login/owner", bot).is_err());
+            assert!(s.check_browser("login/owner", site, bot).is_err());
             assert!(
                 s.check_desktop("login/owner", Some("win:sha256:abc"), bot)
-                    .is_ok()
+                    .is_err()
             );
         }
-    }
-
-    #[test]
-    fn the_value_hook_sees_stored_and_resolved_values() {
-        let n = Arc::new(AtomicUsize::new(0));
-        let seen = n.clone();
-        let store = Arc::new(MemoryStore::new());
-        let s = FillSecrets::in_memory(store).with_value_hook(Arc::new(move |v| {
-            assert_eq!(v, "hooked-value-1");
-            seen.fetch_add(1, Ordering::SeqCst);
-        }));
-        s.upsert("h/one", Some("hooked-value-1"), None, None)
-            .unwrap();
-        s.resolve_value_for("h/one", None).unwrap();
-        assert_eq!(n.load(Ordering::SeqCst), 2);
+        // The owner allows bot-a only: bot-b and a call without a bot stay out.
+        s.upsert_with(
+            "login/owner",
+            FillSecretUpdate {
+                bot_ids: Some(&["bot-a".to_owned()]),
+                ..FillSecretUpdate::default()
+            },
+        )
+        .unwrap();
+        assert!(s.resolve_value_for("login/owner", Some("bot-a")).is_ok());
+        assert!(s.check_browser("login/owner", site, Some("bot-a")).is_ok());
+        for bot in [Some("bot-b"), None] {
+            assert!(s.resolve_value_for("login/owner", bot).is_err());
+            assert!(s.check_browser("login/owner", site, bot).is_err());
+        }
     }
 
     type GapFn = Box<dyn Fn(&FillSecrets)>;
@@ -2110,30 +2359,5 @@ mod tests {
         assert!(s.register_account(&new_account(name)).is_err());
         assert!(inner2.get(&key).unwrap().is_none(), "password left behind");
         assert_eq!(s.accounts(None).unwrap(), Vec::new());
-    }
-
-    #[test]
-    fn labels_are_single_line_and_capped() {
-        assert_eq!(sanitize_label("a\nb\u{202e}c   d", 20), "a b c d");
-        let long = "x".repeat(100);
-        assert_eq!(sanitize_label(&long, 10).chars().count(), 10);
-    }
-
-    #[test]
-    fn config_cannot_reference_the_fill_namespace() {
-        use crate::{SecretError, SecretRef, resolve};
-        let store = MemoryStore::new();
-        store.set("fill/login/x", "some-secret-value").unwrap();
-        assert!(matches!(
-            SecretRef::new("fill/login/x"),
-            Err(SecretError::Reserved(_))
-        ));
-        assert!(matches!(
-            SecretRef::new("FILL/login/x"),
-            Err(SecretError::Reserved(_))
-        ));
-        // A reference that came from deserialisation skips `new`.
-        let r: SecretRef = serde_json::from_str("\"fill/login/x\"").unwrap();
-        assert!(matches!(resolve(&store, &r), Err(SecretError::Reserved(_))));
     }
 }
