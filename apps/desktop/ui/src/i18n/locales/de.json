@@ -2418,6 +2418,7 @@
     "renameEmpty": "Gib einen Titel ein.",
     "renameInputLabel": "Chat-Titel",
     "renameTooLong": "Der Titel darf höchstens {{max}} Zeichen lang sein.",
+    "saveAsSkill": "Als Skill speichern…",
     "unarchive": "Aus Archiv holen",
     "unpin": "Lösen"
   },
@@ -3076,6 +3077,22 @@
       "skill_contains_secret": {
         "hint": "Entferne den geheimen Schlüssel aus seinen Dateien und füge den Skill dann erneut hinzu.",
         "title": "Der Skill scheint ein Passwort oder einen Schlüssel zu enthalten"
+      },
+      "skill_draft_ack_required": {
+        "hint": "Dieser Skill stammt aus einer Aufgabe, die externe Inhalte gelesen hat, oder die Prüfung hat Warnungen gefunden. Setze das Häkchen zur Bestätigung und speichere dann.",
+        "title": "Bitte bestätige, dass du es geprüft hast"
+      },
+      "skill_draft_changed": {
+        "hint": "Prüfe ihn erneut, bevor du speicherst.",
+        "title": "Der Skill hat sich seit der Prüfung geändert"
+      },
+      "skill_draft_no_run": {
+        "hint": "Schließe zuerst in diesem Chat eine Aufgabe mit dem Bot ab und versuche es dann erneut.",
+        "title": "Keine abgeschlossene Aufgabe"
+      },
+      "skill_draft_no_steps": {
+        "hint": "Die letzte Aufgabe hat keine Werkzeuge genutzt, daher gibt es keine Schritte für einen Skill.",
+        "title": "Nichts zu speichern"
       },
       "skill_index_invalid": {
         "hint": "Prüfe die Adresse oder kehre zur Liste zurück, die mit Praxi kommt.",
@@ -6263,6 +6280,31 @@
     "unread": "Ungelesene Nachricht",
     "unreadBot": "Neue Nachrichten von diesem Bot",
     "usage": "Nutzung"
+  },
+  "skillFromChat": {
+    "ack": "Ich habe den Text und die Sicherheitsprüfung gelesen und möchte diesen Skill speichern.",
+    "editTitle": "Skill-Text (du kannst ihn bearbeiten)",
+    "effect": {
+      "destructive": "kann etwas löschen oder senden",
+      "read": "liest nur",
+      "unknown": "unbekanntes Werkzeug",
+      "write": "kann etwas ändern"
+    },
+    "loading": "Lese, was der Bot getan hat…",
+    "permsLead": "Diese Werkzeuge werden genutzt. Deine Berechtigungen gelten weiterhin: riskante Schritte fragen vorher nach.",
+    "permsTitle": "Was er verwenden wird",
+    "recheck": "Erneut prüfen",
+    "recheckFirst": "Klicke auf „Erneut prüfen“, bevor du deine Änderungen speicherst.",
+    "save": "Skill speichern",
+    "saved": "Skill „{{name}}“ gespeichert.",
+    "stepsTitle": "Was der Skill tun wird",
+    "subtitle": "Mache die zuletzt abgeschlossene Aufgabe dieses Chats zu einem Skill, den der Bot wiederverwenden kann.",
+    "tainted": "Der Bot hat bei dieser Aufgabe fremde oder private Inhalte gelesen. Lies den Text unten sorgfältig, bevor du speicherst.",
+    "tickFirst": "Setze oben das Häkchen, um zu speichern.",
+    "title": "Als Skill speichern",
+    "withheld": "{{count}} Werte aus dem Chat wurden weggelassen, weil sie privat sein könnten. Der Skill fragt sie stattdessen jedes Mal ab.",
+    "withheld_one": "{{count}} Wert aus dem Chat wurde weggelassen, weil er privat sein könnte. Der Skill fragt ihn stattdessen jedes Mal ab.",
+    "withheld_other": "{{count}} Werte aus dem Chat wurden weggelassen, weil sie privat sein könnten. Der Skill fragt sie stattdessen jedes Mal ab."
   },
   "skillMarket": {
     "acceptMore": "Ich akzeptiere, dass die neue Version mehr verlangt als die, die ich habe.",

@@ -5162,6 +5162,84 @@
         ]
       }
     },
+    "/v1/chats/{id}/skill-draft": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Propose a skill from the newest successful run of a chat. Read-only.",
+        "operationId": "draft_from_chat",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Chat id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDraftDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/components": {
       "get": {
         "tags": [
@@ -14279,6 +14357,138 @@
         ]
       }
     },
+    "/v1/skills/draft/install": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Install the reviewed draft when its fingerprint is the one the owner confirmed.",
+        "operationId": "draft_install",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftInstallInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedSkillDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/skills/draft/preview": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Scan an edited draft; nothing is installed.",
+        "operationId": "draft_preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftTextInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubPreviewDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/skills/hub/install": {
       "post": {
         "tags": [
@@ -20195,6 +20405,88 @@
           "ok": {
             "type": "boolean",
             "description": "`false` when any check failed."
+          }
+        }
+      },
+      "DraftInstallInput": {
+        "type": "object",
+        "description": "Install request: the reviewed text plus the fingerprint the owner confirmed.",
+        "required": [
+          "skill_md",
+          "accept",
+          "chat_id"
+        ],
+        "properties": {
+          "accept": {
+            "type": "string",
+            "description": "`fingerprint` of the preview the owner confirmed."
+          },
+          "acknowledged": {
+            "type": "boolean",
+            "description": "The owner ticked the box saying they read the warnings. The daemon requires it when the\nsource run read untrusted or private content or the scan found anything above low risk."
+          },
+          "chat_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The chat the draft was proposed from; the daemon re-checks its exposure."
+          },
+          "skill_md": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DraftParamDto": {
+        "type": "object",
+        "description": "A value the skill asks for each time it runs.",
+        "required": [
+          "name",
+          "withheld"
+        ],
+        "properties": {
+          "example": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A harmless example; absent when the real value was not saved."
+          },
+          "name": {
+            "type": "string"
+          },
+          "withheld": {
+            "type": "boolean",
+            "description": "True when the value looked private and was left out."
+          }
+        }
+      },
+      "DraftTextInput": {
+        "type": "object",
+        "description": "An edited draft to scan or install.",
+        "required": [
+          "skill_md"
+        ],
+        "properties": {
+          "skill_md": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DraftToolDto": {
+        "type": "object",
+        "description": "A tool the draft needs, with what it can do.",
+        "required": [
+          "name",
+          "effect"
+        ],
+        "properties": {
+          "effect": {
+            "type": "string",
+            "description": "`read`, `write`, `destructive` or `unknown`."
+          },
+          "name": {
+            "type": "string"
           }
         }
       },
@@ -29911,6 +30203,71 @@
           }
         ],
         "description": "A complete SKILL.md or the three fields used to author one."
+      },
+      "SkillDraftDto": {
+        "type": "object",
+        "description": "The proposed skill plus its safety scan.",
+        "required": [
+          "name",
+          "description",
+          "keywords",
+          "tools",
+          "parameters",
+          "steps",
+          "withheld",
+          "skill_md",
+          "tainted",
+          "preview"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DraftParamDto"
+            }
+          },
+          "preview": {
+            "$ref": "#/components/schemas/HubPreviewDto"
+          },
+          "skill_md": {
+            "type": "string",
+            "description": "Complete SKILL.md the owner can edit."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tainted": {
+            "type": "boolean",
+            "description": "True when the run had read untrusted or private content."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DraftToolDto"
+            },
+            "description": "Permissions the skill will rely on."
+          },
+          "withheld": {
+            "type": "integer",
+            "description": "How many argument values were left out because they looked private.",
+            "minimum": 0
+          }
+        }
       },
       "SkillHubInfoDto": {
         "type": "object",

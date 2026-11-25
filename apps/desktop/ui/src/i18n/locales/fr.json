@@ -2418,6 +2418,7 @@
     "renameEmpty": "Enter a title.",
     "renameInputLabel": "Chat title",
     "renameTooLong": "Keep the title under {{max}} characters.",
+    "saveAsSkill": "Enregistrer comme skill…",
     "unarchive": "Unarchive",
     "unpin": "Unpin"
   },
@@ -3076,6 +3077,22 @@
       "skill_contains_secret": {
         "hint": "Remove the secret from its files, then add it again.",
         "title": "The skill seems to contain a password or key"
+      },
+      "skill_draft_ack_required": {
+        "hint": "Cette skill vient d'une tâche qui a lu du contenu externe, ou la vérification a relevé des avertissements. Cochez la case pour confirmer, puis enregistrez.",
+        "title": "Confirmez que vous l'avez relu"
+      },
+      "skill_draft_changed": {
+        "hint": "Vérifiez-la à nouveau avant de l’enregistrer.",
+        "title": "La skill a changé depuis la vérification"
+      },
+      "skill_draft_no_run": {
+        "hint": "Terminez d’abord une tâche avec le bot dans ce chat, puis réessayez.",
+        "title": "Aucune tâche terminée à enregistrer"
+      },
+      "skill_draft_no_steps": {
+        "hint": "La dernière tâche n’a utilisé aucun outil : il n’y a donc aucune étape à transformer en skill.",
+        "title": "Rien à enregistrer"
       },
       "skill_index_invalid": {
         "hint": "Check the address, or go back to the list that comes with Praxi.",
@@ -6263,6 +6280,31 @@
     "unread": "Unread message",
     "unreadBot": "New messages from this bot",
     "usage": "Usage"
+  },
+  "skillFromChat": {
+    "ack": "J’ai lu le texte et la vérification de sécurité, et je veux enregistrer cette skill.",
+    "editTitle": "Texte de la skill (modifiable)",
+    "effect": {
+      "destructive": "peut supprimer ou envoyer des choses",
+      "read": "lit seulement",
+      "unknown": "outil inconnu",
+      "write": "peut modifier des choses"
+    },
+    "loading": "Lecture de ce qu’a fait le bot…",
+    "permsLead": "Ces outils sont utilisés. Vos réglages d’autorisation s’appliquent toujours : les étapes risquées vous demandent d’abord.",
+    "permsTitle": "Ce qu’elle utilisera",
+    "recheck": "Vérifier à nouveau",
+    "recheckFirst": "Cliquez sur « Vérifier à nouveau » avant d’enregistrer vos modifications.",
+    "save": "Enregistrer la skill",
+    "saved": "Skill « {{name}} » enregistrée.",
+    "stepsTitle": "Ce que fera la skill",
+    "subtitle": "Transformez la dernière tâche terminée de ce chat en skill que le bot pourra réutiliser.",
+    "tainted": "Le bot a lu du contenu externe ou privé pendant cette tâche. Lisez attentivement le texte ci-dessous avant d’enregistrer.",
+    "tickFirst": "Cochez la case ci-dessus pour enregistrer.",
+    "title": "Enregistrer comme skill",
+    "withheld": "{{count}} valeurs du chat ont été omises car elles peuvent être privées. La skill les demande à chaque fois.",
+    "withheld_one": "{{count}} valeur du chat a été omise car elle peut être privée. La skill la demande à chaque fois.",
+    "withheld_other": "{{count}} valeurs du chat ont été omises car elles peuvent être privées. La skill les demande à chaque fois."
   },
   "skillMarket": {
     "acceptMore": "I accept that the new version asks for more than the one I have.",

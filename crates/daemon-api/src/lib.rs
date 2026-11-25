@@ -79,6 +79,7 @@ mod page_reader_routes;
 mod routes;
 mod schedule;
 mod schedule_tools;
+pub mod skill_draft;
 pub mod skill_hub;
 pub mod skill_management;
 pub mod skill_market;
@@ -1455,6 +1456,12 @@ fn api_routes() -> Router<AppState> {
             post(skill_management::import)
                 .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024)),
         )
+        .route(
+            "/v1/chats/{id}/skill-draft",
+            post(skill_draft::draft_from_chat),
+        )
+        .route("/v1/skills/draft/preview", post(skill_draft::draft_preview))
+        .route("/v1/skills/draft/install", post(skill_draft::draft_install))
         .route("/v1/skills/hub/preview", post(skill_hub::hub_preview))
         .route("/v1/skills/hub/install", post(skill_hub::hub_install))
         .route("/v1/skills/market/index", post(skill_market::market_index))

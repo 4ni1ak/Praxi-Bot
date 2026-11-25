@@ -2418,6 +2418,7 @@
     "renameEmpty": "Bir başlık yaz.",
     "renameInputLabel": "Sohbet başlığı",
     "renameTooLong": "Başlık en fazla {{max}} karakter olabilir.",
+    "saveAsSkill": "Beceri olarak kaydet…",
     "unarchive": "Arşivden çıkar",
     "unpin": "Sabitlemeyi kaldır"
   },
@@ -3076,6 +3077,22 @@
       "skill_contains_secret": {
         "hint": "Gizli bilgiyi dosyalardan çıkarıp yeniden ekle.",
         "title": "Becerinin içinde parola ya da anahtar var gibi"
+      },
+      "skill_draft_ack_required": {
+        "hint": "Bu beceri dışarıdan içerik okuyan bir görevden geliyor ya da kontrol uyarı buldu. Kutuyu işaretleyip onayla, sonra kaydet.",
+        "title": "Önce incelediğini onaylamalısın"
+      },
+      "skill_draft_changed": {
+        "hint": "Kaydetmeden önce yeniden denetle.",
+        "title": "Beceri denetimden sonra değişti"
+      },
+      "skill_draft_no_run": {
+        "hint": "Önce bu sohbette botla bir işi bitir, sonra tekrar dene.",
+        "title": "Kaydedilecek tamamlanmış iş yok"
+      },
+      "skill_draft_no_steps": {
+        "hint": "Son iş hiçbir araç kullanmadı; beceriye dönüştürülecek adım yok.",
+        "title": "Kaydedilecek bir şey yok"
       },
       "skill_index_invalid": {
         "hint": "Adresi denetle ya da Praxi ile gelen listeye dön.",
@@ -6263,6 +6280,31 @@
     "unread": "Okunmamış mesaj",
     "unreadBot": "Bu bottan yeni mesajlar var",
     "usage": "Kullanım"
+  },
+  "skillFromChat": {
+    "ack": "Metni ve güvenlik denetimini okudum, bu beceriyi kaydetmek istiyorum.",
+    "editTitle": "Beceri metni (düzenleyebilirsin)",
+    "effect": {
+      "destructive": "bir şeyleri silebilir veya gönderebilir",
+      "read": "yalnızca okur",
+      "unknown": "bilinmeyen araç",
+      "write": "bir şeyleri değiştirebilir"
+    },
+    "loading": "Botun yaptıkları okunuyor…",
+    "permsLead": "Bu araçlar kullanılır. İzin ayarların yine geçerli: riskli adımlar önce sana sorar.",
+    "permsTitle": "Neleri kullanacak",
+    "recheck": "Yeniden denetle",
+    "recheckFirst": "Değişikliklerini kaydetmeden önce \"Yeniden denetle\"ye bas.",
+    "save": "Beceriyi kaydet",
+    "saved": "\"{{name}}\" becerisi kaydedildi.",
+    "stepsTitle": "Beceri ne yapacak",
+    "subtitle": "Bu sohbetteki son tamamlanan işi, botun yeniden kullanabileceği bir beceriye dönüştür.",
+    "tainted": "Bot bu iş sırasında dışarıdan veya özel içerik okudu. Kaydetmeden önce aşağıdaki metni dikkatle oku.",
+    "tickFirst": "Kaydetmek için yukarıdaki kutuyu işaretle.",
+    "title": "Beceri olarak kaydet",
+    "withheld": "Sohbetteki {{count}} değer özel olabileceği için dışarıda bırakıldı. Beceri bunları her seferinde senden ister.",
+    "withheld_one": "Sohbetteki {{count}} değer özel olabileceği için dışarıda bırakıldı. Beceri bunu her seferinde senden ister.",
+    "withheld_other": "Sohbetteki {{count}} değer özel olabileceği için dışarıda bırakıldı. Beceri bunları her seferinde senden ister."
   },
   "skillMarket": {
     "acceptMore": "Yeni sürümün, elimdekinden daha fazlasını istediğini kabul ediyorum.",
