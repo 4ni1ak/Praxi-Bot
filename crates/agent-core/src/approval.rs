@@ -397,6 +397,10 @@ impl Shared {
         {
             return (Decision::Deny, None);
         }
+        // Asking another bot is for the owner's own chat only.
+        if name == crate::delegation::ASK_BOT && ctx.initiator != InitiatorKind::Human {
+            return (Decision::Deny, None);
+        }
         // The user's own computer only serves runs the owner started by
         // hand: never a schedule, webhook, channel, routine or external
         // agent, and never a run whose message came in through Telegram, the
@@ -602,6 +606,11 @@ impl Shared {
         category: PermissionCategory,
         input: &Value,
     ) -> bool {
+        // A helper bot never inherits a standing, chat or scoped grant of
+        // either bot: its approvals are once-only.
+        if ctx.delegation().is_some() {
+            return false;
+        }
         self.scoped_covers(ctx, name, category, input) || {
             let g = self.grants.lock();
             g.this_chat.contains(&(
@@ -757,7 +766,10 @@ impl Shared {
         category: PermissionCategory,
         input: &Value,
     ) -> Option<AllowReason> {
-        if name.starts_with(builtin_tools::pc::PC_PREFIX)
+        // The helper's own autonomy mode must not allow what the asking bot
+        // would have to ask for.
+        if ctx.delegation().is_some()
+            || name.starts_with(builtin_tools::pc::PC_PREFIX)
             || ctx.profile.permissions.mode() != AutonomyMode::Balanced
             || !matches!(
                 ctx.initiator,

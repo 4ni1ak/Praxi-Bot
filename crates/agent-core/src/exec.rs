@@ -80,6 +80,8 @@ enum Slot {
     },
     /// A `spawn_subagent` call, executed by the loop itself.
     Spawn {
+        /// `spawn_subagent` or `ask_bot`.
+        name: String,
         input: Value,
         call: ToolCallId,
         model_call_id: String,
@@ -1067,6 +1069,10 @@ impl TurnExecutor {
         let Some(index) = self.sh.skills.get() else {
             return (None, None);
         };
+        // Another bot's helper run does not see this bot's learned skills.
+        if ctx.delegation().is_some() {
+            return (None, None);
+        }
         // Per-bot resolver: learned skills of this bot (and only this bot) are
         // listed next to the shared and bundled ones. An unusable bot id or
         // a failed resolver gives an empty list (fail closed, never the root view).
@@ -1561,7 +1567,9 @@ impl TurnExecutor {
             if redisclose {
                 drop(carried.take());
             }
-            let is_spawn = resolved.name == crate::subagent::SPAWN_SUBAGENT;
+            let is_spawn = resolved.name == crate::subagent::SPAWN_SUBAGENT
+                || resolved.name == crate::delegation::ASK_BOT;
+            let spawn_name = resolved.name.clone();
             let spawn_input = resolved.input.clone();
             let tool = resolved.tool;
             let status_call = self
@@ -1709,6 +1717,7 @@ impl TurnExecutor {
                 Slot::Run {
                     call: c, permit, ..
                 } if is_spawn => Slot::Spawn {
+                    name: spawn_name,
                     input: spawn_input,
                     call: c,
                     model_call_id: call.id.clone(),
@@ -1726,6 +1735,7 @@ impl TurnExecutor {
             match slot {
                 Slot::Done { text, is_error } => (text, is_error, None, None, not_run),
                 Slot::Spawn {
+                    name,
                     input,
                     call: call_id,
                     model_call_id,
@@ -1734,9 +1744,13 @@ impl TurnExecutor {
                     if let Err(reason) = commit_or_deny(permit) {
                         return (user_denied(reason), true, None, None, not_run);
                     }
-                    let (t, e, d) = self
-                        .run_subagent(run, ctx_ref, call_id, &model_call_id, input)
-                        .await;
+                    let (t, e, d) = if name == crate::delegation::ASK_BOT {
+                        self.run_ask_bot(run, ctx_ref, call_id, &model_call_id, input)
+                            .await
+                    } else {
+                        self.run_subagent(run, ctx_ref, call_id, &model_call_id, input)
+                            .await
+                    };
                     // The child's own steps carry its exposure. This row
                     // is the spawn call, which does not itself ingest.
                     (t, e, d, None, not_run)

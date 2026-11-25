@@ -1019,6 +1019,11 @@ impl RunCtx {
         Some(format!("{}:{id}", self.resolved_computer.label.as_str()))
     }
 
+    /// The `ask_bot` hand-off this run executes, when it is another bot's helper run.
+    pub(crate) fn delegation(&self) -> Option<&crate::delegation::DelegationLink> {
+        self.sub.as_ref().and_then(|s| s.delegation.as_ref())
+    }
+
     /// Subagent nesting level: 0 for a top-level run.
     pub fn depth(&self) -> u32 {
         self.sub.as_ref().map_or(0, |s| s.depth)
@@ -1930,6 +1935,17 @@ impl Shared {
             taint.exposure.observe(true, false);
             taint.note_label("incoming e-mail");
         }
+        // A helper bot starts with untrusted exposure: its task was written
+        // by another bot, whatever that bot had read.
+        if run
+            .spec
+            .as_ref()
+            .and_then(|s| s.get("delegation"))
+            .is_some_and(|d| !d.is_null())
+        {
+            taint.exposure.observe(true, false);
+            taint.note_label("a task from another bot");
+        }
         // A subagent does not see the chat. A top-level turn, including a
         // scheduled one, does: provenance rides on the messages that enter
         // the context. Dropped by the history bound means the bytes are not
@@ -2026,19 +2042,33 @@ impl Shared {
                 }
                 let spec: SubSpec =
                     serde_json::from_value(run.spec.clone().unwrap_or(Value::Null)).map_err(xe)?;
-                let model = spec.model_for(&pctx.profile).map_err(xe)?;
-                let profile = Arc::new(
-                    pctx.profile
-                        .narrowed(spec.tools.as_deref(), Some(&model))
-                        .map_err(xe)?,
-                );
-                (
-                    profile,
-                    pctx.bot_policy.clone(),
-                    pctx.initiator,
-                    Some(spec),
-                    pctx.resolved_computer.clone(),
-                )
+                if let Some(link) = &spec.delegation {
+                    // Another bot's helper run. Everything is re-checked
+                    // here, so a restart or a changed setting fails closed.
+                    let (profile, policy) =
+                        self.helper_authority(run, &parent, &pctx, link, &spec)?;
+                    (
+                        profile,
+                        policy,
+                        pctx.initiator,
+                        Some(spec),
+                        pctx.resolved_computer.clone(),
+                    )
+                } else {
+                    let model = spec.model_for(&pctx.profile).map_err(xe)?;
+                    let profile = Arc::new(
+                        pctx.profile
+                            .narrowed(spec.tools.as_deref(), Some(&model))
+                            .map_err(xe)?,
+                    );
+                    (
+                        profile,
+                        pctx.bot_policy.clone(),
+                        pctx.initiator,
+                        Some(spec),
+                        pctx.resolved_computer.clone(),
+                    )
+                }
             }
         };
         let computer = run
@@ -2087,6 +2117,53 @@ impl Shared {
             mail_links: Mutex::new(HashSet::new()),
         });
         Ok(Arc::clone(self.runs.lock().entry(run.id).or_insert(ctx)))
+    }
+
+    /// Profile and policy of a helper bot's run: the callee's own profile,
+    /// narrowed to the tools both bots may use, with the LOWER permission
+    /// level of the two bots in every category. Any mismatch is an error, so
+    /// the run never starts with more than the asking bot has.
+    fn helper_authority(
+        &self,
+        run: &Run,
+        parent: &Run,
+        pctx: &RunCtx,
+        link: &crate::delegation::DelegationLink,
+        spec: &SubSpec,
+    ) -> Result<(Arc<BotProfile>, Option<Policy>), ExecError> {
+        let refuse = |why: &str| xe(format!("helper bot refused: {why}"));
+        if parent.parent_run_id.is_some()
+            || pctx.delegation().is_some()
+            || link.caller_bot_id != pctx.bot_id
+            || run.bot_id != link.callee_bot_id
+            || parent.bot_id != link.caller_bot_id
+            || spec.depth != 1
+        {
+            return Err(refuse("the hand-off does not match its run"));
+        }
+        crate::delegation::check_pair(&self.storage, link.caller_bot_id, link.callee_bot_id)
+            .map_err(|e| refuse(&e))?;
+        let callee_raw = self.profile_for(link.callee_bot_id).map_err(xe)?;
+        crate::delegation::compatible(&pctx.profile, &callee_raw).map_err(|e| refuse(&e))?;
+        let callee = self.run_profile(&callee_raw, &pctx.resolved_computer);
+        // Only tools both bots can use right now, from the reviewed list.
+        let allowed = crate::delegation::shared_tools(&self.tools, &pctx.profile, &callee);
+        let tools: Vec<String> = spec
+            .tools
+            .iter()
+            .flatten()
+            .filter(|t| allowed.contains(t))
+            .cloned()
+            .collect();
+        let profile = callee
+            .narrowed(Some(&tools), Some(&callee_raw.models.executor))
+            .map_err(xe)?;
+        let policy = crate::delegation::clamp_policy(
+            &self.global_policy.read(),
+            pctx.bot_policy.as_ref(),
+            callee_raw.policy().as_ref(),
+        );
+        Ok((Arc::new(profile), Some(policy)))
     }
 
     /// Accepted steering is stored as a user message before it is queued.

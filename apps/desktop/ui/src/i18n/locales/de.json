@@ -2335,7 +2335,10 @@
     "stopped": "Laufenden Durchgang gestoppt.",
     "subagent": {
       "cancel": "Abbrechen",
+      "cancelHelper": "Helfenden Bot stoppen",
       "cancelLabel": "Subagent abbrechen: {{task}}",
+      "helperLimit": "Der helfende Bot darf bei dieser Aufgabe nicht mehr als {{caller}}. Seine Antwort gilt als nicht vertrauenswürdiger Text.",
+      "helperTitle": "{{caller}} hat {{helper}} um Hilfe gebeten",
       "status": {
         "cancelled": "Abgebrochen",
         "failed": "Fehlgeschlagen",

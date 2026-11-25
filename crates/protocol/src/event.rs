@@ -289,6 +289,23 @@ pub struct SubagentStarted {
     /// The parent's `spawn_subagent` tool call that created the child.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call_id: Option<ToolCallId>,
+    /// Set when the child is ANOTHER bot asked through `ask_bot`: the
+    /// hand-off card shows who asked whom. Daemon-supplied, never model text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helper: Option<SubagentHelper>,
+}
+
+/// The two bots of an `ask_bot` hand-off, for the chat card.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SubagentHelper {
+    /// The bot that was asked (the child run executes as this bot).
+    pub bot_id: String,
+    /// Display name of the bot that was asked.
+    pub bot_name: String,
+    /// The bot that asked.
+    pub caller_bot_id: String,
+    /// Display name of the bot that asked.
+    pub caller_name: String,
 }
 
 /// A subagent run ended.
