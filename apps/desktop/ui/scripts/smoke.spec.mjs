@@ -135,6 +135,8 @@ export async function flows(ctx) {
   await run(wiz, 'first run: API-key path connects, picks a model and creates the bot', async (page) => {
     await page.goto(ctx.uiUrl);
     await page.getByTestId('onboarding-view').waitFor(T);
+    // "I have an access key" opens the provider choices; OpenAI-compatible is one of them.
+    await page.getByTestId('fr-own').click();
     await page.getByTestId('fr-api-openai').click();
     await page.getByTestId('fr-key').fill('sk-smoke-test-key-123456');
     await page.getByTestId('fr-connect').click();

@@ -1,4 +1,4 @@
-import { Check, Copy, Download, FolderOpen, RotateCw, ServerOff, ShieldAlert } from "lucide-react";
+import { Check, Copy, Download, FolderOpen, RotateCw, Server, ServerOff, ShieldAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
@@ -12,11 +12,37 @@ import {
 } from "../api/connection";
 import { humanStartup } from "../lib/humanError";
 import { fixLabelKey, leadIssue } from "../lib/prereq";
+import { startupTone } from "../lib/startupTone";
 import { useDaemon } from "../state/DaemonContext";
+import { Skeleton } from "./Skeleton";
 import styles from "./StartupProblem.module.css";
 
 /** How many of the service's last log lines are shown without opening anything. */
 const SHOWN_LOG_LINES = 8;
+
+/** A thin shimmering bar that says "this is moving": a wait, not a failure (still under reduced motion). */
+function WaitBar() {
+  return (
+    <span className={styles.wait} aria-hidden="true">
+      <Skeleton shape="pill" height="var(--space-1)" />
+    </span>
+  );
+}
+
+/**
+ * "The service is starting": calm and neutral, not an alert.  It is what the offline screen shows during
+ * the first seconds, while Praxi is still trying by itself (a red box is for something that failed).
+ */
+export function StartingNotice() {
+  const { t } = useTranslation();
+  return (
+    <div className={styles.notice} role="status" data-testid="service-starting">
+      <p className={styles.noticeTitle}>{t("errors.serviceStarting.title")}</p>
+      <p className={styles.noticeHint}>{t("errors.serviceStarting.hint")}</p>
+      <WaitBar />
+    </div>
+  );
+}
 
 /**
  * Shown when the local service did not answer within ~15 s (or failed): why, when the app knows
@@ -39,6 +65,7 @@ export function StartupProblem({ startup, raw }: { startup: StartupDiagnostics; 
     };
   }, [recheck]);
   const h = humanStartup(startup, raw);
+  const tone = startupTone(startup.stage);
   const lead = leadIssue(prereq);
   const lines = startup.log_tail.slice(-SHOWN_LOG_LINES);
   const copy = async () => {
@@ -68,7 +95,7 @@ export function StartupProblem({ startup, raw }: { startup: StartupDiagnostics; 
   );
   if (lead) {
     return (
-      <div className={styles.root} data-testid="startup-problem" data-stage={startup.stage} data-issue={lead.id}>
+      <div className={styles.root} data-testid="startup-problem" data-stage={startup.stage} data-issue={lead.id} data-tone="problem">
         <span className={styles.icon}>
           <ServerOff aria-hidden="true" />
         </span>
@@ -110,12 +137,13 @@ export function StartupProblem({ startup, raw }: { startup: StartupDiagnostics; 
     );
   }
   return (
-    <div className={styles.root} data-testid="startup-problem" data-stage={startup.stage}>
+    <div className={styles.root} data-testid="startup-problem" data-stage={startup.stage} data-tone={tone}>
       <span className={styles.icon}>
-        <ServerOff aria-hidden="true" />
+        {tone === "progress" ? <Server aria-hidden="true" /> : <ServerOff aria-hidden="true" />}
       </span>
-      <h1 className={styles.title}>{h.title}</h1>
+      <h1 className={styles.title} role={tone === "progress" ? "status" : undefined}>{h.title}</h1>
       <p className={styles.hint}>{h.hint}</p>
+      {tone === "progress" ? <WaitBar /> : null}
       <p className={styles.waited}>{t("errors.startupPanel.waited", { seconds: Math.round(startup.elapsed_ms / 1000) })}</p>
       {lines.length > 0 ? (
         <>
@@ -124,10 +152,10 @@ export function StartupProblem({ startup, raw }: { startup: StartupDiagnostics; 
         </>
       ) : null}
       <div className={styles.actions}>
-        <Button variant="secondary" onClick={retry}>
+        <Button variant={tone === "progress" ? "primary" : "secondary"} onClick={retry}>
           <RotateCw aria-hidden="true" /> {t("errors.startupPanel.retry")}
         </Button>
-        <Button variant="primary" onClick={() => void restartDaemon(undefined, "owner-startup-screen")}>
+        <Button variant={tone === "progress" ? "secondary" : "primary"} onClick={() => void restartDaemon(undefined, "owner-startup-screen")}>
           {t("errors.startupPanel.restart")}
         </Button>
         <Button variant="secondary" onClick={() => void restartDaemon(true, "owner-safe-start")} title={t("safeMode.startup.hint")}>
