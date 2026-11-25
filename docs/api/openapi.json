@@ -20374,6 +20374,13 @@
             "format": "int32",
             "description": "Warn when a recipient got mail within this many days (`0` = no warning). Default 14.",
             "minimum": 0
+          },
+          "verification_link_domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Extra domains a verification mail may link to, besides the site a sign-up\nstarted on (for example a mail service the site uses). Owner-set; empty\nby default. A bot never sees or changes this list."
           }
         }
       },

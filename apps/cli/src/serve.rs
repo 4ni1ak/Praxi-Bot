@@ -1146,6 +1146,11 @@ pub fn serve(
     } else {
         let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
             .map(|(host, _)| host);
+        // The run loop and the built-in tools (`email_wait_for`, `account_register`)
+        // learn which mail identities exist from this one handle.
+        if let Some(host) = &email {
+            agent.mail_handle().set(Arc::clone(host.connector()));
+        }
         crate::homeassistant_host::start_homeassistant(
             data_dir,
             &mcp_tools,

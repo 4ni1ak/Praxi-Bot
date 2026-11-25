@@ -5929,7 +5929,10 @@
       "saved": "Gespeichert",
       "sentAnyway": "Trotzdem gesendet",
       "softHint": "Diese beiden sind Warnungen, keine Sperren.",
-      "title": "Sicher senden"
+      "title": "Sicher senden",
+      "verifyDomains": "Weitere Seiten, auf die eine Bestätigungs-E-Mail verlinken darf",
+      "verifyDomainsHint": "Ein Bot, der sich auf einer Seite registriert, bekommt aus der Bestätigungs-E-Mail nur die Links dieser Seite zurück. Verschickt eine Seite ihre E-Mails über einen anderen Dienst (zum Beispiel eine Tracking-Domain), tragen Sie diese Domain hier ein, eine pro Zeile (example.com). Lassen Sie das Feld leer, wenn Sie unsicher sind: Der Bot fragt dann bei Ihnen nach.",
+      "verifyDomainsPlaceholder": "mail.beispiel.de"
     },
     "mode": {
       "moreHint": "Zusätzliche Feineinstellungen",
