@@ -71,7 +71,9 @@ test("the live view banner counts the very entries it renders as cards", () => {
 
 test("the chat pins the cards its timeline cannot draw and names what it waits for", () => {
   const chat = read("../views/ChatView.tsx");
-  assert.match(chat, /<PendingDecisions\s+entries=\{pending\.pinned\}/);
+  // Approvals are asked in the approval dock above the composer; questions and secrets keep their cards.
+  assert.match(chat, /<PendingDecisions\s+entries=\{pending\.pinned\.filter\(\(e\) => e\.kind !== "approval"\)\}/);
+  assert.match(chat, /\.\.\.pending\.own, \.\.\.pending\.pinned/);
   assert.match(chat, /pendingForChat\(needs, events/);
   // the status line is fed by the cards, not by the run state alone
   assert.match(chat, /const askedHere = pending\.own\.length > 0/);

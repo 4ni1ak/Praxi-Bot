@@ -625,6 +625,14 @@
       "warm": "Warm"
     }
   },
+  "approvalDock": {
+    "counter": "Aprobación {{current}} de {{total}}",
+    "keyAllow": "Permitir una vez",
+    "keyDeny": "Denegar",
+    "label": "Esperando tu aprobación",
+    "next": "Aprobación siguiente",
+    "previous": "Aprobación anterior"
+  },
   "apps": {
     "access": {
       "all": "All bots",
@@ -1728,6 +1736,7 @@
         "policy": "Este bot está configurado para pedir permiso antes de este tipo de acción."
       }
     },
+    "approvalSkipped": "Se omitió la aprobación pendiente. Tu mensaje va primero.",
     "attach": {
       "add": "Adjuntar archivos o imágenes",
       "command": "Envía los archivos con un mensaje normal. Quítalos antes de usar un comando con barra.",
@@ -1761,6 +1770,7 @@
       "uploading": "Copiando al equipo del chat…"
     },
     "chain": {
+      "allowed": "Permitido por ti",
       "details": "Detalles",
       "groupApp": "{{app}} ×{{count}}",
       "groupSame": "{{what}} ×{{count}}",
@@ -1771,6 +1781,7 @@
         "blocked": "Lo bloqueaste",
         "noAnswer": "Sin respuesta a tiempo",
         "other": "No funcionó",
+        "skipped": "Omitido: escribiste un mensaje nuevo",
         "stopped": "Se detuvo antes de terminar",
         "timeout": "Se agotó el tiempo",
         "timeoutAfter": "Se agotó el tiempo tras {{seconds}} s"
@@ -1929,7 +1940,7 @@
     "pendingPinned": "Esperando tu decisión. La tarjeta está encima del cuadro de mensaje.",
     "placeholder": "Mensaje…  / comandos · @ bots",
     "placeholderBusy": "El bot está trabajando. Tu próximo mensaje quedará en cola",
-    "placeholderWaiting": "Esperando tu aprobación. Tu próximo mensaje quedará en cola…",
+    "placeholderWaiting": "Responde arriba o escribe para cambiar de plan",
     "question": {
       "answer": "Responder",
       "answered": "Respondiste: {{answer}}",

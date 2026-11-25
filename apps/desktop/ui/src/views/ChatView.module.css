@@ -537,13 +537,19 @@
   cursor: text;
   padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
   border: var(--size-border) solid var(--color-border);
-  border-radius: calc(var(--radius-modal) * 1.25);
+  border-radius: var(--radius-composer);
   background-color: var(--color-surface-elevated);
   background-image: var(--surface-sheen);
   box-shadow: var(--shadow-card);
   transition:
     border-color var(--motion-duration-fast) var(--motion-easing-standard),
     box-shadow var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+/* While the approval dock is open above it, the composer joins it: square top corners. */
+.boxWrap[data-docked="true"] .box {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 /* The composer is never under a nested blur: the pane behind it is already frosted.  Over a clear

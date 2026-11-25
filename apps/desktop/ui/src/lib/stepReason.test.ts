@@ -9,6 +9,11 @@ test("a failed step gets a short real reason, not a generic sentence", () => {
     seconds: 30
   });
   assert.deepEqual(stepReason({ status: "denied" }, false), { kind: "blocked" });
+  assert.deepEqual(
+    stepReason({ status: "denied", denyReason: "denied: the owner wrote a new message instead" }, false),
+    { kind: "skipped" }
+  );
+  assert.deepEqual(stepReason({ status: "denied", denyReason: "denied: stopped by you" }, false), { kind: "blocked" });
   assert.deepEqual(stepReason({ status: "expired" }, false), { kind: "noAnswer" });
   assert.deepEqual(stepReason({ status: "running" }, true), { kind: "stopped" });
   assert.deepEqual(stepReason({ status: "error", error: "boom" }, false), { kind: "other" });

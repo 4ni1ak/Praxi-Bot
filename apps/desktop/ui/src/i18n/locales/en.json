@@ -625,6 +625,14 @@
       "warm": "Warm"
     }
   },
+  "approvalDock": {
+    "counter": "Approval {{current}} of {{total}}",
+    "keyAllow": "Allow once",
+    "keyDeny": "Deny",
+    "label": "Waiting for your approval",
+    "next": "Next approval",
+    "previous": "Previous approval"
+  },
   "apps": {
     "access": {
       "all": "All bots",
@@ -1728,6 +1736,7 @@
         "policy": "This bot is set to ask before this kind of action."
       }
     },
+    "approvalSkipped": "Skipped the waiting approval. Your message goes first.",
     "attach": {
       "add": "Attach files or images",
       "command": "Send files with a regular message. Remove them before using a slash command.",
@@ -1761,6 +1770,7 @@
       "uploading": "Copying to the chat’s computer…"
     },
     "chain": {
+      "allowed": "Allowed by you",
       "details": "Details",
       "groupApp": "{{app}} ×{{count}}",
       "groupSame": "{{what}} ×{{count}}",
@@ -1771,6 +1781,7 @@
         "blocked": "Blocked by you",
         "noAnswer": "No answer in time",
         "other": "Did not work",
+        "skipped": "Skipped: you wrote a new message",
         "stopped": "Stopped before finishing",
         "timeout": "Timed out",
         "timeoutAfter": "Timed out after {{seconds}} s"
@@ -1929,7 +1940,7 @@
     "pendingPinned": "Waiting for your decision. The card is above the message box.",
     "placeholder": "Message…  / commands · @ bots",
     "placeholderBusy": "The bot is working. Typing queues your message",
-    "placeholderWaiting": "Waiting for your approval. A message you type is queued…",
+    "placeholderWaiting": "Answer above, or write to change plans",
     "question": {
       "answer": "Answer",
       "answered": "You answered: {{answer}}",

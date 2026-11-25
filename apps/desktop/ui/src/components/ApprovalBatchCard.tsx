@@ -13,6 +13,8 @@ interface Props {
   rows: BatchRow[];
   /** Answer every call id with one decision (each is a once-only approval or a denial). */
   onDecide: (callIds: string[], decision: "approve" | "deny") => Promise<void>;
+  /** `dock`: shown in the approval dock above the composer (the dock draws the surface). */
+  variant?: "inline" | "dock";
 }
 
 /**
@@ -20,7 +22,7 @@ interface Props {
  * is one row and is answered together. Approvals here are always "once": a standing choice needs
  * the single card, where the user sees exactly what would be remembered.
  */
-export function ApprovalBatchCard({ rows, onDecide }: Props) {
+export function ApprovalBatchCard({ rows, onDecide, variant = "inline" }: Props) {
   const { t } = useTranslation();
   const [selected, setSelected] = useState<Set<string>>(() => new Set(rows.map((r) => r.key)));
   const [busy, setBusy] = useState(false);
@@ -53,7 +55,7 @@ export function ApprovalBatchCard({ rows, onDecide }: Props) {
   };
 
   return (
-    <div className={styles.approval} role="group" aria-label={t("chat.approval.batch.title", { count: rows.length })} data-testid="approval-batch">
+    <div className={[styles.approval, variant === "dock" ? styles.approvalDock : ""].filter(Boolean).join(" ")} role="group" aria-label={t("chat.approval.batch.title", { count: rows.length })} data-testid="approval-batch">
       <span className={styles.approvalIcon}>
         <ShieldCheck size={22} aria-hidden />
       </span>
