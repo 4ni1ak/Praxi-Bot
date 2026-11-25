@@ -93,7 +93,9 @@ test("focus rings use --shadow-focus / --color-focus across themes and interacti
   const msgInfoCss = read("../components/MessageInfo.module.css");
   const runStatusCss = read("../components/RunStatusLine.module.css");
 
-  assert.match(chatCss, /\.box:focus-within\s*\{[^}]*var\(--shadow-focus\)/);
+  // The composer shows focus with its border only (one quiet state, no ring on top of the border).
+  assert.match(chatCss, /\.box:focus-within\s*\{[^}]*border-color:\s*var\(--color-focus\)/);
+  assert.doesNotMatch(chatCss, /\.box:focus-within\s*\{[^}]*box-shadow/);
   assert.match(settingsCss, /\.searchWrap \.search:focus-visible\s*\{[^}]*box-shadow:\s*var\(--shadow-focus\)/);
   assert.match(botPickerCss, /\.nameInput:focus-visible\s*\{[^}]*box-shadow:\s*var\(--shadow-focus\)/);
   assert.match(botPanelCss, /\.chatSearch:focus-visible\s*\{[^}]*box-shadow:\s*var\(--shadow-focus\)/);
