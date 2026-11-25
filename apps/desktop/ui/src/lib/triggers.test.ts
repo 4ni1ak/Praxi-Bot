@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clockTime, minutes, newTrigger, triggerInput } from "./triggers.ts";
+import { clockTime, dailyTime, minutes, newTrigger, triggerInput, triggerSpec } from "./triggers.ts";
+import type { ScheduleSpec } from "./schedules.ts";
 
 test("rules start off with bounded polling and visible safe defaults", () => {
   const rule = newTrigger();
@@ -13,4 +14,18 @@ test("rules start off with bounded polling and visible safe defaults", () => {
   edited.config.limits.per_hour = 2;
   assert.equal(rule.config.limits.per_hour, 10);
   assert.equal(clockTime(minutes("22:05")), "22:05");
+});
+
+test("saved intervals, one-time and weekday rules never masquerade as daily rules", () => {
+  const specs: ScheduleSpec[] = [
+    { every: { seconds: 3600 } },
+    { at: { unix_ms: 1_800_000_000_000 } },
+    { cron: "0 9 * * 1-5 Europe/Berlin" }
+  ];
+  for (const spec of specs) {
+    assert.equal(dailyTime({ kind: "time", spec }), null);
+    assert.deepEqual(triggerSpec("cron" in spec ? spec.cron : JSON.stringify(spec)), spec);
+  }
+  assert.deepEqual(dailyTime({ kind: "time", spec: { cron: "5 9 * * * Europe/Berlin" } }),
+    { time: "09:05", zone: "Europe/Berlin" });
 });

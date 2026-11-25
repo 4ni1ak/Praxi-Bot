@@ -4,8 +4,9 @@ import { useTranslation } from "react-i18next";
 import type { EmailAccount, IncomingWebhook } from "../api/types";
 import { accountsForBot } from "../lib/botMail";
 import { DEFAULT_SIMPLE, simpleSpec } from "../lib/scheduleBuilder";
+import { specLabel } from "../lib/schedules";
 import { humanLine } from "../lib/humanError";
-import { clockTime, dailyTime, minutes, newTrigger, triggerInput, type BotTrigger, type TriggerInput, type TriggerPreview, type TriggerSource } from "../lib/triggers";
+import { clockTime, dailyTime, minutes, newTrigger, triggerInput, triggerSpec, type BotTrigger, type TriggerInput, type TriggerPreview, type TriggerSource } from "../lib/triggers";
 import { useDaemon } from "../state/DaemonContext";
 import { Switch } from "./SettingsUi";
 import { useToast } from "./Toast";
@@ -59,6 +60,8 @@ export function BotPanelTriggers({ botId }: { botId: string }) {
   };
   const source = draft?.config.source;
   const quiet = draft?.config.quiet_hours;
+  const daily = source ? dailyTime(source) : null;
+  const timing = source?.kind === "time" ? specLabel(source.spec, ms => new Date(ms).toLocaleString(i18n.language)) : null;
   const setSource = (next: TriggerSource) => { if (draft) change({ ...draft, config: { ...draft.config, source: next } }); };
 
   return <section className={styles.section} aria-labelledby="triggers-heading" data-testid="bot-triggers">
@@ -96,9 +99,10 @@ export function BotPanelTriggers({ botId }: { botId: string }) {
       </>}
       {source.kind === "webhook" && <>{hookError && <p role="alert" className={styles.error}>{hookError}</p>}<label className={styles.field}>{tr("hook")}<select required value={source.id} onChange={e => setSource({ ...source, id: e.target.value })}><option value="">{tr("chooseHook")}</option>{hooks.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}</select></label><p className={styles.note}>{tr("hookHint")}</p></>}
       {source.kind === "time" && <>
-        <div className={styles.pair}><label className={styles.field}>{tr("dailyAt")}<input type="time" required value={dailyTime(source).time} onChange={e => { const spec=simpleSpec({ ...DEFAULT_SIMPLE, time:e.target.value }, dailyTime(source).zone); if(spec) setSource({ kind:"time",spec }); }} /></label>
-        <label className={styles.field}>{tr("timezone")}<input required value={dailyTime(source).zone} onChange={e => { const spec=simpleSpec({ ...DEFAULT_SIMPLE,time:dailyTime(source).time },e.target.value); if(spec) setSource({ kind:"time",spec }); }} /></label></div>
-        <details><summary>{tr("customSchedule")}</summary><label className={styles.field}>{tr("schedule")}<input value={"cron" in source.spec ? source.spec.cron : JSON.stringify(source.spec)} onChange={e => setSource({ ...source,spec:{cron:e.target.value} })} /><span className={styles.note}>{tr("scheduleHint")}</span></label></details>
+        {daily && <div className={styles.pair}><label className={styles.field}>{tr("dailyAt")}<input type="time" required value={daily.time} onChange={e => { const spec=simpleSpec({ ...DEFAULT_SIMPLE, time:e.target.value }, daily.zone); if(spec) setSource({ kind:"time",spec }); }} /></label>
+        <label className={styles.field}>{tr("timezone")}<input required value={daily.zone} onChange={e => { const spec=simpleSpec({ ...DEFAULT_SIMPLE,time:daily.time },e.target.value); if(spec) setSource({ kind:"time",spec }); }} /></label></div>}
+        {!daily && timing && <p className={styles.note}>{t(timing.i18nKey, timing.values)}</p>}
+        <details open={!daily || undefined}><summary>{tr("customSchedule")}</summary><label className={styles.field}>{tr("schedule")}<input value={"cron" in source.spec ? source.spec.cron : JSON.stringify(source.spec)} onChange={e => setSource({ ...source,spec:triggerSpec(e.target.value) })} /><span className={styles.note}>{tr("scheduleHint")}</span></label></details>
       </>}
       <label className={styles.field}>{tr("should")}<textarea required maxLength={4000} value={draft.instruction} data-testid="trigger-instruction" onChange={e => change({ ...draft, instruction: e.target.value })} /></label>
       <div className={styles.examples}>{["exampleSummary", "exampleDraft", "exampleNotify"].map(k => <button type="button" key={k} onClick={() => change({ ...draft, instruction: tr(k) })}>{tr(k)}</button>)}</div>

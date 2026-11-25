@@ -1,4 +1,4 @@
-import type { ScheduleSpec } from "./schedules.ts";
+import { parseSpec, type ScheduleSpec } from "./schedules.ts";
 
 export type TriggerSource =
   | { kind: "mail"; account: string; folder: string; own_address: string; poll_seconds: number }
@@ -52,12 +52,22 @@ export function triggerInput(row: TriggerInput): TriggerInput {
   return { name: row.name, instruction: row.instruction, config: structuredClone(row.config), enabled: row.enabled };
 }
 
-export function dailyTime(source: TriggerSource): { time: string; zone: string } {
+/** Daily controls must never invent a daily time for another saved frequency. */
+export function dailyTime(source: TriggerSource): { time: string; zone: string } | null {
   if (source.kind === "time" && "cron" in source.spec) {
-    const parts=source.spec.cron.split(/\s+/);
-    if (/^\d+$/.test(parts[0] ?? "") && /^\d+$/.test(parts[1] ?? "")) {
+    const parts=source.spec.cron.trim().split(/\s+/);
+    if ((parts.length === 5 || parts.length === 6)
+      && parts.slice(2, 5).every(part => part === "*")
+      && /^\d{1,2}$/.test(parts[0] ?? "") && Number(parts[0]) < 60
+      && /^\d{1,2}$/.test(parts[1] ?? "") && Number(parts[1]) < 24) {
       return {time: clockTime(Number(parts[1])*60+Number(parts[0])),zone:parts[5] ?? "UTC"};
     }
   }
-  return {time:"09:00",zone:Intl.DateTimeFormat().resolvedOptions().timeZone};
+  return null;
+}
+
+/** Preserve interval/one-time JSON while an owner edits advanced timing. */
+export function triggerSpec(text: string): ScheduleSpec {
+  try { return parseSpec(JSON.parse(text)) ?? { cron: text }; }
+  catch { return { cron: text }; }
 }
