@@ -119,75 +119,80 @@ export async function flows(ctx) {
   // A run that executes a shell command can take 25 s on a loaded machine.
   const SLOW = { timeout: 90000 };
 
-  const workspaceSession = await newSession(ctx, { onboarded: true });
-  await run(workspaceSession, 'workspace browser and storage settings in every theme', async (page) => {
-    const api = async (path, method = 'GET', body) => {
-      const response = await fetch(`${ctx.base}/v1${path}`, {
-        method,
-        headers: { authorization: `Bearer ${ctx.token}`, 'x-praxi-owner-key': ctx.ownerKey, 'content-type': 'application/json' },
-        body: body === undefined ? undefined : JSON.stringify(body)
+  const runWorkspace = async () => {
+    const workspaceSession = await newSession(ctx, { onboarded: true });
+    await run(workspaceSession, 'workspace browser and storage settings in every theme', async (page) => {
+      const api = async (path, method = 'GET', body) => {
+        const response = await fetch(`${ctx.base}/v1${path}`, {
+          method,
+          headers: { authorization: `Bearer ${ctx.token}`, 'x-praxi-owner-key': ctx.ownerKey, 'content-type': 'application/json' },
+          body: body === undefined ? undefined : JSON.stringify(body)
+        });
+        if (!response.ok) throw new Error(`${method} ${path}: HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
+        return response.json();
+      };
+      const bot = await api('/bots', 'POST', {
+        profile_toml: '[bot]\nid = "workspace-smoke"\nname = "Workspace"\n[models]\nexecutor = "stub/stub-small"\n'
       });
-      if (!response.ok) throw new Error(`${method} ${path}: HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
-      return response.json();
-    };
-    const bot = await api('/bots', 'POST', {
-      profile_toml: '[bot]\nid = "workspace-smoke"\nname = "Workspace"\n[models]\nexecutor = "stub/stub-small"\n'
-    });
-    await api('/chats', 'POST', { bot_id: bot.id, title: 'Workspace files' });
-    const listing = await api(`/bots/${bot.id}/workspace`);
-    writeFileSync(join(listing.workspace_path, 'notes', 'report.md'), '# Workspace report\nPrepared for review.');
-    writeFileSync(join(listing.workspace_path, 'notes', 'preview.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
-    await page.goto(ctx.uiUrl);
-    for (const theme of ['obsidian', 'cobalt', 'raven', 'clay']) {
-      await page.evaluate((mode) => {
-        const settings = JSON.parse(window.localStorage.getItem('desktop_ui_settings') ?? '{}');
-        window.localStorage.setItem('desktop_ui_settings', JSON.stringify({ ...settings, themeMode: mode }));
-      }, theme);
-      await page.reload();
-      await page.locator('[class*="railItem"]').filter({ hasText: 'Workspace' }).first().click();
-      // Selecting the bot opens its latest chat, including an empty chat.
-      await page.getByTestId('bot-chip').waitFor(T);
-      if (!(await page.getByTestId('bot-panel').isVisible())) await page.getByTestId('bot-chip').click();
-      await page.getByTestId('bot-panel').getByRole('tab', { name: 'Library' }).click();
-      await page.getByTestId('ws-entry-notes').locator('button').first().click();
-      await page.getByTestId('ws-entry-report.md').waitFor(T);
-      await page.screenshot({ path: join(ctx.shots, `workspace-library-${theme}.png`) });
-      if (theme === 'obsidian') {
-        await page.getByTestId('ws-entry-report.md').locator('button').first().click();
-        await page.getByTestId('workspace-preview-modal').getByText('Prepared for review.', { exact: false }).waitFor(T);
-        await page.screenshot({ path: join(ctx.shots, 'workspace-text-preview.png') });
+      await api('/chats', 'POST', { bot_id: bot.id, title: 'Workspace files' });
+      const listing = await api(`/bots/${bot.id}/workspace`);
+      writeFileSync(join(listing.workspace_path, 'notes', 'report.md'), '# Workspace report\nPrepared for review.');
+      writeFileSync(join(listing.workspace_path, 'notes', 'preview.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
+      await page.goto(ctx.uiUrl);
+      for (const theme of ['obsidian', 'cobalt', 'raven', 'clay']) {
+        await page.evaluate((mode) => {
+          const settings = JSON.parse(window.localStorage.getItem('desktop_ui_settings') ?? '{}');
+          window.localStorage.setItem('desktop_ui_settings', JSON.stringify({ ...settings, themeMode: mode }));
+        }, theme);
+        await page.reload();
+        await page.locator('[class*="railItem"]').filter({ hasText: 'Workspace' }).first().click();
+        // Selecting the bot opens its latest chat, including an empty chat.
+        await page.getByTestId('bot-chip').waitFor(T);
+        if (!(await page.getByTestId('bot-panel').isVisible())) await page.getByTestId('bot-chip').click();
+        await page.getByTestId('bot-panel').getByRole('tab', { name: 'Library' }).click();
+        await page.getByTestId('ws-entry-notes').locator('button').first().click();
+        await page.getByTestId('ws-entry-report.md').waitFor(T);
+        await page.screenshot({ path: join(ctx.shots, `workspace-library-${theme}.png`) });
+        if (theme === 'obsidian') {
+          await page.getByTestId('ws-entry-report.md').locator('button').first().click();
+          await page.getByTestId('workspace-preview-modal').getByText('Prepared for review.', { exact: false }).waitFor(T);
+          await page.screenshot({ path: join(ctx.shots, 'workspace-text-preview.png') });
+          await page.keyboard.press('Escape');
+          await page.getByTestId('ws-entry-report.md').getByRole('button', { name: 'Rename', exact: true }).click();
+          const rename = page.getByRole('textbox', { name: 'Rename', exact: true });
+          await rename.fill('summary.md');
+          await rename.press('Enter');
+          await page.getByTestId('ws-entry-summary.md').waitFor(T);
+          await page.getByTestId('ws-entry-summary.md').getByRole('button', { name: 'Delete', exact: true }).click();
+          await page.getByTestId('workspace-undo-button').click();
+          await page.getByTestId('ws-entry-summary.md').waitFor(T);
+          const search = page.getByTestId('bot-workspace-search');
+          await search.fill('summary');
+          await page.getByTestId('ws-entry-preview.png').waitFor({ state: 'hidden', ...T });
+          await search.fill('');
+          await page.getByTestId('ws-entry-preview.png').locator('button').first().click();
+          await page.getByTestId('workspace-preview-modal').locator('img').waitFor(T);
+          await page.screenshot({ path: join(ctx.shots, 'workspace-image-preview.png') });
+          await page.keyboard.press('Escape');
+          // Restore the fixture name for the other themes.
+          await api(`/bots/${bot.id}/workspace/rename`, 'POST', { path: 'notes/summary.md', new_name: 'report.md' });
+        }
         await page.keyboard.press('Escape');
-        await page.getByTestId('ws-entry-report.md').getByRole('button', { name: 'Rename', exact: true }).click();
-        const rename = page.getByRole('textbox', { name: 'Rename', exact: true });
-        await rename.fill('summary.md');
-        await rename.press('Enter');
-        await page.getByTestId('ws-entry-summary.md').waitFor(T);
-        await page.getByTestId('ws-entry-summary.md').getByRole('button', { name: 'Delete', exact: true }).click();
-        await page.getByTestId('workspace-undo-button').click();
-        await page.getByTestId('ws-entry-summary.md').waitFor(T);
-        const search = page.getByTestId('bot-workspace-search');
-        await search.fill('summary');
-        await page.getByTestId('ws-entry-preview.png').waitFor({ state: 'hidden', ...T });
-        await search.fill('');
-        await page.getByTestId('ws-entry-preview.png').locator('button').first().click();
-        await page.getByTestId('workspace-preview-modal').locator('img').waitFor(T);
-        await page.screenshot({ path: join(ctx.shots, 'workspace-image-preview.png') });
+        await page.getByRole('button', { name: 'Settings', exact: true }).click();
+        await page.getByTestId('settings-nav-where').click();
+        const storage = page.getByTestId('workspace-storage-card');
+        await storage.waitFor(T);
+        await storage.locator('[data-testid="workspace-open-root-folder"]').scrollIntoViewIfNeeded();
+        await page.screenshot({ path: join(ctx.shots, `workspace-settings-${theme}.png`) });
         await page.keyboard.press('Escape');
-        // Restore the fixture name for the other themes.
-        await api(`/bots/${bot.id}/workspace/rename`, 'POST', { path: 'notes/summary.md', new_name: 'report.md' });
       }
-      await page.keyboard.press('Escape');
-      await page.getByRole('button', { name: 'Settings', exact: true }).click();
-      await page.getByTestId('settings-nav-where').click();
-      const storage = page.getByTestId('workspace-storage-card');
-      await storage.waitFor(T);
-      await storage.locator('[data-testid="workspace-open-root-folder"]').scrollIntoViewIfNeeded();
-      await page.screenshot({ path: join(ctx.shots, `workspace-settings-${theme}.png`) });
-      await page.keyboard.press('Escape');
-    }
-  });
-  await workspaceSession.context.close();
-  if (ctx.only === 'workspace') return results;
+    });
+    await workspaceSession.context.close();
+  };
+  if (ctx.only === 'workspace') {
+    await runWorkspace();
+    return results;
+  }
 
   // ---- first run: skip path, then the API-key path against the stub
   const first = await newSession(ctx, { onboarded: false });
@@ -223,6 +228,8 @@ export async function flows(ctx) {
     await page.getByTestId('bot-empty-state').waitFor(T);
   });
   await wiz.context.close();
+  // Keep the first-run fixture empty until its onboarding flows finish.
+  await runWorkspace();
 
   // ---- the day-to-day flows (wizard done)
   const s = await newSession(ctx, { onboarded: true });
