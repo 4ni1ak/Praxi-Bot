@@ -661,6 +661,18 @@ pub(crate) enum Verdict {
     },
     /// The owner's submit route stored the value of a `secret_request` (never carries it).
     SecretStored,
+    /// The owner finished a `browser_handover` (a code was typed into the page, or
+    /// the CAPTCHA was solved and the page moved on). Carries nothing.
+    HandoverDone,
+}
+
+/// What a parked `browser_handover` asks for: facts only, never a code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoverInfo {
+    /// The run that asked.
+    pub run_id: RunId,
+    /// CAPTCHA or one-time code.
+    pub kind: protocol::event::HandoverKind,
 }
 
 /// What a parked `secret_request` asks for: names and flags only, never a value.
@@ -716,6 +728,8 @@ pub(crate) enum PendingKind {
     Question,
     /// A credential request.
     Secret,
+    /// A CAPTCHA or one-time-code handover (`browser_handover`).
+    Handover,
 }
 
 /// Browser actions that act on the page open right now: their allowance is bound to its origin.
@@ -801,6 +815,8 @@ pub(crate) struct CtxState {
     pub todos: Vec<TodoItem>,
     /// `secret_request` calls this run has made (asked or refused after the card tests).
     pub secret_requests: u32,
+    /// `browser_handover` calls this run has made (asked or refused).
+    pub handovers: u32,
 }
 
 /// Per-run resolved computer placement fixed at run start.
@@ -1076,6 +1092,8 @@ pub(crate) struct Shared {
     pub pending: Mutex<HashMap<ToolCallId, Pending>>,
     /// `secret_request` calls waiting for the owner's form (see `approval.rs`).
     pub secret_requests: Mutex<HashMap<ToolCallId, SecretRequestInfo>>,
+    /// `browser_handover` calls waiting for the owner (see `approval.rs`).
+    pub handovers: Mutex<HashMap<ToolCallId, HandoverInfo>>,
     pub grants: Mutex<Grants>,
     /// Per-site / per-app permission rules of every bot (see `site_profiles`).
     pub profile_rules: Mutex<Vec<(BotId, permission_engine::ProfileRule)>>,
@@ -2041,6 +2059,10 @@ impl Shared {
                 )
             }
         };
+        // A subagent shares its family's CAPTCHA attempt budget: it is no fresh start.
+        if let Some(parent) = run.parent_run_id {
+            builtin_tools::handover_hub().link_child(&run.id.to_string(), &parent.to_string());
+        }
         let computer = run
             .parent_run_id
             .and_then(|parent| {
@@ -2079,6 +2101,7 @@ impl Shared {
                 seq,
                 todos: Vec::new(),
                 secret_requests: 0,
+                handovers: 0,
             }),
             taint: Mutex::new(taint),
             control_grants: Mutex::new(Vec::new()),
@@ -2598,6 +2621,7 @@ fn needs_barrier(event: &Event) -> bool {
             | Event::ToolCallDenied(_)
             | Event::QuestionAsked(_)
             | Event::SecretRequested(_)
+            | Event::HandoverRequested(_)
             | Event::ControlRequested(_)
             | Event::SubagentStarted(_)
             | Event::SubagentFinished(_)

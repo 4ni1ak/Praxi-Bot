@@ -1194,7 +1194,7 @@ export function SubagentCard({ run, renderItem, onCancel }: SubagentCardProps) {
   const asking = run.items.some(
     (i) =>
       (i.kind === "question" && i.answer === undefined && !i.closed) ||
-      (i.kind === "secret" && i.outcome === undefined && !i.closed)
+      ((i.kind === "secret" || i.kind === "handover") && i.outcome === undefined && !i.closed)
   );
   const expanded = open || waiting || asking;
   const cancellable = status === "running" || waiting;

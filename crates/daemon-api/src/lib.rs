@@ -40,6 +40,7 @@ pub mod fake;
 mod favicon;
 mod file_access;
 mod fill_routes;
+mod handover_routes;
 pub mod host;
 pub mod host_admin;
 pub mod host_copy;
@@ -1802,6 +1803,18 @@ fn api_routes() -> Router<AppState> {
         .route(
             "/v1/secret-requests/{call_id}/cancel",
             post(secret_request_routes::cancel_secret_request),
+        )
+        .route(
+            "/v1/handovers/{call_id}/code",
+            post(handover_routes::submit_handover_code),
+        )
+        .route(
+            "/v1/handovers/{call_id}/done",
+            post(handover_routes::finish_handover_done),
+        )
+        .route(
+            "/v1/handovers/{call_id}/cancel",
+            post(handover_routes::cancel_handover),
         )
         .route("/v1/events", get(sse::events))
         .merge(host_admin::routes())

@@ -2075,6 +2075,11 @@
         "failed": "Didn't fill in a field",
         "running": "Filling in a field"
       },
+      "browser_handover": {
+        "done": "Passou uma etapa para você",
+        "failed": "Não foi possível passar uma etapa para você",
+        "running": "Pedindo uma etapa a você"
+      },
       "browser_hover": {
         "done": "Hovered over something on a page",
         "failed": "Couldn't hover on a page",
@@ -2858,6 +2863,14 @@
         "hint": "This action is only available on the computer that runs the bot.",
         "title": "You are not allowed to do that here"
       },
+      "handover_gone": {
+        "hint": "Ela foi respondida, cancelada ou expirou. Peça ao bot para tentar de novo, se ainda for necessário.",
+        "title": "Esse pedido não está mais aberto"
+      },
+      "handover_not_ready": {
+        "hint": "Olhe a página e tente de novo. Nada foi digitado que você não tenha digitado. Se um cartão de CAPTCHA disser que a verificação ainda está lá e você tiver certeza de que ela foi resolvida, toque em Concluído uma segunda vez para continuar mesmo assim.",
+        "title": "A página ainda não pode aceitar isso"
+      },
       "host_admin_forbidden": {
         "hint": "Only the owner's paired desktop can change the server's setup.",
         "title": "This computer may not manage that server"
@@ -3604,6 +3617,27 @@
     "stateDone": "done",
     "stateOpen": "not done yet",
     "title": "Getting started"
+  },
+  "handover": {
+    "cancel": "Cancelar",
+    "cancelled": "Cancelado. O bot foi avisado de que esta etapa não foi concluída.",
+    "captchaBody": "O bot não conseguiu passar por esta verificação sozinho. Assuma o controle do navegador, resolva-a e toque em Concluído. O Praxi confere que a página avançou antes de o bot continuar.",
+    "captchaTitle": "{{bot}}: este site quer uma prova de que você é humano",
+    "closed": "Este pedido não está mais aberto.",
+    "codeBody": "Digite o código recebido no celular ou por e-mail. O Praxi o digita na página. O bot nunca o vê e o Praxi não o guarda.",
+    "codeLabel": "Código",
+    "codeTitle": "{{bot}} precisa de um código seu",
+    "done": "Concluído. O bot continua.",
+    "doneButton": "Concluído",
+    "expired": "Este pedido esgotou o tempo. O bot foi avisado de que esta etapa não foi concluída.",
+    "expiresIn": "Tempo restante para responder",
+    "notConnected": "Sem conexão com o serviço. Nada foi enviado e o que você digitou continua aqui.",
+    "siteLabel": "Site:",
+    "submit": "Enviar código",
+    "takeControl": "Assumir o controle",
+    "takeControlHint": "Na visualização, toque no botão de assumir o controle, resolva a verificação, volte aqui e toque em Concluído. Se a página continuar igual e você tiver certeza de que foi resolvido, toque em Concluído uma segunda vez para continuar mesmo assim.",
+    "untrusted": "Esta execução leu conteúdo de fora. Uma página pode fingir que pede um código. Digite apenas um código que você acabou de pedir a este site.",
+    "wrongFormat": "Um código tem de 4 a 12 letras ou dígitos."
   },
   "health": {
     "connected": "Local service running",

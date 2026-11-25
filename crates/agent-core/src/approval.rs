@@ -12,7 +12,9 @@ use permission_engine::{
     ActionRequest, AllowReason, AutonomyMode, CallFacts, Decision, EgressReach, Impact, Policy,
     balanced_lane, egress_must_ask, executes_must_ask,
 };
-use protocol::event::{ApprovalNeeded, QuestionAsked, ToolCallApproved, ToolCallDenied};
+use protocol::event::{
+    ApprovalNeeded, HandoverKind, QuestionAsked, ToolCallApproved, ToolCallDenied,
+};
 use protocol::{BotId, Event, InitiatorKind, PermissionCategory, RunId, ToolCallId};
 use serde_json::{Value, json};
 use storage::{Approval, now_ms};
@@ -140,6 +142,7 @@ impl Drop for PendingGuard {
         self.sh.pending.lock().remove(&self.id);
         // A parked `secret_request` must not stay submittable once its wait is gone.
         self.sh.secret_requests.lock().remove(&self.id);
+        self.sh.handovers.lock().remove(&self.id);
         forget_parked(&self.sh, self.id);
         let abandoned = !self.released;
         let last = self.release();
@@ -1911,6 +1914,7 @@ impl Shared {
         if let Some(rt) = self.rt.get().and_then(Weak::upgrade) {
             rt.signal_cancel(run_id);
         }
+        builtin_tools::handover_hub().forget(&run_id.to_string());
         let drained: Vec<(ToolCallId, Pending)> = {
             let mut pending = self.pending.lock();
             let ids: Vec<ToolCallId> = pending
@@ -2383,9 +2387,8 @@ impl Shared {
                 );
                 Err(reason)
             }
-            Ok(Verdict::Answered { .. } | Verdict::SecretStored) | Err(_) => {
-                Err(Some("approval request was dropped".into()))
-            }
+            Ok(Verdict::Answered { .. } | Verdict::SecretStored | Verdict::HandoverDone)
+            | Err(_) => Err(Some("approval request was dropped".into())),
         }
     }
 
@@ -2517,7 +2520,8 @@ impl Shared {
                 let _ = self.storage.decide_approval(approval_id, "declined");
                 Err(reason)
             }
-            Ok(Verdict::Approved { .. } | Verdict::SecretStored) | Err(_) => {
+            Ok(Verdict::Approved { .. } | Verdict::SecretStored | Verdict::HandoverDone)
+            | Err(_) => {
                 let _ = self.storage.decide_approval(approval_id, "declined");
                 Err(Some("question was dropped".into()))
             }
@@ -2664,6 +2668,135 @@ impl Shared {
             &json!({"name": name, "reason": decision}),
         );
         secret_outcome(name, stored, why)
+    }
+}
+
+/// What the model reads when a `browser_handover` ends. Never a code.
+fn handover_outcome(kind: HandoverKind, done: bool, why: &str) -> (String, bool) {
+    match (kind, done) {
+        (HandoverKind::Code, true) => (
+            "done: the owner entered the code and Praxi typed it into the page (you never see it). Submit the form if the page needs it, then take a fresh browser_snapshot.".to_owned(),
+            false,
+        ),
+        (HandoverKind::Captcha, true) => (
+            "done: the owner solved the check and the page moved on. Take a fresh browser_snapshot and continue.".to_owned(),
+            false,
+        ),
+        (_, false) => (
+            format!(
+                "cancelled: the owner did not complete the step ({why}). Do not try to get around it; tell the owner what is blocked."
+            ),
+            true,
+        ),
+    }
+}
+
+impl Shared {
+    /// Run a `browser_handover`: show the owner's card and park the run until the
+    /// owner's app answers through the daemon, cancels it, or it expires. A code
+    /// never passes through here: the owner-only route types it into the page and
+    /// then calls `AgentLoop::finish_handover`.
+    ///
+    /// Refused (nothing shown) unless the run was started by the owner at the
+    /// desktop and the per-run limit is not used up.
+    pub(crate) async fn request_handover(
+        self: &Arc<Self>,
+        ctx: &RunCtx,
+        call_id: ToolCallId,
+        card: &builtin_tools::HandoverCard,
+    ) -> (String, bool) {
+        let kind = match card.kind {
+            builtin_tools::HandoverKind::Captcha => HandoverKind::Captcha,
+            builtin_tools::HandoverKind::Code => HandoverKind::Code,
+        };
+        let refuse = |why: &str| {
+            builtin_tools::handover_hub().disarm(&ctx.run_id.to_string());
+            self.audit(
+                ctx,
+                "system",
+                "handover.refused",
+                &json!({"kind": kind, "reason": why}),
+            );
+            handover_outcome(kind, false, why)
+        };
+        if ctx.initiator != InitiatorKind::Human {
+            return refuse(
+                "only a run the owner started at the desktop can hand a step over; tell the owner in your answer instead",
+            );
+        }
+        {
+            let mut st = ctx.state.lock();
+            if st.handovers >= self.cfg.max_handovers_per_run {
+                drop(st);
+                return refuse("this run has asked for help too often");
+            }
+            st.handovers += 1;
+        }
+        let tainted = self
+            .root_run_id(ctx)
+            .is_none_or(|r| self.router.tainted_runs.lock().contains(&r));
+        let limit = if self.cfg.approval_timeout.is_zero() {
+            self.cfg.handover_timeout
+        } else {
+            self.cfg.handover_timeout.min(self.cfg.approval_timeout)
+        };
+        let summary = format!("handover: {}", truncate_utf8(&card.site, 80));
+        let (approval_id, mut guard, rx) =
+            self.park(ctx, call_id, &summary, true, false, PendingKind::Handover);
+        self.handovers.lock().insert(
+            call_id,
+            crate::shared::HandoverInfo {
+                run_id: ctx.run_id,
+                kind,
+            },
+        );
+        self.audit(
+            ctx,
+            "system",
+            "handover.requested",
+            &json!({"kind": kind, "site": card.site}),
+        );
+        self.emit(
+            ctx,
+            Event::HandoverRequested(protocol::event::HandoverRequested {
+                run_id: ctx.run_id,
+                call_id,
+                kind,
+                site: self.redact(card.site.clone()),
+                untrusted_content: tainted,
+                expires_in_secs: limit.as_secs(),
+            }),
+        );
+        let mut rx = rx;
+        let mut waited = tokio::time::timeout(limit, &mut rx).await;
+        // An answer that claimed the request is typing the code right now: let it
+        // finish, so the model never hears a false "not done".
+        while waited.is_err() {
+            if self.handovers.lock().remove(&call_id).is_some() {
+                break;
+            }
+            waited = tokio::time::timeout(std::time::Duration::from_millis(100), &mut rx).await;
+        }
+        guard.resume();
+        self.handovers.lock().remove(&call_id);
+        builtin_tools::handover_hub().disarm(&ctx.run_id.to_string());
+        let (done, why, decision) = match waited {
+            Ok(Ok(Verdict::HandoverDone)) => (true, "", "approved"),
+            Err(_) => (false, "the owner did not answer in time", "expired"),
+            _ => (false, "the owner cancelled", "declined"),
+        };
+        let _ = self.storage.decide_approval(approval_id, decision);
+        self.audit(
+            ctx,
+            "user",
+            if done {
+                "handover.done"
+            } else {
+                "handover.cancelled"
+            },
+            &json!({"kind": kind, "reason": decision}),
+        );
+        handover_outcome(kind, done, why)
     }
 }
 
