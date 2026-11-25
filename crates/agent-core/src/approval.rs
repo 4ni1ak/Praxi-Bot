@@ -335,11 +335,14 @@ impl Shared {
         let root = self.root_run_id(ctx);
         // A browser call that names a profile other than the throw-away one may be signed in to
         // the owner's accounts: what the run reads from then on is private and cannot be compared.
+        // The same for an address on this computer or its network (file:, localhost, LAN): a
+        // page there is private machine data, whatever the owner's card said.
         if name.starts_with("browser_")
-            && input
+            && (input
                 .get("profile")
                 .and_then(Value::as_str)
                 .is_some_and(|p| !p.is_empty() && p != "isolated")
+                || crate::browser_url::opens_non_public(name, input))
         {
             ctx.taint.lock().mark_private_unhashed();
         }

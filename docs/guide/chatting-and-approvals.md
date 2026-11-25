@@ -286,7 +286,7 @@ desktop app, or sent from your own admin desktop), reading web pages does not
 make the bot ask again for each further step in the managed browser. Opening a
 page already counts as "read something untrusted"; what decides whether the bot
 may keep going is whether the run also holds **your private data**: your files,
-mail, memory, screens or other bots' data, also from an earlier message of the same chat or from another bot's answer (then nothing can be compared, so a new site asks). Pages seen through a browser profile you named count as private too, because that profile may be signed in to your accounts. The details you typed for the task (a
+mail, memory, screens or other bots' data, also from an earlier message of the same chat or from another bot's answer (then nothing can be compared, so a new site asks). Pages seen through a browser profile you named count as private too, because that profile may be signed in to your accounts. So do the pages of a bot's own browser once you took it over (for example to log in) or typed one of your stored secrets into it, and anything opened on this computer or your network (`localhost`, `file:`, a LAN address). Logins the bot made for itself with `account_register` do not count, so sign-up work stays free. The details you typed for the task (a
 company name, your email address) are not private for this purpose. You gave them
 so the bot can type them into forms.
 
@@ -311,7 +311,7 @@ started by you (a schedule, a webhook, an incoming mail, a channel, a paired dev
 that is not your admin desktop, a subagent or a helper bot, an external agent) keeps the old rule
 and its one-time cards, and the Normal level and custom levels are unchanged.
 
-What it cannot stop: private words shorter than 6 letters (a 4-digit PIN, a short first name) and anything shorter than three words are never recognised; a hostile page that talks the model into **re-encoding or
+What it cannot stop: letter-by-letter spelling (`h-a-n-n-e-l-o-r-e`) and punycode host names, as well as private words shorter than 6 letters (a 4-digit PIN, a short first name) and anything shorter than three words are never recognised; a hostile page that talks the model into **re-encoding or
 paraphrasing** your private data into a fresh string (for example translating it, or
 spelling it with different words) and sending it to a new site, or private data the
 model knows that never came through a tool result of this run. Every call this rule

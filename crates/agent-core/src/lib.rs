@@ -14,6 +14,7 @@ mod agent;
 mod approval;
 pub mod attachments;
 pub mod bot_limits;
+pub mod browser_profile;
 mod browser_url;
 mod cli;
 mod compaction;

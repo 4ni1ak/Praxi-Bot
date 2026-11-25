@@ -713,6 +713,25 @@ async fn release_is_a_barrier_for_in_flight_input_and_old_epochs() {
     assert_eq!(t.target.sink.calls.load(Ordering::SeqCst), 1);
 }
 #[tokio::test]
+async fn releasing_a_takeover_of_a_bots_browser_marks_its_profile_as_the_owners() {
+    let t = Test::new();
+    let bot = Uuid::now_v7();
+    t.target.info.lock().bot_id = Some(bot);
+    let (_id, owned, _body) = t.active(None).await;
+    assert!(!agent_core::browser_profile::is_private(
+        t.dir.path(),
+        &bot.to_string()
+    ));
+    assert_eq!(
+        t.release(None, &owned, Uuid::now_v7()).await.0,
+        StatusCode::OK
+    );
+    assert!(agent_core::browser_profile::is_private(
+        t.dir.path(),
+        &bot.to_string()
+    ));
+}
+#[tokio::test]
 async fn revoke_closes_open_stream_resets_inputs_and_never_resumes() {
     let t = Test::new();
     let (id, owned, mut body) = t.active(Some("alice")).await;

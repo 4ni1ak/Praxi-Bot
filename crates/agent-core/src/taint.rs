@@ -198,7 +198,15 @@ impl ContentTaint {
             return;
         }
         if self.sources.len() >= MAX_SOURCES {
-            self.sources.remove(0);
+            // A web page label goes first: a private non-page label (a mailbox, a file,
+            // another bot's answer) must outlive any number of page reads, because the stored
+            // message keeps only these labels and a later turn decides from them.
+            let evict = self
+                .sources
+                .iter()
+                .position(|s| s.starts_with("page "))
+                .unwrap_or(0);
+            self.sources.remove(evict);
             self.earlier += 1;
         }
         self.sources.push(label);

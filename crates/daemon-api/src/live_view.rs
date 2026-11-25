@@ -1751,6 +1751,13 @@ pub(crate) async fn release(
             .ok_or_else(|| ApiError::not_found("view session"))?;
         (session.counts.clone(), target.info().kind)
     };
+    // The owner drove the bot's browser: its persistent profile may now be signed in to his
+    // accounts, so what that browser shows counts as private from now on.
+    if kind == TargetKind::Browser
+        && let Some(bot) = target.info().bot_id
+    {
+        let _ = agent_core::browser_profile::mark_private(&s.data_dir(), &bot.to_string());
+    }
     let declared = match i.human_action {
         Some(HumanAction::LoginCompleted) => agent_core::control_note::Declared::LoginCompleted,
         Some(HumanAction::ApplicationOpened) => {
