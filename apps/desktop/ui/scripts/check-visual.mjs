@@ -8,7 +8,10 @@
 //      thumbnail and a perceptual hash per screen (about 90 KB for everything, no PNG files in git).
 //   2. Contrast: the text is hidden, the page is photographed again, and every text run is measured (WCAG AA, 4.5:1,
 //      3:1 for large text) against the pixels behind it. Failures are listed, never allow-listed.
-// `--update` rewrites the baselines.  VISUAL_OUT=<dir> keeps the screenshots and `report.json` (CI uploads them).
+// `--update` rewrites the baselines.  VISUAL_OUT=<dir> keeps the screenshots and `report.json` (CI uploads them),
+// plus `baselines.candidate.json`: the baselines this run would write, in the committed format. Baselines are
+// only comparable when made on the CI OS (Linux fonts), so after an intended design change download that file
+// from the CI artifact `visual-regression` and commit it as `tests/visual/baselines.json` (see the README).
 // Exit code 1 on any difference or contrast failure.  Chrome is found through CHROME_BIN.
 import { Buffer } from 'node:buffer';
 import { spawn, spawnSync } from 'node:child_process';
@@ -160,6 +163,13 @@ const analyse = async ({ shot, bgShot, runs, grid }) => {
   return { thumb, samples };
 };
 
+// The committed baselines format: sorted by screen id, one screen per line.
+const serialise = (all) => {
+  const sorted = Object.fromEntries(Object.entries(all).sort(([a], [b]) => a.localeCompare(b)));
+  const lines = JSON.stringify(sorted).replaceAll('},"', '},\n"');
+  return { count: Object.keys(sorted).length, text: `${lines}\n` };
+};
+
 const tmp = mkdtempSync(join(tmpdir(), 'praxi-visual-'));
 const started = Date.now();
 let preview; let browser;
@@ -240,10 +250,10 @@ try {
   for (const e of errors) process.stdout.write(`ERROR ${e}\n`);
   if (update) {
     const keep = only ? { ...baselines } : {};
-    const sorted = Object.fromEntries(Object.entries({ ...keep, ...fresh }).sort(([a], [b]) => a.localeCompare(b)));
+    const sorted = serialise({ ...keep, ...fresh });
     mkdirSync(dirname(baselinePath), { recursive: true });
-    writeFileSync(baselinePath, `${JSON.stringify(sorted).replaceAll('},"', '},\n"')}\n`);
-    process.stdout.write(`baselines written: ${Object.keys(sorted).length} screens -> tests/visual/baselines.json\n`);
+    writeFileSync(baselinePath, sorted.text);
+    process.stdout.write(`baselines written: ${sorted.count} screens -> tests/visual/baselines.json\n`);
   }
   for (const d of diffs) process.stdout.write(`DIFF ${d.screen}: ${d.reasons.join('; ')}\n`);
   // Group contrast failures so a long list stays readable; the full list is in report.json.
@@ -252,6 +262,9 @@ try {
   for (const [screen, list] of [...byScreen].sort(([a], [b]) => a.localeCompare(b))) {
     process.stdout.write(`LOW CONTRAST ${screen}: ${list.length} text runs below WCAG AA\n`);
     for (const f of list.sort((a, b) => a.ratio - b.ratio).slice(0, 4)) process.stdout.write(`  ${f.ratio}:1 (needs ${f.need}:1) "${f.text}" in ${f.where}\n`);
+  }
+  if (outDir && !only && selected.length === cases.length && errors.length === 0) {
+    writeFileSync(join(outDir, 'baselines.candidate.json'), serialise(fresh).text);
   }
   if (outDir) writeFileSync(join(outDir, 'report.json'), JSON.stringify({ diffs, lowContrast, errors }, null, 1));
   if (diffs.length || lowContrast.length || errors.length) failed = true;
