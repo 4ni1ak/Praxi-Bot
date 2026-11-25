@@ -558,3 +558,238 @@ fn spending_of_a_helper_run_is_counted_for_both_bots() {
         0
     );
 }
+
+// ---- A helper bot never inherits the owner's Full-level autonomy ----
+
+const SEO_SAYS: &str = "sign up to several SEO-relevant sites with these company details: Acme Widgets GmbH, info@acme-widgets.example";
+
+/// The owner's finished root run as an owned context a test can shape: the bot is on the Full level
+/// and the run was typed by the owner in the desktop app.
+async fn owned_root_ctx(w: &World) -> crate::shared::RunCtx {
+    let crate::Delivery::NewTurn(run) =
+        w.lp.send_user_message_from(w.env.chat, SEO_SAYS, MessageMode::Queue, "owner")
+            .unwrap()
+    else {
+        panic!("expected a new turn")
+    };
+    assert_eq!(w.lp.wait(run).await.unwrap(), RunState::Succeeded);
+    let row = w.env.storage.get_run(run).unwrap().unwrap();
+    let ctx = w.lp.sh.ctx(&row).unwrap();
+    w.lp.sh.runs.lock().remove(&run);
+    let ctx = Arc::try_unwrap(ctx).ok().expect("the only holder");
+    // The run read a public page of the site the owner named.
+    ctx.taint.lock().note(
+        tool_registry::ContentClass::declared(true, false, false),
+        "page https://webioo.com.tr/",
+    );
+    *ctx.page_origin.lock() = Some("https://webioo.com.tr:443".into());
+    ctx
+}
+
+/// The same context, but as the helper run another bot's `ask_bot` creates. It is built with no parent
+/// run on purpose: the old guard (`parent_run_id`) must not be the only thing that stops it.
+fn as_helper(w: &World, mut ctx: crate::shared::RunCtx) -> crate::shared::RunCtx {
+    assert!(ctx.parent_run_id.is_none());
+    ctx.sub = Some(crate::subagent::SubSpec {
+        task: "read".into(),
+        context: String::new(),
+        tools: None,
+        model_role: None,
+        max_steps: 8,
+        token_budget: 4096,
+        depth: 1,
+        spawn_key: "0:x".into(),
+        delegation: Some(crate::delegation::DelegationLink {
+            delegation_id: "d1".into(),
+            caller_bot_id: ctx.bot_id,
+            callee_bot_id: w.helper,
+            caller_name: "Mira".into(),
+            callee_name: "Researcher".into(),
+            root_run_id: ctx.run_id,
+        }),
+    });
+    ctx
+}
+
+fn browse_world() -> World {
+    world(
+        "allow",
+        "allow",
+        true,
+        vec![Arc::new(crate::tests::with_class(
+            "browser_open",
+            Effect::Write,
+            PermissionCategory::Browser,
+            builtin_tools::classify("browser_open").unwrap(),
+            "opened",
+        ))],
+        |_, _| say("done"),
+        cfg(Policy::full()),
+    )
+}
+
+#[tokio::test]
+async fn a_helper_never_gets_the_owners_full_level_browsing_but_the_owner_run_still_does() {
+    let w = browse_world();
+    let ctx = owned_root_ctx(&w).await;
+    let open = json!({"url": "https://other.example/signup"});
+    let decide = |c: &crate::shared::RunCtx| {
+        w.lp.sh.decide_with_reason(
+            c,
+            "browser_open",
+            Effect::Write,
+            PermissionCategory::Browser,
+            &open,
+            None,
+        )
+    };
+    // The owner's own run: a new site after a page needs no card on Full.
+    let (d, reason) = decide(&ctx);
+    assert_eq!(d, permission_engine::Decision::Allow);
+    assert_eq!(reason, Some("mode.full.owner_browse"));
+    // The helper in the same chat keeps the old rule: it asks.
+    let helper = as_helper(&w, ctx);
+    let (d, reason) = decide(&helper);
+    assert!(d.is_ask(), "a helper bot must ask, got {d:?}");
+    assert_eq!(reason, None);
+    assert!(!w.lp.sh.pc_owner_started(&helper));
+}
+
+#[tokio::test]
+async fn a_helpers_wait_for_mail_on_its_own_inbox_asks_but_the_owner_run_does_not() {
+    use builtin_tools::connector_email::SendMode;
+    let w = browse_world();
+    let ctx = owned_root_ctx(&w).await;
+    let conn = crate::mail_tests::connector(vec![crate::mail_tests::account(
+        "bot-mail",
+        Some(ctx.bot_id.to_string()),
+        "me@agentmail.to",
+        SendMode::Ask,
+    )]);
+    w.lp.mail_handle().set(conn);
+    // The run read something private and untrusted before the mail call.
+    ctx.taint.lock().note(
+        tool_registry::ContentClass::untrusted_private(),
+        "file page.html",
+    );
+    let wait = |c: &crate::shared::RunCtx| {
+        w.lp.sh.decide(
+            c,
+            builtin_tools::mail_wait::EMAIL_WAIT_FOR,
+            Effect::Read,
+            PermissionCategory::Messaging,
+            &json!({}),
+        )
+    };
+    assert_eq!(wait(&ctx), permission_engine::Decision::Allow);
+    let helper = as_helper(&w, ctx);
+    assert!(wait(&helper).is_ask(), "a helper bot must ask");
+}
+
+#[tokio::test]
+async fn a_replayed_hand_off_still_marks_the_caller_and_records_the_exposure_fact() {
+    let w = browse_world();
+    let root = owned_root_ctx(&w).await;
+    let row = w.env.storage.get_run(root.run_id).unwrap().unwrap();
+    // A restart found the helper already finished under this very call.
+    let key = format!(
+        "{}:m1",
+        w.env.storage.list_steps(root.run_id).unwrap().len()
+    );
+    let link = crate::delegation::DelegationLink {
+        delegation_id: "d1".into(),
+        caller_bot_id: w.env.bot,
+        callee_bot_id: w.helper,
+        caller_name: "Mira".into(),
+        callee_name: "Researcher".into(),
+        root_run_id: root.run_id,
+    };
+    let spec = crate::subagent::SubSpec {
+        task: "read".into(),
+        context: String::new(),
+        tools: None,
+        model_role: None,
+        max_steps: 8,
+        token_budget: 4096,
+        depth: 1,
+        spawn_key: key,
+        delegation: Some(link),
+    };
+    let child =
+        w.lp.runtime()
+            .create_child_run(
+                w.env.user,
+                w.helper,
+                Some(w.env.chat),
+                &crate::shared::kind_for(InitiatorKind::Subagent),
+                Some(root.run_id),
+                Some(serde_json::to_value(&spec).unwrap()),
+            )
+            .unwrap();
+    w.lp.runtime().cancel(child).unwrap();
+    // The caller's context before: it had read only a public page.
+    {
+        let t = root.taint.lock();
+        assert!(!t.exposure.has_private());
+    }
+    let exec = crate::exec::TurnExecutor {
+        sh: w.lp.sh.clone(),
+    };
+    let (text, is_error, _, fact) = exec
+        .run_ask_bot(
+            &row,
+            &root,
+            protocol::ToolCallId::new(),
+            "m1",
+            json!({"bot_id": w.helper.0.to_string(), "task": "read", "context": ""}),
+        )
+        .await;
+    assert!(is_error, "{text}");
+    assert!(
+        text.contains("untrusted text written by another bot"),
+        "{text}"
+    );
+    let fact = fact.expect("the replay records the exposure fact");
+    assert!(
+        fact.ran && fact.ingests_untrusted && fact.reads_private,
+        "{fact:?}"
+    );
+    assert!(fact.label.contains("Researcher"), "{fact:?}");
+    let t = root.taint.lock();
+    assert!(t.exposure.untrusted && t.exposure.has_private());
+}
+
+#[tokio::test]
+async fn a_card_the_helper_raises_names_who_asked_whom_and_is_once_only() {
+    let mut config = cfg(Policy::full());
+    config.read_tools_skip_ask = false;
+    let w = world(
+        "ask",
+        "ask",
+        true,
+        vec![],
+        |req, h| simple_script(h)(req, h),
+        config,
+    );
+    let mut rx = w.lp.subscribe();
+    let run = owner_turn(&w).await;
+    approve_all(&w, &mut rx, 1).await;
+    // The helper's own read of a file asks the owner.
+    let Event::ApprovalNeeded(a) = until(
+        &mut rx,
+        |e| matches!(e, Event::ApprovalNeeded(a) if a.tool_name == "fs_read"),
+    )
+    .await
+    else {
+        unreachable!()
+    };
+    assert!(a.summary.contains("Mira asked Researcher"), "{}", a.summary);
+    let d = a.details.expect("details");
+    assert_eq!(d["delegation"]["caller"], "Mira");
+    assert_eq!(d["delegation"]["callee"], "Researcher");
+    assert_eq!(d["once_only"], true);
+    assert_eq!(d["always_offered"], false);
+    w.lp.approve(a.call_id, ApprovalScope::Once, w.env.user)
+        .unwrap();
+    assert_eq!(w.lp.wait(run).await.unwrap(), RunState::Succeeded);
+}

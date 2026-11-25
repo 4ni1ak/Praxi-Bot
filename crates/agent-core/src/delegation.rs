@@ -397,20 +397,20 @@ impl TurnExecutor {
         call: ToolCallId,
         model_call_id: &str,
         input: Value,
-    ) -> (String, bool, Option<u64>) {
+    ) -> (String, bool, Option<u64>, Option<crate::taint::ExecFact>) {
         let started = Instant::now();
-        let (text, is_error) = match self
+        let (text, is_error, fact) = match self
             .ask_and_wait(run, ctx, call, model_call_id, &input)
             .await
         {
             Ok(r) => r,
             Err(e) => {
                 self.audit_delegation(ctx, run, "delegation.refused", &json!({"reason": e}));
-                (format!("Error: {e}"), true)
+                (format!("Error: {e}"), true, None)
             }
         };
         let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        (text, is_error, Some(ms))
+        (text, is_error, Some(ms), fact)
     }
 
     fn audit_delegation(&self, ctx: &RunCtx, run: &Run, action: &str, detail: &Value) -> bool {
@@ -428,7 +428,7 @@ impl TurnExecutor {
         call: ToolCallId,
         model_call_id: &str,
         input: &Value,
-    ) -> Result<(String, bool), String> {
+    ) -> Result<(String, bool, Option<crate::taint::ExecFact>), String> {
         let sh = &self.sh;
         let rt: Arc<Runtime> = sh
             .rt
@@ -501,8 +501,17 @@ impl TurnExecutor {
                 drop(gate);
                 return match state {
                     Some(s) if s.is_terminal() => {
+                        // The same caller taint as the first run: after a restart
+                        // the caller must still treat the answer as another
+                        // bot's untrusted text.
                         let (text, is_error) = self.child_result(id, s);
-                        Ok((untrusted_wrap(&pair.callee_name, &text), is_error))
+                        let fact = mark_caller_tainted(ctx, &pair.callee_name);
+                        crate::shared::absorb_run_history(&mut ctx.taint.lock(), sh, id, 0);
+                        Ok((
+                            untrusted_wrap(&pair.callee_name, &text),
+                            is_error,
+                            Some(fact),
+                        ))
                     }
                     _ => {
                         if rt.cancel(id).is_ok() {
@@ -570,11 +579,7 @@ impl TurnExecutor {
         }
         // The request was written by a bot: from here on the caller treats
         // everything that comes back as untrusted, whatever happens next.
-        {
-            let mut taint = ctx.taint.lock();
-            taint.exposure.observe(true, true);
-            taint.note_label(&format!("another bot's answer ({})", pair.callee_name));
-        }
+        let fact = mark_caller_tainted(ctx, &pair.callee_name);
         sh.emit(
             ctx,
             Event::SubagentStarted(SubagentStarted {
@@ -628,8 +633,24 @@ impl TurnExecutor {
                 "is_error": is_error,
             }),
         );
-        Ok((untrusted_wrap(&pair.callee_name, &text), is_error))
+        Ok((
+            untrusted_wrap(&pair.callee_name, &text),
+            is_error,
+            Some(fact),
+        ))
     }
+}
+
+/// From now on the caller holds untrusted, private-class content (another bot's words). Returns
+/// the trusted record for the `ask_bot` step, so a run rebuilt from history after a restart
+/// carries the same mark.
+fn mark_caller_tainted(ctx: &RunCtx, callee: &str) -> crate::taint::ExecFact {
+    let label = format!("another bot's answer ({callee})");
+    let mut taint = ctx.taint.lock();
+    taint.exposure.observe(true, true);
+    taint.note_label(&label);
+    drop(taint);
+    crate::taint::ExecFact::ran(tool_registry::ContentClass::untrusted_private(), label)
 }
 
 /// The answer as the caller's model sees it: marked as data from another bot.

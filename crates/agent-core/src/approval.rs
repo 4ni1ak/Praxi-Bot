@@ -632,7 +632,9 @@ impl Shared {
     /// desktop app on this machine (`owner`) or sent from the owner's admin
     /// desktop paired with this host (`peer_admin`). Fails closed.
     pub(crate) fn pc_owner_started(&self, ctx: &RunCtx) -> bool {
-        if ctx.initiator != InitiatorKind::Human {
+        // Another bot's helper run never counts as owner-started, whatever its
+        // initiator kind or parent chain says: it never inherits the owner's autonomy.
+        if ctx.initiator != InitiatorKind::Human || ctx.delegation().is_some() {
             return false;
         }
         owner_started_run(&self.storage, ctx.run_id, ctx.parent_run_id)
@@ -1094,6 +1096,7 @@ impl Shared {
         // A subagent (and a helper bot another bot called) keeps the old rule: it never inherits
         // the owner's Full autonomy from the run that started it.
         if ctx.parent_run_id.is_some()
+            || ctx.delegation().is_some()
             || !FULL_BROWSER_CALLS.contains(&name)
             || ctx.profile.permissions.mode() != AutonomyMode::Full
             || !self.pc_owner_started(ctx)
@@ -1203,6 +1206,7 @@ impl Shared {
         page_origin: Option<&str>,
     ) -> bool {
         if ctx.initiator != InitiatorKind::Human
+            || ctx.delegation().is_some()
             || self.must_ask(name, input)
             || Self::gate_key(name, input, page_origin).is_none()
         {
@@ -1234,7 +1238,8 @@ impl Shared {
     /// The gate is satisfied by an earlier "always for this chat" for this tool class and
     /// destination, or by a URL the user typed.
     fn gate_waived(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
-        if ctx.initiator != InitiatorKind::Human {
+        // A helper bot never inherits the owner's typed URLs, chat grants or Full-level waivers.
+        if ctx.initiator != InitiatorKind::Human || ctx.delegation().is_some() {
             return false;
         }
         if self.own_mail_waived(ctx, name, input) {
@@ -1262,7 +1267,10 @@ impl Shared {
     /// sign-up started on or an owner-listed domain). A run started by mail, a
     /// webhook, a schedule or a channel is never waived here: it keeps asking.
     fn own_mail_waived(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
-        if ctx.profile.permissions.mode() != AutonomyMode::Full || !self.pc_owner_started(ctx) {
+        if ctx.delegation().is_some()
+            || ctx.profile.permissions.mode() != AutonomyMode::Full
+            || !self.pc_owner_started(ctx)
+        {
             return false;
         }
         match name {
@@ -1441,7 +1449,8 @@ impl Shared {
         // a received mail, an external schedule trigger) or by an external
         // agent never consumes a standing grant, whatever rows exist and
         // whatever the tool would say. Every ask stays a one-time card.
-        if crate::shared::is_external_initiator(ctx.initiator) {
+        // A helper bot's approvals are once-only as well.
+        if crate::shared::is_external_initiator(ctx.initiator) || ctx.delegation().is_some() {
             return None;
         }
         let tool = self.tools.get(name)?;
@@ -2184,6 +2193,7 @@ impl Shared {
         let memory = match &derived {
             Derived::Scope(sc)
                 if !must_ask
+                    && ctx.delegation().is_none()
                     && ctx.initiator == InitiatorKind::Human
                     && (!gate_grant || sc.kind == ScopeKind::Origin) =>
             {
@@ -2192,15 +2202,17 @@ impl Shared {
             _ => None,
         };
         let unscopable = matches!(derived, Derived::Unscopable);
-        let once_only = !gate_grant
-            && (unscopable
-                || (memory.is_none()
-                    && (details.is_some()
-                        || must_ask
-                        || matches!(
-                            ctx.initiator,
-                            InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
-                        ))));
+        // A helper bot's approvals are once-only: no remembered choice for either bot.
+        let once_only = ctx.delegation().is_some()
+            || !gate_grant
+                && (unscopable
+                    || (memory.is_none()
+                        && (details.is_some()
+                            || must_ask
+                            || matches!(
+                                ctx.initiator,
+                                InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
+                            ))));
         let (target, grantable) =
             self.control_offer(ctx, name, category, input, &mut details, target);
         let closed = self.closed_guard(ctx, name, input, token);
@@ -2208,6 +2220,20 @@ impl Shared {
         let mut prefix = computer_approval(ctx, name, category, &mut details);
         if ctx.initiator == InitiatorKind::ExternalAgent {
             prefix.push_str("[External agent: approve once only] ");
+        }
+        // Whose request this is, from the daemon's own record of the hand-off (never model text).
+        if let Some(link) = ctx.delegation() {
+            prefix.push_str("[Helper bot: ");
+            prefix.push_str(&link.caller_name);
+            prefix.push_str(" asked ");
+            prefix.push_str(&link.callee_name);
+            prefix.push_str("] ");
+            if let Some(o) = details.get_or_insert_with(|| json!({})).as_object_mut() {
+                o.insert(
+                    "delegation".into(),
+                    json!({"caller": link.caller_name, "callee": link.callee_name}),
+                );
+            }
         }
         // A browser batch names every step in its summary (the usual cut at 300 characters
         // would hide the later ones) and never repeats typed text there.
