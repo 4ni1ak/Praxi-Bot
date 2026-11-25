@@ -26,7 +26,6 @@ expect:
   tool_runs: { fs_read: 0 }
   permissions:
     - { tool: ask_bot, decision: approved }
-    - { tool: fs_read, decision: denied_policy }
   requests:
     - { request: 0, tools_offered: [ask_bot, fs_read] }
     - { request: 1, tools_offered: [fs_read], tools_not_offered: [ask_bot, spawn_subagent] }

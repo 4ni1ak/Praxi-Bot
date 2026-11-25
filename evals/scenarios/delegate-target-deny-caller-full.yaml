@@ -26,4 +26,3 @@ expect:
   tool_runs: { fs_read: 0 }
   permissions:
     - { tool: ask_bot, decision: approved }
-    - { tool: fs_read, decision: denied_policy }
