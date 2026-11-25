@@ -91,3 +91,17 @@ export function approvalRisk(tool: string, input: unknown, details?: unknown): A
   if (CHANGES.has(name)) return "change";
   return null;
 }
+
+/** Names that mean money or a credential: such a card is never answered with a key, whatever the tier says. */
+const SENSITIVE_NAME = /pay|purchase|checkout|billing|secret|credential|password|passwd|token|api_?key|vault/i;
+
+/**
+ * Whether the Enter key may allow this call once. Only the look-only tier qualifies. A call that
+ * changes something, starts a program or a shell, deletes, sends, mails, moves data out, pays,
+ * touches a secret, or that the tiers do not know (`null`) needs a click on the Allow button.
+ * Escape (deny) is never limited by this.
+ */
+export function enterMayAllowCall(tool: string, input: unknown, details?: unknown): boolean {
+  if (SENSITIVE_NAME.test(tool) || SENSITIVE_NAME.test(resolveToolCall(tool, input).name)) return false;
+  return approvalRisk(tool, input, details) === "read";
+}

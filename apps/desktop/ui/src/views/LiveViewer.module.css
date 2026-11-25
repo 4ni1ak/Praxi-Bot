@@ -86,17 +86,6 @@
   white-space: nowrap;
 }
 
-/* Quality selector and link chip: inline when there is room, a dropdown behind "..." when not. */
-.tools {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.moreBtn {
-  display: none;
-}
-
 /* stylelint-disable-next-line unit-disallowed-list -- viewer width where the toolbar no longer fits in one row (the viewer is narrower than the window while the bot panel is open) */
 @container live-viewer (width <= 72em) {
   .header {
@@ -140,72 +129,6 @@
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
   }
-
-  .moreBtn {
-    display: inline-grid;
-  }
-
-  .tools {
-    display: none;
-    position: absolute;
-    inset-block-start: calc(100% + var(--space-2));
-    inset-inline-end: var(--space-0);
-    z-index: 5;
-    flex-wrap: wrap;
-    padding: var(--space-2);
-    border-radius: var(--radius-card);
-    background-color: var(--color-surface-elevated);
-    box-shadow: var(--shadow-overlay);
-  }
-
-  .tools[data-open="true"] {
-    display: flex;
-  }
-}
-
-.helpWrap {
-  position: relative;
-}
-
-.helpPanel {
-  position: absolute;
-  inset-block-start: calc(100% + var(--space-2));
-  inset-inline-end: var(--space-0);
-  z-index: 6;
-  min-width: calc(var(--space-12) * 4);
-  padding: var(--space-3);
-  border-radius: var(--radius-card);
-  background-color: var(--color-surface-elevated);
-  box-shadow: var(--shadow-overlay);
-  font-size: var(--font-size-xs);
-  color: var(--color-text);
-}
-
-.helpPanel dl {
-  display: grid;
-  gap: var(--space-2);
-  margin: var(--space-0);
-}
-
-.helpPanel dl > div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.helpPanel dd {
-  margin: var(--space-0);
-  color: var(--color-text-secondary);
-}
-
-.helpPanel kbd {
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  background-color: var(--color-surface-active);
-  font: inherit;
-  font-weight: var(--font-weight-medium);
-  white-space: nowrap;
 }
 
 .srOnly {
@@ -355,7 +278,7 @@
   background-color: var(--color-surface);
   box-shadow: 0 var(--space-6) var(--space-12) calc(var(--space-6) * -1) var(--color-shadow);
   overflow: hidden;
-  transition: border-color var(--motion-duration-fast) ease-out;
+  transition: border-color var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
 .stageFrame[data-has-frame="true"] {

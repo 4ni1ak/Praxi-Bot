@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { isTabStop, returnFocusTarget, trapTarget } from "../lib/focusTrap";
+import { usePresence } from "../lib/presence";
 import { appInert } from "../lib/inertStack";
 import { layerStack as modalStack } from "../lib/modalStack";
 import styles from "./Modal.module.css";
@@ -35,6 +36,13 @@ export function Modal({
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  // The dialog stays mounted for its exit animation; while it leaves it shows what it showed when it
+  // was last open (the caller usually clears its data in the same render that closes it).
+  const { mounted, closing } = usePresence(open);
+  const shown = useRef({ children, label, describedBy, size });
+  if (open) {
+    shown.current = { children, label, describedBy, size };
+  }
   // Taken at open time (render), so it follows opening order even within one commit.
   const seqRef = useRef(0);
   if (open && seqRef.current === 0) seqRef.current = modalStack.next();
@@ -94,12 +102,14 @@ export function Modal({
     };
   }, [open]);
 
-  if (!open) {
+  if (!mounted) {
     return null;
   }
+  const view = shown.current;
   return createPortal(
     <div
       className={styles.backdrop}
+      data-state={closing ? "closing" : "open"}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
           onClose();
@@ -108,14 +118,16 @@ export function Modal({
     >
       <div
         ref={ref}
-        className={[styles.dialog, styles[size]].join(" ")}
+        className={[styles.dialog, styles[view.size]].join(" ")}
         role="dialog"
         aria-modal="true"
-        aria-label={label}
-        aria-describedby={describedBy}
+        aria-label={view.label}
+        aria-describedby={view.describedBy}
+        aria-hidden={closing || undefined}
+        inert={closing}
         tabIndex={-1}
       >
-        {children}
+        {view.children}
       </div>
     </div>,
     document.body

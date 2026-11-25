@@ -10,6 +10,7 @@ import {
 } from "react";
 import { CircleAlert, CircleCheck, Info, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { exitDelayMs, motionIsReduced } from "../lib/presence";
 import { toastDuration, type ToastTone } from "../lib/toastTiming";
 import styles from "./Toast.module.css";
 
@@ -30,6 +31,8 @@ interface ToastItem {
   text: string;
   tone: ToastTone;
   action?: ToastAction;
+  /** Set while the toast plays its exit animation; it is inert and removed right after. */
+  leaving?: boolean;
 }
 
 interface ToastApi {
@@ -51,13 +54,27 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const nextId = useRef(1);
   const timers = useRef(new Map<number, number>());
 
+  // A toast leaves in two steps: it is marked `leaving` (exit animation, inert), then removed.
   const dismiss = useCallback((id: number) => {
     const timer = timers.current.get(id);
     if (timer !== undefined) {
       window.clearTimeout(timer);
       timers.current.delete(id);
     }
-    setItems((prev) => prev.filter((i) => i.id !== id));
+    const remove = () => setItems((prev) => prev.filter((i) => i.id !== id));
+    const delay = exitDelayMs(motionIsReduced());
+    if (delay === 0) {
+      remove();
+      return;
+    }
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, leaving: true } : i)));
+    timers.current.set(
+      id,
+      window.setTimeout(() => {
+        timers.current.delete(id);
+        remove();
+      }, delay)
+    );
   }, []);
 
   const show = useCallback(
@@ -65,13 +82,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       const id = nextId.current++;
       setItems((prev) => [...prev.slice(-3), { id, text, tone, action: options?.action }]);
       const delay = options?.durationMs ?? toastDuration(tone);
-      const timer = window.setTimeout(() => {
-        timers.current.delete(id);
-        setItems((prev) => prev.filter((i) => i.id !== id));
-      }, delay);
+      const timer = window.setTimeout(() => dismiss(id), delay);
       timers.current.set(id, timer);
     },
-    []
+    [dismiss]
   );
 
   useEffect(() => {
@@ -95,6 +109,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             key={i.id}
             className={[styles.toast, styles[i.tone]].join(" ")}
             data-testid="toast"
+            data-state={i.leaving ? "closing" : "open"}
+            inert={i.leaving}
             role={i.tone === "danger" ? "alert" : undefined}
           >
             {(() => {

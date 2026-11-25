@@ -7,6 +7,7 @@ import { ModelLineText, PermissionChip } from "../components/BotPanel";
 import { BrandMark } from "../components/BrandMark";
 import { DialogFooter, DialogHeader, dialogStyles } from "../components/DialogParts";
 import { Modal } from "../components/Modal";
+import { SkeletonLines, SkeletonRegion } from "../components/Skeleton";
 import { SettingGroup, SettingRow } from "../components/SettingsUi";
 import { fallbackList } from "../lib/botEditor";
 import { botChats } from "../lib/botLanding";
@@ -215,16 +216,22 @@ function ProfileDialog({
               ) : null}
             </>
           ) : (
-            <p className={dialogStyles.hint}>
-              {skills.error ?? t("bots.skills.loading")}
-            </p>
+            skills.error ? (
+              <p className={dialogStyles.hint}>{skills.error}</p>
+            ) : (
+              <SkeletonRegion label={t("bots.skills.loading")}>
+                <SkeletonLines count={2} />
+              </SkeletonRegion>
+            )
           )}
         </section>
 
         <section className={dialogStyles.block}>
           <h3 className={dialogStyles.blockTitle}>{t("botForm.apps.title")}</h3>
           {apps === null ? (
-            <p className={dialogStyles.hint}>{t("botEdit.appsLoading")}</p>
+            <SkeletonRegion label={t("botEdit.appsLoading")}>
+              <SkeletonLines count={1} />
+            </SkeletonRegion>
           ) : apps.length === 0 ? (
             <p className={dialogStyles.hint}>{t("botProfile.noApps")}</p>
           ) : (

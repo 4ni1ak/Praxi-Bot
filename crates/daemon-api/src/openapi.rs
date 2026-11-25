@@ -43,6 +43,7 @@ use crate::mcp;
 use crate::mcp_routes;
 use crate::mcp_server;
 use crate::memory;
+use crate::page_reader_routes;
 use crate::peer;
 use crate::profile_share;
 use crate::profile_share_routes;
@@ -381,6 +382,8 @@ impl Modify for Security {
         voice_routes::update_voice,
         bot_limits_routes::get_bot_spend_limits,
         bot_limits_routes::put_bot_spend_limits,
+        page_reader_routes::get_page_reader,
+        page_reader_routes::put_page_reader,
         incoming_webhook::create_webhook,
         incoming_webhook::delete_webhook,
         incoming_webhook::list_webhooks,
@@ -774,6 +777,8 @@ impl Modify for Security {
         bot_limits_routes::PeriodLimitDto,
         bot_limits_routes::PeriodUsageDto,
         bot_limits_routes::PutBotSpendLimitsInput,
+        page_reader_routes::PageReaderDto,
+        page_reader_routes::PutPageReaderInput,
         data_routes::DataCategoryDto,
         data_routes::DataUsageDto,
         data_routes::ClearCacheDto,

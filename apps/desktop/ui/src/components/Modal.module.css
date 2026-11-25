@@ -40,15 +40,25 @@
 }
 
 
-.dialog { animation: enter var(--motion-duration-normal) ease-out; }
-.backdrop { animation: fade var(--motion-duration-normal) ease-out; }
+/* Enter: fade in, the sheet rises and settles (enter token + out easing).  Exit: a shorter fade and a
+   small sink (exit token + in easing).  A closing dialog is inert and ignores the pointer.  Reduced
+   motion (OS or the app switch) cancels every animation in global.css and the dialog leaves at once. */
+.dialog { animation: enter var(--motion-duration-normal) var(--motion-easing-out); }
+.backdrop { animation: fade var(--motion-duration-normal) var(--motion-easing-out); }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+.backdrop[data-state="closing"] {
+  pointer-events: none;
+  animation: fadeOut var(--motion-duration-exit) var(--motion-easing-in) forwards;
+}
+.backdrop[data-state="closing"] .dialog { animation: exit var(--motion-duration-exit) var(--motion-easing-in) forwards; }
+@keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .dialog, .backdrop { animation: none; } }
 
 /* Narrow windows: less dead space around the dialog. */
 /* stylelint-disable-next-line unit-disallowed-list -- desktop window resize boundary */
 @media (width <= 56em) { .backdrop { padding: var(--space-4); } }
-@keyframes enter { from { opacity: 0; transform: translateY(var(--space-2)); } to { opacity: 1; transform: translateY(0); } }
+@keyframes enter { from { opacity: 0; transform: translateY(var(--space-2)) scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes exit { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(var(--space-1)) scale(0.985); } }
 
 /* Appearance axes: dialogs get a sheen (solid) or frosted glass. */
 .dialog { background-image: var(--surface-sheen); }

@@ -121,6 +121,9 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/v1/spend-limit"),
     // per-bot spending limits: a bot or token holder must not lift its own cap
     ("PUT", "/v1/bots/{}/spend-limits"),
+    // how outside text reaches a bot (the quarantined page reader): a bot must not switch off
+    // the protection that stands between a page and itself
+    ("PUT", "/v1/bots/{}/page-reader"),
     // data folder sizes and Clear cache: the owner's own housekeeping, not a token holder's
     ("GET", "/v1/data-usage"),
     ("POST", "/v1/data-usage/clear-cache"),

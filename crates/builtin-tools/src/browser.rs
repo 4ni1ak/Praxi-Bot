@@ -436,12 +436,17 @@ fn render_action(r: &ActionResult) -> Result<String, String> {
         // A navigation, or a diff no shorter than the page: show the page itself.
         r.snapshot.render()
     } else {
-        format!(
+        let mut b = format!(
             "# {} ({})\n{}",
             r.snapshot.title,
             r.snapshot.url,
             d.render()
-        )
+        );
+        if let Some(note) = r.snapshot.hidden_note() {
+            b.push('\n');
+            b.push_str(&note);
+        }
+        b
     };
     let mut out = body;
     for dl in &r.dialogs {
@@ -3310,6 +3315,7 @@ mod tests {
                     states: Vec::new(),
                 })
                 .collect(),
+            hidden_removed: 0,
         }
     }
 

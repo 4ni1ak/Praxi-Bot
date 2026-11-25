@@ -358,7 +358,11 @@ fn summary(req: &ChatRequest) -> Value {
     let results: Vec<_> = messages
         .iter()
         .filter(|m| m.role == MessageRole::Tool)
-        .map(|m| &m.content)
+        // The daemon's data frame around outside content is not part of what was recorded.
+        .map(|m| match m.content.as_str() {
+            Some(t) => Value::String(agent_core::page_guard::unframe(t).to_owned()),
+            None => m.content.clone(),
+        })
         .collect();
     let mut tools: Vec<_> = req
         .tools

@@ -24,8 +24,8 @@ test("first-run wizard steps preserve heading hierarchy (h1 -> h2 without skippi
   const freedom = read("../views/firstrun/FreedomStep.tsx");
 
   assert.match(onboarding, /<h1\b/);
-  assert.match(brain, /<h2 id="fr-found"/);
-  assert.match(brain, /<h2 id="fr-api"/);
+  // The first choices are a labelled group of buttons; the only section heading left is the local-servers one.
+  assert.match(brain, /role="group" aria-label=\{t\("firstRun\.brain\.choices"\)\}/);
   assert.match(brain, /<h2 id="fr-local"/);
   assert.doesNotMatch(brain, /<h3 id="fr-(api|local)"/);
   assert.match(freedom, /<h2 id="fr-always"/);
