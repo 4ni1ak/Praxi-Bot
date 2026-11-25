@@ -190,7 +190,7 @@ export function WorkflowsView({ initialBotId }: { initialBotId?: string }) {
     setRows((r) => [...r, { wait }]);
     setWait(NEW_WAIT);
   };
-  const untrusted = current?.source?.untrusted_content === true;
+  const untrusted = (current?.source as { untrusted_content?: boolean } | null | undefined)?.untrusted_content === true;
 
   return (
     <section className={styles.pane} aria-labelledby="workflows-title">

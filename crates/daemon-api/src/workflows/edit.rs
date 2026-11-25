@@ -161,7 +161,7 @@ fn save_error(error: SaveError) -> ApiError {
             "this workflow changed since you opened it; reload it and edit again",
         ),
         SaveError::Store(error) => store_error(error),
-        other => ApiError::internal(other),
+        other @ SaveError::RevisionExhausted(_) => ApiError::internal(other),
     }
 }
 
@@ -440,7 +440,7 @@ fn parse_import(content: &str, rename: Option<&str>, bot: BotId) -> Result<Workf
     let mut wf: Workflow = serde_json::from_value(value)
         .map_err(|_| bad("this file does not match the workflow format"))?;
     if let Some(name) = rename {
-        wf.name = name.to_owned();
+        name.clone_into(&mut wf.name);
     }
     wf.validate().map_err(|e| bad(&e.to_string()))?;
     // Whatever the file claims, it did not come from a run here: mark every
@@ -510,7 +510,7 @@ fn history_of(s: &AppState, bot: BotId, name: &str) -> Result<Vec<WorkflowRunRec
                         .rev()
                         .find(|x| x.step_index == e.step_index)
                     {
-                        step.status = "ok".to_owned();
+                        "ok".clone_into(&mut step.status);
                     }
                 }
                 Event::WorkflowDrift(e) if e.workflow == name => {
@@ -520,7 +520,7 @@ fn history_of(s: &AppState, bot: BotId, name: &str) -> Result<Vec<WorkflowRunRec
                         .find(|x| x.step_index == e.step_index)
                     {
                         Some(step) => {
-                            step.status = "failed".to_owned();
+                            "failed".clone_into(&mut step.status);
                             step.reason = Some(e.reason);
                         }
                         None => steps.push(HistoryStep {

@@ -1181,6 +1181,7 @@ fn seed(env: &Env, name: &str) -> protocol::BotId {
     bot
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn edit_body(bot: protocol::BotId, revision: u64, steps: Value) -> Value {
     json!({"bot_id":bot.0,"revision":revision,"name":"flow","description":"edited",
         "params":[{"name":"who","default":"Grace","description":"who to greet"},{"name":"token","default":null,"description":""}],

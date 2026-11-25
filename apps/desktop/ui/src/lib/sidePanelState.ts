@@ -134,7 +134,7 @@ export function panelDismissedBy(trigger: PanelDismissTrigger): boolean {
  * waiting run has no inline/pinned card in `ChatView`).
  */
 export function hasUnanswerableNeed(opts: {
-  routeKind: "home" | "myBots" | "onboarding" | "bot" | "chat" | "needs" | "notifications" | "schedules";
+  routeKind: "home" | "myBots" | "onboarding" | "bot" | "chat" | "needs" | "notifications" | "schedules" | "workflows";
   selectedBotId?: string;
   activeChatId?: string;
   needs: readonly NeedsYouEntry[];
