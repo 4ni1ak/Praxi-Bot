@@ -141,6 +141,10 @@ pub struct Scenario {
     /// Classification metadata for prompt-injection / red-team corpus reporting.
     #[serde(default)]
     pub attack: Option<AttackMeta>,
+    /// Start the turn as a message the owner typed in the desktop app: the Full level's
+    /// autonomy (no card for web work after reading a page) applies to such runs only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub owner_message: bool,
 }
 
 /// Classification metadata for a prompt-injection or red-team scenario.
@@ -588,6 +592,12 @@ pub struct RequestExpect {
     /// The last user message contains this.
     #[serde(default)]
     pub last_user_contains: Option<String>,
+    /// The system message contains each of these.
+    #[serde(default)]
+    pub system_contains: Vec<String>,
+    /// The system message contains none of these.
+    #[serde(default)]
+    pub system_not_contains: Vec<String>,
     /// Tool names (as the model sees them) that must be offered.
     #[serde(default)]
     pub tools_offered: Vec<String>,
@@ -654,6 +664,11 @@ pub struct Expect {
     /// Final assistant text.
     #[serde(default)]
     pub final_text: Option<TextMatch>,
+    /// The final reply must not END with a question ("Shall I start?", "Devam edeyim mi?"). A
+    /// bot on the Full level carries its task to the end instead of asking the owner to go on;
+    /// a scenario that needs a real question (missing information) leaves this off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_closing_question: bool,
     /// Run error text (failed runs).
     #[serde(default)]
     pub error: Option<TextMatch>,

@@ -1,0 +1,30 @@
+name: full-autonomy-web-work-no-cards
+description: "Full level, run typed by the owner: memory was recalled and a page was read, then the bot searches, reads public pages and opens new sites to register. No approval card for any of it, the base prompt tells the bot to finish the task without asking to go on, and the turn ends with a report instead of a question."
+policy: full
+owner_message: true
+profile_toml: |
+  [permissions]
+  preset = "full"
+tools:
+  - { name: memory_search, effect: read, category: fs, content: private_read, output: "Notes: the owner lives in Zurichstrasse; the company is Acme Widgets." }
+  - { name: browser_open, effect: write, category: browser, content: all, output: "Opened. Directory of free listing sites." }
+  - { name: web_search, effect: read, category: browser, content: untrusted_egress, output: "1. Alpha Directory 2. Beta Listings 3. Gamma Index" }
+  - { name: web_extract, effect: read, category: browser, content: untrusted_egress, output: "Alpha Directory: submit your site here." }
+user: "kayit olmaya basla, backlink alalim, sen karar ver, bana sorma"
+script:
+  - tool_calls: [{ id: c1, tool: memory_search, args: { query: "company" } }]
+  - tool_calls: [{ id: c2, tool: browser_open, args: { url: "https://github.com/" } }]
+  - tool_calls: [{ id: c3, tool: web_search, args: { query: "ucretsiz backlink veren siteler listesi" } }]
+  - tool_calls: [{ id: c4, tool: web_extract, args: { url: "https://www.sikayetvar.com/iletisim" } }]
+  - tool_calls: [{ id: c5, tool: browser_open, args: { url: "https://directory.example/submit?plan=free" } }]
+  - text: "Done: searched, read two pages and opened the sign-up page of the directory. Left: confirming the e-mail address of the account."
+expect:
+  state: succeeded
+  model_calls: 6
+  tool_calls: [memory_search, browser_open, web_search, web_extract, browser_open]
+  tool_runs: { memory_search: 1, browser_open: 2, web_search: 1, web_extract: 1 }
+  no_approval_tools: [memory_search, browser_open, web_search, web_extract]
+  no_closing_question: true
+  final_text: { contains: ["Done:"] }
+  requests:
+    - { request: 0, system_contains: ["Never end a turn with a question while steps remain", "hard stop: spending money"] }
