@@ -184,8 +184,10 @@ async fn store(
     input: &SubmitSecretRequest,
 ) -> Result<(), ApiError> {
     let items = entries(&info.name, info.fields, input)?;
-    // Another bot's account is not replaceable through this bot's form, even when it
-    // appeared after the card opened (the write below checks again under its lock).
+    // An entry this bot may not use (another bot's account, an owner-made or
+    // owner-granted entry) is not replaceable through this bot's form, even when it
+    // appeared after the card opened. Only the owner sees this refusal; the bot never
+    // learns the name exists. The write below checks again under its lock.
     for (n, _) in &items {
         svc.check_request_target(n, Some(&info.bot_id))
             .map_err(|e| crate::fill_routes::map(&e))?;

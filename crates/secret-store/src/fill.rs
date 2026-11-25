@@ -923,11 +923,14 @@ impl FillSecrets {
     /// owner answers): an existing entry that is another bot's account is refused
     /// ([`FillError::NotAllowed`]) before anything is written, under the same lock as
     /// the write, so bot B cannot get the owner to overwrite bot A's account value
-    /// whatever the form said. Owner-made entries (no account facts) stay replaceable.
-    /// The written entries are scoped to `bot` (none when `bot` is `None`).
+    /// whatever the form said; the same holds for an owner-made or owner-granted entry
+    /// the bot may not use. An existing entry the bot may use keeps its scope, account
+    /// facts, origins and programs (only the value changes); new entries are scoped to
+    /// `bot` (none when `bot` is `None`).
     ///
     /// # Errors
-    /// As [`Self::upsert_all`], plus [`FillError::NotAllowed`] for another bot's account.
+    /// As [`Self::upsert_all`], plus [`FillError::NotAllowed`] for an existing entry the bot
+    /// may not use.
     pub fn upsert_all_for_bot(
         &self,
         items: &[(String, String)],
@@ -1003,9 +1006,10 @@ impl FillSecrets {
         let mut meta = self.meta.lock();
         if let WriteScope::Bot(bot) = scope {
             for (n, _) in items {
-                // Only another bot's ACCOUNT is protected here: the owner answering a
-                // request may replace one of their own entries.
-                if let Some(e) = meta.secrets.get(n).filter(|e| e.account.is_some()) {
+                // A bot's request never takes over an entry it may not use, account or
+                // not: an owner-made or owner-granted entry is replaced only through the
+                // owner's own Vault route, whatever the form said.
+                if let Some(e) = meta.secrets.get(n) {
                     Self::scope_check(n, e, bot)?;
                 }
             }
@@ -1050,12 +1054,18 @@ impl FillSecrets {
         }
         let before = meta.clone();
         for (n, _) in items {
+            // A bot-scoped write over an entry that already exists (the bot's own, as
+            // checked above) changes the VALUE only: the scope, account facts, origins
+            // and programs stay as the owner set them. A form cannot widen them.
+            let keep_scope = matches!(scope, WriteScope::Bot(_)) && meta.secrets.contains_key(n);
             let entry = meta.secrets.entry(n.clone()).or_default();
-            entry.origins.clone_from(&origins);
-            entry.programs.clone_from(&programs);
-            entry.bot_ids.clone_from(&bot_ids);
-            if let Some(a) = entry.account.as_mut() {
-                a.bot_ids.clone_from(&bot_ids);
+            if !keep_scope {
+                entry.origins.clone_from(&origins);
+                entry.programs.clone_from(&programs);
+                entry.bot_ids.clone_from(&bot_ids);
+                if let Some(a) = entry.account.as_mut() {
+                    a.bot_ids.clone_from(&bot_ids);
+                }
             }
             if login_id.is_some() {
                 entry.login_id.clone_from(&login_id);
@@ -1245,18 +1255,30 @@ impl FillSecrets {
         }
     }
 
-    /// Whether `bot` may ask the owner to write over `name` (a `secret_request`):
-    /// refused only when `name` is another bot's ACCOUNT. The owner's own entries and
-    /// unknown names are fine to ask about (the owner answers the card).
+    /// Whether a `secret_request` of `bot` may write over `name`: an unknown name is
+    /// free, an existing entry (account or owner-made) only when the bot may use it.
+    /// Used where the OWNER sees the outcome (the submit route); a bot must not learn
+    /// from it whether a name it cannot use exists (see [`Self::exists_for_bot`]).
     ///
     /// # Errors
     /// [`FillError::NotAllowed`] (names the secret, nothing else).
     pub fn check_request_target(&self, name: &str, bot: Option<&str>) -> Result<(), FillError> {
         let meta = self.meta.lock();
-        match meta.secrets.get(name).filter(|e| e.account.is_some()) {
+        match meta.secrets.get(name) {
             Some(e) => Self::scope_check(name, e, bot),
             None => Ok(()),
         }
+    }
+
+    /// Whether `name` exists AND `bot` may use it: the only existence a bot may
+    /// learn. An entry the bot may not use answers exactly like a free name.
+    #[must_use]
+    pub fn exists_for_bot(&self, name: &str, bot: Option<&str>) -> bool {
+        self.meta
+            .lock()
+            .secrets
+            .get(name)
+            .is_some_and(|e| Self::bot_may_use(e, bot))
     }
 
     fn scope_check(name: &str, e: &Entry, bot: Option<&str>) -> Result<(), FillError> {
@@ -2277,18 +2299,134 @@ mod tests {
         }
         let still = s.resolve_value_for(name, Some("bot-a")).unwrap();
         assert_eq!(still.expose(), before, "the account value was overwritten");
-        // The owning bot may ask (the owner still sees the card), and an owner-made
-        // secret stays replaceable on behalf of any bot.
+        // The owning bot may ask (the owner still sees the card): the value changes,
+        // the account keeps its scope.
         assert!(
             s.upsert_all_for_bot(&items, &[], &[], true, Some("bot-a"))
                 .is_ok()
         );
-        s.upsert("login/owner-made", Some("x"), None, None).unwrap();
-        let owner_item = vec![("login/owner-made".to_owned(), "y".to_owned())];
-        assert!(
-            s.upsert_all_for_bot(&owner_item, &[], &[], true, Some("bot-b"))
-                .is_ok()
+        let own = s.list().unwrap().into_iter().find(|i| i.name == name);
+        assert_eq!(own.unwrap().bot_ids, ["bot-a"]);
+    }
+
+    fn info_of(s: &FillSecrets, name: &str) -> FillSecretInfo {
+        s.list()
+            .unwrap()
+            .into_iter()
+            .find(|i| i.name == name)
+            .unwrap()
+    }
+
+    /// An owner-made entry granted to bots A and C: bot B (or a call without a bot)
+    /// cannot replace it through a request, with or without `replace`; value,
+    /// bot list, origins and programs stay exactly as the owner left them.
+    #[test]
+    fn a_bot_write_cannot_take_over_an_owner_made_entry() {
+        let s = FillSecrets::in_memory(Arc::new(MemoryStore::new()));
+        let (origins, programs) = (
+            vec!["https://github.com".to_owned()],
+            vec!["win:sha256:abc".to_owned()],
         );
+        s.upsert_with(
+            "login/github",
+            FillSecretUpdate {
+                value: Some("owner-value-123"),
+                origins: Some(&origins),
+                programs: Some(&programs),
+                bot_ids: Some(&["bot-a".to_owned(), "bot-c".to_owned()]),
+                ..FillSecretUpdate::default()
+            },
+        )
+        .unwrap();
+        let before = info_of(&s, "login/github");
+        let items = vec![("login/github".to_owned(), "chosen-by-bot-b".to_owned())];
+        let wide = vec!["https://evil.example".to_owned()];
+        for bot in [Some("bot-b"), None] {
+            for replace in [true, false] {
+                let err = s
+                    .upsert_all_for_bots(
+                        &items,
+                        &wide,
+                        &[],
+                        &["bot-b".to_owned()],
+                        None,
+                        replace,
+                        bot,
+                    )
+                    .unwrap_err();
+                assert!(matches!(err, FillError::NotAllowed(_)), "{bot:?}: {err:?}");
+                assert!(!err.to_string().contains("chosen-by-bot-b"));
+            }
+        }
+        assert_eq!(
+            s.resolve_value_for_owner("login/github").unwrap().expose(),
+            "owner-value-123"
+        );
+        let after = info_of(&s, "login/github");
+        assert_eq!(after.bot_ids, ["bot-a", "bot-c"]);
+        assert_eq!(after.origins, origins);
+        assert_eq!(after.programs, programs);
+        assert_eq!(after.updated_at_ms, before.updated_at_ms);
+        // B cannot learn the name exists: it answers like a free name.
+        assert!(!s.exists_for_bot("login/github", Some("bot-b")));
+        assert!(!s.exists_for_bot("login/github", None));
+        assert!(!s.exists_for_bot("login/free-name", Some("bot-b")));
+        assert!(s.exists_for_bot("login/github", Some("bot-a")));
+        // The owner's own write path still replaces it.
+        assert!(
+            s.upsert_all(
+                &[("login/github".to_owned(), "owner-new-123".to_owned())],
+                &origins,
+                &programs,
+                true,
+            )
+            .unwrap()
+        );
+    }
+
+    /// A bot the owner allowed on an entry may replace its value; the scope the
+    /// owner set (other bots, origins, programs) is kept, and the form cannot widen it.
+    #[test]
+    fn an_allowed_bot_replaces_the_value_and_keeps_the_scope() {
+        let s = FillSecrets::in_memory(Arc::new(MemoryStore::new()));
+        let origins = vec!["https://github.com".to_owned()];
+        s.upsert_with(
+            "login/github",
+            FillSecretUpdate {
+                value: Some("owner-value-123"),
+                origins: Some(&origins),
+                bot_ids: Some(&["bot-a".to_owned(), "bot-c".to_owned()]),
+                ..FillSecretUpdate::default()
+            },
+        )
+        .unwrap();
+        let items = vec![("login/github".to_owned(), "fresh-value-456".to_owned())];
+        let wide = vec!["https://evil.example".to_owned()];
+        assert!(
+            s.upsert_all_for_bots(
+                &items,
+                &wide,
+                &["win:sha256:evil".to_owned()],
+                &["bot-a".to_owned()],
+                None,
+                true,
+                Some("bot-a"),
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            s.resolve_value_for_owner("login/github").unwrap().expose(),
+            "fresh-value-456"
+        );
+        let after = info_of(&s, "login/github");
+        assert_eq!(after.bot_ids, ["bot-a", "bot-c"]);
+        assert_eq!(after.origins, origins);
+        assert!(after.programs.is_empty());
+        // A name nobody has yet is scoped to the requester.
+        let fresh = vec![("login/new".to_owned(), "new-value-789".to_owned())];
+        s.upsert_all_for_bot(&fresh, &[], &[], false, Some("bot-b"))
+            .unwrap();
+        assert_eq!(info_of(&s, "login/new").bot_ids, ["bot-b"]);
     }
 
     /// A store that "kills the daemon" (panics) right after the password is written.
