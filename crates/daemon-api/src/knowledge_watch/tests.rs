@@ -198,7 +198,9 @@ async fn the_per_minute_file_budget_spreads_a_large_folder_over_time() {
         ..P
     };
     tick(&host.state, slow, 1_000).await;
-    // A partial page must stop exactly at the budget.
+    // Yield after eight files, then stop the next page exactly at the budget.
+    assert_eq!(host.indexed().len(), 8);
+    tick(&host.state, slow, 2_000).await;
     assert_eq!(host.indexed().len(), 10);
     assert_eq!(host.status().state, KnowledgeWatchState::Waiting);
     tick(&host.state, slow, 30_000).await;

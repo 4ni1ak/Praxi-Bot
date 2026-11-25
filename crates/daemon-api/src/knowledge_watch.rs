@@ -226,6 +226,7 @@ fn observe(s: &AppState, source: &Source, w: &mut SourceWatch, p: &Params, now: 
             w.churn = w.churn.saturating_add(1);
             // A change can land before the scan cursor: scan again from the top.
             w.cursor = None;
+            w.skipped_files = 0;
         }
         Some(_) => {
             w.quiet_ticks = w.quiet_ticks.saturating_add(1);
@@ -241,7 +242,7 @@ fn observe(s: &AppState, source: &Source, w: &mut SourceWatch, p: &Params, now: 
     w.pending && w.quiet_ticks >= 1
 }
 
-/// Index pages until the folder is done or this minute's file budget is used.
+/// Index one small page, then release both workers so foreground work can run.
 fn index(
     s: &AppState,
     owner: Scope,
@@ -250,56 +251,52 @@ fn index(
     p: &Params,
     now: i64,
 ) -> Result<(), ApiError> {
-    s.agent().refresh_external_redactor();
-    let store = KnowledgeStore::open(s.data_dir(), owner)
-        .map_err(|_| ApiError::internal("knowledge store"))?;
+    if s.shutdown_token().is_cancelled()
+        || s.0.knowledge_watch.paused_set(&s.data_dir()).contains(&id)
+    {
+        return Ok(());
+    }
     let mut budget = s.0.knowledge_watch.budget.lock();
     let start = *budget.start_ms.get_or_insert(now);
     if now - start >= 60_000 {
         budget.start_ms = Some(now);
         budget.used = 0;
     }
-    loop {
-        if s.shutdown_token().is_cancelled()
-            || s.0.knowledge_watch.paused_set(&s.data_dir()).contains(&id)
-        {
-            return Ok(());
-        }
-        if budget.used >= p.files_per_minute {
-            // Budget used: stay pending, continue from the cursor next minute.
-            w.next_check_ms = budget.start_ms.unwrap_or(now) + 60_000;
-            return Ok(());
-        }
-        let Some(source) = store
-            .source(id)
-            .map_err(|_| ApiError::internal("knowledge store"))?
-        else {
-            return Ok(());
-        };
-        let page_size = p.files_per_minute.saturating_sub(budget.used).min(32);
-        // Reserve attempts before I/O: unreadable and oversized files also cost
-        // budget, as does a partially completed page that returns an error.
-        budget.used += page_size;
-        let done =
-            crate::knowledge::reindex_limited(s, owner, &source, w.cursor.as_deref(), page_size)?;
-        let attempted = done.indexing.processed + done.indexing.failures.len();
-        budget.used -= page_size.saturating_sub(attempted);
-        w.skipped_files += done.indexing.failures.len();
-        if let Some(cursor) = done.indexing.next_cursor {
-            w.cursor = Some(cursor);
-            if !p.page_pause.is_zero() {
-                std::thread::sleep(p.page_pause);
-            }
-        } else {
-            w.cursor = None;
-            w.pending = false;
-            w.last_sync_ms = Some(now);
-            w.failures = 0;
-            w.error = (w.skipped_files > 0).then_some("some_files_skipped");
-            w.skipped_files = 0;
-            return Ok(());
-        }
+    if budget.used >= p.files_per_minute {
+        w.next_check_ms = budget.start_ms.unwrap_or(now) + 60_000;
+        return Ok(());
     }
+    s.agent().refresh_external_redactor();
+    let store = KnowledgeStore::open(s.data_dir(), owner)
+        .map_err(|_| ApiError::internal("knowledge store"))?;
+    let Some(source) = store
+        .source(id)
+        .map_err(|_| ApiError::internal("knowledge store"))?
+    else {
+        return Ok(());
+    };
+    let page_size = p.files_per_minute.saturating_sub(budget.used).min(8);
+    // Reserve attempts before I/O: unreadable and oversized files also cost
+    // budget, as does a partially completed page that returns an error.
+    budget.used += page_size;
+    let done =
+        crate::knowledge::reindex_limited(s, owner, &source, w.cursor.as_deref(), page_size)?;
+    let attempted = done.indexing.processed + done.indexing.failures.len();
+    budget.used -= page_size.saturating_sub(attempted);
+    w.skipped_files += done.indexing.failures.len();
+    w.cursor = done.indexing.next_cursor;
+    if w.cursor.is_some() {
+        if budget.used >= p.files_per_minute {
+            w.next_check_ms = budget.start_ms.unwrap_or(now) + 60_000;
+        }
+    } else {
+        w.pending = false;
+        w.last_sync_ms = Some(now);
+        w.failures = 0;
+        w.error = (w.skipped_files > 0).then_some("some_files_skipped");
+        w.skipped_files = 0;
+    }
+    Ok(())
 }
 
 fn watched_sources(s: &AppState, owner: Scope) -> Vec<Source> {
@@ -375,6 +372,20 @@ async fn step(s: &AppState, owner: Scope, source: Source, p: Params, now: i64) {
         return;
     };
     if !settled {
+        hub.sources.lock().insert(id, w);
+        return;
+    }
+    // An exhausted background budget must not cancel foreground embedding work.
+    let deferred_until = {
+        let budget = hub.budget.lock();
+        budget
+            .start_ms
+            .filter(|start| now < start + 60_000 && budget.used >= p.files_per_minute)
+            .map(|start| start + 60_000)
+    };
+    if let Some(until) = deferred_until {
+        let mut w = w;
+        w.next_check_ms = until;
         hub.sources.lock().insert(id, w);
         return;
     }
