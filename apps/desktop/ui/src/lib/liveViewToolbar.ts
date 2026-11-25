@@ -53,33 +53,6 @@ export function toggleFit(mode: FitMode): FitMode {
   return mode === "fit" ? "fill" : "fit";
 }
 
-const CHAT_KEY = "praxi.liveView.chatOpen";
-
-/** Whether the bottom-right chat strip was left open; a per-viewer convenience, collapsed by default. */
-export function loadChatOpen(storage: Pick<Storage, "getItem"> | null = safeStorage()): boolean {
-  try {
-    return storage?.getItem(CHAT_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-export function saveChatOpen(open: boolean, storage: Pick<Storage, "setItem"> | null = safeStorage()): void {
-  try {
-    storage?.setItem(CHAT_KEY, open ? "1" : "0");
-  } catch {
-    // Blocked storage: the choice just lasts for this session.
-  }
-}
-
-function safeStorage(): Storage | null {
-  try {
-    return typeof localStorage === "undefined" ? null : localStorage;
-  } catch {
-    return null;
-  }
-}
-
 /** The line a screen reader announces about the picture, or null when all is well. */
 export function viewerAnnouncementKey(s: {
   hasTarget: boolean;

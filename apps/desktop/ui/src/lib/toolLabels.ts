@@ -85,6 +85,11 @@ const pathChip = (i: Record<string, unknown>): StepChip[] => {
   return p ? [{ text: clip(baseName(p)) }] : [];
 };
 
+const secondsChip = (i: Record<string, unknown>): StepChip[] => {
+  const n = typeof i.seconds === "number" && Number.isFinite(i.seconds) ? Math.round(i.seconds) : null;
+  return n !== null && n > 0 ? [{ text: `${n} s` }] : [];
+};
+
 /*
  * Only tools whose effect is known get a specific sentence. There are no
  * prefix rows on purpose: a family name must never turn an unlisted (possibly
@@ -145,6 +150,7 @@ const TABLE: Record<string, Entry> = {
   notes_write: { id: "notes_write", icon: "memory" },
   time_now: { id: "time_now", icon: "calendar" },
   calculate: { id: "calculate", icon: "tool" },
+  wait: { id: "wait", icon: "calendar", chips: secondsChip },
   knowledge_search: { id: "knowledge_search", icon: "search", chips: queryChip },
   workflow_run: { id: "workflow", icon: "workflow" },
   todo_write: { id: "todo", icon: "list" },

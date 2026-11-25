@@ -22,7 +22,10 @@ daemon restarts or the system clock jumps.
 The engine reserves an occurrence with its timer update in one transaction and
 allows at most one execution per schedule to be in flight. When a schedule is
 edited, its revision keeps an older timer decision from applying to the new
-definition. Catch-up with `RunAll` is capped at ten occurrences.
+definition. Catch-up with `RunAll` is capped at ten occurrences. An optional
+`catchup_window_secs` limits how late a missed occurrence may still run; older
+ones are recorded as `missed` (never silently dropped, never run on their own)
+and can be run by hand. `Skip` ignores the window; `NULL` means no limit.
 
 After a restart, unresolved occurrences are recorded as missed or interrupted.
 Automatic replay would risk starting the same task twice because the executor

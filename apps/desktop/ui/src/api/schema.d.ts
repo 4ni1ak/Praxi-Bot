@@ -9271,6 +9271,12 @@ export interface components {
              */
             bot_id: string;
             /**
+             * Format: int64
+             * @description With `run_once` / `run_all`: a missed occurrence older than this many
+             *     seconds is not run late; it is listed as missed instead. `null` = no limit.
+             */
+            catchup_window_secs?: number | null;
+            /**
              * Format: uuid
              * @description Chat the runs post to; without one a chat named after the schedule is
              *     used (and created on the first firing).
@@ -9410,6 +9416,12 @@ export interface components {
              * @description Bot that runs it (cannot be changed afterwards).
              */
             bot_id: string;
+            /**
+             * Format: int64
+             * @description Catch-up window in seconds (1 to 30 days); `0` removes it. Absent keeps
+             *     the current value (none on create).
+             */
+            catchup_window_secs?: number | null;
             /**
              * Format: uuid
              * @description Chat the runs post to (default: a chat named after the schedule).

@@ -25,6 +25,8 @@ pub(crate) struct Families {
     /// Browser tools of a connected app (an MCP server such as Playwright).
     pub app_browser: bool,
     pub shell: bool,
+    /// `wait` is offered.
+    pub wait: bool,
     /// Any tool at all.
     pub any: bool,
 }
@@ -45,6 +47,7 @@ impl Families {
                 "web_search" => f.web_search = true,
                 "web_extract" => f.web_fetch = true,
                 "shell_run" => f.shell = true,
+                "wait" => f.wait = true,
                 "browser_act" => {
                     f.browser = true;
                     f.browser_act = true;
@@ -110,6 +113,12 @@ say so.",
             "\n- Do not read web pages with shell_run (curl, wget) or browser_eval when web_extract or browser_* can do it.",
         );
     }
+    if f.wait {
+        out.push_str(
+            "\n- A short burst (\"every 5 seconds, 4 times\") is done inside this one run: do the action, call `wait`, repeat. \
+Do not make a schedule for it: schedules have a minimum interval and refuse anything faster.",
+        );
+    }
     let _ = write!(
         out,
         "\n- Before you tell the user a job is done, check the result of the call that did it. A failed, timed-out, \
@@ -122,6 +131,14 @@ finished; check, retry once differently, or tell the user."
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_short_burst_is_taught_as_wait_in_one_run() {
+        let with = block(Families::of(["wait", "fs_read"])).unwrap();
+        assert!(with.contains("call `wait`"), "{with}");
+        let without = block(Families::of(["fs_read"])).unwrap();
+        assert!(!without.contains("`wait`"));
+    }
 
     #[test]
     fn cookie_banners_prefer_the_narrowest_choice() {

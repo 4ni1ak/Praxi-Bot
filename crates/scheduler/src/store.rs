@@ -48,10 +48,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0014_occurrence_retry_guard",
         include_str!("../migrations/0014_occurrence_retry_guard.sql"),
     ),
+    (
+        "0015_catchup_window",
+        include_str!("../migrations/0015_catchup_window.sql"),
+    ),
 ];
 
 /// Schema version produced by the newest embedded migration.
-pub const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 8;
 
 /// Manual retries allowed per occurrence.
 pub const MAX_OCCURRENCE_RETRIES: u32 = 5;
@@ -66,7 +70,7 @@ const OCCURRENCE_HISTORY_LIMIT: i64 = 100;
 const TERMINAL_STATES: &str = "'succeeded', 'failed', 'started', 'missed', 'interrupted'";
 
 const SCHEDULE_SELECT: &str = "SELECT id, bot_id, chat_id, name, spec_json, payload_json, \
-    enabled, created_at_ms, last_run_at_ms, next_run_at_ms, misfire_policy, revision, origin,     (SELECT COUNT(*) FROM occurrences o WHERE o.schedule_id = schedules.id      AND o.state IN ('missed', 'interrupted')), precheck_json FROM schedules";
+    enabled, created_at_ms, last_run_at_ms, next_run_at_ms, misfire_policy, revision, origin,     (SELECT COUNT(*) FROM occurrences o WHERE o.schedule_id = schedules.id      AND o.state IN ('missed', 'interrupted')), precheck_json, catchup_window_secs FROM schedules";
 
 /// Type alias for [`ScheduleStore`].
 pub type Store = ScheduleStore;
@@ -196,8 +200,8 @@ impl ScheduleStore {
         let payload_json = serde_json::to_string(&schedule.payload)?;
         tx.execute(
             "INSERT INTO schedules (id, bot_id, chat_id, name, spec_json, payload_json, \
-             enabled, created_at_ms, last_run_at_ms, next_run_at_ms, misfire_policy, origin, precheck_json) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             enabled, created_at_ms, last_run_at_ms, next_run_at_ms, misfire_policy, origin, precheck_json, catchup_window_secs) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 schedule.id.to_string(),
                 schedule.bot_id.to_string(),
@@ -212,6 +216,7 @@ impl ScheduleStore {
                 schedule.misfire_policy.as_str(),
                 schedule.origin.as_str(),
                 schedule.precheck.as_ref().map(serde_json::to_string).transpose()?,
+                window_param(schedule),
             ],
         )?;
         if let Some(t) = trigger {
@@ -251,8 +256,8 @@ impl ScheduleStore {
         } else {
             tx.execute(
                 "INSERT INTO schedules (id, bot_id, chat_id, name, spec_json, payload_json, \
-                 enabled, created_at_ms, last_run_at_ms, next_run_at_ms, misfire_policy, origin, precheck_json) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                 enabled, created_at_ms, last_run_at_ms, next_run_at_ms, misfire_policy, origin, precheck_json, catchup_window_secs) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     schedule.id.to_string(),
                     schedule.bot_id.to_string(),
@@ -267,6 +272,7 @@ impl ScheduleStore {
                     schedule.misfire_policy.as_str(),
                     schedule.origin.as_str(),
                 schedule.precheck.as_ref().map(serde_json::to_string).transpose()?,
+                    window_param(schedule),
                 ],
             )?;
         }
@@ -680,10 +686,24 @@ impl ScheduleStore {
     /// Atomically persist the occurrence identities and consume the inspected
     /// timer window. No execution or successful start is implied by a pending
     /// intent. A stale snapshot cannot move the cursor or create claims.
+    #[cfg(test)]
     pub(crate) fn reserve_occurrences(
         &self,
         schedule: &Schedule,
         due_slots: &[i64],
+        next_run_at: Option<i64>,
+    ) -> Result<bool> {
+        self.reserve_occurrences_with_missed(schedule, due_slots, &[], next_run_at)
+    }
+
+    /// Like [`Self::reserve_occurrences`], and also record `missed_slots` as
+    /// `missed` rows (too old for the catch-up window): visible in history and
+    /// the missed count, retryable by hand, never run on their own.
+    pub(crate) fn reserve_occurrences_with_missed(
+        &self,
+        schedule: &Schedule,
+        due_slots: &[i64],
+        missed_slots: &[i64],
         next_run_at: Option<i64>,
     ) -> Result<bool> {
         let mut conn = self.conn();
@@ -705,6 +725,14 @@ impl ScheduleStore {
             tx.execute(
                 "INSERT INTO occurrences (schedule_id, due_ms, revision, run_id, state) \
                  VALUES (?1, ?2, ?3, NULL, 'pending') \
+                 ON CONFLICT(schedule_id, due_ms) DO NOTHING",
+                params![schedule.id.to_string(), due_ms, schedule.revision],
+            )?;
+        }
+        for due_ms in missed_slots {
+            tx.execute(
+                "INSERT INTO occurrences (schedule_id, due_ms, revision, run_id, state) \
+                 VALUES (?1, ?2, ?3, NULL, 'missed') \
                  ON CONFLICT(schedule_id, due_ms) DO NOTHING",
                 params![schedule.id.to_string(), due_ms, schedule.revision],
             )?;
@@ -1295,7 +1323,8 @@ fn arm_from(spec: &ScheduleSpec, now_ms: i64) -> Result<Option<i64>> {
 fn update_definition_in(conn: &Connection, schedule: &Schedule) -> Result<bool> {
     let changed = conn.execute(
         "UPDATE schedules SET chat_id = ?2, name = ?3, spec_json = ?4, payload_json = ?5, \
-         enabled = ?6, misfire_policy = ?7, revision = revision + 1, precheck_json = ?9 \
+         enabled = ?6, misfire_policy = ?7, revision = revision + 1, precheck_json = ?9, \
+         catchup_window_secs = ?10 \
          WHERE id = ?1 AND revision = ?8",
         params![
             schedule.id.to_string(),
@@ -1311,6 +1340,7 @@ fn update_definition_in(conn: &Connection, schedule: &Schedule) -> Result<bool> 
                 .as_ref()
                 .map(serde_json::to_string)
                 .transpose()?,
+            window_param(schedule),
         ],
     )?;
     if changed > 0 {
@@ -1361,6 +1391,12 @@ fn opt_uuid_at(row: &Row<'_>, idx: usize) -> rusqlite::Result<Option<Uuid>> {
         .transpose()
 }
 
+fn window_param(schedule: &Schedule) -> Option<i64> {
+    schedule
+        .catchup_window_secs
+        .and_then(|w| i64::try_from(w).ok())
+}
+
 fn schedule_row(row: &Row<'_>) -> rusqlite::Result<Schedule> {
     let spec_str: String = row.get(4)?;
     let spec: ScheduleSpec = serde_json::from_str(&spec_str).map_err(|e| conv_err(4, e))?;
@@ -1408,6 +1444,9 @@ fn schedule_row(row: &Row<'_>) -> rusqlite::Result<Schedule> {
             .get::<_, Option<String>>(14)?
             .map(|v| serde_json::from_str(&v).map_err(|e| conv_err(14, e)))
             .transpose()?,
+        catchup_window_secs: row
+            .get::<_, Option<i64>>(15)?
+            .and_then(|v| u64::try_from(v).ok()),
         external_input: None,
         precheck_failed: false,
     })

@@ -9,6 +9,7 @@ import {
   Minimize2,
   Monitor,
   OctagonX,
+  PanelRight,
   RefreshCw
 } from "lucide-react";
 import {
@@ -17,6 +18,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FocusEvent
 } from "react";
 import { createPortal } from "react-dom";
@@ -52,6 +54,14 @@ import {
   viewerShortcut,
   type FitMode
 } from "../lib/liveViewToolbar";
+import {
+  escapeChatMode,
+  loadChatMode,
+  nextChatMode,
+  saveChatMode,
+  type ChatDockAction,
+  type ChatDockMode
+} from "../lib/liveChatDock";
 import { layerStack } from "../lib/modalStack";
 import { noScreenCode } from "../lib/computerLabel";
 import { explainScreen } from "../lib/screenReason";
@@ -97,22 +107,36 @@ function targetOptionHint(
   return parts.join(" · ");
 }
 
+/** The right-hand bot panel, as the live view needs to see it (App owns it). */
+export interface LiveInfoPanel {
+  open: boolean;
+  /** Width in px while open: the viewer leaves this much room at the right edge. */
+  width: number;
+  onToggle: () => void;
+  onClose: () => void;
+}
+
 /**
- * The screen viewer. `source="local"` is the one of THIS computer while a server is home (the
- * right panel's "my computer" screen); by default it follows the views' computer.
+ * The full-screen screen viewer. `source="local"` is the one of THIS computer while a server is home
+ * (the right panel's "my computer" screen); by default it follows the views' computer.
+ *
+ * The screen share is the big part. The chat reaches it through a "Chat" button at the bottom-right:
+ * a small chat card, or a chat column on the right with the screen staying on the left
+ * (`lib/liveChatDock`). The bot panel never covers the viewer: while it is open the viewer
+ * ends where the panel begins, and that edge moves smoothly.
  */
 export function LiveViewer({
   source = "home",
-  variant = "overlay",
-  onExpand,
+  botId = null,
+  infoPanel,
   onChatSlots
 }: {
   source?: "home" | "local";
-  variant?: "overlay" | "docked";
-  onExpand?: () => void;
+  /** The bot the chat belongs to: the chat's last state is remembered per bot. */
+  botId?: string | null;
+  infoPanel?: LiveInfoPanel;
   onChatSlots?: (slots: LiveChatSlots | null) => void;
 } = {}) {
-  const isDocked = variant === "docked";
   const { t } = useTranslation();
   const { bots, needs } = useDaemon();
   const questionCount = needs.filter((item) => item.kind === "question").length;
@@ -134,7 +158,6 @@ export function LiveViewer({
     panelAction,
     recoveryPrompt,
     closeViewer,
-    openViewer,
     selectTarget,
     refreshTargets,
     requestTakeover,
@@ -150,6 +173,8 @@ export function LiveViewer({
     qualityMode,
     setQualityMode
   } = view;
+  const infoPanelRef = useRef(infoPanel);
+  infoPanelRef.current = infoPanel;
 
   const viewFailure = streamFailure ?? (!frameUrl ? targetsError : null);
   const [selectedOutcome, setSelectedOutcome] = useState<HumanAction | "none">(
@@ -167,6 +192,26 @@ export function LiveViewer({
     w: 0,
     h: 0
   });
+
+  const [chatMode, setChatMode] = useState<ChatDockMode>(() => loadChatMode(botId));
+  const chatModeRef = useRef(chatMode);
+  chatModeRef.current = chatMode;
+  useEffect(() => {
+    setChatMode(loadChatMode(botId));
+  }, [botId]);
+  const applyChatMode = useCallback(
+    (next: ChatDockMode) => {
+      saveChatMode(botId, next);
+      setChatMode(next);
+    },
+    [botId]
+  );
+  const chatAction = useCallback(
+    (action: ChatDockAction) => applyChatMode(nextChatMode(chatModeRef.current, action)),
+    [applyChatMode]
+  );
+  const chatDockRef = useRef<HTMLDivElement | null>(null);
+  const hasChat = Boolean(onChatSlots);
 
   const stageRef = useRef<HTMLDivElement | null>(null);
   const focusBarRef = useRef<HTMLDivElement | null>(null);
@@ -188,8 +233,8 @@ export function LiveViewer({
     [bots]
   );
 
-  const active = isDocked || viewerOpen;
-  const overlayOpen = !isDocked && viewerOpen;
+  const active = viewerOpen;
+  const overlayOpen = viewerOpen;
 
   // Measure rendered container so contained panel overlays align accurately.
   useEffect(() => {
@@ -274,12 +319,21 @@ export function LiveViewer({
       });
       if (action === "close") {
         e.preventDefault();
-        void closeViewer();
+        // Escape steps back one layer at a time: the chat (large -> small -> closed) when the key
+        // was pressed in it, then the bot panel, and only then the viewer itself.
+        const inChat = e.target instanceof Node && chatDockRef.current?.contains(e.target);
+        if (inChat && chatModeRef.current !== "closed") {
+          applyChatMode(escapeChatMode(chatModeRef.current));
+        } else if (infoPanelRef.current?.open) {
+          infoPanelRef.current.onClose();
+        } else {
+          void closeViewer();
+        }
       }
     };
     window.addEventListener("keydown", onGlobalKey);
     return () => window.removeEventListener("keydown", onGlobalKey);
-  }, [overlayOpen, isInteractive, stageFocused, closeViewer, helpOpen, moreOpen]);
+  }, [overlayOpen, isInteractive, stageFocused, closeViewer, helpOpen, moreOpen, applyChatMode]);
 
   const mapPointer = useCallback(
     (clientX: number, clientY: number, clamp: boolean) => {
@@ -348,7 +402,12 @@ export function LiveViewer({
       if (action !== "trap-tab" || !node) {
         return;
       }
-      const items = [...node.querySelectorAll<HTMLElement>(FOCUSABLE)];
+      // The open bot panel sits beside the viewer: Tab walks through it after the viewer's own controls.
+      const panelNode = document.querySelector<HTMLElement>('[data-shell-part="panel"][data-open="true"]');
+      const items = [
+        ...node.querySelectorAll<HTMLElement>(FOCUSABLE),
+        ...(panelNode ? panelNode.querySelectorAll<HTMLElement>(FOCUSABLE) : [])
+      ];
       if (items.length === 0) {
         e.preventDefault();
         return;
@@ -356,7 +415,7 @@ export function LiveViewer({
       const first = items[0];
       const last = items[items.length - 1];
       const activeEl = document.activeElement;
-      if (!node.contains(activeEl)) {
+      if (!node.contains(activeEl) && !panelNode?.contains(activeEl)) {
         e.preventDefault();
         first.focus();
       } else if (e.shiftKey && activeEl === first) {
@@ -471,10 +530,12 @@ export function LiveViewer({
 
   const content = (
     <div
-      className={isDocked ? styles.dockedRoot : styles.backdrop}
-      role={isDocked ? "region" : "dialog"}
+      className={styles.backdrop}
+      role="dialog"
       aria-label={t("liveView.title")}
-      data-testid={isDocked ? "live-viewer-docked" : "live-viewer"}
+      data-testid="live-viewer"
+      data-panel={infoPanel?.open ? "open" : "closed"}
+      style={{ "--live-panel-w": `${infoPanel?.open ? infoPanel.width : 0}px` } as CSSProperties}
       ref={backdropRef}
     >
       <header className={styles.header}>
@@ -482,36 +543,22 @@ export function LiveViewer({
           {announceKey ? t(`liveView.announce.${announceKey}`) : ""}
         </div>
         <div className={styles.headerLeft}>
-          {isDocked ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => (onExpand ? onExpand() : openViewer())}
-              title={t("liveView.expandScreen")}
-              aria-label={t("liveView.expandScreen")}
-              data-testid="live-viewer-expand"
-            >
-              <Maximize2 />
-              <span>{t("liveView.expandScreen")}</span>
-            </Button>
-          ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void closeViewer()}
-              title={
-                isReleasing
-                  ? t("liveView.dismissKeepsControl")
-                  : ownsActive
-                    ? t("liveView.releaseOnClose")
-                    : undefined
-              }
-              data-testid="live-viewer-close"
-            >
-              <ArrowLeft />
-              <span>{t("liveView.backToChat")}</span>
-            </Button>
-          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void closeViewer()}
+            title={
+              isReleasing
+                ? t("liveView.dismissKeepsControl")
+                : ownsActive
+                  ? t("liveView.releaseOnClose")
+                  : undefined
+            }
+            data-testid="live-viewer-close"
+          >
+            <ArrowLeft />
+            <span>{t("liveView.backToChat")}</span>
+          </Button>
         </div>
 
         <div className={styles.targetPicker}>
@@ -615,15 +662,26 @@ export function LiveViewer({
               </div>
             ) : null}
           </div>
-          {!isDocked ? (
-            <span
-              className={styles.stateBadge}
-              data-tone={tone}
-              data-testid="live-viewer-state-badge"
+          <span
+            className={styles.stateBadge}
+            data-tone={tone}
+            data-testid="live-viewer-state-badge"
+          >
+            <i className={styles.stateDot} aria-hidden="true" />
+            <span>{badgeLabel}</span>
+          </span>
+          {infoPanel ? (
+            <button
+              type="button"
+              className={styles.iconBtn}
+              aria-pressed={infoPanel.open}
+              title={t("liveView.infoPanel")}
+              aria-label={t("liveView.infoPanel")}
+              data-testid="live-viewer-info"
+              onClick={infoPanel.onToggle}
             >
-              <i className={styles.stateDot} aria-hidden="true" />
-              <span>{badgeLabel}</span>
-            </span>
+              <PanelRight />
+            </button>
           ) : null}
           {actions.includes("stop") ? (
             <Button
@@ -641,378 +699,382 @@ export function LiveViewer({
         </div>
       </header>
 
-      <div className={styles.statusSlot}>
-        {otherOwner || state.lastError || viewFailure || state.disconnected || state.needsResync || state.streamStale ? (
-          <div className={styles.statusLine} role="status">
-            {otherOwner ? (
-              <strong>{t("liveView.otherOwner", { owner: otherOwner })}</strong>
-            ) : null}
-            {state.lastError || viewFailure ? (
-              <span className={styles.errorInline} role="alert">
-                {liveViewErrorText(state.lastError ?? viewFailure)}
-                {viewFailure && !frameUrl ? (
-                  <Button variant="secondary" size="sm" onClick={() => {
-                    retryStream();
-                    void refreshTargets();
-                  }}>
-                    {t("computerCard.retry")}
-                  </Button>
+      <div className={styles.body} data-chat={hasChat ? chatMode : "none"}>
+        <div className={styles.mainCol}>
+          <div className={styles.statusSlot}>
+            {otherOwner || state.lastError || viewFailure || state.disconnected || state.needsResync || state.streamStale ? (
+              <div className={styles.statusLine} role="status">
+                {otherOwner ? (
+                  <strong>{t("liveView.otherOwner", { owner: otherOwner })}</strong>
                 ) : null}
-              </span>
-            ) : state.disconnected ? (
-              <span className={styles.errorInline}>{t("liveView.reconnecting")}</span>
-            ) : state.streamStale ? (
-              <span className={styles.errorInline} data-testid="live-viewer-stalled">
-                {t("computerCard.stalled")}
-              </span>
-            ) : state.needsResync ? (
-              <span className={styles.errorInline}>
-                {t("liveView.reasons.resync_required")}
-              </span>
+                {state.lastError || viewFailure ? (
+                  <span className={styles.errorInline} role="alert">
+                    {liveViewErrorText(state.lastError ?? viewFailure)}
+                    {viewFailure && !frameUrl ? (
+                      <Button variant="secondary" size="sm" onClick={() => {
+                        retryStream();
+                        void refreshTargets();
+                      }}>
+                        {t("computerCard.retry")}
+                      </Button>
+                    ) : null}
+                  </span>
+                ) : state.disconnected ? (
+                  <span className={styles.errorInline}>{t("liveView.reconnecting")}</span>
+                ) : state.streamStale ? (
+                  <span className={styles.errorInline} data-testid="live-viewer-stalled">
+                    {t("computerCard.stalled")}
+                  </span>
+                ) : state.needsResync ? (
+                  <span className={styles.errorInline}>
+                    {t("liveView.reasons.resync_required")}
+                  </span>
+                ) : null}
+              </div>
             ) : null}
           </div>
-        ) : null}
-      </div>
 
-      <div className={styles.stageArea} data-fit={fit}>
-        <div
-          className={styles.stageFrame}
-          data-active={isInteractive ? "true" : "false"}
-          data-has-frame={frameUrl && state.latestFrame ? "true" : "false"}
-          style={
-            frameUrl && state.latestFrame
-              ? {
-                  aspectRatio: `${state.latestFrame.width} / ${state.latestFrame.height}`
-                }
-              : undefined
-          }
-        >
-          {frameUrl && (!targetSummary || targetSummary.available) ? (
+          <div className={styles.stageArea} data-fit={fit}>
             <div
-              ref={stageRef}
-              className={styles.stageSurface}
-              data-interactive={isInteractive ? "true" : "false"}
-              data-testid="live-viewer-stage"
-              tabIndex={isInteractive ? 0 : -1}
-              role={isInteractive ? "application" : undefined}
-              aria-roledescription={isInteractive ? "remote screen" : undefined}
-              aria-label={
-                isInteractive
-                  ? t("liveView.stageHint")
-                  : t("liveView.stageAlt", {
+              className={styles.stageFrame}
+              data-active={isInteractive ? "true" : "false"}
+              data-has-frame={frameUrl && state.latestFrame ? "true" : "false"}
+              style={
+                frameUrl && state.latestFrame
+                  ? {
+                      aspectRatio: `${state.latestFrame.width} / ${state.latestFrame.height}`
+                    }
+                  : undefined
+              }
+            >
+              {frameUrl && (!targetSummary || targetSummary.available) ? (
+                <div
+                  ref={stageRef}
+                  className={styles.stageSurface}
+                  data-interactive={isInteractive ? "true" : "false"}
+                  data-testid="live-viewer-stage"
+                  tabIndex={isInteractive ? 0 : -1}
+                  role={isInteractive ? "application" : undefined}
+                  aria-roledescription={isInteractive ? "remote screen" : undefined}
+                  aria-label={
+                    isInteractive
+                      ? t("liveView.stageHint")
+                      : t("liveView.stageAlt", {
+                          target: selectedTarget
+                            ? t(`liveView.kind.${selectedTarget.kind}`)
+                            : t("botPanel.computer")
+                        })
+                  }
+                  onFocus={(e: FocusEvent<HTMLDivElement>) => {
+                    if (isInteractive) {
+                      setStageFocused(true);
+                      if (e.target === e.currentTarget) {
+                        imeInputRef.current?.focus({ preventScroll: true });
+                      }
+                    }
+                  }}
+                  onBlur={(e: FocusEvent<HTMLDivElement>) => {
+                    if (focusLeftScope(e.relatedTarget, stageRef.current, focusBarRef.current)) {
+                      setStageFocused(false);
+                      stageController.reset();
+                      resetInputState(true);
+                    }
+                  }}
+                  {...stageController.stage}
+                >
+                  <img
+                    ref={imgRef}
+                    className={styles.stageImg}
+                    src={frameUrl}
+                    alt={t("liveView.stageAlt", {
                       target: selectedTarget
                         ? t(`liveView.kind.${selectedTarget.kind}`)
                         : t("botPanel.computer")
-                    })
-              }
-              onFocus={(e: FocusEvent<HTMLDivElement>) => {
-                if (isInteractive) {
-                  setStageFocused(true);
-                  if (e.target === e.currentTarget) {
-                    imeInputRef.current?.focus({ preventScroll: true });
-                  }
-                }
-              }}
-              onBlur={(e: FocusEvent<HTMLDivElement>) => {
-                if (focusLeftScope(e.relatedTarget, stageRef.current, focusBarRef.current)) {
-                  setStageFocused(false);
-                  stageController.reset();
-                  resetInputState(true);
-                }
-              }}
-              {...stageController.stage}
-            >
-              <img
-                ref={imgRef}
-                className={styles.stageImg}
-                src={frameUrl}
-                alt={t("liveView.stageAlt", {
-                  target: selectedTarget
-                    ? t(`liveView.kind.${selectedTarget.kind}`)
-                    : t("botPanel.computer")
-                })}
-                draggable={false}
-              />
+                    })}
+                    draggable={false}
+                  />
 
-              {isInteractive ? (
-                <textarea
-                  ref={imeInputRef}
-                  className={styles.imeCapture}
-                  aria-label={t("liveView.stageHint")}
-                  tabIndex={-1}
-                  value={imeBuffer}
-                  onChange={(e) => setImeBuffer(e.target.value)}
-                  {...stageController.ime}
-                />
-              ) : null}
+                  {isInteractive ? (
+                    <textarea
+                      ref={imeInputRef}
+                      className={styles.imeCapture}
+                      aria-label={t("liveView.stageHint")}
+                      tabIndex={-1}
+                      value={imeBuffer}
+                      onChange={(e) => setImeBuffer(e.target.value)}
+                      {...stageController.ime}
+                    />
+                  ) : null}
 
-              {actionOverlayStyle && panelAction ? (
-                <div
-                  className={styles.actionBox}
-                  style={actionOverlayStyle}
-                  aria-hidden="true"
-                >
-                  <span className={styles.actionTag}>
-                    {panelAction.label || panelAction.action}
-                  </span>
+                  {actionOverlayStyle && panelAction ? (
+                    <div
+                      className={styles.actionBox}
+                      style={actionOverlayStyle}
+                      aria-hidden="true"
+                    >
+                      <span className={styles.actionTag}>
+                        {panelAction.label || panelAction.action}
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
-          ) : (
-            <div className={styles.emptyStage} data-testid="live-viewer-unavailable">
-              <span className={styles.emptyIcon}>
-                <KindIcon aria-hidden="true" />
-              </span>
-              <p className={styles.emptyTitle}>
-                {selectedTarget
-                  ? `${t(`liveView.kind.${selectedTarget.kind}`)} · ${selectedTarget.host_id}`
-                  : t("botPanel.computer")}
-              </p>
-              <p className={styles.emptyBody}>
-                {screenWhy
-                  ? t("liveView.panelSummary.noScreenReason", { detail: t(screenWhy.detailKey) })
-                  : unavailableReason
-                    ? t(`liveView.reasons.${unavailableReason}`, {
-                        defaultValue: t("liveView.reasons.unavailable")
-                      })
-                    : t("liveView.noTargets")}
-              </p>
-              {screenWhy ? (
-                <div className={styles.emptyBody} data-testid="live-viewer-fix">
-                  <p>{t(screenWhy.fixKey)}</p>
-                  {screenWhy.command ? <CopyBlock text={screenWhy.command} /> : null}
-                </div>
-              ) : null}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void refreshTargets()}
-              >
-                <RefreshCw />
-                <span>{t("liveView.refresh")}</span>
-              </Button>
-            </div>
-          )}
-        </div>
-        <div
-          ref={focusBarRef}
-          className={styles.focusSlot}
-          aria-live="polite"
-          data-testid="live-viewer-focus-slot"
-        >
-          {isInteractive && stageFocused ? (
-            <div
-              className={styles.focusOverlayBar}
-              data-testid="live-viewer-focus-bar"
-              {...stageController.toolbar}
-            >
-              <span>{t("liveView.focusTrapHint")}</span>
-              <button
-                type="button"
-                className={styles.tabToggle}
-                aria-pressed={captureTab}
-                onClick={() => {
-                  setCaptureTab((v) => !v);
-                  imeInputRef.current?.focus({ preventScroll: true });
-                }}
-              >
-                {t("liveView.captureTab")}
-              </button>
-              <button
-                type="button"
-                className={styles.tabToggle}
-                onClick={exitKeyboardFocus}
-              >
-                {t("liveView.releaseFocus")}
-              </button>
-            </div>
-          ) : isInteractive ? (
-            <span className={styles.focusIdleHint} data-testid="live-viewer-focus-idle">
-              {t("liveView.stageFocusPrompt")}
-            </span>
-          ) : null}
-        </div>
-        <p
-          className={styles.privacyHint}
-          title={t("liveView.globalPauseNotice")}
-          data-testid="live-viewer-privacy"
-        >
-          <Info aria-hidden="true" />
-          <span>{t("liveView.privacyNotice")}</span>
-        </p>
-      </div>
-
-      <div className={styles.viewerFooter}>
-        {!isDocked && questionCount > 0 ? (
-          <div
-            className={styles.approvalBar}
-            role="status"
-            data-testid="live-viewer-approvals"
-          >
-            <div className={styles.approvalHead}>
-              <span>{t("liveView.approvalsWaiting", { count: questionCount })}</span>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void closeViewer()}
-                data-testid="live-viewer-approvals-open"
-              >
-                {t("liveView.reviewApprovals")}
-              </Button>
-            </div>
-            {/* The chat beside the screen holds the approvals; the questions are answered right here. */}
-            <PendingDecisions entries={needs.filter((item) => item.kind === "question")} />
-          </div>
-        ) : null}
-
-        <div className={styles.footerSpacer} aria-hidden="true" />
-
-        <div className={styles.bottomDock} data-testid="live-view-bar">
-        {actions.includes("bitirdim") || actions.includes("retry_bitirdim") ? (
-          <>
-            <span className={styles.dockStatus}>
-              {isReleasing
-                ? t("liveView.retryingDone")
-                : t("liveView.states.active")}
-            </span>
-            {!isReleasing ? (
-              <select
-                className={styles.outcomeSelect}
-                aria-label={t("liveView.outcomeHint")}
-                value={selectedOutcome}
-                onChange={(e) =>
-                  setSelectedOutcome(e.target.value as HumanAction | "none")
-                }
-              >
-                <option value="none">{t("liveView.outcomes.none")}</option>
-                <option value="login_completed">
-                  {t("liveView.outcomes.login_completed")}
-                </option>
-                <option value="application_opened">
-                  {t("liveView.outcomes.application_opened")}
-                </option>
-                <option value="other">{t("liveView.outcomes.other")}</option>
-              </select>
-            ) : null}
-            <div className={styles.dockActions}>
-              {actions.includes("retry_bitirdim") ? (
-                <Button
-                  ref={doneButtonRef}
-                  variant="primary"
-                  size="sm"
-                  data-testid="live-view-retry-done"
-                  onClick={() => void retryRelease()}
-                >
-                  {t("liveView.retryDone")}
-                </Button>
               ) : (
-                <Button
-                  ref={doneButtonRef}
-                  variant="primary"
-                  size="sm"
-                  disabled={isReleasing}
-                  data-testid="live-view-done"
-                  onClick={() =>
-                    void releaseTakeover(
-                      selectedOutcome === "none" ? null : selectedOutcome
-                    )
-                  }
-                >
-                  {t("liveView.handBackAction")}
-                </Button>
+                <div className={styles.emptyStage} data-testid="live-viewer-unavailable">
+                  <span className={styles.emptyIcon}>
+                    <KindIcon aria-hidden="true" />
+                  </span>
+                  <p className={styles.emptyTitle}>
+                    {selectedTarget
+                      ? `${t(`liveView.kind.${selectedTarget.kind}`)} · ${selectedTarget.host_id}`
+                      : t("botPanel.computer")}
+                  </p>
+                  <p className={styles.emptyBody}>
+                    {screenWhy
+                      ? t("liveView.panelSummary.noScreenReason", { detail: t(screenWhy.detailKey) })
+                      : unavailableReason
+                        ? t(`liveView.reasons.${unavailableReason}`, {
+                            defaultValue: t("liveView.reasons.unavailable")
+                          })
+                        : t("liveView.noTargets")}
+                  </p>
+                  {screenWhy ? (
+                    <div className={styles.emptyBody} data-testid="live-viewer-fix">
+                      <p>{t(screenWhy.fixKey)}</p>
+                      {screenWhy.command ? <CopyBlock text={screenWhy.command} /> : null}
+                    </div>
+                  ) : null}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void refreshTargets()}
+                  >
+                    <RefreshCw />
+                    <span>{t("liveView.refresh")}</span>
+                  </Button>
+                </div>
               )}
             </div>
-          </>
-        ) : state.viewState === "acquiring" ||
-          state.pendingRequest?.kind === "takeover" ? (
-          <>
-            <span className={styles.dockStatus}>
-              {t("liveView.states.acquiring")}
-            </span>
-            <Button variant="secondary" size="sm" disabled>
-              {t("liveView.states.acquiring")}
-            </Button>
-          </>
-        ) : recoveryPrompt && actions.includes("clear_pause") ? (
-          <>
-            <span className={styles.dockStatus}>
-              {t(`liveView.reasons.${recoveryPrompt.reason}`, {
-                defaultValue: t("liveView.states.paused")
-              })}
-            </span>
-            <Button
-              variant="primary"
-              size="sm"
-              data-testid="live-view-recover"
-              onClick={() => void recoverTakeover()}
+            <div
+              ref={focusBarRef}
+              className={styles.focusSlot}
+              aria-live="polite"
+              data-testid="live-viewer-focus-slot"
             >
-              {actions.includes("reacquire")
-                ? t("liveView.reacquireAction")
-                : t("liveView.clearPauseAction")}
-            </Button>
-            {actions.includes("reacquire") ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                data-testid="live-view-clear-pause"
-                onClick={() => void clearPause()}
-              >
-                {t("liveView.clearPauseAction")}
-              </Button>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <span className={styles.dockStatus}>
-              {state.disconnected
-                ? t("liveView.connectionLost")
-                : otherOwner
-                  ? t("liveView.otherOwner", { owner: otherOwner })
-                  : selectedTarget && targetSummary?.available
-                    ? t("liveView.states.watch")
-                    : t("liveView.states.unavailable")}
-            </span>
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={!canTakeover}
-              data-testid="live-view-takeover"
-              title={t("liveView.toolbar.takeoverHint")}
-              aria-keyshortcuts="Control+Shift+D"
-              onClick={() => void requestTakeover()}
+              {isInteractive && stageFocused ? (
+                <div
+                  className={styles.focusOverlayBar}
+                  data-testid="live-viewer-focus-bar"
+                  {...stageController.toolbar}
+                >
+                  <span>{t("liveView.focusTrapHint")}</span>
+                  <button
+                    type="button"
+                    className={styles.tabToggle}
+                    aria-pressed={captureTab}
+                    onClick={() => {
+                      setCaptureTab((v) => !v);
+                      imeInputRef.current?.focus({ preventScroll: true });
+                    }}
+                  >
+                    {t("liveView.captureTab")}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.tabToggle}
+                    onClick={exitKeyboardFocus}
+                  >
+                    {t("liveView.releaseFocus")}
+                  </button>
+                </div>
+              ) : isInteractive ? (
+                <span className={styles.focusIdleHint} data-testid="live-viewer-focus-idle">
+                  {t("liveView.stageFocusPrompt")}
+                </span>
+              ) : null}
+            </div>
+            <p
+              className={styles.privacyHint}
+              title={t("liveView.globalPauseNotice")}
+              data-testid="live-viewer-privacy"
             >
-              {t("liveView.watchAction")}
-            </Button>
-            {actions.includes("clear_foreign_pause") && foreignPaused ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                data-testid="live-view-clear-foreign"
-                onClick={() => void clearPause("foreign")}
-              >
-                {t("liveView.clearForeignPause", { owner: foreignPaused.owner })}
-              </Button>
-            ) : null}
-            {actions.includes("clear_latch") ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                data-testid="live-view-clear-latch"
-                onClick={() => void clearPause("latch")}
-              >
-                {t("liveView.clearPauseAction")}
-              </Button>
-            ) : null}
-          </>
-        )}
-        </div>
+              <Info aria-hidden="true" />
+              <span>{t("liveView.privacyNotice")}</span>
+            </p>
+          </div>
 
-        <div className={styles.footerRight}>
-          {!isDocked ? <LiveViewerChat onChatSlots={onChatSlots} /> : null}
+          <div className={styles.viewerFooter}>
+            {questionCount > 0 ? (
+              <div
+                className={styles.approvalBar}
+                role="status"
+                data-testid="live-viewer-approvals"
+              >
+                <div className={styles.approvalHead}>
+                  <span>{t("liveView.approvalsWaiting", { count: questionCount })}</span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void closeViewer()}
+                    data-testid="live-viewer-approvals-open"
+                  >
+                    {t("liveView.reviewApprovals")}
+                  </Button>
+                </div>
+                {/* The chat beside the screen holds the approvals; the questions are answered right here. */}
+                <PendingDecisions entries={needs.filter((item) => item.kind === "question")} />
+              </div>
+            ) : null}
+
+            <div className={styles.footerSpacer} aria-hidden="true" />
+
+            <div className={styles.bottomDock} data-testid="live-view-bar">
+            {actions.includes("bitirdim") || actions.includes("retry_bitirdim") ? (
+              <>
+                <span className={styles.dockStatus}>
+                  {isReleasing
+                    ? t("liveView.retryingDone")
+                    : t("liveView.states.active")}
+                </span>
+                {!isReleasing ? (
+                  <select
+                    className={styles.outcomeSelect}
+                    aria-label={t("liveView.outcomeHint")}
+                    value={selectedOutcome}
+                    onChange={(e) =>
+                      setSelectedOutcome(e.target.value as HumanAction | "none")
+                    }
+                  >
+                    <option value="none">{t("liveView.outcomes.none")}</option>
+                    <option value="login_completed">
+                      {t("liveView.outcomes.login_completed")}
+                    </option>
+                    <option value="application_opened">
+                      {t("liveView.outcomes.application_opened")}
+                    </option>
+                    <option value="other">{t("liveView.outcomes.other")}</option>
+                  </select>
+                ) : null}
+                <div className={styles.dockActions}>
+                  {actions.includes("retry_bitirdim") ? (
+                    <Button
+                      ref={doneButtonRef}
+                      variant="primary"
+                      size="sm"
+                      data-testid="live-view-retry-done"
+                      onClick={() => void retryRelease()}
+                    >
+                      {t("liveView.retryDone")}
+                    </Button>
+                  ) : (
+                    <Button
+                      ref={doneButtonRef}
+                      variant="primary"
+                      size="sm"
+                      disabled={isReleasing}
+                      data-testid="live-view-done"
+                      onClick={() =>
+                        void releaseTakeover(
+                          selectedOutcome === "none" ? null : selectedOutcome
+                        )
+                      }
+                    >
+                      {t("liveView.handBackAction")}
+                    </Button>
+                  )}
+                </div>
+              </>
+            ) : state.viewState === "acquiring" ||
+              state.pendingRequest?.kind === "takeover" ? (
+              <>
+                <span className={styles.dockStatus}>
+                  {t("liveView.states.acquiring")}
+                </span>
+                <Button variant="secondary" size="sm" disabled>
+                  {t("liveView.states.acquiring")}
+                </Button>
+              </>
+            ) : recoveryPrompt && actions.includes("clear_pause") ? (
+              <>
+                <span className={styles.dockStatus}>
+                  {t(`liveView.reasons.${recoveryPrompt.reason}`, {
+                    defaultValue: t("liveView.states.paused")
+                  })}
+                </span>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  data-testid="live-view-recover"
+                  onClick={() => void recoverTakeover()}
+                >
+                  {actions.includes("reacquire")
+                    ? t("liveView.reacquireAction")
+                    : t("liveView.clearPauseAction")}
+                </Button>
+                {actions.includes("reacquire") ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    data-testid="live-view-clear-pause"
+                    onClick={() => void clearPause()}
+                  >
+                    {t("liveView.clearPauseAction")}
+                  </Button>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <span className={styles.dockStatus}>
+                  {state.disconnected
+                    ? t("liveView.connectionLost")
+                    : otherOwner
+                      ? t("liveView.otherOwner", { owner: otherOwner })
+                      : selectedTarget && targetSummary?.available
+                        ? t("liveView.states.watch")
+                        : t("liveView.states.unavailable")}
+                </span>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={!canTakeover}
+                  data-testid="live-view-takeover"
+                  title={t("liveView.toolbar.takeoverHint")}
+                  aria-keyshortcuts="Control+Shift+D"
+                  onClick={() => void requestTakeover()}
+                >
+                  {t("liveView.watchAction")}
+                </Button>
+                {actions.includes("clear_foreign_pause") && foreignPaused ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    data-testid="live-view-clear-foreign"
+                    onClick={() => void clearPause("foreign")}
+                  >
+                    {t("liveView.clearForeignPause", { owner: foreignPaused.owner })}
+                  </Button>
+                ) : null}
+                {actions.includes("clear_latch") ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    data-testid="live-view-clear-latch"
+                    onClick={() => void clearPause("latch")}
+                  >
+                    {t("liveView.clearPauseAction")}
+                  </Button>
+                ) : null}
+              </>
+            )}
+            </div>
+
+          </div>
+        </div>
+        <div ref={chatDockRef} className={styles.chatLayer}>
+          <LiveViewerChat mode={chatMode} onAction={chatAction} onChatSlots={onChatSlots} />
         </div>
       </div>
     </div>
   );
 
-  return isDocked ? content : createPortal(content, document.body);
+  return createPortal(content, document.body);
 }

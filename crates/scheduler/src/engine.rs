@@ -624,12 +624,30 @@ fn handle_misfire(
             inner.store.advance_if_current(schedule, next_future)?;
             Ok(())
         }
-        MisfirePolicy::RunOnce => handle_on_time(inner, schedule, first_due_ms, now_wall_ms),
-        MisfirePolicy::RunAll => {
-            let (due_slots, next_future) = schedule
+        MisfirePolicy::RunOnce if schedule.catchup_window_secs.is_none() => {
+            handle_on_time(inner, schedule, first_due_ms, now_wall_ms)
+        }
+        MisfirePolicy::RunOnce | MisfirePolicy::RunAll => {
+            let (all_slots, next_future) = schedule
                 .spec
                 .collect_due_occurrences(first_due_ms, now_wall_ms)?;
-            reserve_and_spawn(inner, schedule, due_slots, next_future)
+            // Slots older than the window are never run late: they are recorded
+            // as `missed` so the owner sees them (and can run one by hand).
+            let oldest_ok = schedule.catchup_window_secs.map(|w| {
+                let w_ms = i64::try_from(w)
+                    .unwrap_or(i64::MAX / 1000)
+                    .saturating_mul(1000);
+                now_wall_ms.saturating_sub(w_ms)
+            });
+            let (mut fresh, mut missed): (Vec<i64>, Vec<i64>) = all_slots
+                .into_iter()
+                .partition(|s| oldest_ok.is_none_or(|limit| *s >= limit));
+            if schedule.misfire_policy == MisfirePolicy::RunOnce {
+                // One catch-up run (the first in-window slot); the rest are skipped by policy.
+                fresh.truncate(1);
+            }
+            missed.sort_unstable();
+            reserve_and_spawn_with_missed(inner, schedule, fresh, &missed, next_future)
         }
     }
 }
@@ -640,18 +658,39 @@ fn reserve_and_spawn(
     due_slots: Vec<i64>,
     next_future: Option<i64>,
 ) -> Result<()> {
+    reserve_and_spawn_with_missed(inner, schedule, due_slots, &[], next_future)
+}
+
+fn reserve_and_spawn_with_missed(
+    inner: &Arc<Inner>,
+    schedule: &Schedule,
+    due_slots: Vec<i64>,
+    missed_slots: &[i64],
+    next_future: Option<i64>,
+) -> Result<()> {
     if due_slots.is_empty() {
-        inner.store.advance_if_current(schedule, next_future)?;
+        if missed_slots.is_empty() {
+            inner.store.advance_if_current(schedule, next_future)?;
+        } else {
+            inner.store.reserve_occurrences_with_missed(
+                schedule,
+                &[],
+                missed_slots,
+                next_future,
+            )?;
+        }
         return Ok(());
     }
     let Some(guard) = try_acquire_in_flight(inner, schedule) else {
         inner.store.advance_if_current(schedule, next_future)?;
         return Ok(());
     };
-    if inner
-        .store
-        .reserve_occurrences(schedule, &due_slots, next_future)?
-    {
+    if inner.store.reserve_occurrences_with_missed(
+        schedule,
+        &due_slots,
+        missed_slots,
+        next_future,
+    )? {
         spawn_timer_executions(inner, schedule.id, schedule.revision, due_slots, guard);
     }
     Ok(())

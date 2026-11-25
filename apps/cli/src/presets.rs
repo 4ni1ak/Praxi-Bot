@@ -115,6 +115,7 @@ impl BotPreset {
             "workflow_*",
             "notes_*",
             "time_now",
+            "wait",
             "calculate",
             "memory_*",
         ];

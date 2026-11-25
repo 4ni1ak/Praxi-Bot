@@ -2292,6 +2292,11 @@
         "failed": "Der Plan konnte nicht aktualisiert werden",
         "running": "Aktualisiert den Plan"
       },
+      "wait": {
+        "done": "Gewartet",
+        "failed": "Warten fehlgeschlagen",
+        "running": "Warte"
+      },
       "web_read": {
         "done": "Eine Seite gelesen",
         "failed": "Eine Seite konnte nicht gelesen werden",
@@ -3993,7 +3998,10 @@
     "captureTab": "Tab erfassen",
     "chat": {
       "approve": "Genehmigen",
+      "button": "Chat",
+      "close": "Chat schließen",
       "collapse": "Chat einklappen",
+      "expand": "Chat vergrößern",
       "reject": "Ablehnen",
       "replying": "Bot antwortet …",
       "title": "Mit dem Bot chatten",
@@ -4024,11 +4032,11 @@
       "view_quota": "Auf dem Server sind zu viele Bildschirmsitzungen offen. Schließe eine unbenutzte Ansicht oder versuche es gleich erneut."
     },
     "expand": "Große Ansicht öffnen",
-    "expandScreen": "Vergrößern",
     "focusTrapHint": "Eingabe geht an den Bildschirm. Umschalt+Esc zum Verlassen.",
     "globalPauseNotice": "Das Übernehmen der Kontrolle oder das Pausieren gilt global für alle Bots.",
     "handBackAction": "Zurückgeben",
     "hostLabel": "Server: {{host}}",
+    "infoPanel": "Bot-Info",
     "interactive": "Interaktiv",
     "kind": {
       "browser": "Browser",
@@ -5033,6 +5041,15 @@
       "botFixed": "Der Bot eines Zeitplans kann nicht geändert werden.",
       "cannotParse": "Das habe ich nicht verstanden. Versuche „every day at 9“, „weekdays at 8:30“ oder „her gün 09:00“ oder nutze den Reiter Einfach.",
       "cannotPreview": "Vorschau für diesen Zeitplan nicht möglich. Prüfe Syntax und Zeitzone.",
+      "catchupWindow": "Nur nachholen, wenn nicht älter als",
+      "catchupWindowHint": "Ein Lauf, der länger als das verpasst wurde, startet nicht verspätet. Er wird als verpasst aufgeführt, und Sie können ihn selbst starten.",
+      "catchupWindowOption": {
+        "0": "Keine Grenze",
+        "3600": "1 Stunde",
+        "21600": "6 Stunden",
+        "86400": "1 Tag",
+        "604800": "7 Tage"
+      },
       "confirmParsed": "Prüfe, ob das gemeint war, und drücke dann Erstellen.",
       "create": "Erstellen",
       "cron": "Cron-Ausdruck",
@@ -5115,6 +5132,7 @@
     "lastRun": "Letzter Lauf",
     "loading": "Zeitpläne werden geladen …",
     "missed": "Verpasst, während aus",
+    "missedWhy": "Der Computer war aus oder die App war geschlossen.",
     "movedTo": "Auf {{name}} verschoben: Er läuft dort und ist auf diesem Computer eingefroren.",
     "never": "Nie",
     "new": "Neuer Zeitplan",
