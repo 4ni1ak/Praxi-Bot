@@ -2418,6 +2418,7 @@
     "renameEmpty": "Enter a title.",
     "renameInputLabel": "Chat title",
     "renameTooLong": "Keep the title under {{max}} characters.",
+    "saveAsSkill": "Guardar como skill…",
     "unarchive": "Unarchive",
     "unpin": "Unpin"
   },
@@ -3076,6 +3077,18 @@
       "skill_contains_secret": {
         "hint": "Remove the secret from its files, then add it again.",
         "title": "The skill seems to contain a password or key"
+      },
+      "skill_draft_changed": {
+        "hint": "Verifique-a novamente antes de guardar.",
+        "title": "A skill mudou desde a verificação"
+      },
+      "skill_draft_no_run": {
+        "hint": "Termine primeiro uma tarefa com o bot neste chat e tente de novo.",
+        "title": "Nenhuma tarefa concluída para guardar"
+      },
+      "skill_draft_no_steps": {
+        "hint": "A última tarefa não usou nenhuma ferramenta, por isso não há passos para transformar numa skill.",
+        "title": "Nada para guardar"
       },
       "skill_index_invalid": {
         "hint": "Check the address, or go back to the list that comes with Praxi.",
@@ -6235,6 +6248,31 @@
     "unread": "Unread message",
     "unreadBot": "New messages from this bot",
     "usage": "Usage"
+  },
+  "skillFromChat": {
+    "ack": "Li o texto e a verificação de segurança e quero guardar esta skill.",
+    "editTitle": "Texto da skill (pode editá-lo)",
+    "effect": {
+      "destructive": "pode apagar ou enviar coisas",
+      "read": "só lê",
+      "unknown": "ferramenta desconhecida",
+      "write": "pode alterar coisas"
+    },
+    "loading": "A ler o que o bot fez…",
+    "permsLead": "Estas ferramentas são usadas. As suas definições de permissões continuam a aplicar-se: os passos arriscados perguntam-lhe primeiro.",
+    "permsTitle": "O que vai usar",
+    "recheck": "Verificar de novo",
+    "recheckFirst": "Carregue em «Verificar de novo» antes de guardar as suas alterações.",
+    "save": "Guardar skill",
+    "saved": "Skill «{{name}}» guardada.",
+    "stepsTitle": "O que a skill vai fazer",
+    "subtitle": "Transforme a última tarefa concluída deste chat numa skill que o bot possa reutilizar.",
+    "tainted": "O bot leu conteúdo externo ou privado durante esta tarefa. Leia com atenção o texto abaixo antes de guardar.",
+    "tickFirst": "Marque a caixa acima para guardar.",
+    "title": "Guardar como skill",
+    "withheld": "{{count}} valores do chat foram omitidos porque podem ser privados. A skill pede-os de cada vez.",
+    "withheld_one": "{{count}} valor do chat foi omitido porque pode ser privado. A skill pede-o de cada vez.",
+    "withheld_other": "{{count}} valores do chat foram omitidos porque podem ser privados. A skill pede-os de cada vez."
   },
   "skillMarket": {
     "acceptMore": "I accept that the new version asks for more than the one I have.",
