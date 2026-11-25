@@ -6826,6 +6826,41 @@
         ]
       }
     },
+    "/v1/connectivity": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "operationId": "get_connectivity",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectivityReport"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/control/override": {
       "post": {
         "tags": [
@@ -20701,6 +20736,21 @@
           }
         }
       },
+      "ConnectivityReport": {
+        "type": "object",
+        "description": "Empty service lists mean unknown, never an inferred offline state.",
+        "required": [
+          "services"
+        ],
+        "properties": {
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServiceConnectivity"
+            }
+          }
+        }
+      },
       "ControlDecisionInput": {
         "type": "object",
         "description": "`POST /v1/control/{request_id}`.",
@@ -30551,6 +30601,10 @@
             "description": "Completion tokens of the run's own model calls.",
             "minimum": 0
           },
+          "local_model": {
+            "type": "boolean",
+            "description": "The last completed executor response came from a configured loopback model."
+          },
           "model": {
             "type": [
               "string",
@@ -31209,6 +31263,26 @@
             ],
             "format": "uuid",
             "description": "The run to follow (`null` when queued: the turn has no run yet)."
+          }
+        }
+      },
+      "ServiceConnectivity": {
+        "type": "object",
+        "description": "One configured model service. No URLs, credentials or provider error bodies.",
+        "required": [
+          "id",
+          "local",
+          "reachable"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "local": {
+            "type": "boolean"
+          },
+          "reachable": {
+            "type": "boolean"
           }
         }
       },

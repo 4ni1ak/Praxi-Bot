@@ -1597,6 +1597,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/connectivity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_connectivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/control/override": {
         parameters: {
             query?: never;
@@ -6044,6 +6060,10 @@ export interface components {
             /** @description What was tested: `provider`, `mcp`, `channel`, `web`, `voice` or `email`. */
             target: string;
         };
+        /** @description Empty service lists mean unknown, never an inferred offline state. */
+        ConnectivityReport: {
+            services: components["schemas"]["ServiceConnectivity"][];
+        };
         /** @description `POST /v1/control/{request_id}`. */
         ControlDecisionInput: {
             /** @description Proceed or refuse. */
@@ -9741,6 +9761,8 @@ export interface components {
              * @description Completion tokens of the run's own model calls.
              */
             completion_tokens: number;
+            /** @description The last completed executor response came from a configured loopback model. */
+            local_model?: boolean;
             /**
              * @description `provider/model` the run's turn used (the last executor call); absent
              *     when no model call was recorded.
@@ -10083,6 +10105,12 @@ export interface components {
              * @description The run to follow (`null` when queued: the turn has no run yet).
              */
             run_id?: string | null;
+        };
+        /** @description One configured model service. No URLs, credentials or provider error bodies. */
+        ServiceConnectivity: {
+            id: string;
+            local: boolean;
+            reachable: boolean;
         };
         SessionInfo: {
             effective_profile: components["schemas"]["EffectiveProfile"];
@@ -15568,6 +15596,33 @@ export interface operations {
             };
             /** @description web search management is not available */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_connectivity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectivityReport"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
