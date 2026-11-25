@@ -25,6 +25,7 @@ fn summary(uid: u32, from: &str, subject: &str) -> MessageSummary {
         id: None,
         subject: subject.into(),
         from: from.into(),
+        from_addr: address_of(from),
         to: vec!["me@example.com".into()],
         date: Some("2026-11-08T12:00:00Z".into()),
         unread: true,
@@ -262,7 +263,7 @@ send_mode = "draft_only"
 "#,
     )
     .unwrap();
-    a.allowed_senders.clear();
+    a.allowed_senders = vec!["@example.com".to_string()];
     a
 }
 
@@ -632,4 +633,91 @@ async fn mails_over_the_poll_limit_stay_unread_for_the_next_poll() {
     let third = ch.poll_pending().await.unwrap();
     assert_eq!(third.len(), 1);
     assert_eq!(third[0].message_id.as_deref(), Some("5"));
+}
+
+fn parsed(uid: u32, from_header: &str) -> MessageSummary {
+    let raw = format!(
+        "From: {from_header}
+
+To: me@example.com
+
+Subject: x
+
+
+
+body
+
+"
+    );
+    crate::message::parse_summary(uid, raw.as_bytes(), true, Some(500))
+}
+
+#[tokio::test]
+async fn a_long_display_name_cannot_hide_the_real_sender() {
+    let f = Fake::new(vec![]);
+    let ch = EmailChannel::new(
+        f.clone(),
+        "me@example.com",
+        &["colleague@corp.example".to_string()],
+        EmailChannelSettings::default(),
+        None,
+    )
+    .unwrap();
+    ch.poll_pending().await.unwrap();
+    // The real sender is stranger@evil.org; the display name is built so that the
+    // 256-character cap cuts the real address off and leaves the colleague's.
+    let pad = "x".repeat(300);
+    f.arrive(parsed(
+        4,
+        &format!("\"<colleague@corp.example>{pad}\" <stranger@evil.org>"),
+    ));
+    // Two From addresses, the first allowed: not one verifiable sender.
+    f.arrive(parsed(5, "colleague@corp.example, stranger@evil.org"));
+    // A quoted / escaped angle bracket inside the name.
+    f.arrive(parsed(
+        6,
+        "\"a\\> <colleague@corp.example>\" <stranger@evil.org>",
+    ));
+    assert_eq!(f.unread.lock().unwrap()[0].from_addr, "stranger@evil.org");
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 0);
+    assert_eq!(ch.ignored_count(), 3);
+    // A normal "Name <addr>" and a bare address still work.
+    f.arrive(parsed(7, "Colleague <colleague@corp.example>"));
+    f.arrive(parsed(8, "colleague@corp.example"));
+    let got = ch.poll_pending().await.unwrap();
+    assert_eq!(got.len(), 2);
+    assert!(got.iter().all(|m| m.sender.id == "colleague@corp.example"));
+}
+
+#[test]
+fn address_of_fails_closed() {
+    assert_eq!(address_of("Ann <Ann@Example.com>"), "ann@example.com");
+    assert_eq!(address_of("ann@example.com"), "ann@example.com");
+    assert_eq!(address_of("<ann@example.com>"), "ann@example.com");
+    assert_eq!(address_of("Ann <ann@example.com> trailing"), "");
+    assert_eq!(address_of("x>y <a@b.c"), "");
+    assert_eq!(address_of("a@b.c <d@e.f>"), "d@e.f");
+    assert_eq!(address_of("Name <a b@c.d>"), "");
+}
+
+#[tokio::test]
+async fn changing_the_allowed_senders_applies_to_a_running_channel() {
+    let f = Fake::new(vec![]);
+    let ch = channel(&f, false, &["ann@example.com".to_string()]);
+    ch.poll_pending().await.unwrap();
+    f.arrive(summary(1, "ann@example.com", "one"));
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 1);
+    ch.commit(1);
+    // The owner empties the list: the next mail from the old sender is ignored.
+    ch.set_allowed_senders(&[]);
+    f.arrive(summary(2, "ann@example.com", "two"));
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 0);
+    assert_eq!(ch.ignored_count(), 1);
+    ch.set_allowed_senders(&["ann@example.com".to_string()]);
+    f.arrive(summary(3, "ann@example.com", "three"));
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 1);
+    // A bad entry closes the channel instead of opening it.
+    ch.set_allowed_senders(&["not an address".to_string()]);
+    f.arrive(summary(4, "ann@example.com", "four"));
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 0);
 }

@@ -112,6 +112,7 @@ impl MessageWire {
             id: Some(cap_untrusted(&self.message_id)),
             subject: cap_untrusted(self.subject.as_deref().unwrap_or_default()),
             from: cap_untrusted(&self.from),
+            from_addr: crate::message::bare_address(&self.from),
             to: self.to.iter().map(|s| cap_untrusted(s)).collect(),
             date: self.timestamp.as_deref().map(cap_untrusted),
             unread: has_label(self, "unread"),

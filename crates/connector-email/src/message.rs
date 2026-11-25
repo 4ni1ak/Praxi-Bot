@@ -30,8 +30,14 @@ pub struct MessageSummary {
     pub id: Option<String>,
     /// Subject line.
     pub subject: String,
-    /// Sender (`Name <addr>`).
+    /// Sender (`Name <addr>`), for display only (capped, so the address may be cut off).
     pub from: String,
+    /// The one bare sender address, lower-case, taken BEFORE `from` was capped;
+    /// empty when the header has no address or more than one (fail closed).
+    /// Every sender decision (allowed senders, own address) uses this field,
+    /// never the display text. Not serialized.
+    #[serde(skip)]
+    pub from_addr: String,
     /// Recipients.
     pub to: Vec<String>,
     /// Date header as RFC 3339, when parseable.
@@ -79,6 +85,46 @@ pub struct MessageDetail {
     pub attachments: Vec<AttachmentInfo>,
 }
 
+/// The bare address inside a `Name <addr>` / `addr` string, lower-case; empty
+/// (fail closed) when the text is not exactly one of those forms: with `<` or
+/// `>` anywhere it must END with `>` and the part after the last `<` must be a
+/// plain address, so display-name tricks cannot move the address.
+#[must_use]
+pub(crate) fn bare_address(from: &str) -> String {
+    let from = from.trim();
+    let inner = if from.contains(['<', '>']) {
+        let Some(rest) = from.strip_suffix('>') else {
+            return String::new();
+        };
+        let Some(at) = rest.rfind('<') else {
+            return String::new();
+        };
+        &rest[at + 1..]
+    } else {
+        from
+    };
+    let inner = inner.trim();
+    if inner.is_empty()
+        || inner.contains(|c: char| c.is_whitespace() || c.is_control() || c == '<' || c == '>')
+    {
+        return String::new();
+    }
+    inner.to_lowercase()
+}
+
+/// The only address of a `From` header; empty when there is none or several.
+fn sole_address(a: Option<&Address<'_>>) -> String {
+    match a {
+        Some(a) if a.iter().count() == 1 => a
+            .iter()
+            .next()
+            .and_then(|x| x.address.as_deref())
+            .map(bare_address)
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
 fn addresses(a: Option<&Address<'_>>) -> Vec<String> {
     let Some(a) = a else { return Vec::new() };
     a.iter()
@@ -96,20 +142,28 @@ fn addresses(a: Option<&Address<'_>>) -> Vec<String> {
 #[must_use]
 pub fn parse_summary(uid: u32, header: &[u8], unread: bool, size: Option<u32>) -> MessageSummary {
     let msg = MessageParser::default().parse(header);
-    let (subject, from, to, date) = match &msg {
+    let (subject, from, from_addr, to, date) = match &msg {
         Some(m) => (
             m.subject().unwrap_or_default().to_string(),
             addresses(m.from()).into_iter().next().unwrap_or_default(),
+            sole_address(m.from()),
             addresses(m.to()),
             m.date().map(mail_parser::DateTime::to_rfc3339),
         ),
-        None => (String::new(), String::new(), Vec::new(), None),
+        None => (
+            String::new(),
+            String::new(),
+            String::new(),
+            Vec::new(),
+            None,
+        ),
     };
     MessageSummary {
         uid,
         id: None,
         subject: cap_untrusted(&subject),
         from: cap_untrusted(&from),
+        from_addr,
         to: to.iter().map(|s| cap_untrusted(s)).collect(),
         date,
         unread,

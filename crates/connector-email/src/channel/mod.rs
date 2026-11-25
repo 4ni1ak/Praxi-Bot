@@ -109,7 +109,9 @@ struct Core {
     provider: Arc<dyn MailboxProvider>,
     own_address: String,
     settings: EmailChannelSettings,
-    allowed: Vec<String>,
+    /// Allowed senders; the host refreshes them every poll
+    /// ([`EmailChannel::set_allowed_senders`]).
+    allowed: Mutex<Vec<String>>,
     state: Mutex<State>,
     state_path: Option<PathBuf>,
     gate: Mutex<ReplyGate>,
@@ -155,7 +157,7 @@ impl Core {
             provider,
             own_address: own_address.trim().to_lowercase(),
             settings,
-            allowed,
+            allowed: Mutex::new(allowed),
             state: Mutex::new(state),
             state_path,
             gate: Mutex::new(ReplyGate::default()),
@@ -166,10 +168,26 @@ impl Core {
 
     fn sender_allowed(&self, addr: &str) -> bool {
         // An empty list allows nobody: the owner must name who may start a run.
-        self.allowed.iter().any(|a| match a.strip_prefix('@') {
+        // An empty address (not exactly one sender) matches nothing.
+        if addr.is_empty() {
+            return false;
+        }
+        let allowed = self.allowed.lock().unwrap_or_else(PoisonError::into_inner);
+        allowed.iter().any(|a| match a.strip_prefix('@') {
             Some(domain) => addr.rsplit_once('@').is_some_and(|(_, d)| d == domain),
             None => a == addr,
         })
+    }
+
+    /// Replace the allowed senders (the account's list may change while the
+    /// channel runs). A bad entry empties the list: closed, never open.
+    fn set_allowed(&self, senders: &[String]) {
+        let list = senders
+            .iter()
+            .map(|s| normalize_sender(s))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_default();
+        *self.allowed.lock().unwrap_or_else(PoisonError::into_inner) = list;
     }
 
     fn save(&self, state: &State) {
@@ -268,7 +286,7 @@ impl Core {
     fn drop_undeliverable(&self, fresh: &mut Vec<MessageSummary>) {
         let mut ignored = Vec::new();
         fresh.retain(|s| {
-            let addr = address_of(&s.from);
+            let addr = s.from_addr.clone();
             if addr == self.own_address {
                 return false;
             }
@@ -354,7 +372,7 @@ impl Core {
         let last_shown = fresh.last().map_or(newest, |m| m.uid);
         let mut out = Vec::new();
         for s in fresh {
-            let addr = address_of(&s.from);
+            let addr = s.from_addr.clone();
             let text = if s.size.is_some_and(|n| n > MAX_MESSAGE_BYTES) {
                 render::render_unopened(&s, "This mail is too large; it was not opened.")
             } else {
@@ -624,6 +642,13 @@ impl EmailChannel {
     /// Mark every mail up to `uid` as handed over.
     pub fn commit(&self, uid: u32) {
         self.core.commit(uid);
+    }
+
+    /// Replace the allowed senders now (the host calls this every poll with the
+    /// account's current list, so an edit or an emptied list applies at once).
+    /// An invalid entry empties the list.
+    pub fn set_allowed_senders(&self, senders: &[String]) {
+        self.core.set_allowed(senders);
     }
 
     /// Report that handing the mail `uid` over failed: it is retried until

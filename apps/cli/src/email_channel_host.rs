@@ -175,10 +175,26 @@ impl EmailChannelHost {
         let bot = s.bot.as_deref().and_then(|b| b.parse().ok()).map(BotId);
         let state = self.state.clone();
         let poller = channel.clone();
+        let email = Arc::clone(&self.email);
+        let account = s.account.clone();
         let every = std::time::Duration::from_secs(s.poll_secs);
         let task = tokio::spawn(async move {
             let mut ignored_seen = 0;
             loop {
+                // The account's allowed senders may have changed (or the account
+                // may be gone) since the channel started: use the current list;
+                // no account, no delivery.
+                let Some(current) = email
+                    .connector()
+                    .accounts()
+                    .into_iter()
+                    .find(|a| a.name == account)
+                else {
+                    poller.set_allowed_senders(&[]);
+                    tokio::time::sleep(every).await;
+                    continue;
+                };
+                poller.set_allowed_senders(&current.allowed_senders);
                 if let Ok(batch) = poller.poll_pending().await {
                     let ignored = poller.ignored_count();
                     if ignored > ignored_seen {
