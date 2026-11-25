@@ -313,8 +313,17 @@ async fn regression_third_captcha_action_refused_and_new_challenge_resets() {
     for _ in 0..2 {
         click.call(&context, json!({"ref":"e2"})).await.unwrap();
     }
+    // Refreshing/navigating while the challenge remains cannot restore tries.
+    page.show(RECAPTCHA_PAGE, "https://shop.example/signup?retry=1");
     let err = click.call(&context, json!({"ref":"e2"})).await.unwrap_err();
     assert!(err.to_string().contains("browser_handover"));
+    assert!(
+        tool(&page, "browser_open")
+            .call(&context, json!({"url":"https://shop.example/next"}))
+            .await
+            .is_err(),
+        "navigation cannot bypass an exhausted challenge budget"
+    );
     handover_hub().disarm(&context.run_id);
     assert!(
         click.call(&context, json!({"ref":"e2"})).await.is_err(),

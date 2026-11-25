@@ -2083,8 +2083,20 @@ impl BrowserTool {
                 .observed_epoch
                 .load(std::sync::atomic::Ordering::SeqCst)
                 == epoch
-            && (self.op != Op::Open || self.shared.driver.current_url().await.is_some())
         {
+            if self.op == Op::Open {
+                // A navigation has no receiving element to inspect. Do not probe
+                // a remote URL here: Option cannot distinguish a refusal from
+                // an unopened browser, and a refusal must never cause a retry.
+                if crate::handover::handover_hub().next_captcha_attempt(run_id)
+                    > crate::handover::CAPTCHA_OWN_ATTEMPTS
+                {
+                    return Err(exec_err(
+                        "CAPTCHA own attempts exhausted: hand over with browser_handover(kind: captcha) before navigating",
+                    ));
+                }
+                return Ok(permit);
+            }
             self.refuse_observation_while_latched()?;
             let snapshot = self.shared.driver.snapshot(false).await.map_err(exec_err)?;
             if self.op == Op::Eval
@@ -2097,9 +2109,8 @@ impl BrowserTool {
                     "CAPTCHA scripts cannot be bounded to two attempts: hand over with browser_handover(kind: captcha)",
                 ));
             }
-            let document = self.shared.driver.capture_epoch().await.unwrap_or_default();
             crate::handover::handover_hub()
-                .captcha_action(run_id, &snapshot, &document)
+                .captcha_action(run_id, &snapshot)
                 .map_err(exec_err)?;
         }
         Ok(permit)

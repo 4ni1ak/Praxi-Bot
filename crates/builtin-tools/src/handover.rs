@@ -378,7 +378,6 @@ struct Armed {
 
 #[derive(Default)]
 struct CaptchaBudget {
-    page: String,
     attempts: u32,
 }
 
@@ -442,23 +441,13 @@ impl HandoverHub {
     ///
     /// # Errors
     /// Refuses hard challenges and actions after the second own attempt.
-    pub fn captcha_action(
-        &self,
-        run_id: &str,
-        snapshot: &str,
-        document: &str,
-    ) -> Result<(), String> {
+    pub fn captcha_action(&self, run_id: &str, snapshot: &str) -> Result<(), String> {
         if let Some(Challenge::Captcha { hard }) = detect(snapshot) {
             let mut seen = self
                 .seen
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let n = seen.entry(run_id.to_owned()).or_default();
-            let page = document;
-            if n.page != page {
-                page.clone_into(&mut n.page);
-                n.attempts = 0;
-            }
             if hard || n.attempts >= CAPTCHA_OWN_ATTEMPTS {
                 return Err("CAPTCHA own attempts exhausted: hand over with browser_handover(kind: captcha) before any further browser action".into());
             }
