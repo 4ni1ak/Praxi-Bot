@@ -324,6 +324,17 @@ fn normalize_deny_path(path: &str) -> String {
     out
 }
 
+/// A write to `/v1/bots/{id}/site-rules[/...]` (the owner's per-site and per-app rules).
+fn is_site_rules_write(method: &Method, path: &str) -> bool {
+    !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+        && path
+            .strip_prefix("/v1/bots/")
+            .and_then(|rest| rest.split_once('/'))
+            .is_some_and(|(bot, rest)| {
+                !bot.is_empty() && (rest == "site-rules" || rest.starts_with("site-rules/"))
+            })
+}
+
 /// Why `method path` is refused to every paired peer role, if it is: the
 /// host-local provider management, MCP management and diagnostics endpoints.
 fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> {
@@ -411,6 +422,9 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
             })
     {
         return Some("knowledge sources and embedding authority are managed by the local owner");
+    }
+    if is_site_rules_write(method, check_path) {
+        return Some("per-site and per-app permission rules are managed by the local owner");
     }
     if !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
         && (check_path == "/v1/memory" || check_path.starts_with("/v1/memory/"))

@@ -5,15 +5,18 @@ import { SettingRow } from "../../components/SettingsUi";
 import {
   type UpdateInfo,
   type UpdateStatus,
+  type UpdateChannel,
   checkForUpdate,
   installUpdate,
   rollbackUpdate,
+  setUpdateChannel,
+  skipUpdate,
   updateErrorKey,
   updateStatus
 } from "../../lib/appUpdate";
 import styles from "./UpdatePanel.module.css";
 
-type Phase = "idle" | "checking" | "installing" | "rollingBack";
+type Phase = "idle" | "checking" | "installing" | "rollingBack" | "saving";
 
 /**
  * Check for updates, read what is new, install with one click (the app checks
@@ -29,11 +32,11 @@ export function UpdatePanel() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    void updateStatus().then(setStatus);
-  }, []);
+    void updateStatus(i18n.language).then(setStatus).catch((e: unknown) => setError(t(updateErrorKey(e))));
+  }, [i18n.language, t]);
 
   if (!status) {
-    return null;
+    return error ? <p className={styles.error} role="alert">{error}</p> : null;
   }
 
   const run = async (next: Phase, action: () => Promise<void>) => {
@@ -44,29 +47,49 @@ export function UpdatePanel() {
     } catch (e) {
       setError(t(updateErrorKey(e)));
     } finally {
+      try {
+        setStatus(await updateStatus(i18n.language));
+      } catch (e) {
+        setError(t(updateErrorKey(e)));
+      }
       setPhase("idle");
     }
   };
 
   const check = () =>
     run("checking", async () => {
+      setFound(null);
+      setUpToDate(false);
       const info = await checkForUpdate(i18n.language);
       setFound(info);
       setUpToDate(info === null);
     });
 
-  if (!status.enabled) {
-    return (
-      <SettingRow
-        title={t("settingsModal.updates.check.title")}
-        description={t("settingsModal.updates.notConfigured")}
-      />
-    );
-  }
-
   const busy = phase !== "idle";
   return (
     <>
+      <SettingRow title={t("settingsModal.updates.buildId")}>
+        <span>{status.buildId || t("settingsModal.updates.unknown")}</span>
+      </SettingRow>
+      <SettingRow title={t("settingsModal.updates.channel.title")} description={t("settingsModal.updates.channel.description")}>
+        <select
+          aria-label={t("settingsModal.updates.channel.title")}
+          value={status.channel}
+          disabled={busy || !status.enabled}
+          onChange={(e) => {
+            const channel = e.target.value as UpdateChannel;
+            void run("saving", async () => {
+              await setUpdateChannel(channel);
+              setFound(null);
+              setUpToDate(false);
+            });
+          }}
+        >
+          <option value="stable">{t("settingsModal.updates.channel.stable")}</option>
+          <option value="preview" disabled={!status.previewAvailable}>{t("settingsModal.updates.channel.preview")}</option>
+        </select>
+      </SettingRow>
+      {status.enabled && !status.previewAvailable ? <p className={styles.status}>{t("settingsModal.updates.channel.unavailable")}</p> : null}
       {status.rollbackAdvised ? (
         <SettingRow
           title={t("settingsModal.updates.rollback.title")}
@@ -88,20 +111,26 @@ export function UpdatePanel() {
       ) : null}
       <SettingRow
         title={t("settingsModal.updates.check.title")}
-        description={t("settingsModal.updates.check.description")}
+        description={t(status.enabled ? "settingsModal.updates.check.description" : "settingsModal.updates.notConfigured")}
         stacked
       >
         <div className={styles.actions}>
-          <Button size="sm" variant="secondary" disabled={busy} onClick={() => void check()}>
+          <Button size="sm" variant="secondary" disabled={busy || !status.enabled} onClick={() => void check()}>
             {phase === "checking"
               ? t("settingsModal.updates.check.working")
               : t("settingsModal.updates.check.action")}
           </Button>
-          {upToDate && !error ? (
+          {upToDate && !status.skippedVersion && !error ? (
             <span className={styles.status} role="status">{t("settingsModal.updates.upToDate")}</span>
           ) : null}
           {error ? <span className={styles.error} role="alert">{error}</span> : null}
         </div>
+        <p className={styles.status}>
+          {status.lastChecked === null
+            ? t("settingsModal.updates.neverChecked")
+            : t("settingsModal.updates.lastChecked", { time: new Date(status.lastChecked * 1000).toLocaleString(i18n.language) })}
+        </p>
+        {status.skippedVersion ? <p className={styles.status}>{t("settingsModal.updates.skipped", { version: status.skippedVersion })}</p> : null}
         {found ? (
           <>
             <p className={styles.status}>
@@ -118,6 +147,13 @@ export function UpdatePanel() {
                 {phase === "installing"
                   ? t("settingsModal.updates.install.working")
                   : t("settingsModal.updates.install.action")}
+              </Button>
+              <Button size="sm" variant="secondary" disabled={busy} onClick={() => void run("saving", async () => {
+                await skipUpdate();
+                setFound(null);
+                setUpToDate(false);
+              })}>
+                {t("settingsModal.updates.skip")}
               </Button>
             </div>
             <span className={styles.status}>{t("settingsModal.updates.install.hint")}</span>

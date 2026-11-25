@@ -1,6 +1,6 @@
 # In-app updates and rollback
 
-Settings > System > Updates & version can check for a new version, show what is new (in the
+Settings > System > About can check for a new version, show what is new (in the
 user's language when the release has it), install it with one click and go back
 to the previous version if the new one does not start.
 
@@ -20,6 +20,7 @@ Updates page says so, no request is made, nothing can be installed.
    * variable `PRAXI_UPDATER_PUBKEY` (contents of the `.pub` file),
      variable `PRAXI_UPDATER_ENDPOINT` (https URL of `latest.json`, e.g. the `latest.json`
      asset of the latest GitHub release),
+     variable `PRAXI_UPDATER_PREVIEW_ENDPOINT` (separate https feed for Preview, optional),
      variable `PRAXI_UPDATER_ROLLBACK_ENDPOINT` (https URL of `rollback.json`, optional).
 3. `.github/workflows/installer.yml` then also produces `*-setup.exe` + `*-setup.exe.sig`.
    Publish them with the release and write the two feeds (Tauri static JSON format):
@@ -40,13 +41,41 @@ Updates page says so, no request is made, nothing can be installed.
    one `<!-- lang: xx -->` block per language; text before the first marker is the default.
    Notes are shown as plain text.
 
+   Tagged installer builds use the complete release version (including `-alpha.2`,
+   for example) in Tauri and the signed update metadata. The updater and About use
+   that same packaged version, so successive previews of one numeric version can
+   update correctly and each release gets its own “What's new” dismissal.
+
+## Channels and release notes
+
+About shows the app version, source build ID, channel and last attempted check time.
+Stable is the default and rejects prereleases even if the stable feed lists one.
+Choosing Preview explicitly uses `PRAXI_UPDATER_PREVIEW_ENDPOINT`, which may include
+prereleases and stable releases. A missing or invalid Preview feed disables that choice;
+it never falls back to Stable while claiming to check Preview. Both feeds use the same
+built-in signing key. Release builds ignore environment overrides for every feed.
+
+Checks happen only on request and do not download the installer. “Skip this version”
+remembers the offered version across restarts; newer versions are still offered.
+Changing channels clears the skipped version and any pending installer candidate.
+A failed check also clears any previous candidate so it cannot install stale results.
+
+After signature verification, notes are saved locally before the installer starts.
+The existing “What's new” dialog shows those notes for the running version once,
+after onboarding, and remembers dismissal in local settings. Notes survive health
+confirmation, use the user's en/tr/de block with English fallback, and render as
+inert plain text (including HTML and links). Bundled notes remain the fallback for
+manual upgrades or releases without feed notes. No network request is needed to
+show saved notes.
+
 ## How rollback works
 
 Just before the installer runs, the app writes `update-state.json` in its data folder.
 Every start of the new version without a healthy run (60 seconds up) is counted:
 
-* 2nd failed start: Settings > System > Updates & version shows "Go back to the previous version";
-* 3rd failed start: the app goes back by itself (the screen may not even load).
+* 2nd failed start: Settings > System > About shows "Go back to the previous version";
+* 3rd failed start: the rollback recommendation remains visible. The user must click
+  “Go back to the previous version”; no installer, including rollback, runs automatically.
 
 Going back downloads the installer named by `rollback.json`, verifies its signature with
 the same key, and only accepts a version **older** than the running one. A healthy run

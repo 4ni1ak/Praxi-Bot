@@ -5,6 +5,7 @@
 mod c225;
 mod c382;
 mod c812;
+mod c821;
 mod composio_approvals;
 mod external_agent;
 mod fill_secret;

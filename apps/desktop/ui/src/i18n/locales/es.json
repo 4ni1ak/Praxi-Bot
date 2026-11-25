@@ -625,6 +625,14 @@
       "warm": "Warm"
     }
   },
+  "approvalDock": {
+    "counter": "Aprobación {{current}} de {{total}}",
+    "keyAllow": "Permitir una vez",
+    "keyDeny": "Denegar",
+    "label": "Esperando tu aprobación",
+    "next": "Aprobación siguiente",
+    "previous": "Aprobación anterior"
+  },
   "apps": {
     "access": {
       "all": "All bots",
@@ -1728,6 +1736,7 @@
         "policy": "Este bot está configurado para pedir permiso antes de este tipo de acción."
       }
     },
+    "approvalSkipped": "Se omitió la aprobación pendiente. Tu mensaje va primero.",
     "attach": {
       "add": "Adjuntar archivos o imágenes",
       "command": "Envía los archivos con un mensaje normal. Quítalos antes de usar un comando con barra.",
@@ -1761,6 +1770,7 @@
       "uploading": "Copiando al equipo del chat…"
     },
     "chain": {
+      "allowed": "Permitido por ti",
       "details": "Detalles",
       "groupApp": "{{app}} ×{{count}}",
       "groupSame": "{{what}} ×{{count}}",
@@ -1771,6 +1781,7 @@
         "blocked": "Lo bloqueaste",
         "noAnswer": "Sin respuesta a tiempo",
         "other": "No funcionó",
+        "skipped": "Omitido: escribiste un mensaje nuevo",
         "stopped": "Se detuvo antes de terminar",
         "timeout": "Se agotó el tiempo",
         "timeoutAfter": "Se agotó el tiempo tras {{seconds}} s"
@@ -1929,7 +1940,7 @@
     "pendingPinned": "Esperando tu decisión. La tarjeta está encima del cuadro de mensaje.",
     "placeholder": "Mensaje…  / comandos · @ bots",
     "placeholderBusy": "El bot está trabajando. Tu próximo mensaje quedará en cola",
-    "placeholderWaiting": "Esperando tu aprobación. Tu próximo mensaje quedará en cola…",
+    "placeholderWaiting": "Responde arriba o escribe para cambiar de plan",
     "question": {
       "answer": "Responder",
       "answered": "Respondiste: {{answer}}",
@@ -5370,6 +5381,7 @@
       "description": "Select the display language for the interface.",
       "en": "English",
       "es": "Español",
+      "fr": "Français",
       "title": "Language",
       "tr": "Türkçe"
     },
@@ -6053,10 +6065,65 @@
       "saving": "Saving…"
     },
     "search": "Search settings",
+    "siteRules": {
+      "action": "Qué debe pasar",
+      "actions": {
+        "allow": "Permitir",
+        "ask": "Preguntar siempre",
+        "block": "No permitir nunca"
+      },
+      "addButton": "Añadir regla",
+      "addTitle": "Añadir una regla",
+      "added": "Regla guardada.",
+      "allowApp": "Permitir siempre esto en este programa",
+      "allowHint": "Una regla de permitir cubre exactamente este sitio, no sus subdominios.",
+      "allowSite": "Permitir siempre esto en este sitio",
+      "bot": "Bot",
+      "capabilities": {
+        "any": "todo",
+        "interact": "hacer clic y escribir",
+        "read": "abrir y leer",
+        "submit": "enviar formularios y pulsar teclas"
+      },
+      "capability": "Para",
+      "confirm": "¿Permitir siempre {{what}} en {{target}} sin preguntar?",
+      "confirmNo": "Cancelar",
+      "confirmYes": "Sí, permitir siempre",
+      "empty": "Aún no hay reglas.",
+      "expired": "caducada",
+      "expiries": {
+        "day": "Un día",
+        "month": "30 días",
+        "never": "Hasta que la quite",
+        "week": "Una semana"
+      },
+      "expiry": "Mantener esta regla",
+      "lead": "Reglas para un sitio web o programa: preguntar siempre, no permitir nunca o permitir sin preguntar. Solo pueden añadir cautela o dar un visto bueno que tú eliges aquí.",
+      "limits": "La seguridad sigue activa: los archivos fuera del área de trabajo, el contenido de páginas web y lo marcado como nunca permitido siguen sus propias reglas.",
+      "recentHint": "Sitios y programas que aprobaste hace poco. Puedes permitir uno sin volver a preguntar.",
+      "recentNone": "Aún no hay nada que sugerir.",
+      "recentTitle": "De un visto bueno reciente",
+      "remove": "Quitar",
+      "removed": "Regla quitada.",
+      "site": "Sitio web",
+      "siteHint": "Solo el nombre, como example.com (sin https:// ni ruta).",
+      "subdomains": "Incluir también sus subdominios (como shop.example.com)",
+      "title": "Sitios y programas",
+      "until": "hasta {{when}}",
+      "withSubdomains": "(y sus subdominios)"
+    },
     "title": "Settings",
     "updates": {
       "appVersion": "Desktop app",
       "available": "Version {{version}} is available.",
+      "buildId": "Identificador de compilación",
+      "channel": {
+        "description": "Se recomienda Estable. Vista previa incluye versiones anticipadas que pueden tener problemas. Las actualizaciones solo se instalan cuando elige Instalar.",
+        "preview": "Vista previa",
+        "stable": "Estable",
+        "title": "Canal de actualizaciones",
+        "unavailable": "Las actualizaciones de vista previa aún no están configuradas para esta compilación."
+      },
       "check": {
         "action": "Check for updates",
         "description": "Looks for a newer version and shows what is new. Nothing is installed until you choose to.",
@@ -6074,6 +6141,7 @@
         "no_rollback": "No earlier version is available to go back to.",
         "not_configured": "Updates are not set up in this build.",
         "nothing_to_install": "Please check for updates first.",
+        "preview_not_configured": "Las actualizaciones de vista previa no están configuradas. Elija Estable o instale una compilación compatible con Vista previa.",
         "signature": "The update could not be verified as genuine, so it was NOT installed. Nothing was changed."
       },
       "install": {
@@ -6081,14 +6149,18 @@
         "hint": "The update is checked for authenticity before it is installed. Praxi-Bot restarts when it is done.",
         "working": "Updating…"
       },
-      "notConfigured": "This build of Praxi-Bot has no update service set up, so it cannot update itself. Download the newest version from the project page instead.",
+      "lastChecked": "Última comprobación: {{time}}",
+      "neverChecked": "Aún no se han buscado actualizaciones.",
+      "notConfigured": "Las actualizaciones no están disponibles: esta compilación no tiene una clave de firma o una fuente segura de actualizaciones configurada. No se descargará ni instalará nada.",
       "rollback": {
         "action": "Go back to the previous version",
         "description": "Version {{version}} did not start properly. You can go back to the last version that worked.",
         "title": "Something went wrong with the update",
         "working": "Going back…"
       },
-      "title": "Actualizaciones y versión",
+      "skip": "Omitir esta versión",
+      "skipped": "Se omite la versión {{version}}. Las versiones más recientes seguirán ofreciéndose.",
+      "title": "Acerca de",
       "unknown": "Unknown",
       "upToDate": "You have the latest version."
     },

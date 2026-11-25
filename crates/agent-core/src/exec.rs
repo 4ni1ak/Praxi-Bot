@@ -225,7 +225,7 @@ impl StepExecutor for TurnExecutor {
         if history.is_empty()
             && let Some(spec) = self.first_step(run).await?
         {
-            return Ok(Some(spec));
+            return Ok(Some(self.with_turn_note(run, spec)));
         }
         self.plan_next(run, history)
     }
@@ -250,6 +250,29 @@ impl StepExecutor for TurnExecutor {
 
 impl TurnExecutor {
     // ---- planning ----
+
+    /// The first turn after the owner skipped a pending approval by writing: the step carries
+    /// what did not run, and the model is told so (see `history::build_messages`). One note,
+    /// used once, for the owner's own turn of that chat only, and only while it is fresh.
+    fn with_turn_note(&self, run: &Run, mut spec: StepSpec) -> StepSpec {
+        const NOTE_TTL_MS: i64 = 5 * 60 * 1000;
+        if spec.name != STEP_USER
+            || run.parent_run_id.is_some()
+            || crate::shared::initiator_of(&run.kind) != protocol::InitiatorKind::Human
+        {
+            return spec;
+        }
+        let Some(chat_id) = run.chat_id else {
+            return spec;
+        };
+        let Some(note) = self.sh.turn_notes.lock().remove(&chat_id) else {
+            return spec;
+        };
+        if storage::now_ms().saturating_sub(note.at_ms) <= NOTE_TTL_MS {
+            spec.input["approval_skipped"] = json!(note.skipped);
+        }
+        spec
+    }
 
     /// The first step of a top-level turn: the user message, after the
     /// decision ladder (K0-K3) had its say.  `None` for subagents (their first
@@ -1435,7 +1458,8 @@ impl TurnExecutor {
             let target = match (&resolved.tool, &resolved.spec) {
                 (tool, Some(_))
                     if crate::shared::control_kind_of(&resolved.name).is_some()
-                        && ctx.taint.lock().exposure.is_tainted() =>
+                        && (ctx.taint.lock().exposure.is_tainted()
+                            || self.sh.has_profile_rules(ctx.bot_id)) =>
                 {
                     let tctx = ToolContext {
                         run_id: ctx.run_id.to_string(),
@@ -1566,9 +1590,14 @@ impl TurnExecutor {
                     }),
                 );
                 Slot::Done {
-                    text: "Permission denied: policy does not allow this tool call. \
-                           Do not retry it; choose another approach or tell the user."
-                        .into(),
+                    text: self
+                        .sh
+                        .profile_block_text(&ctx, &resolved.name, &resolved.input, target.as_ref())
+                        .unwrap_or_else(|| {
+                            "Permission denied: policy does not allow this tool call. \
+                             Do not retry it; choose another approach or tell the user."
+                                .into()
+                        }),
                     is_error: true,
                 }
             } else if carried.is_none() && (matches!(decision, Decision::Ask { .. }) || redisclose)

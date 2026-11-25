@@ -20,6 +20,7 @@ import { AuditLogCard } from "./AuditLogCard";
 import { AllowedGrantsCard } from "./AllowedGrantsCard";
 import { PageReaderCard } from "./PageReaderCard";
 import { SafetyLevelsCard } from "./SafetyLevelsCard";
+import { SiteRulesCard } from "./SiteRulesCard";
 import type { CardDef, SettingsBridge } from "./types";
 
 function OpenLiveViewerRow() {
@@ -161,6 +162,15 @@ export function computerCards(b: SettingsBridge, t: TFunction): CardDef[] {
           <AuditLogCard />
         </SettingsCard>
       )
+    },
+    {
+      id: "site-rules",
+      section: "computer",
+      kind: "block",
+      title: t("settingsModal.siteRules.title"),
+      description: t("settingsModal.siteRules.lead"),
+      keywords: "site website program app rule always allow block ask domain kural site program izin engelle erlauben sperren regel webseite programm",
+      node: <SettingsCard title={t("settingsModal.siteRules.title")}><SiteRulesCard /></SettingsCard>
     },
     {
       id: "target",

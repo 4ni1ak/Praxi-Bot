@@ -9,6 +9,7 @@ pub mod host_info;
 pub mod modes;
 pub mod never_list;
 pub mod policy;
+pub mod profiles;
 pub mod resolver;
 
 // Re-export shared types from the protocol crate.
@@ -20,4 +21,8 @@ pub use host_info::is_host_status_command;
 pub use modes::{AllowReason, AutonomyMode, CallFacts, Impact, balanced_lane};
 pub use never_list::{CliStores, NeverList, set_data_dir};
 pub use policy::{Level, Limits, Policy, Rule};
+pub use profiles::{
+    Capability, ProfileAction, ProfileRule, RuleError, Subject, SubjectKind, Verdict, evaluate,
+    normalize_app, normalize_host, site_of_url,
+};
 pub use resolver::{ActionRequest, Decision, PermissionResolver};

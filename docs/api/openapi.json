@@ -3560,13 +3560,13 @@
         ]
       }
     },
-    "/v1/bots/{id}/page-reader": {
+    "/v1/bots/{id}/site-rules": {
       "get": {
         "tags": [
           "bots"
         ],
-        "summary": "A bot's page-reader setting.",
-        "operationId": "get_page_reader",
+        "summary": "The rules of one bot.",
+        "operationId": "list_site_rules",
         "parameters": [
           {
             "name": "id",
@@ -3585,7 +3585,10 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PageReaderDto"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SiteRuleDto"
+                  }
                 }
               }
             }
@@ -3607,12 +3610,12 @@
           }
         ]
       },
-      "put": {
+      "post": {
         "tags": [
           "bots"
         ],
-        "summary": "Change a bot's page-reader setting (owner only). Effective from the bot's next tool result.",
-        "operationId": "put_page_reader",
+        "summary": "Add a rule. Owner key required.",
+        "operationId": "add_site_rule",
         "parameters": [
           {
             "name": "id",
@@ -3629,29 +3632,19 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PutPageReaderInput"
+                "$ref": "#/components/schemas/SiteRuleInput"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PageReaderDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
+                  "$ref": "#/components/schemas/SiteRuleDto"
                 }
               }
             }
@@ -3666,7 +3659,108 @@
               }
             }
           },
-          "409": {
+          "422": {
+            "description": "the rule is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{id}/site-rules/recent": {
+      "get": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Sites and programs this bot's recent approvals were for, newest first.",
+        "operationId": "recent_site_approvals",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SiteRuleSuggestionDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{id}/site-rules/{rule_id}": {
+      "delete": {
+        "tags": [
+          "bots"
+        ],
+        "summary": "Remove a rule. Owner key required.",
+        "operationId": "remove_site_rule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "rule_id",
+            "in": "path",
+            "description": "Rule id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -4782,7 +4876,7 @@
         "tags": [
           "chats"
         ],
-        "summary": "Send a user message.  Starts a turn when the chat is idle (returns its run\nid); otherwise `mode` decides between steering and queueing.",
+        "summary": "Send a user message.  Starts a turn when the chat is idle (returns its run\nid); otherwise `mode` decides between steering and queueing.  A message the\nowner's own app sends while the owner's turn waits for a tool approval is\nnot queued behind it: the approval is denied, the turn stops and the message\nstarts the next turn (`delivery` = `redirected`).",
         "operationId": "send_message",
         "parameters": [
           {
@@ -19881,7 +19975,8 @@
           "new_turn",
           "steered",
           "queued",
-          "stopped"
+          "stopped",
+          "redirected"
         ]
       },
       "DetectedProviderDto": {
@@ -27147,19 +27242,6 @@
           }
         }
       },
-      "PageReaderDto": {
-        "type": "object",
-        "description": "How outside text reaches a bot.",
-        "required": [
-          "mode"
-        ],
-        "properties": {
-          "mode": {
-            "type": "string",
-            "description": "`off`: the bot reads pages itself (inside a data block). `auto`: through the reader\nwhile the run holds private data (files, mail, memory). `always`: every page."
-          }
-        }
-      },
       "PairCodeDto": {
         "type": "object",
         "description": "A one-time pairing code (`POST /v1/channels/telegram/pair-code`).",
@@ -27699,20 +27781,6 @@
           "limits": {
             "$ref": "#/components/schemas/BotLimitsDto",
             "description": "The new limits; every field left `null` is unlimited. Replaces all previous values."
-          }
-        },
-        "additionalProperties": false
-      },
-      "PutPageReaderInput": {
-        "type": "object",
-        "description": "`PUT /v1/bots/{id}/page-reader`.",
-        "required": [
-          "mode"
-        ],
-        "properties": {
-          "mode": {
-            "type": "string",
-            "description": "`off`, `auto` or `always`."
           }
         },
         "additionalProperties": false
@@ -29495,6 +29563,133 @@
           }
         },
         "additionalProperties": false
+      },
+      "SiteRuleDto": {
+        "type": "object",
+        "description": "One rule as the owner sees it.",
+        "required": [
+          "id",
+          "kind",
+          "key",
+          "include_subdomains",
+          "capability",
+          "action",
+          "created_at_ms",
+          "expired"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`block`, `ask` or `allow`."
+          },
+          "capability": {
+            "type": "string",
+            "description": "`read` (opening the site), `interact` (click, type, pick), `submit` (key presses,\npage scripts) or `any`."
+          },
+          "created_at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the rule was created (ms since the Unix epoch)."
+          },
+          "expired": {
+            "type": "boolean",
+            "description": "The expiry has passed: the rule no longer applies."
+          },
+          "expires_at_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the rule stops applying, if it expires."
+          },
+          "id": {
+            "type": "string",
+            "description": "Rule id (use it to remove the rule)."
+          },
+          "include_subdomains": {
+            "type": "boolean",
+            "description": "Sites only: the rule also covers every subdomain."
+          },
+          "key": {
+            "type": "string",
+            "description": "Host name (sites) or program path (apps)."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`site` or `app`."
+          }
+        }
+      },
+      "SiteRuleInput": {
+        "type": "object",
+        "description": "`POST /v1/bots/{id}/site-rules`.",
+        "required": [
+          "kind",
+          "key",
+          "capability",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`block`, `ask` or `allow`."
+          },
+          "capability": {
+            "type": "string",
+            "description": "`read`, `interact`, `submit` or `any` (`any` is not allowed with `allow`)."
+          },
+          "expires_in_hours": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The rule stops applying after this many hours (omit for no expiry).",
+            "minimum": 0
+          },
+          "include_subdomains": {
+            "type": "boolean",
+            "description": "Sites only, and never with `allow`: also cover every subdomain."
+          },
+          "key": {
+            "type": "string",
+            "description": "A plain host name (`example.com`, no `https://`, port or path) or an absolute\nprogram path."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`site` or `app`."
+          }
+        }
+      },
+      "SiteRuleSuggestionDto": {
+        "type": "object",
+        "description": "A site or program a recent approval was for (\"add from a recent approval\").",
+        "required": [
+          "kind",
+          "key",
+          "capability",
+          "approved_at_ms"
+        ],
+        "properties": {
+          "approved_at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was approved (ms since the Unix epoch)."
+          },
+          "capability": {
+            "type": "string",
+            "description": "The class of the approved call."
+          },
+          "key": {
+            "type": "string",
+            "description": "Host name or program path."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`site` or `app`."
+          }
+        }
       },
       "SkillAssignmentModeDto": {
         "type": "string",
