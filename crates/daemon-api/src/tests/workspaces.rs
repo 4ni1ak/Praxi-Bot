@@ -88,7 +88,7 @@ async fn workspace_links_are_never_browsed_or_cleaned() {
         None,
     )
     .await;
-    assert!(r.json()["entries"].as_array().unwrap().is_empty());
+    assert_eq!(r.json()["entries"].as_array().unwrap().as_slice(), []);
     let r = call(
         &t,
         Method::POST,
@@ -200,6 +200,7 @@ async fn workspace_routes_are_owner_only_and_denied_to_peers() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // One complete owner file lifecycle, including cleanup safety.
 async fn workspace_browse_search_preview_rename_delete_restore_and_limits() {
     let (ws_root, t) = setup_workspace_app();
     let bot_a = create_test_bot(&t, "Alpha").await;
@@ -272,7 +273,7 @@ async fn workspace_browse_search_preview_rename_delete_restore_and_limits() {
     )
     .await;
     assert_eq!(r.status, StatusCode::OK);
-    assert!(r.json()["entries"].as_array().unwrap().is_empty());
+    assert_eq!(r.json()["entries"].as_array().unwrap().as_slice(), []);
 
     // Safe inline preview serves .svg as text/plain + nosniff + CSP sandbox (no SVG XSS).
     let resp = call(
@@ -401,7 +402,7 @@ async fn workspace_browse_search_preview_rename_delete_restore_and_limits() {
             "warn_percent_1": 75,
             "warn_percent_2": 85,
             "warn_percent_3": 95,
-            "min_free_bytes": 5368709120u64,
+            "min_free_bytes": 5_368_709_120_u64,
             "downloads_max_age_days": 30,
             "logs_max_age_days": 14
         })),

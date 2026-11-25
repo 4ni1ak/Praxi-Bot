@@ -234,7 +234,7 @@ async function runSmoke(tmp, runtime) {
   const env = {
     ...isolated,
     BOT_DATA_DIR: dataDir,
-    BOT_WORKSPACES_DIR: join(tmp, 'workspaces'),
+    BOT_WORKSPACES_DIR: join(tmp, 'home', 'Documents', 'Praxi'),
     BOT_SECRETS_BACKEND: 'file',
     BOT_SECRETS_PASSPHRASE: 'smoke-passphrase-smoke-passphrase',
     BOT_BROWSER_PATH: chromePath,

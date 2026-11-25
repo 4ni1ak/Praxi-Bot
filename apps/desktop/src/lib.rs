@@ -1979,6 +1979,7 @@ mod acl_tests {
 
     #[test]
     fn workspace_folder_name_validation_rejects_traversal_and_reserved_names() {
+        use crate::is_safe_workspace_folder_name;
         assert!(is_safe_workspace_folder_name("Atlas"));
         assert!(is_safe_workspace_folder_name("research-bot_1"));
         for bad in [

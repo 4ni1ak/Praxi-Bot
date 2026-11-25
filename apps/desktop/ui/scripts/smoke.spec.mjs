@@ -127,7 +127,7 @@ export async function flows(ctx) {
         headers: { authorization: `Bearer ${ctx.token}`, 'x-praxi-owner-key': ctx.ownerKey, 'content-type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body)
       });
-      if (!response.ok) throw new Error(`${method} ${path}: HTTP ${response.status}`);
+      if (!response.ok) throw new Error(`${method} ${path}: HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
       return response.json();
     };
     const bot = await api('/bots', 'POST', {

@@ -543,7 +543,7 @@ impl Feed {
                             .app_state
                             .as_ref()
                             .and_then(crate::WeakAppState::upgrade)
-                            .map(|st| crate::workspace_routes::warning_dto_from_event(&st, ev));
+                            .map(|st| crate::workspace_routes::warning_dto_from_event(&st, &ev));
                         if let Some(dto) = dto {
                             return Some(Out::WorkspaceWarning(dto));
                         }

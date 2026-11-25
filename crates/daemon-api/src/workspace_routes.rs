@@ -301,8 +301,7 @@ fn ensure_bot_dir_if_configured(
 
 fn system_time_to_ms(t: SystemTime) -> i64 {
     t.duration_since(UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 fn file_extension_lower(path: &Path) -> String {
@@ -434,7 +433,7 @@ fn entry_dto_from_path(abs: &Path, rel_path: String) -> Option<WorkspaceEntryDto
         .and_then(|n| n.to_str())
         .unwrap_or_default()
         .to_owned();
-    let modified_at_ms = meta.modified().map(system_time_to_ms).unwrap_or(0);
+    let modified_at_ms = meta.modified().map_or(0, system_time_to_ms);
     Some(WorkspaceEntryDto {
         name,
         path: rel_path,
@@ -462,7 +461,7 @@ fn collect_search_entries(
         return;
     };
     let mut children: Vec<_> = rd.filter_map(Result::ok).collect();
-    children.sort_by_key(|e| e.file_name());
+    children.sort_by_key(fs::DirEntry::file_name);
     for entry in children {
         if out.len() >= MAX_SEARCH_RESULTS {
             break;
@@ -569,7 +568,7 @@ fn scan_dir_stats_and_items(
                         old_logs.1 = old_logs.1.saturating_add(1);
                     }
                 }
-                let modified_at_ms = meta.modified().map(system_time_to_ms).unwrap_or(0);
+                let modified_at_ms = meta.modified().map_or(0, system_time_to_ms);
                 if sz > 0 {
                     big_items.push(WorkspaceBigItemDto {
                         bot_id: bot.map(|(b, _)| b.id.0),
@@ -728,7 +727,7 @@ fn list_and_prune_trash(state: &AppState, bot_id: BotId) -> Vec<WorkspaceTrashEn
             deleted_at_ms: meta.deleted_at_ms,
         });
     }
-    items.sort_by(|a, b| b.deleted_at_ms.cmp(&a.deleted_at_ms));
+    items.sort_by_key(|item| std::cmp::Reverse(item.deleted_at_ms));
     items
 }
 
@@ -973,7 +972,7 @@ fn build_overview_inner(state: &AppState) -> Result<WorkspacesOverviewDto, ApiEr
             .cmp(&a.used_bytes)
             .then_with(|| a.bot_name.cmp(&b.bot_name))
     });
-    big_items.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    big_items.sort_by_key(|item| std::cmp::Reverse(item.size_bytes));
     big_items.truncate(DEFAULT_BIG_LIMIT);
 
     let suggestions = build_cleanup_suggestions(&state.data_dir(), old_downloads, old_logs);
@@ -1001,7 +1000,7 @@ fn build_overview_inner(state: &AppState) -> Result<WorkspacesOverviewDto, ApiEr
 /// Build an enriched [`WorkspaceWarningDto`] when the runtime emits a write-time warning event.
 pub(crate) fn warning_dto_from_event(
     state: &AppState,
-    event: agent_core::WorkspaceWarningEvent,
+    event: &agent_core::WorkspaceWarningEvent,
 ) -> WorkspaceWarningDto {
     use builtin_tools::workspace::WriteWarningKind;
     let (
@@ -1507,7 +1506,7 @@ pub(crate) async fn rename_bot_workspace_entry(
     let Some(last) = dst_segments.last_mut() else {
         return Err(ApiError::bad_request("cannot rename workspace root"));
     };
-    *last = new_name.to_owned();
+    new_name.clone_into(last);
     let dst = src
         .parent()
         .ok_or_else(|| ApiError::bad_request("missing parent folder"))?

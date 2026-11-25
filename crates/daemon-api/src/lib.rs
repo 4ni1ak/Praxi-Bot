@@ -563,7 +563,7 @@ impl AppState {
 
     /// Configure the shared workspaces root directory on both daemon state and agent loop.
     pub fn set_workspaces_root(&self, root: Option<PathBuf>) {
-        *self.0.workspaces_root.write() = root.clone();
+        self.0.workspaces_root.write().clone_from(&root);
         self.agent().set_workspaces_root(root);
     }
 
