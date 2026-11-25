@@ -33,6 +33,11 @@ export interface CardDef {
   keywords?: string;
   /** `row` cards share a rounded group; `block` cards bring their own frame. */
   kind: "row" | "block";
+  /**
+   * A `row` card that is its own topic (a big picker, not one line): it gets its own rounded
+   * group with a gap above and below instead of sharing one with the neighbouring cards.
+   */
+  standalone?: boolean;
   node: ReactNode;
 }
 

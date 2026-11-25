@@ -441,7 +441,7 @@ export function NotificationHistoryView({
             ) : null}
             <Button
               size="sm"
-              variant={inlineApproval ? "ghost" : "secondary"}
+              variant="ghost"
               data-notify-open
               onClick={() => openEntry(item.ids, n.chatId)}
             >

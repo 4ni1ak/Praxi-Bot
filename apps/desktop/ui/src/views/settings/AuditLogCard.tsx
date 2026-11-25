@@ -12,6 +12,7 @@ import {
   auditQuery,
   type AuditFilters
 } from "../../lib/auditLog";
+import { formatWhen } from "../../lib/dateFormat";
 import { humanLine } from "../../lib/humanError";
 import { useDaemon } from "../../state/DaemonContext";
 import styles from "./AuditLogCard.module.css";
@@ -32,7 +33,7 @@ const NO_FILTERS: AuditFilters = { windowMs: null, actor: "", kind: "", bot: "",
  * integrity check. The daemon redacts everything; this view only displays and saves what it got.
  */
 export function AuditLogCard() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { client } = useDaemon();
   const toast = useToast();
   const [open, setOpen] = useState(false);
@@ -216,7 +217,7 @@ export function AuditLogCard() {
                 <tbody>
                   {page.items.map((e) => (
                     <tr key={e.id} className={selected?.id === e.id ? styles.selected : undefined}>
-                      <td>{new Date(e.ts_ms).toLocaleString()}</td>
+                      <td>{formatWhen(e.ts_ms, i18n.language)}</td>
                       <td>
                         <button type="button" className={styles.link} onClick={() => setSelected(e)}>
                           {t(auditEventKey(e.action))}
