@@ -136,6 +136,55 @@ are shorter. OpenRouter's three candidates use its verified exact ids, not
 first-party ids. No `:free` model is pinned as a recommendation or default. A
 `free` note is added only when an OpenRouter `:free` id appears in the live list.
 
+## Automatic catalog updates (no app update needed)
+
+New models appear all the time. So that the picker does not wait for an app
+release, Praxi-Bot can fetch a newer model list on its own.
+
+- **What it does:** at most once a day the daemon downloads two small files
+  (`provider-catalog.json` and its signature `provider-catalog.json.minisig`)
+  from the project's GitHub release. Both are plain `GET` requests to fixed
+  `https://` addresses. **Nothing about you, your bots or your chats is sent.**
+- **Only signed files are used.** The signature must match the public key built
+  into the app. A changed, unsigned, too-large or *older* file is thrown away
+  and the model list you already have keeps working. Unknown extra fields in a
+  newer file are ignored.
+- **How it is merged:** for each provider, the downloaded entry replaces the
+  built-in one when its review date is the same or newer. Providers the file
+  does not mention stay as they are.
+- **See it:** `bot doctor` shows "Catalog updated 2026-12-01" and, once the list
+  is older than 30 days, a hint to update.
+- **Turn it off:** `bot catalog auto-update off` (check with
+  `bot catalog auto-update status`, back on with `on`). Setting the environment
+  variable `BOT_CATALOG_UPDATES=off` also stops it.
+- **Update by hand:** `bot catalog update` installs a newer catalog now;
+  `bot catalog update --check` only tells you whether one exists.
+
+Downloaded files live in `<data dir>/provider-catalog/` and are re-verified on
+every start, so a hand-edited copy is ignored.
+
+### Maintainers: publishing a catalog
+
+The signing key is **never** committed. Generate it once and keep the file
+private (a password manager or an offline disk):
+
+```sh
+python scripts/release/sign_provider_catalog.py --generate-key ~/catalog-key.b64
+```
+
+It prints the public key; that string must equal `PINNED_PUBLIC_KEY` in
+`crates/provider-catalog/src/catalog_update.rs` (changing it needs an app
+release). For each refresh, update `crates/provider-catalog/src/model_metadata.json`
+(bump `last_reviewed`), then:
+
+```sh
+PRAXI_CATALOG_SIGNING_KEY="$(cat ~/catalog-key.b64)"   python scripts/release/sign_provider_catalog.py --out dist/
+```
+
+and upload `dist/provider-catalog.json` and `dist/provider-catalog.json.minisig`
+as release assets (the app reads `releases/latest/download/...`). The script
+needs the Python `cryptography` package.
+
 ## Local models: hardware and recommendations
 
 `GET /v1/local-models` (owner only) reports what this computer can run with Ollama or
