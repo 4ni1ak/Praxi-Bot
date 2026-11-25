@@ -1,3 +1,4 @@
+import { formatWhen } from "../lib/dateFormat";
 import { formatInScheduleZone, formatRunPreview, specTimeZone } from "../lib/scheduleTime";
 import {
   ArrowUpRight,
@@ -27,6 +28,7 @@ import type {
   Schedule,
   ScheduleHistoryEntry
 } from "../api/types";
+import { EmptyState } from "../components/EmptyState";
 import formStyles from "../components/Form.module.css";
 import { botView } from "../lib/botProfile";
 import scheduleTemplateFile from "../data/scheduleTemplates.json";
@@ -136,10 +138,7 @@ export function SchedulesView({
     (ms: number, zone?: string) =>
       zone
         ? formatInScheduleZone(ms, i18n.language, zone, LOCAL_TZ)
-        : new Date(ms).toLocaleString(i18n.language, {
-            dateStyle: "medium",
-            timeStyle: "short"
-          }),
+        : formatWhen(ms, i18n.language),
     [i18n.language]
   );
 
@@ -301,26 +300,18 @@ export function SchedulesView({
             {t("schedules.loading")}
           </p>
         ) : list.length === 0 ? (
-          <Card padding="md" className={styles.empty}>
-            <CalendarDays className={formStyles.emptyIcon} />
-            <p className={styles.emptyTitle}>{t("schedules.empty.title")}</p>
-            <p className={formStyles.hint}>
-              {bots.length === 0
-                ? t("schedules.empty.noBots")
-                : t("schedules.empty.hint")}
-            </p>
-            {bots.length > 0 ? (
-              <Button
-                size="sm"
-                variant="primary"
-                data-testid="schedules-empty-new"
-                onClick={() => setEditing("new")}
-              >
-                <Plus />
-                {t("schedules.new")}
-              </Button>
-            ) : null}
-          </Card>
+          <EmptyState
+            icon={CalendarDays}
+            title={t("schedules.empty.title")}
+            actionLabel={bots.length > 0 ? t("schedules.new") : undefined}
+            primary={false}
+            onAction={() => setEditing("new")}
+            testId="schedules-empty"
+          >
+            {bots.length === 0
+              ? t("schedules.empty.noBots")
+              : t("schedules.empty.hint")}
+          </EmptyState>
         ) : viewMode === "calendar" ? (
           <ScheduleCalendar
             schedules={list}
@@ -460,13 +451,17 @@ export function SchedulesView({
                         <h3 className={styles.runsTitle}>
                           {t("schedules.nextRuns")}
                         </h3>
-                        <ul className={styles.upcomingList}>
-                          {nextRuns.slice(0, 5).map((ts) => (
-                            <li key={ts} className={styles.upcomingChip}>
-                              {fmt(ts, specTimeZone(s.spec))}
-                            </li>
-                          ))}
-                        </ul>
+                        <p className={styles.upcomingLine}>
+                          {nextRuns
+                            .slice(0, 3)
+                            .map((ts) => fmt(ts, specTimeZone(s.spec)))
+                            .join(" · ")}
+                          {nextRuns.length > 3 ? (
+                            <span className={styles.upcomingMore}>
+                              {` +${Math.min(nextRuns.length, 5) - 3}`}
+                            </span>
+                          ) : null}
+                        </p>
                       </div>
                     ) : null}
 
@@ -489,7 +484,7 @@ export function SchedulesView({
                         ) : null}
                         <Button
                           size="sm"
-                          variant="primary"
+                          variant="secondary"
                           disabled={busy}
                           data-testid="schedule-reclaim"
                           onClick={() => {
@@ -528,7 +523,7 @@ export function SchedulesView({
                     <div className={styles.actions}>
                       <Button
                         size="sm"
-                        variant="primary"
+                        variant="secondary"
                         disabled={busy || Boolean(s.moved_to)}
                         onClick={() =>
                           void act(
@@ -543,7 +538,7 @@ export function SchedulesView({
                       </Button>
                       <Button
                         size="sm"
-                        variant="secondary"
+                        variant="ghost"
                         disabled={busy || Boolean(s.moved_to)}
                         onClick={() => setEditing(s.id)}
                       >

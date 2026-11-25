@@ -16,8 +16,10 @@
 
 .title {
   margin: var(--space-0);
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-display);
+  line-height: var(--line-height-tight);
   color: var(--color-text);
 }
 
@@ -46,8 +48,14 @@
 
 .kind {
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
   color: var(--color-warning);
+}
+
+.when {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .summary {
