@@ -1571,6 +1571,26 @@
         "label": "{{name}} aracının alacağı tam veri",
         "shortened": "Kısaltıldı: yalnızca ilk {{shown}} karakter gösteriliyor."
       },
+      "mail": {
+        "bcc": "Gizli bilgi",
+        "cc": "Bilgi",
+        "from": "Kimden",
+        "legal": "Listeden çıkmak isteyen birine yazmak ya da çıkış satırı olmadan ticari e-posta göndermek hukuka aykırı olabilir (Türkiye'de 6563 sayılı ETK) ve para cezasına yol açabilir. Bu hukuki tavsiye değildir.",
+        "optOutOff": "Bu e-postaya çıkış satırı eklenmeyecek.",
+        "optOutOn": "Sistem sonuna bir çıkış satırı ekler (yukarıda görünüyor).",
+        "ownerOnly": "Buna yalnızca siz karar verebilirsiniz. Bot bu uyarıları kendi başına aşıp e-posta gönderemez.",
+        "sendAnyway": "Yine de gönder",
+        "subject": "Konu",
+        "title": "Bu e-posta gönderilsin mi?",
+        "to": "Kime",
+        "warning": {
+          "daily_limit": "Bu işlemle bu hesaptan 24 saatte {{count}} e-posta gitmiş olacak. Sınırınız {{limit}}.",
+          "no_opt_out_line": "Bu e-posta, kişilerin listeden çıkmasını sağlayan satır olmadan gidecek.",
+          "opt_out_listed": "Bu kişiler kendilerine yazılmamasını istedi: {{list}}.",
+          "same_recipient": "{{list}} adresine son {{days}} gün içinde zaten yazdınız."
+        },
+        "warningsTitle": "Göndermeden önce kontrol edin"
+      },
       "memory": {
         "always": "{{target}} için bu botta her zaman izin ver",
         "target": {
@@ -5809,6 +5829,39 @@
           "title": "Güvenli mod"
         }
       }
+    },
+    "mailGuard": {
+      "colBot": "Bot",
+      "colNote": "Not",
+      "colSubject": "Konu",
+      "colTime": "Zaman",
+      "colTo": "Kime",
+      "daily": "Posta kutusu başına günde şu sayının üstünde uyar (0 = hiç uyarma)",
+      "days": "Birine bu kadar gün içinde zaten yazdıysam uyar (0 = hiç uyarma)",
+      "description": "Sınırlar, bir çıkış listesi ve botlarınızın gönderdiği her e-postanın günlüğü.",
+      "export": "CSV olarak dışa aktar",
+      "footer": "Çıkış satırının metni",
+      "footerHint": "{sender} gönderen adresle değiştirilir. Satırı bot değil uygulama ekler ve bot onu silemez. Bir e-postayı satırsız göndermek için kartta onaylayabilirsiniz; kartta bir uyarı görünür.",
+      "footerPlaceholder": "Boş bırakırsanız yerleşik metin kullanılır (Türkçe ve İngilizce)",
+      "intro": "Bir botun göndereceği her e-posta yine önce size sorulur. Bu ayarlar yalnızca sorunun ne zaman uyarıyla geldiğini belirler. Uyarı sizi hiçbir zaman engellemez: her zaman \"Yine de gönder\" diyebilirsiniz ve bu seçim günlüğe yazılır.",
+      "kindAddress": "adres",
+      "kindDomain": "tüm alan adı",
+      "loading": "Yükleniyor…",
+      "logEmpty": "Henüz e-posta gönderilmedi.",
+      "logHint": "Kime, ne zaman ve hangi bottan e-posta gitti. Yalnızca gerçekten gönderilenler listelenir.",
+      "logTitle": "Gönderilen e-posta günlüğü",
+      "optOutAdd": "Ekle",
+      "optOutEmpty": "Listede henüz kimse yok.",
+      "optOutHint": "Bir adres (ayse@ornek.com) ya da tüm bir alan adı (ornek.com) ekleyin. Onlara yazmaya çalışan bot, onay kartınızda bir uyarı alır.",
+      "optOutLine": "E-postalara varsayılan olarak çıkış satırı ekle",
+      "optOutPlaceholder": "ayse@ornek.com ya da ornek.com",
+      "optOutRemove": "{{value}} kaydını kaldır",
+      "optOutTitle": "Yazmayacağım kişiler",
+      "save": "Kaydet",
+      "saved": "Kaydedildi",
+      "sentAnyway": "Yine de gönderildi",
+      "softHint": "Bu ikisi engel değil, uyarıdır.",
+      "title": "Güvenli gönderim"
     },
     "mode": {
       "moreHint": "İnce ayar için ek seçenekler",

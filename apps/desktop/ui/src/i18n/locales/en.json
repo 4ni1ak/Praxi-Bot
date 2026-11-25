@@ -1571,6 +1571,26 @@
         "label": "Exactly what {{name}} will receive",
         "shortened": "Shortened: only the first {{shown}} characters are shown."
       },
+      "mail": {
+        "bcc": "Bcc",
+        "cc": "Cc",
+        "from": "From",
+        "legal": "Writing to someone who opted out, or sending commercial e-mail without an opt-out line, can be unlawful (in Turkey: Law 6563, ETK) and can lead to fines. This is not legal advice.",
+        "optOutOff": "No opt-out line will be added to this e-mail.",
+        "optOutOn": "The system adds an opt-out line at the end (shown above).",
+        "ownerOnly": "Only you can decide this. The bot cannot send past these warnings on its own.",
+        "sendAnyway": "Send anyway",
+        "subject": "Subject",
+        "title": "Send this e-mail?",
+        "to": "To",
+        "warning": {
+          "daily_limit": "This would be {{count}} e-mails from this account in 24 hours. Your limit is {{limit}}.",
+          "no_opt_out_line": "This e-mail would go out without the line that lets people opt out.",
+          "opt_out_listed": "These people asked not to be written to: {{list}}.",
+          "same_recipient": "You already wrote to {{list}} in the last {{days}} days."
+        },
+        "warningsTitle": "Check before sending"
+      },
       "memory": {
         "always": "Always allow {{target}} for this bot",
         "target": {
@@ -5809,6 +5829,39 @@
           "title": "Safe mode"
         }
       }
+    },
+    "mailGuard": {
+      "colBot": "Bot",
+      "colNote": "Note",
+      "colSubject": "Subject",
+      "colTime": "When",
+      "colTo": "To",
+      "daily": "Warn above this many e-mails per day, per mailbox (0 = never)",
+      "days": "Warn when I already wrote to someone within this many days (0 = never)",
+      "description": "Limits, an opt-out list and a log of every e-mail your bots send.",
+      "export": "Export as CSV",
+      "footer": "Text of the opt-out line",
+      "footerHint": "{sender} is replaced by the sending address. The line is added by the app, not by the bot, and the bot cannot remove it. You can send one e-mail without it by approving it on the card, which shows a warning.",
+      "footerPlaceholder": "Leave empty to use the built-in text (Turkish and English)",
+      "intro": "Every e-mail a bot sends still asks you first. These settings only decide when the question carries a warning. A warning never blocks you: you can always choose \"Send anyway\", and that choice is written to the log.",
+      "kindAddress": "address",
+      "kindDomain": "whole domain",
+      "loading": "Loading…",
+      "logEmpty": "No e-mail has been sent yet.",
+      "logHint": "Who got an e-mail, when, and from which bot. Only e-mails that were really sent are listed.",
+      "logTitle": "Sent e-mail log",
+      "optOutAdd": "Add",
+      "optOutEmpty": "Nobody is on the list yet.",
+      "optOutHint": "Add an address (ann@example.com) or a whole domain (example.com). A bot that tries to write to them gets a warning on your approval card.",
+      "optOutLine": "Add an opt-out line to e-mails by default",
+      "optOutPlaceholder": "ann@example.com or example.com",
+      "optOutRemove": "Remove {{value}}",
+      "optOutTitle": "People I will not write to",
+      "save": "Save",
+      "saved": "Saved",
+      "sentAnyway": "Sent anyway",
+      "softHint": "These two are warnings, not blocks.",
+      "title": "Safe sending"
     },
     "mode": {
       "moreHint": "Extra controls for fine-tuning",

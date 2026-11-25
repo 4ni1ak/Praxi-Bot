@@ -21,6 +21,7 @@ pub mod config;
 pub mod connector;
 mod cred;
 pub mod error;
+pub mod guard;
 pub mod imap;
 pub mod imap_provider;
 pub mod message;
@@ -41,6 +42,9 @@ pub use config::{
 };
 pub use connector::{EmailConnector, MAX_ATTACHMENT_BYTES, Scoped, SearchResult};
 pub use error::{EmailError, ProviderError};
+pub use guard::{
+    GuardReport, GuardSettings, MailGuard, OptOut, SendLogEntry, Warning,
+};
 pub use imap::{FolderInfo, SearchQuery};
 pub use imap_provider::ImapSmtpProvider;
 pub use message::{AttachmentInfo, MessageDetail, MessageSummary};
@@ -69,6 +73,8 @@ pub fn register(registry: &ToolRegistry, connector: &Arc<EmailConnector>) -> usi
 
 #[cfg(test)]
 mod bot_tests;
+#[cfg(test)]
+mod guard_tests;
 #[cfg(test)]
 mod kind_tests;
 #[cfg(test)]

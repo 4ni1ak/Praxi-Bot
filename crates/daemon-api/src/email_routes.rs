@@ -9,8 +9,9 @@ use axum::http::StatusCode;
 
 use crate::AppState;
 use crate::email::{
-    EmailAccountDto, EmailAccountInput, EmailControl, EmailControlError, EmailMessageDto,
-    EmailProviderKind, EmailSendTestResponse, EmailTestReport,
+    EmailAccountDto, EmailAccountInput, EmailControl, EmailControlError, EmailGuardSettingsDto,
+    EmailMessageDto, EmailOptOutDto, EmailOptOutInput, EmailProviderKind, EmailSendLogDto,
+    EmailSendTestResponse, EmailTestReport,
 };
 use crate::error::{ApiError, ErrorBody};
 use crate::mcp_routes::MAX_BOT_ID_LEN;
@@ -360,4 +361,104 @@ pub(crate) async fn send_email_test(
     Ok(Json(EmailSendTestResponse {
         sent_to: control.send_test(&name).await?,
     }))
+}
+
+/// Default and largest number of send-log lines in one answer.
+const DEFAULT_LOG: usize = 200;
+const MAX_LOG: usize = 5000;
+
+/// Query of `GET /v1/email/guard/send-log`.
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+pub(crate) struct SendLogQuery {
+    /// How many lines, newest first (default 200, at most 5000).
+    limit: Option<usize>,
+}
+
+/// The values the outgoing-mail guard uses (owner only).
+#[utoipa::path(get, path = "/v1/email/guard/settings", tag = "email",
+    security(("bearer" = [])),
+    responses((status = 200, body = EmailGuardSettingsDto), (status = 503, body = ErrorBody)))]
+pub(crate) async fn get_guard_settings(
+    State(s): State<AppState>,
+) -> Result<Json<EmailGuardSettingsDto>, ApiError> {
+    Ok(Json(email(&s)?.guard_settings()?))
+}
+
+/// Change the guard values (owner only).
+#[utoipa::path(put, path = "/v1/email/guard/settings", tag = "email",
+    security(("bearer" = [])), request_body = EmailGuardSettingsDto,
+    responses((status = 200, body = EmailGuardSettingsDto), (status = 422, body = ErrorBody),
+              (status = 503, body = ErrorBody)))]
+pub(crate) async fn put_guard_settings(
+    State(s): State<AppState>,
+    ApiJson(body): ApiJson<EmailGuardSettingsDto>,
+) -> Result<Json<EmailGuardSettingsDto>, ApiError> {
+    Ok(Json(email(&s)?.set_guard_settings(body)?))
+}
+
+/// The opt-out list (owner only).
+#[utoipa::path(get, path = "/v1/email/guard/opt-out", tag = "email",
+    security(("bearer" = [])),
+    responses((status = 200, body = Vec<EmailOptOutDto>), (status = 503, body = ErrorBody)))]
+pub(crate) async fn list_opt_outs(
+    State(s): State<AppState>,
+) -> Result<Json<Vec<EmailOptOutDto>>, ApiError> {
+    Ok(Json(email(&s)?.opt_outs()?))
+}
+
+/// Add an address or domain to the opt-out list (owner only).
+#[utoipa::path(post, path = "/v1/email/guard/opt-out", tag = "email",
+    security(("bearer" = [])), request_body = EmailOptOutInput,
+    responses((status = 200, body = EmailOptOutDto), (status = 422, body = ErrorBody),
+              (status = 503, body = ErrorBody)))]
+pub(crate) async fn add_opt_out(
+    State(s): State<AppState>,
+    ApiJson(body): ApiJson<EmailOptOutInput>,
+) -> Result<Json<EmailOptOutDto>, ApiError> {
+    Ok(Json(email(&s)?.add_opt_out(body)?))
+}
+
+/// Remove an entry from the opt-out list (owner only).
+#[utoipa::path(delete, path = "/v1/email/guard/opt-out/{value}", tag = "email",
+    security(("bearer" = [])),
+    params(("value" = String, Path, description = "The address or domain")),
+    responses((status = 204), (status = 404, body = ErrorBody), (status = 503, body = ErrorBody)))]
+pub(crate) async fn remove_opt_out(
+    State(s): State<AppState>,
+    Path(value): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    email(&s)?.remove_opt_out(&value)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The send log, newest first (owner only: it lists recipients).
+#[utoipa::path(get, path = "/v1/email/guard/send-log", tag = "email",
+    security(("bearer" = [])), params(SendLogQuery),
+    responses((status = 200, body = Vec<EmailSendLogDto>), (status = 503, body = ErrorBody)))]
+pub(crate) async fn get_send_log(
+    State(s): State<AppState>,
+    Query(q): Query<SendLogQuery>,
+) -> Result<Json<Vec<EmailSendLogDto>>, ApiError> {
+    let limit = q.limit.unwrap_or(DEFAULT_LOG).clamp(1, MAX_LOG);
+    Ok(Json(email(&s)?.send_log(limit)?))
+}
+
+/// The whole send log as a CSV file (owner only).
+#[utoipa::path(get, path = "/v1/email/guard/send-log.csv", tag = "email",
+    security(("bearer" = [])),
+    responses((status = 200, content_type = "text/csv", body = String), (status = 503, body = ErrorBody)))]
+pub(crate) async fn export_send_log(
+    State(s): State<AppState>,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
+    let csv = email(&s)?.send_log_csv()?;
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, "text/csv; charset=utf-8"),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"send-log.csv\"",
+            ),
+        ],
+        csv,
+    ))
 }

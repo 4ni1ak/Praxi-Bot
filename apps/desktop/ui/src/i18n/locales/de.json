@@ -1571,6 +1571,26 @@
         "label": "Genau das erhält {{name}}",
         "shortened": "Gekürzt: Es werden nur die ersten {{shown}} Zeichen angezeigt."
       },
+      "mail": {
+        "bcc": "Bcc",
+        "cc": "Cc",
+        "from": "Von",
+        "legal": "Jemanden anzuschreiben, der sich abgemeldet hat, oder Werbe-E-Mails ohne Abmeldezeile zu senden, kann rechtswidrig sein (in der Türkei: Gesetz Nr. 6563, ETK) und zu Bußgeldern führen. Das ist keine Rechtsberatung.",
+        "optOutOff": "Dieser E-Mail wird keine Abmeldezeile hinzugefügt.",
+        "optOutOn": "Das System fügt am Ende eine Abmeldezeile hinzu (oben zu sehen).",
+        "ownerOnly": "Das können nur Sie entscheiden. Der Bot kann diese Warnungen nicht selbst übergehen.",
+        "sendAnyway": "Trotzdem senden",
+        "subject": "Betreff",
+        "title": "Diese E-Mail senden?",
+        "to": "An",
+        "warning": {
+          "daily_limit": "Damit wären es {{count}} E-Mails von diesem Konto in 24 Stunden. Ihr Limit liegt bei {{limit}}.",
+          "no_opt_out_line": "Diese E-Mail würde ohne die Zeile zum Abmelden verschickt.",
+          "opt_out_listed": "Diese Personen möchten nicht angeschrieben werden: {{list}}.",
+          "same_recipient": "Sie haben {{list}} in den letzten {{days}} Tagen bereits geschrieben."
+        },
+        "warningsTitle": "Bitte vor dem Senden prüfen"
+      },
       "memory": {
         "always": "{{target}} für diesen Bot immer erlauben",
         "target": {
@@ -5809,6 +5829,39 @@
           "title": "Sicherer Modus"
         }
       }
+    },
+    "mailGuard": {
+      "colBot": "Bot",
+      "colNote": "Hinweis",
+      "colSubject": "Betreff",
+      "colTime": "Wann",
+      "colTo": "An",
+      "daily": "Warnen ab dieser Zahl E-Mails pro Tag und Postfach (0 = nie)",
+      "days": "Warnen, wenn ich jemandem innerhalb dieser Tage schon geschrieben habe (0 = nie)",
+      "description": "Grenzen, eine Sperrliste und ein Protokoll jeder E-Mail, die Ihre Bots senden.",
+      "export": "Als CSV exportieren",
+      "footer": "Text der Abmeldezeile",
+      "footerHint": "{sender} wird durch die Absenderadresse ersetzt. Die Zeile fügt die App hinzu, nicht der Bot, und der Bot kann sie nicht entfernen. Eine einzelne E-Mail ohne Zeile können Sie auf der Karte freigeben; dort erscheint eine Warnung.",
+      "footerPlaceholder": "Leer lassen für den eingebauten Text (Türkisch und Englisch)",
+      "intro": "Jede E-Mail eines Bots wird Ihnen weiterhin zuerst vorgelegt. Diese Einstellungen bestimmen nur, wann die Rückfrage eine Warnung enthält. Eine Warnung blockiert Sie nie: Sie können immer \"Trotzdem senden\" wählen, und diese Wahl wird im Protokoll festgehalten.",
+      "kindAddress": "Adresse",
+      "kindDomain": "ganze Domain",
+      "loading": "Wird geladen…",
+      "logEmpty": "Es wurde noch keine E-Mail gesendet.",
+      "logHint": "Wer wann eine E-Mail bekam und von welchem Bot. Nur wirklich gesendete E-Mails stehen hier.",
+      "logTitle": "Protokoll gesendeter E-Mails",
+      "optOutAdd": "Hinzufügen",
+      "optOutEmpty": "Die Liste ist noch leer.",
+      "optOutHint": "Fügen Sie eine Adresse (anna@beispiel.de) oder eine ganze Domain (beispiel.de) hinzu. Versucht ein Bot, sie anzuschreiben, erscheint eine Warnung auf Ihrer Freigabekarte.",
+      "optOutLine": "E-Mails standardmäßig eine Abmeldezeile hinzufügen",
+      "optOutPlaceholder": "anna@beispiel.de oder beispiel.de",
+      "optOutRemove": "{{value}} entfernen",
+      "optOutTitle": "Personen, die ich nicht anschreibe",
+      "save": "Speichern",
+      "saved": "Gespeichert",
+      "sentAnyway": "Trotzdem gesendet",
+      "softHint": "Diese beiden sind Warnungen, keine Sperren.",
+      "title": "Sicher senden"
     },
     "mode": {
       "moreHint": "Zusätzliche Feineinstellungen",

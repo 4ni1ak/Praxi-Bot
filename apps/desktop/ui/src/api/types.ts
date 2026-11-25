@@ -479,6 +479,9 @@ export type EmailTestReport = S["EmailTestReport"];
 /** One inbox row: headers only; every text field is untrusted, show it as plain text. */
 export type EmailMessage = S["EmailMessageDto"];
 export type EmailSendTestResponse = S["EmailSendTestResponse"];
+export type EmailGuardSettings = S["EmailGuardSettingsDto"];
+export type EmailOptOut = S["EmailOptOutDto"];
+export type EmailSendLogEntry = S["EmailSendLogDto"];
 
 export type VoiceConfig = S["VoiceConfigDto"];
 export type VoiceConfigInput = S["VoiceConfigInput"];
