@@ -637,7 +637,7 @@ pub fn with_footer(body: &str, footer: &str) -> String {
 mod tests {
     use super::*;
 
-    fn facts<'a>(rcpt: &'a [String], line: bool) -> MailFacts<'a> {
+    fn facts(rcpt: &[String], line: bool) -> MailFacts<'_> {
         MailFacts {
             bot: Some("b1"),
             account: "work",
@@ -680,14 +680,16 @@ mod tests {
         assert_eq!(rep.warnings[0].addresses.len(), 2);
         assert!(rep.legal_notice.is_some());
         let ok = vec!["bob@example.com".to_owned()];
-        assert!(g.check(&facts(&ok, true)).warnings.is_empty());
+        assert_eq!(g.check(&facts(&ok, true)).codes(), Vec::<String>::new());
     }
 
     #[test]
     fn daily_limit_and_same_recipient_are_warnings_not_blocks() {
         let g = MailGuard::in_memory();
-        let mut s = GuardSettings::default();
-        s.daily_limit = 2;
+        let s = GuardSettings {
+            daily_limit: 2,
+            ..GuardSettings::default()
+        };
         g.set_settings(s).unwrap();
         g.record(entry(&["a@x.io", "b@x.io"], now_secs()));
         let r = vec!["a@x.io".to_owned()];

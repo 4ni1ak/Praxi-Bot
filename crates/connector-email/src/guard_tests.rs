@@ -1,4 +1,4 @@
-//! The outgoing-mail guardrails through the real `email_send` tool (AgentMail mock server).
+//! The outgoing-mail guardrails through the real `email_send` tool (`AgentMail` mock server).
 
 use std::sync::Arc;
 
