@@ -29,10 +29,14 @@ pub enum ProviderError {
     Transient,
     /// `4xx` the request itself was wrong (validation, name taken, ...).
     /// `code` is the provider's `snake_case` error code when it was well formed.
-    #[error("the provider rejected the request{}", .code.as_deref().map_or(String::new(), |c| format!(" ({c})")))]
+    #[error("the provider rejected the request{}{}", .code.as_deref().map_or(String::new(), |c| format!(" ({c})")), .detail.as_deref().map_or(String::new(), |d| format!(": {d}")))]
     Rejected {
         /// Sanitised machine code, `[a-z0-9_]{1,64}`.
         code: Option<String>,
+        /// For a `400`/`422` validation answer: the provider's error `name` and
+        /// the first `errors[]` entries (`path: message`), sanitised and capped,
+        /// so the model and the owner can see what was refused.
+        detail: Option<String>,
     },
     /// The response was larger than the cap or not what the API documents.
     #[error("the provider sent an unusable or oversized response")]
@@ -127,7 +131,8 @@ mod tests {
         );
         assert_eq!(
             ProviderError::Rejected {
-                code: Some("already_exists".into())
+                code: Some("already_exists".into()),
+                detail: None,
             }
             .to_string(),
             "the provider rejected the request (already_exists)"
