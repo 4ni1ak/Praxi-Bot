@@ -2597,16 +2597,16 @@ mod tests {
         };
         assert_eq!(ids(SearchFilter::default()).len(), 3);
         let only = |m: &Message| std::collections::HashSet::from([m.id]);
-        let links = SearchFilter {
+        let with_link = SearchFilter {
             has_link: true,
             ..SearchFilter::default()
         };
-        assert_eq!(ids(links), only(&linked));
-        let files = SearchFilter {
+        assert_eq!(ids(with_link), only(&linked));
+        let with_file = SearchFilter {
             has_file: true,
             ..SearchFilter::default()
         };
-        assert_eq!(ids(files), only(&filed));
+        assert_eq!(ids(with_file), only(&filed));
         let window = SearchFilter {
             from_ms: Some(1_500),
             to_ms: Some(2_500),
