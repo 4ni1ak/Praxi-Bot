@@ -81,6 +81,21 @@ test("daemon error codes stay sorted and unique (keeps parallel branches from co
   assert.deepEqual(codes, [...new Set(codes)].sort());
 });
 
+test("unreachable model and app errors offer translated connection advice without replaying an action", async () => {
+  const titles = new Set<string>();
+  for (const lng of ["en", "tr", "de"]) {
+    await i18n.changeLanguage(lng);
+    for (const raw of ["Cannot reach the app service. Details: disconnected", "Cannot reach MCP server `mail`. Details: disconnected", "The model service cannot be reached."]) {
+      const error = layer.humanToolError(raw);
+      assert.equal(error.code, "serviceConnection");
+      assert.equal(error.action, undefined);
+      assert.ok(error.hint.length > 20 && !error.hint.includes("errors."));
+      titles.add(error.title);
+    }
+  }
+  assert.equal(titles.size, 3);
+});
+
 test("first-run provider failures distinguish credentials, network, endpoint and model", async () => {
   assert.equal(firstRun.classifyConnectError("authentication failed: test credential rejected", "openai"), "badKey");
   assert.equal(firstRun.classifyConnectError("connection error: error sending request", "openai"), "offline");

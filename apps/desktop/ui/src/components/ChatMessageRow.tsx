@@ -1,5 +1,5 @@
 import { Pencil } from "lucide-react";
-import { memo, type CSSProperties } from "react";
+import { memo, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { BotAvatar } from "ui";
 import type { ApiClient } from "../api/client";
@@ -68,10 +68,12 @@ export const AssistantMessageRow = memo(function AssistantMessageRow({
 }) {
   const { t } = useTranslation();
   const gv = guest ? botView(guest) : null;
+  const [localModel, setLocalModel] = useState(false);
   return (
     <div id={id} tabIndex={-1} className={styles.assistantRow} data-message-row="assistant">
       <div className={styles.assistantBubble} data-message-body>
         {source?.startsWith("imported") ? <span className={styles.importedBadge}>{t("chat.imported")}</span> : null}
+        {localModel ? <span className={styles.importedBadge} data-testid="local-model-chip">{t("offline.localAnswer")}</span> : null}
         {gv ? (
           <span className={styles.authorName} style={{ "--mention-color": gv.color } as CSSProperties} data-testid="guest-author">
             <BotAvatar bot={gv} size="xs" decorative />
@@ -85,7 +87,7 @@ export const AssistantMessageRow = memo(function AssistantMessageRow({
       <MessageActions side="bot" meta={<MessageTime ts={ts} mode={times} />}>
         <CopyButton text={text} />
         <SpeakButton id={id} text={text} botId={botId} />
-        <MessageInfo client={client} side="bot" ts={ts} source={source} runId={runId} run={run} runDto={runDto} />
+        <MessageInfo client={client} side="bot" ts={ts} source={source} runId={runId} run={run} runDto={runDto} onLocalModel={setLocalModel} />
       </MessageActions>
     </div>
   );

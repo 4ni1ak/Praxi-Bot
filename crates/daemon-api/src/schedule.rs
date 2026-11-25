@@ -215,6 +215,69 @@ pub(crate) fn attempt_run_of(
 }
 
 impl DaemonExecutor {
+    async fn wait_for_connection(
+        &self,
+        schedule: &Schedule,
+        occurrence: Option<(i64, u32)>,
+    ) -> scheduler::Result<()> {
+        // Network checks happen before a chat/run or any action exists. Only prompt payloads
+        // require a model; local tools and workflow replay keep their existing gate paths.
+        if matches!(schedule.payload, Payload::AgentPrompt { .. }) {
+            let skip = schedule.misfire_policy == scheduler::MisfirePolicy::Skip;
+            let attempts = if skip { 1 } else { 3 };
+            let mut available = false;
+            for attempt in 0..attempts {
+                if attempt > 0 {
+                    // Longer than the reachability cache; bounded by the catch-up window.
+                    let delay = Duration::from_secs(15 * attempt);
+                    if schedule.catchup_window_secs.is_some_and(|window| {
+                        occurrence.is_some_and(|(due, _)| {
+                            now_ms().saturating_sub(due).saturating_add(
+                                i64::try_from(delay.as_millis()).unwrap_or(i64::MAX),
+                            ) > i64::try_from(window.saturating_mul(1000)).unwrap_or(i64::MAX)
+                        })
+                    }) {
+                        break;
+                    }
+                    tokio::time::sleep(delay).await;
+                }
+                if self
+                    .agent
+                    .model_connection_available(schedule.bot_id)
+                    .await
+                    .map_err(exec_err)?
+                {
+                    available = true;
+                    break;
+                }
+                if !skip && attempt == 0 {
+                    if let Some((due, _)) = occurrence {
+                        self.store.note_network_retry(schedule.id, due)?;
+                    }
+                }
+            }
+            if !available {
+                if let Some((due, _)) = occurrence {
+                    self.store.note_offline(schedule.id, due, skip)?;
+                }
+                return Err(exec_err(
+                    "The model service cannot be reached. Nothing was started. Retry when the connection returns.",
+                ));
+            }
+        }
+        if occurrence.is_some() {
+            let current = self.store.get(schedule.id)?;
+            if !current.is_some_and(|s| s.enabled && s.revision == schedule.revision)
+                || self.store.frozen_for(schedule.id)?.is_some()
+            {
+                return Err(exec_err(
+                    "This schedule was changed or stopped while waiting for the connection. Nothing was started.",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     async fn execute_inner(
         &self,
         schedule: &Schedule,
@@ -225,6 +288,7 @@ impl DaemonExecutor {
             .map_err(exec_err)?
             .filter(|b| b.user_id == self.user_id)
             .ok_or_else(|| exec_err(format!("bot {} of schedule is gone", schedule.bot_id)))?;
+        self.wait_for_connection(schedule, occurrence).await?;
         let chat = self.chat_for(schedule)?;
         let external = schedule.external_input.is_some() || schedule.precheck.is_some();
         let mut payload = schedule.payload.clone();

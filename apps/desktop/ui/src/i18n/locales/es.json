@@ -3372,6 +3372,10 @@
       "hint": "Check the connection and try again.",
       "title": "Your message was not sent"
     },
+    "serviceConnection": {
+      "hint": "Comprueba la conexión y vuelve a intentarlo. Antes de repetir una acción, comprueba si ya se realizó.",
+      "title": "No se puede acceder a este servicio"
+    },
     "serviceDown": {
       "hint": "Restart it. Your bots and chats are safe.",
       "title": "Praxi's local service stopped"
@@ -4813,6 +4817,22 @@
     "unread": "No leída",
     "unreadCount": "{{count}} sin leer",
     "unsnooze": "Recuperar"
+  },
+  "offline": {
+    "detail": "No se puede acceder a tus servicios de modelos. Praxi vuelve a comprobarlo automáticamente.",
+    "full": "La cola está llena (20 mensajes o 32.000 caracteres). Cancela un mensaje pendiente o conserva este borrador.",
+    "held": "Esperando a que envíes el mensaje",
+    "host": "No se puede acceder al equipo seleccionado.",
+    "hostDetail": "Praxi volverá a comprobar la conexión automáticamente.",
+    "keepDraft": "Conserva este borrador y envíalo cuando vuelva la conexión. Los archivos y comandos no se ponen en cola sin conexión.",
+    "localAnswer": "Respondido por un modelo local",
+    "memory": "Los mensajes pendientes permanecen en esta aplicación hasta que se envían o cancelan. Se borran al cerrar la aplicación.",
+    "queued": "Se enviará cuando vuelva la conexión",
+    "scheduleRetry": "No se puede acceder al servicio del modelo tras un número limitado de reintentos. No se inició ninguna tarea. Reinténtalo cuando vuelva la conexión.",
+    "scheduleSkipped": "No se puede acceder al servicio del modelo. Se omitió según la política de ejecuciones perdidas. Puedes reintentarlo cuando vuelva la conexión.",
+    "scheduleWaiting": "Esperando la conexión con el servicio del modelo. Esta tarea volverá a intentarlo antes de iniciar el trabajo.",
+    "title": "Estás sin conexión.",
+    "uncertain": "Puede que ya se haya enviado. Comprueba el chat antes de volver a intentarlo."
   },
   "overlay": {
     "actions": {

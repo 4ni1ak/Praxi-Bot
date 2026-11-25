@@ -8,6 +8,7 @@ pub mod catalog;
 pub mod catalog_freshness;
 pub mod catalog_update;
 pub mod config;
+pub mod connectivity;
 pub mod embedding;
 pub mod entry;
 pub mod error;

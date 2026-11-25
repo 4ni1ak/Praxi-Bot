@@ -1458,6 +1458,7 @@ export class MockApiClient extends ApiClient {
     await Promise.resolve();
     const ok = (v: unknown) => v as T;
     const seg = path.split("/").filter(Boolean).map(decodeURIComponent);
+    if (path === "/connectivity" && method === "GET") return ok({ services: [] });
     if (seg[0] === "bots" && seg[2] === "incoming-webhooks") {
       return ok(this.incomingWebhookRoute(method, seg, opts.body));
     }

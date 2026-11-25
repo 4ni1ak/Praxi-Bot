@@ -3372,6 +3372,10 @@
       "hint": "Check the connection and try again.",
       "title": "Your message was not sent"
     },
+    "serviceConnection": {
+      "hint": "Check your connection and try again. Before repeating an action, check whether it already happened.",
+      "title": "This service cannot be reached"
+    },
     "serviceDown": {
       "hint": "Restart it. Your bots and chats are safe.",
       "title": "Praxi's local service stopped"
@@ -4813,6 +4817,22 @@
     "unread": "Unread",
     "unreadCount": "{{count}} unread",
     "unsnooze": "Bring back"
+  },
+  "offline": {
+    "detail": "Your model services are not reachable. Praxi checks again automatically.",
+    "full": "The queue is full (20 messages or 32,000 characters). Cancel a queued message or keep this draft.",
+    "held": "Waiting for you to send",
+    "host": "Your selected computer cannot be reached.",
+    "hostDetail": "Praxi will check the connection again automatically.",
+    "keepDraft": "Keep this draft and send it when the connection returns. Files and commands are not queued offline.",
+    "localAnswer": "Answered by local model",
+    "memory": "Queued messages stay in this app until sent or cancelled. Closing the app clears them.",
+    "queued": "Will send when back online",
+    "scheduleRetry": "The model service cannot be reached after bounded retries. Nothing was started. Retry when the connection returns.",
+    "scheduleSkipped": "The model service cannot be reached. Skipped by this schedule’s missed-run policy. You can retry when the connection returns.",
+    "scheduleWaiting": "Waiting for a connection to the model service. This schedule will retry before starting any work.",
+    "title": "You are offline.",
+    "uncertain": "May already be sent. Check the chat before trying again."
   },
   "overlay": {
     "actions": {

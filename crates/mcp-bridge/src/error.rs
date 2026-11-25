@@ -40,7 +40,9 @@ pub enum McpError {
         reason: String,
     },
     /// The MCP handshake or a request failed at the transport/protocol level.
-    #[error("MCP server `{server}`: {message}")]
+    #[error(
+        "Cannot reach MCP server `{server}`. Check the connection before trying again; an action may already have happened. Details: {message}"
+    )]
     Transport {
         /// Server id.
         server: String,

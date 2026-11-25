@@ -52,10 +52,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0015_catchup_window",
         include_str!("../migrations/0015_catchup_window.sql"),
     ),
+    (
+        "0016_occurrence_note",
+        include_str!("../migrations/0016_occurrence_note.sql"),
+    ),
 ];
 
 /// Schema version produced by the newest embedded migration.
-pub const SCHEMA_VERSION: u32 = 8;
+pub const SCHEMA_VERSION: u32 = 9;
 
 /// Manual retries allowed per occurrence.
 pub const MAX_OCCURRENCE_RETRIES: u32 = 5;
@@ -785,7 +789,7 @@ impl ScheduleStore {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute(
-            "UPDATE occurrences SET state = ?3 WHERE schedule_id = ?1 \
+            "UPDATE occurrences SET state = ?3, note = CASE WHEN ?3 = 'succeeded' THEN NULL ELSE note END WHERE schedule_id = ?1 \
              AND due_ms = ?2 AND state IN ('dispatched', 'started')",
             params![
                 id.to_string(),
@@ -798,6 +802,50 @@ impl ScheduleStore {
         Ok(())
     }
 
+    /// Keep a plain explanation for a network skip even when no agent run exists.
+    ///
+    /// # Errors
+    /// Returns SQLite errors.
+    pub fn note_offline(&self, id: TaskId, due_ms: i64, skip: bool) -> Result<()> {
+        self.conn().execute(
+            "UPDATE occurrences SET note = ?3, state = CASE WHEN ?4 THEN 'missed' ELSE state END WHERE schedule_id = ?1 AND due_ms = ?2 AND state = 'dispatched'",
+            params![id.to_string(), due_ms, if skip {
+                "The model service cannot be reached. Skipped by this schedule's missed-run policy. You can retry it when the connection returns."
+            } else {
+                "The model service cannot be reached after bounded retries. Nothing was started. Retry when the connection returns."
+            }, skip],
+        )?;
+        Ok(())
+    }
+
+    /// Explain the bounded pre-run network wait in history while no run exists.
+    ///
+    /// # Errors
+    /// Returns SQLite errors.
+    pub fn note_network_retry(&self, id: TaskId, due_ms: i64) -> Result<()> {
+        self.conn().execute(
+            "UPDATE occurrences SET note = ?3 WHERE schedule_id = ?1 AND due_ms = ?2 AND state = 'dispatched'",
+            params![id.to_string(), due_ms, "Waiting for a connection to the model service. This schedule will retry before starting any work."],
+        )?;
+        Ok(())
+    }
+
+    /// An explanation for an occurrence which could not start.
+    ///
+    /// # Errors
+    /// Returns SQLite errors.
+    pub fn occurrence_note(&self, id: TaskId, due_ms: i64) -> Result<Option<String>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT note FROM occurrences WHERE schedule_id = ?1 AND due_ms = ?2",
+                params![id.to_string(), due_ms],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
     /// Attach the created agent `run_id` to an in-flight occurrence so history
     /// can link the occurrence to its run even if it later fails or is interrupted.
     ///
@@ -805,7 +853,7 @@ impl ScheduleStore {
     /// Fails on SQLite errors.
     pub fn set_occurrence_run_id(&self, id: TaskId, due_ms: i64, run_id: &str) -> Result<bool> {
         let changed = self.conn().execute(
-            "UPDATE occurrences SET run_id = ?3 WHERE schedule_id = ?1 \
+            "UPDATE occurrences SET run_id = ?3, note = NULL WHERE schedule_id = ?1 \
              AND due_ms = ?2 AND state IN ('dispatched', 'started')",
             params![id.to_string(), due_ms, run_id],
         )?;

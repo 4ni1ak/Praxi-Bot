@@ -1485,6 +1485,7 @@ pub(crate) async fn run_usage(
     let run = s.run_of_user(RunId(id(&rid)?))?;
     let st = s.storage();
     let mut out = RunUsageDto {
+        local_model: false,
         model: None,
         prompt_tokens: 0,
         completion_tokens: 0,
@@ -1510,12 +1511,19 @@ pub(crate) async fn run_usage(
     }
     // Pre-ledger runs: the model step carries the model and usage.
     for step in st.list_steps(run.id)? {
-        if step.name != "model" || recorded_steps.contains(&step.idx) {
+        if step.name != "model" {
             continue;
         }
         let Some(output) = step.output.as_ref() else {
             continue;
         };
+        out.local_model = output
+            .get("local_model")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if recorded_steps.contains(&step.idx) {
+            continue;
+        }
         if let Some(m) = output.get("model").and_then(Value::as_str) {
             out.model = Some(m.to_owned());
         }
@@ -2942,7 +2950,9 @@ pub(crate) async fn list_schedule_history(
             status,
             started_at_ms,
             finished_at_ms,
-            error: run.and_then(|r| r.error),
+            error: run
+                .and_then(|r| r.error)
+                .or(s.schedule_store()?.occurrence_note(sc.id, occ.due_ms)?),
             retryable,
         });
     }

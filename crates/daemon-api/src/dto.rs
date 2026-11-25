@@ -375,6 +375,9 @@ pub struct AttachmentDto {
 /// What a run cost, read from the usage ledger (`GET /v1/runs/{id}/usage`).
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct RunUsageDto {
+    /// The last completed executor response came from a configured loopback model.
+    #[serde(default)]
+    pub local_model: bool,
     /// `provider/model` the run's turn used (the last executor call); absent
     /// when no model call was recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -358,6 +358,9 @@ export function humanLine(err: unknown): string {
  * `text` is the tool result's error text; unknown text gets the generic "could not finish this step".
  */
 export function humanToolError(text: string): HumanError {
+  if (/Cannot reach (?:the app service|MCP server)|The model service cannot be reached/i.test(text)) {
+    return pack("serviceConnection", "serviceConnection", redactDetails(text));
+  }
   const h = humanError(text);
   return h.code === "generic" ? pack("toolFailed", "toolFailed", text) : h;
 }

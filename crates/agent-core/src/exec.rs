@@ -893,7 +893,20 @@ impl TurnExecutor {
         let mut cooldowns =
             std::collections::HashMap::<String, (tokio::time::Instant, Duration)>::new();
         let mut last_model = &primary;
+        let connectivity = self.sh.providers.read().connectivity.clone();
+        let reachability = connectivity.check().await;
         for (i, &name) in models.iter().enumerate() {
+            // Only the owner's configured fallback chain is eligible. Unknown/CLI providers
+            // keep their normal path; HTTP responses such as 401/429 never count as offline.
+            if reachability
+                .iter()
+                .any(|r| Some(r.id.as_str()) == ModelRef(name.clone()).provider() && !r.reachable)
+            {
+                other_failure = true;
+                last_model = name;
+                last_err = Some(ProviderError::Connection("The model service cannot be reached. Your message has not been answered; try again when the connection returns.".into()));
+                continue;
+            }
             req.model = ModelRef(name.clone());
             let provider_id = self
                 .sh
@@ -1055,6 +1068,12 @@ impl TurnExecutor {
             out.tool_calls.clear();
         }
         let mut output = serde_json::to_value(out).map_err(xe)?;
+        if let Some(model) = output["model"].as_str() {
+            let local = ModelRef(model.to_owned())
+                .provider()
+                .is_some_and(|id| connectivity.local_provider(id));
+            output["local_model"] = json!(local);
+        }
         if let Some(tier) = actual_tier {
             output["tier"] = json!(tier);
         }

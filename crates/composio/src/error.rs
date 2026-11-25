@@ -29,7 +29,9 @@ pub enum ComposioError {
     #[error("Composio error: {0}")]
     Upstream(String),
     /// The request could not be sent or the response not read.
-    #[error("cannot reach Composio: {0}")]
+    #[error(
+        "Cannot reach the app service. Check your connection before trying again; an action may already have happened. Details: {0}"
+    )]
     Transport(String),
     /// Local failure (state file, secret store).
     #[error("{0}")]

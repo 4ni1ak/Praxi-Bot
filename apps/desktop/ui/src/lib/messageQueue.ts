@@ -9,11 +9,22 @@ export interface QueuedMessage {
   id: string;
   text: string;
   createdMs: number;
+  /** Retained only in memory until this chat's connection returns. */
+  offline?: boolean;
+  /** Stop decisions made after enqueueing hold automatic delivery across chat navigation. */
+  stopEpoch?: number;
 }
 
 export type MessageQueue = readonly QueuedMessage[];
 
 export const EMPTY_QUEUE: MessageQueue = [];
+export const MAX_QUEUED_MESSAGES = 20;
+export const MAX_QUEUED_CHARS = 32_000;
+
+export function queueHasRoom(queue: MessageQueue, text: string): boolean {
+  return queue.length < MAX_QUEUED_MESSAGES &&
+    queue.reduce((n, m) => n + m.text.length, 0) + text.trim().length <= MAX_QUEUED_CHARS;
+}
 
 /**
  * Whether a message typed now waits in the local "Sirada" queue (true) or goes to the daemon at once.
@@ -27,9 +38,13 @@ export function queuesLocally(a: { runActive: boolean; approvalWaits: boolean; s
 }
 
 /** A message typed during a run joins the end of the queue (blank text never does). */
-export function enqueue(queue: MessageQueue, text: string, id: string, now: number): MessageQueue {
+export function enqueue(queue: MessageQueue, text: string, id: string, now: number, offline = false, stopEpoch?: number): MessageQueue {
   const body = text.trim();
-  return body ? [...queue, { id, text: body, createdMs: now }] : queue;
+  return body && queueHasRoom(queue, body) ? [...queue, { id, text: body, createdMs: now, ...(offline ? { offline } : {}), ...(stopEpoch === undefined ? {} : { stopEpoch }) }] : queue;
+}
+
+export function canAutoDeliver(message: QueuedMessage, stopEpoch: number): boolean {
+  return message.stopEpoch === undefined || message.stopEpoch === stopEpoch;
 }
 
 /** The small x on a queued bubble. */

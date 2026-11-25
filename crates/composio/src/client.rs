@@ -269,7 +269,7 @@ impl ComposioClient {
             .default_headers(headers)
             .redirect(Policy::none())
             .timeout(REQUEST_TIMEOUT)
-            .connect_timeout(Duration::from_secs(10))
+            .connect_timeout(Duration::from_secs(3))
             .https_only(https_only)
             .user_agent(concat!("praxi-bot-composio/", env!("CARGO_PKG_VERSION")))
             .build()
