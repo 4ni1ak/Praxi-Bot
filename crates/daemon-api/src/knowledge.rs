@@ -254,7 +254,7 @@ fn err(error: memory_store::MemoryError) -> ApiError {
     }
 }
 
-fn scope(s: &AppState, bot: Uuid) -> Result<Scope, ApiError> {
+pub(crate) fn scope(s: &AppState, bot: Uuid) -> Result<Scope, ApiError> {
     let bot = s.bot_of_user(BotId(bot))?;
     Ok(Scope {
         user_id: bot.user_id,
@@ -534,7 +534,7 @@ fn parse_chat(locator: &str) -> Result<Uuid, ApiError> {
 }
 
 #[allow(clippy::too_many_lines)] // One scan transaction: walk, index, record failures, prune.
-fn reindex_inner(
+pub(crate) fn reindex_inner(
     s: &AppState,
     owner: Scope,
     source: &Source,
