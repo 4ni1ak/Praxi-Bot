@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Hermetic tests for the extractor's guards (no network, no trafilatura)."""
 import os
+import socket
 import sys
 import threading
 import time
@@ -45,7 +46,7 @@ class AddressGuard(unittest.TestCase):
             def getheaders(self):
                 return [("Location", "http://127.0.0.1/admin")] if self.status == 302 else []
 
-            def read(self, _n):
+            def read1(self, _n):
                 return b""
 
         class Conn:
@@ -61,7 +62,7 @@ class AddressGuard(unittest.TestCase):
             def close(self):
                 pass
 
-        def opener(parts, ip, timeout):
+        def opener(parts, ip, timeout, track=None):
             opened.append(ip)
             return Conn(parts.hostname)
 
@@ -100,6 +101,23 @@ class Pacing(unittest.TestCase):
         self.assertAlmostEqual(rl.reserve("a", 100.0, extra_interval=5.0), 6.0)  # robots Crawl-delay widens the gap
         self.assertIsNone(rl.reserve("a", 100.5))  # 3 per minute spent
         self.assertEqual(rl.reserve("a", 161.0), 0.0)  # a minute later it is open again
+
+    def test_the_robots_txt_fetch_uses_the_same_per_site_budget(self):
+        calls = []
+
+        def fake(url, deadline, max_bytes=s.MAX_BYTES):
+            calls.append(url)
+            return 404, {}, b"", False
+
+        orig = s.resolve_public
+        s.resolve_public = lambda host, port, resolver=None: ["93.184.216.34"]
+        try:
+            with self.assertRaises(s.Refused) as c:  # budget of ONE request: robots.txt spends it
+                s.fetch_following("http://example.test/a", time.monotonic() + 5, s.RateLimiter(0, 1), {}, fake)
+        finally:
+            s.resolve_public = orig
+        self.assertEqual(c.exception.code, "rate_limited")
+        self.assertEqual(calls, ["http://example.test/robots.txt"])
 
 
 class Auth(unittest.TestCase):
@@ -146,6 +164,117 @@ class Pipeline(unittest.TestCase):
         self.assertTrue(out["truncated"])
         self.assertEqual(out["title"], "T")
         self.assertEqual(out["links"][0]["url"], "http://example.test/b")
+
+
+class TimeCap(unittest.TestCase):
+    """The deadline is a wall-clock cap, not "checked between reads": a page that keeps
+    sending one byte at a time must not keep the handler thread (or a slot) for longer."""
+
+    def _fetch_slowly(self, opener, budget=1.0, url="http://example.test:8080/x"):
+        """Run fetch_once on a worker thread; a hang (the old behaviour) shows up as `alive`."""
+        out = {}
+        orig = s.resolve_public
+        s.resolve_public = lambda host, port, resolver=None: ["93.184.216.34"]
+
+        def run():
+            started = time.monotonic()
+            try:
+                out["ok"] = s.fetch_once(url, started + budget, s.MAX_BYTES, opener)
+            except s.Refused as e:
+                out["code"] = e.code
+            out["took"] = time.monotonic() - started
+
+        th = threading.Thread(target=run, daemon=True)
+        th.start()
+        th.join(budget + 3.0)
+        s.resolve_public = orig
+        return th, out
+
+    def _drip_server(self, head: bytes, drip: bytes):
+        """Loopback server: sends `head`, then `drip` one byte per 0.1 s until the peer is gone."""
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(4)
+        stop = threading.Event()
+
+        def serve():
+            srv.settimeout(0.2)
+            while not stop.is_set():
+                try:
+                    c, _ = srv.accept()
+                except OSError:
+                    continue
+                c.settimeout(5)
+                try:
+                    c.recv(4096)
+                    c.sendall(head)
+                    while not stop.is_set():
+                        c.sendall(drip)
+                        time.sleep(0.1)
+                except OSError:
+                    pass
+                finally:
+                    c.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        self.addCleanup(lambda: (stop.set(), srv.close()))
+        return srv.getsockname()[1]
+
+    def _real_opener(self, port):
+        def opener(parts, ip, timeout, track=None):
+            conn = s._open(s.urllib.parse.urlsplit(f"http://example.test:{port}/"), "127.0.0.1", timeout)
+            if track:
+                track(conn.sock)
+            return conn
+        return opener
+
+    def test_a_body_that_drips_one_byte_at_a_time_hits_the_deadline(self):
+        port = self._drip_server(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n", b"x")
+        th, out = self._fetch_slowly(self._real_opener(port))
+        self.assertFalse(th.is_alive(), "fetch_once is still blocked past its deadline")
+        self.assertEqual(out.get("code"), "timeout", out)
+        self.assertLess(out["took"], 3.0)
+
+    def test_headers_that_drip_forever_hit_the_deadline(self):
+        port = self._drip_server(b"HTTP/1.1 200 OK\r\nX-Slow: ", b"a")
+        th, out = self._fetch_slowly(self._real_opener(port))
+        self.assertFalse(th.is_alive(), "fetch_once is still blocked in the header phase")
+        self.assertEqual(out.get("code"), "timeout", out)
+
+    def test_every_read_is_armed_with_a_short_socket_timeout(self):
+        timeouts = []
+
+        class Sock:
+            def settimeout(self, t):
+                timeouts.append(t)
+
+        class Resp:
+            status = 200
+
+            def getheaders(self):
+                return []
+
+            def read1(self, _n):
+                time.sleep(0.15)
+                return b"x"
+
+        class Conn:
+            sock = Sock()
+
+            def request(self, *_a, **_k):
+                pass
+
+            def getresponse(self):
+                return Resp()
+
+            def close(self):
+                pass
+
+        th, out = self._fetch_slowly(lambda parts, ip, timeout, track=None: Conn(), budget=1.0)
+        self.assertEqual(out.get("code"), "timeout", out)
+        self.assertGreater(len(timeouts), 3)
+        self.assertTrue(all(0.1 <= t <= 5.0 for t in timeouts), timeouts)
+        self.assertLessEqual(min(timeouts), 0.5)  # shrinks toward the deadline instead of staying at 20 s
 
 
 if __name__ == "__main__":

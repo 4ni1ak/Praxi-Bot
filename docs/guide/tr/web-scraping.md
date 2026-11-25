@@ -25,16 +25,26 @@ Sunucudaki Praxi kullanıcısının yönetici hakkı yoktur; bir bot bunu asla k
 Yeniden kurmak güvenlidir ve bozuk bir kurulumu onarır. Araç, o sunucudaki Praxi
 bir sonraki başladığında (yeniden başlatma ya da güncelleme sonrası) botlara görünür.
 
+**Bot başına ayrı bir anahtar yoktur.** Eklenti bir sunucuya kurulunca o sunucudaki
+tüm botlar, diğer web araçları gibi `web_scrape` aracını alır. Olağan onaylar
+geçerli kalır: bir sayfayı okuyan bot, size sormadan özel veri gönderemez. Tüm
+botlar için kapatmak üzere **Kaldır** düğmesini kullanın.
+
 ## Eklenti ne yapar, ne yapmaz
 
 - Yalnızca `127.0.0.1` üzerinde dinler (port 47811); bilgisayardaki diğer
   programların `/etc/praxi/scrape.token` anahtarına ihtiyacı vardır.
 - Yalnızca herkese açık sayfaları okur. Özel, yerel ve bulut meta veri adreslerini
-  reddeder, her yönlendirmeyi yeniden denetler; en çok 5 yönlendirme, 5 MB, 20 saniye.
-  Yalnızca HTML, XML ve metin; çerez yok.
+  reddeder, her yönlendirmeyi yeniden denetler; en çok 5 yönlendirme, 5 MB, sayfa başına 20 saniye.
+  Süre sınırı katıdır: verisini bayt bayt damlatan bir site sınırda kesilir ve eklentiyi
+  sonraki istek için asla tıkayamaz. Yalnızca HTML, XML ve metin; çerez yok.
 - `robots.txt` dosyasına (`Crawl-delay` dahil) uyar ve kendini dürüstçe tanıtır:
   `PraxiBot/1 (+https://github.com/emreocell/Praxi-Bot)`.
-- Naziktir: bir siteye saniyede en fazla 1, dakikada en fazla 30 istek.
+- Naziktir: bir siteye saniyede en fazla 1, dakikada en fazla 30 istek (`robots.txt`
+  isteği de sayılır).
+- Sunucunun DNS adresleri, **kurulum sırasında** `/etc/resolv.conf` dosyasından küçük
+  bir ek dosyaya yazılır. DNS ayarları sonradan değişirse (ör. yeni DHCP kirası)
+  **Araçlar**'dan eklentiyi yeniden kurun.
 - Getirdiği metin, `web_extract` gibi **güvenilmeyen sayfa içeriğidir**: botun
   okuyacağı veridir, asla talimat değildir.
 

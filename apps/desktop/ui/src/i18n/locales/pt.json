@@ -6555,6 +6555,10 @@
     "switch": "Switch to this computer"
   },
   "toolPacks": {
+    "ack": {
+      "label": "Entendi",
+      "text": "Este é um software separado, sob a licença {{license}}, baixado do autor. O Praxi não o distribui nem o modifica."
+    },
     "back": "Back",
     "basicSet": "Select the basic set",
     "button": "Tools",
@@ -6566,6 +6570,8 @@
     "dontClose": "This can take a few minutes. You can keep using the app.",
     "found": "Programs found: {{n}}",
     "lead": "Programs your bots can use on this server.",
+    "licenseMixed": "Licenças mistas",
+    "licenseName": "Licença {{name}}",
     "listLabel": "Tool packs",
     "loading": "Looking at the server…",
     "noLogin": {
@@ -6593,6 +6599,11 @@
       "office": {
         "desc": "Word, Excel, PowerPoint and PDF export, with Turkish fonts",
         "name": "Office files"
+      },
+      "scrape": {
+        "desc": "Lê as páginas de forma mais limpa e pode seguir alguns links",
+        "name": "Extração da web",
+        "note": "Não serve para páginas que exigem login"
       }
     },
     "planning": "Checking what would change…",
@@ -6611,9 +6622,17 @@
         "body": "The server stopped it, for example because the disk is full or another update is running. Your server is fine; you can try again.",
         "title": "It did not finish"
       },
+      "needs_ack": {
+        "body": "Leia e confirme o aviso de licença e depois revise novamente.",
+        "title": "Confirme a licença"
+      },
       "needs_admin": {
         "body": "Use a server login with administrator rights (sudo without a password), then try again.",
         "title": "This login can't install software"
+      },
+      "needs_python": {
+        "body": "Instale primeiro “Developer tools” neste servidor e depois adicione a extração da web.",
+        "title": "O Python é necessário primeiro"
       },
       "shared": {
         "body": "Praxi does not remove these: your server needs them.",
@@ -6655,6 +6674,7 @@
     "safeRemove": "Only these tools are removed",
     "safeRemoveBody": "Your settings and other software stay as they are.",
     "size": "about {{value}} {{unit}}",
+    "source": "Código-fonte",
     "status": {
       "installed": "Installed",
       "partial": "Incomplete"
@@ -6664,6 +6684,7 @@
     "title": "Tools",
     "titleFor": "Tools on {{name}}",
     "tryAgain": "Try again",
+    "versionLabel": "Versão {{version}}",
     "willInstall": "Will be installed",
     "willRemove": "Will be removed"
   },

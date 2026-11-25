@@ -20,6 +20,10 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+# Praxi's own state (database, keys) is hidden from this unit. The file permissions already
+# keep it out (0750 praxi); this takes the path out of the unit's view altogether. The "-"
+# means: fine if Praxi is not installed in that place.
+InaccessiblePaths=-/var/lib/praxi
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
@@ -36,7 +40,10 @@ TasksMax=64
 CPUQuota=100%
 # Defence in depth next to the address checks in the program itself: no private, link-local or
 # cloud-metadata ranges. The computer's own DNS servers are re-allowed by the install step
-# (a drop-in written from /etc/resolv.conf), because many clouds keep DNS on a private address.
+# (a drop-in written from /etc/resolv.conf at install time: install again after the computer's
+# DNS servers change), because many clouds keep DNS on a private address.
+# IPAddressDeny cannot cover loopback (this service itself listens there), so the Praxi API on
+# 127.0.0.1 is kept out by the address check and the port allow-list in praxi_scrape.py.
 IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10
 IPAddressAllow=localhost
 

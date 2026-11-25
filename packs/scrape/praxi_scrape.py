@@ -194,31 +194,105 @@ def robots_decision(status: int | None, body: str, url: str) -> tuple[str, float
 # --------------------------------------------------------------------------------- fetching
 
 
-def _open(parts: urllib.parse.SplitResult, ip: str, timeout: float) -> http.client.HTTPConnection:
-    """Connect to the ADDRESS we already checked (no second DNS lookup), TLS against the name."""
+def _kill(sock) -> None:
+    """Wake any thread blocked on `sock` (shutdown works from another thread, close does not).
+
+    Uses the plain socket method on purpose: SSLSocket.shutdown would unwrap the TLS object
+    underneath a reader that is still using it."""
+    try:
+        if isinstance(sock, socket.socket):
+            socket.socket.shutdown(sock, socket.SHUT_RDWR)
+        else:
+            sock.shutdown(socket.SHUT_RDWR)
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+class _Watchdog:
+    """Hard wall-clock cap for ONE fetch (TLS handshake, headers, chunk framing and body).
+
+    Socket timeouts only fire when NO byte arrives for a while, so a server that drips one
+    byte every few seconds would otherwise keep our thread (and one of the MAX_CONCURRENT
+    slots) for as long as it likes. At the deadline this shuts the tracked sockets down;
+    the blocked read returns and `expired` tells the caller that it was the deadline.
+    """
+
+    def __init__(self, deadline: float):
+        self.expired = threading.Event()
+        self._socks: list = []
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(max(0.0, deadline - time.monotonic()), self._fire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def track(self, sock) -> None:
+        with self._lock:
+            self._socks.append(sock)
+            if self.expired.is_set():
+                _kill(sock)
+
+    def _fire(self) -> None:
+        with self._lock:
+            self.expired.set()
+            for sock in self._socks:
+                _kill(sock)
+
+    def cancel(self) -> None:
+        self._timer.cancel()
+
+
+def _open(parts: urllib.parse.SplitResult, ip: str, timeout: float, track=None) -> http.client.HTTPConnection:
+    """Connect to the ADDRESS we already checked (no second DNS lookup), TLS against the name.
+
+    `track` (the watchdog) gets every socket before it can block on the peer, the TLS
+    handshake included."""
     port = parts.port or (443 if parts.scheme == "https" else 80)
     sock = socket.create_connection((ip, port), timeout=timeout)
-    if parts.scheme == "https":
-        ctx = ssl.create_default_context()
-        sock = ctx.wrap_socket(sock, server_hostname=parts.hostname)
+    try:
+        if parts.scheme == "https":
+            ctx = ssl.create_default_context()
+            sock = ctx.wrap_socket(sock, server_hostname=parts.hostname, do_handshake_on_connect=False)
+            if track:
+                track(sock)
+            sock.do_handshake()
+        elif track:
+            track(sock)
+    except BaseException:
+        sock.close()
+        raise
     conn = http.client.HTTPConnection(parts.hostname, port, timeout=timeout)
     conn.sock = sock
     return conn
 
 
+def _arm(conn, deadline: float) -> None:
+    """Before every blocking step: stop at the deadline, and never wait more than 5 s for one read."""
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise Refused("timeout", "The page took too long.")
+    sock = getattr(conn, "sock", None)
+    if sock is not None:
+        sock.settimeout(max(0.1, min(5.0, left)))
+
+
 def fetch_once(url: str, deadline: float, max_bytes: int = MAX_BYTES, opener=_open):
-    """One GET without redirects. Returns (status, headers, body bytes, truncated)."""
+    """One GET without redirects. Returns (status, headers, body bytes, truncated).
+
+    `deadline` (time.monotonic) is a hard cap on the whole call, not only between reads."""
     parts = check_url(url)
     port = parts.port or (443 if parts.scheme == "https" else 80)
     ip = resolve_public(parts.hostname, port)[0]
     left = deadline - time.monotonic()
     if left <= 0:
         raise Refused("timeout", "The page took too long.")
-    conn = opener(parts, ip, min(left, FETCH_TIMEOUT))
+    dog = _Watchdog(deadline)
+    conn = None
     try:
+        conn = opener(parts, ip, min(left, FETCH_TIMEOUT), dog.track)
         target = parts.path or "/"
         if parts.query:
             target += "?" + parts.query
+        _arm(conn, deadline)
         conn.request(
             "GET",
             target,
@@ -230,14 +304,14 @@ def fetch_once(url: str, deadline: float, max_bytes: int = MAX_BYTES, opener=_op
                 "Connection": "close",
             },
         )
+        _arm(conn, deadline)
         resp = conn.getresponse()
         headers = {k.lower(): v for k, v in resp.getheaders()}
         body = bytearray()
         truncated = False
         while True:
-            if time.monotonic() > deadline:
-                raise Refused("timeout", "The page took too long.")
-            chunk = resp.read(65536)
+            _arm(conn, deadline)
+            chunk = resp.read1(65536)  # what one recv gave us; read(n) would wait for n bytes
             if not chunk:
                 break
             body += chunk
@@ -245,13 +319,32 @@ def fetch_once(url: str, deadline: float, max_bytes: int = MAX_BYTES, opener=_op
                 del body[max_bytes:]
                 truncated = True
                 break
+        if dog.expired.is_set():  # the watchdog cut the connection: an empty read, not "end of page"
+            raise Refused("timeout", "The page took too long.")
         return resp.status, headers, bytes(body), truncated
+    except Refused:
+        raise
     except (socket.timeout, TimeoutError):
         raise Refused("timeout", "The page took too long.") from None
     except (OSError, http.client.HTTPException, ssl.SSLError):
+        if dog.expired.is_set():
+            raise Refused("timeout", "The page took too long.") from None
         raise Refused("fetch_failed", "The page could not be loaded.") from None
     finally:
-        conn.close()
+        dog.cancel()
+        if conn is not None:
+            conn.close()
+
+
+def _pace(limiter: RateLimiter, site: str, deadline: float, extra: float = 0.0) -> None:
+    """Wait for this site's turn (robots.txt fetches included); never past the overall deadline."""
+    wait = limiter.reserve(site, time.monotonic(), extra)
+    if wait is None:
+        raise Refused("rate_limited", "Too many requests to this site. Try again in a minute.")
+    if wait:
+        if time.monotonic() + wait >= deadline:
+            raise Refused("timeout", "The page took too long.")
+        time.sleep(min(wait, 20.0))
 
 
 def fetch_following(url: str, deadline: float, limiter: RateLimiter, robots_cache, fetch=fetch_once):
@@ -263,14 +356,10 @@ def fetch_following(url: str, deadline: float, limiter: RateLimiter, robots_cach
     robots = "unknown"
     for hop in range(MAX_REDIRECTS + 1):
         parts = check_url(current)
-        robots, delay = robots_for(parts, deadline, robots_cache, fetch)
+        robots, delay = robots_for(parts, deadline, robots_cache, fetch, limiter)
         if robots == "blocked":
             raise Refused("robots_blocked", "The site's robots.txt asks robots not to read this page.")
-        wait = limiter.reserve(parts.netloc.lower(), time.monotonic(), delay)
-        if wait is None:
-            raise Refused("rate_limited", "Too many requests to this site. Try again in a minute.")
-        if wait:
-            time.sleep(min(wait, 20.0))
+        _pace(limiter, parts.netloc.lower(), deadline, delay)
         status, headers, body, truncated = fetch(current, deadline)
         if 300 <= status < 400 and headers.get("location"):
             if hop == MAX_REDIRECTS:
@@ -281,16 +370,18 @@ def fetch_following(url: str, deadline: float, limiter: RateLimiter, robots_cach
     raise Refused("fetch_failed", "The page redirects too many times.")
 
 
-def robots_for(parts, deadline, cache, fetch=fetch_once):
+def robots_for(parts, deadline, cache, fetch=fetch_once, limiter=None):
     origin = f"{parts.scheme}://{parts.netloc.lower()}"
     now = time.monotonic()
     hit = cache.get(origin)
     if hit is None or now - hit[0] > ROBOTS_TTL:
+        if limiter is not None:  # the robots.txt request is a request to the site like any other
+            _pace(limiter, parts.netloc.lower(), deadline)
         try:
             status, _h, body, _t = fetch(origin + "/robots.txt", deadline, 512 * 1024)
             text = body.decode("utf-8", "replace")
         except Refused as e:
-            if e.code == "blocked_address":
+            if e.code in ("blocked_address", "timeout"):
                 raise
             status, text = None, ""
         hit = (now, status, text)

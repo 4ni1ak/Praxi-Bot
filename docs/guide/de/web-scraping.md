@@ -27,16 +27,28 @@ Erneutes Installieren ist ungefährlich und repariert eine kaputte Installation.
 Das Werkzeug erscheint für Bots, sobald Praxi auf dem Server das nächste Mal
 startet (nach einem Neustart oder Update).
 
+**Es gibt keinen Schalter pro Bot.** Ist der Zusatz auf einem Server installiert,
+bekommt jeder Bot auf diesem Server `web_scrape`, wie die anderen Web-Werkzeuge.
+Die üblichen Freigaben gelten weiter: Ein Bot, der eine Seite gelesen hat, kann
+ohne Ihre Nachfrage keine privaten Daten senden. Zum Abschalten für alle Bots
+verwenden Sie **Entfernen**.
+
 ## Was der Zusatz tut und nicht tut
 
 - Lauscht nur auf `127.0.0.1` (Port 47811); andere Programme brauchen den Schlüssel
   aus `/etc/praxi/scrape.token`.
 - Liest nur öffentliche Seiten. Private, lokale und Cloud-Metadaten-Adressen werden
   abgelehnt, jede Weiterleitung wird erneut geprüft; höchstens 5 Weiterleitungen,
-  5 MB und 20 Sekunden. Nur HTML, XML und Text, keine Cookies.
+  5 MB und 20 Sekunden pro Seite. Das Zeitlimit ist hart: Eine Seite, die ihre
+  Daten nur tröpfchenweise sendet, wird am Limit abgebrochen und kann den Zusatz
+  nie für die nächste Anfrage blockieren. Nur HTML, XML und Text, keine Cookies.
 - Beachtet `robots.txt` samt `Crawl-delay` und nennt sich ehrlich
   `PraxiBot/1 (+https://github.com/emreocell/Praxi-Bot)`.
-- Ist höflich: höchstens 1 Anfrage pro Sekunde und 30 pro Minute an eine Website.
+- Ist höflich: höchstens 1 Anfrage pro Sekunde und 30 pro Minute an eine Website
+  (die `robots.txt`-Anfrage zählt mit).
+- Die DNS-Adressen des Servers werden aus `/etc/resolv.conf` **bei der Installation**
+  in eine kleine Zusatzdatei übernommen. Ändern sich die DNS-Einstellungen später
+  (z. B. neuer DHCP-Lease), installieren Sie den Zusatz über **Werkzeuge** erneut.
 - Gelesener Text ist **nicht vertrauenswürdiger Seiteninhalt**, genau wie bei
   `web_extract`: Daten zum Lesen, nie Anweisungen.
 

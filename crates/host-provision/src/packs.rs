@@ -904,7 +904,7 @@ install
             assert!(l.source_url.starts_with("https://"), "{}", p.id);
             assert!(l.notice_url.starts_with("https://"), "{}", p.id);
             // a pack Praxi pins and downloads from its author must say which version
-            assert_eq!(l.distro || !l.version.is_empty(), true, "{}", p.id);
+            assert!(l.distro || !l.version.is_empty(), "{}", p.id);
             // no strong-copyleft software is pulled from upstream by a pack today
             if !l.distro {
                 assert!(!l.copyleft && !l.spdx.contains("GPL"), "{}", p.id);
@@ -1015,6 +1015,7 @@ unavailable=python3-venv
             "ProtectSystem=strict",
             "ProtectHome=yes",
             "PrivateTmp=yes",
+            "InaccessiblePaths=-/var/lib/praxi",
             "MemoryMax=",
             "TasksMax=",
             "IPAddressDeny=",

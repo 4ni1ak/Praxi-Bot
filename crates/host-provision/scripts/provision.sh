@@ -360,8 +360,7 @@ scrape_install() {
   systemctl daemon-reload
   systemctl enable praxi-scrape.service >/dev/null 2>&1
   systemctl restart praxi-scrape.service
-  local i
-  for i in 1 2 3 4 5 6 7 8 9 10; do
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
     if python3 -I -c "import urllib.request,sys; sys.exit(0 if b'ok' in urllib.request.urlopen('http://127.0.0.1:${SCRAPE_PORT}/health', timeout=2).read() else 1)" >/dev/null 2>&1; then
       kv scrape_health 1; return 0
     fi

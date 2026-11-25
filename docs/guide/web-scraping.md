@@ -27,6 +27,12 @@ Installing again is safe: it does the same thing and repairs a broken install.
 The tool appears for bots the next time Praxi on that server starts (after a
 restart or an update of Praxi there).
 
+**There is no per-bot switch.** Once the add-on is installed on a server, every bot
+that runs on that server gets `web_scrape`, just like the other web tools. What
+it may do is still limited by the usual approvals: reading a page is a
+Browser-level action, and a bot that read a page cannot send private data out
+without asking you. To turn it off for all bots, use **Remove**.
+
 ### What the install does
 
 - Creates `/opt/praxi/packs/scrape/venv` and installs Trafilatura and its
@@ -39,8 +45,13 @@ restart or an update of Praxi there).
 - Creates a random key at `/etc/praxi/scrape.token`, readable only by root and
   the Praxi service user. The add-on answers only requests that carry it.
 - The service runs as its own throwaway user with `NoNewPrivileges`, a read-only
-  system, no access to home folders, memory and task limits, and it is not
-  allowed to open connections to private or cloud-metadata addresses.
+  system, no access to home folders or to Praxi's own data folder, memory and
+  task limits, and it is not allowed to open connections to private or
+  cloud-metadata addresses.
+- The server's own DNS addresses are allowed through a small drop-in file that
+  is written from `/etc/resolv.conf` **at install time**. If the server's DNS
+  settings change later (for example a new DHCP lease), press **Tools** and
+  install the add-on again to refresh it.
 
 ## What the add-on does and does not do
 
@@ -48,11 +59,14 @@ restart or an update of Praxi there).
   reach it, and other programs on it need the key.
 - Reads public web pages only. It refuses private, loopback, link-local and
   cloud-metadata addresses, checks every redirect again, and stops at 5
-  redirects, 5 MB and 20 seconds. Only HTML, XML and text are read; no cookies.
+  redirects, 5 MB and 20 seconds per page. The time limit is a hard one: a site
+  that sends its data a few bytes at a time is cut off at the limit, and a
+  stuck page can never block the add-on for the next request. Only HTML, XML and
+  text are read; no cookies.
 - Respects `robots.txt`, including `Crawl-delay`, and says who it is:
   `PraxiBot/1 (+https://github.com/emreocell/Praxi-Bot)`.
-- Is polite: at most 1 request per second and 30 per minute to one site, and 2
-  pages at a time overall.
+- Is polite: at most 1 request per second and 30 per minute to one site (the
+  `robots.txt` request counts too), and 2 pages at a time overall.
 - Text it brings back is **untrusted page content**, exactly like
   `web_extract`: it is data for the bot to read, never instructions. A bot that
   read a page cannot send private data out without asking you first.
