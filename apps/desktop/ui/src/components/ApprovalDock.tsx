@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { isReducedMotionPreferred } from "ui";
 import styles from "./ApprovalDock.module.css";
 
 /** One thing the dock can show: a single approval card, or the card that answers several at once. */
@@ -14,23 +15,47 @@ export interface DockPage {
   keys?: "both" | "deny" | "none";
 }
 
+/** A little over `--motion-duration-exit`: how long the answered dock stays mounted to fade out. */
+const EXIT_MS = 160;
+
 /**
  * The one place where a run's approvals are asked, docked directly above the composer (the
  * composer squares its top corners while this is open). Compact: one card at a time, a counter
  * with previous / next when several wait. It is a self-contained piece: the host passes the pages,
  * it owns nothing about how a card decides. After the answer the run's own step line is the trace.
  */
-export function ApprovalDock({ pages }: { pages: readonly DockPage[] }) {
+export function ApprovalDock({ pages: live }: { pages: readonly DockPage[] }) {
   const { t } = useTranslation();
   const [index, setIndex] = useState(0);
+  // After the last approval is answered the dock stays mounted for one short exit animation (it fades
+  // and sinks into the composer).  While it leaves it is inert: no key and no click reaches the old card.
+  const last = useRef<readonly DockPage[]>(live);
+  const [, tick] = useState(0);
+  const open = live.length > 0;
+  if (open) last.current = live;
+  useEffect(() => {
+    if (open || last.current.length === 0) return undefined;
+    // No exit animation (OS setting or the app's own switch): the dock leaves at once.
+    const still = document.documentElement.hasAttribute("data-reduce-motion") || isReducedMotionPreferred();
+    const id = window.setTimeout(() => {
+      last.current = [];
+      tick((n) => n + 1);
+    }, still ? 0 : EXIT_MS);
+    return () => window.clearTimeout(id);
+  }, [open]);
+  const pages = open ? live : last.current;
   if (pages.length === 0) {
     return null;
   }
+  const closing = !open;
   const at = Math.min(index, pages.length - 1);
   const page = pages[at]!;
   return (
     <section
       className={styles.dock}
+      data-state={closing ? "closing" : "open"}
+      inert={closing}
+      aria-hidden={closing || undefined}
       role="region"
       aria-label={t("approvalDock.label")}
       data-testid="approval-dock"
@@ -66,7 +91,7 @@ export function ApprovalDock({ pages }: { pages: readonly DockPage[] }) {
       ) : null}
       {page.caption ? <p className={styles.caption}>{page.caption}</p> : null}
       <div className={styles.page} key={page.key}>
-        {page.render(true)}
+        {page.render(!closing)}
       </div>
       {page.keys === "none" ? null : (
         <p className={styles.keys} aria-hidden="true">
