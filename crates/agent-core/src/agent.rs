@@ -29,9 +29,9 @@ use crate::profile::BotProfile;
 use crate::shared::{
     ApprovalScope, COMPUTER_IDENTITY_UNBOUND_NOTICE, COMPUTER_PREPARE_TIMEOUT_NOTICE,
     CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, Grants, LoopError,
-    MessageMode, ModelOut, Pending, Providers, STEP_MODEL, STEP_NUDGE, STEP_TOOLS, STEP_USER,
-    ScheduleWork, Shared, StreamItem, Verdict, initiator_of, is_occurrence_kind, kind_for,
-    kind_for_mention, kind_for_schedule, mention_message_id, occurrence_kind,
+    MessageMode, ModelOut, Pending, Providers, QueuedMessage, STEP_MODEL, STEP_NUDGE, STEP_TOOLS,
+    STEP_USER, ScheduleWork, Shared, StreamItem, Verdict, initiator_of, is_occurrence_kind,
+    kind_for, kind_for_mention, kind_for_schedule, mention_message_id, occurrence_kind,
 };
 use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_INERT, AUDIT_GRANT_REVOKED};
 
@@ -146,7 +146,7 @@ impl AgentLoop {
                 router: crate::router::Router::default(),
                 directives: Mutex::new(HashMap::new()),
                 user_stopped: Mutex::new(HashSet::new()),
-                concluded: Mutex::new(HashSet::new()),
+                concluded: Mutex::new(crate::shared::RecentRuns::new(crate::shared::CONCLUDED_CAP)),
                 approval_paused: Mutex::new(HashSet::new()),
                 identity_paused: Mutex::new(HashSet::new()),
                 parked: Mutex::new(HashMap::new()),
@@ -1382,13 +1382,24 @@ impl AgentLoop {
                         }
                     }
                 }
+                // The kind is read now, from the run that is active now, and
+                // travels with the message until its turn starts.
+                let initiator = self
+                    .sh
+                    .storage
+                    .get_run(run_id)?
+                    .map_or(InitiatorKind::Human, |r| initiator_of(&r.kind));
                 self.sh
                     .queued
                     .lock()
                     .entry(chat_id)
                     .or_default()
-                    .push_back((text.to_owned(), source));
-                return Ok(Delivery::Queued);
+                    .push_back(QueuedMessage {
+                        text: text.to_owned(),
+                        source,
+                        initiator,
+                    });
+                return Ok(Delivery::Queued(initiator));
             }
         }
         Ok(Delivery::NewTurn(self.start_turn_from(
@@ -2987,14 +2998,14 @@ impl AgentLoop {
                     active.remove(&chat_id);
                 }
             }
-        } else if let Some((text, source)) = next {
+        } else if let Some(msg) = next {
             let started = self.start_turn_from(
                 chat_id,
-                &text,
-                &kind_for(initiator_of(&run.kind)),
+                &msg.text,
+                &kind_for(msg.initiator),
                 None,
                 Some(run_id),
-                source,
+                msg.source,
             );
             if started.is_err() {
                 // Never lose the follow-up: release the slot and put it back.
@@ -3009,7 +3020,7 @@ impl AgentLoop {
                     .lock()
                     .entry(chat_id)
                     .or_default()
-                    .push_front((text, source));
+                    .push_front(msg);
             }
         }
     }

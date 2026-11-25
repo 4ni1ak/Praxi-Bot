@@ -1241,18 +1241,28 @@ pub(crate) async fn send_message(
     } else {
         "local_api"
     };
+    let mut queued_initiator = None;
     let (delivery, run_id) = match s
         .agent()
         .send_user_message_from(chat.id, &text, mode, source)?
     {
         Delivery::NewTurn(r) => (DeliveryKind::NewTurn, Some(r.0)),
         Delivery::Steered(r) => (DeliveryKind::Steered, Some(r.0)),
-        Delivery::Queued => (DeliveryKind::Queued, None),
+        Delivery::Queued(kind) => {
+            queued_initiator = serde_json::to_value(kind)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned));
+            (DeliveryKind::Queued, None)
+        }
         Delivery::Stopped(r) => (DeliveryKind::Stopped, Some(r.0)),
     };
     Ok((
         StatusCode::ACCEPTED,
-        Json(SendResponse { delivery, run_id }),
+        Json(SendResponse {
+            delivery,
+            run_id,
+            queued_initiator,
+        }),
     ))
 }
 

@@ -73,14 +73,12 @@ pub fn clean_body(s: &str, max: usize) -> String {
     }
 }
 
-/// The bare address inside `Name <addr>`, lower-case.
+/// The bare address inside `Name <addr>`, lower-case. Fails closed: text that
+/// is not exactly `addr` or `Name <addr>` gives an empty string (which no
+/// allowed-senders entry matches).
 #[must_use]
 pub fn address_of(from: &str) -> String {
-    let inner = match (from.rfind('<'), from.rfind('>')) {
-        (Some(a), Some(b)) if a < b => &from[a + 1..b],
-        _ => from,
-    };
-    inner.trim().to_lowercase()
+    crate::message::bare_address(from)
 }
 
 /// Display name of the sender, if the header had one.

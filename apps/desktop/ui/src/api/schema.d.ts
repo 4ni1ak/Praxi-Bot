@@ -6201,12 +6201,22 @@ export interface components {
         };
         /** @description The e-mail channel as the app shows it. */
         EmailChannelDto: {
+            /**
+             * @description Mails ignored since the channel started because the sender is not on
+             *     the mailbox's allowed-senders list.
+             */
+            ignored_mails: number;
             /** @description Replies waiting for approval. */
             pending_replies: number;
             /** @description The channel is running in this daemon. */
             running: boolean;
             /** @description The saved choices. */
             settings: components["schemas"]["EmailChannelSettingsDto"];
+            /**
+             * @description Mails given up since the channel started because handing them to the bot
+             *     kept failing (for example the bot was deleted).
+             */
+            skipped_mails: number;
         };
         /**
          * @description How much of a mail the bot sees.
@@ -9508,6 +9518,11 @@ export interface components {
         SendResponse: {
             /** @description How it was delivered. */
             delivery: components["schemas"]["DeliveryKind"];
+            /**
+             * @description Only when `delivery` is `queued`: who the queued turn will start as
+             *     (`human`, `schedule`, `channel`, ...). Fixed when the message is queued.
+             */
+            queued_initiator?: string | null;
             /**
              * Format: uuid
              * @description The run to follow (`null` when queued: the turn has no run yet).

@@ -20468,9 +20468,16 @@
         "required": [
           "settings",
           "running",
-          "pending_replies"
+          "pending_replies",
+          "skipped_mails",
+          "ignored_mails"
         ],
         "properties": {
+          "ignored_mails": {
+            "type": "integer",
+            "description": "Mails ignored since the channel started because the sender is not on\nthe mailbox's allowed-senders list.",
+            "minimum": 0
+          },
           "pending_replies": {
             "type": "integer",
             "description": "Replies waiting for approval.",
@@ -20483,6 +20490,11 @@
           "settings": {
             "$ref": "#/components/schemas/EmailChannelSettingsDto",
             "description": "The saved choices."
+          },
+          "skipped_mails": {
+            "type": "integer",
+            "description": "Mails given up since the channel started because handing them to the bot\nkept failing (for example the bot was deleted).",
+            "minimum": 0
           }
         }
       },
@@ -29162,6 +29174,13 @@
           "delivery": {
             "$ref": "#/components/schemas/DeliveryKind",
             "description": "How it was delivered."
+          },
+          "queued_initiator": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only when `delivery` is `queued`: who the queued turn will start as\n(`human`, `schedule`, `channel`, ...). Fixed when the message is queued."
           },
           "run_id": {
             "type": [

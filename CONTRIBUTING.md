@@ -134,6 +134,20 @@ cargo clippy -p <crate> --all-targets -- -D warnings
 pnpm --dir apps/desktop/ui test             # UI unit tests (node --test)
 ```
 
+`doc_convert` / `doc_preview` (crate `doc-tools`) hand hostile documents to LibreOffice. The default
+test run never needs `soffice`; before wiring them for untrusted documents, or after changing the
+seeded LibreOffice profile or upgrading LibreOffice, run the real thing once by hand:
+
+```sh
+python scripts/check_soffice_no_network.py            # skips (exit 0) when soffice is missing
+python scripts/check_soffice_no_network.py --require  # fails (exit 2) when soffice is missing
+python scripts/check_soffice_no_network.py --self-test  # offline; also run by `cargo test -p doc-tools`
+```
+
+It converts linked-image, attached-template and `WEBSERVICE()` documents and fails if a local
+listener on 127.0.0.1 receives a single request. CI may run it on a runner that has LibreOffice,
+but that is optional.
+
 CI runs, on **both Linux and Windows**: `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace`. It also runs
 `cargo deny check licenses bans advisories sources`, the browser integration tests (Chrome for

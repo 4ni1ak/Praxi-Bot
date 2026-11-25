@@ -2413,7 +2413,9 @@ export class MockApiClient extends ApiClient {
       return {
         settings: this.emailChannel,
         running: this.emailChannel.enabled,
-        pending_replies: this.emailReplies.length
+        pending_replies: this.emailReplies.length,
+        skipped_mails: 0,
+        ignored_mails: 0
       };
     }
     if (sub !== "accounts") {

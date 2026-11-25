@@ -4,6 +4,7 @@
 
 mod c225;
 mod c382;
+mod c812;
 mod composio_approvals;
 mod external_agent;
 mod fill_secret;
@@ -25,7 +26,7 @@ use futures::stream::BoxStream;
 use parking_lot::Mutex;
 use permission_engine::{Level, Limits, Policy, Rule};
 use protocol::event::TodoStatus;
-use protocol::{BotId, ChatId, Event, UserId};
+use protocol::{BotId, ChatId, Event, InitiatorKind, UserId};
 use provider_catalog::{
     ChatChunk, ChatProvider, ChatRequest, FinishReason, MessageRole, ProviderError, ToolCall, Usage,
 };
@@ -40,7 +41,7 @@ use tool_registry::{
 
 use crate::{
     AgentLoop, ApprovalScope, BotProfile, Delivery, GrantTarget, LoopConfig, MessageMode,
-    Providers, StreamItem,
+    Providers, QueuedMessage, StreamItem,
 };
 
 // ---------- fakes ----------
@@ -1440,7 +1441,7 @@ async fn queue_runs_as_next_turn_with_history() {
     assert_eq!(
         lp.send_user_message(env.chat, "two", MessageMode::Queue)
             .unwrap(),
-        Delivery::Queued
+        Delivery::Queued(InitiatorKind::Human)
     );
     assert!(lp.run_turn(env.chat, "three").is_err(), "chat is busy");
     lp.wait(run).await.unwrap();
@@ -1489,7 +1490,7 @@ async fn stop_keeps_queued_messages_instead_of_starting_the_next_turn() {
     assert_eq!(
         lp.send_user_message(env.chat, "two", MessageMode::Queue)
             .unwrap(),
-        Delivery::Queued
+        Delivery::Queued(InitiatorKind::Human)
     );
     lp.cancel(run).unwrap();
     assert_eq!(lp.wait(run).await.unwrap(), RunState::Cancelled);
@@ -1504,7 +1505,7 @@ async fn stop_keeps_queued_messages_instead_of_starting_the_next_turn() {
         .queued
         .lock()
         .get(&env.chat)
-        .and_then(|q| q.front().map(|(text, _)| text.clone()));
+        .and_then(|q| q.front().map(|m| m.text.clone()));
     assert_eq!(
         queued.as_deref(),
         Some("two"),
@@ -2312,13 +2313,17 @@ async fn steering_refresh_leaves_run_state_unlocked_and_rechecks_closed() {
         assert!(unlocked, "steering refresh held the run-state lock");
         let messages = env.storage.list_messages(env.chat).unwrap();
         if closed {
-            assert_eq!(delivery, Delivery::Queued);
+            assert_eq!(delivery, Delivery::Queued(InitiatorKind::Human));
             assert!(ctx.state.lock().steer.is_empty());
             assert_eq!(messages.len(), 1, "closed run accepted a chat row");
             // Keep this test's artificial close from starting a follow-up.
             assert_eq!(
                 lp.sh.queued.lock().remove(&env.chat).unwrap(),
-                [(input, "unknown")]
+                [QueuedMessage {
+                    text: input,
+                    source: "unknown",
+                    initiator: InitiatorKind::Human,
+                }]
             );
         } else {
             assert_eq!(delivery, Delivery::Steered(run));
@@ -5514,7 +5519,14 @@ async fn a_queued_follow_up_is_put_back_when_its_turn_cannot_start() {
         .get(&env.chat)
         .cloned()
         .unwrap_or_default();
-    assert_eq!(queued, [("two".to_owned(), "unknown")]);
+    assert_eq!(
+        queued,
+        [QueuedMessage {
+            text: "two".to_owned(),
+            source: "unknown",
+            initiator: InitiatorKind::Human,
+        }]
+    );
     assert!(
         !lp.sh.active.lock().contains_key(&env.chat),
         "the chat slot is released"

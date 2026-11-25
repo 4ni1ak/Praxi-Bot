@@ -127,7 +127,7 @@ An account can belong to one bot:
 [[accounts]]
 name = "atlas"
 bot = "6f1c2a4e-...-uuid-of-the-bot"      # the bot's id (`bot bots list`)
-allowed_senders = ["alice@example.com", "@corp.example"]   # stored; used by a later release
+allowed_senders = ["alice@example.com", "@corp.example"]   # who may reach a bot through the e-mail channel
 ```
 
 - A bound account is usable only by that bot, and that bot's email tools use it
@@ -143,7 +143,12 @@ allowed_senders = ["alice@example.com", "@corp.example"]   # stored; used by a l
   `email-secret-cleanup.json` and deleted on the next start.
 - Bundle exports with "all secrets" leave out `email/<account>/password`
   secrets; a mailbox password is exported only when you name it.
-- `allowed_senders` is validated and stored but nothing reads incoming mail yet.
+- `allowed_senders` decides whose mail the e-mail channel may pass to a bot. The
+  list is empty by default and an empty list passes **nothing** on (there is no
+  "any sender"): name at least your own address. Mail from anyone else is
+  ignored, counted and logged without its text. A mail that cannot be handed to
+  the bot is retried three times and then skipped (counted), so it cannot block
+  later mails. Mails above `max_per_poll` stay unread and come at the next check.
 - The "Test connection" action logs in over TLS exactly as configured and
   reports one status per server (`ok`, `unreachable`, `tls`, `auth_failed`,
   `protocol`, `timeout`); it never sends or reads mail and never shows what the

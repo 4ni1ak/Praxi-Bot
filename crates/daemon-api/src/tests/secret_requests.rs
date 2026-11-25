@@ -194,6 +194,56 @@ async fn cancel_leaves_nothing_and_an_existing_name_is_not_replaced_silently() {
     assert_eq!(again.json()["error"]["code"], "secret_request_gone");
 }
 
+/// Guard: a form cannot overwrite another bot's account, even when that account was
+/// created after the card opened (the tool refuses it up front; the route is the root).
+#[tokio::test]
+async fn a_form_cannot_replace_another_bots_account_that_appeared_while_it_was_open() {
+    let r = rig();
+    let (run, call_id) = open_form(
+        &r,
+        r#"call:secret_request {"name":"login/example","purpose":"Sign in","fields":"login","replace":true}"#,
+    )
+    .await;
+    let path = format!("/v1/secret-requests/{call_id}");
+    r.secrets
+        .register_account(&secret_store::NewAccount {
+            name: "login/example/password",
+            site: "https://example.com",
+            login_id: "me",
+            email_account: None,
+            bot_id: "another-bot",
+            note: None,
+            password_len: 20,
+            symbols: true,
+        })
+        .unwrap();
+    let before = r
+        .secrets
+        .resolve_value_for("login/example/password", Some("another-bot"))
+        .unwrap()
+        .expose()
+        .to_owned();
+    let denied = call(
+        &r.t,
+        Method::POST,
+        &path,
+        Some(json!({"username": "u", "password": CANARY})),
+    )
+    .await;
+    assert_eq!(denied.status, StatusCode::FORBIDDEN, "{:?}", denied.json());
+    assert!(!String::from_utf8_lossy(&denied.body).contains(CANARY));
+    let still = r
+        .secrets
+        .resolve_value_for("login/example/password", Some("another-bot"))
+        .unwrap();
+    assert_eq!(still.expose(), before, "the account value was replaced");
+    assert!(!r.secrets.exists("login/example/username"));
+    // The form is still open: the owner can cancel it.
+    let cancelled = call(&r.t, Method::POST, &format!("{path}/cancel"), None).await;
+    assert_eq!(cancelled.status, StatusCode::OK);
+    wait_state(&r.t, &run, "succeeded").await;
+}
+
 /// Guard: a paired device never reaches the routes (the peer router matches the prefix).
 #[test]
 fn the_peer_router_treats_secret_requests_as_a_fill_route() {

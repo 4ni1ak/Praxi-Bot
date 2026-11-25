@@ -1140,6 +1140,13 @@ impl Shared {
         name: &str,
         input: &Value,
     ) -> Option<tool_registry::StandingGrant> {
+        // Defence in depth: a run started by external data (a signed webhook,
+        // a received mail, an external schedule trigger) or by an external
+        // agent never consumes a standing grant, whatever rows exist and
+        // whatever the tool would say. Every ask stays a one-time card.
+        if crate::shared::is_external_initiator(ctx.initiator) {
+            return None;
+        }
         let tool = self.tools.get(name)?;
         if !tool.always_ask_for(input) {
             return None;
@@ -2127,13 +2134,18 @@ impl Shared {
 
     /// Persist a new "always allow" rule for the run's bot (idempotent) and
     /// keep the audit entry.
-    fn add_grant(
+    pub(crate) fn add_grant(
         &self,
         ctx: &RunCtx,
         target: GrantTarget,
         category: PermissionCategory,
         name: &str,
     ) {
+        // Defence in depth (the callers already force `Once` for these runs):
+        // an externally started run never creates a standing grant.
+        if crate::shared::is_external_initiator(ctx.initiator) {
+            return;
+        }
         let grant = Grant {
             bot_id: ctx.bot_id,
             target,
@@ -2290,6 +2302,7 @@ impl Shared {
                 name: name.to_owned(),
                 fields,
                 replace: card.replace,
+                bot_id: ctx.bot_id.to_string(),
             },
         );
         self.audit(

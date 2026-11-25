@@ -13,14 +13,23 @@ throw-away profile and flags the tool uses, and asserts that a local HTTP listen
 It also checks that `--safe-mode` kept the seeded `registrymodifications.xcu` (the
 reviewer could not confirm the key names or that the profile survives safe mode).
 
-Usage:  python scripts/check_soffice_no_network.py [path-to-soffice]
-Exit:   0 = zero hits (or skipped), 1 = the listener was contacted / profile was reset.
+Usage:  python scripts/check_soffice_no_network.py [path-to-soffice] [--require] [--self-test]
+          --require    fail (exit 2) instead of skipping when soffice is missing
+                       (also: environment variable PRAXI_REQUIRE_SOFFICE=1)
+          --self-test  offline: build the hostile documents and read the seeded profile,
+                       without running soffice (this is what the Rust test runs)
+Exit:   0 = zero hits (or skipped), 1 = the listener was contacted / profile was reset /
+        the harmless control document did not convert, 2 = soffice missing with --require.
+It is NOT part of the default test run and CI does not need soffice; run it by hand
+before wiring the tools for untrusted documents, and after changing the seeded profile
+(`seed_profile` in crates/doc-tools/src/convert.rs) or upgrading LibreOffice.
 The proxy settings in the profile point at a closed port, so a hit here means a request
 that bypassed them: the Rust vetting plus the Linux network sandbox are then the only
 barrier, and the tool must not be wired for untrusted documents on a host without one.
 """
 
 import http.server
+import os
 import pathlib
 import re
 import shutil
@@ -199,9 +208,64 @@ def run(soffice, doc, outdir, profile):
         print(f"  (timeout on {doc.name}; hits so far still count)")
 
 
+def make_control_docx(path, base):
+    """A harmless docx (no external reference): LibreOffice must convert it, otherwise a
+    'zero hits' result for the hostile files would prove nothing."""
+    make_docx(path, base)
+    with zipfile.ZipFile(path) as src:
+        parts = {n: src.read(n) for n in src.namelist()}
+    parts["word/_rels/document.xml.rels"] = (
+        b'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        b'<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>'
+        b"</Relationships>"
+    )
+    parts["word/document.xml"] = (
+        b'<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        b"<w:body><w:p><w:r><w:t>control</w:t></w:r></w:p></w:body></w:document>"
+    )
+    parts["word/settings.xml"] = (
+        b'<?xml version="1.0"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'
+    )
+    parts.pop("word/_rels/settings.xml.rels", None)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in parts.items():
+            z.writestr(name, data)
+
+
+def self_test():
+    """Offline check that needs no LibreOffice: the generators produce valid zips, the
+    seeded profile can be read out of convert.rs and carries the keys the check asserts."""
+    xcu = seeded_xcu()
+    assert "MacroSecurityLevel" in xcu, "the seeded profile lost MacroSecurityLevel"
+    with tempfile.TemporaryDirectory(prefix="praxi-soffice-selftest-") as tmp:
+        tmp = pathlib.Path(tmp)
+        for name, maker in [
+            ("linked.docx", make_docx),
+            ("control.docx", make_control_docx),
+            ("webservice.xlsx", make_xlsx),
+            ("webservice.ods", make_ods),
+        ]:
+            maker(tmp / name, "http://127.0.0.1:1")
+            with zipfile.ZipFile(tmp / name) as z:
+                assert z.testzip() is None, name
+    print("SELF-TEST OK: generators and seeded profile are fine (soffice was not run)")
+    return 0
+
+
 def main():
-    soffice = find_soffice(sys.argv[1] if len(sys.argv) > 1 else None)
+    args = sys.argv[1:]
+    if "-h" in args or "--help" in args:
+        print(__doc__)
+        return 0
+    if "--self-test" in args:
+        return self_test()
+    require = "--require" in args or os.environ.get("PRAXI_REQUIRE_SOFFICE") == "1"
+    paths = [a for a in args if not a.startswith("--")]
+    soffice = find_soffice(paths[0] if paths else None)
     if not soffice:
+        if require:
+            print("FAIL: soffice is required (--require) but is not installed")
+            return 2
         print("SKIPPED: soffice is not installed (install the office pack to run this check)")
         return 0
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -210,7 +274,12 @@ def main():
     failed = False
     with tempfile.TemporaryDirectory(prefix="praxi-soffice-check-") as tmp:
         tmp = pathlib.Path(tmp)
-        docs = [("linked.docx", make_docx), ("webservice.xlsx", make_xlsx), ("webservice.ods", make_ods)]
+        docs = [
+            ("control.docx", make_control_docx),
+            ("linked.docx", make_docx),
+            ("webservice.xlsx", make_xlsx),
+            ("webservice.ods", make_ods),
+        ]
         for name, maker in docs:
             doc = tmp / name
             maker(doc, base)
@@ -223,6 +292,10 @@ def main():
             run(soffice, doc, out, profile)
             made = any(out.iterdir())
             print(f"{name}: converted={made} listener_hits={len(hits) - before}")
+            if name == "control.docx" and not made:
+                print("FAIL: the harmless control document was not converted; soffice does not work here, so a 'zero hits' result would prove nothing")
+                server.shutdown()
+                return 1
             if len(hits) > before:
                 failed = True
             kept = (profile / "user" / "registrymodifications.xcu").read_text(encoding="utf-8", errors="replace")
