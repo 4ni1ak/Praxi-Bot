@@ -423,7 +423,7 @@ export class ApiClient {
   protected async request<T>(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal; headers?: Record<string, string>; raw?: Blob } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal; headers?: Record<string, string>; raw?: Blob; keepalive?: boolean } = {}
   ): Promise<T> {
     const res = await this.send(method, path, opts);
     if (res.status === 204) {
@@ -462,6 +462,8 @@ export class ApiClient {
       headers?: Record<string, string>;
       /** A file body, sent as is (the attachment upload); `body` stays JSON. */
       raw?: Blob;
+      /** Let the request finish while the page is closing or reloading. */
+      keepalive?: boolean;
     } = {}
   ): Promise<Response> {
     const url = new URL(`${this.baseUrl}/v1${path}`);
@@ -493,6 +495,7 @@ export class ApiClient {
         method,
         headers,
         body: opts.raw ?? (opts.body === undefined ? undefined : JSON.stringify(opts.body)),
+        ...(opts.keepalive ? { keepalive: true } : {}),
         signal: AbortSignal.any([
           this.life.signal,
           ...(opts.signal ? [opts.signal] : []),
@@ -1221,7 +1224,7 @@ export class ApiClient {
       { body: input }
     );
   }
-  async deleteViewSession(id: string): Promise<void> {
+  async deleteViewSession(id: string, opts: { keepalive?: boolean } = {}): Promise<void> {
     this.staleViewSessions.add(id);
     // The daemon reaps dormant sessions after their lease. Bound local tracking as well.
     if (this.staleViewSessions.size > 8) {
@@ -1229,7 +1232,7 @@ export class ApiClient {
       if (oldest) this.staleViewSessions.delete(oldest);
     }
     try {
-      await this.request("DELETE", `/view/sessions/${encodeURIComponent(id)}`);
+      await this.request("DELETE", `/view/sessions/${encodeURIComponent(id)}`, opts.keepalive ? { keepalive: true } : {});
       this.staleViewSessions.delete(id);
     } catch (err) {
       if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {

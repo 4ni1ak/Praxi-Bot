@@ -835,7 +835,7 @@ export function LiveViewProvider({
     const onUnload = () => {
       const s = activeSessionRef.current;
       if (s && client) {
-        void client.deleteViewSession(s.session_id).catch(() => undefined);
+        void client.deleteViewSession(s.session_id, { keepalive: true }).catch(() => undefined);
       }
     };
     window.addEventListener("pagehide", onUnload);
