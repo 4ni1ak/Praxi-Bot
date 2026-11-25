@@ -148,6 +148,7 @@
       "The four presets",
       "Absolute floors",
       "Egress after a read",
+      "Full level: browsing after a read (owner-started runs)",
       "Host-status commands on an always-on host",
       "Runs started by a schedule",
       "Controlling the desktop",
