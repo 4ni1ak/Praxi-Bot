@@ -1135,7 +1135,7 @@ mod tests {
             timeout_secs: 30,
             bot: None,
             allowed_senders: Vec::new(),
-            identity: Default::default(),
+            identity: connector_email::IdentitySettings::default(),
             kind: connector_email::AccountKind::ImapSmtp,
             inbox_id: None,
         };
