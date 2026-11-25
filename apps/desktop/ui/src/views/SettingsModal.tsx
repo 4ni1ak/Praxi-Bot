@@ -100,7 +100,11 @@ function Marked({ text, query }: { text: string; query: string }) {
   );
 }
 
-/** Consecutive `row` cards share one rounded group; `block` cards stand alone. */
+/**
+ * Consecutive one-line `row` cards share one rounded group; a `standalone` row card (its own
+ * topic, e.g. Theme or Backdrop) and every `block` card get a frame of their own, so unrelated
+ * settings are never stacked into one long card.
+ */
 function renderCards(
   cards: PlacedCard[],
   extras: (p: PlacedCard) => ReactNode,
@@ -108,29 +112,29 @@ function renderCards(
 ): ReactNode[] {
   const out: ReactNode[] = [];
   let run: PlacedCard[] = [];
+  const slot = (p: PlacedCard) => (
+    <div
+      key={p.card.id}
+      className={styles.cardSlot}
+      data-card={p.card.id}
+      data-flash={flashCard === p.card.id ? "true" : undefined}
+    >
+      {p.card.node}
+      {extras(p)}
+    </div>
+  );
   const flush = () => {
     if (run.length > 0) {
       const first = run[0].card.id;
-      out.push(
-        <SettingGroup key={`group-${first}`}>
-          {run.map((p) => (
-            <div
-              key={p.card.id}
-              className={styles.cardSlot}
-              data-card={p.card.id}
-              data-flash={flashCard === p.card.id ? "true" : undefined}
-            >
-              {p.card.node}
-              {extras(p)}
-            </div>
-          ))}
-        </SettingGroup>
-      );
+      out.push(<SettingGroup key={`group-${first}`}>{run.map(slot)}</SettingGroup>);
       run = [];
     }
   };
   for (const p of cards) {
-    if (p.card.kind === "row") {
+    if (p.card.kind === "row" && p.card.standalone) {
+      flush();
+      out.push(<SettingGroup key={`group-${p.card.id}`}>{slot(p)}</SettingGroup>);
+    } else if (p.card.kind === "row") {
       run.push(p);
     } else {
       flush();

@@ -36,8 +36,10 @@
 
 .title {
   margin: var(--space-0);
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-display);
+  line-height: var(--line-height-tight);
   color: var(--color-text);
 }
 
@@ -54,19 +56,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-}
-
-.empty {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.emptyTitle {
-  margin: var(--space-0);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text);
 }
 
 .item {
@@ -151,13 +140,14 @@
 
 .meta dt {
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-muted);
 }
 
 .meta dd {
   margin: var(--space-0);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-ui);
+  font-variant-numeric: tabular-nums;
   color: var(--color-text);
   min-width: var(--space-0);
   overflow-wrap: anywhere;
@@ -187,7 +177,7 @@
 .runsTitle {
   margin: var(--space-0);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-muted);
 }
 
@@ -231,9 +221,15 @@
   cursor: pointer;
 }
 
-.filterChipActive {
-  border-color: var(--color-accent-text);
-  background-color: var(--color-accent-subtle);
+.filterChip:hover {
+  background-color: var(--state-hover);
+  color: var(--color-text);
+}
+
+.filterChipActive,
+.filterChipActive:hover {
+  border-color: var(--color-accent);
+  background-color: var(--state-selected);
   color: var(--color-accent-text);
 }
 
@@ -251,22 +247,17 @@
   border-top: var(--size-border) solid var(--color-border);
 }
 
-.upcomingList {
+/* The next runs are one quiet line, not a row of chips: chips are for filters and status. */
+.upcomingLine {
   margin: var(--space-0);
-  padding: var(--space-0);
-  list-style: none;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
-.upcomingChip {
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  border: var(--size-border) solid var(--color-border);
-  background-color: var(--color-surface);
-  font-size: var(--font-size-xs);
-  color: var(--color-text);
+.upcomingMore {
+  margin-left: var(--space-1);
+  color: var(--color-text-muted);
 }
 
 .previewBox {

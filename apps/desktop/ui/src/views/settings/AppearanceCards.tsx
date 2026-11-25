@@ -260,6 +260,7 @@ export function appearanceCards(b: SettingsBridge, t: TFunction): CardDef[] {
     title,
     description,
     kind: "row",
+    standalone: true,
     node,
     ...over
   });

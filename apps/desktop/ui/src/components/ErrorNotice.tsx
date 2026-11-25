@@ -1,4 +1,4 @@
-import { Check, Copy, RotateCw, TriangleAlert } from "lucide-react";
+import { Check, Copy, LoaderCircle, RotateCw, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
@@ -53,9 +53,21 @@ export function ErrorNotice({
       // Clipboard blocked: the text stays selectable in the disclosure.
     }
   };
+  // "Starting" is a wait, not a failure: neutral surface with a quiet spinner, no alarm colours.
+  const waiting = h.code === "serviceStarting";
   return (
-    <div className={`${styles.box} ${compact ? styles.compact : ""}`} role="alert" data-testid="error-notice" data-code={h.code}>
-      <TriangleAlert className={styles.icon} aria-hidden="true" />
+    <div
+      className={`${styles.box} ${compact ? styles.compact : ""} ${waiting ? styles.waiting : ""}`}
+      role={waiting ? "status" : "alert"}
+      data-testid="error-notice"
+      data-code={h.code}
+      data-tone={waiting ? "info" : "danger"}
+    >
+      {waiting ? (
+        <LoaderCircle className={`${styles.icon} ${styles.spin}`} aria-hidden="true" />
+      ) : (
+        <TriangleAlert className={styles.icon} aria-hidden="true" />
+      )}
       <div className={styles.text}>
         <p className={styles.title}>{h.title}</p>
         {h.hint ? <p className={styles.hint}>{h.hint}</p> : null}
