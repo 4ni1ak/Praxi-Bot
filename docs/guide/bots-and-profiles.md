@@ -19,6 +19,35 @@ bot bots list
 `bot bots add` sends the file to the running daemon (`bot serve` must be up).
 The desktop app has a bot form that writes the same structure.
 
+## Saved browser sessions
+
+Open a bot's **Tools** tab and choose **Sign in manually**. A separate managed
+browser opens on the computer running the bot. Navigate to the site and sign in
+there, then choose **Done signing in**. Praxi has no password form and disables
+the browser's password-saving feature. During manual sign-in, this bot's browser
+tools are paused and its browser live view is detached.
+
+Cookies and site data stay in this bot's profile across browser restarts and
+headed/headless mode changes. Profiles are never shared between bots. On
+signed-in sites the bot can act as you; existing approval rules still apply.
+The Balanced-mode shortcut for anonymous browsing does not cover saved accounts.
+
+The tab shows profile size and domains with saved cookies. A cookie is not proof
+of a current login, and sites using only local storage may not appear. **Forget
+this site** clears that domain and its saved subdomains in the default profile;
+**Forget everything** deletes the bot's entire browser profile, including named
+profiles. Both close its browser first. Forgetting data never changes approvals.
+
+Persistent browsers retain Chromium's native OS cookie protection. On Windows,
+Praxi also attempts EFS encryption of the profile directory and existing files;
+unsupported Windows editions or filesystems may refuse. The tab only reports
+directory encryption when it can confirm it. Other site data can remain
+unencrypted when filesystem encryption is unavailable. Existing old `headed/`
+profiles are not migrated into the default profile; sign in again to use one
+profile in both modes. For a bot using a paired server's browser, manage sign-in
+on that server; local profile management refuses rather than changing an unused
+profile on this computer.
+
 ## A complete profile
 
 ```toml

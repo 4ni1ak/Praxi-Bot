@@ -97,6 +97,11 @@ impl Modify for Security {
             except GET /v1/health need `Authorization: Bearer <token>`."
     ),
     paths(
+        crate::browser_profiles::get,
+        crate::browser_profiles::sign_in,
+        crate::browser_profiles::finish,
+        crate::browser_profiles::forget_site,
+        crate::browser_profiles::forget_all,
         crate::logs::recent,
         crate::audit_routes::list,
         crate::audit_routes::export,

@@ -859,6 +859,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "live-view",
+ "rusqlite",
  "rustix",
  "serde",
  "serde_json",

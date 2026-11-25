@@ -28,9 +28,11 @@ use crate::fill_secret::{Source, names_a_secret, refused, scrub, source};
 use crate::util::{exec_err, finish_text, parse, save_file, spec};
 
 mod act;
+mod profiles;
 #[cfg(test)]
 mod reopen_tests;
 pub use act::{can_egress as act_can_egress, summary as act_summary};
+pub use profiles::{BrowserProfiles, ProfileStatus};
 
 pub use browser_cdp::FieldTarget;
 
@@ -369,6 +371,8 @@ pub struct CdpDriver {
     settings: BrowserSettings,
     alternate_mode: parking_lot::Mutex<Option<Arc<CdpDriver>>>,
     session: Arc<Mutex<Option<Session>>>,
+    /// Private owner sign-in window, never attached to a Page or live view.
+    manual: Arc<Mutex<Option<Browser>>>,
     takeover_pin: Arc<std::sync::atomic::AtomicBool>,
     /// True while a bot run that used the computer is still active.
     activity: Arc<std::sync::RwLock<Option<ActivityProbe>>>,
@@ -483,6 +487,7 @@ impl CdpDriver {
             alternate_mode: parking_lot::Mutex::new(None),
             peers: None,
             session: Arc::new(Mutex::new(None)),
+            manual: Arc::new(Mutex::new(None)),
             takeover_pin: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             activity: Arc::new(std::sync::RwLock::new(None)),
             reaper_started: std::sync::atomic::AtomicBool::new(false),
@@ -604,6 +609,11 @@ impl CdpDriver {
         profile: Option<&str>,
         allow_launch: bool,
     ) -> Result<&'a mut Session, String> {
+        if self.manual.lock().await.is_some() {
+            return Err(
+                "finish manual sign-in in the bot's Tools tab before using browser tools".into(),
+            );
+        }
         self.start_idle_reaper();
         let desired_headless = self.desired_headless();
         // A crashed, closed, or mode-mismatched (headless vs headed) browser
@@ -699,12 +709,19 @@ impl CdpDriver {
 
     /// Close the browser (the next call launches a new one).
     pub async fn shutdown(&self) {
-        let session = self.session.lock().await.take();
+        let mut guard = self.session.lock().await;
+        if let Some(browser) = self.manual.lock().await.take() {
+            let _ = browser.close().await;
+        }
+        let session = guard.take();
         if let Some(sess) = session {
             close_session(self.view.as_deref(), sess).await;
         }
         let alternate = self.alternate_mode.lock().clone();
         if let Some(alt) = alternate {
+            if Arc::ptr_eq(&self.session, &alt.session) {
+                return;
+            }
             // One level only: the alternate driver has no alternate of its own.
             let session = alt.session.lock().await.take();
             if let Some(sess) = session {
@@ -893,12 +910,19 @@ impl BrowserDriver for CdpDriver {
                     let mut settings = self.settings.clone();
                     settings.headless = headless;
                     let mode = if headless { "headless" } else { "headed" };
-                    settings.profile_dir = settings.profile_dir.map(|p| p.join(mode));
-                    settings.profiles_root = settings.profiles_root.join(mode);
+                    if settings.profile_dir.is_none() {
+                        settings.profiles_root = settings.profiles_root.join(mode);
+                    }
                     // `settings` is already this bot's profile. The caller must
                     // not wrap this driver in the managed-browser pool again:
-                    // headed and headless keep separate directories and cookies.
+                    // persistent headed/headless runs share one serialized session.
                     let mut driver = CdpDriver::new(settings);
+                    driver.manual = Arc::clone(&self.manual);
+                    if self.settings.profile_dir.is_some() {
+                        // One persistent profile across headed/headless runs. One
+                        // session lock closes the old process before changing mode.
+                        driver.session = Arc::clone(&self.session);
+                    }
                     driver.takeover_pin = Arc::clone(&self.takeover_pin);
                     driver.activity = Arc::clone(&self.activity);
                     // One live-view slot per bot, whichever mode runs: the
@@ -1421,6 +1445,20 @@ pub fn managed_tools_with_origin(
     fill_secrets: Option<Arc<FillSecrets>>,
     page_origin: Option<Arc<connector_email::PageOriginSlot>>,
 ) -> Vec<Arc<dyn Tool>> {
+    managed_tools_with_profiles(settings, data_dir, control, views, fill_secrets, page_origin, None)
+}
+
+/// Managed tools and an optional owner-only housekeeping handle to the SAME pool.
+#[must_use]
+pub fn managed_tools_with_profiles(
+    settings: BrowserSettings,
+    data_dir: &Path,
+    control: Option<Arc<dyn DesktopControlGate>>,
+    views: Option<Arc<live_view::TargetRegistry>>,
+    fill_secrets: Option<Arc<FillSecrets>>,
+    page_origin: Option<Arc<connector_email::PageOriginSlot>>,
+    profiles: Option<Arc<BrowserProfiles>>,
+) -> Vec<Arc<dyn Tool>> {
     let driver = Arc::new(CdpDriver::new(settings.clone()));
     let peers = BrowserPeers::default();
     let bots = BotDrivers::default();
@@ -1439,6 +1477,7 @@ pub fn managed_tools_with_origin(
         }),
         fill_secrets,
         page_origin,
+        profiles,
     )
 }
 
@@ -1474,7 +1513,7 @@ pub fn tools(
     data_dir: &Path,
     control: Option<Arc<dyn DesktopControlGate>>,
 ) -> Vec<Arc<dyn Tool>> {
-    tools_with_pool(driver, data_dir, control, None, None, None)
+    tools_with_pool(driver, data_dir, control, None, None, None, None)
 }
 
 /// [`tools`] whose `browser_fill` may type the owner's fill secrets.
@@ -1485,7 +1524,7 @@ pub fn tools_with_secrets(
     control: Option<Arc<dyn DesktopControlGate>>,
     fill_secrets: Option<Arc<FillSecrets>>,
 ) -> Vec<Arc<dyn Tool>> {
-    tools_with_pool(driver, data_dir, control, None, fill_secrets, None)
+    tools_with_pool(driver, data_dir, control, None, fill_secrets, None, None)
 }
 
 /// [`tools_with_secrets`] that also fills `page_origin` with a probe of the page
@@ -1498,7 +1537,7 @@ pub fn tools_with_origin(
     fill_secrets: Option<Arc<FillSecrets>>,
     page_origin: Option<Arc<connector_email::PageOriginSlot>>,
 ) -> Vec<Arc<dyn Tool>> {
-    tools_with_pool(driver, data_dir, control, None, fill_secrets, page_origin)
+    tools_with_pool(driver, data_dir, control, None, fill_secrets, page_origin, None)
 }
 
 /// Asks the BROWSER (target info, never page script) which page a run is on.
@@ -1529,6 +1568,7 @@ fn tools_with_pool(
     managed: Option<ManagedBrowsers>,
     fill_secrets: Option<Arc<FillSecrets>>,
     page_origin: Option<Arc<connector_email::PageOriginSlot>>,
+    profiles: Option<Arc<BrowserProfiles>>,
 ) -> Vec<Arc<dyn Tool>> {
     let shared = Arc::new(Shared {
         driver,
@@ -1540,6 +1580,9 @@ fn tools_with_pool(
         fill_secrets,
         last_open: parking_lot::Mutex::default(),
     });
+    if let Some(profiles) = profiles {
+        let _ = profiles.root.set(Arc::clone(&shared));
+    }
     let b = PermissionCategory::Browser;
     let ref_prop =
         json!({"type":"string","description":"Element ref from browser_snapshot, like e12."});
@@ -4101,6 +4144,40 @@ mod tests {
         assert_eq!(drv.profile_path(None).unwrap(), Some(d.path().join("p")));
     }
 
+    #[tokio::test]
+    async fn manual_sign_in_blocks_tools_in_both_modes_without_attaching_a_page() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = FakeCdp::start();
+        let driver = CdpDriver::new(BrowserSettings {
+            executable: Some(dir.path().join("no-browser-executable")),
+            profile_dir: Some(dir.path().join("bot-a")),
+            ..BrowserSettings::isolated(dir.path())
+        });
+        *driver.manual.lock().await = Some(Browser::connect(&server.url).await.unwrap());
+        assert!(
+            driver
+                .snapshot(false)
+                .await
+                .unwrap_err()
+                .contains("finish manual sign-in")
+        );
+        let alternate = driver.for_headless(false).unwrap();
+        assert!(
+            alternate
+                .eval("document.body.innerText")
+                .await
+                .unwrap_err()
+                .contains("finish manual sign-in")
+        );
+        assert!(
+            driver.session.lock().await.is_none(),
+            "no automation page during sign-in"
+        );
+        driver.shutdown().await;
+        assert!(driver.manual.lock().await.is_none());
+        server.kill();
+    }
+
     #[test]
     fn tab_activation_spec_effect_is_write() {
         let (_d, _f, t) = build();
@@ -5205,8 +5282,8 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        // The headed driver of a managed bot uses `<browsers>/<bot>/headed`.
-        let profile = dir.path().join("browsers").join(bot).join("headed");
+        // Both modes of a managed bot use the same persistent profile.
+        let profile = dir.path().join("browsers").join(bot);
         let launcher = write_cdp_launcher(dir.path(), &profile, port);
         let registry = Arc::new(live_view::TargetRegistry::default());
         let mut changes = registry.subscribe_changes();

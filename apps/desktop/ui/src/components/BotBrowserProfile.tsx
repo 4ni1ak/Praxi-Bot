@@ -1,0 +1,107 @@
+import { Globe, LogIn, RefreshCw, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Button } from "ui";
+import type { BrowserProfileStatus } from "../api/types";
+import { humanError, type HumanError } from "../lib/humanError";
+import { useDaemon } from "../state/DaemonContext";
+import { ConfirmDialog } from "./DialogParts";
+import { ErrorNotice } from "./ErrorNotice";
+import styles from "./BotBrowserProfile.module.css";
+
+/** Owner-only housekeeping; credentials are typed in the native browser, never this form. */
+export function BotBrowserProfile({ botId }: { botId: string }) {
+  const { t, i18n } = useTranslation();
+  const { client } = useDaemon();
+  const [profile, setProfile] = useState<BrowserProfileStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<HumanError | null>(null);
+  const [forget, setForget] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!client) return;
+    try {
+      setProfile(await client.browserProfile(botId));
+      setError(null);
+    } catch (e) {
+      setError(humanError(e));
+    }
+  }, [client, botId]);
+
+  useEffect(() => {
+    void load();
+    // Closing the native browser by its X button must release manual mode too.
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [load]);
+
+  const act = async (action: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      setForget(null);
+      await load();
+    } catch (e) {
+      setError(humanError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className={styles.root} aria-labelledby="browser-profile-title" data-testid="browser-profile">
+      <h3 id="browser-profile-title"><Globe aria-hidden="true" />{t("browserProfile.title")}</h3>
+      <p>{t("browserProfile.intro")}</p>
+      <p className={styles.warning}>{t("browserProfile.warning")}</p>
+      <p>{t("browserProfile.isolation")}</p>
+      <p>{t(profile?.directory_encrypted ? "browserProfile.encrypted" : "browserProfile.protection")}</p>
+      <div className={styles.actions}>
+        <Button disabled={!client || busy || !profile} onClick={() => {
+          if (!client) return;
+          void act(() => profile?.signing_in ? client.finishBrowserSignIn(botId) : client.startBrowserSignIn(botId));
+        }}>
+          <LogIn aria-hidden="true" />
+          {t(profile?.signing_in ? "browserProfile.done" : "browserProfile.signIn")}
+        </Button>
+        <Button variant="ghost" disabled={!client || busy} onClick={() => void load()} aria-label={t("browserProfile.refresh")}>
+          <RefreshCw aria-hidden="true" />{t("browserProfile.refresh")}
+        </Button>
+      </div>
+      {profile?.signing_in ? <p role="status">{t("browserProfile.manualHint")}</p> : null}
+      {error && forget === null ? <ErrorNotice error={error} compact /> : null}
+      {profile ? <>
+        <p>{t("browserProfile.size", { bytes: profile.size_bytes.toLocaleString(i18n.language) })}</p>
+        <h4>{t("browserProfile.sites")}</h4>
+        <p>{t("browserProfile.siteHint")}</p>
+        {!profile.sites_available ? <p role="status">{t("browserProfile.sitesUnavailable")}</p> : profile.domains.length ? <ul className={styles.sites}>
+          {profile.domains.map((domain) => <li key={domain}>
+            <span>{domain}</span>
+            <Button variant="ghost" disabled={busy || profile.signing_in} onClick={() => { setError(null); setForget(domain); }}
+              aria-label={t("browserProfile.forgetNamed", { domain })}>
+              <Trash2 aria-hidden="true" />{t("browserProfile.forgetSite")}
+            </Button>
+          </li>)}
+        </ul> : <p>{t("browserProfile.empty")}</p>}
+        <Button variant="danger" disabled={!client || busy || profile.signing_in || profile.size_bytes === 0}
+          onClick={() => { setError(null); setForget(""); }}>
+          <Trash2 aria-hidden="true" />{t("browserProfile.forgetAll")}
+        </Button>
+      </> : null}
+      <ConfirmDialog open={forget !== null} tone="danger" busy={busy}
+        title={t(forget === "" ? "browserProfile.forgetAll" : "browserProfile.forgetSite")}
+        body={<>
+          <p>{forget === "" ? t("browserProfile.confirmAll") : t("browserProfile.confirmSite", { domain: forget })}</p>
+          {error ? <ErrorNotice error={error} compact /> : null}
+        </>}
+        confirmLabel={t(forget === "" ? "browserProfile.forgetAll" : "browserProfile.forgetSite")}
+        onCancel={() => { setForget(null); setError(null); }}
+        onConfirm={() => {
+          if (!client || forget === null) return;
+          void act(() => forget === "" ? client.forgetBrowserProfile(botId) : client.forgetBrowserSite(botId, forget));
+        }} />
+    </section>
+  );
+}

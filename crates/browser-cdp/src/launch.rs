@@ -197,8 +197,6 @@ pub fn build_args_for_host(
         "--disable-sync".into(),
         "--disable-dev-shm-usage".into(),
         "--disable-gpu".into(),
-        "--password-store=basic".into(),
-        "--use-mock-keychain".into(),
         format!("--window-size={win_w},{win_h}"),
         // The managed profile belongs to the daemon and is often stopped
         // abruptly: never ask the person watching to "Restore pages", and
@@ -214,6 +212,14 @@ pub fn build_args_for_host(
     if fill {
         a.push("--start-maximized".into());
         a.push("--window-position=0,0".into());
+    }
+    // Disposable test profiles need no keyring. Persistent profiles must retain
+    // Chromium's native OS cookie encryption instead of forcing plaintext storage.
+    if opts.user_data_dir.is_none() {
+        a.extend([
+            "--password-store=basic".into(),
+            "--use-mock-keychain".into(),
+        ]);
     }
     let served = opts.served.is_some() || opts.served_proxy.is_some();
     if !served {
@@ -462,6 +468,13 @@ mod tests {
         assert_eq!(url, "ws://127.0.0.1:9222/devtools/browser/abc-123");
         assert!(parse_devtools_active_port("9222\n").is_none());
         assert!(parse_devtools_active_port("x\n/y").is_none());
+    }
+
+    #[test]
+    fn persistent_profiles_keep_native_cookie_protection() {
+        let opts = LaunchOptions { user_data_dir: Some("/managed/profile".into()), ..Default::default() };
+        let args = build_args_for_host(&opts, Path::new("/managed/profile"), false, true, false);
+        assert!(!args.iter().any(|a| a == "--password-store=basic" || a == "--use-mock-keychain"));
     }
 
     #[test]

@@ -818,7 +818,11 @@ impl Shared {
             named_browser_profile: input
                 .get("profile")
                 .and_then(Value::as_str)
-                .is_some_and(|p| !p.is_empty() && p != "isolated"),
+                .is_some_and(|p| !p.is_empty() && p != "isolated")
+                || self
+                    .browser_profiles
+                    .get()
+                    .is_some_and(|profiles| profiles.may_be_signed_in(&ctx.bot_id.to_string())),
         })
     }
 

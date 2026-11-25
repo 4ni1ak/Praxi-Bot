@@ -126,6 +126,8 @@ pub struct BuiltinConfig {
     pub browser: Option<Arc<dyn BrowserDriver>>,
     /// Settings for the default [`CdpDriver`].
     pub browser_settings: BrowserSettings,
+    /// Owner-only profile housekeeping, sharing the managed tool pool.
+    pub browser_profiles: Option<Arc<browser::BrowserProfiles>>,
     /// Permission gate for tool calls made from scripts.
     pub gate: Arc<dyn ToolGate>,
     /// Limits for `script_run`.
@@ -239,6 +241,7 @@ impl BuiltinConfig {
             ocr: None,
             desktop_settings: DesktopSettings::default(),
             browser: None,
+            browser_profiles: None,
             gate,
             script_limits: script_runtime::Limits::default(),
             control: None,
@@ -301,13 +304,14 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
             Some(Arc::clone(&page_origin)),
         ));
     } else {
-        all.extend(browser::managed_tools_with_origin(
+        all.extend(browser::managed_tools_with_profiles(
             cfg.browser_settings,
             &cfg.data_dir,
             cfg.control.clone(),
             cfg.view_registry.clone(),
             cfg.fill_secrets.clone(),
             Some(Arc::clone(&page_origin)),
+            cfg.browser_profiles,
         ));
     }
     if let Some(secrets) = &cfg.fill_secrets {

@@ -1402,7 +1402,8 @@
       "activity": "Etkinlik",
       "automation": "Otomasyon",
       "label": "Panel bölümleri",
-      "library": "Kitaplık"
+      "library": "Kitaplık",
+      "tools": "Araçlar"
     },
     "thisBot": "Bu bot",
     "toggle": "Bot paneli",
@@ -1491,6 +1492,28 @@
       "tooMany": "En fazla {{max}} beceri atanabilir. Daha az beceri seç ya da “Tüm ortak beceriler” seçeneğini kullan."
     },
     "writeConflict": "Bu bot sen kaydederken başka bir yerden değiştirildi. Yeniden yükleyip yeniden dene."
+  },
+  "browserProfile": {
+    "confirmAll": "Bu botun tarayıcısı kapatılacak ve adlandırılmış profiller dâhil tüm kayıtlı tarayıcı verileri silinecek. Yeniden oturum açmanız gerekecek. Diğer botlar etkilenmez.",
+    "confirmSite": "Bu botun tarayıcısı kapatılacak ve varsayılan profilde {{domain}} ile kayıtlı alt alan adlarının çerezleri ve site verileri temizlenecek. Yeniden oturum açmanız gerekebilir.",
+    "done": "Oturum açmayı bitirdim",
+    "empty": "Henüz çerezleri kayıtlı site yok.",
+    "encrypted": "Profil klasörü Windows tarafından şifrelenmiştir. Tarayıcı ayrıca kullanılabiliyorsa sistemin çerez korumasını kullanır.",
+    "forgetAll": "Her şeyi unut",
+    "forgetNamed": "{{domain}} sitesini unut",
+    "forgetSite": "Bu siteyi unut",
+    "intro": "Bu botun yönettiği tarayıcıda kendiniz oturum açın. Praxi şifrenizi istemez veya kaydetmez. Tarayıcı, oturumların sonraki çalışmalarda devam edebilmesi için çerezleri ve site verilerini saklar.",
+    "isolation": "Bu tarayıcı profili yalnızca bu bota aittir. Diğer botlar kayıtlı oturumlarını paylaşmaz.",
+    "manualHint": "Bu botun çalıştığı bilgisayardaki tarayıcı penceresini kullanın. Bu botun tarayıcı araçları duraklatıldı. Bitirdiğinizde Oturum açmayı bitirdim seçeneğine basın.",
+    "protection": "Tarayıcı, kullanılabiliyorsa sistemin çerez korumasını kullanır. Klasör şifrelemesi doğrulanamadı; bazı site verileri şifrelenmeden saklanabilir.",
+    "refresh": "Yenile",
+    "signIn": "Kendiniz oturum açın",
+    "siteHint": "Kayıtlı çerez, oturumunuzun hâlâ açık olduğunu kanıtlamaz. Yalnızca başka depolama türlerini kullanan siteler burada görünmeyebilir. Bir siteyi unutmak, tarayıcıdaki diğer kayıtlı verilerini de temizler.",
+    "sites": "Çerezleri kayıtlı siteler",
+    "sitesUnavailable": "Kayıtlı site adları şu anda okunamıyor. Oturum açmayı bitirin, tarayıcıyı kapatın ve yenileyin. Yine de her şeyi unutabilirsiniz.",
+    "size": "Profil boyutu: {{bytes}} bayt",
+    "title": "Tarayıcı profili",
+    "warning": "Oturum açtığınız sitelerde bu bot sizin adınıza işlem yapabilir. Mevcut onay kurallarınız geçerliliğini korur. Yalnızca bu botun kullanmasını istediğiniz hesaplarda oturum açın."
   },
   "chat": {
     "addCommand": "Komut veya bot ekle",
@@ -2835,6 +2858,10 @@
       "bot_limit_warning": {
         "hint": "Bir harcama limitinin %80'ini kullandı. Bot ayarlarındaki limitlere bak.",
         "title": "Bu bot limitine yaklaştı"
+      },
+      "browser_profile_error": {
+        "hint": "Önce elle oturum açmayı bitirin, ardından yenileyip tekrar deneyin. Elle oturum açmak için botun çalıştığı bilgisayarda masaüstü ekranı gerekir. Sorun sürerse ayrıntıları inceleyin.",
+        "title": "Tarayıcı profili güncellenemedi"
       },
       "busy": {
         "hint": "Biraz bekleyip yeniden dene.",
