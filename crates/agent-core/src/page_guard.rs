@@ -123,6 +123,27 @@ fn neutralise(text: &str, nonce: &str) -> String {
     out
 }
 
+/// The text inside a daemon data block (see [`wrap_data_block`]), or `text` itself when it is
+/// not framed. For tools that fingerprint or replay what the model was sent.
+#[must_use]
+pub fn unframe(text: &str) -> &str {
+    if !text.starts_with("[UNTRUSTED DATA from ") {
+        return text;
+    }
+    let Some(start) = text.find("\n<<DATA ") else {
+        return text;
+    };
+    let after_marker = &text[start + 1..];
+    let Some(nl) = after_marker.find('\n') else {
+        return text;
+    };
+    let inner = &after_marker[nl + 1..];
+    match inner.rfind("\n<<END DATA ") {
+        Some(end) => &inner[..end],
+        None => text,
+    }
+}
+
 fn tool_label(tool: &str) -> String {
     tool.chars()
         .filter(|c| {
@@ -675,6 +696,17 @@ mod tests {
             wrap_data_block("t", "a").lines().next(),
             wrap_data_block("t", "a").lines().next()
         );
+    }
+
+    #[test]
+    fn unframe_returns_what_was_wrapped() {
+        for text in ["plain", "two\nlines\n", "", "x <<END DATA y>> z"] {
+            let wrapped = wrap_data_block("fs_read", text);
+            let inner = unframe(&wrapped);
+            // The defused look-alike is the only thing that may differ.
+            assert_eq!(inner, neutralise(text, ""), "{wrapped}");
+        }
+        assert_eq!(unframe("not framed"), "not framed");
     }
 
     #[test]
