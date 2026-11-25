@@ -137,7 +137,6 @@
 .linkIcon {
   width: var(--size-icon-sm);
   height: var(--size-icon-sm);
-  margin-inline-end: var(--space-1);
   vertical-align: middle;
 }
 

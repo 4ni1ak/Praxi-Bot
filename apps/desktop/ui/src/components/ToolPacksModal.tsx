@@ -507,11 +507,11 @@ function LicenseBits({ pack }: { pack: HostPackInfo }) {
           type="button"
           className={styles.link}
           onClick={() => openExternal(href)}
-          aria-label={`${t("toolPacks.source")}: ${pack.id}`}
+          aria-label={`${t("toolPacks.source")}: ${isPackId(pack.id) ? t(`toolPacks.packs.${pack.id}.name`) : pack.id}`}
+          title={t("toolPacks.source")}
           data-testid={`source-${pack.id}`}
         >
           <ExternalLink aria-hidden="true" className={styles.linkIcon} />
-          {t("toolPacks.source")}
         </button>
       ) : null}
     </>
