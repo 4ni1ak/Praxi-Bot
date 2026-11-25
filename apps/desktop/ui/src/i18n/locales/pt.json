@@ -4681,6 +4681,24 @@
     "typingPreview": "Typing",
     "youAreInControl": "You are in control"
   },
+  "pageReader": {
+    "bot": "Bot",
+    "description": "Como um bot lê páginas web, e-mails e outros textos escritos por desconhecidos.",
+    "legend": "Leitor de páginas",
+    "mode": {
+      "always": "Sempre",
+      "auto": "Automático (recomendado)",
+      "off": "Desligado"
+    },
+    "modeHint": {
+      "always": "Um modelo auxiliar separado lê primeiro todas as páginas, mesmo sem dados privados. É mais lento e gasta um pouco mais da sua quota.",
+      "auto": "Quando o bot trabalha com os seus ficheiros, e-mails ou memória privados, um modelo auxiliar separado lê primeiro cada página e só passa os factos. Caso contrário, o bot lê as páginas sozinho.",
+      "off": "O bot lê as páginas sozinho. O texto da página chega sempre marcado como dados externos, e o que uma pessoa não consegue ver já foi removido."
+    },
+    "noBot": "Crie primeiro um bot.",
+    "note": "O auxiliar é o modelo auxiliar económico deste bot (o seu classificador) e pode funcionar num fornecedor diferente do do próprio bot: o texto da página é enviado para lá. Não tem ferramentas e nunca vê os seus dados privados. Uma página ainda pode tentar enganá-lo, por isso as aprovações para enviar e apagar continuam em vigor. Se não houver modelo auxiliar, as páginas ficam retidas em vez de passarem sem verificação.",
+    "title": "Ler páginas web com segurança"
+  },
   "pairHost": {
     "failed": "Pairing failed. Check that the host is on and the ticket is new.",
     "hint": "The ticket is used once and is not saved.",
