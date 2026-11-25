@@ -1,4 +1,4 @@
-import { formatRunPreview } from "../lib/scheduleTime";
+import { formatInScheduleZone, formatRunPreview, specTimeZone } from "../lib/scheduleTime";
 import {
   ArrowUpRight,
   CalendarCheck,
@@ -56,6 +56,7 @@ import {
   historyStatusTone,
   localDayKey,
   mergeLiveRunsIntoHistory,
+  CATCHUP_WINDOWS,
   MISFIRE_POLICIES,
   moveCalendarFocusIndex,
   parsePayload,
@@ -132,11 +133,13 @@ export function SchedulesView({
   const [editing, setEditing] = useState<string | null>(initialBotId ? "new" : null);
 
   const fmt = useCallback(
-    (ms: number) =>
-      new Date(ms).toLocaleString(i18n.language, {
-        dateStyle: "medium",
-        timeStyle: "short"
-      }),
+    (ms: number, zone?: string) =>
+      zone
+        ? formatInScheduleZone(ms, i18n.language, zone, LOCAL_TZ)
+        : new Date(ms).toLocaleString(i18n.language, {
+            dateStyle: "medium",
+            timeStyle: "short"
+          }),
     [i18n.language]
   );
 
@@ -428,7 +431,7 @@ export function SchedulesView({
                         <dd>
                           {s.next_run_at_ms !== null &&
                           s.next_run_at_ms !== undefined
-                            ? fmt(s.next_run_at_ms)
+                            ? fmt(s.next_run_at_ms, specTimeZone(s.spec))
                             : "—"}
                         </dd>
                       </div>
@@ -437,7 +440,7 @@ export function SchedulesView({
                         <dd>
                           {s.last_run_at_ms !== null &&
                           s.last_run_at_ms !== undefined
-                            ? fmt(s.last_run_at_ms)
+                            ? fmt(s.last_run_at_ms, specTimeZone(s.spec))
                             : t("schedules.never")}
                         </dd>
                       </div>
@@ -460,7 +463,7 @@ export function SchedulesView({
                         <ul className={styles.upcomingList}>
                           {nextRuns.slice(0, 5).map((ts) => (
                             <li key={ts} className={styles.upcomingChip}>
-                              {fmt(ts)}
+                              {fmt(ts, specTimeZone(s.spec))}
                             </li>
                           ))}
                         </ul>
@@ -668,6 +671,11 @@ export function SchedulesView({
                                     {t(duration.i18nKey, duration.values)}
                                   </span>
                                 ) : null}
+                                {entry.status === "missed" ? (
+                                  <span className={formStyles.hint}>
+                                    {t("schedules.missedWhy")}
+                                  </span>
+                                ) : null}
                                 {entry.error ? (
                                   <span className={styles.runError}>
                                     {entry.error}
@@ -706,7 +714,9 @@ export function SchedulesView({
                                     }
                                   >
                                     <RotateCcw />
-                                    {t("schedules.retry")}
+                                    {entry.status === "missed"
+                                      ? t("schedules.runNow")
+                                      : t("schedules.retry")}
                                   </Button>
                                 ) : canRunAgain ? (
                                   <Button
@@ -1716,6 +1726,30 @@ function ScheduleForm({
                 ))}
               </select>
             </label>
+            {draft.misfire !== "skip" ? (
+              <label className={formStyles.field}>
+                <span className={formStyles.label}>
+                  {t("schedules.form.catchupWindow")}
+                </span>
+                <select
+                  className={formStyles.select}
+                  value={draft.catchupWindow}
+                  data-testid="schedule-catchup-window"
+                  onChange={(e) =>
+                    patch({ catchupWindow: Number(e.target.value) })
+                  }
+                >
+                  {CATCHUP_WINDOWS.map((w) => (
+                    <option key={w} value={w}>
+                      {t(`schedules.form.catchupWindowOption.${w}`)}
+                    </option>
+                  ))}
+                </select>
+                <span className={formStyles.hint}>
+                  {t("schedules.form.catchupWindowHint")}
+                </span>
+              </label>
+            ) : null}
           </div>
         </details>
 

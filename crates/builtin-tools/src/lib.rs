@@ -37,6 +37,7 @@ pub mod script;
 pub mod secret_request;
 pub mod shell;
 mod util;
+pub mod wait;
 
 pub use util::classify;
 
@@ -297,6 +298,7 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
     all.extend(meta::tools());
     all.extend(notes::tools(&cfg.data_dir));
     all.extend(pure_tools::tools());
+    all.extend(wait::tools());
     if let Some(backend) = cfg.knowledge {
         all.push(knowledge::tool(backend));
     }
@@ -572,6 +574,7 @@ mod tests {
             ("notes_read", R, Fs),
             ("notes_write", W, Fs),
             ("time_now", R, Me),
+            ("wait", R, Me),
             ("calculate", R, Me),
         ]
     }
@@ -1146,7 +1149,7 @@ mod tests {
         cfg.browser = Some(Arc::new(browser::fake::FakeBrowser::default()));
         cfg.email = Some(connector.clone());
         let added = register_builtin_tools(&reg, cfg);
-        assert_eq!(added, 39 + 7 + 2 + 2);
+        assert_eq!(added, 39 + 7 + 2 + 2 + 1);
 
         // Verification of email tools and their effects
         let send_tool = reg

@@ -561,7 +561,10 @@ impl DaemonScheduleHost {
         let min = self.limits.min_interval_secs;
         let too_often = |gap_secs: u64| {
             format!(
-                "that schedule fires every {} but the minimum interval is {}; choose a less frequent one",
+                "that schedule fires every {} but the minimum interval is {} (a schedule that runs too often costs money, \
+floods the chat and can overload the computer); choose a less frequent one. For a short burst (for example \
+every 5 seconds, 4 times) do not use a schedule: do it inside one run, repeat the action and call `wait` between \
+the rounds",
                 human_secs(gap_secs),
                 human_secs(min)
             )

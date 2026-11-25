@@ -28465,6 +28465,15 @@
             "format": "uuid",
             "description": "Bot that runs it."
           },
+          "catchup_window_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "With `run_once` / `run_all`: a missed occurrence older than this many\nseconds is not run late; it is listed as missed instead. `null` = no limit.",
+            "minimum": 0
+          },
           "chat_id": {
             "type": [
               "string",
@@ -28687,6 +28696,15 @@
             "type": "string",
             "format": "uuid",
             "description": "Bot that runs it (cannot be changed afterwards)."
+          },
+          "catchup_window_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Catch-up window in seconds (1 to 30 days); `0` removes it. Absent keeps\nthe current value (none on create).",
+            "minimum": 0
           },
           "chat_id": {
             "type": [

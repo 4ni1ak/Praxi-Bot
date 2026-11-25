@@ -2287,6 +2287,11 @@
         "failed": "Plan güncellenemedi",
         "running": "Plan güncelleniyor"
       },
+      "wait": {
+        "done": "Beklendi",
+        "failed": "Beklenemedi",
+        "running": "Bekleniyor"
+      },
       "web_read": {
         "done": "Sayfa okundu",
         "failed": "Sayfa okunamadı",
@@ -5002,6 +5007,15 @@
       "botFixed": "Bir zamanlamanın botu değiştirilemez.",
       "cannotParse": "Bunu anlayamadım. \"her gün 09:00\", \"hafta içi her sabah 8\" ya da \"every day at 9\" deneyin veya Kolay sekmesini kullanın.",
       "cannotPreview": "Bu zamanlama önizlenemedi. Söz dizimini ve saat dilimini kontrol et.",
+      "catchupWindow": "Yalnızca şundan eskiyse yetişme",
+      "catchupWindowHint": "Bundan uzun süre kaçan çalıştırma geç başlatılmaz. Kaçırılan olarak listelenir ve isterseniz kendiniz çalıştırabilirsiniz.",
+      "catchupWindowOption": {
+        "0": "Sınır yok",
+        "3600": "1 saat",
+        "21600": "6 saat",
+        "86400": "1 gün",
+        "604800": "7 gün"
+      },
       "confirmParsed": "Bunu kastettiğinizi kontrol edin, sonra Oluştur'a basın.",
       "create": "Oluştur",
       "cron": "Cron ifadesi",
@@ -5084,6 +5098,7 @@
     "lastRun": "Son çalışma",
     "loading": "Zamanlamalar yükleniyor…",
     "missed": "Kapalıyken kaçırılan",
+    "missedWhy": "O sırada bilgisayar kapalıydı veya uygulama kapalıydı.",
     "movedTo": "{{name}} sunucusuna taşındı: orada çalışır, bu bilgisayarda dondurulmuştur.",
     "never": "Hiç",
     "new": "Yeni zamanlama",

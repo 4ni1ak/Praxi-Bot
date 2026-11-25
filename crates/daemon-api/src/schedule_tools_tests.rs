@@ -520,6 +520,10 @@ fn minimum_interval_applies_to_phrases_and_cron_including_dense_bursts() {
         let e = f.make(&f.caller_a(), &r).unwrap_err();
         assert!(e.contains("minimum interval is 5 minutes"), "{e}");
         assert!(e.contains(what), "{e} / {what}");
+        assert!(
+            e.contains("call `wait`") && e.contains("inside one run"),
+            "{e}"
+        );
     }
     f.make(&f.caller_a(), &when("ok", "every 5 minutes"))
         .unwrap();

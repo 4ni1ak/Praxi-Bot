@@ -31,7 +31,7 @@ pub fn classify(name: &str) -> Option<ContentClass> {
             ContentClass::none()
         }
         // Pure helpers: only the clock and the model's own short text go in.
-        "time_now" | "calculate" => ContentClass::declared(false, false, false),
+        "time_now" | "calculate" | "wait" => ContentClass::declared(false, false, false),
         // Editing reads old content and reports match counts, including no-op edits.
         // Observation, including a click or a scroll. Those pick an on-screen
         // target and cannot carry bytes off the machine. A drag can drop a

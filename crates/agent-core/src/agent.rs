@@ -1884,6 +1884,8 @@ impl AgentLoop {
     fn cancel_user(&self, run_id: RunId, supervise: bool) -> Result<()> {
         self.sh.user_stopped.lock().insert(run_id);
         self.cancel_wait_pc_timer(run_id);
+        // A `wait` in flight ends now (Stop must not sit out the pause).
+        builtin_tools::wait::cancel_run_waits(&run_id.to_string());
         self.sh.run_computers.lock().remove(&run_id);
         self.sh.directives.lock().remove(&run_id);
         let idle_paused = !self.sh.tasks.lock().contains_key(&run_id)

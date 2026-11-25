@@ -765,6 +765,11 @@ pub struct Schedule {
     /// replayed automatically; UIs can show them as "missed".
     #[serde(default)]
     pub missed_occurrences: u32,
+    /// After downtime, a missed occurrence older than this many seconds is
+    /// recorded as `missed` instead of being run late (only matters for the
+    /// `RunOnce` / `RunAll` policies). `None` = no limit.
+    #[serde(default)]
+    pub catchup_window_secs: Option<u64>,
 }
 
 impl Schedule {
@@ -805,6 +810,7 @@ impl Schedule {
             revision: 0,
             origin: ScheduleOrigin::User,
             missed_occurrences: 0,
+            catchup_window_secs: None,
         })
     }
 }

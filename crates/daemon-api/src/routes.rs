@@ -2207,6 +2207,7 @@ fn schedule_dto(sc: &Schedule, has_webhook: bool) -> ScheduleDto {
         last_run_at_ms: sc.last_run_at,
         next_run_at_ms: sc.next_run_at,
         misfire_policy: sc.misfire_policy.as_str().to_owned(),
+        catchup_window_secs: sc.catchup_window_secs,
         has_webhook,
         trigger: None,
         precheck: sc
@@ -2281,8 +2282,20 @@ struct ScheduleParts {
     spec: ScheduleSpec,
     payload: Payload,
     policy: MisfirePolicy,
+    catchup_window_secs: CatchupChange,
     chat_id: Option<ChatId>,
 }
+
+/// What an input does to a schedule's catch-up window.
+#[derive(Clone, Copy)]
+enum CatchupChange {
+    Keep,
+    Clear,
+    Set(u64),
+}
+
+/// Longest catch-up window the owner can pick.
+const MAX_CATCHUP_WINDOW_SECS: u64 = 30 * 24 * 3600;
 
 fn schedule_parts(s: &AppState, input: &ScheduleInput) -> Result<ScheduleParts, ApiError> {
     s.bot_of_user(BotId(input.bot_id))?;
@@ -2312,6 +2325,16 @@ fn schedule_parts(s: &AppState, input: &ScheduleInput) -> Result<ScheduleParts, 
         Some(p) => MisfirePolicy::parse(p)
             .ok_or_else(|| bad_schedule(format!("unknown misfire_policy {p:?}")))?,
     };
+    let catchup_window_secs = match input.catchup_window_secs {
+        None => CatchupChange::Keep,
+        Some(0) => CatchupChange::Clear,
+        Some(n) if n <= MAX_CATCHUP_WINDOW_SECS => CatchupChange::Set(n),
+        Some(_) => {
+            return Err(bad_schedule(
+                "catchup_window_secs must be between 1 second and 30 days",
+            ));
+        }
+    };
     let chat_id = match input.chat_id {
         None => None,
         Some(c) => {
@@ -2326,6 +2349,7 @@ fn schedule_parts(s: &AppState, input: &ScheduleInput) -> Result<ScheduleParts, 
         spec,
         payload,
         policy,
+        catchup_window_secs,
         chat_id,
     })
 }
@@ -2476,6 +2500,9 @@ pub(crate) async fn create_schedule(
         p.policy,
         now_ms(),
     )?;
+    if let CatchupChange::Set(n) = p.catchup_window_secs {
+        sc.catchup_window_secs = Some(n);
+    }
     if input.enabled == Some(false) {
         sc.enabled = false;
         sc.next_run_at = None;
@@ -2595,6 +2622,11 @@ pub(crate) async fn update_schedule(
     sc.chat_id = p.chat_id;
     sc.payload = p.payload;
     sc.misfire_policy = p.policy;
+    match p.catchup_window_secs {
+        CatchupChange::Keep => {}
+        CatchupChange::Clear => sc.catchup_window_secs = None,
+        CatchupChange::Set(n) => sc.catchup_window_secs = Some(n),
+    }
     sc.spec = p.spec;
     let trigger = schedule_extensions(&s, &mut sc, &input).await?;
     let store = s.schedule_store()?;

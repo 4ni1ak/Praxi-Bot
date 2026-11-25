@@ -2287,6 +2287,11 @@
         "failed": "Couldn't update the plan",
         "running": "Updating the plan"
       },
+      "wait": {
+        "done": "Waited",
+        "failed": "Couldn't wait",
+        "running": "Waiting"
+      },
       "web_read": {
         "done": "Read a page",
         "failed": "Couldn't read a page",
@@ -5002,6 +5007,15 @@
       "botFixed": "The bot of a schedule cannot be changed.",
       "cannotParse": "I could not understand that. Try \"every day at 9\", \"weekdays at 8:30\" or \"her gün 09:00\", or use the Easy tab.",
       "cannotPreview": "Could not preview this schedule. Check the syntax and timezone.",
+      "catchupWindow": "Only catch up if it is not older than",
+      "catchupWindowHint": "A run missed for longer than this is not started late. It is listed as missed, and you can run it yourself.",
+      "catchupWindowOption": {
+        "0": "No limit",
+        "3600": "1 hour",
+        "21600": "6 hours",
+        "86400": "1 day",
+        "604800": "7 days"
+      },
       "confirmParsed": "Check this is what you meant, then press Create.",
       "create": "Create",
       "cron": "Cron expression",
@@ -5084,6 +5098,7 @@
     "lastRun": "Last run",
     "loading": "Loading schedules…",
     "missed": "Missed while off",
+    "missedWhy": "The computer was off or the app was closed at that time.",
     "movedTo": "Moved to {{name}}: it runs there and is frozen on this computer.",
     "never": "Never",
     "new": "New schedule",

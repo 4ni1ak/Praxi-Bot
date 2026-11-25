@@ -1853,8 +1853,17 @@ impl TurnExecutor {
         // covers the tool itself.
         let started = std::time::Instant::now();
         let control = self.sh.control.read().clone();
+        // `wait` may legitimately last up to its own cap (300 s); every other tool keeps the
+        // configured limit.
+        let tool_timeout = if tool.spec().name == "wait" {
+            g.tool_timeout.max(std::time::Duration::from_secs(
+                builtin_tools::wait::MAX_WAIT_SECS + 10,
+            ))
+        } else {
+            g.tool_timeout
+        };
         let outcome = crate::control::pause_aware_timeout(
-            g.tool_timeout,
+            tool_timeout,
             control,
             // The clock stops while the run waits for the computer slot or is parked on a card
             // (a call that asks the user from inside the tool, such as a script's inner call).
