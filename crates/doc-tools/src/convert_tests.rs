@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -912,4 +913,34 @@ fn the_converter_cannot_open_a_socket_inside_the_sandbox() {
     let made = fs::read_to_string(work.path().join("a.pdf")).unwrap();
     assert_eq!(made.trim(), "ISOLATED", "the converter reached the network");
     assert!(listener.accept().is_err(), "the listener saw a connection");
+}
+
+/// `scripts/check_soffice_no_network.py` stays runnable: its offline self-test (no
+/// LibreOffice) builds the hostile documents and finds the seeded profile in
+/// `convert.rs`. Skipped when this host has no python. The real soffice run is a manual check (CONTRIBUTING).
+#[test]
+fn the_soffice_network_check_script_self_test_runs() {
+    let script =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/check_soffice_no_network.py");
+    assert!(script.is_file(), "{} is missing", script.display());
+    let Some(python) = ["python3", "python"].into_iter().find(|p| {
+        Command::new(p)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }) else {
+        eprintln!("SKIPPED: no python on this host");
+        return;
+    };
+    let out = Command::new(python)
+        .arg(&script)
+        .arg("--self-test")
+        .output()
+        .unwrap();
+    let (code, out) = (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    );
+    assert_eq!(code, Some(0), "{out}");
+    assert!(out.contains("SELF-TEST OK"), "{out}");
 }
