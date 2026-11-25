@@ -1,14 +1,36 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HostPackInfo, HostSetupJob } from "../api/types";
-import { BASE_PACKS, BASE_SET_MB, jobFailure, missingBase, reasonKey, reasonOf, rowStates, sizeParts, sortedPacks, totalMb } from "./toolPacks.ts";
+import {
+  BASE_PACKS,
+  BASE_SET_MB,
+  jobFailure,
+  licenseIsMixed,
+  missingBase,
+  needsAck,
+  reasonKey,
+  reasonOf,
+  rowStates,
+  safeSourceUrl,
+  sizeParts,
+  sortedPacks,
+  totalMb
+} from "./toolPacks.ts";
 
 const pack = (id: string, status: string, base = true, size_mb = 100): HostPackInfo => ({
   id,
   status,
   size_mb,
   base,
-  removable: id !== "dev"
+  removable: id !== "dev",
+  license: "Apache-2.0",
+  copyleft: false,
+  distro: true,
+  needs_ack: false,
+  source_url: "https://example.org/src",
+  notice_url: "https://example.org/licence",
+  version: "",
+  lock_sha256: null
 });
 
 const job = (state: HostSetupJob["state"], steps: Array<[string, string, string]>): HostSetupJob =>
@@ -74,4 +96,25 @@ test("the wizard switch names every base pack and its sizes add up to the shown 
     ["office", "docs", "media", "dev"]
   );
   assert.equal(BASE_SET_MB, 1350);
+});
+
+test("the scraping pack is listed last and its reasons have words", () => {
+  assert.deepEqual(sortedPacks([pack("scrape", "missing"), pack("office", "missing")]).map((p) => p.id), ["office", "scrape"]);
+  assert.equal(reasonKey("needs_python"), "needs_python");
+  assert.equal(reasonKey("needs_ack"), "needs_ack");
+});
+
+test("licence chips: a mix of licences collapses to one word, links must be https", () => {
+  assert.equal(licenseIsMixed("Apache-2.0"), false);
+  assert.equal(licenseIsMixed("GPL-2.0-only AND MIT"), true);
+  assert.equal(safeSourceUrl("https://github.com/adbar/trafilatura"), "https://github.com/adbar/trafilatura");
+  assert.equal(safeSourceUrl("javascript:alert(1)"), null);
+  assert.equal(safeSourceUrl("http://plain.example"), null);
+});
+
+test("a copyleft download needs the acknowledgement before it can be reviewed", () => {
+  const agpl = { ...pack("agpl", "missing", false), license: "AGPL-3.0-only", copyleft: true, distro: false, needs_ack: true };
+  const packs = [pack("office", "missing"), agpl];
+  assert.deepEqual(needsAck(packs, ["office"]).map((p) => p.id), []);
+  assert.deepEqual(needsAck(packs, ["office", "agpl"]).map((p) => p.id), ["agpl"]);
 });

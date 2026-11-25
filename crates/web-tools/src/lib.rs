@@ -23,6 +23,7 @@ pub mod extract;
 pub mod http;
 pub mod metadata;
 pub mod policy;
+pub mod scrape;
 pub mod search;
 pub mod tools;
 pub mod xmlfeed;
@@ -38,6 +39,7 @@ pub use search::{
     DuckDuckGoLiteBackend, KNOWN_BACKENDS, MultiSearch, SearchBackend, SearchConfig, SearchOutcome,
     SearchQuery, SearchResult, SearxngBackend, TAVILY_ENDPOINT, TavilyBackend,
 };
+pub use scrape::{SCRAPE_TOOL, ScrapeConfig};
 pub use tools::{TOOL_NAMES, WebToolsConfig, register, tools};
 pub use xmlfeed::{
     Feed, FeedEntry, FeedKind, Sitemap, SitemapEntry, SitemapKind, parse_feed, parse_sitemap,

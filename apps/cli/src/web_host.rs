@@ -340,7 +340,7 @@ impl WebControl for WebHost {
 
         self.persist(&file)?;
 
-        for name in TOOL_NAMES {
+        for name in TOOL_NAMES.iter().chain([&web_tools::SCRAPE_TOOL]) {
             self.registry.unregister(name);
         }
         builtin_tools::register_web_tools(&self.registry, candidate_cfg)

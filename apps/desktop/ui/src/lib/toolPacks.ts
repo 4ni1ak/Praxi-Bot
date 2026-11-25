@@ -21,7 +21,7 @@ export const BASE_SET_MB: number = BASE_PACKS.reduce((sum, p) => sum + p.mb, 0);
 export const PLAN_REQUIRED_STEP = "packs.plan";
 
 /** Catalog ids in the order they are shown (the daemon owns the catalog; the app owns the words). */
-export const PACK_ORDER = ["office", "docs", "ocr", "media", "dev"] as const;
+export const PACK_ORDER = ["office", "docs", "ocr", "media", "dev", "scrape"] as const;
 export type PackId = (typeof PACK_ORDER)[number];
 
 export function isPackId(id: string): id is PackId {
@@ -64,6 +64,8 @@ const REASONS = [
   "unsupported",
   "connection",
   "unavailable",
+  "needs_python",
+  "needs_ack",
   "shared",
   "dependants",
   "blocked_shared",
@@ -114,6 +116,24 @@ export function jobFailure(job: HostSetupJob | null): Reason | null {
   const bad = job?.steps.find((s) => s.status === "fail" || s.status === "warn");
   return bad ? reasonOf(bad.detail) : null;
 }
+
+/** The chip text for a licence: one SPDX id as it is, a mix of several as a word (full text in the tooltip). */
+export function licenseIsMixed(spdx: string): boolean {
+  return / (AND|OR) /.test(spdx);
+}
+
+/** Packs among `selected` whose licence notice must be acknowledged before they are installed. */
+export function needsAck(packs: readonly HostPackInfo[], selected: readonly string[]): HostPackInfo[] {
+  return packs.filter((p) => selected.includes(p.id) && p.needs_ack);
+}
+
+/** Only web links from the catalog are ever opened from the list. */
+export function safeSourceUrl(url: string): string | null {
+  return /^https:\/\/[^\s]+$/.test(url) ? url : null;
+}
+
+/** Packs with a short "not for ..." note under their description. */
+export const NOTED_PACKS: readonly string[] = ["scrape"];
 
 /** Plan items that can run. */
 export function runnableItems(items: readonly PackPlanItem[]): PackPlanItem[] {

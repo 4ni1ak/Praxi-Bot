@@ -269,3 +269,19 @@ below:
 - **bzip2 (`bzip2-1.0.6`):**
   `libbz2-rs-sys` (optional `local-voice` feature, permitted via `[[licenses.exceptions]]` in
   `deny.toml`).
+
+## Web scraping add-on (optional pack; Apache-2.0 and permissive)
+
+The optional "Web scraping" tool pack (`packs/scrape/`) installs, only when the owner
+adds it, a pinned Python environment on the owner's server (`requirements.lock`,
+SHA-256 hashes for every file). Praxi does not ship these packages; the server
+downloads them from PyPI. Versions pinned: [Trafilatura](https://github.com/adbar/trafilatura)
+2.4.0 (Apache-2.0), courlan 1.5.0 (Apache-2.0), htmldate 1.11.0 (Apache-2.0),
+lxml 6.1.3 (BSD-3-Clause), dateparser 1.5.1 (BSD-3-Clause), charset-normalizer 3.5.3
+(MIT), urllib3 2.8.0 (MIT), tzlocal 5.4.5 (MIT), python-dateutil 3.0.0
+(Apache-2.0 / BSD-3-Clause), regex 2026.9.29 (Apache-2.0 AND CNRI-Python), pytz 2026.6
+(MIT), six 1.17.0 (MIT), tzdata 2026.6 (Apache-2.0), certifi 2026.11.20 (MPL-2.0, used
+unmodified). Licences were read from the PyPI metadata of each pinned version. No GPL
+or AGPL software is part of the pack. Praxi's own extractor `packs/scrape/praxi_scrape.py`
+is Apache-2.0 and uses only the Python standard library apart from Trafilatura.
+Firecrawl (AGPL-3.0) and Crawl4AI are not included.

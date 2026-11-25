@@ -13,6 +13,9 @@ login or clicking around.
 | `web_sitemap` | Fetch and parse a `sitemap.xml`, sitemap index or text sitemap. |
 | `web_metadata` | Page title, description, canonical URL, OpenGraph, Twitter card, feeds and JSON-LD. |
 
+An optional [web scraping add-on](web-scraping.md) adds `web_scrape` for cleaner
+article text, link lists and small crawls of one site; it is not installed by default.
+
 A typical question that needs a current fact goes `web_search`, then
 `web_extract` on the best result. The browser is only used when the page itself
 needs a real browser.

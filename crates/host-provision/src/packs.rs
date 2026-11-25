@@ -23,13 +23,67 @@ use crate::{
     transport::{Output, RemoteCmd, StageFile, Sub, Transport, TransportError, sanitize},
 };
 
+/// Catalog id of the web scraping add-on (the one pack with extra files to stage).
+pub const SCRAPE: &str = "scrape";
+
 const SHORT: Duration = Duration::from_secs(60);
 /// A full office pack download can be slow on a small server.
 const LONG: Duration = Duration::from_secs(1800);
 
+/// Licence facts of one pack (`scripts/pack-licenses.txt`), shown for every pack.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct License {
+    /// SPDX expression of the software the pack installs.
+    pub spdx: String,
+    /// GPL/AGPL family.
+    pub copyleft: bool,
+    /// Installed from the server's own distribution (Praxi ships nothing and downloads nothing).
+    pub distro: bool,
+    pub source_url: String,
+    pub notice_url: String,
+    /// Pinned upstream version (empty for distribution packs).
+    pub version: String,
+}
+
+/// Parse `pack-licenses.txt`: `id|spdx|copyleft|distro|source_url|notice_url|version`.
+pub fn parse_licenses(text: &str) -> Vec<(String, License)> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('|').collect();
+            if f.len() != 7 || !valid_id(f[0]) {
+                return None;
+            }
+            Some((
+                f[0].to_owned(),
+                License {
+                    spdx: f[1].to_owned(),
+                    copyleft: f[2] == "1",
+                    distro: f[3] == "1",
+                    source_url: f[4].to_owned(),
+                    notice_url: f[5].to_owned(),
+                    version: f[6].to_owned(),
+                },
+            ))
+        })
+        .collect()
+}
+
+impl License {
+    /// Separate copyleft software downloaded from its author (not from the distribution): the
+    /// owner must acknowledge the notice before it is installed.
+    pub fn needs_acknowledgement(&self) -> bool {
+        self.copyleft && !self.distro
+    }
+}
+
 /// One catalog entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pack {
+    /// Licence facts; `None` only for a hand-parsed catalog (the shipped one has them all, a test
+    /// guards that). A pack without them is treated as needing acknowledgement.
+    pub license: Option<License>,
     pub id: String,
     /// Part of the wizard's "basic set" switch.
     pub base: bool,
@@ -55,6 +109,7 @@ pub fn parse_catalog(text: &str) -> Vec<Pack> {
             }
             let words = |s: &str| s.split_whitespace().map(str::to_owned).collect::<Vec<_>>();
             Some(Pack {
+                license: None,
                 id: f[0].to_owned(),
                 base: f[1] == "1",
                 removable: f[2] == "1",
@@ -70,9 +125,42 @@ fn valid_id(id: &str) -> bool {
     (2..=16).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_lowercase())
 }
 
-/// The catalog this build ships.
+/// The catalog this build ships, with each pack's licence facts attached.
 pub fn catalog() -> Vec<Pack> {
+    let licenses = parse_licenses(&remote::pack_licenses_txt());
     parse_catalog(&remote::packs_txt())
+        .into_iter()
+        .map(|mut p| {
+            p.license = licenses
+                .iter()
+                .find(|(id, _)| *id == p.id)
+                .map(|(_, l)| l.clone());
+            p
+        })
+        .collect()
+}
+
+impl Pack {
+    /// The licence notice must be acknowledged before this pack is installed.
+    pub fn needs_acknowledgement(&self) -> bool {
+        self.license
+            .as_ref()
+            .is_none_or(License::needs_acknowledgement)
+    }
+
+    /// May this pack be installed, given what the owner acknowledged?
+    pub fn installable(&self, acknowledged: bool) -> Result<(), PackError> {
+        if self.needs_acknowledgement() && !acknowledged {
+            Err(PackError::NeedsAcknowledgement)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// SHA-256 (hex) of the scrape add-on's pinned requirements: shown as its lockfile checksum.
+pub fn scrape_lock_sha() -> String {
+    sha_hex(remote::scrape_lock().as_bytes())
 }
 
 /// SHA-256 of the shipped catalog (lowercase hex): what the server verifies.
@@ -216,6 +304,8 @@ pub enum Blocked {
     Dependants,
     /// The server's software sources do not offer a package.
     Unavailable,
+    /// The web scraping add-on needs Python 3.10+ with venv (the "dev" tools pack).
+    NeedsPython,
 }
 
 /// Why a pack operation did not work, already in words the app can map to plain sentences.
@@ -233,6 +323,8 @@ pub enum PackError {
     Blocked(Blocked),
     /// SSH itself failed (login, host key, network).
     Connection(String),
+    /// A separate copyleft pack: the owner has not acknowledged its licence notice yet.
+    NeedsAcknowledgement,
 }
 
 impl PackError {
@@ -246,7 +338,9 @@ impl PackError {
             Self::Blocked(Blocked::Shared) => "blocked_shared",
             Self::Blocked(Blocked::Dependants) => "blocked_dependants",
             Self::Blocked(Blocked::Unavailable) => "unavailable",
+            Self::Blocked(Blocked::NeedsPython) => "needs_python",
             Self::Connection(_) => "connection",
+            Self::NeedsAcknowledgement => "needs_ack",
         }
     }
 
@@ -301,14 +395,25 @@ fn names(v: &str) -> Vec<String> {
 }
 
 impl Packs<'_> {
-    fn stage(&self) -> Result<(), PackError> {
-        self.transport
-            .upload(StageFile::Provision, remote::provision_sh().as_bytes())
-            .and_then(|()| {
+    fn stage(&self, pack: Option<&str>) -> Result<(), PackError> {
+        let go = || -> Result<(), TransportError> {
+            self.transport
+                .upload(StageFile::Provision, remote::provision_sh().as_bytes())?;
+            self.transport
+                .upload(StageFile::Packs, remote::packs_txt().as_bytes())?;
+            if pack == Some(SCRAPE) {
+                self.transport.upload(
+                    StageFile::ScrapeService,
+                    remote::scrape_service_py().as_bytes(),
+                )?;
                 self.transport
-                    .upload(StageFile::Packs, remote::packs_txt().as_bytes())
-            })
-            .map_err(|e| conn(&e))
+                    .upload(StageFile::ScrapeLock, remote::scrape_lock().as_bytes())?;
+                self.transport
+                    .upload(StageFile::ScrapeUnit, remote::scrape_unit().as_bytes())?;
+            }
+            Ok(())
+        };
+        go().map_err(|e| conn(&e))
     }
 
     fn cleanup(&self) {
@@ -331,11 +436,21 @@ impl Packs<'_> {
                 return Err(PackError::UnknownPack);
             }
             stdin.push_str(&format!("pack={id}\naction={}\n", action.word()));
+            if id == SCRAPE {
+                // The server re-hashes the staged files against these: only the app's own copies run.
+                for (key, text) in [
+                    ("scrape_service", remote::scrape_service_py()),
+                    ("scrape_lock", remote::scrape_lock()),
+                    ("scrape_unit", remote::scrape_unit()),
+                ] {
+                    stdin.push_str(&format!("{key}={}\n", sha_hex(text.as_bytes())));
+                }
+            }
         }
         if let Some(sha) = approved {
             stdin.push_str(&format!("plan={sha}\n"));
         }
-        self.stage()?;
+        self.stage(pack.map(|(id, _)| id))?;
         let out = self
             .transport
             .run(RemoteCmd::Provision(sub), stdin.as_bytes(), timeout);
@@ -395,6 +510,7 @@ impl Packs<'_> {
         let blocked = match (get(&kv, "blocked"), get(&kv, "unavailable")) {
             ("shared", _) => Some(Blocked::Shared),
             ("dependants", _) => Some(Blocked::Dependants),
+            (_, u) if !u.is_empty() && id == SCRAPE => Some(Blocked::NeedsPython),
             (_, u) if !u.is_empty() => Some(Blocked::Unavailable),
             _ => None,
         };
@@ -413,6 +529,25 @@ impl Packs<'_> {
     /// the [`Plan::list_sha`] the owner saw; the server refuses anything else, and there is no way
     /// to run without one.
     pub fn apply(&self, id: &str, action: Action, approved: &str) -> Result<(), PackError> {
+        self.apply_acknowledged(id, action, approved, false)
+    }
+
+    /// [`Packs::apply`] after the owner acknowledged the licence notice of a separate copyleft
+    /// pack. Without that, such a pack is refused here, whatever the caller above did.
+    pub fn apply_acknowledged(
+        &self,
+        id: &str,
+        action: Action,
+        approved: &str,
+        acknowledged: bool,
+    ) -> Result<(), PackError> {
+        if action == Action::Install {
+            let pack = catalog()
+                .into_iter()
+                .find(|p| p.id == id)
+                .ok_or(PackError::UnknownPack)?;
+            pack.installable(acknowledged)?;
+        }
         let sub = match action {
             Action::Install => Sub::PackInstall,
             Action::Remove => Sub::PackRemove,
@@ -433,6 +568,8 @@ fn classify(out: &Output) -> PackError {
         PackError::Blocked(Blocked::Shared)
     } else if err.contains("blocked: other software") {
         PackError::Blocked(Blocked::Dependants)
+    } else if err.contains("python 3.10 or newer") {
+        PackError::Blocked(Blocked::NeedsPython)
     } else if err.contains("not-available: package") {
         PackError::Blocked(Blocked::Unavailable)
     } else {
@@ -502,7 +639,7 @@ mod tests {
     fn the_shipped_catalog_is_sound_and_covers_the_agreed_tools() {
         let cat = catalog();
         let ids: Vec<&str> = cat.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, ["office", "docs", "ocr", "media", "dev"]);
+        assert_eq!(ids, ["office", "docs", "ocr", "media", "dev", "scrape"]);
         assert_eq!(base_ids(), ["office", "docs", "media", "dev"]);
         let has = |id: &str, pkg: &str| {
             cat.iter()
@@ -566,7 +703,8 @@ mod tests {
         // the fixed catalog is uploaded and the helper cleans up after itself
         assert_eq!(
             *t.uploaded.borrow(),
-            [StageFile::Provision, StageFile::Packs]
+            [StageFile::Provision, StageFile::Packs],
+            "the scrape files are staged only for the scrape pack"
         );
         assert_eq!(t.ran.borrow().last().unwrap().0, RemoteCmd::Cleanup);
     }
@@ -752,5 +890,116 @@ install
             p.apply("media", Action::Remove, &sha),
             Err(PackError::Failed(_))
         ));
+    }
+
+    #[test]
+    fn every_pack_has_licence_facts_and_nothing_copyleft_is_pinned_from_upstream() {
+        let cat = catalog();
+        for p in &cat {
+            let l = p.license.as_ref().unwrap_or_else(|| panic!("{} has no licence", p.id));
+            assert!(!l.spdx.is_empty(), "{}", p.id);
+            assert!(l.source_url.starts_with("https://"), "{}", p.id);
+            assert!(l.notice_url.starts_with("https://"), "{}", p.id);
+            // a pack Praxi pins and downloads from its author must say which version
+            assert_eq!(l.distro || !l.version.is_empty(), true, "{}", p.id);
+            // no strong-copyleft software is pulled from upstream by a pack today
+            if !l.distro {
+                assert!(!l.copyleft && !l.spdx.contains("GPL"), "{}", p.id);
+                assert!(!p.needs_acknowledgement(), "{}", p.id);
+            }
+        }
+        let scrape = cat.iter().find(|p| p.id == SCRAPE).unwrap();
+        let l = scrape.license.as_ref().unwrap();
+        assert_eq!((l.spdx.as_str(), l.distro), ("Apache-2.0", false));
+        // the pinned environment is hash-locked and holds no GPL/AGPL project
+        let lock = remote::scrape_lock();
+        assert!(lock.contains("--require-hashes") || lock.contains("--hash=sha256:"));
+        let pins = lock.lines().filter(|l| l.contains("==")).count();
+        assert!(pins >= 5 && lock.matches("--hash=sha256:").count() >= pins);
+        assert!(lock.contains(&format!("trafilatura=={}", l.version)));
+        for banned in ["firecrawl", "scrapy", "mysql-connector", "pyqt", "pymupdf", "ghostscript"] {
+            assert!(!lock.to_lowercase().contains(banned), "{banned}");
+        }
+        assert_eq!(scrape_lock_sha().len(), 64);
+    }
+
+    #[test]
+    fn a_separate_copyleft_pack_cannot_be_installed_without_the_acknowledgement() {
+        let text = "agpltool|AGPL-3.0-only|1|0|https://example.org/src|https://example.org/lic|1.2.3
+                    distrotool|GPL-2.0-only|1|1|https://example.org/src|https://example.org/lic|
+";
+        let ls = parse_licenses(text);
+        let mut pack = parse_catalog("agpltool|0|1|10|foo|foo
+").remove(0);
+        pack.license = Some(ls[0].1.clone());
+        assert_eq!(pack.installable(false), Err(PackError::NeedsAcknowledgement));
+        assert_eq!(pack.installable(true), Ok(()));
+        // GPL software that the server's own distribution ships needs no extra step
+        pack.license = Some(ls[1].1.clone());
+        assert_eq!(pack.installable(false), Ok(()));
+        // a pack with no licence record at all is never silently installable
+        pack.license = None;
+        assert_eq!(pack.installable(false), Err(PackError::NeedsAcknowledgement));
+    }
+
+    #[test]
+    fn the_scrape_pack_stages_its_files_and_sends_their_checksums_only_for_itself() {
+        let t = Fake::new(|c| match c {
+            RemoteCmd::Provision(Sub::PacksPlan) => ok("pack=scrape
+action=install
+missing=praxi-scrape
+unavailable=
+"),
+            _ => ok("pack_scrape=installed
+"),
+        });
+        let p = Packs { transport: &t };
+        let plan = p.plan(SCRAPE, Action::Install).unwrap();
+        assert_eq!(plan.packages, ["praxi-scrape"]);
+        p.apply(SCRAPE, Action::Install, &plan.list_sha).unwrap();
+        let up = t.uploaded.borrow();
+        for f in [StageFile::ScrapeService, StageFile::ScrapeLock, StageFile::ScrapeUnit] {
+            assert!(up.contains(&f), "{f:?}");
+        }
+        let ran = t.ran.borrow();
+        let (_, stdin) = ran
+            .iter()
+            .find(|(c, _)| *c == RemoteCmd::Provision(Sub::PackInstall))
+            .unwrap();
+        for key in ["scrape_service=", "scrape_lock=", "scrape_unit="] {
+            assert!(stdin.contains(key), "{key}");
+        }
+        // a python-less server is explained, not reported as "not offered by the software sources"
+        let t = Fake::new(|_| ok("pack=scrape
+action=install
+missing=
+unavailable=python3-venv
+"));
+        let plan = Packs { transport: &t }.plan(SCRAPE, Action::Install).unwrap();
+        assert_eq!(plan.blocked, Some(Blocked::NeedsPython));
+    }
+
+    #[test]
+    fn the_scrape_unit_is_hardened_and_the_script_verifies_hashes_and_never_runs_as_root_service() {
+        let unit = remote::scrape_unit();
+        for need in [
+            "NoNewPrivileges=yes",
+            "ProtectSystem=strict",
+            "ProtectHome=yes",
+            "PrivateTmp=yes",
+            "MemoryMax=",
+            "TasksMax=",
+            "IPAddressDeny=",
+            "IPAddressAllow=localhost",
+            "DynamicUser=yes",
+            "LoadCredential=token:/etc/praxi/scrape.token",
+        ] {
+            assert!(unit.contains(need), "{need}");
+        }
+        let sh = remote::provision_sh();
+        assert!(sh.contains("--require-hashes") && sh.contains("--only-binary=:all:"));
+        assert!(sh.contains("scrape_verify_staged"));
+        let svc = remote::scrape_service_py();
+        assert!(svc.contains("BIND_HOST = \"127.0.0.1\"") && svc.contains("X-Praxi-Token"));
     }
 }

@@ -1,0 +1,44 @@
+# Praxi web scraping add-on (SPDX-License-Identifier: Apache-2.0). Installed by the owner from
+# Settings > Computers; see docs/guide/web-scraping.md. Listens on 127.0.0.1 only.
+[Unit]
+Description=Praxi web scraping add-on (local page reader)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/praxi/packs/scrape/venv/bin/python -I /opt/praxi/packs/scrape/praxi_scrape.py
+Environment=PRAXI_SCRAPE_PORT=47811 PRAXI_SCRAPE_VERSION=1
+# The per-install token is handed over as a credential: only this service and root can read it.
+LoadCredential=token:/etc/praxi/scrape.token
+DynamicUser=yes
+Restart=on-failure
+RestartSec=5
+
+# Hardening: it only reads public web pages, so it gets nothing else.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+MemoryMax=512M
+TasksMax=64
+CPUQuota=100%
+# Defence in depth next to the address checks in the program itself: no private, link-local or
+# cloud-metadata ranges. The computer's own DNS servers are re-allowed by the install step
+# (a drop-in written from /etc/resolv.conf), because many clouds keep DNS on a private address.
+IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

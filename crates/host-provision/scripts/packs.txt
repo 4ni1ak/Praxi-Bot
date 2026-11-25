@@ -9,3 +9,7 @@ docs|1|1|150|pandoc poppler-utils qpdf ghostscript|pandoc pdftotext qpdf gs
 ocr|0|1|90|tesseract-ocr tesseract-ocr-eng tesseract-ocr-tur|tesseract
 media|1|1|250|ffmpeg imagemagick|ffmpeg magick/convert
 dev|1|0|250|git gh ripgrep jq sqlite3 zip unzip curl python3 python3-venv nodejs|git gh rg jq sqlite3 zip unzip curl python3 node
+# scrape: the optional web scraping add-on (a small local page reader in a pinned Python
+# environment, see packs/scrape/). It has no apt packages of its own: it needs Python from the
+# "dev" pack, and its install step is the fixed `scrape_*` functions in provision.sh.
+scrape|0|1|40||
