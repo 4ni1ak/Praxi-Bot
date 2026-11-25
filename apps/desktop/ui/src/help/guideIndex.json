@@ -660,6 +660,7 @@
       "What a schedule can run",
       "Webhooks",
       "Missed runs",
+      "Short bursts: use one run, not a schedule",
       "Approvals in unattended runs",
       "Letting a bot manage its own schedules"
     ],
