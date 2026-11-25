@@ -78,9 +78,10 @@ export const CARD_META: Record<string, CardMeta> = {
   helpers: { page: "models", advanced: true },
   providers: { page: "models", advanced: true, risk: "providers", learn: "provider" },
 
-  // Computers (Your bots): 2 basic
+  // Computers (Your bots): 3 basic
   target: { page: "where" },
   "my-computer": { page: "where" },
+  "bot-workspaces": { page: "where" },
 
   // Mail & web (Your bots): 2 basic
   "web-search": { page: "apps" },

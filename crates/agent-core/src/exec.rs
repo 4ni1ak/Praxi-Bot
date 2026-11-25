@@ -810,6 +810,15 @@ impl TurnExecutor {
             &Compaction::from_guards(&self.sh.cfg.guards, Some(&lookup), Some(&spill_dir)),
         )
         .map_err(xe)?;
+        if let Some(ws) = self.sh.bot_workspace_dir(ctx.bot_id)
+            && let Some(sys) = messages.first_mut()
+            && let Some(text) = sys.content.as_str()
+        {
+            sys.content = serde_json::Value::String(format!(
+                "{text}\n\nYour persistent workspace folder on this computer is: {}\nRelative file paths and shell commands start there. Standard subfolders: leads/, drafts/, downloads/, notes/, logs/.",
+                ws.display()
+            ));
+        }
         // What the turn's tool calls really did, so the answer cannot claim
         // more than happened. Placed before the closing note of a guard stop.
         // A discarded light reply (and its never-executed calls) is not part of what happened.

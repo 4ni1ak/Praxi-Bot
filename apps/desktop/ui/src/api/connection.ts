@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "../overlay/events";
 import { isMockMode, MOCK_BASE_URL } from "./mockMode";
 
+export { isTauriRuntime };
+
 /** What the shell hands us after starting / finding the daemon. */
 export interface Connection {
   base_url: string;
@@ -141,5 +143,12 @@ export async function openWebview2Download(): Promise<void> {
 export async function openLogFolder(): Promise<void> {
   if (isTauriRuntime() && !isMockMode()) {
     await invoke("open_log_folder");
+  }
+}
+
+/** Open the Praxi workspaces root or one bot's workspace subfolder in the OS file manager. */
+export async function openWorkspaceFolder(folderName?: string): Promise<void> {
+  if (isTauriRuntime() && !isMockMode()) {
+    await invoke("open_workspace_folder", { folderName: folderName ?? null });
   }
 }

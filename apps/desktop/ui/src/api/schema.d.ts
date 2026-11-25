@@ -908,6 +908,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{id}/workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browse or search files strictly within a bot's own workspace directory. */
+        get: operations["get_bot_workspace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{id}/workspace/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete a file or subfolder inside a bot's workspace, returning an undo token. */
+        post: operations["delete_bot_workspace_entry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{id}/workspace/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read or download a single file strictly within a bot's workspace. */
+        get: operations["get_bot_workspace_file"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{id}/workspace/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set or clear optional soft/hard disk limits (bytes) on a single bot's workspace. */
+        put: operations["put_bot_workspace_limits"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{id}/workspace/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rename a file or folder within the same parent directory inside a bot's workspace. */
+        post: operations["rename_bot_workspace_entry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{id}/workspace/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore a recently deleted workspace entry from trash (`undo_id`). */
+        post: operations["restore_bot_workspace_entry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/channels": {
         parameters: {
             query?: never;
@@ -4717,6 +4819,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Host disk stats, per-bot workspace usage, settings, and cleanup suggestions. */
+        get: operations["list_workspaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Safely remove expired files in `downloads/`, `logs/`, or daemon cache dirs. */
+        post: operations["run_workspace_cleanup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update workspace disk warning thresholds and cleanup retention policy. */
+        put: operations["put_workspace_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5230,6 +5383,51 @@ export interface components {
              */
             bot_id: string;
         };
+        /** @description Request body of `PUT /v1/bots/{id}/workspace/limits`. */
+        BotWorkspaceLimitsInput: {
+            /** Format: int64 */
+            hard_limit_bytes?: number | null;
+            /** Format: int64 */
+            soft_limit_bytes?: number | null;
+        };
+        /** @description Response of `GET /v1/bots/{id}/workspace`. */
+        BotWorkspaceListDto: {
+            /** Format: uuid */
+            bot_id: string;
+            bot_name: string;
+            current_path: string;
+            entries: components["schemas"]["WorkspaceEntryDto"][];
+            folder_name: string;
+            /** Format: int64 */
+            hard_limit_bytes?: number | null;
+            hard_limit_exceeded: boolean;
+            /** Format: int64 */
+            soft_limit_bytes?: number | null;
+            soft_limit_exceeded: boolean;
+            undo_items: components["schemas"]["WorkspaceTrashEntryDto"][];
+            /** Format: int64 */
+            used_bytes: number;
+            workspace_path?: string | null;
+        };
+        /** @description Summary of one bot's persistent workspace directory. */
+        BotWorkspaceSummaryDto: {
+            /** Format: uuid */
+            bot_id: string;
+            bot_name: string;
+            exists: boolean;
+            /** Format: int64 */
+            file_count: number;
+            folder_name: string;
+            /** Format: int64 */
+            hard_limit_bytes?: number | null;
+            hard_limit_exceeded: boolean;
+            /** Format: int64 */
+            soft_limit_bytes?: number | null;
+            soft_limit_exceeded: boolean;
+            /** Format: int64 */
+            used_bytes: number;
+            workspace_path?: string | null;
+        };
         /** @enum {string} */
         Button: "left" | "middle" | "right";
         Capabilities: {
@@ -5455,6 +5653,19 @@ export interface components {
         };
         /** @enum {string} */
         CheckpointLocationDto: "daemon_local";
+        /** @description One-click cleanup suggestion showing reclaimable space. */
+        CleanupSuggestionDto: {
+            /** Format: int64 */
+            file_count: number;
+            /** Format: int64 */
+            reclaimable_bytes: number;
+            target: components["schemas"]["CleanupTarget"];
+        };
+        /**
+         * @description Allowed safe cleanup targets (`POST /v1/workspaces/cleanup`).
+         * @enum {string}
+         */
+        CleanupTarget: "old_downloads" | "old_logs" | "all_old" | "daemon_cache";
         /** @description Result of "Clear cache". */
         ClearCacheDto: {
             /** Format: int64 */
@@ -6158,6 +6369,17 @@ export interface components {
          * @enum {string}
          */
         DiffOmittedReasonDto: "binary" | "too_large" | "run_budget_exceeded" | "directory" | "symlink" | "not_accessible" | "line_endings";
+        /** @description Host filesystem usage statistics for the workspaces disk. */
+        DiskStatsDto: {
+            /** Format: int64 */
+            available_bytes: number;
+            /** Format: int64 */
+            total_bytes: number;
+            /** Format: int64 */
+            used_bytes: number;
+            /** Format: int32 */
+            used_percent: number;
+        };
         /** @description `GET /v1/doctor` response. */
         DoctorReport: {
             /** @description Results, in display order. */
@@ -10771,6 +10993,136 @@ export interface components {
             /** Format: uuid */
             run_id: string;
         };
+        /** @description Largest item entry surfaced inside warnings and overview suggestions. */
+        WorkspaceBigItemDto: {
+            /** Format: uuid */
+            bot_id?: string | null;
+            bot_name?: string | null;
+            category: string;
+            folder_name: string;
+            /** Format: int64 */
+            modified_at_ms: number;
+            relative_path: string;
+            /** Format: int64 */
+            size_bytes: number;
+        };
+        /** @description Request body of `POST /v1/workspaces/cleanup`. */
+        WorkspaceCleanupInput: {
+            /** Format: uuid */
+            bot_id?: string | null;
+            target: components["schemas"]["CleanupTarget"];
+        };
+        /** @description Response of `POST /v1/workspaces/cleanup`. */
+        WorkspaceCleanupResultDto: {
+            /** Format: int64 */
+            deleted_files: number;
+            /** Format: int64 */
+            freed_bytes: number;
+            target: components["schemas"]["CleanupTarget"];
+        };
+        /** @description Request body of `POST /v1/bots/{id}/workspace/delete`. */
+        WorkspaceDeleteInput: {
+            path: string;
+        };
+        /** @description One file or directory inside a bot's workspace. */
+        WorkspaceEntryDto: {
+            kind: components["schemas"]["WorkspaceEntryKind"];
+            /** Format: int64 */
+            modified_at_ms: number;
+            name: string;
+            path: string;
+            preview_kind: components["schemas"]["WorkspacePreviewKind"];
+            /** Format: int64 */
+            size_bytes: number;
+        };
+        /**
+         * @description Kind of entry in a bot's workspace file browser.
+         * @enum {string}
+         */
+        WorkspaceEntryKind: "directory" | "file";
+        /**
+         * @description Preview kind supported safely by the UI.
+         * @enum {string}
+         */
+        WorkspacePreviewKind: "none" | "text" | "image";
+        /** @description Request body of `POST /v1/bots/{id}/workspace/rename`. */
+        WorkspaceRenameInput: {
+            new_name: string;
+            path: string;
+        };
+        /** @description Request body of `POST /v1/bots/{id}/workspace/restore`. */
+        WorkspaceRestoreInput: {
+            undo_id: string;
+        };
+        /** @description Editable disk-threshold and cleanup-age settings (`PUT /v1/workspaces/settings`). */
+        WorkspaceSettingsDto: {
+            /** Format: int32 */
+            downloads_max_age_days?: number | null;
+            /** Format: int32 */
+            logs_max_age_days?: number | null;
+            /** Format: int64 */
+            min_free_bytes: number;
+            /** Format: int32 */
+            warn_percent_1: number;
+            /** Format: int32 */
+            warn_percent_2: number;
+            /** Format: int32 */
+            warn_percent_3: number;
+        };
+        /** @description Request body of `PUT /v1/workspaces/settings`. */
+        WorkspaceSettingsInput: {
+            /** Format: int32 */
+            downloads_max_age_days?: number | null;
+            /** Format: int32 */
+            logs_max_age_days?: number | null;
+            /** Format: int64 */
+            min_free_bytes: number;
+            /** Format: int32 */
+            warn_percent_1: number;
+            /** Format: int32 */
+            warn_percent_2: number;
+            /** Format: int32 */
+            warn_percent_3: number;
+        };
+        /** @description Deleted entry held briefly in trash for Undo (`POST /v1/bots/{id}/workspace/restore`). */
+        WorkspaceTrashEntryDto: {
+            /** Format: int64 */
+            deleted_at_ms: number;
+            name: string;
+            original_path: string;
+            /** Format: int64 */
+            size_bytes: number;
+            undo_id: string;
+        };
+        /** @description Actionable disk/limit warning (`GET /v1/workspaces` and SSE `workspace_warning`). */
+        WorkspaceWarningDto: {
+            /** Format: int64 */
+            available_bytes?: number | null;
+            below_min_free: boolean;
+            /** Format: int32 */
+            disk_used_percent?: number | null;
+            largest_items: components["schemas"]["WorkspaceBigItemDto"][];
+            /** Format: int64 */
+            min_free_bytes: number;
+            severity: string;
+            soft_limit_bots: string[];
+            suggestions: components["schemas"]["CleanupSuggestionDto"][];
+            /** Format: int32 */
+            threshold_percent?: number | null;
+        };
+        /** @description Response of `GET /v1/workspaces`. */
+        WorkspacesOverviewDto: {
+            active_warning?: null | components["schemas"]["WorkspaceWarningDto"];
+            bots: components["schemas"]["BotWorkspaceSummaryDto"][];
+            configured: boolean;
+            disk?: null | components["schemas"]["DiskStatsDto"];
+            largest_items: components["schemas"]["WorkspaceBigItemDto"][];
+            root_path?: string | null;
+            settings: components["schemas"]["WorkspaceSettingsDto"];
+            suggestions: components["schemas"]["CleanupSuggestionDto"][];
+            /** Format: int64 */
+            total_workspace_bytes: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -13377,6 +13729,325 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_bot_workspace: {
+        parameters: {
+            query?: {
+                /** @description Relative subfolder path inside the bot workspace */
+                path?: string;
+                /** @description Case-insensitive filename search filter */
+                q?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotWorkspaceListDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_bot_workspace_entry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceDeleteInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceTrashEntryDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_bot_workspace_file: {
+        parameters: {
+            query: {
+                /** @description Relative file path inside the bot workspace */
+                path: string;
+                /** @description When true, send as attachment download */
+                download?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description File bytes with nosniff and sandbox headers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_bot_workspace_limits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BotWorkspaceLimitsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotWorkspaceSummaryDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    rename_bot_workspace_entry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceRenameInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceEntryDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    restore_bot_workspace_entry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceRestoreInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceEntryDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22081,6 +22752,119 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_workspaces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspacesOverviewDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    run_workspace_cleanup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceCleanupInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceCleanupResultDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_workspace_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceSettingsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceSettingsDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -821,6 +821,98 @@ fn open_log_folder(window: Window) -> Result<(), String> {
     open::that(&dir).map_err(|e| format!("cannot open {} ({e})", dir.display()))
 }
 
+fn is_safe_workspace_folder_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > 80 || name == "." || name == ".." {
+        return false;
+    }
+    if name.ends_with('.') || name.ends_with(' ') {
+        return false;
+    }
+    if name.chars().any(|c| {
+        c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+    }) {
+        return false;
+    }
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        && !((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit())
+}
+
+#[cfg(windows)]
+fn is_reparse_point_dir(meta: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    meta.file_attributes() & 0x0400 != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point_dir(_meta: &std::fs::Metadata) -> bool {
+    false
+}
+
+/// Open either the Praxi workspaces root (`Documents/Praxi`) or a single bot
+/// workspace folder under it in the OS file manager. Main window only.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn open_workspace_folder(
+    app: tauri::AppHandle,
+    window: Window,
+    folder_name: Option<String>,
+) -> Result<(), String> {
+    require_window(&window, MAIN_ONLY)?;
+    let root = if let Some(override_dir) = std::env::var_os("BOT_WORKSPACES_DIR")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+    {
+        override_dir
+    } else {
+        app.path()
+            .document_dir()
+            .map_err(|_| "documents folder unavailable".to_owned())?
+            .join("Praxi")
+    };
+    if let Ok(meta) = std::fs::symlink_metadata(&root) {
+        if meta.file_type().is_symlink() || is_reparse_point_dir(&meta) || !meta.is_dir() {
+            return Err("workspaces folder is not a plain directory".to_owned());
+        }
+    } else {
+        std::fs::create_dir_all(&root).map_err(|_| "workspaces folder unavailable".to_owned())?;
+    }
+
+    let target = match folder_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(name) => {
+            if !is_safe_workspace_folder_name(name) {
+                return Err("invalid workspace folder name".to_owned());
+            }
+            let dir = root.join(name);
+            if let Ok(meta) = std::fs::symlink_metadata(&dir) {
+                if meta.file_type().is_symlink() || is_reparse_point_dir(&meta) || !meta.is_dir() {
+                    return Err("bot workspace is not a plain directory".to_owned());
+                }
+            } else {
+                std::fs::create_dir(&dir)
+                    .map_err(|_| "bot workspace folder unavailable".to_owned())?;
+            }
+            let root_canon = std::fs::canonicalize(&root)
+                .map_err(|_| "workspaces folder unavailable".to_owned())?;
+            let dir_canon = std::fs::canonicalize(&dir)
+                .map_err(|_| "bot workspace folder unavailable".to_owned())?;
+            if !dir_canon.starts_with(&root_canon) || dir_canon == root_canon {
+                return Err("bot workspace path is unsafe".to_owned());
+            }
+            dir
+        }
+        None => root,
+    };
+
+    open::that(&target).map_err(|e| format!("cannot open {} ({e})", target.display()))
+}
+
 /// First-run prerequisite check for the start-up screen: `WebView2`, the service file, the data
 /// folder, the clock and the port. Read-only and offline. Main window only.
 #[tauri::command]
@@ -1263,6 +1355,7 @@ pub fn run() {
             daemon_restart,
             daemon_diagnostics,
             open_log_folder,
+            open_workspace_folder,
             prereq_check,
             open_webview_download,
             providers_cli,
@@ -1555,6 +1648,7 @@ mod acl_tests {
         ("daemon_restart", "MAIN_ONLY"),
         ("daemon_diagnostics", "MAIN_ONLY"),
         ("open_log_folder", "MAIN_ONLY"),
+        ("open_workspace_folder", "MAIN_ONLY"),
         ("prereq_check", "MAIN_ONLY"),
         ("open_webview_download", "MAIN_ONLY"),
         ("providers_cli", "MAIN_ONLY"),
@@ -1779,6 +1873,7 @@ mod acl_tests {
                 "daemon_restart",
                 "daemon_diagnostics",
                 "open_log_folder",
+                "open_workspace_folder",
                 "prereq_check",
                 "open_webview_download",
                 "simulate_bot_run",
@@ -1879,6 +1974,18 @@ mod acl_tests {
         let config = tauri_conf();
         for window in config["app"]["windows"].as_array().expect("windows") {
             assert_ne!(window["useHttpsScheme"], serde_json::json!(true));
+        }
+    }
+
+    #[test]
+    fn workspace_folder_name_validation_rejects_traversal_and_reserved_names() {
+        assert!(is_safe_workspace_folder_name("Atlas"));
+        assert!(is_safe_workspace_folder_name("research-bot_1"));
+        for bad in [
+            "", ".", "..", "a/b", "a\\b", "C:", "Atlas.", "Atlas ", "CON", "aux.txt", "COM1",
+            "lpt9",
+        ] {
+            assert!(!is_safe_workspace_folder_name(bad), "should reject {bad:?}");
         }
     }
 }

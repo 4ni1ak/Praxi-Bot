@@ -371,6 +371,18 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
     if check_path == "/v1/data-usage" || check_path.starts_with("/v1/data-usage/") {
         return Some("data folder sizes and Clear cache are a host-local owner action");
     }
+    if check_path == "/v1/workspaces" || check_path.starts_with("/v1/workspaces/") {
+        return Some("workspace storage settings and cleanup are a host-local owner action");
+    }
+    if check_path
+        .strip_prefix("/v1/bots/")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(bot, rest)| {
+            !bot.is_empty() && (rest == "workspace" || rest.starts_with("workspace/"))
+        })
+    {
+        return Some("bot workspace files and limits are managed by the local owner only");
+    }
     if under(check_path, "/v1/embeddings") || under(check_path, "/v1/decision-helper") {
         return Some("embedding providers and their keys are a host-local owner setting");
     }

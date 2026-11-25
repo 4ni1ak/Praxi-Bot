@@ -76,12 +76,14 @@ pub struct ShellTool {
     /// Ledger of untrusted-origin files: what the command fetches (`git clone`, `curl`, `wget`,
     /// `unzip` ...) is recorded before it runs.
     provenance: Option<Arc<dyn crate::provenance::Provenance>>,
+    /// Per-bot workspace lookup so `cwd` defaults to the bot's workspace when omitted.
+    access: Option<Arc<dyn crate::FsAccessProvider>>,
 }
 
 /// Build the shell tool; `data_dir` hosts spill files.
 #[must_use]
 pub fn tool(data_dir: &Path) -> Arc<dyn Tool> {
-    tool_with_provenance(data_dir, None)
+    tool_with_provenance_and_access(data_dir, None, None)
 }
 
 /// [`tool`] that records what a command fetches in the provenance ledger.
@@ -90,6 +92,16 @@ pub fn tool_with_provenance(
     data_dir: &Path,
     provenance: Option<Arc<dyn crate::provenance::Provenance>>,
 ) -> Arc<dyn Tool> {
+    tool_with_provenance_and_access(data_dir, provenance, None)
+}
+
+/// [`tool_with_provenance`] that defaults `cwd` to the calling bot's workspace.
+#[must_use]
+pub fn tool_with_provenance_and_access(
+    data_dir: &Path,
+    provenance: Option<Arc<dyn crate::provenance::Provenance>>,
+    access: Option<Arc<dyn crate::FsAccessProvider>>,
+) -> Arc<dyn Tool> {
     Arc::new(ShellTool {
         spec: spec(
             "shell_run",
@@ -97,7 +109,7 @@ pub fn tool_with_provenance(
             json!({"type":"object","properties":{
                 "command":{"type":"string","description":"The command line, passed to the shell as one argument."},
                 "shell":{"type":"string","enum":["powershell","cmd","bash","sh"],"description":"Default: powershell on Windows, sh elsewhere."},
-                "cwd":{"type":"string","description":"Working directory."},
+                "cwd":{"type":"string","description":"Working directory (defaults to the bot's workspace)."},
                 "timeout":{"type":"integer","minimum":1,"maximum":MAX_TIMEOUT_SECS,"description":"Seconds before the command is killed (default 60)."}
             },"required":["command"]}),
             Effect::Destructive,
@@ -105,6 +117,7 @@ pub fn tool_with_provenance(
         ),
         spill_dir: data_dir.join("spill"),
         provenance,
+        access,
     })
 }
 
@@ -415,22 +428,24 @@ impl Tool for ShellTool {
         if i.command.trim().is_empty() {
             return Err(ToolError::InvalidInput("command is empty".into()));
         }
-        let cwd = i
-            .cwd
+        let default_ws = self
+            .access
             .as_ref()
-            .map(PathBuf::from)
-            .or_else(|| std::env::current_dir().ok());
-        let fetched: Vec<_> = cwd
-            .iter()
-            .flat_map(|cwd| crate::provenance::shell_fetch_targets(&i.command, cwd))
-            .collect();
+            .and_then(|a| a.bot_workspace(ctx.bot_id.as_deref()));
+        let effective_cwd = match i.cwd.as_ref().map(PathBuf::from) {
+            Some(p) if p.is_relative() => default_ws.as_ref().map_or(p.clone(), |ws| ws.join(&p)),
+            Some(p) => p,
+            None => default_ws
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
+        };
+        let fetched: Vec<_> = crate::provenance::shell_fetch_targets(&i.command, &effective_cwd);
         let fetch_marks = FetchMarks(self.provenance.as_deref(), fetched);
         fetch_marks.record();
         let kind = i.shell.unwrap_or_else(ShellKind::default_for_host);
         let timeout = Duration::from_secs(resolved_timeout_secs(i.timeout));
         let mut cmd = build_command(kind, &i.command);
-        if let Some(cwd) = &i.cwd {
-            cmd.current_dir(cwd);
+        if i.cwd.is_some() || self.access.is_some() {
+            cmd.current_dir(&effective_cwd);
         }
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())

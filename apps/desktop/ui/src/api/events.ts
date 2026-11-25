@@ -120,6 +120,21 @@ export function parseSseEnvelope(
         nextCursor: currentCursor
       };
     }
+    if (m.event === "workspace_warning") {
+      return {
+        envelope: {
+          v: 1,
+          seq: 0,
+          gseq: currentCursor ?? 0,
+          ts_ms: nowMs,
+          event: {
+            type: "workspace_warning",
+            warning: raw as unknown as import("./types").WorkspaceWarningDto
+          }
+        },
+        nextCursor: currentCursor
+      };
+    }
     const env = raw as unknown as {
       v: number;
       seq: number;

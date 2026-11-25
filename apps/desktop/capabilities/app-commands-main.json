@@ -26,6 +26,7 @@
     "allow-daemon-restart",
     "allow-daemon-diagnostics",
     "allow-open-log-folder",
+    "allow-open-workspace-folder",
     "allow-prereq-check",
     "allow-open-webview-download",
     "allow-providers-cli",

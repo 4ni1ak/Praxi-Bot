@@ -1139,11 +1139,14 @@ if grep -q '^BOT_SECRETS_PASSPHRASE=' "${NODE_ENV_FILE}"; then
 fi
 chown root:"${SVC_USER}" "${ENV_FILE}" "${NODE_ENV_FILE}"
 chmod 0640 "${ENV_FILE}" "${NODE_ENV_FILE}"
+mkdir -p /var/lib/praxi-work
+chown "${SVC_USER}:${SVC_USER}" /var/lib/praxi-work
+chmod 0755 /var/lib/praxi-work
 
 # ------------------------------------------------------------------ units
 HARDENING="NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=${DATA_DIR}
+ReadWritePaths=${DATA_DIR} /var/lib/praxi-work
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true

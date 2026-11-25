@@ -71,6 +71,7 @@ mod provider_models;
 mod secret_request_routes;
 mod site_rule_routes;
 pub mod trusted_folders;
+pub(crate) mod workspace_routes;
 pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod bot_limits_routes;
 mod data_routes;
@@ -314,6 +315,8 @@ struct Inner {
     memory: parking_lot::Mutex<Option<Arc<memory_store::MemoryStore>>>,
     /// A Basic/Smart recall switch (re-index) is running.
     memory_switch: std::sync::atomic::AtomicBool,
+    /// Shared root directory for per-bot persistent workspaces (`None` when disabled/unconfigured).
+    workspaces_root: parking_lot::RwLock<Option<PathBuf>>,
     /// Serialises `PUT /v1/policy` (read-modify-write of memory + `policy.json`).
     policy_lock: parking_lot::Mutex<()>,
     /// Target sets of `POST /v1/runs/stop` (see `stop`).
@@ -506,6 +509,11 @@ impl AppState {
             schedules: parking_lot::Mutex::new(None),
             memory: parking_lot::Mutex::new(None),
             memory_switch: std::sync::atomic::AtomicBool::new(false),
+            workspaces_root: parking_lot::RwLock::new(
+                std::env::var_os(builtin_tools::workspace::WORKSPACES_DIR_ENV)
+                    .filter(|v| !v.is_empty())
+                    .map(PathBuf::from),
+            ),
             policy_lock: parking_lot::Mutex::new(()),
             stops: parking_lot::Mutex::new(stop::StopBook::default()),
             #[cfg(test)]
@@ -551,6 +559,26 @@ impl AppState {
             weak.upgrade()
                 .is_some_and(|s| s.leader().config().mode == host::HostMode::Host)
         });
+    }
+
+    /// Configure the shared workspaces root directory on both daemon state and agent loop.
+    pub fn set_workspaces_root(&self, root: Option<PathBuf>) {
+        *self.0.workspaces_root.write() = root.clone();
+        self.agent().set_workspaces_root(root);
+    }
+
+    /// Current shared workspaces root directory, if enabled.
+    #[must_use]
+    pub fn workspaces_root(&self) -> Option<PathBuf> {
+        self.0.workspaces_root.read().clone()
+    }
+
+    /// Subscribe to runtime workspace disk/limit warnings.
+    #[must_use]
+    pub(crate) fn subscribe_workspace_warnings(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<agent_core::WorkspaceWarningEvent> {
+        self.agent().subscribe_workspace_warnings()
     }
 
     /// Let `/v1/providers` list the catalog and reload the providers (call
@@ -1323,6 +1351,39 @@ fn api_routes() -> Router<AppState> {
         .route(
             "/v1/bots/{bot}/files",
             get(file_access::get_files).put(file_access::put_files),
+        )
+        .route("/v1/workspaces", get(workspace_routes::list_workspaces))
+        .route(
+            "/v1/workspaces/settings",
+            put(workspace_routes::put_workspace_settings),
+        )
+        .route(
+            "/v1/workspaces/cleanup",
+            post(workspace_routes::run_workspace_cleanup),
+        )
+        .route(
+            "/v1/bots/{id}/workspace",
+            get(workspace_routes::get_bot_workspace),
+        )
+        .route(
+            "/v1/bots/{id}/workspace/file",
+            get(workspace_routes::get_bot_workspace_file),
+        )
+        .route(
+            "/v1/bots/{id}/workspace/rename",
+            post(workspace_routes::rename_bot_workspace_entry),
+        )
+        .route(
+            "/v1/bots/{id}/workspace/delete",
+            post(workspace_routes::delete_bot_workspace_entry),
+        )
+        .route(
+            "/v1/bots/{id}/workspace/restore",
+            post(workspace_routes::restore_bot_workspace_entry),
+        )
+        .route(
+            "/v1/bots/{id}/workspace/limits",
+            put(workspace_routes::put_bot_workspace_limits),
         )
         .route(
             "/v1/bots/{bot}/knowledge/sources",

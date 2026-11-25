@@ -13,8 +13,8 @@ use uuid::Uuid;
 use crate::error::{Result, StorageError};
 use crate::migrate;
 use crate::records::{
-    Approval, AuditEntry, Bot, BotPatch, BotSkillAssignment, Chat, ChatFlags, EventIndexRow,
-    Message, Run, RunStep, SkillAssignmentMode, User,
+    Approval, AuditEntry, Bot, BotPatch, BotSkillAssignment, BotWorkspaceRecord, Chat, ChatFlags,
+    EventIndexRow, Message, Run, RunStep, SkillAssignmentMode, User, WorkspaceSettingsRecord,
 };
 
 /// How many pre-upgrade database copies are kept under `<data_dir>/backups`.
@@ -512,6 +512,7 @@ impl Storage {
         let bid = id.to_string();
         tx.execute("DELETE FROM bot_skill_assignment WHERE bot_id = ?1", [&bid])?;
         tx.execute("DELETE FROM bot_spend_limits WHERE bot_id = ?1", [&bid])?;
+        tx.execute("DELETE FROM bot_workspaces WHERE bot_id = ?1", [&bid])?;
         let n = tx.execute("DELETE FROM bots WHERE id = ?1", [&bid])?;
         if n > 0 {
             cleanup()?;
@@ -1980,6 +1981,166 @@ impl Storage {
         Ok(())
     }
 
+    // ---- bot_workspaces & workspace_settings ----
+
+    /// Fetch a bot's persisted workspace mapping and limits, if created yet.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn get_bot_workspace(&self, bot_id: BotId) -> Result<Option<BotWorkspaceRecord>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT bot_id, user_id, folder_name, soft_limit_bytes, hard_limit_bytes, created_at_ms, updated_at_ms FROM bot_workspaces WHERE bot_id = ?1",
+                [bot_id.to_string()],
+                bot_workspace_row,
+            )
+            .optional()?)
+    }
+
+    /// List all persisted bot workspace records for `user_id`.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn list_bot_workspaces(&self, user_id: UserId) -> Result<Vec<BotWorkspaceRecord>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
+            "SELECT bot_id, user_id, folder_name, soft_limit_bytes, hard_limit_bytes, created_at_ms, updated_at_ms FROM bot_workspaces WHERE user_id = ?1 ORDER BY created_at_ms, bot_id",
+        )?;
+        let rows = st.query_map([user_id.to_string()], bot_workspace_row)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Return the existing workspace record for `bot_id`, or create one with a
+    /// unique `folder_name` derived from `preferred_folder_name`.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors or when `bot_id` does not exist.
+    pub fn ensure_bot_workspace(
+        &self,
+        user_id: UserId,
+        bot_id: BotId,
+        preferred_folder_name: &str,
+    ) -> Result<BotWorkspaceRecord> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let record = ensure_bot_workspace_tx(&tx, user_id, bot_id, preferred_folder_name)?;
+        tx.commit()?;
+        Ok(record)
+    }
+
+    /// Update a bot's optional soft/hard workspace limits and record an audit
+    /// entry in the same transaction.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors or when `bot_id` does not exist.
+    pub fn set_bot_workspace_limits(
+        &self,
+        user_id: UserId,
+        bot_id: BotId,
+        preferred_folder_name: &str,
+        soft_limit_bytes: Option<u64>,
+        hard_limit_bytes: Option<u64>,
+        audit_detail: &Value,
+    ) -> Result<BotWorkspaceRecord> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let mut record = ensure_bot_workspace_tx(&tx, user_id, bot_id, preferred_folder_name)?;
+        let now = now_ms();
+        let soft = soft_limit_bytes.map(|v| i64::try_from(v).unwrap_or(i64::MAX));
+        let hard = hard_limit_bytes.map(|v| i64::try_from(v).unwrap_or(i64::MAX));
+        tx.execute(
+            "UPDATE bot_workspaces SET soft_limit_bytes = ?2, hard_limit_bytes = ?3, updated_at_ms = ?4 WHERE bot_id = ?1",
+            params![bot_id.to_string(), soft, hard, now],
+        )?;
+        tx.execute(
+            "INSERT INTO audit_log (user_id, run_id, actor, action, detail_json, ts_ms) VALUES (?1, NULL, 'owner', 'bot.workspace_limits_changed', ?2, ?3)",
+            params![user_id.to_string(), serde_json::to_string(audit_detail)?, now],
+        )?;
+        tx.commit()?;
+        record.soft_limit_bytes = soft_limit_bytes;
+        record.hard_limit_bytes = hard_limit_bytes;
+        record.updated_at_ms = now;
+        Ok(record)
+    }
+
+    /// Host disk warning thresholds and workspace cleanup settings for `user_id`.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn get_workspace_settings(&self, user_id: UserId) -> Result<WorkspaceSettingsRecord> {
+        let row = self
+            .conn()
+            .query_row(
+                "SELECT warn_percent_1, warn_percent_2, warn_percent_3, min_free_bytes, downloads_max_age_days, logs_max_age_days, updated_at_ms FROM workspace_settings WHERE user_id = ?1",
+                [user_id.to_string()],
+                |r| {
+                    let p1: i64 = r.get(0)?;
+                    let p2: i64 = r.get(1)?;
+                    let p3: i64 = r.get(2)?;
+                    let min_free: i64 = r.get(3)?;
+                    let dl_days: Option<i64> = r.get(4)?;
+                    let log_days: Option<i64> = r.get(5)?;
+                    let updated: i64 = r.get(6)?;
+                    Ok(WorkspaceSettingsRecord {
+                        warn_percent_1: u8::try_from(p1).unwrap_or(80),
+                        warn_percent_2: u8::try_from(p2).unwrap_or(90),
+                        warn_percent_3: u8::try_from(p3).unwrap_or(95),
+                        min_free_bytes: u64::try_from(min_free).unwrap_or(0),
+                        downloads_max_age_days: dl_days.and_then(|d| u32::try_from(d).ok()),
+                        logs_max_age_days: log_days.and_then(|d| u32::try_from(d).ok()),
+                        updated_at_ms: updated,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row.unwrap_or_default())
+    }
+
+    /// Save host disk warning thresholds and workspace cleanup policy with an
+    /// audit record in the same transaction.
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn set_workspace_settings(
+        &self,
+        user_id: UserId,
+        settings: &WorkspaceSettingsRecord,
+        audit_detail: &Value,
+    ) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let now = now_ms();
+        tx.execute(
+            "INSERT INTO workspace_settings (user_id, warn_percent_1, warn_percent_2, warn_percent_3, min_free_bytes, downloads_max_age_days, logs_max_age_days, updated_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(user_id) DO UPDATE SET
+               warn_percent_1 = excluded.warn_percent_1,
+               warn_percent_2 = excluded.warn_percent_2,
+               warn_percent_3 = excluded.warn_percent_3,
+               min_free_bytes = excluded.min_free_bytes,
+               downloads_max_age_days = excluded.downloads_max_age_days,
+               logs_max_age_days = excluded.logs_max_age_days,
+               updated_at_ms = excluded.updated_at_ms",
+            params![
+                user_id.to_string(),
+                i64::from(settings.warn_percent_1),
+                i64::from(settings.warn_percent_2),
+                i64::from(settings.warn_percent_3),
+                i64::try_from(settings.min_free_bytes).unwrap_or(i64::MAX),
+                settings.downloads_max_age_days.map(i64::from),
+                settings.logs_max_age_days.map(i64::from),
+                now,
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO audit_log (user_id, run_id, actor, action, detail_json, ts_ms) VALUES (?1, NULL, 'owner', 'workspace.settings_changed', ?2, ?3)",
+            params![user_id.to_string(), serde_json::to_string(audit_detail)?, now],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Largest `prompt_tokens` any usage row of one run recorded.
     ///
     /// # Errors
@@ -2357,6 +2518,76 @@ fn audit_row(r: &Row<'_>) -> rusqlite::Result<AuditEntry> {
         action: r.get(4)?,
         detail: json_at(r, 5)?,
         ts_ms: r.get(6)?,
+    })
+}
+
+fn bot_workspace_row(r: &Row<'_>) -> rusqlite::Result<BotWorkspaceRecord> {
+    let soft: Option<i64> = r.get(3)?;
+    let hard: Option<i64> = r.get(4)?;
+    Ok(BotWorkspaceRecord {
+        bot_id: BotId(uuid_at(r, 0)?),
+        user_id: UserId(uuid_at(r, 1)?),
+        folder_name: r.get(2)?,
+        soft_limit_bytes: soft.and_then(|v| u64::try_from(v).ok()),
+        hard_limit_bytes: hard.and_then(|v| u64::try_from(v).ok()),
+        created_at_ms: r.get(5)?,
+        updated_at_ms: r.get(6)?,
+    })
+}
+
+fn ensure_bot_workspace_tx(
+    tx: &rusqlite::Transaction<'_>,
+    user_id: UserId,
+    bot_id: BotId,
+    preferred_folder_name: &str,
+) -> Result<BotWorkspaceRecord> {
+    if let Some(existing) = tx
+        .query_row(
+            "SELECT bot_id, user_id, folder_name, soft_limit_bytes, hard_limit_bytes, created_at_ms, updated_at_ms FROM bot_workspaces WHERE bot_id = ?1",
+            [bot_id.to_string()],
+            bot_workspace_row,
+        )
+        .optional()?
+    {
+        return Ok(existing);
+    }
+    let mut existing_folders: Vec<String> = {
+        let mut st = tx.prepare("SELECT folder_name FROM bot_workspaces WHERE user_id = ?1")?;
+        let rows = st.query_map([user_id.to_string()], |r| r.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for s in &mut existing_folders {
+        *s = s.to_ascii_lowercase();
+    }
+    let base = if preferred_folder_name.is_empty() {
+        "bot"
+    } else {
+        preferred_folder_name
+    };
+    let short_id = bot_id.0.simple().to_string();
+    let short8 = &short_id[..8];
+    let mut candidate = base.to_owned();
+    if existing_folders.contains(&candidate.to_ascii_lowercase()) {
+        candidate = format!("{base}-{short8}");
+    }
+    let mut suffix = 2u32;
+    while existing_folders.contains(&candidate.to_ascii_lowercase()) {
+        candidate = format!("{base}-{short8}-{suffix}");
+        suffix += 1;
+    }
+    let now = now_ms();
+    tx.execute(
+        "INSERT INTO bot_workspaces (bot_id, user_id, folder_name, soft_limit_bytes, hard_limit_bytes, created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?4)",
+        params![bot_id.to_string(), user_id.to_string(), candidate, now],
+    )?;
+    Ok(BotWorkspaceRecord {
+        bot_id,
+        user_id,
+        folder_name: candidate,
+        soft_limit_bytes: None,
+        hard_limit_bytes: None,
+        created_at_ms: now,
+        updated_at_ms: now,
     })
 }
 

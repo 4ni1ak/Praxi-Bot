@@ -64,6 +64,7 @@ use crate::voice;
 use crate::voice_routes;
 use crate::web;
 use crate::web_routes;
+use crate::workspace_routes;
 
 struct Security;
 
@@ -412,6 +413,15 @@ impl Modify for Security {
         web_routes::get_web_search,
         web_routes::test_web_search,
         web_routes::update_web_search,
+        workspace_routes::delete_bot_workspace_entry,
+        workspace_routes::get_bot_workspace,
+        workspace_routes::get_bot_workspace_file,
+        workspace_routes::list_workspaces,
+        workspace_routes::put_bot_workspace_limits,
+        workspace_routes::put_workspace_settings,
+        workspace_routes::rename_bot_workspace_entry,
+        workspace_routes::restore_bot_workspace_entry,
+        workspace_routes::run_workspace_cleanup,
     ),
     components(schemas(
         ::live_view::FrameMetadata,
@@ -810,6 +820,26 @@ impl Modify for Security {
         web::WebSearchConfigInput,
         web::WebSearchTestInput,
         web::WebSearchTestReport,
+        workspace_routes::BotWorkspaceLimitsInput,
+        workspace_routes::BotWorkspaceListDto,
+        workspace_routes::BotWorkspaceSummaryDto,
+        workspace_routes::CleanupSuggestionDto,
+        workspace_routes::CleanupTarget,
+        workspace_routes::DiskStatsDto,
+        workspace_routes::WorkspaceBigItemDto,
+        workspace_routes::WorkspaceCleanupInput,
+        workspace_routes::WorkspaceCleanupResultDto,
+        workspace_routes::WorkspaceDeleteInput,
+        workspace_routes::WorkspaceEntryDto,
+        workspace_routes::WorkspaceEntryKind,
+        workspace_routes::WorkspacePreviewKind,
+        workspace_routes::WorkspaceRenameInput,
+        workspace_routes::WorkspaceRestoreInput,
+        workspace_routes::WorkspaceSettingsDto,
+        workspace_routes::WorkspaceSettingsInput,
+        workspace_routes::WorkspaceTrashEntryDto,
+        workspace_routes::WorkspaceWarningDto,
+        workspace_routes::WorkspacesOverviewDto,
     )),
     modifiers(&Security),
     tags(
@@ -838,6 +868,7 @@ impl Modify for Security {
         (name = "view"),
         (name = "voice"),
         (name = "web"),
+        (name = "workspaces"),
         (name = "connection-test"),
     )
 )]

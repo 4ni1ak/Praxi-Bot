@@ -25,6 +25,7 @@ const LOCAL_ONLY: Record<string, string> = {
   "components/AccountMenu.tsx": "arrow keys inside the account menu (covered by popup menu rows)",
   "components/BotEditorFields.tsx": "Enter inside a single field",
   "components/BotPanel.tsx": "arrow keys on the panel tabs",
+  "components/BotPanelWorkspace.tsx": "Enter commits and Escape cancels inline rename and closes preview modal",
   "components/CharacterPicker.tsx": "arrow keys inside the bot shape and color pickers",
   "components/ChatList.tsx": "Enter/Escape in inline rename and arrow keys on chat menu trigger",
   "components/HandoverCard.tsx": "Esc cancels the one-time code card (the card shows a Cancel button)",

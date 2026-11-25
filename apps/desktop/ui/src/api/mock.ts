@@ -49,7 +49,20 @@ import type {
   ViewHeartbeat,
   WebSearchConfig,
   WebSearchConfigInput,
-  WebSearchTestInput
+  WebSearchTestInput,
+  BotWorkspaceLimitsInput,
+  BotWorkspaceListDto,
+  BotWorkspaceSummaryDto,
+  WorkspaceCleanupInput,
+  WorkspaceCleanupResultDto,
+  WorkspaceDeleteInput,
+  WorkspaceEntryDto,
+  WorkspaceRenameInput,
+  WorkspaceRestoreInput,
+  WorkspaceSettingsDto,
+  WorkspaceSettingsInput,
+  WorkspacesOverviewDto,
+  WorkspaceTrashEntryDto
 } from "./types.ts";
 import type {
   KnowledgeSource,
@@ -934,6 +947,80 @@ export class MockApiClient extends ApiClient {
   >([[NOVA, { mode: "selected", names: ["meeting-notes", "removed-skill"], version: 1 }]]);
   private botSkillsVersion = 1;
 
+  private workspaceSettings: WorkspaceSettingsDto = {
+    warn_percent_1: 80,
+    warn_percent_2: 90,
+    warn_percent_3: 95,
+    min_free_bytes: 5 * 1024 * 1024 * 1024,
+    downloads_max_age_days: 30,
+    logs_max_age_days: 30
+  };
+
+  private botWorkspaceLimits = new Map<
+    string,
+    { soft_limit_bytes: number | null; hard_limit_bytes: number | null }
+  >();
+
+  private workspaceFiles = new Map<
+    string,
+    Array<{
+      path: string;
+      kind: "directory" | "file";
+      size_bytes: number;
+      modified_at_ms: number;
+      content?: string;
+    }>
+  >([
+    [
+      ATLAS,
+      [
+        { path: "leads", kind: "directory", size_bytes: 0, modified_at_ms: NOW - 86_400_000 },
+        { path: "drafts", kind: "directory", size_bytes: 0, modified_at_ms: NOW - 86_400_000 },
+        { path: "downloads", kind: "directory", size_bytes: 0, modified_at_ms: NOW - 86_400_000 },
+        { path: "notes", kind: "directory", size_bytes: 0, modified_at_ms: NOW - 86_400_000 },
+        { path: "logs", kind: "directory", size_bytes: 0, modified_at_ms: NOW - 86_400_000 },
+        {
+          path: "notes/weekly-summary.md",
+          kind: "file",
+          size_bytes: 1842,
+          modified_at_ms: NOW - 3_600_000,
+          content: "# Weekly Summary\n\n- Reviewed workspace layout\n- Verified bot folder isolation\n- Updated quarterly deliverables"
+        },
+        {
+          path: "leads/q4-accounts.csv",
+          kind: "file",
+          size_bytes: 14_200,
+          modified_at_ms: NOW - 7_200_000,
+          content: "company,status,owner\nAcme Corp,qualified,Atlas\nNorthwind,contacted,Atlas\nGlobex,drafting,Atlas"
+        },
+        {
+          path: "drafts/launch-preview.png",
+          kind: "file",
+          size_bytes: 48_120,
+          modified_at_ms: NOW - 18_000_000
+        },
+        {
+          path: "downloads/archive-export.zip",
+          kind: "file",
+          size_bytes: 28 * 1024 * 1024,
+          modified_at_ms: NOW - 40 * 86_400_000
+        },
+        {
+          path: "logs/run-2026-10.log",
+          kind: "file",
+          size_bytes: 4 * 1024 * 1024,
+          modified_at_ms: NOW - 35 * 86_400_000,
+          content: "[INFO] Initialized persistent workspace\n[INFO] Archived completed task output"
+        }
+      ]
+    ]
+  ]);
+
+  private workspaceTrash = new Map<
+    string,
+    Array<WorkspaceTrashEntryDto & { entry: { path: string; kind: "directory" | "file"; size_bytes: number; modified_at_ms: number; content?: string } }>
+  >();
+
   constructor() {
     super({ base_url: MOCK_BASE_URL, token: "mock" });
     this.servers = [
@@ -1037,6 +1124,199 @@ export class MockApiClient extends ApiClient {
     const svg =
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="6" cy="12" r="3.4" fill="#F6314D"/><circle cx="12" cy="12" r="3.4" fill="#FFCC00"/><circle cx="18" cy="12" r="3.4" fill="#00CA72"/></svg>';
     return new Blob([svg], { type: "image/svg+xml" });
+  }
+
+  override async getBotWorkspaceFile(
+    botId: string,
+    path: string,
+    download = false
+  ): Promise<Blob> {
+    const items = this.ensureMockBotFiles(botId);
+    const hit = items.find((e) => e.path === path && e.kind === "file");
+    if (!hit) {
+      throw new ApiError(404, "not_found", "workspace file");
+    }
+    if (!download && /\.(png|jpe?g|gif|webp)$/i.test(path)) {
+      // 1x1 neutral PNG pixel
+      const pngBytes = Uint8Array.from(
+        atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="),
+        (c) => c.charCodeAt(0)
+      );
+      return new Blob([pngBytes], { type: "image/png" });
+    }
+    return new Blob([hit.content ?? `Sample workspace file: ${path}\nSize: ${hit.size_bytes} bytes\n`], {
+      type: download ? "application/octet-stream" : "text/plain; charset=utf-8"
+    });
+  }
+
+  private ensureMockBotFiles(botId: string) {
+    let items = this.workspaceFiles.get(botId);
+    if (!items) {
+      items = [
+        { path: "leads", kind: "directory", size_bytes: 0, modified_at_ms: NOW - 86_400_000 },
+        { path: "drafts", kind: "directory", size_bytes: 0, modified_at_ms: NOW - 86_400_000 },
+        { path: "downloads", kind: "directory", size_bytes: 0, modified_at_ms: NOW - 86_400_000 },
+        { path: "notes", kind: "directory", size_bytes: 0, modified_at_ms: NOW - 86_400_000 },
+        { path: "logs", kind: "directory", size_bytes: 0, modified_at_ms: NOW - 86_400_000 }
+      ];
+      this.workspaceFiles.set(botId, items);
+    }
+    return items;
+  }
+
+  private mockWorkspacesOverview(): WorkspacesOverviewDto {
+    const showWarning =
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("screen") === "workspace-warning";
+    const totalDisk = 256 * 1024 ** 3;
+    const availDisk = showWarning ? 3.4 * 1024 ** 3 : 68 * 1024 ** 3;
+    const usedDisk = totalDisk - availDisk;
+    const usedPercent = Math.round((usedDisk / totalDisk) * 100);
+    const botSummaries: BotWorkspaceSummaryDto[] = this.bots.map((bot) => {
+      const items = this.ensureMockBotFiles(bot.id);
+      const files = items.filter((e) => e.kind === "file");
+      const usedBytes = files.reduce((s, e) => s + e.size_bytes, 0);
+      const lim = this.botWorkspaceLimits.get(bot.id) ?? {
+        soft_limit_bytes: null,
+        hard_limit_bytes: null
+      };
+      return {
+        bot_id: bot.id,
+        bot_name: bot.name,
+        folder_name: bot.name,
+        workspace_path: `C:/Users/emre/Documents/Praxi/${bot.name}`,
+        exists: true,
+        used_bytes: usedBytes,
+        file_count: files.length,
+        soft_limit_bytes: lim.soft_limit_bytes,
+        hard_limit_bytes: lim.hard_limit_bytes,
+        soft_limit_exceeded: lim.soft_limit_bytes !== null && usedBytes >= lim.soft_limit_bytes,
+        hard_limit_exceeded: lim.hard_limit_bytes !== null && usedBytes >= lim.hard_limit_bytes
+      };
+    });
+    const largestItems = this.bots
+      .flatMap((bot) =>
+        this.ensureMockBotFiles(bot.id)
+          .filter((e) => e.kind === "file")
+          .map((e) => ({
+            bot_id: bot.id,
+            bot_name: bot.name,
+            folder_name: bot.name,
+            relative_path: e.path,
+            size_bytes: e.size_bytes,
+            modified_at_ms: e.modified_at_ms,
+            category: e.path.startsWith("downloads/")
+              ? "downloads"
+              : e.path.startsWith("logs/")
+                ? "logs"
+                : "workspace"
+          }))
+      )
+      .sort((a, b) => b.size_bytes - a.size_bytes)
+      .slice(0, 5);
+    const oldDl = this.bots
+      .flatMap((b) => this.ensureMockBotFiles(b.id))
+      .filter((e) => e.kind === "file" && e.path.startsWith("downloads/"));
+    const oldLog = this.bots
+      .flatMap((b) => this.ensureMockBotFiles(b.id))
+      .filter((e) => e.kind === "file" && e.path.startsWith("logs/"));
+    const dlBytes = oldDl.reduce((s, e) => s + e.size_bytes, 0);
+    const logBytes = oldLog.reduce((s, e) => s + e.size_bytes, 0);
+    const suggestions: WorkspacesOverviewDto["suggestions"] = [];
+    if (oldDl.length > 0) suggestions.push({ target: "old_downloads", reclaimable_bytes: dlBytes, file_count: oldDl.length });
+    if (oldLog.length > 0) suggestions.push({ target: "old_logs", reclaimable_bytes: logBytes, file_count: oldLog.length });
+    if (oldDl.length + oldLog.length > 0) suggestions.push({ target: "all_old", reclaimable_bytes: dlBytes + logBytes, file_count: oldDl.length + oldLog.length });
+    suggestions.push({ target: "daemon_cache", reclaimable_bytes: 12 * 1024 * 1024, file_count: 14 });
+    const softBots = botSummaries.filter((b) => b.soft_limit_exceeded || b.hard_limit_exceeded).map((b) => b.bot_id);
+    const thresholdPercent = usedPercent >= this.workspaceSettings.warn_percent_3
+      ? this.workspaceSettings.warn_percent_3
+      : usedPercent >= this.workspaceSettings.warn_percent_2
+        ? this.workspaceSettings.warn_percent_2
+        : usedPercent >= this.workspaceSettings.warn_percent_1
+          ? this.workspaceSettings.warn_percent_1
+          : null;
+    const belowMinFree = availDisk < this.workspaceSettings.min_free_bytes;
+    return {
+      configured: true,
+      root_path: "C:/Users/emre/Documents/Praxi",
+      disk: { total_bytes: totalDisk, available_bytes: availDisk, used_bytes: usedDisk, used_percent: usedPercent },
+      total_workspace_bytes: botSummaries.reduce((s, b) => s + b.used_bytes, 0),
+      settings: { ...this.workspaceSettings },
+      bots: botSummaries,
+      largest_items: largestItems,
+      suggestions,
+      active_warning: thresholdPercent !== null || belowMinFree || softBots.length > 0
+        ? {
+            severity: belowMinFree || usedPercent >= this.workspaceSettings.warn_percent_3 ? "critical" : "warning",
+            threshold_percent: thresholdPercent,
+            below_min_free: belowMinFree,
+            disk_used_percent: usedPercent,
+            available_bytes: availDisk,
+            min_free_bytes: this.workspaceSettings.min_free_bytes,
+            soft_limit_bots: softBots,
+            largest_items: largestItems,
+            suggestions
+          }
+        : null
+    };
+  }
+
+  private mockGetBotWorkspace(botId: string, query?: Record<string, string | number | boolean | null | undefined>): BotWorkspaceListDto {
+    const bot = this.bots.find((b) => b.id === botId);
+    if (!bot) throw new ApiError(404, "not_found", "bot");
+    const items = this.ensureMockBotFiles(botId);
+    const currentPath = typeof query?.path === "string" ? query.path.replace(/^\/+|\/+$/g, "") : "";
+    const q = typeof query?.q === "string" ? query.q.trim().toLowerCase() : "";
+    const toDto = (e: (typeof items)[number]): WorkspaceEntryDto => ({
+      name: e.path.split("/").pop() ?? e.path,
+      path: e.path,
+      kind: e.kind,
+      size_bytes: e.size_bytes,
+      modified_at_ms: e.modified_at_ms,
+      preview_kind: e.kind === "directory"
+        ? "none"
+        : /\.(png|jpe?g|gif|webp)$/i.test(e.path)
+          ? "image"
+          : /\.(md|txt|csv|json|log|ts|tsx|rs|toml|yaml|yml)$/i.test(e.path)
+            ? "text"
+            : "none"
+    });
+    const filtered = q
+      ? items.filter((e) => {
+          const under = !currentPath || e.path.startsWith(`${currentPath}/`);
+          const name = e.path.split("/").pop() ?? "";
+          return under && name.toLowerCase().includes(q);
+        })
+      : items.filter((e) => {
+          if (!currentPath) return !e.path.includes("/");
+          if (!e.path.startsWith(`${currentPath}/`)) return false;
+          return !e.path.slice(currentPath.length + 1).includes("/");
+        });
+    const entries = filtered.map(toDto).sort((a, b) =>
+      a.kind !== b.kind ? (a.kind === "directory" ? -1 : 1) : a.name.localeCompare(b.name)
+    );
+    const usedBytes = items.filter((e) => e.kind === "file").reduce((s, e) => s + e.size_bytes, 0);
+    const lim = this.botWorkspaceLimits.get(botId) ?? { soft_limit_bytes: null, hard_limit_bytes: null };
+    return {
+      bot_id: bot.id,
+      bot_name: bot.name,
+      folder_name: bot.name,
+      workspace_path: `C:/Users/emre/Documents/Praxi/${bot.name}`,
+      current_path: currentPath,
+      used_bytes: usedBytes,
+      soft_limit_bytes: lim.soft_limit_bytes,
+      hard_limit_bytes: lim.hard_limit_bytes,
+      soft_limit_exceeded: lim.soft_limit_bytes !== null && usedBytes >= lim.soft_limit_bytes,
+      hard_limit_exceeded: lim.hard_limit_bytes !== null && usedBytes >= lim.hard_limit_bytes,
+      entries,
+      undo_items: (this.workspaceTrash.get(botId) ?? []).map((t) => ({
+        undo_id: t.undo_id,
+        name: t.name,
+        original_path: t.original_path,
+        size_bytes: t.size_bytes,
+        deleted_at_ms: t.deleted_at_ms
+      }))
+    };
   }
 
   protected override async requestText(method: string, path: string): Promise<string> {
@@ -1453,12 +1733,50 @@ export class MockApiClient extends ApiClient {
         });
       case "GET /skills":
         return ok(structuredClone(MOCK_SKILLS_CATALOG));
+      case "GET /workspaces":
+        return ok(this.mockWorkspacesOverview());
+      case "PUT /workspaces":
+        if (seg[1] === "settings") {
+          this.workspaceSettings = { ...(opts.body as WorkspaceSettingsInput) };
+          return ok({ ...this.workspaceSettings });
+        }
+        throw new ApiError(404, "not_found", path);
+      case "POST /workspaces":
+        if (seg[1] === "cleanup") {
+          const input = opts.body as WorkspaceCleanupInput;
+          if (input.target === "daemon_cache") {
+            return ok({ target: input.target, deleted_files: 0, freed_bytes: 12 * 1024 * 1024 } satisfies WorkspaceCleanupResultDto);
+          }
+          let deleted_files = 0;
+          let freed_bytes = 0;
+          const targets = input.bot_id ? [input.bot_id] : this.bots.map((b) => b.id);
+          for (const id of targets) {
+            const list = this.ensureMockBotFiles(id);
+            const keep = list.filter((e) => {
+              if (e.kind !== "file") return true;
+              const matchDl = (input.target === "old_downloads" || input.target === "all_old") && e.path.startsWith("downloads/");
+              const matchLog = (input.target === "old_logs" || input.target === "all_old") && e.path.startsWith("logs/");
+              if (matchDl || matchLog) {
+                deleted_files += 1;
+                freed_bytes += e.size_bytes;
+                return false;
+              }
+              return true;
+            });
+            this.workspaceFiles.set(id, keep);
+          }
+          return ok({ target: input.target, deleted_files, freed_bytes } satisfies WorkspaceCleanupResultDto);
+        }
+        throw new ApiError(404, "not_found", path);
       case "GET /bots":
         if (seg[1] && seg[2] === "skills") {
           return ok(this.getBotSkillsState(seg[1]));
         }
         if (seg[1] && seg[2] === "grants") {
           return ok(structuredClone(this.botGrants.get(seg[1]) ?? []));
+        }
+        if (seg[1] && seg[2] === "workspace") {
+          return ok(this.mockGetBotWorkspace(seg[1], opts.query));
         }
         if (seg[1] && !seg[2]) {
           const found = this.bots.find((b) => b.id === seg[1]);
@@ -1987,6 +2305,67 @@ export class MockApiClient extends ApiClient {
         // Preview, import and export need the daemon's validator; the demo has none.
         throw new ApiError(422, "bad_profile", "profile sharing needs a running daemon");
       case "POST /bots": {
+        if (seg[1] && seg[2] === "workspace") {
+          const items = this.ensureMockBotFiles(seg[1]);
+          if (seg[3] === "rename") {
+            const body = opts.body as WorkspaceRenameInput;
+            const entry = items.find((e) => e.path === body.path);
+            if (!entry) throw new ApiError(404, "not_found", "workspace entry");
+            const parent = body.path.includes("/") ? `${body.path.slice(0, body.path.lastIndexOf("/") + 1)}` : "";
+            const nextPath = `${parent}${body.new_name.trim()}`;
+            entry.path = nextPath;
+            return ok({
+              name: body.new_name.trim(),
+              path: nextPath,
+              kind: entry.kind,
+              size_bytes: entry.size_bytes,
+              modified_at_ms: entry.modified_at_ms,
+              preview_kind: entry.kind === "directory" ? "none" : "text"
+            } satisfies WorkspaceEntryDto);
+          }
+          if (seg[3] === "delete") {
+            const body = opts.body as WorkspaceDeleteInput;
+            const idx = items.findIndex((e) => e.path === body.path);
+            if (idx < 0) throw new ApiError(404, "not_found", "workspace entry");
+            const [removed] = items.splice(idx, 1);
+            const undo_id = crypto.randomUUID();
+            const trashItem = {
+              undo_id,
+              name: removed.path.split("/").pop() ?? removed.path,
+              original_path: removed.path,
+              size_bytes: removed.size_bytes,
+              deleted_at_ms: Date.now(),
+              entry: removed
+            };
+            const curTrash = this.workspaceTrash.get(seg[1]) ?? [];
+            curTrash.unshift(trashItem);
+            this.workspaceTrash.set(seg[1], curTrash);
+            const dto: WorkspaceTrashEntryDto = {
+              undo_id: trashItem.undo_id,
+              name: trashItem.name,
+              original_path: trashItem.original_path,
+              size_bytes: trashItem.size_bytes,
+              deleted_at_ms: trashItem.deleted_at_ms
+            };
+            return ok(dto);
+          }
+          if (seg[3] === "restore") {
+            const body = opts.body as WorkspaceRestoreInput;
+            const curTrash = this.workspaceTrash.get(seg[1]) ?? [];
+            const tidx = curTrash.findIndex((t) => t.undo_id === body.undo_id);
+            if (tidx < 0) throw new ApiError(404, "not_found", "undo entry");
+            const [restored] = curTrash.splice(tidx, 1);
+            items.push(restored.entry);
+            return ok({
+              name: restored.name,
+              path: restored.entry.path,
+              kind: restored.entry.kind,
+              size_bytes: restored.entry.size_bytes,
+              modified_at_ms: restored.entry.modified_at_ms,
+              preview_kind: restored.entry.kind === "directory" ? "none" : "text"
+            } satisfies WorkspaceEntryDto);
+          }
+        }
         const input = opts.body as { name: string; config: unknown };
         if (this.bots.some((b) => b.name.toLowerCase() === input.name.toLowerCase())) {
           throw new ApiError(409, "conflict", `a bot named "${input.name}" already exists`);
@@ -1998,6 +2377,17 @@ export class MockApiClient extends ApiClient {
       case "PUT /bots":
         if (seg[1] && seg[2] === "skills") {
           return ok(this.putBotSkillsState(seg[1], opts.body as PutBotSkillsInput));
+        }
+        if (seg[1] && seg[2] === "workspace" && seg[3] === "limits") {
+          const body = opts.body as BotWorkspaceLimitsInput;
+          this.botWorkspaceLimits.set(seg[1], {
+            soft_limit_bytes: body.soft_limit_bytes ?? null,
+            hard_limit_bytes: body.hard_limit_bytes ?? null
+          });
+          const overview = this.mockWorkspacesOverview();
+          const hit = overview.bots.find((b) => b.bot_id === seg[1]);
+          if (!hit) throw new ApiError(404, "not_found", "bot");
+          return ok(hit);
         }
         { const index = this.bots.findIndex(b => b.id === seg[1]);
           if (index >= 0) this.bots[index] = { ...this.bots[index], ...(opts.body as Partial<Bot>), version: this.bots[index].version + 1 };

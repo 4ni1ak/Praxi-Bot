@@ -140,6 +140,7 @@ import { ComputerRequestModal } from "./components/ComputerAccess";
 import { HostEmptyState } from "./components/HostEmptyState";
 import { HostStateBanner } from "./components/HostStateBanner";
 import { SafeModeBanner } from "./components/SafeModeBanner";
+import { WorkspaceWarningBanner } from "./components/WorkspaceWarningBanner";
 import { onboardingAllowed } from "./lib/hostMode";
 import {
   DaemonProvider,
@@ -1389,6 +1390,7 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
         <ServiceBanner />
         <SafeModeBanner />
         <HostStateBanner />
+        <WorkspaceWarningBanner onOpenStorage={() => setSettingsOpen("computer")} />
         <ShellBridgeHost
           settings={settings}
           onOpenChat={openChat}

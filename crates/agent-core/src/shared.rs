@@ -1165,6 +1165,12 @@ pub(crate) struct Shared {
     /// Cancellation tokens of the native-tools engine processes running per bot,
     /// so the owner's kill switch can end them at once.
     pub native_runs: Mutex<HashMap<BotId, Vec<(uuid::Uuid, tokio_util::sync::CancellationToken)>>>,
+    /// Root folder containing per-bot persistent workspaces (`None` = disabled).
+    pub workspaces_root: RwLock<Option<std::path::PathBuf>>,
+    /// Broadcast channel for pre-fill workspace disk warnings.
+    pub workspace_warnings: broadcast::Sender<WorkspaceWarningEvent>,
+    /// Cooldown map preventing duplicate warnings for the same `(bot, kind, threshold)`.
+    pub workspace_warned: Mutex<HashMap<(Option<BotId>, &'static str, u8), std::time::Instant>>,
     /// Test-only: the drive task waits here after `conclude` and before it
     /// reaps its own [`JoinHandle`].
     #[cfg(test)]
@@ -1264,6 +1270,14 @@ impl RecentRuns {
 /// Test-only hook invoked under `exec_gate` before the pre-tool deny recheck.
 #[cfg(test)]
 pub(crate) type ExecCommitHook = Arc<dyn Fn(&Shared) + Send + Sync>;
+
+/// Emitted when a write approaches a host disk threshold or per-bot soft limit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceWarningEvent {
+    pub bot_id: Option<BotId>,
+    pub kind: builtin_tools::workspace::WriteWarningKind,
+    pub workspace_path: std::path::PathBuf,
+}
 
 /// What a schedule-started run does (see
 /// [`AgentLoop::run_scheduled`](crate::AgentLoop::run_scheduled)).
@@ -1459,6 +1473,25 @@ impl Shared {
         } else {
             builtin_tools::FsScope::Computer
         }
+    }
+
+    /// Ensure and return `bot_id`'s persistent workspace folder when workspaces
+    /// are enabled.
+    pub fn bot_workspace_dir(&self, bot_id: BotId) -> Option<std::path::PathBuf> {
+        let root = self.workspaces_root.read().clone()?;
+        let bot = self.storage.get_bot(bot_id).ok().flatten()?;
+        let preferred =
+            builtin_tools::workspace::sanitize_bot_folder_name(&bot.name, &bot.id.to_string());
+        let rec = self
+            .storage
+            .ensure_bot_workspace(bot.user_id, bot.id, &preferred)
+            .ok()?;
+        builtin_tools::workspace::ensure_bot_workspace_dir(
+            &root,
+            &rec.folder_name,
+            self.storage.data_dir(),
+        )
+        .ok()
     }
 
     /// The bot's memory settings, read from the bot row on every call (never

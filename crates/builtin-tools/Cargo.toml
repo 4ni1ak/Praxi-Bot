@@ -21,6 +21,8 @@ iana-time-zone = "0.1"
 browser-cdp = { path = "../browser-cdp", version = "0.1.0" }
 connector-email = { path = "../connector-email", version = "0.1.0" }
 desktop-api = { path = "../desktop-api", version = "0.1.0" }
+directories.workspace = true
+fs4 = "1"
 globset.workspace = true
 memory-store = { path = "../memory-store", version = "0.1.0" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

@@ -114,21 +114,52 @@ struct Shared {
     workdir: Option<PathBuf>,
     /// Ledger of files with an untrusted origin (see `crate::provenance`).
     provenance: Option<Arc<dyn crate::provenance::Provenance>>,
+    /// The shared directory containing all bots' workspaces (for bot-to-bot isolation).
+    workspaces_root: Option<PathBuf>,
+    /// The calling bot's own workspace directory.
+    bot_workspace: Option<PathBuf>,
+    /// Calling bot identifier (for quota & warning checks).
+    bot_id: Option<String>,
 }
 
 impl Shared {
     /// This call's view of the shared state under the bot's file access scope.
-    fn scoped(&self, scope: &crate::FsScope) -> Self {
+    fn scoped(&self, scope: &crate::FsScope, bot_id: Option<&str>) -> Self {
+        let ws_root = self
+            .access
+            .as_ref()
+            .and_then(|a| a.workspaces_root())
+            .and_then(|r| resolve_local_folder(&r).ok());
+        let bot_ws = self
+            .access
+            .as_ref()
+            .and_then(|a| a.bot_workspace(bot_id))
+            .and_then(|w| resolve_local_folder(&w).ok());
         let (roots, unresolved, workdir) = match scope {
-            crate::FsScope::Computer => (Vec::new(), self.home.is_none(), self.home.clone()),
-            crate::FsScope::Folders(folders) if folders.is_empty() => (Vec::new(), true, None),
-            crate::FsScope::Folders(folders) => match prepare_roots(folders, &self.drives) {
-                Ok(roots) => {
-                    let first = roots.first().cloned();
-                    (roots, false, first)
-                }
-                Err(()) => (Vec::new(), true, None),
+            crate::FsScope::Computer => (
+                Vec::new(),
+                self.home.is_none() && bot_ws.is_none(),
+                bot_ws.clone().or_else(|| self.home.clone()),
+            ),
+            crate::FsScope::Folders(folders) if folders.is_empty() => match &bot_ws {
+                Some(ws) => (vec![ws.clone()], false, Some(ws.clone())),
+                None => (Vec::new(), true, None),
             },
+            crate::FsScope::Folders(folders) => {
+                let mut combined = folders.clone();
+                if let Some(ws) = &bot_ws
+                    && !combined.iter().any(|f| f == ws)
+                {
+                    combined.push(ws.clone());
+                }
+                match prepare_roots(&combined, &self.drives) {
+                    Ok(roots) => {
+                        let first = bot_ws.clone().or_else(|| roots.first().cloned());
+                        (roots, false, first)
+                    }
+                    Err(()) => (Vec::new(), true, None),
+                }
+            }
         };
         Self {
             checkpoints: self.checkpoints.clone(),
@@ -138,10 +169,13 @@ impl Shared {
             grants: self.grants.clone(),
             roots_unresolved: unresolved,
             drives: DriveCache::new(),
-            access: None,
+            access: self.access.clone(),
             home: self.home.clone(),
             workdir,
             provenance: self.provenance.clone(),
+            workspaces_root: ws_root,
+            bot_workspace: bot_ws,
+            bot_id: bot_id.map(str::to_owned),
         }
     }
 }
@@ -212,6 +246,9 @@ pub fn watch_snapshot(
         home: None,
         workdir: None,
         provenance: None,
+        workspaces_root: None,
+        bot_workspace: None,
+        bot_id: None,
     };
     let root = validate_path(&sh, raw, Follow::Watch)?;
     if root.parent().is_none() {
@@ -388,6 +425,9 @@ pub(crate) fn tools_scoped(
         access,
         home,
         provenance,
+        workspaces_root: None,
+        bot_workspace: None,
+        bot_id: None,
     });
     let fs = PermissionCategory::Fs;
     let defs: Vec<(Op, ToolSpec)> = vec![
@@ -594,6 +634,7 @@ const UNC_MSG: &str = "UNC paths are not allowed";
 const DEVICE_MSG: &str = "device paths are not allowed";
 const ROOT_MSG: &str = "path is outside the allowed roots";
 const ROOT_UNRESOLVED_MSG: &str = "allowed root could not be resolved";
+const OTHER_BOT_WORKSPACE_MSG: &str = "cannot access another bot's workspace";
 const GRANT_MSG: &str = "credential or control file requires an explicit grant";
 const REPARSE_MSG: &str = "reparse points are not allowed";
 const LINK_MSG: &str = "symlink chain is too deep";
@@ -932,6 +973,12 @@ fn validate_path(sh: &Shared, raw: &str, follow: Follow) -> Result<PathBuf, Tool
     if credential_blocked(sh, &lexical, &resolved) || credential_blocked(sh, &lexical, &opened) {
         return Err(denied(GRANT_MSG));
     }
+    if workspace_blocked(sh, &lexical)
+        || workspace_blocked(sh, &resolved)
+        || workspace_blocked(sh, &opened)
+    {
+        return Err(denied(OTHER_BOT_WORKSPACE_MSG));
+    }
     Ok(opened)
 }
 
@@ -1008,6 +1055,12 @@ fn validate_read_path(sh: &Shared, raw: &str, run: &str) -> Result<PathBuf, Tool
     }
     if credential_blocked(sh, &lexical, &resolved) || credential_blocked(sh, &lexical, &opened) {
         return Err(denied(GRANT_MSG));
+    }
+    if workspace_blocked(sh, &lexical)
+        || workspace_blocked(sh, &resolved)
+        || workspace_blocked(sh, &opened)
+    {
+        return Err(denied(OTHER_BOT_WORKSPACE_MSG));
     }
     Ok(opened)
 }
@@ -1785,6 +1838,34 @@ fn validate_mutation(sh: &Shared, raw: &str, resolved: &Path) -> Result<(), Tool
 fn credential_blocked(sh: &Shared, lexical: &Path, resolved: &Path) -> bool {
     protected_ungranted(lexical, &sh.data_dir, &sh.grants)
         || protected_ungranted(resolved, &sh.data_dir, &sh.grants)
+}
+
+/// True when `path` lies inside `sh.workspaces_root` (including the root itself)
+/// and NOT inside the calling bot's own `sh.bot_workspace`.
+fn workspace_blocked(sh: &Shared, path: &Path) -> bool {
+    let Some(ws_root) = &sh.workspaces_root else {
+        return false;
+    };
+    let widened = widen_for_compare(path);
+    let in_root = lexical_under(path, ws_root)
+        || lexical_under(&widened, ws_root)
+        || under_dir(path, ws_root);
+    if !in_root {
+        return false;
+    }
+    let Some(own_ws) = &sh.bot_workspace else {
+        return true;
+    };
+    !(lexical_under(path, own_ws) || lexical_under(&widened, own_ws) || under_dir(path, own_ws))
+}
+
+fn check_write_budget(sh: &Shared, target: &Path, added_bytes: u64) -> Result<(), ToolError> {
+    if let Some(access) = &sh.access {
+        access
+            .check_write(sh.bot_id.as_deref(), target, added_bytes)
+            .map_err(|msg| denied(&msg))?;
+    }
+    Ok(())
 }
 
 // ---- The ONE table of locations no file tool may touch --------------------
@@ -3428,7 +3509,8 @@ fn do_list(sh: &Shared, i: &ListIn) -> Result<String, ToolError> {
         return Err(exec_err(format!("{} is not a directory", i.path)));
     }
     let m = matcher(i.glob.as_deref())?;
-    let protected = |p: &Path| protected_ungranted(p, &sh.data_dir, &sh.grants);
+    let protected =
+        |p: &Path| protected_ungranted(p, &sh.data_dir, &sh.grants) || workspace_blocked(sh, p);
     let mut lines = Vec::new();
     let mut truncated = false;
     let mut push = |p: &Path, is_dir: bool| -> bool {
@@ -3528,7 +3610,8 @@ fn do_search(sh: &Shared, i: &SearchIn) -> Result<String, ToolError> {
         let parent = root.parent().unwrap_or(&root);
         search_file(sh, &root, &q, parent, &mut out);
     } else if is_dir_nofollow(&root) {
-        let protected = |p: &Path| protected_ungranted(p, &sh.data_dir, &sh.grants);
+        let protected =
+            |p: &Path| protected_ungranted(p, &sh.data_dir, &sh.grants) || workspace_blocked(sh, p);
         walk_skipping(&root, 12, &protected, &mut |p, is_dir| {
             if !is_dir && m.as_ref().is_none_or(|m| glob_hit(m, &root, p)) {
                 search_file(sh, p, &q, &root, &mut out);
@@ -3613,6 +3696,12 @@ fn do_write(sh: &Shared, run: &str, i: &WriteIn) -> Result<String, ToolError> {
     let _mutation = mutation_lock.read();
     let p = validate_path(sh, &i.path, Follow::Write)?;
     validate_mutation(sh, &i.path, &p)?;
+    let existing = fs::symlink_metadata(&p)
+        .ok()
+        .filter(|m| m.is_file())
+        .map_or(0, |m| m.len());
+    let added = (i.content.len() as u64).saturating_sub(existing);
+    check_write_budget(sh, &p, added)?;
     let (cp, note) = sh.checkpoint(run, "fs_write", &[(Path::new(&i.path), &p)])?;
     if let Some(parent) = p.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(parent).map_err(|e| exec_err(format!("create dirs: {e}")))?;
@@ -3644,8 +3733,10 @@ fn do_edit(sh: &Shared, run: &str, i: &EditIn) -> Result<String, ToolError> {
             "edit failed: old text matches {n} times; include more context or set replace_all"
         )));
     }
-    let (cp, note) = sh.checkpoint(run, "fs_edit", &[(Path::new(&i.path), &p)])?;
     let updated = text.replace(&i.old, &i.new);
+    let added = (updated.len() as u64).saturating_sub(text.len() as u64);
+    check_write_budget(sh, &p, added)?;
+    let (cp, note) = sh.checkpoint(run, "fs_edit", &[(Path::new(&i.path), &p)])?;
     fs::write(&p, updated).map_err(|e| exec_err(format!("write {}: {e}", i.path)))?;
     sh.record_checkpoint_after(&cp)?;
     Ok(format!(
@@ -3681,6 +3772,13 @@ fn do_move_with(
         let to = validate_path(sh, &i.to, Follow::Place)?;
         validate_mutation(sh, &i.from, &from)?;
         validate_mutation(sh, &i.to, &to)?;
+        if let Some(own_ws) = &sh.bot_workspace
+            && (lexical_under(&to, own_ws) || under_dir(&to, own_ws))
+            && !(lexical_under(&from, own_ws) || under_dir(&from, own_ws))
+        {
+            let added = crate::workspace::dir_size_bytes(&from);
+            check_write_budget(sh, &to, added)?;
+        }
         // Cheap preflight first: a rejected move must not copy the
         // destination into a checkpoint or leave an empty receipt behind.
         if fs::symlink_metadata(&from).is_err() {
@@ -3912,7 +4010,7 @@ impl Tool for FsTool {
         let sh = match &self.shared.access {
             Some(access) => {
                 let scope = access.scope(ctx.bot_id.as_deref());
-                Arc::new(self.shared.scoped(&scope))
+                Arc::new(self.shared.scoped(&scope, ctx.bot_id.as_deref()))
             }
             None => self.shared.clone(),
         };
@@ -6689,6 +6787,9 @@ mod tests {
             home: None,
             workdir: None,
             provenance: None,
+            workspaces_root: None,
+            bot_workspace: None,
+            bot_id: None,
         }
     }
 
@@ -7712,5 +7813,128 @@ mod workspace_refusal_tests {
         }
         let root = tmp.path().ancestors().last().unwrap();
         assert!(check(root).is_some(), "drive root");
+    }
+}
+
+#[cfg(test)]
+mod bot_workspace_isolation_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct TestWsAccess {
+        ws_root: PathBuf,
+        ws_a: PathBuf,
+        ws_b: PathBuf,
+        hard_limit: AtomicU64,
+    }
+
+    impl crate::FsAccessProvider for TestWsAccess {
+        fn scope(&self, _bot_id: Option<&str>) -> crate::FsScope {
+            crate::FsScope::Computer
+        }
+        fn workspaces_root(&self) -> Option<PathBuf> {
+            Some(self.ws_root.clone())
+        }
+        fn bot_workspace(&self, bot_id: Option<&str>) -> Option<PathBuf> {
+            match bot_id {
+                Some("bot-a") => Some(self.ws_a.clone()),
+                Some("bot-b") => Some(self.ws_b.clone()),
+                _ => None,
+            }
+        }
+        fn check_write(
+            &self,
+            bot_id: Option<&str>,
+            target: &Path,
+            added_bytes: u64,
+        ) -> Result<(), String> {
+            let limit = self.hard_limit.load(Ordering::Relaxed);
+            if limit == 0 {
+                return Ok(());
+            }
+            if let Some(ws) = self.bot_workspace(bot_id)
+                && target.starts_with(&ws)
+            {
+                let used = crate::workspace::dir_size_bytes(&ws);
+                if used.saturating_add(added_bytes) > limit {
+                    return Err("workspace_limit_reached".into());
+                }
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn relative_paths_default_to_bot_workspace_and_block_other_bots_and_hard_limit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().join("data");
+        let home = tmp.path().join("home");
+        let ws_root = tmp.path().join("Documents").join("Praxi");
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        let ws_a = crate::workspace::ensure_bot_workspace_dir(&ws_root, "BotA", &data).unwrap();
+        let ws_b = crate::workspace::ensure_bot_workspace_dir(&ws_root, "BotB", &data).unwrap();
+        fs::write(ws_b.join("notes").join("secret.txt"), "top-secret").unwrap();
+
+        let access = Arc::new(TestWsAccess {
+            ws_root: ws_root.clone(),
+            ws_a: ws_a.clone(),
+            ws_b: ws_b.clone(),
+            hard_limit: AtomicU64::new(0),
+        });
+        let tools = tools_scoped(&data, &[], &[], Some(access.clone()), Some(home), None);
+        let find = |name: &str| {
+            tools
+                .iter()
+                .find(|t| t.spec().name == name)
+                .unwrap()
+                .clone()
+        };
+        let ctx_a = ToolContext {
+            run_id: "r1".into(),
+            bot_id: Some("bot-a".into()),
+            ..ToolContext::default()
+        };
+
+        // Writing a relative path goes to BotA's workspace.
+        find("fs_write")
+            .call(&ctx_a, json!({"path": "notes/hello.txt", "content": "hi"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(ws_a.join("notes").join("hello.txt")).unwrap(),
+            "hi"
+        );
+
+        // BotA cannot read BotB's workspace directly or via traversal.
+        let err_direct = find("fs_read")
+            .call(
+                &ctx_a,
+                json!({"path": ws_b.join("notes/secret.txt").to_string_lossy()}),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err_direct, ToolError::PermissionDenied(_)));
+        let err_trav = find("fs_read")
+            .call(&ctx_a, json!({"path": "../BotB/notes/secret.txt"}))
+            .await
+            .unwrap_err();
+        assert!(matches!(err_trav, ToolError::PermissionDenied(_)));
+        let err_root = find("fs_list")
+            .call(&ctx_a, json!({"path": ws_root.to_string_lossy()}))
+            .await
+            .unwrap_err();
+        assert!(matches!(err_root, ToolError::PermissionDenied(_)));
+
+        // Hard limit blocks writes exceeding the cap.
+        access.hard_limit.store(10, Ordering::Relaxed);
+        let err_quota = find("fs_write")
+            .call(
+                &ctx_a,
+                json!({"path": "notes/big.txt", "content": "0123456789abcdef"}),
+            )
+            .await
+            .unwrap_err();
+        assert!(err_quota.to_string().contains("workspace_limit_reached"));
     }
 }

@@ -21,6 +21,6 @@ pub use incoming_webhooks::IncomingWebhook;
 pub use journal::{EventJournal, FsJournalSink, JournalRecord, JournalSink};
 pub use paths::{DATA_DIR_ENV, data_dir, resolve_data_dir, without_verbatim_prefix};
 pub use records::{
-    Approval, AuditEntry, Bot, BotPatch, BotSkillAssignment, Chat, ChatFlags, EventIndexRow,
-    Message, Run, RunStep, SkillAssignmentMode, User,
+    Approval, AuditEntry, Bot, BotPatch, BotSkillAssignment, BotWorkspaceRecord, Chat, ChatFlags,
+    EventIndexRow, Message, Run, RunStep, SkillAssignmentMode, User, WorkspaceSettingsRecord,
 };

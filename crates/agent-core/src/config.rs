@@ -389,6 +389,8 @@ pub struct LoopConfig {
     /// Where events are journaled.  Empty by default: the loop then creates a
     /// background writer over its own storage on first use.
     pub journal: JournalSlot,
+    /// Shared root folder holding per-bot persistent workspaces (`None` = disabled).
+    pub workspaces_root: Option<std::path::PathBuf>,
 }
 
 impl Default for LoopConfig {
@@ -424,6 +426,7 @@ impl Default for LoopConfig {
             wait_for_pc_timeout: DEFAULT_WAIT_FOR_PC_TIMEOUT,
             safe_mode: false,
             journal: JournalSlot::default(),
+            workspaces_root: None,
         }
     }
 }
