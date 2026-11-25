@@ -20,7 +20,7 @@ use uuid::Uuid;
 pub struct TriggerInput {
     pub name: String,
     pub instruction: String,
-    /// Source, filters, quiet_hours, limits and bot_limits. Never credentials.
+    /// Source, filters, `quiet_hours`, limits and `bot_limits`. Never credentials.
     pub config: Value,
     #[serde(default)]
     pub enabled: bool,
@@ -256,8 +256,7 @@ pub(crate) async fn list(
                 let own = accounts
                     .iter()
                     .find(|a| a.name == account)
-                    .map(|a| a.address.as_str())
-                    .unwrap_or("");
+                    .map_or("", |a| a.address.as_str());
                 (
                     serde_json::json!({"kind":"mail","account":account,"folder":"INBOX","own_address":own,"poll_seconds":120}),
                     serde_json::json!({"sender":from_filter,"sender_match":"contains","subject":subject_filter.unwrap_or_default(),"has_attachment":false}),
@@ -306,7 +305,7 @@ fn redact_value(s: &AppState, value: Value) -> Value {
         other => other,
     }
 }
-#[allow(clippy::too_many_arguments)] // a projection of two existing DTOs; no state change
+#[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)] // a projection of two existing DTOs; no state change
 fn existing_dto(
     s: &AppState,
     origin: &str,
