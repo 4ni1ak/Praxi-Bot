@@ -45,6 +45,7 @@ pub mod host_admin;
 pub mod host_copy;
 pub mod host_import;
 pub mod host_links;
+pub mod host_packs;
 pub mod host_setup;
 mod knowledge;
 pub mod knowledge_runtime;
@@ -1253,6 +1254,9 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/hosts/setup/ssh-keys", get(host_setup::ssh_keys))
         .route("/v1/hosts/setup/bootstrap", get(host_setup::bootstrap))
         .route("/v1/hosts/setup/update", post(host_setup::start_update))
+        .route("/v1/hosts/setup/packs/plan", post(host_packs::plan))
+        .route("/v1/hosts/setup/packs/apply", post(host_packs::apply))
+        .route("/v1/hosts/setup/packs/{host_id}", get(host_packs::get))
         .route("/v1/hosts/{id}/version", get(host_links::host_version))
         .route("/v1/hosts/setup/{job}", get(host_setup::get))
         .route("/v1/hosts/setup/{job}/host-key", post(host_setup::host_key))

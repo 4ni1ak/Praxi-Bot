@@ -18,11 +18,15 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use daemon_api::{
     host_links::{HostLinkError, HostLinks},
+    host_packs::{
+        HostPackInfo, HostPacks, HostToolFact, PackAction, PackApplyInput, PackPlan, PackPlanInput,
+        PackPlanItem,
+    },
     host_setup::{
         BootstrapCommand, HostJobKind, HostKeyPrompt, HostSetup, HostSetupError, HostSetupJob,
         HostSetupState, HostSetupStep, HostSetupStepStatus, SshKeyHint, StartHostSetupInput,
@@ -31,7 +35,9 @@ use daemon_api::{
 };
 use host_provision::{
     Engine, HostHealth, HostRecord, KnownHosts, LocalHost, Mode, Output, PairedHost, Params,
-    RemoteCmd, Status, StepResult, Store, Sub, Transport, TransportError, Ui, validate,
+    RemoteCmd, Status, StepResult, Store, Sub, Transport, TransportError, Ui,
+    packs::{self, Action, Blocked, PackError, PackStatus, Packs},
+    validate,
 };
 use parking_lot::Mutex;
 use reqwest::Method;
@@ -57,6 +63,13 @@ fn install_available() -> bool {
     std::env::var("PRAXI_HOST_INSTALL").is_ok_and(|v| v == "1")
 }
 
+struct Registered {
+    job: HostSetupJob,
+    id: String,
+    cancel: Arc<AtomicBool>,
+    rx: mpsc::Receiver<bool>,
+}
+
 struct Slot {
     job: HostSetupJob,
     cancel: Arc<AtomicBool>,
@@ -75,10 +88,26 @@ fn update(jobs: &Jobs, id: &str, f: impl FnOnce(&mut Slot)) {
 type TransportFactory =
     Arc<dyn Fn(&Store, &HostRecord) -> Result<Box<dyn Transport>, String> + Send + Sync>;
 
+/// A dry-run preview the owner has been shown; `packs_apply` runs exactly this.
+struct StoredPlan {
+    id: String,
+    host_id: String,
+    action: Action,
+    /// Only the items that can run.
+    packs: Vec<String>,
+    made: Instant,
+}
+
+/// How long a preview stays valid: long enough to read it, short enough that a stale one (the
+/// server may have changed) is never run.
+const PLAN_TTL: Duration = Duration::from_secs(15 * 60);
+const KEEP_PLANS: usize = 8;
+
 pub struct CliHostSetup {
     data: PathBuf,
     links: Arc<CliHostLinks>,
     jobs: Jobs,
+    plans: Mutex<Vec<StoredPlan>>,
     transport: TransportFactory,
 }
 
@@ -88,6 +117,7 @@ impl CliHostSetup {
             data,
             links,
             jobs: Arc::new(Mutex::new(VecDeque::new())),
+            plans: Mutex::new(Vec::new()),
             transport: Arc::new(|store, record| {
                 transport(store, record)
                     .map(|t| Box::new(t) as Box<dyn Transport>)
@@ -96,15 +126,12 @@ impl CliHostSetup {
         }
     }
 
-    fn launch(
+    /// Reserve the one job slot (only one server job runs at a time).
+    fn register(
         &self,
-        record: HostRecord,
-        mode: Mode,
+        record: &HostRecord,
         kind: HostJobKind,
-    ) -> Result<HostSetupJob, HostSetupError> {
-        let handle = tokio::runtime::Handle::try_current()
-            .map_err(|_| HostSetupError::Conflict("the daemon is shutting down".into()))?;
-
+    ) -> Result<Registered, HostSetupError> {
         let (tx, rx) = mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let id = uuid::Uuid::new_v4().to_string();
@@ -121,23 +148,43 @@ impl CliHostSetup {
             view_targets: None,
             install_available: install_available(),
         };
-        {
-            let mut jobs = self.jobs.lock();
-            if jobs.iter().any(|s| busy(s.job.state)) {
-                return Err(HostSetupError::Conflict(
-                    "another server setup is still running".into(),
-                ));
-            }
-            while jobs.len() >= KEEP_JOBS {
-                jobs.pop_front();
-            }
-            jobs.push_back(Slot {
-                job: job.clone(),
-                cancel: cancel.clone(),
-                answer: tx,
-            });
+        let mut jobs = self.jobs.lock();
+        if jobs.iter().any(|s| busy(s.job.state)) {
+            return Err(HostSetupError::Conflict(
+                "another server setup is still running".into(),
+            ));
         }
+        while jobs.len() >= KEEP_JOBS {
+            jobs.pop_front();
+        }
+        jobs.push_back(Slot {
+            job: job.clone(),
+            cancel: cancel.clone(),
+            answer: tx,
+        });
+        Ok(Registered {
+            job,
+            id,
+            cancel,
+            rx,
+        })
+    }
 
+    fn launch(
+        &self,
+        record: HostRecord,
+        mode: Mode,
+        kind: HostJobKind,
+        base_packs: bool,
+    ) -> Result<HostSetupJob, HostSetupError> {
+        let handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| HostSetupError::Conflict("the daemon is shutting down".into()))?;
+        let Registered {
+            job,
+            id,
+            cancel,
+            rx,
+        } = self.register(&record, kind)?;
         let worker = Worker {
             data: self.data.clone(),
             links: self.links.clone(),
@@ -149,12 +196,41 @@ impl CliHostSetup {
             record,
             transport: self.transport.clone(),
             mode,
+            base_packs,
         };
         std::thread::Builder::new()
             .name("host-setup".into())
             .spawn(move || worker.run())
             .map_err(|e| HostSetupError::Conflict(format!("could not start the setup: {e}")))?;
         Ok(job)
+    }
+
+    /// The SSH details the "Add server" wizard stored for a paired server (nothing new is saved).
+    /// The stored file is plain JSON on disk: every field that reaches ssh's argv is re-checked.
+    fn saved_record(&self, host_id: &str) -> Result<HostRecord, HostSetupError> {
+        let store = Store::from_data_dir(&self.data);
+        let mut record = store
+            .list()
+            .into_iter()
+            .find(|r| r.paired_host_id.as_deref() == Some(host_id))
+            .ok_or_else(|| {
+                HostSetupError::Invalid(
+                    "no saved login details for this server on this computer".into(),
+                )
+            })?;
+        validate::host(&record.host).map_err(invalid)?;
+        validate::user(&record.user).map_err(invalid)?;
+        validate::port(u32::from(record.port)).map_err(invalid)?;
+        if let Some(key) = record.key_path.take() {
+            record.key_path = Some(validate::key_path(&key).map_err(invalid)?);
+        }
+        Ok(record)
+    }
+
+    fn ssh_for(&self, record: &HostRecord) -> Result<Box<dyn Transport>, HostSetupError> {
+        let store = Store::from_data_dir(&self.data);
+        (self.transport)(&store, record)
+            .map_err(|e| HostSetupError::Invalid(format!("the SSH client is not available: {e}")))
     }
 
     #[cfg(test)]
@@ -203,30 +279,222 @@ impl HostSetup for CliHostSetup {
         let mut record = record;
         record.key_path.clone_from(&key);
         record.port = port;
-        self.launch(record, Mode::Add, HostJobKind::Setup)
+        self.launch(record, Mode::Add, HostJobKind::Setup, input.base_packs)
     }
 
     fn start_update(&self, input: StartHostUpdateInput) -> Result<HostSetupJob, HostSetupError> {
-        let store = Store::from_data_dir(&self.data);
-        // The SSH details the "Add server" wizard stored for this server: nothing new is saved.
-        let record = store
-            .list()
-            .into_iter()
-            .find(|r| r.paired_host_id.as_deref() == Some(input.host_id.as_str()))
-            .ok_or_else(|| {
-                HostSetupError::Invalid(
-                    "no saved login details for this server on this computer".into(),
-                )
-            })?;
-        // The stored file is plain JSON on disk: re-check every field that reaches ssh's argv.
-        let mut record = record;
-        validate::host(&record.host).map_err(invalid)?;
-        validate::user(&record.user).map_err(invalid)?;
-        validate::port(u32::from(record.port)).map_err(invalid)?;
-        if let Some(key) = record.key_path.take() {
-            record.key_path = Some(validate::key_path(&key).map_err(invalid)?);
+        let record = self.saved_record(&input.host_id)?;
+        self.launch(record, Mode::Upgrade, HostJobKind::Update, false)
+    }
+
+    fn packs(&self, host_id: &str) -> Result<HostPacks, HostSetupError> {
+        let record = self.saved_record(host_id)?;
+        let ssh = self.ssh_for(&record)?;
+        let cat = packs::catalog();
+        let mut view = HostPacks {
+            host_id: host_id.to_owned(),
+            supported: false,
+            can_admin: false,
+            packs: cat
+                .iter()
+                .map(|p| pack_info(p, PackStatus::Missing))
+                .collect(),
+            tools: Vec::new(),
+            error: None,
+            error_detail: None,
+        };
+        match (Packs { transport: &*ssh }).facts() {
+            Ok(f) => {
+                view.supported = f.supported;
+                view.can_admin = f.can_admin;
+                view.packs = cat.iter().map(|p| pack_info(p, f.status(&p.id))).collect();
+                view.tools = f
+                    .tools
+                    .into_iter()
+                    .map(|(name, present)| HostToolFact { name, present })
+                    .collect();
+                if !f.supported {
+                    view.error = Some("unsupported".into());
+                }
+            }
+            Err(e) => {
+                view.error = Some(e.code().into());
+                view.error_detail = Some(e.detail());
+            }
         }
-        self.launch(record, Mode::Upgrade, HostJobKind::Update)
+        Ok(view)
+    }
+
+    fn packs_plan(&self, input: PackPlanInput) -> Result<PackPlan, HostSetupError> {
+        let record = self.saved_record(&input.host_id)?;
+        let catalog = packs::catalog();
+        let mut wanted: Vec<&packs::Pack> = Vec::new();
+        for id in &input.packs {
+            let pack = catalog
+                .iter()
+                .find(|p| &p.id == id)
+                .ok_or_else(|| HostSetupError::Invalid("unknown tool pack".into()))?;
+            if !wanted.iter().any(|p| p.id == pack.id) {
+                wanted.push(pack);
+            }
+        }
+        let action = match input.action {
+            PackAction::Install => Action::Install,
+            PackAction::Remove => Action::Remove,
+        };
+        let ssh = self.ssh_for(&record)?;
+        let runner = Packs { transport: &*ssh };
+        // One look at the server first: no apt, or no way to run administrator commands, makes
+        // every item fail the same way, so say that once instead of failing pack by pack.
+        let server = runner.facts();
+        let items: Vec<PackPlanItem> = wanted
+            .iter()
+            .map(|pack| {
+                let blocked = |code: &str| PackPlanItem {
+                    pack: pack.id.clone(),
+                    packages: Vec::new(),
+                    total_packages: 0,
+                    size_mb: pack.size_mb,
+                    noop: false,
+                    blocked: Some(code.to_owned()),
+                };
+                match &server {
+                    Err(e) => blocked(e.code()),
+                    Ok(f) if !f.supported => blocked("unsupported"),
+                    Ok(f) if action == Action::Install && !f.can_admin => blocked("needs_admin"),
+                    Ok(_) => match runner.plan(&pack.id, action) {
+                        Ok(plan) => PackPlanItem {
+                            pack: plan.pack.clone(),
+                            noop: plan.is_noop(),
+                            blocked: plan.blocked.map(|b| blocked_code(b).to_owned()),
+                            packages: plan.packages,
+                            total_packages: plan.total_packages,
+                            size_mb: plan.size_mb,
+                        },
+                        Err(e) => blocked(e.code()),
+                    },
+                }
+            })
+            .collect();
+        let runnable: Vec<String> = items
+            .iter()
+            .filter(|i| !i.noop && i.blocked.is_none())
+            .map(|i| i.pack.clone())
+            .collect();
+        let size_mb = if action == Action::Install {
+            items
+                .iter()
+                .filter(|i| runnable.contains(&i.pack))
+                .map(|i| i.size_mb)
+                .sum()
+        } else {
+            0
+        };
+        let plan_id = uuid::Uuid::new_v4().to_string();
+        if !runnable.is_empty() {
+            let mut plans = self.plans.lock();
+            plans.retain(|s| s.made.elapsed() < PLAN_TTL);
+            while plans.len() >= KEEP_PLANS {
+                plans.remove(0);
+            }
+            plans.push(StoredPlan {
+                id: plan_id.clone(),
+                host_id: input.host_id.clone(),
+                action,
+                packs: runnable.clone(),
+                made: Instant::now(),
+            });
+        }
+        Ok(PackPlan {
+            plan_id,
+            host_id: input.host_id,
+            action: input.action,
+            runnable: !runnable.is_empty(),
+            items,
+            size_mb,
+            expires_in_secs: u32::try_from(PLAN_TTL.as_secs()).unwrap_or(900),
+        })
+    }
+
+    fn packs_apply(&self, input: PackApplyInput) -> Result<HostSetupJob, HostSetupError> {
+        // Single use: the plan is taken out whether or not the job then starts, so the owner
+        // always approves what runs.
+        let plan = {
+            let mut plans = self.plans.lock();
+            let at = plans
+                .iter()
+                .position(|s| s.id == input.plan_id)
+                .ok_or_else(|| {
+                    HostSetupError::Invalid(
+                        "this preview is no longer valid; look at what would change again".into(),
+                    )
+                })?;
+            plans.remove(at)
+        };
+        if plan.made.elapsed() >= PLAN_TTL {
+            return Err(HostSetupError::Invalid(
+                "this preview has expired; look at what would change again".into(),
+            ));
+        }
+        let record = self.saved_record(&plan.host_id)?;
+        let Registered {
+            job,
+            id,
+            cancel,
+            rx: _,
+        } = self.register(&record, HostJobKind::Packs)?;
+        let jobs = self.jobs.clone();
+        let factory = self.transport.clone();
+        let store = Store::from_data_dir(&self.data);
+        let spawned = std::thread::Builder::new()
+            .name("host-packs".into())
+            .spawn(move || {
+                // The SSH transport is built on this thread (it is not `Send`).
+                let ok = match factory(&store, &record) {
+                    Ok(inner) => run_packs(
+                        &jobs,
+                        &id,
+                        &Cancellable {
+                            inner,
+                            cancel: cancel.clone(),
+                        },
+                        &plan.packs,
+                        plan.action,
+                        HostSetupStepStatus::Fail,
+                        &cancel,
+                    ),
+                    Err(e) => {
+                        let step = HostSetupStep {
+                            id: "pack.ssh".into(),
+                            title: "SSH client".into(),
+                            status: HostSetupStepStatus::Fail,
+                            detail: "connection".into(),
+                            hint: Some(e),
+                        };
+                        update(&jobs, &id, |s| s.job.steps.push(step));
+                        false
+                    }
+                };
+                let cancelled = cancel.load(Ordering::SeqCst);
+                update(&jobs, &id, |s| {
+                    s.job.state = if cancelled {
+                        HostSetupState::Cancelled
+                    } else if ok {
+                        HostSetupState::Succeeded
+                    } else {
+                        HostSetupState::Failed
+                    };
+                });
+            });
+        if let Err(e) = spawned {
+            update(&self.jobs, &job.id, |s| {
+                s.job.state = HostSetupState::Failed
+            });
+            return Err(HostSetupError::Conflict(format!(
+                "could not start the install: {e}"
+            )));
+        }
+        Ok(job)
     }
 
     fn job(&self, id: &str) -> Option<HostSetupJob> {
@@ -336,6 +604,80 @@ fn ssh_key_hints() -> Vec<SshKeyHint> {
     keys
 }
 
+fn pack_info(p: &packs::Pack, status: PackStatus) -> HostPackInfo {
+    HostPackInfo {
+        id: p.id.clone(),
+        status: match status {
+            PackStatus::Installed => "installed",
+            PackStatus::Partial => "partial",
+            PackStatus::Missing => "missing",
+        }
+        .into(),
+        size_mb: p.size_mb,
+        base: p.base,
+        removable: p.removable,
+    }
+}
+
+fn blocked_code(b: Blocked) -> &'static str {
+    match b {
+        Blocked::Shared => "shared",
+        Blocked::Dependants => "dependants",
+        Blocked::Unavailable => "unavailable",
+    }
+}
+
+/// Install or remove packs one after the other, one finished step each (`pack.<id>`: `detail` is
+/// the result code the app turns into a sentence, `hint` the technical detail). Stops at the first
+/// failure: apt problems (lock, offline, disk) would repeat for every following pack. `on_fail` is
+/// `Fail` for an explicit install and `Warn` in the wizard, where the server is added regardless.
+fn run_packs(
+    jobs: &Jobs,
+    job_id: &str,
+    ssh: &dyn Transport,
+    ids: &[String],
+    action: Action,
+    on_fail: HostSetupStepStatus,
+    cancel: &AtomicBool,
+) -> bool {
+    let runner = Packs { transport: ssh };
+    let (verb, title) = match action {
+        Action::Install => ("installing", "Install"),
+        Action::Remove => ("removing", "Remove"),
+    };
+    for pack in ids {
+        if cancel.load(Ordering::SeqCst) {
+            return false;
+        }
+        update(jobs, job_id, |s| {
+            if s.job.notes.len() < MAX_NOTES {
+                s.job.notes.push(format!("{verb} {pack}"));
+            }
+        });
+        let result = runner.apply(pack, action);
+        let ok = result.is_ok();
+        let step = HostSetupStep {
+            id: format!("pack.{pack}"),
+            title: format!("{title} {pack}"),
+            status: if ok {
+                HostSetupStepStatus::Pass
+            } else {
+                on_fail
+            },
+            detail: match &result {
+                Ok(()) => "done".into(),
+                Err(e) => e.code().into(),
+            },
+            hint: result.err().map(|e: PackError| e.detail()),
+        };
+        update(jobs, job_id, |s| s.job.steps.push(step));
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
 fn describe(e: HostLinkError) -> String {
     match e {
         HostLinkError::NotFound => "unknown host".into(),
@@ -354,6 +696,8 @@ struct Worker {
     record: HostRecord,
     transport: TransportFactory,
     mode: Mode,
+    /// Install the basic tool set after the server was added.
+    base_packs: bool,
 }
 
 impl Worker {
@@ -432,7 +776,22 @@ impl Worker {
             },
         };
         let report = engine.run();
-        report.ok()
+        let ok = report.ok();
+        drop(engine);
+        if ok && self.base_packs && !self.cancel.load(Ordering::SeqCst) {
+            // The server is added and paired either way: a problem here is a warning the app
+            // explains, and "Computers" offers the same install again.
+            run_packs(
+                &self.jobs,
+                &self.id,
+                &guarded,
+                &packs::base_ids(),
+                Action::Install,
+                HostSetupStepStatus::Warn,
+                &self.cancel,
+            );
+        }
+        ok
     }
 }
 
@@ -696,6 +1055,7 @@ mod tests {
                 port: None,
                 key_path: Some(key.to_string_lossy().into_owned()),
                 name: None,
+                base_packs: false,
             })
             .unwrap();
         let waiting = wait(&setup, &job.id, |j| {
@@ -837,5 +1197,220 @@ port_busy=0
         assert_eq!(install.status, HostSetupStepStatus::Fail);
         assert!(install.detail.contains("rollback complete"), "{install:?}");
         assert!(!done.steps.iter().any(|s| s.id.starts_with("health")));
+    }
+
+    /// A server with apt for the pack tests; records every command it was asked to run.
+    struct PackFake {
+        admin: bool,
+        install_exit: i32,
+        log: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Transport for PackFake {
+        fn scan_host_keys(&self) -> Result<Vec<ScannedKey>, TransportError> {
+            Fake.scan_host_keys()
+        }
+        fn run(
+            &self,
+            cmd: RemoteCmd,
+            stdin: &[u8],
+            _t: Duration,
+        ) -> Result<Output, TransportError> {
+            // Uploads carry whole scripts on stdin; only what actually runs is recorded.
+            if matches!(cmd, RemoteCmd::Provision(_)) {
+                self.log.lock().push(format!(
+                    "{} {}",
+                    cmd.command_line(),
+                    String::from_utf8_lossy(stdin).replace('\n', " ")
+                ));
+            }
+            let (code, stdout, stderr) = match cmd {
+                RemoteCmd::Probe => (0, "praxi-ok\n".to_owned(), String::new()),
+                RemoteCmd::Provision(Sub::PacksFacts) => (
+                    0,
+                    format!(
+                        "apt=1\nadmin={}\nos_id=ubuntu\npack_office=missing\npack_docs=installed\npack_ocr=missing\npack_media=missing\npack_dev=installed\ntool_pandoc=1\n",
+                        u8::from(self.admin)
+                    ),
+                    String::new(),
+                ),
+                RemoteCmd::Provision(Sub::PacksPlan) => {
+                    let text = String::from_utf8_lossy(stdin);
+                    if text.contains("pack=docs") {
+                        (0, "missing=\nunavailable=\n".to_owned(), String::new())
+                    } else {
+                        (
+                            0,
+                            "missing=libreoffice-writer,fonts-noto-core\nunavailable=\nnew_packages=240\n"
+                                .to_owned(),
+                            String::new(),
+                        )
+                    }
+                }
+                RemoteCmd::Provision(Sub::PackInstall) => (
+                    self.install_exit,
+                    String::new(),
+                    if self.install_exit == 0 {
+                        String::new()
+                    } else {
+                        "E: Could not get lock /var/lib/dpkg/lock".to_owned()
+                    },
+                ),
+                _ => (0, String::new(), String::new()),
+            };
+            Ok(Output {
+                code,
+                stdout,
+                stderr,
+                ..Output::default()
+            })
+        }
+    }
+
+    fn packs_setup(
+        data: &std::path::Path,
+        admin: bool,
+        install_exit: i32,
+    ) -> (CliHostSetup, Arc<Mutex<Vec<String>>>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let l = log.clone();
+        let store = Store::from_data_dir(data);
+        store
+            .save(&HostRecord {
+                name: "oracle".into(),
+                user: "ubuntu".into(),
+                host: "203.0.113.7".into(),
+                port: 22,
+                key_path: None,
+                fingerprint: None,
+                paired_host_id: Some("hostid1".into()),
+                desktop_key: None,
+                installed_version: None,
+            })
+            .unwrap();
+        let links = Arc::new(CliHostLinks::new(data.to_path_buf(), None));
+        let setup =
+            CliHostSetup::new(data.to_path_buf(), links).with_transport(Arc::new(move |_, _| {
+                Ok(Box::new(PackFake {
+                    admin,
+                    install_exit,
+                    log: l.clone(),
+                }) as Box<dyn Transport>)
+            }));
+        (setup, log)
+    }
+
+    fn plan_input(action: PackAction, packs: &[&str]) -> PackPlanInput {
+        PackPlanInput {
+            host_id: "hostid1".into(),
+            action,
+            packs: packs.iter().map(|p| (*p).to_owned()).collect(),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pack_install_runs_only_the_previewed_runnable_items_once_and_only_as_root_via_ssh() {
+        let dir = tempfile::tempdir().unwrap();
+        let (setup, log) = packs_setup(dir.path(), true, 0);
+        let facts = setup.packs("hostid1").unwrap();
+        assert!(facts.supported && facts.can_admin && facts.error.is_none());
+        assert!(facts.tools.iter().any(|t| t.name == "pandoc" && t.present));
+        // docs is already installed: a no-op, so it is previewed but never run
+        let plan = setup
+            .packs_plan(plan_input(PackAction::Install, &["office", "docs"]))
+            .unwrap();
+        assert!(plan.runnable);
+        assert_eq!(plan.items.iter().filter(|i| i.noop).count(), 1);
+        assert_eq!(plan.size_mb, 700);
+        assert!(
+            !log.lock().iter().any(|l| l.contains("pack-install")),
+            "a dry run must not install anything"
+        );
+        let job = setup
+            .packs_apply(PackApplyInput {
+                plan_id: plan.plan_id.clone(),
+            })
+            .unwrap();
+        assert_eq!(job.kind, HostJobKind::Packs);
+        let done = wait(&setup, &job.id, |j| j.state == HostSetupState::Succeeded);
+        assert_eq!(done.steps.len(), 1, "{:?}", done.steps);
+        assert_eq!(done.steps[0].id, "pack.office");
+        let installs: Vec<String> = log
+            .lock()
+            .iter()
+            .filter(|l| l.contains("pack-install"))
+            .cloned()
+            .collect();
+        assert_eq!(installs.len(), 1, "{installs:?}");
+        assert!(installs[0].contains("sudo -n") && installs[0].contains("pack=office"));
+        // a plan is single use
+        let again = setup.packs_apply(PackApplyInput {
+            plan_id: plan.plan_id,
+        });
+        assert!(matches!(again, Err(HostSetupError::Invalid(_))));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn without_administrator_rights_the_plan_says_so_and_cannot_be_applied() {
+        let dir = tempfile::tempdir().unwrap();
+        let (setup, log) = packs_setup(dir.path(), false, 0);
+        let plan = setup
+            .packs_plan(plan_input(PackAction::Install, &["office"]))
+            .unwrap();
+        assert!(!plan.runnable);
+        assert_eq!(plan.items[0].blocked.as_deref(), Some("needs_admin"));
+        let tried = setup.packs_apply(PackApplyInput {
+            plan_id: plan.plan_id,
+        });
+        assert!(matches!(tried, Err(HostSetupError::Invalid(_))));
+        assert!(!log.lock().iter().any(|l| l.contains("pack-install")));
+        // a name that is not in the catalog never reaches the server
+        let bad = setup.packs_plan(plan_input(PackAction::Install, &["libreoffice-writer"]));
+        assert!(matches!(bad, Err(HostSetupError::Invalid(_))));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failed_pack_install_is_a_failed_job_with_a_plain_code_and_the_wizard_only_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        let (setup, _log) = packs_setup(dir.path(), true, 100);
+        let plan = setup
+            .packs_plan(plan_input(PackAction::Install, &["office"]))
+            .unwrap();
+        let job = setup
+            .packs_apply(PackApplyInput {
+                plan_id: plan.plan_id,
+            })
+            .unwrap();
+        let done = wait(&setup, &job.id, |j| j.state == HostSetupState::Failed);
+        assert_eq!(done.steps[0].status, HostSetupStepStatus::Fail);
+        assert_eq!(done.steps[0].detail, "failed");
+        assert!(done.steps[0].hint.as_deref().unwrap().contains("dpkg/lock"));
+        // the wizard's basic-set install: same failure, but only a warning, and it stops there
+        let jobs: Jobs = Arc::new(Mutex::new(VecDeque::new()));
+        let (tx, _rx) = mpsc::channel();
+        let mut fresh = done.clone();
+        fresh.steps.clear();
+        jobs.lock().push_back(Slot {
+            job: fresh,
+            cancel: Arc::new(AtomicBool::new(false)),
+            answer: tx,
+        });
+        let ok = run_packs(
+            &jobs,
+            &done.id,
+            &PackFake {
+                admin: true,
+                install_exit: 100,
+                log: Arc::default(),
+            },
+            &["office".to_owned(), "media".to_owned()],
+            Action::Install,
+            HostSetupStepStatus::Warn,
+            &AtomicBool::new(false),
+        );
+        assert!(!ok);
+        let steps = jobs.lock()[0].job.steps.clone();
+        assert_eq!(steps.len(), 1, "stops at the first failure");
+        assert_eq!(steps[0].status, HostSetupStepStatus::Warn);
     }
 }

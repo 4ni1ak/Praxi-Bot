@@ -8456,6 +8456,151 @@
         ]
       }
     },
+    "/v1/hosts/setup/packs/apply": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_packs_apply",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackApplyInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostSetupJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/setup/packs/plan": {
+      "post": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_packs_plan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackPlanInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackPlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/hosts/setup/packs/{host_id}": {
+      "get": {
+        "tags": [
+          "host"
+        ],
+        "operationId": "hosts_packs_get",
+        "parameters": [
+          {
+            "name": "host_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostPacks"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/hosts/setup/ssh-keys": {
       "get": {
         "tags": [
@@ -21363,7 +21508,8 @@
         "description": "What a job does on the server.",
         "enum": [
           "setup",
-          "update"
+          "update",
+          "packs"
         ]
       },
       "HostKeyAnswer": {
@@ -21549,6 +21695,91 @@
           "host",
           "client"
         ]
+      },
+      "HostPackInfo": {
+        "type": "object",
+        "description": "One pack on one server.",
+        "required": [
+          "id",
+          "status",
+          "size_mb",
+          "base",
+          "removable"
+        ],
+        "properties": {
+          "base": {
+            "type": "boolean",
+            "description": "Part of the wizard's one-switch basic set."
+          },
+          "id": {
+            "type": "string",
+            "description": "Catalog id (`office`, `docs`, `ocr`, `media`, `dev`). The app shows its own localised name."
+          },
+          "removable": {
+            "type": "boolean",
+            "description": "False for shared system tools that Praxi never removes."
+          },
+          "size_mb": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Rough download size.",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "description": "`installed`, `partial` (an interrupted install) or `missing`."
+          }
+        }
+      },
+      "HostPacks": {
+        "type": "object",
+        "description": "`GET /v1/hosts/setup/packs/{host_id}`: the server's \"installed tools\" fact sheet.",
+        "required": [
+          "host_id",
+          "supported",
+          "can_admin",
+          "packs",
+          "tools"
+        ],
+        "properties": {
+          "can_admin": {
+            "type": "boolean",
+            "description": "The saved login can install software without a password prompt."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when the server could not be read: `connection`, `unsupported` or `failed`."
+          },
+          "error_detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Technical detail for \"copy details\" (sanitised, redacted)."
+          },
+          "host_id": {
+            "type": "string"
+          },
+          "packs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostPackInfo"
+            }
+          },
+          "supported": {
+            "type": "boolean",
+            "description": "Debian and Ubuntu servers only."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostToolFact"
+            }
+          }
+        }
       },
       "HostPeer": {
         "type": "object",
@@ -21803,6 +22034,22 @@
           },
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "HostToolFact": {
+        "type": "object",
+        "description": "One program the fact sheet looked for.",
+        "required": [
+          "name",
+          "present"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "present": {
+            "type": "boolean"
           }
         }
       },
@@ -26020,6 +26267,141 @@
           }
         }
       },
+      "PackAction": {
+        "type": "string",
+        "description": "What the owner wants done with the chosen packs.",
+        "enum": [
+          "install",
+          "remove"
+        ]
+      },
+      "PackApplyInput": {
+        "type": "object",
+        "description": "`POST /v1/hosts/setup/packs/apply`: run exactly the plan the owner saw.",
+        "required": [
+          "plan_id"
+        ],
+        "properties": {
+          "plan_id": {
+            "type": "string"
+          }
+        }
+      },
+      "PackPlan": {
+        "type": "object",
+        "description": "The dry-run preview the owner approves. `plan_id` is single use and expires.",
+        "required": [
+          "plan_id",
+          "host_id",
+          "action",
+          "items",
+          "size_mb",
+          "runnable",
+          "expires_in_secs"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/PackAction"
+          },
+          "expires_in_secs": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "host_id": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PackPlanItem"
+            }
+          },
+          "plan_id": {
+            "type": "string"
+          },
+          "runnable": {
+            "type": "boolean",
+            "description": "True when at least one item can run."
+          },
+          "size_mb": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Rough download size of what would be installed (0 for a removal).",
+            "minimum": 0
+          }
+        }
+      },
+      "PackPlanInput": {
+        "type": "object",
+        "description": "`POST /v1/hosts/setup/packs/plan`.",
+        "required": [
+          "host_id",
+          "action",
+          "packs"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/PackAction"
+          },
+          "host_id": {
+            "type": "string",
+            "description": "Paired host id (`GET /v1/hosts`)."
+          },
+          "packs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Catalog ids. Anything else is refused."
+          }
+        }
+      },
+      "PackPlanItem": {
+        "type": "object",
+        "description": "What would happen to one pack. Nothing has been changed yet.",
+        "required": [
+          "pack",
+          "packages",
+          "total_packages",
+          "size_mb",
+          "noop"
+        ],
+        "properties": {
+          "blocked": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it cannot run: `shared`, `dependants`, `unavailable`, `needs_admin`, `unsupported`,\n`connection` or `failed`."
+          },
+          "noop": {
+            "type": "boolean",
+            "description": "Already as wanted: nothing to do."
+          },
+          "pack": {
+            "type": "string"
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The catalog's packages that would be installed or removed."
+          },
+          "size_mb": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total_packages": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Packages apt would unpack in total, dependencies included (0 when unknown).",
+            "minimum": 0
+          }
+        }
+      },
       "PairCodeDto": {
         "type": "object",
         "description": "A one-time pairing code (`POST /v1/channels/telegram/pair-code`).",
@@ -28806,6 +29188,10 @@
           "host"
         ],
         "properties": {
+          "base_packs": {
+            "type": "boolean",
+            "description": "Also install the basic tool set (office, documents, media, developer tools) once the server\nis added. Needs a login that may run administrator commands; a failure there never undoes\nthe added server."
+          },
           "host": {
             "type": "string",
             "description": "Host name or IP address of the server."
