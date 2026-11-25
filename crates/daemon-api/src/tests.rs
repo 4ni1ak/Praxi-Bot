@@ -1060,9 +1060,14 @@ async fn a_message_from_the_app_skips_the_pending_approval_and_starts_the_next_t
     assert_eq!(sent.json()["run_id"], run.as_str());
     wait_state(&t, &run, "cancelled").await;
 
-    let all = call(&t, Method::GET, &format!("/v1/approvals?run_id={run}"), None)
-        .await
-        .json();
+    let all = call(
+        &t,
+        Method::GET,
+        &format!("/v1/approvals?run_id={run}"),
+        None,
+    )
+    .await
+    .json();
     assert_eq!(all[0]["decision"], "denied", "{all}");
     let fr = events(&t, &format!("?run_id={run}"), None).await;
     let denied = fr.iter().find(|f| f.1 == "tool_call_denied").unwrap();
