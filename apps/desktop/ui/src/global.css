@@ -31,9 +31,18 @@ html[data-window-kind="widget"] #root {
 html { font-optical-sizing: auto; -webkit-font-smoothing: antialiased; }
 button, input, textarea, select { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
-button, a, input, textarea, select { transition: background-color var(--motion-duration-fast) ease-out, border-color var(--motion-duration-fast) ease-out, color var(--motion-duration-fast) ease-out; }
+button, a, input, textarea, select { transition: background-color var(--motion-duration-fast) var(--motion-easing-standard), border-color var(--motion-duration-fast) var(--motion-easing-standard), color var(--motion-duration-fast) var(--motion-easing-standard); }
 button:not(:disabled):active { filter: brightness(0.94); }
-button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [tabindex="0"]:focus-visible { outline: var(--size-border-thick) solid var(--color-focus); outline-offset: var(--space-1); }
+/* ONE focus style, keyboard only (:focus-visible): a 2px ring in --color-focus hugging the element.
+   It is the same ring as --shadow-focus (components that draw it as a box-shadow), so every control looks
+   identical.  Never remove it without drawing --shadow-focus instead. */
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible, [tabindex="0"]:focus-visible { outline: var(--size-border-thick) solid var(--color-focus); outline-offset: var(--space-0); }
+b, strong { font-weight: var(--font-weight-semibold); }
+/* Numbers that change or line up (clock times, counters, costs, timers) use tabular figures so columns and
+   live values do not jitter.  CSS-module class names are _name_hash, so match the name segment. */
+time, output, meter, progress, [data-num], input[type="number"],
+[class*="_time_"], [class*="Time_"], [class*="_times_"], [class*="_count_"], [class*="Count_"], [class*="_counter"],
+[class*="_countdown_"], [class*="_cost_"], [class*="Cost_"], [class*="_duration_"], [class*="_mono_"] { font-variant-numeric: tabular-nums; }
 .lucide { flex-shrink: 0; width: var(--size-icon); height: var(--size-icon); stroke-width: 1.5; }
 button .lucide { width: var(--size-icon-sm); height: var(--size-icon-sm); }
 ::selection { background: var(--color-selection); color: var(--color-selection-text); }
@@ -54,9 +63,11 @@ button .lucide { width: var(--size-icon-sm); height: var(--size-icon-sm); }
 input::placeholder, textarea::placeholder { color: var(--color-text-muted); opacity: 1; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  :root { --motion-press-scale: 1; }
 }
 /* Accessibility > Reduce motion (the app's own switch, same effect as the OS preference). */
 html[data-reduce-motion] *, html[data-reduce-motion] *::before, html[data-reduce-motion] *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+:root[data-reduce-motion] { --motion-press-scale: 1; }
 @media (prefers-contrast: more) {
   :root[data-theme] { --color-border: var(--color-border-strong); --color-text-muted: var(--color-text); }
 }

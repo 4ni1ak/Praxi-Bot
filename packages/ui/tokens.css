@@ -18,8 +18,6 @@
   --space-10: 40px;
   --space-12: 48px;
   --space-16: 64px;
-  --font-size-ui: 13px;
-  --size-titlebar: 28px;
 
   /* Sizing tokens */
   --size-border: 1px;
@@ -33,9 +31,10 @@
   --size-avatar-sm: 28px;
   --size-avatar-md: 36px;
   --size-avatar-lg: 48px;
-  --size-control-sm: 30px;
-  --size-control-md: 36px;
-  --size-control-lg: 42px;
+  /* Control heights: compact pro-tool density (Button sm / md / lg, inputs, segmented controls). */
+  --size-control-sm: 28px;
+  --size-control-md: 32px;
+  --size-control-lg: 40px;
   --size-list-max: 210px;
   --size-sidebar-width: 260px;
   --size-content-max: 760px;
@@ -50,25 +49,44 @@
   --corner-scale: 1;
   --radius-sm: calc(6px * var(--corner-scale));
   --radius-md: calc(8px * var(--corner-scale));
-  --radius-control: calc(10px * var(--corner-scale));
+  /* Retired: buttons and inputs use --radius-md.  Kept as an alias so old rules keep working. */
+  --radius-control: var(--radius-md);
   --radius-card: calc(12px * var(--corner-scale));
   --radius-pill: 9999px;
 
-  /* Typography tokens */
+  /* Typography tokens.  One scale: 11 / 12 / 13 / 14 / 15 / 17 / 22 / 28 px, weights 400 / 500 / 600.
+     11 captions, timestamps | 12 meta, helper text | 13 default control and row text | 14 secondary body,
+     list titles | 15 chat prose | 17 modal and section titles | 22 page titles | 28 hero. */
   --font-sans: "Geist Variable", "Segoe UI", sans-serif;
   --font-mono: "Geist Mono Variable", Consolas, monospace;
+  --font-size-2xs: 11px;
   --font-size-xs: 12px;
+  --font-size-ui: 13px;
   --font-size-sm: 14px;
   --font-size-md: 15px;
-  --font-size-lg: 20px;
-  --font-size-xl: 24px;
+  --font-size-chat: var(--font-size-md);
+  --font-size-title: 17px;
+  --font-size-lg: 22px;
+  --font-size-display: 28px;
+  /* Legacy names, folded into the scale above (no half pixels). */
+  --font-size-micro: var(--font-size-2xs);
+  --font-size-caption: var(--font-size-2xs);
+  --font-size-ui-sm: var(--font-size-xs);
+  --font-size-name: var(--font-size-title);
+  --font-size-xl: var(--font-size-lg);
   --font-weight-regular: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
-  --font-weight-bold: 700;
+  /* No bold: the scale stops at 600 (titles, brand, bot names). */
+  --font-weight-bold: var(--font-weight-semibold);
   --line-height-tight: 1.25;
+  --line-height-ui: 1.4;
   --line-height-normal: 1.5;
+  --line-height-chat: 1.65;
   --letter-spacing-wide: 0.6px;
+  /* Relative, so it scales with the size it is used on. */
+  --letter-spacing-tight: -0.011em;
+  --letter-spacing-display: -0.02em;
 
   --radius-modal: calc(16px * var(--corner-scale));
   /* The composer box and everything docked to it (the approval dock) share this radius. */
@@ -79,23 +97,41 @@
   --size-modal-height: 740px;
   --size-icon-sm: 16px;
   --size-icon-lg: 20px;
-  --font-size-display: 30px;
-  --letter-spacing-tight: -0.5px;
-  --line-height-chat: 1.75;
 
-  /* Motion tokens */
-  --motion-duration-fast: 160ms;
-  --motion-duration-normal: 200ms;
-  --motion-duration-slow: 450ms;
+  /* Motion tokens: short and calm.  instant = press feedback, fast = hover / tooltip, normal = enter,
+     exit = leave (shorter than enter), slow = panel and layout slides.  prefers-reduced-motion and the
+     app's own switch cancel every transition and animation (global.css). */
+  --motion-duration-instant: 80ms;
+  --motion-duration-fast: 120ms;
+  --motion-duration-normal: 180ms;
+  --motion-duration-exit: 120ms;
+  --motion-duration-slow: 320ms;
   --motion-duration-ripple: 650ms;
   --motion-duration-pulse: 1400ms;
+  --motion-duration-skeleton: 1400ms;
   --motion-duration-avatar-hover: 260ms;
   --motion-duration-avatar-press: 130ms;
   --motion-duration-avatar-state: 320ms;
   --motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --motion-easing-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-easing-in: cubic-bezier(0.4, 0, 1, 1);
   --motion-easing-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --motion-easing-spring-soft: cubic-bezier(0.22, 1.24, 0.36, 1);
   --motion-easing-organic: cubic-bezier(0.45, 0.05, 0.55, 0.95);
+  --motion-press-scale: 0.97;
+
+  /* State layers: translucent text-colour overlays that work on every surface (page, card, popover),
+     so hover strength never depends on the host colour.  Mix a layer into a base with
+     color-mix(in srgb, <base>, var(--color-text) var(--state-hover-strength)) when the base must animate. */
+  --state-hover-strength: 6%;
+  --state-pressed-strength: 10%;
+  --state-hover: color-mix(in srgb, var(--color-text) var(--state-hover-strength), transparent);
+  --state-pressed: color-mix(in srgb, var(--color-text) var(--state-pressed-strength), transparent);
+  --state-selected: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --state-disabled-opacity: 0.5;
+  /* Hover edge: a step up from --color-border without jumping to the 4.7:1 strong border. */
+  --color-border-hover: color-mix(in srgb, var(--color-text) 14%, transparent);
+
   /* v7 bot panel (card 281): sizes the design fixes in pixels. */
   --size-avatar-panel: 68px;
   --size-computer-view: 132px;
@@ -107,11 +143,6 @@
   --size-menu-width: 300px;
   --size-switch-track: 30px;
   --size-switch-thumb: 14px;
-  --font-size-micro: 10.5px;
-  --font-size-2xs: 11px;
-  --font-size-caption: 11.5px;
-  --font-size-ui-sm: 12.5px;
-  --font-size-name: 16px;
   --color-on-media: #ffffff;
   --color-media-scrim: #0a0a0e;
 }
@@ -184,10 +215,11 @@
   --color-creature-eyes: #172125;
   --color-bg-gradient: #27282d;
   --color-shadow: color-mix(in srgb, #000000 60%, transparent);
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 30%, transparent);
-  --shadow-card: 0 4px 16px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-overlay: 0 32px 100px color-mix(in srgb, #000000 50%, transparent), 0 0 0 1px color-mix(in srgb, #ecedf1 2%, transparent);
-  --shadow-focus: 0 0 0 2px var(--color-background), 0 0 0 4px var(--color-focus);
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 40%, transparent), inset 0 1px 0 color-mix(in srgb, #ecedf1 4%, transparent);
+  --shadow-card: inset 0 1px 0 color-mix(in srgb, #ecedf1 3%, transparent), 0 2px 8px -2px color-mix(in srgb, #000000 35%, transparent);
+  --shadow-popover: 0 8px 24px -6px color-mix(in srgb, #000000 55%, transparent), 0 0 0 1px color-mix(in srgb, #ecedf1 8%, transparent);
+  --shadow-overlay: 0 24px 64px -16px color-mix(in srgb, #000000 60%, transparent), 0 0 0 1px color-mix(in srgb, #ecedf1 8%, transparent);
+  --shadow-focus: 0 0 0 var(--size-border-thick) var(--color-focus);
   --shadow-target: 0 0 0 4px var(--color-accent-subtle);
   --shadow-human-banner: 0 0 0 3px var(--color-warning-subtle);
   --shell-fill: #111217;

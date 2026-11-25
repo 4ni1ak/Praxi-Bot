@@ -535,12 +535,23 @@ export function buildTokens(
     "--color-creature-eyes": "#172125",
     "--color-bg-gradient": d.bg2,
     "--color-shadow": `color-mix(in srgb, ${shadowInk} ${Math.round(shadowStrength * 100)}%, transparent)`,
-    "--shadow-sm": `0 1px 2px ${alpha(shadowInk, d.light ? 12 : 30)}`,
-    "--shadow-card": `0 4px 16px ${alpha(shadowInk, d.light ? 10 : 18)}`,
+    // Elevation: page < card < popover < overlay.  Each level is one soft drop shadow; dark surfaces
+    // add a 1px top highlight (a hairline of light) because a dark shadow alone barely shows.
+    "--shadow-sm": d.light
+      ? `0 1px 2px ${alpha(shadowInk, 10)}`
+      : `0 1px 2px ${alpha(shadowInk, 40)}, inset 0 1px 0 ${alpha(d.text, 4)}`,
+    "--shadow-card": d.light
+      ? `0 1px 2px ${alpha(shadowInk, 8)}, 0 4px 12px -4px ${alpha(shadowInk, 10)}`
+      : `inset 0 1px 0 ${alpha(d.text, 3)}, 0 2px 8px -2px ${alpha(shadowInk, 35)}`,
+    "--shadow-popover": d.light
+      ? `0 8px 24px -8px ${alpha(shadowInk, 22)}, 0 0 0 1px ${alpha(shadowInk, 6)}`
+      : `0 8px 24px -6px ${alpha(shadowInk, 55)}, 0 0 0 1px ${alpha(d.text, 8)}`,
     "--shadow-overlay": d.light
-      ? `0 24px 80px ${alpha(shadowInk, 30)}, 0 2px 8px ${alpha(shadowInk, 14)}`
-      : `0 32px 100px ${alpha(shadowInk, 50)}, 0 0 0 1px ${alpha(d.text, 2)}`,
-    "--shadow-focus": "0 0 0 2px var(--color-background), 0 0 0 4px var(--color-focus)",
+      ? `0 24px 64px -16px ${alpha(shadowInk, 30)}, 0 2px 8px ${alpha(shadowInk, 10)}`
+      : `0 24px 64px -16px ${alpha(shadowInk, 60)}, 0 0 0 1px ${alpha(d.text, 8)}`,
+    // One focus ring everywhere (global :focus-visible outline and component shadows look identical):
+    // 2px in --color-focus, which is >= 3:1 on every surface (4.5:1 in the high-contrast themes).
+    "--shadow-focus": "0 0 0 var(--size-border-thick) var(--color-focus)",
     "--shadow-target": "0 0 0 4px var(--color-accent-subtle)",
     "--shadow-human-banner": "0 0 0 3px var(--color-warning-subtle)"
   };
