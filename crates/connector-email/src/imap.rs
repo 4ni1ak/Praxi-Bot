@@ -523,7 +523,10 @@ impl ImapSession {
         }
         let header_set = uid_set(&allowed);
         let fetches = self
-            .uid_fetch(&header_set, "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER])")
+            .uid_fetch(
+                &header_set,
+                "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER] BODYSTRUCTURE)",
+            )
             .await?;
         let mut out: Vec<MessageSummary> = fetches
             .iter()
@@ -538,7 +541,9 @@ impl ImapSession {
                     return None;
                 }
                 let unread = !f.flags().any(|fl| matches!(fl, Flag::Seen));
-                Some(parse_summary(uid, header, unread, f.size))
+                let mut summary = parse_summary(uid, header, unread, f.size);
+                summary.has_attachment = f.bodystructure().map(|body| has_attachment(body, 0));
+                Some(summary)
             })
             .collect();
         out.sort_unstable_by_key(|a| std::cmp::Reverse(a.uid));
@@ -657,6 +662,26 @@ fn uid_set(uids: &[u32]) -> String {
         let _ = write!(set, "{u}");
     }
     set
+}
+
+// BODYSTRUCTURE is metadata; never fetch a body to decide an attachment filter.
+fn has_attachment(body: &async_imap::imap_proto::BodyStructure<'_>, depth: usize) -> bool {
+    use async_imap::imap_proto::BodyStructure;
+    if depth > 16 {
+        return false;
+    }
+    let (common, children) = match body {
+        BodyStructure::Basic { common, .. } | BodyStructure::Text { common, .. } => (common, false),
+        BodyStructure::Message { common, body, .. } => (common, has_attachment(body, depth + 1)),
+        BodyStructure::Multipart { common, bodies, .. } => {
+            (common, bodies.iter().any(|b| has_attachment(b, depth + 1)))
+        }
+    };
+    children
+        || common
+            .disposition
+            .as_ref()
+            .is_some_and(|d| d.ty.eq_ignore_ascii_case("attachment"))
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ kılavuzda arama yapar ve sayfa çevrilmişse Türkçesini açar.
 
 | Sayfa | Ne anlatır |
 | --- | --- |
+| E-posta veya imzalı çağrıyla botu uyandırma | [Bir şey olduğunda](triggers.md) |
 | [5 dakikada başlangıç](getting-started.md) | Kur, ücretsiz anahtar al, ilk sohbetini yap, bot nedir öğren. |
 | [Botunu güvende tut](keep-your-bot-safe.md) | İzin seviyeleri, onaylar ve bilgisayarından ne çıkar. |
 | [Bu bilgisayarda mı, sunucuda mı çalışsın](local-or-server.md) | Neden sunucuya ihtiyacın yok ve istersen nasıl eklenir. |

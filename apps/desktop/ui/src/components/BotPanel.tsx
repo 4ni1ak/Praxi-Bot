@@ -35,6 +35,7 @@ import { BotComputerBlock } from "./BotComputerBlock";
 import { StopStatusNotice } from "./StopStatusNotice";
 import styles from "./BotPanel.module.css";
 import { BotPanelMail } from "./BotPanelMail";
+import { BotPanelTriggers } from "./BotPanelTriggers";
 import { BotPanelWebhooks } from "./BotPanelWebhooks";
 import { BotPanelSkills } from "./BotPanelSkills";
 import { BotPanelWorkspace } from "./BotPanelWorkspace";
@@ -381,7 +382,7 @@ export function BotPanel({
             })}
           </>
         ) : tab === "automation" ? (
-          <BotPanelWebhooks botId={bot.id} />
+          <><BotPanelTriggers botId={bot.id} /><details><summary>{t("botPanel.triggers.manageHooks")}</summary><BotPanelWebhooks botId={bot.id} /></details></>
         ) : (
           library.map((id) =>
             id === "skills" ? (

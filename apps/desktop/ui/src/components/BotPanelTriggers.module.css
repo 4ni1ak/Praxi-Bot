@@ -1,0 +1,37 @@
+.section, .form, .card { display: flex; flex-direction: column; gap: var(--space-2); }
+.section { margin-bottom: var(--space-5); }
+.heading, .row { display: flex; align-items: center; gap: var(--space-2); }
+.heading { justify-content: space-between; }
+.heading h3 { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-0); font-size: var(--font-size-ui-sm); font-weight: var(--font-weight-medium); }
+.section svg { width: var(--space-4); height: var(--space-4); flex-shrink: 0; }
+.note, .empty, .error { margin: var(--space-0); font-size: var(--font-size-xs); line-height: var(--line-height-normal); color: var(--color-text-muted); }
+.empty { padding: var(--space-3) var(--space-0); }
+.error { color: var(--color-danger); }
+.list { display: flex; flex-direction: column; gap: var(--space-2); list-style: none; padding: var(--space-0); margin: var(--space-0); }
+.card, .form { border: var(--size-border) solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3); background: var(--color-surface); }
+.form { animation: arrive 180ms ease-out; }
+.form > .row { justify-content: space-between; }
+.name { flex: 1; min-width: 0; text-align: start; overflow-wrap: anywhere; border: none; padding: var(--space-0); background: transparent; color: var(--color-text); font: inherit; font-size: var(--font-size-ui-sm); cursor: pointer; }
+.chip { border-radius: var(--radius-sm); background: var(--color-surface-elevated); color: var(--color-text-muted); font-size: var(--font-size-xs); padding: var(--space-1) var(--space-2); white-space: nowrap; }
+.field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; color: var(--color-text); font-size: var(--font-size-xs); }
+.field input, .field select, .field textarea { box-sizing: border-box; min-width: 0; width: 100%; padding: var(--space-2); border: var(--size-border) solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-elevated); color: var(--color-text); font: inherit; }
+.field textarea { min-height: calc(var(--space-8) * 2); resize: vertical; }
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-2); }
+.check { display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-xs); padding: var(--space-2) var(--space-0); }
+.check input { accent-color: var(--color-accent); }
+.form details { border-top: var(--size-border) solid var(--color-border); padding-top: var(--space-2); font-size: var(--font-size-xs); }
+.form summary { cursor: pointer; padding: var(--space-1) var(--space-0); color: var(--color-text-muted); }
+.form details[open] > * + * { margin-top: var(--space-2); }
+.form fieldset { min-width: 0; border: none; padding: var(--space-0); margin: var(--space-0); }
+.form legend { margin-bottom: var(--space-1); color: var(--color-text-muted); }
+.examples { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.examples button, .secondary { border: var(--size-border) solid var(--color-border); border-radius: var(--radius-sm); background: transparent; color: var(--color-text-muted); padding: var(--space-1) var(--space-2); font: inherit; font-size: var(--font-size-xs); cursor: pointer; }
+.primary { border: none; border-radius: var(--radius-sm); background: var(--color-accent); color: var(--color-accent-contrast); font: inherit; font-size: var(--font-size-xs); min-height: var(--space-8); padding: var(--space-1) var(--space-3); cursor: pointer; }
+.iconButton { display: grid; place-items: center; border: none; background: transparent; color: var(--color-text-muted); width: var(--space-8); height: var(--space-8); border-radius: var(--radius-sm); cursor: pointer; }
+.iconButton:hover, .examples button:hover, .secondary:hover { background: var(--color-surface-elevated); color: var(--color-text); }
+.section button, .section input, .section select, .section textarea { transition: background-color 180ms ease, box-shadow 180ms ease; }
+.section :focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.section button:disabled { opacity: 0.6; cursor: default; }
+.preview { white-space: pre-wrap; overflow-wrap: anywhere; max-height: calc(var(--space-8) * 8); overflow: auto; font-family: var(--font-mono); font-size: var(--font-size-xs); padding: var(--space-2); border-radius: var(--radius-sm); background: var(--color-surface-elevated); }
+@keyframes arrive { from { opacity: 0; transform: translateY(var(--space-1)); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .form { animation: none; } .section button, .section input, .section select, .section textarea { transition: none; } }

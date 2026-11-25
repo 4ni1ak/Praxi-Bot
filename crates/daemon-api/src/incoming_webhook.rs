@@ -107,9 +107,9 @@ pub struct IncomingWebhookAccepted {
     /// Webhook that fired.
     pub webhook_id: Uuid,
     /// Run that was started.
-    pub run_id: Uuid,
+    pub run_id: Option<Uuid>,
     /// New chat the run lives in.
-    pub chat_id: Uuid,
+    pub chat_id: Option<Uuid>,
 }
 
 /// Body of `POST /v1/bots/{bot}/incoming-webhooks`.
@@ -393,7 +393,7 @@ pub(crate) async fn test_webhook(
         &s,
         "owner",
         "incoming_webhook.tested",
-        Some(RunId(accepted.run_id)),
+        accepted.run_id.map(RunId),
         &serde_json::json!({"webhook_id": row.id, "bot_id": row.bot_id.0}),
     )?;
     Ok((StatusCode::ACCEPTED, Json(accepted)))
@@ -506,7 +506,7 @@ pub(crate) async fn receive_webhook(
         &s,
         "webhook",
         "incoming_webhook.fired",
-        Some(RunId(accepted.run_id)),
+        accepted.run_id.map(RunId),
         &serde_json::json!({
             "webhook_id": row.id,
             "bot_id": row.bot_id.0,
@@ -593,6 +593,27 @@ fn start_run(
             "incoming webhooks are paused in safe mode",
         ));
     }
+    let safe_payload = s
+        .agent()
+        .redact_host_text(scheduler::registry::clean_header(payload, 4096));
+    let queued = s.leader().with_active(|| -> Result<_, ApiError> {
+        Ok(s.schedule_store()?.enqueue_webhook(
+            hook.bot_id,
+            hook.id,
+            serde_json::json!({"body":safe_payload,"received_at":storage::now_ms()}),
+            storage::now_ms(),
+        )?)
+    })??;
+    if queued.is_some() {
+        s.storage()
+            .mark_incoming_webhook_fired(hook.id, storage::now_ms())?;
+        return Ok(IncomingWebhookAccepted {
+            status: "queued".into(),
+            webhook_id: hook.id,
+            run_id: None,
+            chat_id: None,
+        });
+    }
     let envelope = serde_json::to_string(&serde_json::json!({
         "webhook": hook.name,
         "instruction": hook.instruction,
@@ -626,8 +647,8 @@ fn start_run(
     Ok(IncomingWebhookAccepted {
         status: "accepted".to_owned(),
         webhook_id: hook.id,
-        run_id: run.0,
-        chat_id: chat.id.0,
+        run_id: Some(run.0),
+        chat_id: Some(chat.id.0),
     })
 }
 

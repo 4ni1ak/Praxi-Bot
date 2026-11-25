@@ -88,3 +88,40 @@ Migration `0012_triggers_prechecks.sql` is the fifth migration of the independen
 Definitions and non-webhook triggers are committed atomically, and asynchronous check/poll results are discarded if the definition revision changed. Trigger state is bounded; the existing scheduler occurrence recovery contract still marks unresolved starts missed/interrupted rather than claiming exactly-once delivery after a process crash. Watcher dispatch follows that same best-effort crash boundary.
 
 The existing CLI startup wires the live registry (including e-mail) before starting the scheduler. Up to four source polls run concurrently; a slow mailbox cannot hold the timer loop or all other source polls. Shutdown cancels polls and uses the existing in-flight drain. No shell, real account, real browser or desktop is needed by the deterministic test suites.
+
+## Owner trigger registry (P7)
+
+The bot panel's Automation tab now exposes owner rules over these schedules.
+See [When something happens](guide/triggers.md) for the supported mailbox,
+quiet-hour, rate, queue and approval behavior. This does not add another runner.
+The scheduler's independent migration `0017_trigger_registry.sql` (user_version 10)
+adds `trigger_registry` (schedule foreign key, source/policy JSON, bounded runtime
+queue and counters, unique incoming-webhook reference) and `trigger_bot_rate`.
+No application-storage migration number is claimed.
+
+`/v1/bots/{bot}/triggers` (GET/POST), `/{trigger}` (PUT/DELETE), and `/preview`
+(POST) are local-owner-only, including reads and previews. New definitions are
+saved off. Existing always-confirmed schedule tools remain the bot proposal
+surface; they cannot edit owner-created registry schedules. The schedule editor
+refuses registry edits to keep the source and policy atomic. Mail uses the existing
+`email_search` read gate, baseline, UID high-water tracking and WatchState batching.
+The mail interval is configurable, 60–86,400 seconds (default 120). The connector
+now supplies canonical sender and loop-guard headers; IMAP BODYSTRUCTURE supplies
+attachment metadata without fetching content. Unknown metadata fails closed.
+
+Both #737 and c642 (#796/#810) were already merged at implementation time.
+Linked #737 calls keep their existing HMAC, durable replay and 30/minute ingress
+limits, but enqueue into their referenced schedule. Calls to an off linked rule
+are refused; they do not fall back to the webhook's earlier instruction. Queued
+responses have status `queued` and null run/chat ids. The c642 conversation channel
+is not reused as a runner or cursor: mailbox rules use the existing search poller.
+
+The daemon and sample preview share `wrapped_instruction`, using
+`untrusted_data_block_capped` with `trigger.mail`, `trigger.webhook`, or
+`trigger.schedule`. AgentPrompt input substitution is disabled at the payload
+model too: only typed tool/workflow parameters retain explicit input binding.
+Owner prompt text is never replaced by raw incoming text. Every external run
+keeps the existing isolated external_schedule initiator and once-only tool
+approval floor, including egress, resume and child runs. The old note above
+about pre-native taint describes that implementation's origin; current main also
+has native taint/egress protection, which remains in force.

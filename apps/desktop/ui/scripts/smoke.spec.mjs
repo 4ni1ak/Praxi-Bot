@@ -252,6 +252,54 @@ export async function flows(ctx) {
     }
   };
 
+  await run(s, 'trigger registry builder and wrapped sample in every theme', async (page) => {
+    const headers = { authorization: `Bearer ${ctx.token}`, 'x-praxi-owner-key': ctx.ownerKey, 'content-type': 'application/json' };
+    const create = async (path, body) => {
+      const response = await fetch(`${ctx.base}/v1${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+      if (!response.ok) throw new Error(`trigger setup ${path}: ${response.status}`);
+      return response.json();
+    };
+    const bot = await create('/bots', { profile_toml: '[bot]\nid="trigger-review"\nname="Trigger review"\n[models]\nexecutor="stub/stub-small"\n' });
+    await create('/chats', { bot_id: bot.id });
+    const rule = await create(`/bots/${bot.id}/triggers`, {
+      name: 'Morning review', instruction: 'Summarize what needs my attention.',
+      config: { source: { kind: 'time', spec: { cron: '0 9 * * * Europe/Berlin' } }, filters: {}, limits: { per_hour: 10, per_day: 50 } }
+    });
+    if (rule.enabled) throw new Error('a new trigger must start off');
+    await page.goto(ctx.uiUrl);
+    for (const theme of ['obsidian', 'cobalt', 'raven', 'clay']) {
+      await page.evaluate(mode => {
+        const raw=JSON.parse(window.localStorage.getItem('desktop_ui_settings') ?? '{}');
+        window.localStorage.setItem('desktop_ui_settings',JSON.stringify({ ...raw, themeMode: mode }));
+      },theme);
+      await page.reload();
+      await page.locator('[class*="railItem"]', { hasText: 'Trigger review' }).first().click();
+      await openFirstChat(page);
+      if (!(await page.getByTestId('bot-panel').isVisible())) await page.getByTestId('bot-chip').click();
+      await page.getByTestId('bot-panel-tab-automation').click();
+      await page.getByTestId('bot-triggers').getByRole('button', { name:'Morning review', exact:true }).click();
+      await page.getByTestId('trigger-builder').waitFor(T);
+      if (!(await page.getByTestId('trigger-instruction').inputValue()).includes('Summarize')) throw new Error('saved instruction missing');
+      await page.screenshot({ path:join(ctx.shots,`trigger-registry-${theme}.png`), timeout:10000 });
+      // Preview uses the daemon's production wrapper, not a mock in the UI.
+      if (theme === 'clay') {
+        await page.getByTestId('trigger-builder').locator('summary').filter({ hasText:'Test with a sample' }).click();
+        await page.getByRole('button', { name:'Show what the bot receives' }).click();
+        await page.getByTestId('trigger-preview').waitFor(T);
+        const text=await page.getByTestId('trigger-preview').textContent();
+        if (!text.includes('trigger.schedule') || !text.includes('"trust":"untrusted"')) throw new Error('sample is not protected event data');
+        const runs=await (await fetch(`${ctx.base}/v1/runs`,{headers})).json();
+        if (runs.some(run => run.bot_id===bot.id)) throw new Error('sample started a run');
+        await page.getByTestId('trigger-preview').scrollIntoViewIfNeeded();
+        await page.screenshot({ path:join(ctx.shots,'trigger-registry-preview-clay.png'), timeout:10000 });
+      }
+    }
+    await page.evaluate(() => {
+      const raw=JSON.parse(window.localStorage.getItem('desktop_ui_settings') ?? '{}');
+      window.localStorage.setItem('desktop_ui_settings',JSON.stringify({ ...raw,themeMode:'obsidian' }));
+    });
+  });
+
   await run(s, 'app loads with bots and no wizard', async (page) => {
     await page.goto(ctx.uiUrl);
     await page.getByTestId('home-empty-state').or(page.getByTestId('bot-empty-state')).or(page.getByTestId('chat-timeline')).waitFor(T);

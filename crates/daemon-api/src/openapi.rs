@@ -59,6 +59,7 @@ use crate::skills;
 use crate::spend_routes;
 use crate::sse;
 use crate::terminal;
+use crate::triggers;
 use crate::trusted_folders;
 use crate::usage;
 use crate::voice;
@@ -394,6 +395,7 @@ impl Modify for Security {
         bot_limits_routes::put_bot_spend_limits,
         page_reader_routes::get_page_reader,
         page_reader_routes::put_page_reader,
+        triggers::list, triggers::create, triggers::update, triggers::delete, triggers::preview,
         incoming_webhook::create_webhook,
         incoming_webhook::delete_webhook,
         incoming_webhook::list_webhooks,
@@ -795,6 +797,7 @@ impl Modify for Security {
         voice::TranscribeOutput,
         voice::VoiceConfigDto,
         voice::VoiceConfigInput,
+        triggers::TriggerDto, triggers::TriggerInput, triggers::TriggerSample, triggers::TriggerPreview,
         incoming_webhook::IncomingWebhookAccepted,
         incoming_webhook::IncomingWebhookCreated,
         incoming_webhook::IncomingWebhookDto,

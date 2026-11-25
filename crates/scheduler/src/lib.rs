@@ -37,6 +37,7 @@ pub mod error;
 pub mod model;
 pub mod nl;
 pub mod precheck;
+pub mod registry;
 pub mod store;
 pub mod watch;
 pub mod webhook;
@@ -47,6 +48,8 @@ mod c225_tests;
 mod catchup_tests;
 #[cfg(test)]
 mod dst_tests;
+#[cfg(test)]
+mod registry_tests;
 #[cfg(test)]
 mod tests;
 
