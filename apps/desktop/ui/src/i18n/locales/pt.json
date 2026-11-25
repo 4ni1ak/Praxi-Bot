@@ -1689,6 +1689,15 @@
         }
       },
       "reasonPlaceholder": "Reason for denying (optional)",
+      "risk": {
+        "allowDelete": "Permitir exclusão",
+        "allowSend": "Permitir envio",
+        "change": "Faz alterações",
+        "delete": "Exclui",
+        "read": "Apenas consulta",
+        "run": "Executa um comando",
+        "send": "Envia algo para fora"
+      },
       "runTool": "Allow for this task",
       "schedule": {
         "allowed": "Allowed without asking: {{list}}.",
@@ -1864,6 +1873,9 @@
       "undoFile": "Undo",
       "undoUndo": "Undo this undo",
       "viaLink": "Via link {{path}}"
+    },
+    "composerMenu": {
+      "label": "Adicionar ou anexar"
     },
     "conversationLabel": "Today",
     "copyMessage": "Copy message",
