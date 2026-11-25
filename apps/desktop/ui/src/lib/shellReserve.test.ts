@@ -20,7 +20,7 @@ const sources = {
 };
 const withSlow = (value: string) => ({
   ...sources,
-  tokensCss: sources.tokensCss.replace("--motion-duration-slow: 450ms;", `--motion-duration-slow: ${value};`)
+  tokensCss: sources.tokensCss.replace("--motion-duration-slow: 320ms;", `--motion-duration-slow: ${value};`)
 });
 
 test("CSS durations parse with units and the reserve follows them", () => {
@@ -48,7 +48,7 @@ test("the reserve follows the slide token in ms and s alike; a fixed 500 ms rese
   assert.deepEqual(ms.violations, []);
   assert.deepEqual(s.violations, []);
   assert.deepEqual(s.contractFailures, ms.contractFailures);
-  // A reserve hard-coded to 500 ms covers 450 ms, but not 1 s, whichever unit the token uses.
+  // A reserve hard-coded to 500 ms covers 320 ms, but not 1 s, whichever unit the token uses.
   const fixed500 = { reserveDelay: () => 500 };
   assert.deepEqual(evaluateShell(sources, APP_FNS, fixed500).violations, []);
   const tooShort = evaluateShell(withSlow("1s"), APP_FNS, fixed500);
