@@ -30,6 +30,8 @@ pub mod provider;
 pub mod smtp;
 mod tls;
 pub mod tools;
+pub mod verify;
+pub mod wait;
 
 use std::sync::Arc;
 
@@ -53,6 +55,10 @@ pub use provider::{
 };
 pub use smtp::OutgoingMail;
 pub use tools::TOOL_NAMES;
+pub use wait::{
+    LinkBasis, MailHandle, PageOrigin, PageOriginSlot, WaitEnd, WaitFilter, WaitPlan, found_json,
+    link_basis, timed_out_json, wait_for_mail,
+};
 
 /// Build the e-mail tools without registering them.
 #[must_use]
@@ -83,3 +89,5 @@ mod probe_tests;
 mod tests;
 #[cfg(test)]
 mod testutil;
+#[cfg(test)]
+mod wait_tests;

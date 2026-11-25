@@ -83,6 +83,11 @@ pub struct MessageDetail {
     pub body_truncated: bool,
     /// Attachment metadata.
     pub attachments: Vec<AttachmentInfo>,
+    /// Absolute http(s) links found in the body (text and `href`s), untrusted and
+    /// not part of the model-facing JSON: only [`crate::verify`] reads them, and
+    /// it reports them after judging each one.
+    #[serde(skip)]
+    pub links: Vec<String>,
 }
 
 /// The bare address inside a `Name <addr>` / `addr` string, lower-case; empty
@@ -194,6 +199,7 @@ pub fn parse_detail(
         .ok_or_else(|| EmailError::Imap("message could not be parsed".into()))?;
     let summary = parse_summary(uid, raw, unread, size);
     let body = msg.body_text(0).map(|b| b.to_string()).unwrap_or_default();
+    let links = body_links(&msg);
     let (body_text, body_truncated) = truncate_chars(&body, max_body_chars);
     let attachments = msg
         .attachments()
@@ -220,7 +226,25 @@ pub fn parse_detail(
         body_text,
         body_truncated,
         attachments,
+        links,
     })
+}
+
+/// The links of every text and HTML body part: written-out URLs of plain parts,
+/// `href`s of HTML parts.
+fn body_links(msg: &mail_parser::Message<'_>) -> Vec<String> {
+    let mut lists = Vec::new();
+    for part in msg.text_bodies().chain(msg.html_bodies()) {
+        let Some(text) = part.text_contents() else {
+            continue;
+        };
+        lists.push(if part.is_text_html() {
+            crate::verify::hrefs_in_html(text)
+        } else {
+            crate::verify::urls_in_text(text)
+        });
+    }
+    crate::verify::merge_links(&lists)
 }
 
 pub(crate) fn cap_untrusted(s: &str) -> String {

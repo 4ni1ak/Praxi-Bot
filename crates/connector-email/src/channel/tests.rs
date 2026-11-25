@@ -109,6 +109,7 @@ impl MailboxProvider for Fake {
                 content_type: "application/pdf".into(),
                 size: 2048,
             }],
+            links: Vec::new(),
         })
     }
     async fn send(&self, mail: &OutgoingMail) -> Result<Receipt, EmailError> {
