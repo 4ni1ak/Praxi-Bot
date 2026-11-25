@@ -1,5 +1,5 @@
 import { AlertTriangle, FolderOpen, Settings2, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import { isTauriRuntime, openWorkspaceFolder } from "../api/connection";
@@ -21,12 +21,19 @@ export function WorkspaceWarningBanner({
   const [warning, setWarning] = useState<WorkspaceWarningDto | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [cleaning, setCleaning] = useState(false);
+  const warningKey = useRef("");
 
   const refresh = useCallback(async () => {
     if (!client) return;
     try {
       const overview = await client.listWorkspaces();
-      setWarning(overview.active_warning);
+      const next = overview.active_warning;
+      const key = next
+        ? JSON.stringify([next.severity, next.threshold_percent, next.below_min_free, next.soft_limit_bots])
+        : "";
+      if (key !== warningKey.current) setDismissed(false);
+      warningKey.current = key;
+      setWarning(next);
     } catch {
       // Owner-only or unconfigured hosts stay silent here.
     }
@@ -35,6 +42,10 @@ export function WorkspaceWarningBanner({
   useEffect(() => {
     setDismissed(false);
     void refresh();
+    // Shell commands and other programs can consume disk too. Recheck while
+    // the app is open, even when no managed file tool emits a write warning.
+    const timer = window.setInterval(() => void refresh(), 60_000);
+    return () => window.clearInterval(timer);
   }, [refresh]);
 
   useEffect(() => {
