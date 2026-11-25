@@ -31,13 +31,26 @@
   transition: background-color var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
-.row:hover,
-.row[data-active="true"] {
-  background-color: var(--color-surface-elevated);
+/* Hover and pressed are the shared state layers; the open chat is the accent layer plus a straight marker. */
+.row:hover {
+  background-color: var(--state-hover);
 }
 
-.rowRail[data-active="true"] {
-  background-color: var(--color-surface-active);
+.row[data-active="true"],
+.row[data-active="true"]:hover {
+  background-color: var(--state-selected);
+}
+
+.row[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: var(--space-half);
+  width: calc(var(--size-border-thick) * 1.5);
+  height: var(--space-4);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-accent-text);
+  transform: translateY(-50%);
 }
 
 .row[data-archived="true"] .main { color: var(--color-text-muted); }
@@ -73,11 +86,15 @@
   color: var(--color-text);
 }
 
+.row[data-active="true"] .title {
+  font-weight: var(--font-weight-medium);
+}
+
 .icon {
   flex: none;
   width: var(--size-icon-sm);
   height: var(--size-icon-sm);
-  color: var(--color-text-faint);
+  color: var(--color-text-muted);
 }
 
 .rowPanel .icon {
@@ -102,7 +119,7 @@
 }
 
 .date {
-  color: var(--color-text-faint);
+  color: var(--color-text-muted);
   font-size: var(--font-size-xs);
 }
 
@@ -166,7 +183,7 @@
 .more:hover:not(:disabled),
 .more[aria-expanded="true"],
 .renameBtn:hover {
-  background-color: var(--color-surface-active);
+  background-color: var(--state-pressed);
   color: var(--color-text);
 }
 
@@ -243,7 +260,7 @@
 .menuItem:hover,
 .menuItem:focus-visible {
   outline: none;
-  background-color: var(--color-surface-active);
+  background-color: var(--state-hover);
 }
 
 .menuItem:focus-visible {
@@ -272,7 +289,7 @@
 }
 
 .archivedToggle:hover {
-  background-color: var(--color-surface-elevated);
+  background-color: var(--state-hover);
   color: var(--color-text);
 }
 

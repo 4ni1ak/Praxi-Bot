@@ -1,4 +1,4 @@
-import { CalendarClock, CircleHelp, Download, Gauge, Palette, Settings2, Sparkles, type LucideIcon } from "lucide-react";
+import { CalendarClock, ChevronsUpDown, CircleHelp, Download, Gauge, Palette, Settings2, Sparkles, type LucideIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ComputerTarget } from "../lib/settingsPrefs";
@@ -80,6 +80,7 @@ export function AccountMenu({
           {initial}
         </span>
         {compact ? null : <span className={styles.name}>{label}</span>}
+        {compact ? null : <ChevronsUpDown className={styles.chevron} aria-hidden="true" />}
       </button>
       <Popover open={open} anchor={trigger} onClose={close} placement="top-start" label={label} width={272} className={styles.menu}>
         <div className={styles.head}>

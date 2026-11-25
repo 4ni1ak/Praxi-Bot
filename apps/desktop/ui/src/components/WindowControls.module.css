@@ -29,12 +29,14 @@
   background: none;
   color: var(--color-text-muted);
   cursor: default;
-  transition: background-color var(--motion-duration-fast) ease-out;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-easing-standard),
+    color var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
 .button svg {
-  width: var(--space-4);
-  height: var(--space-4);
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
 }
 
 .restoreIcon {
@@ -42,12 +44,13 @@
 }
 
 .button:hover {
-  background-color: var(--color-surface-elevated);
+  background-color: var(--state-hover);
   color: var(--color-text);
 }
 
 .button:active {
-  background-color: var(--color-surface-active);
+  background-color: var(--state-pressed);
+  color: var(--color-text);
 }
 
 .button:focus-visible {
