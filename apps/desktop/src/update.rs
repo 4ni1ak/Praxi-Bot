@@ -517,7 +517,7 @@ pub async fn check_for_update<R: Runtime>(
         s.last_checked = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .ok()
-            .map(|d| d.as_secs())
+            .map(|d| d.as_secs());
     })?;
     let found = check_channel(app, settings, endpoint, false, channel)
         .await

@@ -1057,15 +1057,16 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
     if (!isTauriRuntime()) return;
     void getVersion().then(setAppVersion).catch(() => undefined);
   }, []);
+  const notesLanguage = i18n.language;
   useEffect(() => {
     let cancelled = false;
-    void updateStatus(i18n.language).then((status) => {
+    void updateStatus(notesLanguage).then((status) => {
       if (!cancelled) setInstalledNotes(status.installedNotes);
     }).catch(() => undefined).finally(() => {
       if (!cancelled) setUpdateNotesLoaded(true);
     });
     return () => { cancelled = true; };
-  }, [i18n.language]);
+  }, [notesLanguage]);
   const whatsNewNotes = installedReleaseNotes(installedNotes, appVersion, t("whatsNew.label"))
     ?? notesFor(whatsNewFile as WhatsNewFile, appVersion, i18n.language);
   const whatsNewStep = settingsLoaded && updateNotesLoaded
