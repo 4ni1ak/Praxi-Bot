@@ -287,12 +287,14 @@ Manage the e-mail accounts of the running daemon (see [email](email.md)). Change
 
 Validate the curated model catalog, check its freshness, or compare it with a
 provider model list (see [model catalog](model-catalog.md)). Offline by
-default; `--live` is the only network call and is opt-in.
+default; `--live` and `update` are the only network calls (`--live` is opt-in; `update` fetches a signed catalog from a fixed https address and sends nothing about you).
 
 | Subcommand | Meaning |
 | --- | --- |
 | `bot catalog check` | Validate `model_metadata.json`, the provider catalog entries, and optionally the docs table. Options: `--metadata <FILE>`, `--docs <FILE>`, `--max-age-days <DAYS>` (default 90), `--strict` (exit non-zero when stale) |
 | `bot catalog diff <PROVIDER> [SNAPSHOT]` | Compare the committed catalog for a provider with a JSON or TOML model-list snapshot. Options: `--live` (query the configured provider with its stored key), `--metadata <FILE>` |
+| `bot catalog update` | Download the signed, newer model catalog and install it if its signature is valid and it is not older than what you have. Option: `--check` (only report, install nothing) |
+| `bot catalog auto-update on\|off\|status` | Switch the automatic daily update (default on) or show its state. `BOT_CATALOG_UPDATES=off` also disables it |
 | `bot catalog render-docs` | Print the Markdown provider table generated from `model_metadata.json`. Option: `--metadata <FILE>` |
 
 ### `bot secrets`
