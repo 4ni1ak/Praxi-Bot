@@ -168,6 +168,10 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/v1/bots/{}/memory/settings"),
     ("POST", "/v1/skills"),
     ("POST", "/v1/skills/import"),
+    // a draft built from a chat's steps, and its install, are the owner's
+    ("POST", "/v1/chats/{}/skill-draft"),
+    ("POST", "/v1/skills/draft/preview"),
+    ("POST", "/v1/skills/draft/install"),
     ("POST", "/v1/skills/hub/preview"),
     ("POST", "/v1/skills/hub/install"),
     ("POST", "/v1/skills/market/index"),

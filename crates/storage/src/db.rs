@@ -1237,6 +1237,27 @@ impl Storage {
             .optional()?)
     }
 
+    /// The newest run of `chat` that finished successfully (`succeeded`).
+    ///
+    /// # Errors
+    /// Fails on SQLite errors.
+    pub fn latest_succeeded_run_for_chat(
+        &self,
+        user_id: UserId,
+        chat: ChatId,
+    ) -> Result<Option<Run>> {
+        Ok(self
+            .conn()
+            .query_row(
+                &format!(
+                    "{RUN_SELECT} WHERE user_id = ?1 AND chat_id = ?2 AND state = 'succeeded' ORDER BY id DESC LIMIT 1"
+                ),
+                params![user_id.to_string(), chat.to_string()],
+                run_row,
+            )
+            .optional()?)
+    }
+
     /// List a user's runs.
     ///
     /// # Errors

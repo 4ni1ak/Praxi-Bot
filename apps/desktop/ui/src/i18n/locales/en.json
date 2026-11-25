@@ -2418,6 +2418,7 @@
     "renameEmpty": "Enter a title.",
     "renameInputLabel": "Chat title",
     "renameTooLong": "Keep the title under {{max}} characters.",
+    "saveAsSkill": "Save as skill…",
     "unarchive": "Unarchive",
     "unpin": "Unpin"
   },
@@ -3076,6 +3077,18 @@
       "skill_contains_secret": {
         "hint": "Remove the secret from its files, then add it again.",
         "title": "The skill seems to contain a password or key"
+      },
+      "skill_draft_changed": {
+        "hint": "Check it again before you save it.",
+        "title": "The skill changed since the check"
+      },
+      "skill_draft_no_run": {
+        "hint": "Finish a task with the bot in this chat first, then try again.",
+        "title": "No finished task to save"
+      },
+      "skill_draft_no_steps": {
+        "hint": "The last task used no tools, so there are no steps to turn into a skill.",
+        "title": "Nothing to save"
       },
       "skill_index_invalid": {
         "hint": "Check the address, or go back to the list that comes with Praxi.",
@@ -6235,6 +6248,30 @@
     "unread": "Unread message",
     "unreadBot": "New messages from this bot",
     "usage": "Usage"
+  },
+  "skillFromChat": {
+    "ack": "I read the text and the safety check, and I want to save this skill.",
+    "editTitle": "Skill text (you can edit it)",
+    "effect": {
+      "destructive": "can delete or send things",
+      "read": "only reads",
+      "unknown": "unknown tool",
+      "write": "can change things"
+    },
+    "loading": "Reading what the bot did…",
+    "permsLead": "These tools are used. Your permission settings still apply: risky steps still ask you first.",
+    "permsTitle": "What it will use",
+    "recheck": "Check again",
+    "recheckFirst": "Press \"Check again\" before saving your edits.",
+    "save": "Save skill",
+    "saved": "Skill \"{{name}}\" saved.",
+    "stepsTitle": "What the skill will do",
+    "subtitle": "Turn the last finished task of this chat into a skill the bot can reuse.",
+    "tainted": "The bot read outside or private content during this task. Read the text below carefully before you save it.",
+    "tickFirst": "Tick the box above to save.",
+    "title": "Save as skill",
+    "withheld_one": "{{count}} value from the chat was left out because it may be private. The skill asks for it each time instead.",
+    "withheld_other": "{{count}} values from the chat were left out because they may be private. The skill asks for them each time instead."
   },
   "skillMarket": {
     "acceptMore": "I accept that the new version asks for more than the one I have.",
