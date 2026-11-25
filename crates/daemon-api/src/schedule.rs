@@ -250,10 +250,11 @@ impl DaemonExecutor {
                     available = true;
                     break;
                 }
-                if !skip && attempt == 0 {
-                    if let Some((due, _)) = occurrence {
-                        self.store.note_network_retry(schedule.id, due)?;
-                    }
+                if !skip
+                    && attempt == 0
+                    && let Some((due, _)) = occurrence
+                {
+                    self.store.note_network_retry(schedule.id, due)?;
                 }
             }
             if !available {

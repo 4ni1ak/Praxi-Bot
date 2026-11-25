@@ -2869,6 +2869,7 @@ pub(crate) async fn preview_schedule(
     params(("id" = Uuid, Path, description = "Schedule id")),
     responses((status = 200, body = Vec<ScheduleHistoryEntryDto>),
               (status = 404, body = ErrorBody)))]
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn list_schedule_history(
     State(s): State<AppState>,
     Path(sid): Path<String>,

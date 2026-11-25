@@ -246,7 +246,7 @@ impl Providers {
     #[must_use]
     pub fn unconfigured() -> Self {
         Self {
-            connectivity: Default::default(),
+            connectivity: provider_catalog::connectivity::Connectivity::default(),
             default: None,
             default_id: None,
             by_id: HashMap::new(),
@@ -272,7 +272,7 @@ impl Providers {
         let id = p.id().to_owned();
         by_id.insert(id.clone(), Arc::clone(&p));
         Self {
-            connectivity: Default::default(),
+            connectivity: provider_catalog::connectivity::Connectivity::default(),
             default: Some(p),
             default_id: Some(id),
             by_id,

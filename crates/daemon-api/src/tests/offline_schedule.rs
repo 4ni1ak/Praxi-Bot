@@ -37,11 +37,12 @@ async fn offline_schedule_skips_before_creating_a_run_or_sending_anything() {
     };
     let error = executor.execute(&schedule).await.unwrap_err();
     assert!(error.to_string().contains("Nothing was started"));
-    assert!(
+    assert_eq!(
         t.state
             .storage()
             .list_runs(t.state.user_id())
             .unwrap()
-            .is_empty()
+            .len(),
+        0
     );
 }

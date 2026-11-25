@@ -4,7 +4,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::{StreamExt, stream};
 use tokio::sync::Mutex;
 
 const FRESH_FOR: Duration = Duration::from_secs(15);
@@ -41,7 +40,7 @@ pub struct Connectivity {
 /// Only loopback URLs qualify; provider names such as `local` are not evidence.
 #[must_use]
 pub fn is_local(url: &str) -> bool {
-    reqwest::Url::parse(url).ok().is_some_and(|u| {
+    reqwest::Url::parse(url).is_ok_and(|u| {
         matches!(u.scheme(), "http" | "https")
             && u.host_str().is_some_and(|host| {
                 host == "localhost"
@@ -51,6 +50,18 @@ pub fn is_local(url: &str) -> bool {
                         .is_ok_and(|ip| ip.is_loopback())
             })
     })
+}
+
+async fn probe(client: Option<&reqwest::Client>, target: &Target) -> Observation {
+    let reachable = match client {
+        Some(c) => c.head(&target.url).send().await.is_ok(),
+        None => false,
+    };
+    Observation {
+        id: target.id.clone(),
+        local: is_local(&target.url),
+        reachable,
+    }
 }
 
 impl Connectivity {
@@ -88,34 +99,18 @@ impl Connectivity {
     /// The normal inference path retains the provider reliability layer's backoff.
     pub async fn check(&self) -> Vec<Observation> {
         let mut cache = self.cache.lock().await;
-        if let Some((at, rows)) = &*cache {
-            if at.elapsed() < FRESH_FOR {
-                return rows.clone();
-            }
+        if let Some((at, rows)) = &*cache
+            && at.elapsed() < FRESH_FOR
+        {
+            return rows.clone();
         }
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(DEADLINE)
             .connect_timeout(DEADLINE)
             .build();
-        let rows: Vec<_> = stream::iter(self.targets.iter())
-            .map(|target| {
-                let client = client.as_ref().ok();
-                async move {
-                    let reachable = match client {
-                        Some(c) => c.head(&target.url).send().await.is_ok(),
-                        None => false,
-                    };
-                    Observation {
-                        id: target.id.clone(),
-                        local: is_local(&target.url),
-                        reachable,
-                    }
-                }
-            })
-            .buffer_unordered(4)
-            .collect()
-            .await;
+        let client = client.as_ref().ok();
+        let rows = futures::future::join_all(self.targets.iter().map(|t| probe(client, t))).await;
         *cache = Some((tokio::time::Instant::now(), rows.clone()));
         rows
     }

@@ -604,7 +604,10 @@ impl AgentLoop {
     ///
     /// # Errors
     /// Returns an error when the bot profile cannot be read.
-    pub async fn model_connection_available(&self, bot_id: BotId) -> Result<bool, String> {
+    pub async fn model_connection_available(
+        &self,
+        bot_id: BotId,
+    ) -> std::result::Result<bool, String> {
         let profile = self.sh.profile_for(bot_id)?;
         let providers = self.providers();
         let rows = providers.connectivity.check().await;
