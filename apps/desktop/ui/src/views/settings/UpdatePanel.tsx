@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import { SettingRow } from "../../components/SettingsUi";
+import { formatWhen } from "../../lib/dateFormat";
 import {
   type UpdateInfo,
   type UpdateStatus,
@@ -128,7 +129,7 @@ export function UpdatePanel() {
         <p className={styles.status}>
           {status.lastChecked === null
             ? t("settingsModal.updates.neverChecked")
-            : t("settingsModal.updates.lastChecked", { time: new Date(status.lastChecked * 1000).toLocaleString(i18n.language) })}
+            : t("settingsModal.updates.lastChecked", { time: formatWhen(status.lastChecked * 1000, i18n.language) })}
         </p>
         {status.skippedVersion ? <p className={styles.status}>{t("settingsModal.updates.skipped", { version: status.skippedVersion })}</p> : null}
         {found ? (

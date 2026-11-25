@@ -9,6 +9,7 @@ import form from "../../components/Form.module.css";
 import { EmptyState } from "../../components/EmptyState";
 import { BotMemorySettings } from "../../components/BotMemorySettings";
 import { humanLine } from "../../lib/humanError";
+import { formatDay } from "../../lib/dateFormat";
 import { MemoryRecallQuality } from "./MemoryRecallQuality";
 import { useDaemon } from "../../state/DaemonContext";
 import styles from "./KnowledgeCard.module.css";
@@ -286,10 +287,10 @@ export function MemoryCard() {
                 <span className={form.hint}>
                   {t(`memory.kinds.${item.kind}`)} · {botName(item.bot_id)} ·{" "}
                   {t(`memory.trust.${item.trust}`)} ·{" "}
-                  {new Date(item.created_ms).toLocaleDateString(i18n.language)}
+                  {formatDay(item.created_ms, i18n.language)}
                   {item.deleted ? ` · ${t("memory.forgottenBadge")}` : ""}
                   {item.valid_until_ms
-                    ? ` · ${t("memory.expires", { date: new Date(item.valid_until_ms).toLocaleDateString(i18n.language) })}`
+                    ? ` · ${t("memory.expires", { date: formatDay(item.valid_until_ms, i18n.language) })}`
                     : ""}
                 </span>
                 {item.source_quote ? (
@@ -377,7 +378,7 @@ export function MemoryCard() {
                       <strong>{entry.label ?? t("memory.forgottenErased")}</strong>
                       <span className={form.hint}>
                         {t(`memory.kinds.${entry.kind}`)} · {botName(entry.bot_id)} ·{" "}
-                        {new Date(entry.created_ms).toLocaleDateString(i18n.language)}
+                        {formatDay(entry.created_ms, i18n.language)}
                         {entry.erased && entry.label ? ` · ${t("memory.forgottenErased")}` : ""}
                       </span>
                       <div className={styles.actions}>

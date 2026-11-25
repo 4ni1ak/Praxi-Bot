@@ -2,6 +2,7 @@ import { ExternalLink } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button, Card } from "ui";
 import type { TopRunUsage } from "../api/types";
+import { formatWhen } from "../lib/dateFormat";
 import { requestOpenChat } from "../lib/openChatLink";
 import { formatTokenCount, formatUsageCost, isAllUnknownUsage, totalTokens } from "../lib/usage";
 import styles from "./TopRunsCard.module.css";
@@ -20,14 +21,13 @@ export function TopRunsCard({ runs, botName, onOpenChat = requestOpenChat }: Top
     return null;
   }
   const unknown = t("usage.unknown");
-  const when = new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "short" });
   return (
     <Card padding="md" className={styles.card} data-testid="usage-top-runs">
       <h2 className={styles.title}>{t("usage.insights.topRuns")}</h2>
       <ol className={styles.list}>
         {runs.map((r) => {
           const bot = botName(r.bot_id) ?? t("usage.deletedBot");
-          const at = when.format(new Date(r.created_at_ms));
+          const at = formatWhen(r.created_at_ms, i18n.language);
           return (
             <li key={r.run_id} className={styles.row}>
               <div className={styles.info}>

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { BotAvatar, Button, Card } from "ui";
 import formStyles from "../components/Form.module.css";
 import { botView } from "../lib/botProfile";
+import { formatWhen } from "../lib/dateFormat";
 import { useDaemon } from "../state/DaemonContext";
 import styles from "./NeedsYouView.module.css";
 
@@ -39,17 +40,17 @@ export function NeedsYouView({
                         {view ? ` · ${view.name}` : ""}
                       </span>
                       <span className={styles.summary}>{n.title}</span>
-                      <span className={formStyles.hint}>
-                        {new Date(n.sinceMs).toLocaleTimeString(i18n.language)}
-                      </span>
+                      <time className={styles.when} dateTime={new Date(n.sinceMs).toISOString()}>
+                        {formatWhen(n.sinceMs, i18n.language)}
+                      </time>
                     </div>
                     <Button
                       size="sm"
-                      variant="primary"
+                      variant="secondary"
                       disabled={!n.chatId}
                       onClick={() => onOpenChat(n.chatId)}
                     >
-                      <ArrowUpRight />{t("needs.open")}
+                      <ArrowUpRight aria-hidden="true" />{t("needs.open")}
                     </Button>
                   </Card>
                 </li>

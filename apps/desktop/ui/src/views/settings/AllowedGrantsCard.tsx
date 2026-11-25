@@ -8,6 +8,7 @@ import { botView } from "../../lib/botProfile";
 import { humanLine } from "../../lib/humanError";
 import { hostOf } from "../../lib/toolLabels";
 import { useDaemon } from "../../state/DaemonContext";
+import { formatDay } from "../../lib/dateFormat";
 import formStyles from "../../components/Form.module.css";
 import styles from "./AllowedGrantsCard.module.css";
 
@@ -40,7 +41,7 @@ function GrantIcon({ target }: { target: GrantTarget }) {
  * so users can review or revoke any allowed site or action without enabling Advanced settings.
  */
 export function AllowedGrantsCard() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { bots, client } = useDaemon();
   const [rows, setRows] = useState<BotGrantRow[]>([]);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -141,7 +142,7 @@ export function AllowedGrantsCard() {
                               {[
                                 g.computer ?? null,
                                 g.inert ? t("settings.permissions.inertGrant") : null,
-                                new Date(g.granted_at_ms).toLocaleDateString()
+                                formatDay(g.granted_at_ms, i18n.language)
                               ]
                                 .filter(Boolean)
                                 .join(" · ")}

@@ -1,10 +1,12 @@
-import { CalendarDays, LayoutGrid, List, MessageSquarePlus, Pause, Play, Plus, RefreshCw, Settings2 } from "lucide-react";
+import { Bot, CalendarDays, LayoutGrid, List, MessageSquarePlus, Pause, Play, Plus, RefreshCw, SearchX, Settings2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BotAvatar, Button, Card } from "ui";
 import type { BotSpendLimits } from "../api/types";
+import { EmptyState } from "../components/EmptyState";
 import formStyles from "../components/Form.module.css";
 import { botView } from "../lib/botProfile";
+import { formatWhen } from "../lib/dateFormat";
 import { humanLine } from "../lib/humanError";
 import { dailyBudget, nativePauseAction, overviewBots, selectOverviewBots, type BotFilter, type BotSort } from "../lib/myBots";
 import type { ControlSnapshot } from "../overlay/events";
@@ -96,32 +98,30 @@ export function MyBotsView({ control, onPause, onNewBot, onNewChat, onSettings, 
     <section className={styles.pane} aria-labelledby="my-bots-title" data-testid="my-bots">
       <div className={styles.container}>
         <header className={styles.header}>
-          <div><h1 id="my-bots-title">{t("myBots.title")}</h1><p>{t("myBots.scope", { place })}</p></div>
+          <div className={styles.headerText}><h1 id="my-bots-title">{t("myBots.title")}</h1><p>{t("myBots.scope", { place })}</p></div>
           <div className={styles.actions}>
-            <Button size="sm" disabled={busy || !client} onClick={() => void refresh()} aria-label={t("myBots.refresh")} title={t("myBots.refresh")}><RefreshCw aria-hidden="true" /></Button>
+            <Button size="sm" variant="ghost" disabled={busy || !client} onClick={() => void refresh()} aria-label={t("myBots.refresh")} title={t("myBots.refresh")}><RefreshCw aria-hidden="true" /></Button>
             <Button size="sm" variant="primary" onClick={onNewBot} disabled={!client || homeStale}><Plus aria-hidden="true" />{t("myBots.newBot")}</Button>
           </div>
         </header>
         {homeStale || !eventsConnected ? <p role="status" className={styles.notice}>{t("myBots.stale")}</p> : null}
         {error ? <p className={formStyles.error} role="alert">{error}</p> : null}
         <div className={styles.toolbar}>
-          <label className={styles.search}>{t("myBots.search")}<input className={formStyles.input} type="search" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
-          <label>{t("myBots.filter")}<select className={formStyles.select} value={filter} onChange={(e) => setFilter(e.target.value as BotFilter)}>
+          <label className={styles.search}><span className={styles.fieldLabel}>{t("myBots.search")}</span><input className={formStyles.input} type="search" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
+          <label className={styles.picker}><span className={styles.fieldLabel}>{t("myBots.filter")}</span><select className={formStyles.select} value={filter} onChange={(e) => setFilter(e.target.value as BotFilter)}>
             {(["all", "idle", "running", "approval", "paused"] as const).map((s) => <option key={s} value={s}>{t(s === "all" ? "myBots.all" : `myBots.status.${s}`)}</option>)}
           </select></label>
-          <label>{t("myBots.sort")}<select className={formStyles.select} value={sort} onChange={(e) => setSort(e.target.value as BotSort)}>
+          <label className={styles.picker}><span className={styles.fieldLabel}>{t("myBots.sort")}</span><select className={formStyles.select} value={sort} onChange={(e) => setSort(e.target.value as BotSort)}>
             {(["activity", "name", "cost"] as const).map((s) => <option key={s} value={s}>{t(`myBots.sortBy.${s}`)}</option>)}
           </select></label>
-          <div className={styles.actions} role="group" aria-label={t("myBots.layout")}>
+          <div className={styles.layoutSwitch} role="group" aria-label={t("myBots.layout")}>
             {(["grid", "list"] as const).map((m) => <Button key={m} size="sm" variant={mode === m ? "secondary" : "ghost"} aria-pressed={mode === m} aria-label={t(`myBots.${m}`)} title={t(`myBots.${m}`)} onClick={() => setMode(m)}>{m === "grid" ? <LayoutGrid aria-hidden="true" /> : <List aria-hidden="true" />}</Button>)}
           </div>
         </div>
         <p className={styles.count} role="status">{t("myBots.count", { shown: shown.length, total: bots.length })}</p>
-        {shown.length === 0 ? <Card padding="md" className={styles.empty}>
-          <h2>{t(bots.length ? "myBots.noMatches" : "myBots.emptyTitle")}</h2>
-          <p>{t(bots.length ? "myBots.noMatchesHint" : "myBots.emptyHint")}</p>
-          {bots.length ? <Button onClick={() => { setQuery(""); setFilter("all"); }}>{t("myBots.clear")}</Button> : <Button variant="primary" onClick={onNewBot} disabled={!client || homeStale}><Plus aria-hidden="true" />{t("myBots.newBot")}</Button>}
-        </Card> : <ul className={mode === "grid" ? styles.grid : styles.list} data-testid={`my-bots-${mode}`}>
+        {shown.length === 0 ? (bots.length
+          ? <EmptyState icon={SearchX} title={t("myBots.noMatches")} actionLabel={t("myBots.clear")} primary={false} onAction={() => { setQuery(""); setFilter("all"); }} testId="my-bots-empty">{t("myBots.noMatchesHint")}</EmptyState>
+          : <EmptyState icon={Bot} title={t("myBots.emptyTitle")} actionLabel={client && !homeStale ? t("myBots.newBot") : undefined} onAction={onNewBot} primary={false} testId="my-bots-empty">{t("myBots.emptyHint")}</EmptyState>) : <ul className={mode === "grid" ? styles.grid : styles.list} data-testid={`my-bots-${mode}`}>
           {shown.map(({ bot, status, lastActivity, pausedRunId, needsChatId }) => {
             const view = botView(bot);
             const data = spend[bot.id];
@@ -137,7 +137,7 @@ export function MyBotsView({ control, onPause, onNewBot, onNewChat, onSettings, 
                   <span className={styles.status} data-status={status}>{t(`myBots.status.${status}`)}</span>
                 </div>
                 <dl className={styles.facts}>
-                  <div><dt>{t("myBots.lastActivity")}</dt><dd>{lastActivity ? <time dateTime={new Date(lastActivity).toISOString()}>{new Date(lastActivity).toLocaleString(i18n.language, { dateStyle: "short", timeStyle: "short" })}</time> : t("myBots.noActivity")}</dd></div>
+                  <div><dt>{t("myBots.lastActivity")}</dt><dd>{lastActivity ? <time dateTime={new Date(lastActivity).toISOString()}>{formatWhen(lastActivity, i18n.language)}</time> : t("myBots.noActivity")}</dd></div>
                   <div><dt>{t("myBots.today")}</dt><dd>{budget ? t(budget.limit === null ? "myBots.costNoLimit" : "myBots.costLimit", { cost: usd.format(budget.used), limit: budget.limit === null ? "" : usd.format(budget.limit) }) : t(data === null ? "myBots.costUnavailable" : "myBots.loading")}</dd></div>
                 </dl>
                 {budget?.limit ? <progress className={styles.progress} value={Math.min(budget.used, budget.limit)} max={budget.limit} aria-label={t("myBots.dailyLimit", { name: view.name })} /> : null}
