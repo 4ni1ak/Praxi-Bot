@@ -29,6 +29,7 @@ export function onboardingAllowed(activeComputerId: string): boolean {
  * Matched on the English text the daemon sends; the daemon strings are not shown to people.
  */
 const REFUSALS: ReadonlyArray<readonly [needle: string, key: string]> = [
+  ["the owner must confirm this desktop on the host", "adminRequired"],
   ["execution policy is managed on the host", "policy"],
   ["secrets are managed on the host", "secrets"],
   ["tool servers and skills are managed on the host", "tools"],

@@ -3703,7 +3703,7 @@
   },
   "home": {
     "admin": {
-      "byDesign": "{{name}} bazı şeyleri kendine saklar: yürütme politikası, komut satırı araç sunucuları, beceriler, e-posta hesapları ve kodlama CLI girişleri doğrudan {{name}} üzerinde değiştirilir.",
+      "byDesign": "{{name}} bazı şeyleri kendine saklar: yürütme politikası, komut satırı araç sunucuları, beceriler ve kodlama CLI girişleri doğrudan {{name}} üzerinde değiştirilir. E-posta, arama ve dikte hesapları bu bilgisayardan bağlanabilir.",
       "noSecrets": "{{name}} henüz anahtar saklayamıyor.",
       "notGranted": "{{name}} bu bilgisayarı henüz onaylamadı. Şunu {{name}} üzerinde bir kez çalıştır:",
       "title": "Bu bilgisayardan kurulum"
@@ -3796,10 +3796,11 @@
     },
     "newBotNeedsModel": "{{name}} sunucusunda henüz model yok, bu yüzden orada bot oluşturulamaz. Önce sunucuya bir model bağla.",
     "refusal": {
+      "adminRequired": "{{name}} bu bilgisayarı henüz yönetici olarak onaylamadı. {{name}} üzerinde bir kez `bot host admin --all-desktops` çalıştır, sonra tekrar dene.",
       "botPermissions": "Bir botun izinleri ve araçları {{name}} üzerinde yönetilir. Ad, kişilik ve model buradan değiştirilebilir.",
       "composio": "Uygulama bağlantıları {{name}} üzerinde değil, bu bilgisayarın sahibi tarafında yönetilir.",
       "connectionTest": "Anahtar testleri {{name}} üzerinde çalışır, bu uygulamadan yapılamaz.",
-      "credentials": "E-posta ve arama hesapları {{name}} üzerinde bağlanır.",
+      "credentials": "Bu e-posta ya da arama ayarı bu uygulamadan değil, {{name}} üzerinde değiştirilir.",
       "generic": "{{name}} buna izin vermedi: {{reason}}",
       "hostTransfer": "Sunucuyu taşıma ve kanal eşleştirme {{name}} üzerinde yapılır.",
       "knowledge": "Bilgi ayarları {{name}} üzerinde yönetilir.",

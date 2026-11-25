@@ -155,6 +155,49 @@ pub(crate) fn protect_execution_config(
     Ok(())
 }
 
+/// The "accounts and keys" settings a paired desktop that holds host
+/// administration (`Device::admin`, granted by the host's owner) may change on
+/// the host it controls. This is the ONLY allow-list for that: nothing outside
+/// it is opened, and every route in it is exact (no prefixes, no wildcards):
+///
+/// * mail accounts: create, replace, delete, test (`POST /v1/email/accounts`,
+///   `PUT|DELETE /v1/email/accounts/{name}`, `POST /v1/email/test`,
+///   `POST /v1/email/accounts/{name}/test|send-test`);
+/// * web search: `PUT /v1/web/search`, `POST /v1/web/search/test`;
+/// * dictation service and key: `PUT /v1/voice`.
+///
+/// Secrets in these bodies are write-only (the handlers store them in the
+/// host's secret store and never return them). Unconfirmed desktops are told
+/// how to get confirmed, phones, nodes and other hosts never reach this
+/// function (the role checks above refuse them), and the rest of
+/// [`host_mode_desktop_denial`] (policy, secrets, tool servers, skills, mail
+/// channel and guard, pairing) stays closed to every desktop.
+fn host_admin_settings_class(method: &Method, check_path: &str) -> Option<&'static str> {
+    let account = |rest: &str| !rest.is_empty() && !rest.contains('/');
+    let account_path = check_path.strip_prefix("/v1/email/accounts/");
+    match (method, check_path) {
+        (&Method::POST, "/v1/email/accounts" | "/v1/email/test") => Some("mail-account"),
+        (&Method::PUT | &Method::DELETE, _) if account_path.is_some_and(account) => {
+            Some("mail-account")
+        }
+        (&Method::POST, _)
+            if account_path
+                .and_then(|rest| {
+                    rest.strip_suffix("/test")
+                        .or_else(|| rest.strip_suffix("/send-test"))
+                })
+                .is_some_and(account) =>
+        {
+            Some("mail-account")
+        }
+        (&Method::PUT, "/v1/web/search") | (&Method::POST, "/v1/web/search/test") => {
+            Some("web-search")
+        }
+        (&Method::PUT, "/v1/voice") => Some("dictation"),
+        _ => None,
+    }
+}
+
 /// What a Desktop peer may NOT administer on a daemon that runs as an
 /// always-on host (`mode = host`). On such a host the desktop is an operator
 /// of bots, runs, chats and the screen, not an administrator of credentials,
@@ -534,6 +577,9 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
             // have no read, proposal, mutation or replay access.
             || check_path == "/v1/workflows"
             || check_path.starts_with("/v1/workflows/")
+            // Mail / search / dictation accounts and keys: a desktop only (and
+            // on a host only a confirmed one, below). A phone never.
+            || host_admin_settings_class(req.method(), &check_path).is_some()
             || check_path.ends_with("/workflow-proposal")
             || (req.method() == Method::POST
                 && PHONE_DENIED_POST_PATHS.contains(&check_path.as_str()))
@@ -556,6 +602,33 @@ async fn guard(State(state): State<AppState>, mut req: Request, next: Next) -> R
             .into_response();
         }
         if peer.role == PeerRole::Desktop
+            && let Some(class) = host_admin_settings_class(req.method(), &check_path)
+        {
+            if !state.is_host_admin(Some(&peer)) {
+                return ApiError::new(
+                    axum::http::StatusCode::FORBIDDEN,
+                    crate::host_admin::codes::REQUIRED,
+                    format!(
+                        "the owner must confirm this desktop on the host: run `{}`",
+                        crate::host_admin::CONFIRM_COMMAND
+                    ),
+                )
+                .into_response();
+            }
+            // Same budget as the other administration calls, and the change is
+            // attributed before it runs (fail closed). Never the body.
+            if let Err(error) = state.leader().admit_admin_call() {
+                return error.into_response();
+            }
+            if let Err(error) = crate::host_admin::audit(
+                &state,
+                &crate::host_admin::admin_for(&peer.key),
+                "host.admin.settings",
+                &serde_json::json!({"class": class, "method": req.method().as_str(), "path": check_path}),
+            ) {
+                return error.into_response();
+            }
+        } else if peer.role == PeerRole::Desktop
             && let Some(why) = host_mode_desktop_denial(req.method(), &check_path)
         {
             return ApiError::forbidden(why).into_response();
@@ -697,6 +770,53 @@ mod tests {
                     "{method} {path}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_admin_settings_allow_list_is_exact() {
+        for (method, path, class) in [
+            (Method::POST, "/v1/email/accounts", "mail-account"),
+            (Method::PUT, "/v1/email/accounts/work", "mail-account"),
+            (Method::DELETE, "/v1/email/accounts/work", "mail-account"),
+            (Method::POST, "/v1/email/test", "mail-account"),
+            (Method::POST, "/v1/email/accounts/work/test", "mail-account"),
+            (
+                Method::POST,
+                "/v1/email/accounts/work/send-test",
+                "mail-account",
+            ),
+            (Method::PUT, "/v1/web/search", "web-search"),
+            (Method::POST, "/v1/web/search/test", "web-search"),
+            (Method::PUT, "/v1/voice", "dictation"),
+        ] {
+            assert_eq!(
+                host_admin_settings_class(&method, path),
+                Some(class),
+                "{method} {path}"
+            );
+        }
+        for (method, path) in [
+            (Method::GET, "/v1/email/accounts"),
+            (Method::HEAD, "/v1/email/accounts"),
+            (Method::PATCH, "/v1/email/accounts/work"),
+            (Method::PUT, "/v1/email/accounts/"),
+            (Method::PUT, "/v1/email/accounts/a/b"),
+            (Method::POST, "/v1/email/accounts//test"),
+            (Method::PUT, "/v1/email/channel"),
+            (Method::PUT, "/v1/email/guard/settings"),
+            (Method::POST, "/v1/email/channel/replies/1/approve"),
+            (Method::POST, "/v1/voice"),
+            (Method::POST, "/v1/voice/local/install"),
+            (Method::PUT, "/v1/web/search/other"),
+            (Method::POST, "/v1/connection-test/email"),
+            (Method::POST, "/v1/secrets/x"),
+        ] {
+            assert_eq!(
+                host_admin_settings_class(&method, path),
+                None,
+                "{method} {path}"
+            );
         }
     }
 
