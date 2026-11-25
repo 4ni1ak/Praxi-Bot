@@ -19,8 +19,10 @@ async fn sleep(d: Duration) {
         tokio::time::sleep(d).await;
     }
 }
+mod consent;
 use crate::page::{DEFAULT_WAIT, DialogInfo, DialogOptions, NAVIGATION_LOAD_DEADLINE, Page};
 use crate::snapshot::{DomExtra, RefEntry, Snapshot};
+pub use consent::{ConsentChoice, ConsentOutcome};
 
 /// Result of an action: success flag, refreshed view as a diff against what the agent saw before.
 #[derive(Debug, Clone)]

@@ -317,6 +317,21 @@ fn parse<T: DeserializeOwned>(v: Value) -> Result<T, ToolError> {
     serde_json::from_value(v).map_err(|e| ToolError::InvalidInput(e.to_string()))
 }
 
+/// A mail input as the model wrote it, with literal backslash-n sequences fixed (see
+/// [`crate::smtp::unescape_literal_breaks`]). Everything that shows or sends the mail goes
+/// through this, so the approval card shows exactly the text that is sent.
+fn parse_send(v: Value) -> Result<SendInput, ToolError> {
+    let mut i: SendInput = parse(v)?;
+    i.mail.fix_literal_breaks();
+    Ok(i)
+}
+
+fn parse_mail(v: Value) -> Result<MailInput, ToolError> {
+    let mut i: MailInput = parse(v)?;
+    i.mail.fix_literal_breaks();
+    Ok(i)
+}
+
 fn json_out(v: Value) -> ToolOutput {
     ToolOutput {
         content: vec![ContentPart::Json { data: v }],
@@ -538,7 +553,7 @@ fn file_name(path: &str) -> String {
 impl EmailTool {
     /// `email_send`: the guard checks, the opt-out line, the provider call and the log entry.
     async fn send(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
-        let i: SendInput = parse(input)?;
+        let i = parse_send(input)?;
         let c = self.conn.scoped(ctx.bot_id.as_deref());
         let chosen = c
             .resolve(i.account.as_deref())
@@ -622,7 +637,7 @@ impl Tool for EmailTool {
         if !matches!(self.kind, Kind::Send) {
             return Ok(None);
         }
-        let i: SendInput = parse(input.clone())?;
+        let i = parse_send(input.clone())?;
         let plan = self.plan_send(ctx, &i)?;
         let token = next_token();
         // The owner is about to be shown exactly these warnings; a later call that matches this
@@ -655,7 +670,7 @@ impl Tool for EmailTool {
         }
         let mut lines = Vec::new();
         if matches!(self.kind, Kind::Send)
-            && let Ok(i) = serde_json::from_value::<SendInput>(input.clone())
+            && let Ok(i) = parse_send(input.clone())
             && let Ok(plan) = self.plan_send(ctx, &i)
         {
             for w in &plan.report.warnings {
@@ -779,7 +794,7 @@ impl Tool for EmailTool {
                 })))
             }
             Kind::Draft => {
-                let i: MailInput = parse(input)?;
+                let i = parse_mail(input)?;
                 draft_output(&c, &i).await
             }
             Kind::Send => self.send(ctx, input).await,

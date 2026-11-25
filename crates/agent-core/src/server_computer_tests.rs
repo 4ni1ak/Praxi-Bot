@@ -235,7 +235,14 @@ async fn a_refusal_by_the_server_is_final_even_at_full_level() {
     let second = tool_messages(&fake.request(1)).join(" ");
     assert!(second.contains("administrator desktop"), "{second}");
     assert!(!second.contains("opened"), "{second}");
-    assert_eq!(server.calls.lock().len(), 1, "no second try");
+    // Asking where the page is (the "already open" check of browser_open) is a read, not a try.
+    let opens = server
+        .calls
+        .lock()
+        .iter()
+        .filter(|(_, p)| p["op"] == "open")
+        .count();
+    assert_eq!(opens, 1, "no second try");
     assert_eq!(local.used.load(Ordering::SeqCst), 0);
 }
 

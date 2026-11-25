@@ -34,6 +34,71 @@ pub struct OutgoingMail {
     pub body: String,
 }
 
+/// Models sometimes write a line break as the two characters backslash and `n` instead of a
+/// real line break, and the mail then shows them between the paragraphs. When `text` has NO
+/// real line break but does contain such escape sequences, they are turned into the characters
+/// they stand for (backslash-r-backslash-n, backslash-n, backslash-r, backslash-t). A text that
+/// already has a real line break is never touched. `None`: nothing to fix.
+#[must_use]
+pub fn unescape_literal_breaks(text: &str) -> Option<String> {
+    if text.contains(['\n', '\r']) || !text.contains('\\') {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut changed = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek().copied() {
+            Some('n') => {
+                chars.next();
+                out.push('\n');
+                changed = true;
+            }
+            Some('t') => {
+                chars.next();
+                out.push('\t');
+                changed = true;
+            }
+            Some('r') => {
+                chars.next();
+                out.push('\r');
+                changed = true;
+                let mut ahead = chars.clone();
+                if ahead.next() == Some('\\') && ahead.next() == Some('n') {
+                    chars.next();
+                    chars.next();
+                    out.push('\n');
+                }
+            }
+            // An escaped backslash, or a lone one, stays as the model wrote it.
+            _ => out.push(c),
+        }
+    }
+    changed.then_some(out)
+}
+
+impl OutgoingMail {
+    /// Fix literal backslash-n / backslash-r-backslash-n / backslash-t sequences (see
+    /// [`unescape_literal_breaks`]) in the body and the subject. A subject must stay one line,
+    /// so an escaped line break there becomes a space.
+    pub fn fix_literal_breaks(&mut self) {
+        if let Some(fixed) = unescape_literal_breaks(&self.body) {
+            self.body = fixed;
+        }
+        if let Some(fixed) = unescape_literal_breaks(&self.subject) {
+            self.subject = fixed
+                .split(['\r', '\n', '\t'])
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
+    }
+}
+
 fn mailbox(s: &str) -> Result<(String, String), EmailError> {
     let bad = || EmailError::Input(format!("invalid address {s:?}"));
     if s.contains(['\r', '\n', '\0']) {
@@ -249,5 +314,35 @@ mod tests {
         let mut m = mail();
         m.to = (0..51).map(|i| format!("u{i}@example.com")).collect();
         assert!(compose("me@example.com", &m).is_err());
+    }
+}
+
+#[cfg(test)]
+mod break_tests {
+    use super::*;
+
+    #[test]
+    fn escaped_breaks_are_fixed_only_when_there_is_no_real_break() {
+        assert_eq!(
+            unescape_literal_breaks(r"Hi,\n\nBye\r\nNow\tgo").as_deref(),
+            Some("Hi,\n\nBye\r\nNow\tgo")
+        );
+        assert_eq!(unescape_literal_breaks("plain text"), None);
+        // A real line break anywhere: left alone, escapes included.
+        assert_eq!(unescape_literal_breaks("a\\nb\nc"), None);
+        // A backslash that does not start an escape is not a break.
+        assert_eq!(unescape_literal_breaks(r"C:\folder"), None);
+    }
+
+    #[test]
+    fn the_subject_stays_on_one_line() {
+        let mut mail = OutgoingMail {
+            subject: r"Hello\nthere".into(),
+            body: r"a\nb".into(),
+            ..Default::default()
+        };
+        mail.fix_literal_breaks();
+        assert_eq!(mail.subject, "Hello there");
+        assert_eq!(mail.body, "a\nb");
     }
 }

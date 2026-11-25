@@ -2072,6 +2072,11 @@
         "failed": "Auf einer Seite wurde nicht geklickt",
         "running": "Klickt auf einer Seite"
       },
+      "browser_dismiss_consent": {
+        "done": "Cookie-Banner auf einer Seite geschlossen",
+        "failed": "Cookie-Banner konnte nicht geschlossen werden",
+        "running": "Schließt ein Cookie-Banner auf einer Seite"
+      },
       "browser_eval": {
         "done": "Ein Skript im Browser ausgeführt",
         "failed": "Ein Skript im Browser wurde nicht ausgeführt",

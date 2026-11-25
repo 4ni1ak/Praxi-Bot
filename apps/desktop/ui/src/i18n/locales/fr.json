@@ -2072,6 +2072,11 @@
         "failed": "Didn't click on a page",
         "running": "Clicking on a page"
       },
+      "browser_dismiss_consent": {
+        "done": "Bandeau de cookies fermé sur une page",
+        "failed": "Impossible de fermer le bandeau de cookies",
+        "running": "Fermeture du bandeau de cookies d'une page"
+      },
       "browser_eval": {
         "done": "Ran a script in the browser",
         "failed": "Didn't run a script in the browser",
