@@ -2,6 +2,7 @@ import {
   Bell,
   BellOff,
   ChevronRight,
+  Lightbulb,
   Lock,
   PenLine,
   Plus,
@@ -22,7 +23,7 @@ import { type PermissionTone, permissionTone } from "../lib/botEditor";
 import { chatActivity, chatDateLabel } from "../lib/botLanding";
 import { CHAT_SEARCH_MIN_CHATS, filterChats } from "../lib/chatSearch";
 import type { PresetChoice } from "../lib/botProfile";
-import { modelLine } from "../lib/modelName";
+import { isLiteModel, modelLine } from "../lib/modelName";
 import { approvalHeadline, type T } from "../lib/approvalPlain";
 import { runNow } from "../lib/runNow";
 import { toolSentence } from "../lib/runSentence";
@@ -229,6 +230,12 @@ export function BotPanel({
           <PermissionChip preset={preset} />
           {engineCli ? <span data-testid="bot-engine-label">{t("botEngine.label", { cli: engineCli })}</span> : null}
         </div>
+        {preset === "full" && isLiteModel(model) ? (
+          <p className={styles.liteHint} role="note" data-testid="bot-panel-lite-hint">
+            <Lightbulb aria-hidden="true" />
+            <span>{t("botPanel.liteFullHint")}</span>
+          </p>
+        ) : null}
         <div className={styles.actions}>
           <button
             type="button"

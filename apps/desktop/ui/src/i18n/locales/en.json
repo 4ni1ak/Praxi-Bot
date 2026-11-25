@@ -1309,6 +1309,7 @@
     "computer": "Computer",
     "edit": "Edit bot",
     "isMain": "This is the main bot",
+    "liteFullHint": "A light model is set. For long multi-step tasks a stronger model works better: this one may stop to ask or lose track. You can change it in the bot's settings.",
     "mail": {
       "agentmail": "Own address",
       "check": "Check connection",

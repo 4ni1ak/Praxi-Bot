@@ -36,9 +36,24 @@ const GUIDANCE: &str = "You are an agent that can call tools. Call a tool when y
 need to act; when the task is done, answer the user in plain text. If a tool result says it was \
 denied, interrupted or truncated, adapt instead of repeating the same call. Work quietly: do not narrate between steps. When several calls do not depend on each other's results, request them together in one message instead of one per turn; say something only when you are done, blocked or need the user.";
 
+/// Added at every level: a model that fails a step must not invent the reason (a 503, an
+/// outage, a rate limit) because the owner cannot tell a real error from an excuse.
+const HONESTY_GUIDANCE: &str = "\n\nHonesty: report only what tool results of this run show. Never state an HTTP \
+status, outage, rate limit, block or \"temporary problem\" unless a tool result says so. When a step \
+fails, quote the tool's real error in one plain sentence, say what you tried and what you will try \
+next or need from the owner; if the cause is unknown, say \"I don't know why it failed\".";
+
 const SUBAGENT_GUIDANCE: &str = "\n\nYou are a subagent: another agent delegated one task to you. \
 Do exactly that task with your tools, then reply with a concise final answer; the parent receives \
 your final text as-is and nothing else.";
+
+/// Added for a bot on the Full ("Tam") level: the owner chose it so that the bot works through a
+/// task alone. A model that ends its turn with "shall I start?" makes the owner type "go on"
+/// after every step. Only for a top-level run (a subagent reports to its parent, who decides).
+/// The hard stops are the ones the daemon enforces with a card anyway.
+const FULL_GUIDANCE: &str = "
+
+Autonomy: the owner chose the Full level, so work alone until the whole task is done. Do not ask \"shall I start?\", \"should I continue?\" or for a go-ahead, and do not stop after a step to report: keep calling tools. Pick sensible defaults yourself (which sites, names, wording, order) and say what you chose at the end. Ask the owner only for what only they know (a password, a personal choice you cannot guess) or at a hard stop: spending money, deleting outside the workspace, secrets, messaging third parties, a CAPTCHA or 2FA handover. Never end a turn with a question while steps remain. When finished, write \"Done:\" (in the user's language) with what you did, then what is left, if anything.";
 
 pub(crate) fn system_prompt(profile: &BotProfile, subagent: bool, skills: Option<&str>) -> String {
     let mut s = String::new();
@@ -50,8 +65,11 @@ pub(crate) fn system_prompt(profile: &BotProfile, subagent: bool, skills: Option
         let _ = write!(s, "Reply in the user's language (default: {l}).\n\n");
     }
     s.push_str(GUIDANCE);
+    s.push_str(HONESTY_GUIDANCE);
     if subagent {
         s.push_str(SUBAGENT_GUIDANCE);
+    } else if profile.permissions.mode() == permission_engine::AutonomyMode::Full {
+        s.push_str(FULL_GUIDANCE);
     }
     if let Some(block) = skills.filter(|b| !b.is_empty()) {
         s.push_str("\n\n");
@@ -148,6 +166,10 @@ fn message_from_schedule(
 pub(crate) struct ChatProvenance {
     pub exposure: permission_engine::ContentExposure,
     pub sources: Vec<String>,
+    /// The text of every kept message that came out of a run which held private data of the
+    /// owner (a source label that is not a web page). It is what the model can still copy from,
+    /// so the run hashes it instead of treating the earlier turn as "cannot compare".
+    pub private_texts: Vec<String>,
 }
 
 pub(crate) fn chat_provenance(
@@ -158,12 +180,23 @@ pub(crate) fn chat_provenance(
 ) -> ChatProvenance {
     let mut exposure = permission_engine::ContentExposure::clean();
     let mut sources = Vec::new();
+    let mut private_texts = Vec::new();
     let Ok((messages, _)) = messages_in_context(storage, chat, exclude_run, own_schedule) else {
-        return ChatProvenance { exposure, sources };
+        return ChatProvenance {
+            exposure,
+            sources,
+            private_texts,
+        };
     };
     for m in messages {
         if m.exposure_untrusted || m.exposure_private {
             exposure.observe(m.exposure_untrusted, m.exposure_private);
+        }
+        if m.exposure_private
+            && !m.content.is_empty()
+            && m.exposure_sources.iter().any(|l| !l.starts_with("page "))
+        {
+            private_texts.push(m.content.clone());
         }
         for label in m.exposure_sources {
             if !label.is_empty() && !sources.iter().any(|s| s == &label) {
@@ -171,7 +204,11 @@ pub(crate) fn chat_provenance(
             }
         }
     }
-    ChatProvenance { exposure, sources }
+    ChatProvenance {
+        exposure,
+        sources,
+        private_texts,
+    }
 }
 
 fn append_chat_history(
@@ -693,6 +730,58 @@ mod tests {
         assert_eq!(p, system_prompt(&profile, false, None));
         // The base prompt stays small: it is paid on every model call.
         assert!(GUIDANCE.len() < 700, "{}", GUIDANCE.len());
+        assert!(HONESTY_GUIDANCE.len() < 460, "{}", HONESTY_GUIDANCE.len());
+        // Every level (and a subagent) is told not to invent a reason for a failed step.
+        for needle in [
+            "report only what tool results of this run show",
+            "Never state an HTTP status, outage, rate limit, block",
+            "quote the tool's real error",
+            "I don't know why it failed",
+        ] {
+            assert!(p.contains(needle), "{needle}: {p}");
+            assert!(
+                system_prompt(&profile, true, None).contains(needle),
+                "{needle}"
+            );
+        }
+        // Only the Full level is told to work without asking; a subagent never is.
+        assert!(!p.contains("Never end a turn with a question"), "{p}");
+    }
+
+    #[test]
+    fn the_full_level_is_told_to_finish_the_task_without_asking_to_go_on() {
+        let full = BotProfile::from_toml_str(
+            "[bot]
+id = 'test'
+name = 'Test'
+[models]
+executor = 'test/model'
+[permissions]
+preset = 'full'",
+        )
+        .unwrap();
+        let p = system_prompt(&full, false, None);
+        for needle in [
+            "Never end a turn with a question while steps remain",
+            "shall I start?",
+            "hard stop: spending money",
+            "\"Done:\"",
+        ] {
+            assert!(p.contains(needle), "{needle}: {p}");
+        }
+        assert_eq!(p, system_prompt(&full, false, None));
+        assert!(!system_prompt(&full, true, None).contains("Autonomy: the owner chose"));
+        let balanced = BotProfile::from_toml_str(
+            "[bot]
+id = 'test'
+name = 'Test'
+[models]
+executor = 'test/model'
+[permissions]
+preset = 'approve-destructive'",
+        )
+        .unwrap();
+        assert!(!system_prompt(&balanced, false, None).contains("Autonomy: the owner chose"));
     }
 
     pub(super) fn fixture() -> (Storage, Run, BotProfile) {

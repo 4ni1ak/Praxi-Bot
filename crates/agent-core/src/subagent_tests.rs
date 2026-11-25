@@ -2244,3 +2244,77 @@ async fn a_subagent_in_a_full_run_still_asks_for_a_new_site_after_a_page() {
     );
     lp.cancel(parent).unwrap();
 }
+
+/// The same for the public-web read tools: the subagent of a Full owner run asks to read a page
+/// after it read one, where the owner-started parent run would not.
+#[tokio::test]
+async fn a_subagent_in_a_full_run_still_asks_for_a_web_read_after_a_page() {
+    let env = setup();
+    let b = PermissionCategory::Browser;
+    let extract = Arc::new(with_class(
+        "web_extract",
+        Effect::Read,
+        b,
+        ContentClass::untrusted_egress(),
+        "page text",
+    ));
+    let snapshot = Arc::new(with_class(
+        "browser_snapshot",
+        Effect::Read,
+        b,
+        builtin_tools::classify("browser_snapshot").unwrap(),
+        "page text",
+    ));
+    let tools = vec![
+        Arc::clone(&extract) as Arc<dyn Tool>,
+        Arc::clone(&snapshot) as Arc<dyn Tool>,
+    ];
+    let brain = Brain::new(|req| {
+        if is_child(req) {
+            match results(req).len() {
+                0 => call(&[("k1", "browser_snapshot", json!({}))]),
+                1 => call(&[(
+                    "k2",
+                    "web_extract",
+                    json!({"url": "https://directory.example/page"}),
+                )]),
+                _ => say("done"),
+            }
+        } else if results(req).is_empty() {
+            call(&[(
+                "p1",
+                "spawn_subagent",
+                json!({"task": "read", "tools": ["web_extract", "browser_snapshot"]}),
+            )])
+        } else {
+            say("done")
+        }
+    });
+    let lp = make(
+        &env.storage,
+        env.bot,
+        &brain,
+        &tools,
+        profile("[permissions]\npreset = \"full\"\n"),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    let crate::Delivery::NewTurn(parent) = lp
+        .send_user_message_from(
+            env.chat,
+            "research backlink directories",
+            crate::MessageMode::Steer,
+            "owner",
+        )
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(a) = event else {
+        unreachable!()
+    };
+    assert_eq!(a.tool_name, "web_extract");
+    assert_eq!(extract.count.load(Ordering::SeqCst), 0);
+    lp.cancel(parent).unwrap();
+}

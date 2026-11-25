@@ -4,14 +4,17 @@
 //! See `Shared::full_mode_waives`:
 //!
 //! 1. A run with no private data of the owner in it (files, mail, memory, screens, other bots)
-//!    browses any public site and fills any form without asking. Reading web pages alone never
-//!    makes a run private.
+//!    browses any public site, searches and reads the public web and fills any form without
+//!    asking. Reading web pages alone never makes a run private.
 //! 2. A run that holds private data AND read untrusted content trusts only the sites the OWNER
 //!    named or approved (never a site the model navigated to). Anywhere else a call passes only
 //!    when none of the private results' words ([`SeenText`]: salted hashes, in memory for the
 //!    run, never the text) are in it, it has no data SHAPE ([`blob_like`]: keys, hashes,
 //!    encoded strings, card numbers), it is small, and the run's running total sent to such
-//!    places stays under a budget.
+//!    places stays under a budget. Memory recall, knowledge-base hits and the replies of earlier
+//!    turns are private data that CAN be hashed, so they only make a copied word or phrase ask;
+//!    only private data whose text cannot be hashed (a signed-in browser, a window, an attached
+//!    file, another bot, an MCP tool) makes every new site ask ([`SeenText::unhashed`]).
 //!
 //! Honest limit: an injected model that PARAPHRASES or re-encodes private data into a fresh,
 //! differently shaped string, or private data that never passed through a tool result the run
@@ -28,9 +31,11 @@ const URL_TOTAL_LIMIT: usize = 120;
 /// Longest single path segment, query key or value (decoded) of such a URL.
 const URL_PART_LIMIT: usize = 40;
 /// What one run may send to places the owner did not name, in decoded characters of URLs
-/// (host included) and form text together. Above it every further call asks, so a secret
-/// cannot leave in many small pieces.
-pub(crate) const SEND_BUDGET: usize = 600;
+/// (host included), search queries and form text together. Above it every further call asks,
+/// so a secret cannot leave in many small pieces. Sized for a real research-and-sign-up task
+/// (a few dozen searches, pages and forms on new sites); it bounds the VOLUME that a paraphrase
+/// could carry out, the words themselves are caught by [`SeenText`].
+pub(crate) const SEND_BUDGET: usize = 1500;
 /// Text typed into a page that is not the owner's must be shorter than this.
 pub(crate) const FOREIGN_TEXT_LIMIT: usize = 40;
 /// Most distinct hashes kept for a run; more means "cannot compare", which asks.

@@ -1982,8 +1982,19 @@ impl Shared {
             if prior.exposure.private && prior.sources.is_empty() {
                 taint.mark_private_unhashed();
             }
+            // What an earlier turn left in front of the model is its own reply text: words of
+            // that text are compared like any private result of this run. Labels that cannot be
+            // compared (a signed-in browser, a window, an attached file, another bot, an MCP
+            // tool) keep the run "unhashed": every new site then asks.
             for label in prior.sources {
-                taint.note_label(&label);
+                if taint::comparable_label(&label) {
+                    taint.note_label_hashed(&label);
+                } else {
+                    taint.note_label(&label);
+                }
+            }
+            for text in &prior.private_texts {
+                taint.seen.observe(text);
             }
             // Text read out of an attached file is untrusted data like any tool read.
             if let Some(name) = crate::history::text_attachment_source(&self.storage, run) {
