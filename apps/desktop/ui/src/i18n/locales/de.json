@@ -1238,7 +1238,7 @@
         "name": "Benutzerdefiniert"
       },
       "full": {
-        "hint": "Läuft ohne Nachfrage (auch Löschen und Senden), außer bei Geld, Aktivierung von Zeitplänen und katastrophalen Befehlen auf der Verbotsliste. Nach dem Lesen nicht vertrauenswürdiger Inhalte fragt der Bot weiterhin vor dem Senden von Daten oder dem Start eines Programms. Ausnahme: Aktionen in einem Browser, den du als Browser verbunden hast (Playwright: öffnen, ansehen, klicken, tippen, Seitenskript ausführen), fragen nach einer Webseite allein nicht; sie fragen, sobald die Aufgabe auch etwas Privates gelesen hat (Dateien, E-Mail, Gedächtnis, deinen Bildschirm). Code außerhalb der Seite und Dateiübertragungen fragen immer.",
+        "hint": "Läuft ohne Nachfrage (auch Löschen), außer bei Geld, E-Mail-Versand, Aktivierung von Zeitplänen und katastrophalen Befehlen auf der Verbotsliste. Wenn du den Lauf selbst startest, besucht der Bot auch nach dem Lesen einer Seite jede öffentliche Webseite, registriert sich und füllt Formulare ohne Nachfrage aus. Er fragt nur dann wieder, wenn der Lauf auch deine privaten Daten (Dateien, E-Mails, Gedächtnis) hält und eine neue Seite oder ein Formular ein Stück davon enthält, bei einem gespeicherten Geheimnis, bei einem Seitenskript und, nach dem Lesen nicht vertrauenswürdiger Inhalte, vor dem Start eines Programms.",
         "name": "Voll"
       },
       "read-and-draft": {
