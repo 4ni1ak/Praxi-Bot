@@ -4658,7 +4658,7 @@
         "tags": [
           "chats"
         ],
-        "summary": "Send a user message.  Starts a turn when the chat is idle (returns its run\nid); otherwise `mode` decides between steering and queueing.",
+        "summary": "Send a user message.  Starts a turn when the chat is idle (returns its run\nid); otherwise `mode` decides between steering and queueing.  A message the\nowner's own app sends while the owner's turn waits for a tool approval is\nnot queued behind it: the approval is denied, the turn stops and the message\nstarts the next turn (`delivery` = `redirected`).",
         "operationId": "send_message",
         "parameters": [
           {
@@ -19757,7 +19757,8 @@
           "new_turn",
           "steered",
           "queued",
-          "stopped"
+          "stopped",
+          "redirected"
         ]
       },
       "DetectedProviderDto": {

@@ -1022,7 +1022,10 @@ export interface paths {
         put?: never;
         /**
          * Send a user message.  Starts a turn when the chat is idle (returns its run
-         *     id); otherwise `mode` decides between steering and queueing.
+         *     id); otherwise `mode` decides between steering and queueing.  A message the
+         *     owner's own app sends while the owner's turn waits for a tool approval is
+         *     not queued behind it: the approval is denied, the turn stops and the message
+         *     starts the next turn (`delivery` = `redirected`).
          */
         post: operations["send_message"];
         delete?: never;
@@ -5950,7 +5953,7 @@ export interface components {
          * @description How a sent message was delivered.
          * @enum {string}
          */
-        DeliveryKind: "new_turn" | "steered" | "queued" | "stopped";
+        DeliveryKind: "new_turn" | "steered" | "queued" | "stopped" | "redirected";
         /** @description A detected coding CLI engine (`GET /v1/providers/detected`). */
         DetectedProviderDto: {
             /** @description Account label (email or org name, max 160 chars, or null). */

@@ -442,6 +442,10 @@ pub enum DeliveryKind {
     Queued,
     /// The message was `/stop`: the running turn was cancelled (`run_id` is that turn).
     Stopped,
+    /// The turn was waiting for an approval and the owner wrote instead of answering: the
+    /// approval was denied, the turn was stopped (`run_id` is that turn) and the message starts
+    /// the next turn at once.
+    Redirected,
 }
 
 /// Response of a sent message.
