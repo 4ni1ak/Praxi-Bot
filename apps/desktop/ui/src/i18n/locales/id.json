@@ -3372,6 +3372,10 @@
       "hint": "Check the connection and try again.",
       "title": "Your message was not sent"
     },
+    "serviceConnection": {
+      "hint": "Periksa koneksi Anda dan coba lagi. Sebelum mengulang tindakan, periksa apakah tindakan itu sudah terjadi.",
+      "title": "Layanan ini tidak dapat dijangkau"
+    },
     "serviceDown": {
       "hint": "Restart it. Your bots and chats are safe.",
       "title": "Praxi's local service stopped"
@@ -4813,6 +4817,22 @@
     "unread": "Unread",
     "unreadCount": "{{count}} unread",
     "unsnooze": "Bring back"
+  },
+  "offline": {
+    "detail": "Layanan model Anda tidak dapat dijangkau. Praxi memeriksa lagi secara otomatis.",
+    "full": "Antrean penuh (20 pesan atau 32.000 karakter). Batalkan pesan dalam antrean atau simpan draf ini.",
+    "held": "Menunggu Anda mengirim",
+    "host": "Komputer yang dipilih tidak dapat dijangkau.",
+    "hostDetail": "Praxi akan memeriksa koneksi lagi secara otomatis.",
+    "keepDraft": "Simpan draf ini dan kirim saat koneksi kembali. File dan perintah tidak diantrekan saat offline.",
+    "localAnswer": "Dijawab oleh model lokal",
+    "memory": "Pesan dalam antrean tetap di aplikasi ini sampai dikirim atau dibatalkan. Menutup aplikasi akan menghapusnya.",
+    "queued": "Akan dikirim saat kembali online",
+    "scheduleRetry": "Layanan model tetap tidak dapat dijangkau setelah beberapa percobaan. Tidak ada yang dimulai. Coba lagi saat koneksi kembali.",
+    "scheduleSkipped": "Layanan model tidak dapat dijangkau. Dilewati sesuai aturan eksekusi terlewat pada jadwal ini. Anda dapat mencoba lagi saat koneksi kembali.",
+    "scheduleWaiting": "Menunggu koneksi ke layanan model. Jadwal ini akan mencoba lagi sebelum memulai pekerjaan apa pun.",
+    "title": "Anda sedang offline.",
+    "uncertain": "Mungkin sudah terkirim. Periksa obrolan sebelum mencoba lagi."
   },
   "overlay": {
     "actions": {
