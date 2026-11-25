@@ -178,9 +178,12 @@ async fn an_ask_rule_beats_full_and_an_allow_rule_answers_only_its_own_site_and_
     *click.page_origin.lock() = Some("https://other.test:443".into());
     assert!(asks(&env, &lp).await, "another site still asks");
     *click.page_origin.lock() = None;
-    assert!(
-        asks(&env, &lp).await,
-        "an unknown page never matches an allow rule"
+    let before = click.count.load(Ordering::SeqCst);
+    let _ = asks(&env, &lp).await;
+    assert_eq!(
+        click.count.load(Ordering::SeqCst),
+        before,
+        "an unknown page never matches an allow rule: the click does not run"
     );
 }
 
@@ -194,11 +197,11 @@ async fn an_allow_rule_does_not_waive_the_untrusted_content_gate() {
         ContentClass::untrusted_private(),
         "page",
     ));
-    let click = browser("browser_click", ContentClass::all());
+    let click = browser("browser_fill", ContentClass::all());
     *click.page_origin.lock() = Some("https://example.com:443".into());
     let script = vec![
         calls(&[("c1", "fs_read", json!({"path": "p.html"}))]),
-        calls(&[("c2", "browser_click", json!({"ref": "e1"}))]),
+        calls(&[("c2", "browser_fill", json!({"ref": "e1", "text": "hello"}))]),
         text("ok"),
     ];
     let lp = make_loop(
