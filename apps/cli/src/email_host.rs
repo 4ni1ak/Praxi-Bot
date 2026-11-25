@@ -14,13 +14,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use connector_email::{
     AccountConfig, AccountKind, AgentMailEndpoint, CreateInbox, EmailConnector, EmailError,
-    GuardSettings, ImapSettings, OutgoingMail, ProbeReport, ProbeStatus, ProviderError, SearchQuery, SmtpSecurity,
-    SmtpSettings, normalize_sender, validate_account_name,
+    GuardSettings, ImapSettings, OutgoingMail, ProbeReport, ProbeStatus, ProviderError,
+    SearchQuery, SmtpSecurity, SmtpSettings, normalize_sender, validate_account_name,
 };
 use daemon_api::email::{
     EmailAccountDto, EmailAccountInput, EmailAccountPatch, EmailGuardSettingsDto, EmailImapServer,
-    EmailMessageDto, EmailOptOutDto, EmailOptOutInput, EmailProbeStatus, EmailSendLogDto,
-    EmailProviderKind, EmailSecurity, EmailSmtpServer, EmailTestReport,
+    EmailMessageDto, EmailOptOutDto, EmailOptOutInput, EmailProbeStatus, EmailProviderKind,
+    EmailSecurity, EmailSendLogDto, EmailSmtpServer, EmailTestReport,
 };
 use daemon_api::{EmailControl, EmailControlError};
 use secret_store::{SecretRef, SecretStore};

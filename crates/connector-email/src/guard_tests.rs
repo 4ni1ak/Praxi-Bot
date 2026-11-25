@@ -39,7 +39,9 @@ async fn setup() -> (MockServer, Arc<EmailConnector>) {
         kind: AccountKind::AgentMail,
         inbox_id: Some(INBOX.into()),
     };
-    store.set(acct.password.name(), "am_guard_test_KEY_77aa").unwrap();
+    store
+        .set(acct.password.name(), "am_guard_test_KEY_77aa")
+        .unwrap();
     let c = EmailConnector::reloadable_with(
         store,
         AgentMailEndpoint::loopback_mock_for_tests(&server.uri()).unwrap(),
@@ -102,7 +104,9 @@ async fn a_clean_send_gets_the_opt_out_line_in_code_and_is_logged() {
 #[tokio::test]
 async fn a_model_cannot_send_to_an_opted_out_address_without_the_owner_card() {
     let (server, conn) = setup().await;
-    conn.guard().add_opt_out("ann@example.com", "asked").unwrap();
+    conn.guard()
+        .add_opt_out("ann@example.com", "asked")
+        .unwrap();
     let t = send_tool(&conn);
     // No card was shown: refused, nothing goes out, whatever the arguments say.
     let e = t.call(&ctx(), mail("Ann@Example.com")).await.unwrap_err();
@@ -167,7 +171,10 @@ async fn the_daily_count_warns_but_the_owner_may_still_send() {
     let second = mail("b@example.com");
     let d = t.approval_details(&ctx(), &second).await.unwrap().unwrap();
     assert_eq!(d["warnings"][0]["code"], "daily_limit");
-    assert!(d["legal_notice"].is_null(), "legal note only for opt-out rights");
+    assert!(
+        d["legal_notice"].is_null(),
+        "legal note only for opt-out rights"
+    );
     t.call(&ctx(), second).await.unwrap();
     assert_eq!(conn.guard().log(10).len(), 2);
 }

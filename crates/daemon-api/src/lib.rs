@@ -1697,7 +1697,10 @@ fn api_routes() -> Router<AppState> {
             "/v1/email/guard/opt-out",
             get(e::list_opt_outs).post(e::add_opt_out),
         )
-        .route("/v1/email/guard/opt-out/{value}", axum::routing::delete(e::remove_opt_out))
+        .route(
+            "/v1/email/guard/opt-out/{value}",
+            axum::routing::delete(e::remove_opt_out),
+        )
         .route("/v1/email/guard/send-log", get(e::get_send_log))
         .route("/v1/email/guard/send-log.csv", get(e::export_send_log))
         .route(

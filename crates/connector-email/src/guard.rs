@@ -260,7 +260,9 @@ pub fn plain_address(s: &str) -> Option<String> {
 pub fn normalize_opt_out(raw: &str) -> Result<(String, &'static str), String> {
     let t = raw.trim().to_ascii_lowercase();
     if t.is_empty() || t.len() > 254 || t.contains(char::is_whitespace) || t.contains(['<', '>']) {
-        return Err("enter one e-mail address (ann@example.com) or one domain (example.com)".into());
+        return Err(
+            "enter one e-mail address (ann@example.com) or one domain (example.com)".into(),
+        );
     }
     if let Some(domain) = t.strip_prefix('@') {
         return domain_entry(domain);
@@ -280,7 +282,9 @@ fn domain_entry(d: &str) -> Result<(String, &'static str), String> {
         || !d.contains('.')
         || d.starts_with('.')
         || d.ends_with('.')
-        || !d.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-')
+        || !d
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '.' || c == '-')
     {
         return Err("that does not look like a domain (example.com)".into());
     }
@@ -438,8 +442,9 @@ impl MailGuard {
             };
             format!("\"{}\"", s.replace('"', "\"\""))
         }
-        let mut out =
-            String::from("time_utc,bot,run,account,from,recipients,subject,message_id,opt_out_line,send_anyway\r\n");
+        let mut out = String::from(
+            "time_utc,bot,run,account,from,recipients,subject,message_id,opt_out_line,send_anyway\r\n",
+        );
         for e in &lock(&self.state).log {
             let row = [
                 cell(&e.at_utc),
@@ -697,7 +702,10 @@ mod tests {
         g.add_opt_out("a@x.io", "").unwrap();
         let r = vec!["a@x.io".to_owned()];
         let rep = g.check(&facts(&r, true));
-        assert!(!g.take_override("k", &rep), "nothing was shown to the owner");
+        assert!(
+            !g.take_override("k", &rep),
+            "nothing was shown to the owner"
+        );
         g.freeze("k", &rep, "t1");
         assert!(g.take_override("k", &rep));
         assert!(!g.take_override("k", &rep), "consumed");

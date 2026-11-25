@@ -42,9 +42,7 @@ pub use config::{
 };
 pub use connector::{EmailConnector, MAX_ATTACHMENT_BYTES, Scoped, SearchResult};
 pub use error::{EmailError, ProviderError};
-pub use guard::{
-    GuardReport, GuardSettings, MailGuard, OptOut, SendLogEntry, Warning,
-};
+pub use guard::{GuardReport, GuardSettings, MailGuard, OptOut, SendLogEntry, Warning};
 pub use imap::{FolderInfo, SearchQuery};
 pub use imap_provider::ImapSmtpProvider;
 pub use message::{AttachmentInfo, MessageDetail, MessageSummary};

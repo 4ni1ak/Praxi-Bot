@@ -125,6 +125,7 @@ export function MailGuardCard() {
                 </span>{" "}
                 <Button size="sm" variant="ghost" disabled={busy}
                   aria-label={t("settingsModal.mailGuard.optOutRemove", { value: o.value })}
+                  title={t("settingsModal.mailGuard.optOutRemove", { value: o.value })}
                   onClick={() => void act(async () => {
                     await client!.removeMailOptOut(o.value);
                     setOptOuts(await client!.listMailOptOuts());
