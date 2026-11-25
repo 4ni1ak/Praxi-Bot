@@ -30,6 +30,7 @@ Start here, then pick the page for what you want to do. The top-level
 ## Maintainers
 
 - [Maintaining: triage and merge guide](MAINTAINING.md)
+- [Dependency hygiene policy](dependencies.md): Dependabot cooldowns, weekly audits, advisory expiry dates, and licence notices
 - [Releasing Praxi-Bot](releasing.md)
 - [The Windows installer: look, texts, preview and CI checks](installer.md)
 - [Reading CI timing reports](ci-report.md) and the [November 2026 findings](ci-report-2026-11.md)
