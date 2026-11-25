@@ -2607,7 +2607,6 @@ impl Shared {
             call_id,
             crate::shared::SecretRequestInfo {
                 run_id: ctx.run_id,
-                bot_id: ctx.bot_id,
                 name: name.to_owned(),
                 fields,
                 replace: card.replace,
