@@ -2340,7 +2340,10 @@
     "stopped": "Stopped the running turn.",
     "subagent": {
       "cancel": "Cancel",
+      "cancelHelper": "Parar o bot ajudante",
       "cancelLabel": "Cancel subagent: {{task}}",
+      "helperLimit": "O bot ajudante não pode fazer, nesta tarefa, mais do que {{caller}} pode. A resposta dele conta como texto não confiável.",
+      "helperTitle": "{{caller}} pediu ajuda a {{helper}}",
       "status": {
         "cancelled": "Cancelled",
         "failed": "Failed",

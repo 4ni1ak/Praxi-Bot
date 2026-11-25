@@ -444,7 +444,7 @@ pub fn execution_changed(current: Option<&serde_json::Value>, next: &serde_json:
             .filter(|e| e.starts_with("cli:"))
             .map(str::to_owned)
     };
-    ["permissions", "tools", "files", "runtime"]
+    ["permissions", "tools", "files", "runtime", "delegation"]
         .iter()
         .any(|k| next.get(k).is_some() && next.get(k) != current.and_then(|c| c.get(k)))
         || cli_executor(next) != current.and_then(cli_executor)

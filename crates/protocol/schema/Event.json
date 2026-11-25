@@ -718,6 +718,17 @@
           ],
           "format": "uuid"
         },
+        "helper": {
+          "description": "Set when the child is ANOTHER bot asked through `ask_bot`: the hand-off card shows who asked whom. Daemon-supplied, never model text.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SubagentHelper"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "parent_run_id": {
           "type": "string",
           "format": "uuid"
@@ -921,6 +932,34 @@
           ]
         }
       ]
+    },
+    "SubagentHelper": {
+      "description": "The two bots of an `ask_bot` hand-off, for the chat card.",
+      "type": "object",
+      "required": [
+        "bot_id",
+        "bot_name",
+        "caller_bot_id",
+        "caller_name"
+      ],
+      "properties": {
+        "bot_id": {
+          "description": "The bot that was asked (the child run executes as this bot).",
+          "type": "string"
+        },
+        "bot_name": {
+          "description": "Display name of the bot that was asked.",
+          "type": "string"
+        },
+        "caller_bot_id": {
+          "description": "The bot that asked.",
+          "type": "string"
+        },
+        "caller_name": {
+          "description": "Display name of the bot that asked.",
+          "type": "string"
+        }
+      }
     },
     "TodoItem": {
       "description": "One entry of the model-maintained todo list.",

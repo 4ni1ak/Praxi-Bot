@@ -2340,7 +2340,10 @@
     "stopped": "Çalışan tur durduruldu.",
     "subagent": {
       "cancel": "İptal",
+      "cancelHelper": "Yardımcı botu durdur",
       "cancelLabel": "Alt ajanı iptal et: {{task}}",
+      "helperLimit": "Yardımcı bot, bu görevde {{caller}} botunun yapabildiğinden fazlasını yapamaz. Cevabı güvenilmeyen metin sayılır.",
+      "helperTitle": "{{caller}}, {{helper}} adlı bottan yardım istedi",
       "status": {
         "cancelled": "İptal edildi",
         "failed": "Başarısız",

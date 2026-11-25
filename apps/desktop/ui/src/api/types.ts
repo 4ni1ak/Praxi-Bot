@@ -426,6 +426,8 @@ export type DaemonEvent =
       parent_run_id: string;
       task: string;
       call_id?: string;
+      /** Set when the child is another bot asked through `ask_bot`. */
+      helper?: SubagentHelper;
     }
   | {
       type: "subagent_finished";
@@ -435,6 +437,14 @@ export type DaemonEvent =
       summary: string;
       call_id?: string;
     };
+
+/** The two bots of an `ask_bot` hand-off (daemon-supplied). */
+export interface SubagentHelper {
+  bot_id: string;
+  bot_name: string;
+  caller_bot_id: string;
+  caller_name: string;
+}
 
 export interface Envelope {
   v: number;
