@@ -732,7 +732,7 @@
         "failed": "The app list could not be refreshed: showing the saved one.",
         "offline": "No connection: showing the saved app list.",
         "rate_limited": "Composio is busy: showing the saved app list.",
-        "unauthorized": "Composio sign-in ran out: showing the saved app list."
+        "unauthorized": "Composio tidak lagi menerima login yang tersimpan: daftar aplikasi yang tersimpan ditampilkan."
       },
       "connectedSection": "Connected",
       "disable": "Turn off",
@@ -757,6 +757,7 @@
       "loading": "Loading apps…",
       "noResults": "No matching apps.",
       "openFailed": "The sign-in link was not opened because it is not a Composio link.",
+      "relogin": "Masuk ke Composio lagi",
       "retry": "Try again",
       "state": {
         "active": "Connected",
@@ -846,8 +847,11 @@
       "failed": {
         "app_link": "The page for {{name}} could not be prepared. Try again.",
         "app_open": "The page for {{name}} could not be opened.",
+        "login_expired": "Composio tidak lagi menerima login yang tersimpan, jadi {{name}} belum bisa dihubungkan. Masuk ke Composio lagi.",
         "login_failed": "The sign-in did not finish. Try again.",
-        "login_open": "The sign-in page could not be opened."
+        "login_open": "The sign-in page could not be opened.",
+        "rate_limited": "Composio sedang sibuk. Tunggu semenit, lalu coba {{name}} lagi.",
+        "upstream": "Composio tidak dapat dijangkau atau tidak menjawab. Periksa koneksi komputer tempat bot berjalan, lalu coba lagi."
       },
       "login": "The sign-in page opened in your browser. Finish it there and {{name}} opens next by itself.",
       "opened": "{{name}}'s page is open in your browser. Allow access there; it shows up as Connected here.",
@@ -2824,6 +2828,10 @@
       "composio_error": {
         "hint": "Try again in a moment. If it keeps failing, reconnect the app.",
         "title": "Composio could not finish that"
+      },
+      "composio_login_expired": {
+        "hint": "Buka Aplikasi dan tekan Masuk ke Composio lagi. Cukup satu klik di browser.",
+        "title": "Composio tidak lagi menerima login Anda"
       },
       "composio_not_configured": {
         "hint": "Add your Composio key in Apps, then try again.",
