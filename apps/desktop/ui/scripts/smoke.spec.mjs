@@ -280,6 +280,10 @@ export async function flows(ctx) {
       await page.getByTestId('bot-triggers').getByRole('button', { name:'Morning review', exact:true }).click();
       await page.getByTestId('trigger-builder').waitFor(T);
       if (!(await page.getByTestId('trigger-instruction').inputValue()).includes('Summarize')) throw new Error('saved instruction missing');
+      await page.getByTestId('trigger-builder').evaluate(async (editor) => {
+        await Promise.all(editor.getAnimations().map((animation) => animation.finished.catch(() => {})));
+        editor.scrollIntoView({ block: 'start', inline: 'nearest' });
+      });
       await page.screenshot({ path:join(ctx.shots,`trigger-registry-${theme}.png`), timeout:10000 });
       // Preview uses the daemon's production wrapper, not a mock in the UI.
       if (theme === 'clay') {
