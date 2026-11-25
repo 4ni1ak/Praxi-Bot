@@ -119,7 +119,7 @@ async fn a_block_rule_refuses_that_site_even_at_full_and_not_a_lookalike_host() 
     assert_eq!(count("profile_rule.applied"), 2);
     let id = lp2.list_profile_rules(env.bot)[0].id.clone();
     assert!(lp2.remove_profile_rule(env.bot, &id).unwrap());
-    assert!(lp2.list_profile_rules(env.bot).is_empty());
+    assert_eq!(lp2.list_profile_rules(env.bot).len(), 0);
 }
 
 #[tokio::test]
@@ -250,7 +250,7 @@ async fn a_rule_is_validated_when_added_and_stops_applying_when_it_expires() {
     for b in &bad {
         assert!(lp.add_profile_rule(env.bot, b).is_err(), "{}", b.raw_key);
     }
-    assert!(lp.list_profile_rules(env.bot).is_empty());
+    assert_eq!(lp.list_profile_rules(env.bot).len(), 0);
     let mut soon = rule("example.com", false, Capability::Any, ProfileAction::Block);
     soon.expires_at_ms = Some(storage::now_ms() + 20);
     lp.add_profile_rule(env.bot, &soon).unwrap();
