@@ -5,7 +5,7 @@
 //! (no `..`, no absolute paths, no symlinks or Windows reparse points).
 
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Json;
@@ -1627,7 +1627,7 @@ pub(crate) async fn restore_bot_workspace_entry(
     let undo_uuid = Uuid::parse_str(input.undo_id.trim())
         .map_err(|_| ApiError::bad_request("invalid undo id"))?;
     let bot = state.bot_of_user(BotId(id))?;
-    let (_, ws_dir) = ensure_bot_dir_if_configured(&state, &bot)?;
+    let (rec, ws_dir) = ensure_bot_dir_if_configured(&state, &bot)?;
     let ws_root =
         ws_dir.ok_or_else(|| ApiError::bad_request("workspaces root is not configured"))?;
 
@@ -1638,16 +1638,23 @@ pub(crate) async fn restore_bot_workspace_entry(
         .map_err(|_| ApiError::not_found("deleted item expired or unknown"))?;
     let trash_meta = serde_json::from_str::<TrashMeta>(&raw)
         .map_err(|e| ApiError::internal(format!("corrupt trash meta: {e}")))?;
+    if trash_meta.deleted_at_ms < now_ms().saturating_sub(UNDO_TTL_MS) {
+        return Err(ApiError::not_found("deleted item expired"));
+    }
     if !payload_path.exists() {
         return Err(ApiError::not_found("deleted payload missing"));
     }
+    let restored_bytes = builtin_tools::workspace::dir_size_bytes(&payload_path);
+    if rec.hard_limit_bytes.is_some_and(|limit| {
+        builtin_tools::workspace::dir_size_bytes(&ws_root).saturating_add(restored_bytes) > limit
+    }) {
+        return Err(ApiError::bad_request(
+            "restoring this item would exceed the workspace hard limit",
+        ));
+    }
 
     let segments = normalize_rel_segments(&trash_meta.original_path)?;
-    if segments.is_empty()
-        || !segments.last().is_some_and(|n| {
-            is_valid_entry_name(n) || Component::Normal(n.as_ref()) == Component::Normal(n.as_ref())
-        })
-    {
+    if segments.is_empty() {
         return Err(ApiError::bad_request("invalid restore path"));
     }
     let dst = ensure_plain_parents(&ws_root, &segments)?;

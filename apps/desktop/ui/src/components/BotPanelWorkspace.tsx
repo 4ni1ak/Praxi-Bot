@@ -12,11 +12,11 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { type KeyboardEvent, useCallback, useEffect, useState } from "react";
+import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import { isTauriRuntime, openWorkspaceFolder } from "../api/connection";
-import type { BotWorkspaceListDto, WorkspaceEntryDto } from "../api/types";
+import type { BotWorkspaceListDto, WorkspaceEntryDto, WorkspacesOverviewDto } from "../api/types";
 import { humanLine } from "../lib/humanError";
 import { formatBytes, workspaceBreadcrumbs } from "../lib/workspaceFormat";
 import { useDaemon } from "../state/DaemonContext";
@@ -44,6 +44,8 @@ export function BotPanelWorkspace({
   const [currentPath, setCurrentPath] = useState("");
   const [query, setQuery] = useState("");
   const [data, setData] = useState<BotWorkspaceListDto | null>(null);
+  const [overview, setOverview] = useState<WorkspacesOverviewDto | null>(null);
+  const requestId = useRef(0);
   const [loading, setLoading] = useState(false);
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
@@ -52,17 +54,24 @@ export function BotPanelWorkspace({
   const load = useCallback(
     async (path: string, q: string) => {
       if (!client) return;
+      const request = ++requestId.current;
       setLoading(true);
       try {
-        const res = await client.getBotWorkspace(botId, {
-          path: path || undefined,
-          q: q.trim() || undefined
-        });
-        setData(res);
+        const [res, usage] = await Promise.all([
+          client.getBotWorkspace(botId, {
+            path: path || undefined,
+            q: q.trim() || undefined
+          }),
+          client.listWorkspaces()
+        ]);
+        if (request === requestId.current) {
+          setData(res);
+          setOverview(usage);
+        }
       } catch (err) {
-        toast.show(humanLine(err), "danger");
+        if (request === requestId.current) toast.show(humanLine(err), "danger");
       } finally {
-        setLoading(false);
+        if (request === requestId.current) setLoading(false);
       }
     },
     [botId, client, toast]
@@ -72,14 +81,21 @@ export function BotPanelWorkspace({
     setCurrentPath("");
     setQuery("");
     setEditingPath(null);
-  }, [botId]);
+    setData(null);
+    setOverview(null);
+    setPreview(null);
+    requestId.current += 1;
+  }, [botId, client]);
 
   useEffect(() => {
     if (!active) return;
     const timer = window.setTimeout(() => {
       void load(currentPath, query);
     }, query ? 160 : 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      requestId.current += 1;
+    };
   }, [active, currentPath, query, load]);
 
   useEffect(() => {
@@ -232,6 +248,17 @@ export function BotPanelWorkspace({
           </Button>
         ) : null}
       </div>
+
+      {overview?.disk ? (
+        <p className={styles.emptyNote}>
+          {t("workspace.diskSummary", {
+            percent: overview.disk.used_percent,
+            free: formatBytes(overview.disk.available_bytes),
+            total: formatBytes(overview.disk.total_bytes),
+            botsTotal: formatBytes(overview.total_workspace_bytes)
+          })}
+        </p>
+      ) : null}
 
       <div className={styles.controls}>
         <input

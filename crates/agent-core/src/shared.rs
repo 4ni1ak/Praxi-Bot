@@ -1054,6 +1054,9 @@ pub struct SkillHints {
     pub app: Option<String>,
 }
 
+/// Deduplication key `(bot_id, kind, threshold)` for workspace pre-fill warnings.
+pub(crate) type WorkspaceWarnKey = (Option<BotId>, &'static str, u8);
+
 pub(crate) struct Shared {
     pub usage: crate::usage::Ledger,
     pub storage: Arc<Storage>,
@@ -1170,7 +1173,7 @@ pub(crate) struct Shared {
     /// Broadcast channel for pre-fill workspace disk warnings.
     pub workspace_warnings: broadcast::Sender<WorkspaceWarningEvent>,
     /// Cooldown map preventing duplicate warnings for the same `(bot, kind, threshold)`.
-    pub workspace_warned: Mutex<HashMap<(Option<BotId>, &'static str, u8), std::time::Instant>>,
+    pub workspace_warned: Mutex<HashMap<WorkspaceWarnKey, std::time::Instant>>,
     /// Test-only: the drive task waits here after `conclude` and before it
     /// reaps its own [`JoinHandle`].
     #[cfg(test)]

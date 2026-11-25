@@ -229,11 +229,12 @@ async function runSmoke(tmp, runtime) {
   // A fake `cursor-agent` first on the daemon's PATH: it speaks ACP and needs the CLI's own tools.
   const fakeBin = join(tmp, 'fakebin');
   mkdirSync(fakeBin, { recursive: true });
-  copyFileSync(fixture, join(fakeBin, executable('cursor-agent')));
+  if (flag('only') !== 'workspace') copyFileSync(fixture, join(fakeBin, executable('cursor-agent')));
   const isolated = isolatedEnv(tmp, fakeBin);
   const env = {
     ...isolated,
     BOT_DATA_DIR: dataDir,
+    BOT_WORKSPACES_DIR: join(tmp, 'workspaces'),
     BOT_SECRETS_BACKEND: 'file',
     BOT_SECRETS_PASSPHRASE: 'smoke-passphrase-smoke-passphrase',
     BOT_BROWSER_PATH: chromePath,
@@ -358,7 +359,7 @@ async function main() {
     const build = spawnSync('cargo', ['build', '--locked', '-p', 'cli', '-p', 'cli-provider', '--bin', 'bot', '--bin', 'native-cli-fixture'], { cwd: repo, stdio: 'inherit', env: { ...process.env, CARGO_TARGET_DIR: targetDir, CARGO_INCREMENTAL: '0', CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS ?? '3' } });
     if (build.status !== 0) throw new Error('cargo build failed');
   }
-  for (const binary of [bot, fixture]) {
+  for (const binary of flag('only') === 'workspace' ? [bot] : [bot, fixture]) {
     if (!existsSync(binary)) throw new Error(`missing ${binary}`);
   }
 

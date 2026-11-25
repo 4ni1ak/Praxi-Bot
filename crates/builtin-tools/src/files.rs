@@ -3698,7 +3698,7 @@ fn do_write(sh: &Shared, run: &str, i: &WriteIn) -> Result<String, ToolError> {
     validate_mutation(sh, &i.path, &p)?;
     let existing = fs::symlink_metadata(&p)
         .ok()
-        .filter(|m| m.is_file())
+        .filter(fs::Metadata::is_file)
         .map_or(0, |m| m.len());
     let added = (i.content.len() as u64).saturating_sub(existing);
     check_write_budget(sh, &p, added)?;

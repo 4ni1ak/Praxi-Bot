@@ -52,7 +52,8 @@ export function gbInputToBytes(raw: string): number | null | undefined {
   if (!Number.isFinite(value) || value <= 0) {
     return undefined;
   }
-  return Math.round(value * GIB);
+  const bytes = Math.round(value * GIB);
+  return Number.isSafeInteger(bytes) && bytes > 0 ? bytes : undefined;
 }
 
 /** Build clickable breadcrumb segments from a relative workspace path (`a/b/c`). */

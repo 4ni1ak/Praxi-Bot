@@ -196,6 +196,11 @@ pub fn ensure_bot_workspace_dir(
 }
 
 fn ensure_plain_dir_chain(dir: &Path) -> Result<(), String> {
+    // Check existing ancestors too: an otherwise plain directory can sit below
+    // a symlink/junction pointing into a different bot's tree.
+    if let Some(parent) = dir.parent().filter(|p| !p.as_os_str().is_empty()) {
+        ensure_plain_dir_chain(parent)?;
+    }
     match fs::symlink_metadata(dir) {
         Ok(meta) => {
             if is_link_or_reparse(&meta) || !meta.is_dir() {
@@ -204,9 +209,6 @@ fn ensure_plain_dir_chain(dir: &Path) -> Result<(), String> {
             Ok(())
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            if let Some(parent) = dir.parent().filter(|p| !p.as_os_str().is_empty()) {
-                ensure_plain_dir_chain(parent)?;
-            }
             fs::create_dir(dir).map_err(|err| format!("create {}: {err}", dir.display()))
         }
         Err(e) => Err(format!("stat {}: {e}", dir.display())),
@@ -362,6 +364,14 @@ pub fn evaluate_write_budget(
         let used_after_disk = d.total_bytes.saturating_sub(free_after);
         let used_after_pct = percent_of(used_after_disk, d.total_bytes);
 
+        if min_free_bytes > 0 && free_after < min_free_bytes {
+            return WriteBudgetOutcome::Warn(WriteWarningKind::LowFreeSpace {
+                free_after_bytes: free_after,
+                min_free_bytes,
+                used_percent: used_after_pct,
+            });
+        }
+
         let mut sorted = thresholds;
         sorted.sort_unstable();
         if let Some(&crossed) = sorted.iter().rev().find(|&&t| t > 0 && used_after_pct >= t) {
@@ -369,13 +379,6 @@ pub fn evaluate_write_budget(
                 threshold_percent: crossed,
                 used_percent: used_after_pct,
                 free_after_bytes: free_after,
-            });
-        }
-        if min_free_bytes > 0 && free_after < min_free_bytes {
-            return WriteBudgetOutcome::Warn(WriteWarningKind::LowFreeSpace {
-                free_after_bytes: free_after,
-                min_free_bytes,
-                used_percent: used_after_pct,
             });
         }
     }

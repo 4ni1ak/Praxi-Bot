@@ -34,7 +34,7 @@
 .searchInput {
   flex: 1;
   min-width: 0;
-  height: var(--space-7);
+  height: var(--space-8);
   padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
   border: var(--size-border) solid var(--color-border);
@@ -44,7 +44,7 @@
 }
 
 .searchInput:focus-visible {
-  outline: var(--size-focus-ring) solid var(--color-focus);
+  outline: var(--size-border-thick) solid var(--color-focus);
   outline-offset: var(--space-0);
 }
 
@@ -62,16 +62,16 @@
   background: transparent;
   color: var(--color-text-muted);
   padding: var(--space-0) var(--space-1);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font: inherit;
-  transition: color var(--motion-duration-fast) ease, background var(--motion-duration-fast) ease;
+  transition: color var(--motion-duration-normal) ease, background var(--motion-duration-normal) ease;
 }
 
 .crumbBtn:hover,
 .crumbBtn:focus-visible {
   color: var(--color-text);
-  background: var(--color-surface-hover);
+  background: var(--state-hover);
 }
 
 .crumbCurrent {
@@ -103,12 +103,12 @@
   gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
-  transition: background var(--motion-duration-fast) ease;
+  transition: background var(--motion-duration-normal) ease;
 }
 
 .row:hover,
 .row:focus-within {
-  background: var(--color-surface-hover);
+  background: var(--state-hover);
 }
 
 .rowMain {
@@ -155,7 +155,7 @@
   align-items: center;
   gap: var(--space-0);
   opacity: 0.75;
-  transition: opacity var(--motion-duration-fast) ease;
+  transition: opacity var(--motion-duration-normal) ease;
 }
 
 .row:hover .rowActions,
@@ -170,7 +170,7 @@
   width: var(--space-6);
   height: var(--space-6);
   border: none;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -200,7 +200,7 @@
   min-width: 0;
   height: var(--space-6);
   padding: 0 var(--space-1);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   border: var(--size-border) solid var(--color-accent);
   background: var(--color-surface);
   color: var(--color-text);

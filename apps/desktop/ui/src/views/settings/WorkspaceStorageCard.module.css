@@ -17,7 +17,7 @@
   height: 100%;
   border-radius: inherit;
   background: var(--color-accent);
-  transition: width var(--motion-duration-fast) ease;
+  transition: width var(--motion-duration-normal) ease;
 }
 
 .meterFillWarn {
@@ -48,7 +48,7 @@
 
 .compactInput {
   width: 7ch;
-  height: var(--space-7);
+  height: var(--space-8);
   padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
   border: var(--size-border) solid var(--color-border);
@@ -59,7 +59,7 @@
 }
 
 .compactInput:focus-visible {
-  outline: var(--size-focus-ring) solid var(--color-focus);
+  outline: var(--size-border-thick) solid var(--color-focus);
   outline-offset: var(--space-0);
 }
 

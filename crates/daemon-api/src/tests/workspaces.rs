@@ -36,6 +36,123 @@ fn setup_workspace_app() -> (tempfile::TempDir, T) {
 }
 
 #[tokio::test]
+async fn workspace_links_are_never_browsed_or_cleaned() {
+    let (_root, t) = setup_workspace_app();
+    let bot = create_test_bot(&t, "Links").await;
+    let ws = t.state.agent().bot_workspace_dir(BotId(bot)).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let old_file = outside.path().join("private.txt");
+    std::fs::write(&old_file, "must remain outside").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&old_file)
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(40 * 86_400))
+        .unwrap();
+    let link = ws.join("downloads/linked");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let output = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(outside.path())
+            .creation_flags(0x0800_0000)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "junction creation failed");
+    }
+    std::fs::create_dir(outside.path().join("nested")).unwrap();
+    assert!(
+        builtin_tools::workspace::validate_workspaces_root(
+            &link.join("nested"),
+            &t.state.data_dir()
+        )
+        .is_err(),
+        "an existing root below a linked ancestor must be refused"
+    );
+    let r = call(
+        &t,
+        Method::GET,
+        &format!("/v1/bots/{bot}/workspace/file?path=downloads/linked/private.txt"),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = call(
+        &t,
+        Method::GET,
+        &format!("/v1/bots/{bot}/workspace?q=private"),
+        None,
+    )
+    .await;
+    assert!(r.json()["entries"].as_array().unwrap().is_empty());
+    let r = call(
+        &t,
+        Method::POST,
+        "/v1/workspaces/cleanup",
+        Some(json!({ "target": "old_downloads", "bot_id": bot })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(
+        std::fs::read_to_string(&old_file).unwrap(),
+        "must remain outside"
+    );
+}
+
+#[tokio::test]
+async fn workspace_restore_honors_expiry_and_hard_limit() {
+    let (_root, t) = setup_workspace_app();
+    let bot = create_test_bot(&t, "Undo").await;
+    let ws = t.state.agent().bot_workspace_dir(BotId(bot)).unwrap();
+    std::fs::write(ws.join("notes/undo.txt"), "restore me").unwrap();
+    let r = call(
+        &t,
+        Method::POST,
+        &format!("/v1/bots/{bot}/workspace/delete"),
+        Some(json!({ "path": "notes/undo.txt" })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let undo = r.json()["undo_id"].as_str().unwrap().to_owned();
+    call(
+        &t,
+        Method::PUT,
+        &format!("/v1/bots/{bot}/workspace/limits"),
+        Some(json!({ "hard_limit_bytes": 1 })),
+    )
+    .await;
+    let restore = format!("/v1/bots/{bot}/workspace/restore");
+    let r = call(&t, Method::POST, &restore, Some(json!({ "undo_id": undo }))).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert!(!ws.join("notes/undo.txt").exists());
+    call(
+        &t,
+        Method::PUT,
+        &format!("/v1/bots/{bot}/workspace/limits"),
+        Some(json!({ "hard_limit_bytes": null })),
+    )
+    .await;
+    let meta_path = t
+        .state
+        .data_dir()
+        .join("workspace-trash")
+        .join(bot.to_string())
+        .join(&undo)
+        .join("meta.json");
+    let mut meta: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+    meta["deleted_at_ms"] = json!(storage::now_ms() - 11 * 60 * 1000);
+    std::fs::write(meta_path, serde_json::to_vec(&meta).unwrap()).unwrap();
+    let r = call(&t, Method::POST, &restore, Some(json!({ "undo_id": undo }))).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    assert!(!ws.join("notes/undo.txt").exists());
+}
+
+#[tokio::test]
 async fn workspace_routes_are_owner_only_and_denied_to_peers() {
     let (_ws, t) = setup_workspace_app();
     let bot_id = create_test_bot(&t, "Researcher").await;

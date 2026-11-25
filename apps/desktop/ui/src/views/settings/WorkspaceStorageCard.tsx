@@ -228,7 +228,7 @@ export function WorkspaceStorageCard() {
           )}
         </SettingRow>
 
-        {overview && overview.suggestions.length > 0 ? (
+        {overview && (overview.suggestions.length > 0 || overview.largest_items.length > 0) ? (
           <SettingRow title={t("workspace.cleanupHeading")} description={t("workspace.cleanupDesc")} stacked>
             <div className={styles.cleanupList}>
               {overview.suggestions.map((s) => (
@@ -272,7 +272,6 @@ export function WorkspaceStorageCard() {
                   used: formatBytes(bot.used_bytes),
                   files: bot.file_count
                 })}
-                stacked
               >
                 <div className={styles.botLimits}>
                   <label className={styles.hint}>
