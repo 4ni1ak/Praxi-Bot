@@ -127,3 +127,19 @@
   font: inherit;
   text-decoration: underline;
 }
+
+.details {
+  margin-block-start: var(--space-1);
+}
+
+.details summary {
+  cursor: pointer;
+}
+
+.raw {
+  display: block;
+  margin-block-start: var(--space-1);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+  user-select: text;
+}

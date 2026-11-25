@@ -2881,6 +2881,10 @@
         "hint": "Wait for the current setup to finish, then try again.",
         "title": "That computer is already being set up"
       },
+      "host_terminal_failed": {
+        "hint": "Komputer itu online dan menjawab, tetapi terminalnya melaporkan galat. Lihat detail di bawah, lalu coba lagi.",
+        "title": "Terminal gagal di komputer itu"
+      },
       "host_unreachable": {
         "hint": "Its copy may still be running. Try again, or confirm to bring the schedule back anyway.",
         "title": "The server did not answer"

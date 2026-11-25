@@ -2898,6 +2898,10 @@
         "hint": "Wait for the current setup to finish, then try again.",
         "title": "That computer is already being set up"
       },
+      "host_terminal_failed": {
+        "hint": "The computer is online and answered, but its terminal reported an error. Open the details below, then try again.",
+        "title": "The terminal failed on that computer"
+      },
       "host_unreachable": {
         "hint": "Its copy may still be running. Try again, or confirm to bring the schedule back anyway.",
         "title": "The server did not answer"
