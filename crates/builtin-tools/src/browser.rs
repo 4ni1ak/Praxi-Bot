@@ -1341,6 +1341,20 @@ pub fn managed_tools_with_secrets(
     views: Option<Arc<live_view::TargetRegistry>>,
     fill_secrets: Option<Arc<FillSecrets>>,
 ) -> Vec<Arc<dyn Tool>> {
+    managed_tools_with_origin(settings, data_dir, control, views, fill_secrets, None)
+}
+
+/// [`managed_tools_with_secrets`] that also fills `page_origin` with a probe of
+/// the page each run's browser is on.
+#[must_use]
+pub fn managed_tools_with_origin(
+    settings: BrowserSettings,
+    data_dir: &Path,
+    control: Option<Arc<dyn DesktopControlGate>>,
+    views: Option<Arc<live_view::TargetRegistry>>,
+    fill_secrets: Option<Arc<FillSecrets>>,
+    page_origin: Option<Arc<connector_email::PageOriginSlot>>,
+) -> Vec<Arc<dyn Tool>> {
     let driver = Arc::new(CdpDriver::new(settings.clone()));
     let peers = BrowserPeers::default();
     let bots = BotDrivers::default();
@@ -1358,6 +1372,7 @@ pub fn managed_tools_with_secrets(
             views,
         }),
         fill_secrets,
+        page_origin,
     )
 }
 
@@ -1393,7 +1408,7 @@ pub fn tools(
     data_dir: &Path,
     control: Option<Arc<dyn DesktopControlGate>>,
 ) -> Vec<Arc<dyn Tool>> {
-    tools_with_pool(driver, data_dir, control, None, None)
+    tools_with_pool(driver, data_dir, control, None, None, None)
 }
 
 /// [`tools`] whose `browser_fill` may type the owner's fill secrets.
@@ -1404,7 +1419,41 @@ pub fn tools_with_secrets(
     control: Option<Arc<dyn DesktopControlGate>>,
     fill_secrets: Option<Arc<FillSecrets>>,
 ) -> Vec<Arc<dyn Tool>> {
-    tools_with_pool(driver, data_dir, control, None, fill_secrets)
+    tools_with_pool(driver, data_dir, control, None, fill_secrets, None)
+}
+
+/// [`tools_with_secrets`] that also fills `page_origin` with a probe of the page
+/// the browser is on.
+#[must_use]
+pub fn tools_with_origin(
+    driver: Arc<dyn BrowserDriver>,
+    data_dir: &Path,
+    control: Option<Arc<dyn DesktopControlGate>>,
+    fill_secrets: Option<Arc<FillSecrets>>,
+    page_origin: Option<Arc<connector_email::PageOriginSlot>>,
+) -> Vec<Arc<dyn Tool>> {
+    tools_with_pool(driver, data_dir, control, None, fill_secrets, page_origin)
+}
+
+/// Asks the BROWSER (target info, never page script) which page a run is on.
+struct BrowserOriginProbe {
+    tool: BrowserTool,
+}
+
+#[async_trait]
+impl connector_email::PageOrigin for BrowserOriginProbe {
+    async fn top_origin(&self, ctx: &ToolContext) -> Option<String> {
+        BROWSER_LANE
+            .scope(ctx.lane.clone(), async {
+                let shared = self.tool.select_shared(ctx).ok()?;
+                shared
+                    .driver
+                    .current_url()
+                    .await
+                    .and_then(|u| origin_of(&u))
+            })
+            .await
+    }
 }
 
 fn tools_with_pool(
@@ -1413,6 +1462,7 @@ fn tools_with_pool(
     control: Option<Arc<dyn DesktopControlGate>>,
     managed: Option<ManagedBrowsers>,
     fill_secrets: Option<Arc<FillSecrets>>,
+    page_origin: Option<Arc<connector_email::PageOriginSlot>>,
 ) -> Vec<Arc<dyn Tool>> {
     let shared = Arc::new(Shared {
         driver,
@@ -1639,6 +1689,17 @@ fn tools_with_pool(
             ),
         ),
     ];
+    if let (Some(slot), Some((_, snapshot_spec))) =
+        (page_origin, defs.iter().find(|(op, _)| *op == Op::Snapshot))
+    {
+        slot.set(Arc::new(BrowserOriginProbe {
+            tool: BrowserTool {
+                spec: snapshot_spec.clone(),
+                op: Op::Snapshot,
+                shared: shared.clone(),
+            },
+        }));
+    }
     defs.into_iter()
         .map(|(op, spec)| {
             Arc::new(BrowserTool {
