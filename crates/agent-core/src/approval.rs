@@ -64,7 +64,8 @@ impl Drop for ClosedGuard {
     }
 }
 
-/// Audit reason code of a browser call the Full level let through after a page was read.
+/// Audit reason code of a browser or web-read call the Full level let through after a page was
+/// read (the code predates the web tools; it stays because audit consumers know it).
 const FULL_BROWSE_REASON: &str = "mode.full.owner_browse";
 
 /// The managed browser's calls that Full lets an owner-started run make after reading a page:
@@ -82,6 +83,24 @@ const FULL_BROWSER_CALLS: [&str; 9] = [
     "browser_tabs",
     "browser_act",
 ];
+
+/// The public-web READ tools (`web-tools`): a search, a page, a feed, a sitemap, a page's
+/// metadata. They follow the same rule as `browser_open` in the Full level: no card for an
+/// owner-started run unless the run holds private data AND read untrusted content and the query
+/// or address carries a private word, a data shape or exceeds the budget. They fetch over HTTP
+/// with the tool's own address guard (private networks refused); they start no program and
+/// type nothing into a page.
+const FULL_WEB_READ_CALLS: [&str; 5] = [
+    "web_search",
+    "web_extract",
+    "web_feed",
+    "web_sitemap",
+    "web_metadata",
+];
+
+/// Longest `web_search` query a run that holds private data may send without a card, in
+/// characters (the tool accepts 400). Longer is a paragraph, not a query.
+const WEB_QUERY_LIMIT: usize = 160;
 
 /// What a call's card says when nobody decided it in time (the model sees it as the denial reason).
 pub(crate) const EXPIRED_REASON: &str = "expired: nobody answered in time";
@@ -1088,6 +1107,12 @@ impl Shared {
     ///   it is small (a form field under 40 characters) and the run's running total sent to
     ///   such places is under a budget. Otherwise it asks, as before.
     ///
+    /// The public-web read tools (`web_search`, `web_extract`, `web_feed`, `web_sitemap`,
+    /// `web_metadata`) follow the same rules as `browser_open`: a query or an address is judged
+    /// like the text and the URL of a browser call on a site the owner did not name (it is never
+    /// "the owner's own page"), and a query of [`WEB_QUERY_LIMIT`] characters or more asks once
+    /// the run holds private data and read untrusted content.
+    ///
     /// Never covered, whatever the level: an owner-stored secret typed with `browser_fill`
     /// (always-ask, decided before this), money and the never-list (floors), mail and message
     /// sends (always-ask tools), `browser_eval`, a program start (`executes`), a named browser
@@ -1098,9 +1123,10 @@ impl Shared {
     fn full_mode_waives(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
         // A subagent (and a helper bot another bot called) keeps the old rule: it never inherits
         // the owner's Full autonomy from the run that started it.
+        let web_read = FULL_WEB_READ_CALLS.contains(&name);
         if ctx.parent_run_id.is_some()
             || ctx.delegation().is_some()
-            || !FULL_BROWSER_CALLS.contains(&name)
+            || !(web_read || FULL_BROWSER_CALLS.contains(&name))
             || ctx.profile.permissions.mode() != AutonomyMode::Full
             || !self.pc_owner_started(ctx)
         {
@@ -1165,16 +1191,24 @@ impl Shared {
             sent += crate::full_autonomy::url_sent_chars(url);
             checked.push(crate::full_autonomy::decoded(url));
         }
-        let page_is_owners = ctx
-            .page_origin
-            .lock()
-            .as_deref()
-            .and_then(host_of_origin)
-            .is_some_and(|h| self.trusted_host(ctx, &h, &named));
+        // Text typed into a page the owner trusts is the owner's business. A search query goes
+        // to the search provider whatever page is open, so it is always judged.
+        let page_is_owners = !web_read
+            && ctx
+                .page_origin
+                .lock()
+                .as_deref()
+                .and_then(host_of_origin)
+                .is_some_and(|h| self.trusted_host(ctx, &h, &named));
         if !texts.is_empty() && !page_is_owners {
+            let limit = if web_read {
+                WEB_QUERY_LIMIT
+            } else {
+                crate::full_autonomy::FOREIGN_TEXT_LIMIT
+            };
             for text in &texts {
                 let len = text.chars().count();
-                if len >= crate::full_autonomy::FOREIGN_TEXT_LIMIT {
+                if len >= limit {
                     return false;
                 }
                 sent += len;

