@@ -90,6 +90,12 @@ jobs:
           python3 scripts/installer/generate_installer_assets.py --check
           python3 -B -m unittest discover -s scripts/tests -p test_installer_assets.py -v
 
+      - name: Check third-party notices consistency and dependency hygiene tests
+        run: |
+          python3 scripts/license_report.py --check-notices
+          python3 -B -m unittest discover -s scripts/tests -p "test_license_report.py" -v
+          python3 -B -m unittest discover -s scripts/tests -p "test_dependency_hygiene.py" -v
+
   build-and-test:
     name: ${{ matrix.name }}
     needs: changes
@@ -261,6 +267,9 @@ jobs:
           arguments: --all-features
           command: check licenses bans advisories sources
 
+      - name: Check generated licence report, notices, and advisory expiry dates
+        run: python3 scripts/license_report.py --check --check-advisory-expiry
+
   ui-lint-and-typecheck:
     name: UI Lint & Typecheck
     needs: changes
@@ -302,6 +311,9 @@ jobs:
 
       - name: UI shell layout
         run: pnpm --dir apps/desktop/ui check:layout
+
+      - name: Check UI production licences against report and notices
+        run: python3 scripts/license_report.py --check-ui
 
       # axe-core over the mock-mode screens in headless Chrome (preinstalled on ubuntu-latest).
       - name: UI accessibility (axe-core)
