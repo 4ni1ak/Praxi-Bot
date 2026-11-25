@@ -90,6 +90,7 @@ export const CARD_META: Record<string, CardMeta> = {
   "safety-levels": { page: "safety", learn: "permissions" },
   "trusted-folders": { page: "safety", risk: "folders", learn: "folders" },
   "allowed-grants": { page: "safety", learn: "permissions" },
+  "site-rules": { page: "safety", advanced: true, learn: "permissions" },
   "audit-log": { page: "safety" },
   permissions: { page: "safety", advanced: true, risk: "permissions", learn: "permissions" },
   "safe-mode": { page: "safety", advanced: true, learn: "safeMode" },

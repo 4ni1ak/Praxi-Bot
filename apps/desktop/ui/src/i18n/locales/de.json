@@ -625,6 +625,14 @@
       "warm": "Warm"
     }
   },
+  "approvalDock": {
+    "counter": "Freigabe {{current}} von {{total}}",
+    "keyAllow": "Einmal erlauben",
+    "keyDeny": "Ablehnen",
+    "label": "Wartet auf deine Freigabe",
+    "next": "Nächste Freigabe",
+    "previous": "Vorherige Freigabe"
+  },
   "apps": {
     "access": {
       "all": "Alle Bots",
@@ -1728,6 +1736,7 @@
         "policy": "Dieser Bot ist so eingestellt, dass er vor dieser Art von Aktion nachfragt."
       }
     },
+    "approvalSkipped": "Die wartende Freigabe wurde übersprungen. Deine Nachricht kommt zuerst.",
     "attach": {
       "add": "Dateien oder Bilder anhängen",
       "command": "Sende Dateien mit einer normalen Nachricht. Entferne sie, bevor du einen Schrägstrichbefehl verwendest.",
@@ -1761,6 +1770,7 @@
       "uploading": "Wird auf den Computer des Chats kopiert…"
     },
     "chain": {
+      "allowed": "Von dir erlaubt",
       "details": "Details",
       "groupApp": "{{app}} ×{{count}}",
       "groupSame": "{{what}} ×{{count}}",
@@ -1771,6 +1781,7 @@
         "blocked": "Von dir blockiert",
         "noAnswer": "Keine Antwort rechtzeitig",
         "other": "Hat nicht geklappt",
+        "skipped": "Übersprungen: du hast eine neue Nachricht geschrieben",
         "stopped": "Vor dem Ende gestoppt",
         "timeout": "Zeitüberschreitung",
         "timeoutAfter": "Zeitüberschreitung nach {{seconds}} s"
@@ -1929,7 +1940,7 @@
     "pendingPinned": "Wartet auf deine Entscheidung. Die Karte steht über dem Nachrichtenfeld.",
     "placeholder": "Nachricht …  / Befehle · @ Bots",
     "placeholderBusy": "Der Bot arbeitet. Deine Nachricht kommt in die Warteschlange",
-    "placeholderWaiting": "Wartet auf deine Freigabe. Eine getippte Nachricht wird eingereiht …",
+    "placeholderWaiting": "Oben antworten oder schreiben, um den Plan zu ändern",
     "question": {
       "answer": "Antworten",
       "answered": "Du hast geantwortet: {{answer}}",
@@ -5352,6 +5363,7 @@
       "description": "Wähle die Anzeigesprache der Oberfläche.",
       "en": "English",
       "es": "Español",
+      "fr": "Français",
       "title": "Sprache",
       "tr": "Türkçe"
     },
@@ -6038,10 +6050,65 @@
       "saving": "Wird gespeichert…"
     },
     "search": "Einstellungen suchen",
+    "siteRules": {
+      "action": "Was soll passieren",
+      "actions": {
+        "allow": "Erlauben",
+        "ask": "Immer fragen",
+        "block": "Nie erlauben"
+      },
+      "addButton": "Regel hinzufügen",
+      "addTitle": "Regel hinzufügen",
+      "added": "Regel gespeichert.",
+      "allowApp": "Das in diesem Programm immer erlauben",
+      "allowHint": "Eine Erlauben-Regel gilt genau für diese Website, nicht für ihre Subdomains.",
+      "allowSite": "Das auf dieser Website immer erlauben",
+      "bot": "Bot",
+      "capabilities": {
+        "any": "alles",
+        "interact": "Klicken und Tippen",
+        "read": "Öffnen und Lesen",
+        "submit": "Formulare senden und Tasten drücken"
+      },
+      "capability": "Für",
+      "confirm": "{{what}} auf {{target}} immer ohne Nachfrage erlauben?",
+      "confirmNo": "Abbrechen",
+      "confirmYes": "Ja, immer erlauben",
+      "empty": "Noch keine Regeln.",
+      "expired": "abgelaufen",
+      "expiries": {
+        "day": "Einen Tag",
+        "month": "30 Tage",
+        "never": "Bis ich sie entferne",
+        "week": "Eine Woche"
+      },
+      "expiry": "Regel behalten",
+      "lead": "Regeln für eine Website oder ein Programm: immer fragen, nie erlauben oder ohne Nachfrage erlauben. Sie können nur mehr Vorsicht hinzufügen oder ein OK geben, das du hier wählst.",
+      "limits": "Die Sicherheit bleibt an: Dateien außerhalb des Arbeitsbereichs, Inhalte von Webseiten und als „nie erlaubt“ markierte Dinge folgen weiter ihren eigenen Regeln.",
+      "recentHint": "Websites und Programme, die du zuletzt bestätigt hast. Du kannst eines ohne erneute Nachfrage erlauben.",
+      "recentNone": "Noch nichts vorzuschlagen.",
+      "recentTitle": "Aus einem letzten OK",
+      "remove": "Entfernen",
+      "removed": "Regel entfernt.",
+      "site": "Website",
+      "siteHint": "Nur der Name, z. B. example.com (ohne https://, ohne Pfad).",
+      "subdomains": "Auch Subdomains einbeziehen (z. B. shop.example.com)",
+      "title": "Websites und Programme",
+      "until": "bis {{when}}",
+      "withSubdomains": "(und seine Subdomains)"
+    },
     "title": "Einstellungen",
     "updates": {
       "appVersion": "Desktop-App",
       "available": "Version {{version}} ist verfügbar.",
+      "buildId": "Build-Kennung",
+      "channel": {
+        "description": "Stabil wird empfohlen. Vorschau enthält frühe Versionen, die noch Probleme haben können. Updates werden erst installiert, wenn Sie Installieren wählen.",
+        "preview": "Vorschau",
+        "stable": "Stabil",
+        "title": "Update-Kanal",
+        "unavailable": "Vorschau-Updates sind für diesen Build noch nicht eingerichtet."
+      },
       "check": {
         "action": "Nach Updates suchen",
         "description": "Sucht nach einer neueren Version und zeigt, was neu ist. Es wird nichts installiert, bevor Sie es wollen.",
@@ -6059,6 +6126,7 @@
         "no_rollback": "Es gibt keine frühere Version, zu der Sie zurückkehren können.",
         "not_configured": "Updates sind in dieser Version nicht eingerichtet.",
         "nothing_to_install": "Bitte suchen Sie zuerst nach Updates.",
+        "preview_not_configured": "Vorschau-Updates sind nicht eingerichtet. Wählen Sie Stabil oder installieren Sie einen Build mit Vorschau-Unterstützung.",
         "signature": "Das Update konnte nicht als echt bestätigt werden und wurde deshalb NICHT installiert. Es wurde nichts verändert."
       },
       "install": {
@@ -6066,14 +6134,18 @@
         "hint": "Das Update wird vor der Installation auf Echtheit geprüft. Praxi-Bot startet danach neu.",
         "working": "Wird aktualisiert…"
       },
-      "notConfigured": "Diese Version von Praxi-Bot hat keinen Update-Dienst und kann sich nicht selbst aktualisieren. Laden Sie die neueste Version von der Projektseite herunter.",
+      "lastChecked": "Zuletzt geprüft: {{time}}",
+      "neverChecked": "Es wurde noch nicht nach Updates gesucht.",
+      "notConfigured": "Updates sind nicht verfügbar: Für diesen Build ist kein Signaturschlüssel oder keine sichere Update-Quelle eingerichtet. Es wird nichts heruntergeladen oder installiert.",
       "rollback": {
         "action": "Zur vorherigen Version zurückkehren",
         "description": "Version {{version}} ist nicht richtig gestartet. Sie können zur letzten funktionierenden Version zurückkehren.",
         "title": "Beim Update ist etwas schiefgelaufen",
         "working": "Kehrt zurück…"
       },
-      "title": "Updates & Version",
+      "skip": "Diese Version überspringen",
+      "skipped": "Version {{version}} wird übersprungen. Neuere Versionen werden weiterhin angeboten.",
+      "title": "Über die App",
       "unknown": "Unbekannt",
       "upToDate": "Sie haben die neueste Version."
     },

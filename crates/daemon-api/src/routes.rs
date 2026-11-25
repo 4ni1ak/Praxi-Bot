@@ -1193,7 +1193,10 @@ fn has_attachments(s: &AppState, chat: ChatId, message: Uuid) -> bool {
 }
 
 /// Send a user message.  Starts a turn when the chat is idle (returns its run
-/// id); otherwise `mode` decides between steering and queueing.
+/// id); otherwise `mode` decides between steering and queueing.  A message the
+/// owner's own app sends while the owner's turn waits for a tool approval is
+/// not queued behind it: the approval is denied, the turn stops and the message
+/// starts the next turn (`delivery` = `redirected`).
 #[utoipa::path(post, path = "/v1/chats/{id}/messages", tag = "chats", security(("bearer" = [])),
     params(("id" = Uuid, Path, description = "Chat id")),
     request_body = SendMessage,
@@ -1255,6 +1258,7 @@ pub(crate) async fn send_message(
             (DeliveryKind::Queued, None)
         }
         Delivery::Stopped(r) => (DeliveryKind::Stopped, Some(r.0)),
+        Delivery::Redirected(r) => (DeliveryKind::Redirected, Some(r.0)),
     };
     Ok((
         StatusCode::ACCEPTED,

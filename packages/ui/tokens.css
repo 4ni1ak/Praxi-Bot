@@ -71,6 +71,8 @@
   --letter-spacing-wide: 0.6px;
 
   --radius-modal: calc(16px * var(--corner-scale));
+  /* The composer box and everything docked to it (the approval dock) share this radius. */
+  --radius-composer: calc(var(--radius-modal) * 1.25);
   --surface-sheen: linear-gradient(180deg, color-mix(in srgb, var(--color-text) 4%, transparent), transparent 45%);
   --blur-glass: 30px;
   --size-modal-width: 1040px;

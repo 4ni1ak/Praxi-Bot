@@ -46,3 +46,28 @@ flight. The run leaves `running` within about a second. It does not stay
   if the last run list still says `queued`, `running`, or `waiting_approval`.
 - Text in the box still makes the button Send, so the user can queue another
   message. Queued bubbles do not hide Stop while the box is empty.
+
+## Writing instead of answering an approval
+
+The approval is asked in the dock above the composer (one place, not in the
+message stream). When the owner's own app (`owner` / `peer_admin` source) sends a
+message while the owner's turn waits on a tool approval, the message is not
+queued behind it:
+
+- The turn is stopped by the same path as Stop (the run token is cancelled
+  before the cards are released) and every open tool approval of the turn and its
+  subagents is closed as `denied` with the reason
+  `denied: the owner wrote a new message instead`. Never `approved`, no tool
+  starts, no grant is minted. The send response says `delivery: "redirected"`.
+- The message is queued for exactly the moment the stopped run ends and starts
+  the next turn at once (a plain Stop keeps queued messages queued; a redirect is
+  the one exception).
+- That turn's first step carries a note: the previous action was NOT approved and
+  did not run, the message may redirect or answer it. The summaries of the skipped
+  actions ride along as quoted untrusted data, never inside the system note.
+- A question or a credential request is answered, not skipped, so it still queues.
+  A run started by a webhook, a mail, a schedule or another agent is never
+  redirected, and neither is a message from Telegram, the plain local API or a
+  non-admin peer: those queue as before.
+- In the chat the skipped step reads "Skipped: you wrote a new message" and the
+  run shows no "Stopped by you" line.

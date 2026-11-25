@@ -25,8 +25,8 @@ use crate::AUDIT_GRANT_ALWAYS;
 use crate::history::truncate_utf8;
 use crate::scoped_grant::{self, Derived, Scope, ScopeKind};
 use crate::shared::{
-    ApprovalScope, ControlGrant, Grant, GrantTarget, Pending, RunCtx, RunToolGrant, Shared,
-    Verdict, control_kind_of,
+    ApprovalScope, ControlGrant, Grant, GrantTarget, Pending, PendingKind, RunCtx, RunToolGrant,
+    Shared, Verdict, control_kind_of,
 };
 use crate::taint;
 
@@ -66,6 +66,9 @@ impl Drop for ClosedGuard {
 pub(crate) const EXPIRED_REASON: &str = "expired: nobody answered in time";
 /// Reason on the denial a Stop records for an approval that was still open.
 pub(crate) const STOPPED_REASON: &str = "denied: stopped by you";
+/// Reason on the denial recorded for an approval the owner skipped by writing a new message.
+/// The desktop app matches this text (`REDIRECT_DENY_REASON` in the UI): keep them equal.
+pub(crate) const REDIRECTED_REASON: &str = "denied: the owner wrote a new message instead";
 
 /// How a wait for the user ended.
 enum Waited {
@@ -437,6 +440,27 @@ impl Shared {
                 d = Decision::Deny;
             }
         }
+        // The owner's per-site / per-app rules. A block and an ask only ever tighten: they
+        // sit above grants, read shortcuts and the autonomy mode. An allow is one more
+        // remembered grant (below), never above a floor or the untrusted-content gate.
+        let profile = self.profile_verdict(ctx, name, input, target);
+        let mut profile_allows = false;
+        if let Some(v) = &profile {
+            match v.action {
+                permission_engine::ProfileAction::Block => {
+                    self.audit_profile_applied(ctx, name, v);
+                    return (Decision::Deny, None);
+                }
+                permission_engine::ProfileAction::Ask => {
+                    self.audit_profile_applied(ctx, name, v);
+                    if d == Decision::Allow {
+                        d = Decision::ask();
+                    }
+                    return (d, None);
+                }
+                permission_engine::ProfileAction::Allow => profile_allows = true,
+            }
+        }
         let must_ask = self.gate_must_ask(ctx, name, input);
         // Only a call that already has to ask can be covered, so the lookup is
         // skipped for every other call.
@@ -504,8 +528,17 @@ impl Shared {
         if must_ask {
             return (d, None);
         }
-        let granted =
-            control_covered || run_tool_covered || self.plain_granted(ctx, name, category, input);
+        let granted = control_covered
+            || run_tool_covered
+            || profile_allows
+            || self.plain_granted(ctx, name, category, input);
+        if profile_allows
+            && !control_covered
+            && !run_tool_covered
+            && let Some(v) = &profile
+        {
+            self.audit_profile_applied(ctx, name, v);
+        }
         let read_skip = effect == Effect::Read
             && if name.starts_with(builtin_tools::pc::PC_PREFIX) {
                 !pc_read_pending
@@ -1503,6 +1536,7 @@ impl Shared {
         summary: &str,
         once_only: bool,
         grantable: bool,
+        kind: PendingKind,
     ) -> (Uuid, PendingGuard, oneshot::Receiver<Verdict>) {
         let (tx, rx) = oneshot::channel();
         let approval_id = Uuid::now_v7();
@@ -1517,6 +1551,7 @@ impl Shared {
                 always_refused: false,
                 run_id: ctx.run_id,
                 approval_id,
+                kind,
             },
         );
         *self.parked.lock().entry(ctx.run_id).or_insert(0) += 1;
@@ -1614,11 +1649,16 @@ impl Shared {
         let Some(ctx) = ctx else {
             return;
         };
+        let redirected = self.redirected.lock().contains(&run_id);
         self.audit(
             &ctx,
             "user",
             "approval.denied",
-            &json!({ "reason": "stopped by you" }),
+            &json!({ "reason": if redirected {
+                "the owner wrote a new message instead"
+            } else {
+                "stopped by you"
+            } }),
         );
         self.emit(
             &ctx,
@@ -1626,7 +1666,14 @@ impl Shared {
                 run_id,
                 call_id,
                 denied_by: ctx.user_id,
-                reason: Some(STOPPED_REASON.into()),
+                reason: Some(
+                    if redirected {
+                        REDIRECTED_REASON
+                    } else {
+                        STOPPED_REASON
+                    }
+                    .into(),
+                ),
             }),
         );
     }
@@ -1999,7 +2046,14 @@ impl Shared {
                 );
             }
         }
-        let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, once_only, grantable);
+        let (approval_id, mut guard, rx) = self.park(
+            ctx,
+            call_id,
+            &summary,
+            once_only,
+            grantable,
+            PendingKind::Approval,
+        );
         if let Some(p) = self.pending.lock().get_mut(&call_id) {
             p.gate_grant = gate_grant || (memory.is_some() && !once_only);
             p.run_tool = run_tool;
@@ -2206,7 +2260,8 @@ impl Shared {
     ) -> Result<String, Option<String>> {
         let question = self.redact(question.to_owned());
         let summary = format!("question: {}", truncate_utf8(&question, 300));
-        let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, false, false);
+        let (approval_id, mut guard, rx) =
+            self.park(ctx, call_id, &summary, false, false, PendingKind::Question);
         self.emit(
             ctx,
             Event::QuestionAsked(QuestionAsked {
@@ -2276,6 +2331,7 @@ impl Shared {
     /// desktop (`Human`: never a channel such as Telegram, a schedule, a
     /// subagent or an external agent), requests are switched on, and the
     /// per-run limit is not used up.
+    #[allow(clippy::too_many_lines)] // One linear park / wait / outcome sequence.
     pub(crate) async fn request_secret(
         self: &Arc<Self>,
         ctx: &RunCtx,
@@ -2323,7 +2379,8 @@ impl Shared {
             builtin_tools::SecretFields::Login => protocol::event::SecretFields::Login,
         };
         let summary = format!("secret request: {}", truncate_utf8(name, 80));
-        let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, true, false);
+        let (approval_id, mut guard, rx) =
+            self.park(ctx, call_id, &summary, true, false, PendingKind::Secret);
         self.secret_requests.lock().insert(
             call_id,
             crate::shared::SecretRequestInfo {
@@ -2630,6 +2687,18 @@ impl ExecPermit {
             "user",
             "approval.approved",
             &json!({
+                "bot_id": self.ctx.bot_id.to_string(),
+                "subject": crate::site_profiles::approval_subject(
+                    &self.name,
+                    &self.input,
+                    self.page_origin.as_deref(),
+                    self.target.as_ref(),
+                )
+                .map(|(kind, key, capability)| json!({
+                    "kind": kind.as_str(),
+                    "key": key,
+                    "capability": capability.as_str(),
+                })),
                 "tool": self.name,
                 "scope": format!("{scope:?}"),
                 "policy_revision": policy_revision(&self.sh),

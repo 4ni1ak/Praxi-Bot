@@ -19,6 +19,7 @@ const lookup = (dict: Record<string, unknown>, key: string) =>
 const LOCAL_ONLY: Record<string, string> = {
   "quickask/QuickAskWindow.tsx": "its own small window: Enter sends and Esc closes, shown in the window's footer hint",
   "views/settings/QuickAskCard.tsx": "Enter applies the typed shortcut inside that field",
+  "lib/approvalKeys.ts": "Enter allows once / Esc denies the open approval of the approval dock (the dock shows the hint itself)",
   "lib/composerFocus.ts": "type-to-focus rule: a printable key outside any field focuses the composer (no shortcut)",
   "api/mockLiveView.ts": "mock backend, not a UI shortcut",
   "components/AccountMenu.tsx": "arrow keys inside the account menu (covered by popup menu rows)",

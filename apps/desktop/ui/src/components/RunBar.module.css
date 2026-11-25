@@ -49,7 +49,7 @@
   margin-bottom: var(--space-2);
   padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
   border: var(--size-border) solid color-mix(in srgb, var(--bar-tone) 32%, var(--color-border));
-  border-radius: calc(var(--radius-modal) * 1.25);
+  border-radius: var(--radius-composer);
   background-color: color-mix(in srgb, var(--bar-tone) 8%, var(--color-surface-elevated));
   color: var(--color-text);
   font-size: var(--font-size-sm);

@@ -1,6 +1,7 @@
 /** Error codes the shell can return; anything else counts as "failed". */
 const KNOWN_CODES = [
   "not_configured",
+  "preview_not_configured",
   "network",
   "signature",
   "busy",
