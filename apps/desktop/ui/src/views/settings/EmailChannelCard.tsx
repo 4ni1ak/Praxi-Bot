@@ -89,6 +89,8 @@ export function EmailChannelCard() {
     }
   };
 
+  const selected = form ? accounts.find((a) => a.name === form.account) : undefined;
+
   const set = (patch: Partial<EmailChannelSettings>) => setForm((f) => (f ? { ...f, ...patch } : f));
 
   return (
@@ -127,6 +129,11 @@ export function EmailChannelCard() {
               ))}
             </select>
           </label>
+          {selected && selected.allowed_senders.length === 0 ? (
+            <p className={formStyles.error} role="alert" data-testid="email-channel-no-senders">
+              {t("settingsModal.emailChannel.noSenders")}
+            </p>
+          ) : null}
           <label className={formStyles.field}>
             <span className={formStyles.label}>{t("settingsModal.emailChannel.folder")}</span>
             <input
@@ -197,6 +204,16 @@ export function EmailChannelCard() {
             ) : null}
           </div>
         </>
+      ) : null}
+      {channel && channel.ignored_mails > 0 ? (
+        <p className={formStyles.hint} data-testid="email-channel-ignored">
+          {t("settingsModal.emailChannel.ignored", { n: channel.ignored_mails })}
+        </p>
+      ) : null}
+      {channel && channel.skipped_mails > 0 ? (
+        <p className={formStyles.error} role="status" data-testid="email-channel-skipped">
+          {t("settingsModal.emailChannel.skipped", { n: channel.skipped_mails })}
+        </p>
       ) : null}
       {replies.length > 0 ? (
         <div className={mailStyles.info}>

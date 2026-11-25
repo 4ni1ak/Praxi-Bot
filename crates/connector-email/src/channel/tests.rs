@@ -25,6 +25,7 @@ fn summary(uid: u32, from: &str, subject: &str) -> MessageSummary {
         id: None,
         subject: subject.into(),
         from: from.into(),
+        from_addr: address_of(from),
         to: vec!["me@example.com".into()],
         date: Some("2026-11-08T12:00:00Z".into()),
         unread: true,
@@ -119,12 +120,20 @@ impl MailboxProvider for Fake {
     }
 }
 
+/// An empty `allowed` list stands for "the whole example.com domain" here: the
+/// channel itself delivers nothing for an empty list (see
+/// `an_empty_allowed_senders_list_delivers_nothing`).
 fn channel(f: &Arc<Fake>, replies: bool, allowed: &[String]) -> EmailChannel {
     let settings = EmailChannelSettings {
         replies_enabled: replies,
         ..EmailChannelSettings::default()
     };
-    EmailChannel::new(f.clone(), "me@example.com", allowed, settings, None).unwrap()
+    let allowed = if allowed.is_empty() {
+        vec!["@example.com".to_string()]
+    } else {
+        allowed.to_vec()
+    };
+    EmailChannel::new(f.clone(), "me@example.com", &allowed, settings, None).unwrap()
 }
 
 fn text(m: &IncomingMessage) -> &str {
@@ -173,6 +182,10 @@ async fn filters_floods_and_unreadable_mail() {
     assert_eq!(got.len(), 11, "10 mails plus one notice");
     assert!(text(got.last().unwrap()).contains("10 more new mails"));
     assert!(got.iter().all(|m| m.sender.id != "evil@elsewhere.org"));
+    // The 10 mails over the limit were not committed: they come next, in order.
+    let next = ch.poll_once().await.unwrap();
+    assert_eq!(next.len(), 10, "the rest, and no notice any more");
+    assert_eq!(next[0].message_id.as_deref(), Some("20"));
     assert_eq!(ch.poll_once().await.unwrap().len(), 0);
 
     let mut bad = Fake::new(vec![]);
@@ -250,7 +263,7 @@ send_mode = "draft_only"
 "#,
     )
     .unwrap();
-    a.allowed_senders.clear();
+    a.allowed_senders = vec!["@example.com".to_string()];
     a
 }
 
@@ -403,7 +416,7 @@ async fn works_over_a_fake_tls_imap_and_smtp_server() {
     let ch = EmailChannel::new(
         provider,
         "me@example.com",
-        &[],
+        &["ann@example.com".to_string()],
         settings,
         Some(state.clone()),
     )
@@ -521,4 +534,190 @@ async fn an_approved_reply_goes_through_the_guard_and_the_send_log() {
     assert_eq!(log.len(), 1);
     assert_eq!(log[0].recipients, ["bob@example.com"]);
     assert_eq!(log[0].run, "email-channel-reply");
+}
+
+#[tokio::test]
+async fn an_empty_allowed_senders_list_delivers_nothing() {
+    let f = Fake::new(vec![summary(3, "old@example.com", "Old")]);
+    // No allowed sender named: the default must never be "anyone".
+    let ch = EmailChannel::new(
+        f.clone(),
+        "me@example.com",
+        &[],
+        EmailChannelSettings::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 0);
+    f.arrive(summary(4, "stranger@evil.org", "Hello"));
+    f.arrive(summary(5, "Ann <ann@example.com>", "Hi"));
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 0);
+    assert_eq!(ch.ignored_count(), 2, "ignored and counted, not delivered");
+    // The ignored mails are not offered again, and not counted twice.
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 0);
+    assert_eq!(ch.ignored_count(), 2);
+
+    // With a named sender only that sender gets through.
+    let ch = channel(&f, false, &["ann@example.com".to_string()]);
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 0);
+    f.arrive(summary(6, "stranger@evil.org", "Hello again"));
+    f.arrive(summary(7, "Ann <ann@example.com>", "Hi again"));
+    let got = ch.poll_pending().await.unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].sender.id, "ann@example.com");
+    assert_eq!(ch.ignored_count(), 1);
+}
+
+#[tokio::test]
+async fn a_mail_that_keeps_failing_is_skipped_after_three_attempts() {
+    let f = Fake::new(vec![summary(3, "old@example.com", "Old")]);
+    let ch = channel(&f, false, &[]);
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 0);
+    f.arrive(summary(4, "a@example.com", "poison"));
+    f.arrive(summary(5, "b@example.com", "fine"));
+    for attempt in 1..MAX_DELIVERY_ATTEMPTS {
+        let batch = ch.poll_pending().await.unwrap();
+        assert_eq!(batch.len(), 2, "attempt {attempt}: still blocking");
+        assert_eq!(
+            ch.delivery_failed(uid_of(&batch[0]).unwrap()),
+            DeliveryOutcome::RetryLater
+        );
+    }
+    let batch = ch.poll_pending().await.unwrap();
+    assert_eq!(batch.len(), 2);
+    assert_eq!(
+        ch.delivery_failed(uid_of(&batch[0]).unwrap()),
+        DeliveryOutcome::Skipped
+    );
+    assert_eq!(ch.skipped_count(), 1);
+    // The poison mail is gone from the queue; the mail behind it flows.
+    let rest = ch.poll_pending().await.unwrap();
+    assert_eq!(rest.len(), 1);
+    assert_eq!(rest[0].sender.id, "b@example.com");
+    ch.commit(uid_of(&rest[0]).unwrap());
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn mails_over_the_poll_limit_stay_unread_for_the_next_poll() {
+    let f = Fake::new(vec![]);
+    let settings = EmailChannelSettings {
+        max_per_poll: 2,
+        ..EmailChannelSettings::default()
+    };
+    let ch = EmailChannel::new(
+        f.clone(),
+        "me@example.com",
+        &["@example.com".to_string()],
+        settings,
+        None,
+    )
+    .unwrap();
+    ch.poll_pending().await.unwrap();
+    for uid in 1..=5 {
+        f.arrive(summary(uid, "a@example.com", &format!("mail {uid}")));
+    }
+    let first = ch.poll_pending().await.unwrap();
+    assert_eq!(first.len(), 3, "2 mails and the notice");
+    assert!(text(&first[2]).contains("3 more new mails"));
+    // Delivering everything the host got (the notice included) must not commit the rest.
+    for m in &first {
+        ch.commit(uid_of(m).unwrap());
+    }
+    let second = ch.poll_pending().await.unwrap();
+    assert_eq!(second.len(), 3, "mails 3 and 4, and a notice for mail 5");
+    assert_eq!(second[0].message_id.as_deref(), Some("3"));
+    for m in &second {
+        ch.commit(uid_of(m).unwrap());
+    }
+    let third = ch.poll_pending().await.unwrap();
+    assert_eq!(third.len(), 1);
+    assert_eq!(third[0].message_id.as_deref(), Some("5"));
+}
+
+fn parsed(uid: u32, from_header: &str) -> MessageSummary {
+    let raw = format!(
+        "From: {from_header}
+
+To: me@example.com
+
+Subject: x
+
+
+
+body
+
+"
+    );
+    crate::message::parse_summary(uid, raw.as_bytes(), true, Some(500))
+}
+
+#[tokio::test]
+async fn a_long_display_name_cannot_hide_the_real_sender() {
+    let f = Fake::new(vec![]);
+    let ch = EmailChannel::new(
+        f.clone(),
+        "me@example.com",
+        &["colleague@corp.example".to_string()],
+        EmailChannelSettings::default(),
+        None,
+    )
+    .unwrap();
+    ch.poll_pending().await.unwrap();
+    // The real sender is stranger@evil.org; the display name is built so that the
+    // 256-character cap cuts the real address off and leaves the colleague's.
+    let pad = "x".repeat(300);
+    f.arrive(parsed(
+        4,
+        &format!("\"<colleague@corp.example>{pad}\" <stranger@evil.org>"),
+    ));
+    // Two From addresses, the first allowed: not one verifiable sender.
+    f.arrive(parsed(5, "colleague@corp.example, stranger@evil.org"));
+    // A quoted / escaped angle bracket inside the name.
+    f.arrive(parsed(
+        6,
+        "\"a\\> <colleague@corp.example>\" <stranger@evil.org>",
+    ));
+    assert_eq!(f.unread.lock().unwrap()[0].from_addr, "stranger@evil.org");
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 0);
+    assert_eq!(ch.ignored_count(), 3);
+    // A normal "Name <addr>" and a bare address still work.
+    f.arrive(parsed(7, "Colleague <colleague@corp.example>"));
+    f.arrive(parsed(8, "colleague@corp.example"));
+    let got = ch.poll_pending().await.unwrap();
+    assert_eq!(got.len(), 2);
+    assert!(got.iter().all(|m| m.sender.id == "colleague@corp.example"));
+}
+
+#[test]
+fn address_of_fails_closed() {
+    assert_eq!(address_of("Ann <Ann@Example.com>"), "ann@example.com");
+    assert_eq!(address_of("ann@example.com"), "ann@example.com");
+    assert_eq!(address_of("<ann@example.com>"), "ann@example.com");
+    assert_eq!(address_of("Ann <ann@example.com> trailing"), "");
+    assert_eq!(address_of("x>y <a@b.c"), "");
+    assert_eq!(address_of("a@b.c <d@e.f>"), "d@e.f");
+    assert_eq!(address_of("Name <a b@c.d>"), "");
+}
+
+#[tokio::test]
+async fn changing_the_allowed_senders_applies_to_a_running_channel() {
+    let f = Fake::new(vec![]);
+    let ch = channel(&f, false, &["ann@example.com".to_string()]);
+    ch.poll_pending().await.unwrap();
+    f.arrive(summary(1, "ann@example.com", "one"));
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 1);
+    ch.commit(1);
+    // The owner empties the list: the next mail from the old sender is ignored.
+    ch.set_allowed_senders(&[]);
+    f.arrive(summary(2, "ann@example.com", "two"));
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 0);
+    assert_eq!(ch.ignored_count(), 1);
+    ch.set_allowed_senders(&["ann@example.com".to_string()]);
+    f.arrive(summary(3, "ann@example.com", "three"));
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 1);
+    // A bad entry closes the channel instead of opening it.
+    ch.set_allowed_senders(&["not an address".to_string()]);
+    f.arrive(summary(4, "ann@example.com", "four"));
+    assert_eq!(ch.poll_pending().await.unwrap().len(), 0);
 }
