@@ -12,6 +12,8 @@
 //! | `csv_read`      | read       | paged CSV/TSV reading                              |
 //! | `csv_transform` | read/write | filter / select / sort / group / limit pipeline    |
 //! | `json_query`    | read       | JSONPath (RFC 9535) query over a file or inline    |
+//! | `doc_convert`   | write      | Office <-> PDF through LibreOffice (see `convert`)  |
+//! | `doc_preview`   | write      | PNG page previews (pdftoppm / LibreOffice)         |
 //!
 //! Every tool returns two content parts: a compact markdown preview for the
 //! model (`ContentPart::Text`) and the structured result (`ContentPart::Json`).
@@ -27,6 +29,21 @@
 //! file unless `overwrite: true` is given. Inputs larger than
 //! [`DocToolsConfig::max_input_bytes`] are rejected.
 //!
+//! # `doc_convert` / `doc_preview`
+//!
+//! These two tools run LibreOffice and `pdftoppm` on untrusted documents and fail closed
+//! unless the host sets [`ConvertConfig::output_root`] (the bot workspace) and
+//! [`ConvertConfig::read_guard`] (the `fs_read` path rule). No daemon crate registers them
+//! with such a configuration yet; `DocToolsConfig::default()` leaves both unset, so the
+//! tools exist in the registry but refuse every call until the wiring sets them.
+//!
+//! Network isolation is mandatory too: on Linux the converters run in a network-less
+//! sandbox (bubblewrap or `unshare`) and the tools fail closed when none works, unless the
+//! owner sets [`ConvertConfig::allow_unsandboxed_convert`] (UNSAFE for untrusted
+//! documents). On Windows conversion is off unless
+//! [`ConvertConfig::convert_enabled_on_windows`] is set (NTLM / SMB leak risk). Before
+//! wiring, run `scripts/check_soffice_no_network.py` against a real LibreOffice.
+//!
 //! # Wiring
 //!
 //! ```ignore
@@ -41,6 +58,11 @@
 )]
 
 mod common;
+mod convert;
+mod convert_sandbox;
+#[cfg(test)]
+mod convert_tests;
+mod convert_vet;
 mod csv_tools;
 mod docx;
 mod json_query;
@@ -61,6 +83,7 @@ use tool_registry::{
 };
 
 pub use common::Reply;
+pub use convert::ConvertConfig;
 
 /// Extract an already-authorized PDF or DOCX snapshot without reopening a path.
 /// The caller owns path authorization and supplies a display label, never an
@@ -383,6 +406,8 @@ pub struct DocToolsConfig {
     /// workflow there. It is a hook, not a dependency: `builtin-tools` already
     /// depends on this crate's consumers, so the guard cannot be imported here.
     pub write_guard: Option<WriteGuard>,
+    /// Converter binaries, timeout and output folder for `doc_convert` / `doc_preview`.
+    pub convert: ConvertConfig,
 }
 
 type GuardFn = dyn Fn(&str) -> Result<(), String> + Send + Sync + std::panic::RefUnwindSafe;
@@ -419,6 +444,7 @@ impl Default for DocToolsConfig {
             max_cell_chars: 4000,
             max_output_bytes: 25 * 1024 * 1024,
             write_guard: None,
+            convert: ConvertConfig::default(),
         }
     }
 }
@@ -460,6 +486,8 @@ pub fn tools(cfg: &DocToolsConfig) -> Vec<Arc<dyn Tool>> {
         (csv_tools::read_spec(), csv_tools::run_read),
         (csv_tools::transform_spec(), csv_tools::run_transform),
         (json_query::spec(), json_query::run),
+        (convert::convert_spec(), convert::run_convert),
+        (convert::preview_spec(), convert::run_preview),
     ];
     defs.into_iter()
         .map(|(spec, handler)| {
@@ -480,7 +508,7 @@ pub fn register(registry: &ToolRegistry, cfg: &DocToolsConfig) {
 }
 
 /// Names of all tools in this crate.
-pub const TOOL_NAMES: [&str; 8] = [
+pub const TOOL_NAMES: [&str; 10] = [
     "pdf_extract",
     "docx_read",
     "docx_write",
@@ -489,6 +517,8 @@ pub const TOOL_NAMES: [&str; 8] = [
     "csv_read",
     "csv_transform",
     "json_query",
+    "doc_convert",
+    "doc_preview",
 ];
 
 pub(crate) fn mk_spec(
@@ -507,9 +537,9 @@ pub(crate) fn mk_spec(
         content: match name {
             // Documents can carry prompt injection and are private files.
             "pdf_extract" | "docx_read" | "xlsx_read" | "csv_read" | "csv_transform"
-            | "json_query" => tool_registry::ContentClass::untrusted_private(),
+            | "json_query" | "doc_preview" => tool_registry::ContentClass::untrusted_private(),
             // The model already holds the document it is writing.
-            "docx_write" | "xlsx_write" => tool_registry::ContentClass::none(),
+            "docx_write" | "xlsx_write" | "doc_convert" => tool_registry::ContentClass::none(),
             _ => tool_registry::ContentClass::unspecified(),
         },
     }
