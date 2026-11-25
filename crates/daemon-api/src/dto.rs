@@ -442,6 +442,10 @@ pub enum DeliveryKind {
     Queued,
     /// The message was `/stop`: the running turn was cancelled (`run_id` is that turn).
     Stopped,
+    /// The turn was waiting for an approval and the owner wrote instead of answering: the
+    /// approval was denied, the turn was stopped (`run_id` is that turn) and the message starts
+    /// the next turn at once.
+    Redirected,
 }
 
 /// Response of a sent message.
@@ -1055,6 +1059,10 @@ pub struct ScheduleDto {
     /// `skip`, `run_once` or `run_all`: what happens to occurrences missed
     /// while the daemon was down.
     pub misfire_policy: String,
+    /// With `run_once` / `run_all`: a missed occurrence older than this many
+    /// seconds is not run late; it is listed as missed instead. `null` = no limit.
+    #[serde(default)]
+    pub catchup_window_secs: Option<u64>,
     /// A webhook trigger is configured (`POST /v1/webhooks/{id}`); the secret
     /// is never returned.
     pub has_webhook: bool,
@@ -1104,6 +1112,10 @@ pub struct ScheduleInput {
     /// `skip` (default), `run_once` or `run_all`.
     #[serde(default)]
     pub misfire_policy: Option<String>,
+    /// Catch-up window in seconds (1 to 30 days); `0` removes it. Absent keeps
+    /// the current value (none on create).
+    #[serde(default)]
+    pub catchup_window_secs: Option<u64>,
     /// HMAC secret of a webhook trigger.  Absent: unchanged (none on create);
     /// the empty string removes the trigger.
     #[serde(default)]

@@ -289,6 +289,7 @@
       "One mailbox per bot",
       "Available tools",
       "Several mail identities",
+      "Sign-ups: a bot with its own address",
       "Approvals and security",
       "Safe sending (send log, opt-out list, limits)",
       "Give a bot its own address (AgentMail)"
@@ -661,6 +662,7 @@
       "What a schedule can run",
       "Webhooks",
       "Missed runs",
+      "Short bursts: use one run, not a schedule",
       "Approvals in unattended runs",
       "Letting a bot manage its own schedules"
     ],

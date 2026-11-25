@@ -133,12 +133,23 @@ impl MessageWire {
             _ => self.preview.clone().unwrap_or_default(),
         };
         let (body_text, body_truncated) = truncate_chars(&body, max_body_chars.min(MAX_BODY_CHARS));
+        let links = crate::verify::merge_links(&[
+            self.html
+                .as_deref()
+                .map(crate::verify::hrefs_in_html)
+                .unwrap_or_default(),
+            self.text
+                .as_deref()
+                .map(crate::verify::urls_in_text)
+                .unwrap_or_default(),
+        ]);
         Ok(MessageDetail {
             summary: self.summary(),
             cc: self.cc.iter().map(|s| cap_untrusted(s)).collect(),
             message_id: Some(cap_untrusted(&self.message_id)),
             body_text,
             body_truncated,
+            links,
             attachments: self
                 .attachments
                 .iter()

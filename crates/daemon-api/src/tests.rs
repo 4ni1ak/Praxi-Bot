@@ -50,6 +50,7 @@ mod peer_knowledge;
 mod profile_share;
 mod safe_mode;
 mod schedules;
+mod schedules_catchup;
 mod secret_requests;
 mod skills;
 mod voice;
@@ -1013,6 +1014,77 @@ async fn approval_flow_approve() {
         call(&t, Method::GET, "/v1/approvals", None).await.json(),
         json!([])
     );
+}
+
+/// The owner's app writes while a tool approval of the owner's turn is open: the card is closed as
+/// a denial with the "wrote a new message" reason (never an approval), the turn stops, the message
+/// starts the next one. The same message from a token-only caller just queues behind the approval.
+#[tokio::test]
+async fn a_message_from_the_app_skips_the_pending_approval_and_starts_the_next_turn() {
+    let t = setup();
+    let (_, chat) = make_chat(&t).await;
+    let run = send_msg(&t, &chat, "call:danger_run {}", "queue").await["run_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (call_id, _) = pending_call(&t).await;
+    wait_state(&t, &run, "waiting_approval").await;
+    let (k, v) = auth();
+    let path = format!("/v1/chats/{chat}/messages");
+    let body = |text: &str| Some(json!({ "text": text, "mode": "queue" }));
+
+    // Not the desktop app: still queued, the approval still waits.
+    let queued = send(
+        &t.app,
+        Method::POST,
+        &path,
+        body("later"),
+        &[(k, v.as_str()), ("x-test-token-only", "1")],
+    )
+    .await
+    .json();
+    assert_eq!(queued["delivery"], "queued");
+    wait_state(&t, &run, "waiting_approval").await;
+
+    // The app (owner key + local UI hint) redirects.
+    let sent = send(
+        &t.app,
+        Method::POST,
+        &path,
+        body("do something else"),
+        &[(k, v.as_str()), ("x-praxi-message-source", "local_ui")],
+    )
+    .await;
+    assert_eq!(sent.status, StatusCode::ACCEPTED, "{:?}", sent.json());
+    assert_eq!(sent.json()["delivery"], "redirected");
+    assert_eq!(sent.json()["run_id"], run.as_str());
+    wait_state(&t, &run, "cancelled").await;
+
+    let all = call(
+        &t,
+        Method::GET,
+        &format!("/v1/approvals?run_id={run}"),
+        None,
+    )
+    .await
+    .json();
+    assert_eq!(all[0]["decision"], "denied", "{all}");
+    let fr = events(&t, &format!("?run_id={run}"), None).await;
+    let denied = fr.iter().find(|f| f.1 == "tool_call_denied").unwrap();
+    assert_eq!(
+        denied.2["event"]["reason"],
+        "denied: the owner wrote a new message instead"
+    );
+    assert!(!fr.iter().any(|f| f.1 == "tool_call_approved"));
+    // The card is gone: it can no longer be approved.
+    let late = call(
+        &t,
+        Method::POST,
+        &format!("/v1/approvals/{call_id}"),
+        Some(json!({"decision": "approve", "scope": "once"})),
+    )
+    .await;
+    assert_eq!(late.status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

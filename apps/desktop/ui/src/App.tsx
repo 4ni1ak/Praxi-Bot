@@ -51,8 +51,6 @@ import {
   deriveSidePanelState,
   hasUnanswerableNeed,
   PANEL_DOCK_MIN_WIDTH,
-  SCREEN_SPLIT_MIN_WIDTH,
-  type LiveViewPresence,
   type SidePanelMode
 } from "./lib/sidePanelState";
 import { useMcp } from "./state/useMcp";
@@ -68,7 +66,8 @@ import { DemoModal } from "./demo/DemoModal";
 import { type DemoTaskId, offerDemo } from "./demo/demoEngine";
 import { useProviders } from "./state/useProviders";
 import { WhatsNewModal } from "./components/WhatsNewModal";
-import { notesFor, whatsNewAction, type WhatsNewFile } from "./lib/whatsNew";
+import { installedReleaseNotes, notesFor, whatsNewAction, type WhatsNewFile } from "./lib/whatsNew";
+import { updateStatus, type UpdateInfo } from "./lib/appUpdate";
 import whatsNewFile from "./whats-new.json";
 import { getVersion } from "@tauri-apps/api/app";
 import { isHelpKey } from "./lib/shortcuts";
@@ -101,7 +100,7 @@ import { ControlBridgeHost } from "./state/ControlBridgeHost";
 import { requestStop } from "./state/appStop";
 import { isNewerNativeSnapshot } from "./state/stopStatus";
 import { StopStatusNotice } from "./components/StopStatusNotice";
-import { LiveViewProvider, useLiveView } from "./state/LiveViewContext";
+import { LiveViewProvider, useLiveView, useLocalLiveView } from "./state/LiveViewContext";
 import { HumanDrivingBanner } from "./components/HumanDrivingBanner";
 import { LiveViewer } from "./views/LiveViewer";
 import type { LiveChatSlots } from "./views/LiveViewerChat";
@@ -240,10 +239,9 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
   } = useDaemon();
   const {
     openViewer,
-    viewerOpen,
-    setDockedDemand,
-    state: liveState
+    viewerOpen
   } = useLiveView();
+  const localViewerOpen = useLocalLiveView().viewerOpen;
   const readState = useReadState(client?.baseUrl ?? "");
   const unreadBots = useMemo(() => unreadBotIds(chats, runs, needs, readState), [chats, runs, needs, readState]);
   const [settings, setSettings] = useState<AppSettings>(() => loadSettingsSync() ?? DEFAULT_SETTINGS);
@@ -376,6 +374,8 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
     });
   });
   const [appVersion, setAppVersion] = useState("");
+  const [installedNotes, setInstalledNotes] = useState<UpdateInfo | null>(null);
+  const [updateNotesLoaded, setUpdateNotesLoaded] = useState(false);
   const [whatsNewDone, setWhatsNewDone] = useState(false);
   const [layout, setLayout] = useState<ShellLayout>(loadShellLayout);
   const [panelOpen, setPanelOpen] = useState(() => {
@@ -994,13 +994,10 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
   }, []);
   const float = isFloatShell(shellSettings.uiStyle, backdropIsActive(shellSettings.backdrop, shellSettings.backgroundUrl));
   const panelWidth = Math.min(layout.panel, panelMax(viewportWidth, layout.rail, float));
-  const bigScreenDocked = route.kind === "chat" && !hostEmpty && viewportWidth >= SCREEN_SPLIT_MIN_WIDTH;
-  const liveViewStatus: LiveViewPresence =
-    liveState.viewState === "active" || liveState.viewState === "acquiring" || Boolean(liveState.session && liveState.latestFrame)
-      ? "live"
-      : liveState.pendingRequest !== null || (liveState.viewState === "watch" && Boolean(liveState.session))
-        ? "starting"
-        : "idle";
+  // The panel overlays (instead of squeezing the chat) only while the full-screen live view is open.
+  // A preview stream started by the computer card must not flip the panel's mode a moment after the
+  // owner opened it, which would make the chat column jump.
+  const screenOpen = viewerOpen || localViewerOpen;
   const needAttentionKey = needs
     .filter((n) => n.botId === selectedBot?.id)
     .map((n) => n.callId)
@@ -1019,8 +1016,7 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
     ownerOpen: panelOpen,
     unanswerableNeed,
     attentionDismissed,
-    liveViewState: liveViewStatus,
-    bigScreenDocked,
+    liveViewState: screenOpen ? "live" : "idle",
     viewportWidth,
     storedPanelWidth: panelWidth,
     railWidth: RAIL_MIN,
@@ -1035,7 +1031,7 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
   const panelRenderMode: Exclude<SidePanelMode, "hidden"> =
     panelState.mode !== "hidden"
       ? panelState.mode
-      : bigScreenDocked || viewportWidth < PANEL_DOCK_MIN_WIDTH
+      : screenOpen || viewportWidth < PANEL_DOCK_MIN_WIDTH
         ? "overlay"
         : lastPanelModeRef.current;
   const panelReserve = usePanelReserve(panelDocked);
@@ -1054,8 +1050,19 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
     if (!isTauriRuntime()) return;
     void getVersion().then(setAppVersion).catch(() => undefined);
   }, []);
-  const whatsNewNotes = notesFor(whatsNewFile as WhatsNewFile, appVersion, i18n.language);
-  const whatsNewStep = settingsLoaded
+  const notesLanguage = i18n.language;
+  useEffect(() => {
+    let cancelled = false;
+    void updateStatus(notesLanguage).then((status) => {
+      if (!cancelled) setInstalledNotes(status.installedNotes);
+    }).catch(() => undefined).finally(() => {
+      if (!cancelled) setUpdateNotesLoaded(true);
+    });
+    return () => { cancelled = true; };
+  }, [notesLanguage]);
+  const whatsNewNotes = installedReleaseNotes(installedNotes, appVersion, t("whatsNew.label"))
+    ?? notesFor(whatsNewFile as WhatsNewFile, appVersion, i18n.language);
+  const whatsNewStep = settingsLoaded && updateNotesLoaded
     ? whatsNewAction({
         version: appVersion,
         lastSeen: settings.lastSeenVersion,
@@ -1074,11 +1081,6 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
   const showWhatsNew = whatsNewStep === "show" && !whatsNewDone && route.kind !== "onboarding" && !dialogOpen;
   const mini = isMiniRail(railWidth);
 
-  useEffect(() => {
-    setDockedDemand(bigScreenDocked && !viewerOpen, selectedBot?.id ?? null);
-    return () => setDockedDemand(false, null);
-  }, [setDockedDemand, bigScreenDocked, viewerOpen, selectedBot?.id]);
-
   // The computer card asks for the screen itself, only when the owner presses "show screen".
   const closePanel = () =>
     leave.attempt(() => {
@@ -1088,29 +1090,15 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
       }
       chipRef.current?.focus();
     });
-  const dismissOverlayPanel = useCallback(() => {
-    leave.attempt(() => {
-      setPanelOpen(false);
-      if (unanswerableNeed && needAttentionKey) {
-        setDismissedNeedKey(needAttentionKey);
-      }
-    });
-  }, [leave, unanswerableNeed, needAttentionKey]);
   const togglePanel = () => (panelVisible ? closePanel() : setPanelOpen(true));
 
-  // Overlay panel closes on click-away or Escape without reflowing the workspace.
+  // The panel closes through its own X, the control that opened it, or Escape (`panelDismissedBy`).
+  // There is deliberately no click-away: the owner clicks into the chat and the composer while the
+  // panel stays open. With the full-screen live view open, the viewer's Escape closes the panel first.
   useEffect(() => {
-    if (!panelVisible || panelRenderMode !== "overlay" || viewerOpen || dialogOpen || demo !== null) {
+    if (!panelVisible || panelRenderMode !== "overlay" || screenOpen || dialogOpen || demo !== null) {
       return undefined;
     }
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target as Element | null;
-      if (!target) return;
-      if (target.closest('[data-shell-part="panel"]') || chipRef.current?.contains(target)) {
-        return;
-      }
-      dismissOverlayPanel();
-    };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !e.defaultPrevented && !helpOpen) {
         e.preventDefault();
@@ -1123,24 +1111,28 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
         });
       }
     };
-    document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown);
-    };
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, [
     panelVisible,
     panelRenderMode,
-    viewerOpen,
+    screenOpen,
     dialogOpen,
     demo,
     helpOpen,
-    dismissOverlayPanel,
     leave,
     unanswerableNeed,
     needAttentionKey
   ]);
+  // What the full-screen live view needs to offer (and respect) the right-hand bot panel.
+  const liveInfoPanel = botInView
+    ? {
+        open: panelVisible,
+        width: panelWidth,
+        onToggle: togglePanel,
+        onClose: closePanel
+      }
+    : undefined;
   const panelBotView = selectedBot ? botView(selectedBot) : undefined;
   const panelChats = selectedBot
     ? botChats(chats, selectedBot.id).map((c) => ({
@@ -1550,54 +1542,24 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
           />
         ) : null}
         {route.kind === "chat" && !hostEmpty ? (
-          bigScreenDocked ? (
-            <div className={styles.workspaceSplit} data-testid="workspace-split">
-              <div className={styles.chatColumn} data-testid="chat-column">
-                <ChatView
-                  key={route.chatId}
-                  chatId={route.chatId}
-                  external={route.external}
-                  jumpMessageId={route.messageId}
-                  jumpRequestId={route.jumpRequestId}
-                  onBack={() => {
-                    // There is no bot page to go back to: the chat list lives in the right panel.
-                    if (backFromChatOpensPanel(panelOpen)) setPanelOpen(true);
-                  }}
-                  control={controlState}
-                  onControl={setControlState}
-                  onSwitchChat={openChat}
-                  showAgentRoute={settings.showAgentRoute}
-                  sendWith={settings.sendWith}
-                  messageTimes={settings.messageTimes}
-                  liveChatSlots={localChatSlots ?? homeChatSlots}
-                />
-              </div>
-              <div className={styles.screenColumn} data-testid="screen-column">
-                {!viewerOpen ? (
-                  <LiveViewer variant="docked" onExpand={() => openViewer()} />
-                ) : null}
-              </div>
-            </div>
-          ) : (
-            <ChatView
-              key={route.chatId}
-              chatId={route.chatId}
-              external={route.external}
-              jumpMessageId={route.messageId}
-              jumpRequestId={route.jumpRequestId}
-              onBack={() => {
-                // There is no bot page to go back to: the chat list lives in the right panel.
-                if (backFromChatOpensPanel(panelOpen)) setPanelOpen(true);
-              }}
-              control={controlState}
-              onControl={setControlState}
-              onSwitchChat={openChat}
-              showAgentRoute={settings.showAgentRoute}
-              sendWith={settings.sendWith}
-              messageTimes={settings.messageTimes}
-              liveChatSlots={localChatSlots ?? homeChatSlots}
-            />
-          )
+          <ChatView
+            key={route.chatId}
+            chatId={route.chatId}
+            external={route.external}
+            jumpMessageId={route.messageId}
+            jumpRequestId={route.jumpRequestId}
+            onBack={() => {
+              // There is no bot page to go back to: the chat list lives in the right panel.
+              if (backFromChatOpensPanel(panelOpen)) setPanelOpen(true);
+            }}
+            control={controlState}
+            onControl={setControlState}
+            onSwitchChat={openChat}
+            showAgentRoute={settings.showAgentRoute}
+            sendWith={settings.sendWith}
+            messageTimes={settings.messageTimes}
+            liveChatSlots={localChatSlots ?? homeChatSlots}
+          />
         ) : null}
         {route.kind === "needs" ? <NeedsYouView onOpenChat={openChat} /> : null}
         {route.kind === "notifications" ? <NotificationHistoryView onOpenChat={openChat} onOpenNeeds={openNeeds} privateMode={settings.notifyPrivate} /> : null}
@@ -1762,9 +1724,18 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
           }
         }}
       />
-      <LiveViewer onChatSlots={route.kind === "chat" && !hostEmpty ? setHomeChatSlots : undefined} />
+      <LiveViewer
+        botId={selectedBot?.id ?? null}
+        infoPanel={liveInfoPanel}
+        onChatSlots={route.kind === "chat" && !hostEmpty ? setHomeChatSlots : undefined}
+      />
       {activeComputerId !== LOCAL_COMPUTER ? (
-        <LiveViewer source="local" onChatSlots={route.kind === "chat" && !hostEmpty ? setLocalChatSlots : undefined} />
+        <LiveViewer
+          source="local"
+          botId={selectedBot?.id ?? null}
+          infoPanel={liveInfoPanel}
+          onChatSlots={route.kind === "chat" && !hostEmpty ? setLocalChatSlots : undefined}
+        />
       ) : null}
       {customChrome ? <WindowControls /> : null}
     </SidebarLayout>

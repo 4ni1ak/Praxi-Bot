@@ -27,6 +27,9 @@ pub mod fill_secret;
 mod fill_secret_tests;
 pub mod knowledge;
 pub mod knowledge_brain;
+pub mod mail_wait;
+#[cfg(test)]
+mod mail_wait_tests;
 pub mod meta;
 pub mod notes;
 pub mod pc;
@@ -37,6 +40,7 @@ pub mod script;
 pub mod secret_request;
 pub mod shell;
 mod util;
+pub mod wait;
 
 pub use util::classify;
 
@@ -155,6 +159,13 @@ pub struct BuiltinConfig {
     pub account_register: account_register::AccountRegisterConfig,
     /// Ledger of files with an untrusted origin (see [`provenance`]); `None` = rules only.
     pub provenance: Option<Arc<dyn provenance::Provenance>>,
+    /// Late-bound mail connector: the host binds it once the mail accounts are
+    /// loaded (`email` above, when set, binds it here too). `email_wait_for` and
+    /// `account_register` use it; the run loop reads the same handle.
+    pub mail: Arc<connector_email::MailHandle>,
+    /// Filled when the browser tools are built: the page the run's browser is
+    /// REALLY on, which `email_wait_for` checks the sign-up site against.
+    pub page_origin: Arc<connector_email::PageOriginSlot>,
 }
 
 /// What the built-in file tools may reach for one bot.
@@ -212,6 +223,8 @@ impl BuiltinConfig {
             secret_requests: false,
             account_register: account_register::AccountRegisterConfig::default(),
             provenance: None,
+            mail: Arc::new(connector_email::MailHandle::new()),
+            page_origin: Arc::new(connector_email::PageOriginSlot::new()),
         }
     }
 
@@ -234,6 +247,11 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
         }
     }
     let mut all: Vec<Arc<dyn Tool>> = Vec::new();
+    let mail = Arc::clone(&cfg.mail);
+    let page_origin = Arc::clone(&cfg.page_origin);
+    if let Some(email) = &cfg.email {
+        mail.set(Arc::clone(email));
+    }
     if cfg.desktop.is_some() || cfg.dynamic_desktop {
         all.extend(desktop::tools_dynamic_with_secrets(
             cfg.desktop,
@@ -245,26 +263,29 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
         ));
     }
     if let Some(driver) = cfg.browser {
-        all.extend(browser::tools_with_secrets(
+        all.extend(browser::tools_with_origin(
             driver,
             &cfg.data_dir,
             cfg.control.clone(),
             cfg.fill_secrets.clone(),
+            Some(Arc::clone(&page_origin)),
         ));
     } else {
-        all.extend(browser::managed_tools_with_secrets(
+        all.extend(browser::managed_tools_with_origin(
             cfg.browser_settings,
             &cfg.data_dir,
             cfg.control.clone(),
             cfg.view_registry.clone(),
             cfg.fill_secrets.clone(),
+            Some(Arc::clone(&page_origin)),
         ));
     }
     if let Some(secrets) = &cfg.fill_secrets {
         all.push(fill_secret::secrets_list_tool(Arc::clone(secrets)));
-        all.push(account_register::account_register_tool(
+        all.push(account_register::account_register_tool_with_mail(
             Arc::clone(secrets),
             cfg.account_register,
+            Arc::clone(&mail),
         ));
         all.push(account_register::account_list_tool(Arc::clone(secrets)));
         all.push(account_register::account_discard_tool(Arc::clone(secrets)));
@@ -297,12 +318,19 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
     all.extend(meta::tools());
     all.extend(notes::tools(&cfg.data_dir));
     all.extend(pure_tools::tools());
+    all.extend(wait::tools());
     if let Some(backend) = cfg.knowledge {
         all.push(knowledge::tool(backend));
     }
     if let Some(email) = &cfg.email {
         all.extend(connector_email::tools(email));
     }
+    // Offered only to a bot that has a mail identity of its own; the connector may
+    // be bound later (the host starts mail after the tools exist).
+    all.push(mail_wait::email_wait_for_tool(
+        Arc::clone(&mail),
+        page_origin,
+    ));
     if let Some(web) = cfg.web.clone() {
         match web_tools::tools(web) {
             Ok(tools) => all.extend(tools),
@@ -527,7 +555,7 @@ mod tests {
     fn expected() -> Vec<(&'static str, Effect, PermissionCategory)> {
         use Effect::{Destructive as D, Read as R, Write as W};
         use PermissionCategory::{
-            Browser as B, Desktop as De, Fs, Meta as Me, Script as Sc, Shell as Sh,
+            Browser as B, Desktop as De, Fs, Messaging as Ms, Meta as Me, Script as Sc, Shell as Sh,
         };
         vec![
             ("desktop_list_apps", R, De),
@@ -572,7 +600,9 @@ mod tests {
             ("notes_read", R, Fs),
             ("notes_write", W, Fs),
             ("time_now", R, Me),
+            ("wait", R, Me),
             ("calculate", R, Me),
+            ("email_wait_for", R, Ms),
         ]
     }
 
@@ -1146,7 +1176,7 @@ mod tests {
         cfg.browser = Some(Arc::new(browser::fake::FakeBrowser::default()));
         cfg.email = Some(connector.clone());
         let added = register_builtin_tools(&reg, cfg);
-        assert_eq!(added, 39 + 7 + 2 + 2);
+        assert_eq!(added, 39 + 7 + 2 + 2 + 1 + 1);
 
         // Verification of email tools and their effects
         let send_tool = reg

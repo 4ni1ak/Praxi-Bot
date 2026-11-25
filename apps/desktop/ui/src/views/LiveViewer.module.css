@@ -6,6 +6,45 @@
   flex-direction: column;
   background-color: var(--color-background);
   color: var(--color-text);
+  container: live-viewer / inline-size;
+  /* The bot panel never covers the viewer: the viewer ends where the open panel begins, and that
+     edge glides there (the chat card and column travel with it; the picture only rescales). */
+  transition: right var(--motion-duration-normal) var(--motion-easing-standard);
+}
+
+.backdrop[data-panel="open"] {
+  right: min(calc(var(--live-panel-w, var(--space-0)) + var(--space-6)), 70%);
+}
+
+/* Everything below the toolbar. The chat layer floats over it; in the large chat the picture's column
+   makes room for the chat column by padding, so the screen share stays whole on the left. */
+.body {
+  --chat-w: clamp(calc(var(--space-16) * 5), 34%, calc(var(--space-16) * 8));
+
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-height: var(--space-0);
+}
+
+.mainCol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: var(--space-0);
+  min-height: var(--space-0);
+  transition: padding-inline-end var(--motion-duration-normal) var(--motion-easing-standard);
+}
+
+.body[data-chat="large"] .mainCol {
+  padding-inline-end: var(--chat-w);
+}
+
+.chatLayer {
+  position: absolute;
+  inset: var(--space-0);
+  z-index: 62;
+  pointer-events: none;
 }
 
 :global(:root[data-style="glass"]) .backdrop {
@@ -13,61 +52,9 @@
   backdrop-filter: blur(var(--blur-glass)) saturate(1.25);
 }
 
-.dockedRoot {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: var(--space-0);
-  min-height: var(--space-0);
-  background-color: var(--color-background);
-  color: var(--color-text);
-  border-left: var(--size-border) solid var(--color-border);
-}
-
-.dockedRoot .header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-2) var(--space-3);
-  gap: var(--space-2);
-}
-
-.dockedRoot .headerLeft,
-.dockedRoot .headerRight {
-  flex-shrink: 0;
-}
-
-.dockedRoot .targetPicker {
-  flex: 1 1 auto;
-  min-width: var(--space-0);
-  overflow: hidden;
-}
-
-.dockedRoot .moreBtn {
-  display: inline-grid;
-}
-
-.dockedRoot .tools {
-  display: none;
-  position: absolute;
-  inset-block-start: calc(100% + var(--space-2));
-  inset-inline-end: var(--space-0);
-  z-index: 5;
-  flex-wrap: wrap;
-  padding: var(--space-2);
-  border-radius: var(--radius-card);
-  background-color: var(--color-surface-elevated);
-  box-shadow: var(--shadow-overlay);
-}
-
-.dockedRoot .tools[data-open="true"] {
-  display: flex;
-}
-
 .header {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: auto minmax(var(--space-0), 1fr) auto;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-5);
@@ -84,6 +71,7 @@
 .targetPicker {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-2);
   min-width: var(--space-0);
 }
@@ -109,8 +97,8 @@
   display: none;
 }
 
-/* stylelint-disable-next-line unit-disallowed-list -- window width where the toolbar no longer fits in one row */
-@media (width <= 60em) {
+/* stylelint-disable-next-line unit-disallowed-list -- viewer width where the toolbar no longer fits in one row (the viewer is narrower than the window while the bot panel is open) */
+@container live-viewer (width <= 72em) {
   .header {
     display: flex;
     align-items: center;
@@ -561,13 +549,6 @@
   min-width: var(--space-0);
 }
 
-.footerRight {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  min-width: var(--space-0);
-}
-
 .bottomDock {
   position: relative;
   flex-shrink: 0;
@@ -640,32 +621,23 @@
   min-height: var(--space-8);
 }
 
-/* Footer trigger bar stays fixed-height; drawer floats upward without resizing the stage. */
-.chatOverlay {
-  position: relative;
-  z-index: 62;
-  display: inline-flex;
-  align-items: center;
+/* ---- Chat inside the live view: a button, a small card, or a column on the right ---- */
+.chatDock {
+  display: contents;
 }
 
-.chatDrawer {
+.chatClosed {
   position: absolute;
-  bottom: calc(100% + var(--space-2));
-  right: var(--space-0);
-  z-index: 62;
-  display: grid;
-  width: min(var(--size-content-max), 86vw);
-  max-height: 36vh;
-  overflow: auto;
+  right: var(--space-5);
+  bottom: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   gap: var(--space-2);
-  padding: var(--space-3);
-  border: var(--size-border) solid var(--color-border);
-  border-radius: var(--radius-card);
-  background: var(--color-surface-elevated);
-  box-shadow: var(--shadow-overlay);
+  pointer-events: auto;
 }
 
-.chatOverlayBar {
+.chatPill {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -675,6 +647,105 @@
   background: var(--color-surface-elevated);
   box-shadow: var(--shadow-overlay);
   white-space: nowrap;
+}
+
+.chatApprovalsBox {
+  width: min(calc(var(--space-16) * 6), 86vw);
+  padding: var(--space-3);
+  border: var(--size-border) solid var(--color-warning);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-elevated);
+  box-shadow: var(--shadow-overlay);
+  pointer-events: auto;
+}
+
+.chatCard {
+  position: absolute;
+  right: var(--space-5);
+  bottom: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  width: min(calc(var(--space-16) * 6), calc(100% - var(--space-6)));
+  height: min(calc(var(--space-16) * 7), calc(100% - var(--space-6)));
+  overflow: hidden;
+  border: var(--size-border) solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-elevated-opaque, var(--color-surface-elevated));
+  box-shadow: var(--shadow-overlay);
+  color: var(--color-text);
+  pointer-events: auto;
+  animation: chatCardIn var(--motion-duration-normal) var(--motion-easing-standard);
+  transition:
+    right var(--motion-duration-normal) var(--motion-easing-standard),
+    bottom var(--motion-duration-normal) var(--motion-easing-standard),
+    width var(--motion-duration-normal) var(--motion-easing-standard),
+    height var(--motion-duration-normal) var(--motion-easing-standard),
+    border-radius var(--motion-duration-normal) var(--motion-easing-standard);
+}
+
+/* The large chat is a column: full height on the right, the screen share keeps the left. */
+.chatCard[data-mode="large"] {
+  right: var(--space-0);
+  bottom: var(--space-0);
+  width: var(--chat-w);
+  height: 100%;
+  border-radius: var(--space-0);
+  border-width: var(--size-border) var(--space-0) var(--space-0) var(--size-border);
+  box-shadow: none;
+}
+
+@keyframes chatCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-3));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chatCard {
+    animation: none;
+  }
+}
+
+.chatCardHead {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-bottom: var(--size-border) solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.chatCardTitle {
+  flex: 1;
+  min-width: var(--space-0);
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The real chat view lives here: history on top (scrolls), run status and composer at the bottom. */
+.chatSlot {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: var(--space-0);
+  min-height: var(--space-0);
+}
+
+/* stylelint-disable-next-line unit-disallowed-list -- viewer width where a chat column would leave no room for the picture */
+@container live-viewer (width <= 48em) {
+  .body[data-chat="large"] .mainCol {
+    padding-inline-end: var(--space-0);
+  }
+
+  .chatCard[data-mode="large"] {
+    width: 100%;
+  }
 }
 
 .chatApproval {

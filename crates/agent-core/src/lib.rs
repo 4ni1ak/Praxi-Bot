@@ -30,6 +30,7 @@ mod full_autonomy;
 mod history;
 mod knowledge;
 mod ledger;
+mod mail_prompt;
 mod memory;
 mod mention;
 mod profile;
@@ -37,6 +38,7 @@ mod router;
 mod schedule_precheck;
 mod scoped_grant;
 mod shared;
+mod site_profiles;
 pub mod spend;
 mod subagent;
 mod taint;
@@ -61,6 +63,8 @@ mod egress_tests;
 #[cfg(test)]
 mod full_mode_tests;
 #[cfg(test)]
+mod mail_tests;
+#[cfg(test)]
 mod mode_tests;
 #[cfg(test)]
 mod pc_scope_tests;
@@ -70,6 +74,8 @@ mod router_tests;
 mod scoped_tests;
 #[cfg(test)]
 mod server_computer_tests;
+#[cfg(test)]
+mod site_profile_tests;
 #[cfg(test)]
 mod spend_tests;
 #[cfg(test)]
@@ -106,6 +112,7 @@ pub use shared::{
     SkillHints, StreamItem, build_providers, embedding_key_resolver, initiator_of, occurrence_kind,
     schedule_id_of,
 };
+pub use site_profiles::ApprovalSubject;
 pub use subagent::MAX_DEPTH as MAX_SUBAGENT_DEPTH;
 pub use usage::CallPurpose;
 

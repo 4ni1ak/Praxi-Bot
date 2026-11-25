@@ -171,6 +171,10 @@ pub enum Delivery {
     Queued(InitiatorKind),
     /// The message was the `/stop` command: the running turn was cancelled.
     Stopped(RunId),
+    /// The turn waited for the owner's approval and the owner wrote instead of answering: the
+    /// approval was denied, the turn (this run) was stopped as Stop does, and the message starts
+    /// the next turn at once.
+    Redirected(RunId),
 }
 
 /// The permission picture of one bot: its stored policy merged with its
@@ -699,6 +703,19 @@ pub(crate) struct Pending {
     pub run_id: RunId,
     /// The persisted approval row of this park.
     pub approval_id: uuid::Uuid,
+    /// What the card asks for.
+    pub kind: PendingKind,
+}
+
+/// What a parked card asks the owner for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PendingKind {
+    /// A tool call that needs the owner's approval.
+    Approval,
+    /// A question of the bot (`ask_user`).
+    Question,
+    /// A credential request.
+    Secret,
 }
 
 /// Browser actions that act on the page open right now: their allowance is bound to its origin.
@@ -876,6 +893,11 @@ pub(crate) struct RunCtx {
     /// browser itself; `None`: unknown, so the action stays once-only). Set by the loop right
     /// before the decision and handed to the tool as `expected_origin`.
     pub page_origin: Mutex<Option<String>>,
+    /// Links `email_wait_for` returned as followable in this run (https, on the
+    /// sign-up site or an owner-listed domain). Written only by the loop from
+    /// that tool's own structured result, never from model text. In memory, per
+    /// run; not copied to a sub-agent.
+    pub mail_links: Mutex<HashSet<String>>,
 }
 
 /// "Allow this tool for this task": one tool, this run, at most the exposure
@@ -1055,6 +1077,8 @@ pub(crate) struct Shared {
     /// `secret_request` calls waiting for the owner's form (see `approval.rs`).
     pub secret_requests: Mutex<HashMap<ToolCallId, SecretRequestInfo>>,
     pub grants: Mutex<Grants>,
+    /// Per-site / per-app permission rules of every bot (see `site_profiles`).
+    pub profile_rules: Mutex<Vec<(BotId, permission_engine::ProfileRule)>>,
     pub active: Mutex<HashMap<ChatId, RunId>>,
     pub queued: Mutex<HashMap<ChatId, VecDeque<QueuedMessage>>>,
     /// Bots still to answer one user message that mentioned several bots
@@ -1083,6 +1107,10 @@ pub(crate) struct Shared {
     /// Owner-stored fill secrets (from the builtin tool config); workflow
     /// replay types them through the same checks as the fill tools.
     pub fill_secrets: OnceLock<Arc<secret_store::FillSecrets>>,
+    /// Late-bound mail connector, shared with the built-in tools: the host binds
+    /// it when mail starts. Read for the per-run "your mail identity" block and
+    /// to tell a bot's OWN inbox from one every bot may use.
+    pub mail: Arc<builtin_tools::connector_email::MailHandle>,
     /// Foreground browser / app source for skill suggestions.
     pub skill_hints: RwLock<Option<SkillHintFn>>,
     /// The K0-K3 decision ladders (one per bot) and the workflow wiring.
@@ -1093,6 +1121,11 @@ pub(crate) struct Shared {
     /// Runs the owner stopped. An approval abandoned by that stop is a denial,
     /// not a timeout. Cleared when the run is concluded.
     pub user_stopped: Mutex<HashSet<RunId>>,
+    /// Runs stopped because the owner wrote a new message while they waited on an approval: the
+    /// denial says so, and the chat hands over to the queued message instead of staying free.
+    pub redirected: Mutex<HashSet<RunId>>,
+    /// A note for the next turn of a chat whose pending approval was skipped by a new message.
+    pub turn_notes: Mutex<HashMap<ChatId, TurnNote>>,
     /// Runs whose terminal bookkeeping has started. A second conclude (the
     /// drive task waking after the stop supervisor already finished the run)
     /// must not emit another `run_finished` or start a queued turn.
@@ -1139,6 +1172,15 @@ pub(crate) struct Shared {
     /// grant mechanics with a generic tool. Never set outside tests.
     #[cfg(test)]
     pub legacy_always: AtomicBool,
+}
+
+/// What the model is told at the start of the turn that follows a skipped approval.
+#[derive(Debug, Clone)]
+pub(crate) struct TurnNote {
+    /// When the approval was skipped.
+    pub at_ms: i64,
+    /// The summaries of the actions that did not run (quoted to the model as data).
+    pub skipped: Vec<String>,
 }
 
 /// A message waiting for the running turn to end. Its initiator kind is fixed
@@ -2042,6 +2084,7 @@ impl Shared {
             control_grants: Mutex::new(Vec::new()),
             tool_grants: Mutex::new(Vec::new()),
             page_origin: Mutex::new(None),
+            mail_links: Mutex::new(HashSet::new()),
         });
         Ok(Arc::clone(self.runs.lock().entry(run.id).or_insert(ctx)))
     }
@@ -2388,6 +2431,58 @@ impl Shared {
             crate::tool_guidance::Families::of(specs.iter().map(|s| s.name.as_str()))
         };
         crate::tool_guidance::block(families)
+    }
+
+    /// The per-run "your mail identity" block: the bot's own mail address(es),
+    /// what they are for and which tools read them. Built from the connector's
+    /// configuration and the tools the bot may use (fixed text; an address is
+    /// the only owner-written value and is reduced to address characters), only
+    /// for a bot that has an identity of its own. Stable across a run's model calls.
+    pub(crate) fn mail_block(&self, ctx: &RunCtx, specs: &[ToolSpec]) -> Option<String> {
+        let connector = self.mail.get()?;
+        let bot = ctx.bot_id.to_string();
+        let own = connector.scoped(Some(&bot)).own_identities();
+        if own.is_empty() {
+            return None;
+        }
+        let discovery = specs.iter().any(|s| {
+            matches!(
+                s.name.as_str(),
+                agent_router::FIND_TOOL | agent_router::TOOL_SEARCH
+            )
+        });
+        let names: Vec<String> = if discovery {
+            self.visible_specs(&ctx.profile, ctx.bot_id)
+                .iter()
+                .filter(|s| {
+                    self.decide(ctx, &s.name, s.effect, s.category, &Value::Null) != Decision::Deny
+                })
+                .map(|s| s.name.clone())
+                .collect()
+        } else {
+            specs.iter().map(|s| s.name.clone()).collect()
+        };
+        let has = |n: &str| names.iter().any(|x| x == n);
+        let facts: Vec<crate::mail_prompt::Identity> = own
+            .iter()
+            .map(|(a, default)| crate::mail_prompt::Identity {
+                name: a.name.clone(),
+                address: a.address.clone(),
+                kind: a.kind,
+                draft_only: a.identity.send_mode
+                    == builtin_tools::connector_email::SendMode::DraftOnly,
+                default: *default,
+            })
+            .collect();
+        Some(crate::mail_prompt::block(
+            &facts,
+            &crate::mail_prompt::Tools {
+                read: has("email_search") && has("email_read"),
+                wait: has(builtin_tools::mail_wait::EMAIL_WAIT_FOR),
+                send: has("email_send"),
+                register: has("account_register"),
+            },
+        ))
     }
 
     /// This daemon is an always-on host (the bots' own computer).

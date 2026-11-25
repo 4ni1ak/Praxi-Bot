@@ -44,6 +44,10 @@ pub mod webhook;
 #[cfg(test)]
 mod c225_tests;
 #[cfg(test)]
+mod catchup_tests;
+#[cfg(test)]
+mod dst_tests;
+#[cfg(test)]
 mod tests;
 
 pub use clock::{Clock, FakeClock, SystemClock};

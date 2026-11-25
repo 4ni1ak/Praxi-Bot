@@ -625,6 +625,14 @@
       "warm": "Warm"
     }
   },
+  "approvalDock": {
+    "counter": "Approval {{current}} of {{total}}",
+    "keyAllow": "Allow once",
+    "keyDeny": "Deny",
+    "label": "Waiting for your approval",
+    "next": "Next approval",
+    "previous": "Previous approval"
+  },
   "apps": {
     "access": {
       "all": "All bots",
@@ -1728,6 +1736,7 @@
         "policy": "This bot is set to ask before this kind of action."
       }
     },
+    "approvalSkipped": "Skipped the waiting approval. Your message goes first.",
     "attach": {
       "add": "Attach files or images",
       "command": "Send files with a regular message. Remove them before using a slash command.",
@@ -1761,6 +1770,7 @@
       "uploading": "Copying to the chat’s computer…"
     },
     "chain": {
+      "allowed": "Allowed by you",
       "details": "Details",
       "groupApp": "{{app}} ×{{count}}",
       "groupSame": "{{what}} ×{{count}}",
@@ -1771,6 +1781,7 @@
         "blocked": "Blocked by you",
         "noAnswer": "No answer in time",
         "other": "Did not work",
+        "skipped": "Skipped: you wrote a new message",
         "stopped": "Stopped before finishing",
         "timeout": "Timed out",
         "timeoutAfter": "Timed out after {{seconds}} s"
@@ -1929,7 +1940,7 @@
     "pendingPinned": "Waiting for your decision. The card is above the message box.",
     "placeholder": "Message…  / commands · @ bots",
     "placeholderBusy": "The bot is working. Typing queues your message",
-    "placeholderWaiting": "Waiting for your approval. A message you type is queued…",
+    "placeholderWaiting": "Answer above, or write to change plans",
     "question": {
       "answer": "Answer",
       "answered": "You answered: {{answer}}",
@@ -2286,6 +2297,11 @@
         "done": "Updated the plan",
         "failed": "Couldn't update the plan",
         "running": "Updating the plan"
+      },
+      "wait": {
+        "done": "Waited",
+        "failed": "Couldn't wait",
+        "running": "Waiting"
       },
       "web_read": {
         "done": "Read a page",
@@ -3698,7 +3714,7 @@
   },
   "home": {
     "admin": {
-      "byDesign": "{{name}} keeps some things to itself: the execution policy, command-line tool servers, skills, email accounts and coding-CLI sign-ins are changed on {{name}} directly.",
+      "byDesign": "{{name}} keeps some things to itself: the execution policy, command-line tool servers, skills and coding-CLI sign-ins are changed on {{name}} directly. Email, search and dictation accounts can be connected from this computer.",
       "noSecrets": "{{name}} cannot store keys yet.",
       "notGranted": "{{name}} has not confirmed this computer yet. Run this once on {{name}}:",
       "title": "Set up from this computer"
@@ -3791,10 +3807,11 @@
     },
     "newBotNeedsModel": "{{name}} has no model yet, so a bot cannot be created there. Connect a model on the server first.",
     "refusal": {
+      "adminRequired": "{{name}} has not confirmed this computer as its administrator yet. Run `bot host admin --all-desktops` once on {{name}}, then try again.",
       "botPermissions": "A bot's permissions and tools are managed on {{name}} itself. Name, persona and model can be changed here.",
       "composio": "App connections are managed on this computer's owner side, not on {{name}}.",
       "connectionTest": "Key tests run on {{name}} itself and are not available from this app.",
-      "credentials": "Email and search accounts are connected on {{name}} itself.",
+      "credentials": "This email or search setting is changed on {{name}} itself, not from this app.",
       "generic": "{{name}} did not allow this: {{reason}}",
       "hostTransfer": "Moving the host and pairing channels is done on {{name}} itself.",
       "knowledge": "Knowledge settings are managed on {{name}} itself.",
@@ -3959,7 +3976,10 @@
     "captureTab": "Tab key capture",
     "chat": {
       "approve": "Approve",
+      "button": "Chat",
+      "close": "Close chat",
       "collapse": "Collapse chat",
+      "expand": "Expand chat",
       "reject": "Reject",
       "replying": "Bot is replying…",
       "title": "Chat with bot",
@@ -3990,11 +4010,11 @@
       "view_quota": "The server has too many screen sessions. Close an unused viewer or try again in a moment."
     },
     "expand": "Open large viewer",
-    "expandScreen": "Expand",
     "focusTrapHint": "Keyboard goes to the screen. Shift+Esc to leave.",
     "globalPauseNotice": "Taking control or pausing applies globally across all bots.",
     "handBackAction": "Hand back",
     "hostLabel": "Host: {{host}}",
+    "infoPanel": "Bot info",
     "interactive": "Interactive",
     "kind": {
       "browser": "Browser",
@@ -4999,6 +5019,15 @@
       "botFixed": "The bot of a schedule cannot be changed.",
       "cannotParse": "I could not understand that. Try \"every day at 9\", \"weekdays at 8:30\" or \"her gün 09:00\", or use the Easy tab.",
       "cannotPreview": "Could not preview this schedule. Check the syntax and timezone.",
+      "catchupWindow": "Only catch up if it is not older than",
+      "catchupWindowHint": "A run missed for longer than this is not started late. It is listed as missed, and you can run it yourself.",
+      "catchupWindowOption": {
+        "0": "No limit",
+        "3600": "1 hour",
+        "21600": "6 hours",
+        "86400": "1 day",
+        "604800": "7 days"
+      },
       "confirmParsed": "Check this is what you meant, then press Create.",
       "create": "Create",
       "cron": "Cron expression",
@@ -5081,6 +5110,7 @@
     "lastRun": "Last run",
     "loading": "Loading schedules…",
     "missed": "Missed while off",
+    "missedWhy": "The computer was off or the app was closed at that time.",
     "movedTo": "Moved to {{name}}: it runs there and is frozen on this computer.",
     "never": "Never",
     "new": "New schedule",
@@ -5333,6 +5363,7 @@
       "description": "Select the display language for the interface.",
       "en": "English",
       "es": "Español",
+      "fr": "Français",
       "title": "Language",
       "tr": "Türkçe"
     },
@@ -5910,7 +5941,10 @@
       "saved": "Saved",
       "sentAnyway": "Sent anyway",
       "softHint": "These two are warnings, not blocks.",
-      "title": "Safe sending"
+      "title": "Safe sending",
+      "verifyDomains": "Extra sites a verification e-mail may link to",
+      "verifyDomainsHint": "A bot that signs up on a site gets back only the links of that site from its verification e-mail. If a site sends its mails through another service (for example a tracking domain), add that domain here, one per line (example.com). Leave it empty if you are unsure: the bot then asks you.",
+      "verifyDomainsPlaceholder": "mail.example.com"
     },
     "mode": {
       "moreHint": "Extra controls for fine-tuning",
@@ -6016,10 +6050,65 @@
       "saving": "Saving…"
     },
     "search": "Search settings",
+    "siteRules": {
+      "action": "What should happen",
+      "actions": {
+        "allow": "Allow",
+        "ask": "Always ask",
+        "block": "Never allow"
+      },
+      "addButton": "Add rule",
+      "addTitle": "Add a rule",
+      "added": "Rule saved.",
+      "allowApp": "Always allow this in this program",
+      "allowHint": "An allow rule covers exactly this site, not its subdomains.",
+      "allowSite": "Always allow this on this site",
+      "bot": "Bot",
+      "capabilities": {
+        "any": "everything",
+        "interact": "clicking and typing",
+        "read": "opening and reading",
+        "submit": "sending forms and key presses"
+      },
+      "capability": "For",
+      "confirm": "Always allow {{what}} on {{target}} without asking?",
+      "confirmNo": "Cancel",
+      "confirmYes": "Yes, always allow",
+      "empty": "No rules yet.",
+      "expired": "expired",
+      "expiries": {
+        "day": "For one day",
+        "month": "For 30 days",
+        "never": "Until I remove it",
+        "week": "For one week"
+      },
+      "expiry": "Keep this rule",
+      "lead": "Rules for one website or program: always ask, never allow, or allow without asking. They can only add care, or give an OK you choose here.",
+      "limits": "Safety stays on: files outside the work area, content from web pages and the things marked never allowed still follow their own rules.",
+      "recentHint": "Sites and programs you recently approved. You can allow one without asking again.",
+      "recentNone": "Nothing to suggest yet.",
+      "recentTitle": "From a recent OK",
+      "remove": "Remove",
+      "removed": "Rule removed.",
+      "site": "Website",
+      "siteHint": "Only the name, like example.com (no https://, no path).",
+      "subdomains": "Also cover its subdomains (like shop.example.com)",
+      "title": "Sites and programs",
+      "until": "until {{when}}",
+      "withSubdomains": "(and its subdomains)"
+    },
     "title": "Settings",
     "updates": {
       "appVersion": "Desktop app",
       "available": "Version {{version}} is available.",
+      "buildId": "Build ID",
+      "channel": {
+        "description": "Stable is recommended. Preview includes early releases that may have problems. Updates install only when you choose Install.",
+        "preview": "Preview",
+        "stable": "Stable",
+        "title": "Update channel",
+        "unavailable": "Preview updates have not been configured for this build."
+      },
       "check": {
         "action": "Check for updates",
         "description": "Looks for a newer version and shows what is new. Nothing is installed until you choose to.",
@@ -6037,6 +6126,7 @@
         "no_rollback": "No earlier version is available to go back to.",
         "not_configured": "Updates are not set up in this build.",
         "nothing_to_install": "Please check for updates first.",
+        "preview_not_configured": "Preview updates are not configured. Choose Stable or install a build with Preview support.",
         "signature": "The update could not be verified as genuine, so it was NOT installed. Nothing was changed."
       },
       "install": {
@@ -6044,14 +6134,18 @@
         "hint": "The update is checked for authenticity before it is installed. Praxi-Bot restarts when it is done.",
         "working": "Updating…"
       },
-      "notConfigured": "This build of Praxi-Bot has no update service set up, so it cannot update itself. Download the newest version from the project page instead.",
+      "lastChecked": "Last checked: {{time}}",
+      "neverChecked": "Updates have not been checked yet.",
+      "notConfigured": "Updates are unavailable: this build has no updater signing key or secure update feed configured. Nothing will be downloaded or installed.",
       "rollback": {
         "action": "Go back to the previous version",
         "description": "Version {{version}} did not start properly. You can go back to the last version that worked.",
         "title": "Something went wrong with the update",
         "working": "Going back…"
       },
-      "title": "Updates & version",
+      "skip": "Skip this version",
+      "skipped": "Version {{version}} is skipped. Newer versions will still be offered.",
+      "title": "About",
       "unknown": "Unknown",
       "upToDate": "You have the latest version."
     },

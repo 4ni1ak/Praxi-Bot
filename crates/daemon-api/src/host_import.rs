@@ -531,6 +531,7 @@ pub(crate) async fn import_schedules(
             // Stage 1: never enabled here until the sending computer froze its copy.
             enabled: Some(false),
             misfire_policy: item.misfire_policy,
+            catchup_window_secs: None,
             webhook_secret: None,
             trigger: item.trigger,
             precheck: item.precheck,

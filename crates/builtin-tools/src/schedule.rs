@@ -310,7 +310,7 @@ pub fn tools(host: &Arc<dyn ScheduleHost>) -> Vec<Arc<dyn Tool>> {
         ),
         mk(
             "schedule_create",
-            "Create a scheduled task for yourself: at each firing you are run with `prompt`, unattended, in this chat. The user must approve the prompt and the firing times first. Example: {\"name\":\"Standup\",\"prompt\":\"Summarise open tasks\",\"when\":\"every weekday at 10:30\"}",
+            "Create a scheduled task for yourself: at each firing you are run with `prompt`, unattended, in this chat. The user must approve the prompt and the firing times first. A schedule cannot fire more often than the minimum interval (5 minutes by default): for a short burst such as \"every 5 seconds, 4 times\" do NOT schedule it; repeat the action inside one run and call `wait` between the rounds. Example: {\"name\":\"Standup\",\"prompt\":\"Summarise open tasks\",\"when\":\"every weekday at 10:30\"}",
             json!({"type":"object","properties":create_props,"required":["name","prompt"]}),
             Effect::Write,
             Op::Create,
@@ -569,6 +569,17 @@ mod tests {
             self.calls.lock().push(format!("delete {} {id}", c.bot_id));
             Ok(view())
         }
+    }
+
+    #[test]
+    fn schedule_create_points_short_bursts_to_wait() {
+        let host = Arc::new(Fake::default());
+        let t = tool(&host, "schedule_create");
+        let d = &t.spec().description;
+        assert!(
+            d.contains("`wait`") && d.contains("minimum interval"),
+            "{d}"
+        );
     }
 
     fn ctx(bot: Option<&str>) -> ToolContext {

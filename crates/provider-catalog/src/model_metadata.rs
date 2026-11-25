@@ -342,7 +342,7 @@ pub fn model_metadata(provider: &str, ids: &[String], chat_only: bool) -> Vec<Mo
         .iter()
         .filter(|id| safe_model_id(id) && seen.insert(id.as_str()))
         .map(|id| {
-            let mut model = embedded_metadata().describe(provider, id);
+            let mut model = crate::catalog_update::active_metadata().describe(provider, id);
             if provider == "openrouter" && id.ends_with(":free") {
                 // This id came from the provider's current list, not the table.
                 model.note = Some("free".into());

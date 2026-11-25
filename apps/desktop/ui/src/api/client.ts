@@ -862,6 +862,19 @@ export class ApiClient {
       body: { target }
     });
   }
+  listSiteRules(botId: string): Promise<import("./types").SiteRule[]> {
+    return this.request("GET", `/bots/${botId}/site-rules`);
+  }
+  /** Owner-only: an allow rule is an explicit grant. */
+  addSiteRule(botId: string, input: import("./types").SiteRuleInput): Promise<import("./types").SiteRule> {
+    return this.request("POST", `/bots/${botId}/site-rules`, { body: input });
+  }
+  removeSiteRule(botId: string, ruleId: string): Promise<void> {
+    return this.request("DELETE", `/bots/${botId}/site-rules/${encodeURIComponent(ruleId)}`);
+  }
+  recentSiteApprovals(botId: string): Promise<import("./types").SiteRuleSuggestion[]> {
+    return this.request("GET", `/bots/${botId}/site-rules/recent`);
+  }
   listSkills(): Promise<SkillsCatalog> {
     return this.request("GET", "/skills");
   }

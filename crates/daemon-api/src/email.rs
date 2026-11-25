@@ -327,6 +327,11 @@ pub struct EmailGuardSettingsDto {
     pub opt_out_line: bool,
     /// Text of the opt-out line (`{sender}` = the sending address); empty = built-in text.
     pub footer: String,
+    /// Extra domains a verification mail may link to, besides the site a sign-up
+    /// started on (for example a mail service the site uses). Owner-set; empty
+    /// by default. A bot never sees or changes this list.
+    #[serde(default)]
+    pub verification_link_domains: Vec<String>,
 }
 
 /// One address or domain the owner will not write to.

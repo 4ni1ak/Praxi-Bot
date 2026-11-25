@@ -29,6 +29,7 @@ const SAME_AS_ENGLISH_BY_LOCALE = {
     "Port", "Stdio", "Aurora", "Avatar", "Model", "Plan", "Terminal", "Bot", "Cron", "Limit", "Neon",
     "Gemini Live", "Enter", "B", "model",
   ]),
+  es: new Set(["Chat"]),
 };
 // Groups of keys whose values are names by design.
 const SAME_AS_ENGLISH_KEY_PREFIXES = [

@@ -225,7 +225,7 @@ impl StepExecutor for TurnExecutor {
         if history.is_empty()
             && let Some(spec) = self.first_step(run).await?
         {
-            return Ok(Some(spec));
+            return Ok(Some(self.with_turn_note(run, spec)));
         }
         self.plan_next(run, history)
     }
@@ -250,6 +250,29 @@ impl StepExecutor for TurnExecutor {
 
 impl TurnExecutor {
     // ---- planning ----
+
+    /// The first turn after the owner skipped a pending approval by writing: the step carries
+    /// what did not run, and the model is told so (see `history::build_messages`). One note,
+    /// used once, for the owner's own turn of that chat only, and only while it is fresh.
+    fn with_turn_note(&self, run: &Run, mut spec: StepSpec) -> StepSpec {
+        const NOTE_TTL_MS: i64 = 5 * 60 * 1000;
+        if spec.name != STEP_USER
+            || run.parent_run_id.is_some()
+            || crate::shared::initiator_of(&run.kind) != protocol::InitiatorKind::Human
+        {
+            return spec;
+        }
+        let Some(chat_id) = run.chat_id else {
+            return spec;
+        };
+        let Some(note) = self.sh.turn_notes.lock().remove(&chat_id) else {
+            return spec;
+        };
+        if storage::now_ms().saturating_sub(note.at_ms) <= NOTE_TTL_MS {
+            spec.input["approval_skipped"] = json!(note.skipped);
+        }
+        spec
+    }
 
     /// The first step of a top-level turn: the user message, after the
     /// decision ladder (K0-K3) had its say.  `None` for subagents (their first
@@ -744,6 +767,16 @@ impl TurnExecutor {
 {s}"
             )),
             (Some(p), None) => Some(p),
+            (None, s) => s,
+        };
+        // A bot with a mail identity of its own is told, every run, which address it has.
+        let skills = match (self.sh.mail_block(&ctx, &specs), skills) {
+            (Some(m), Some(s)) => Some(format!(
+                "{m}
+
+{s}"
+            )),
+            (Some(m), None) => Some(m),
             (None, s) => s,
         };
         // Which tool family fits which job; claims need the call behind them.
@@ -1436,7 +1469,8 @@ impl TurnExecutor {
             let target = match (&resolved.tool, &resolved.spec) {
                 (tool, Some(_))
                     if crate::shared::control_kind_of(&resolved.name).is_some()
-                        && ctx.taint.lock().exposure.is_tainted() =>
+                        && (ctx.taint.lock().exposure.is_tainted()
+                            || self.sh.has_profile_rules(ctx.bot_id)) =>
                 {
                     let tctx = ToolContext {
                         run_id: ctx.run_id.to_string(),
@@ -1567,9 +1601,14 @@ impl TurnExecutor {
                     }),
                 );
                 Slot::Done {
-                    text: "Permission denied: policy does not allow this tool call. \
-                           Do not retry it; choose another approach or tell the user."
-                        .into(),
+                    text: self
+                        .sh
+                        .profile_block_text(&ctx, &resolved.name, &resolved.input, target.as_ref())
+                        .unwrap_or_else(|| {
+                            "Permission denied: policy does not allow this tool call. \
+                             Do not retry it; choose another approach or tell the user."
+                                .into()
+                        }),
                     is_error: true,
                 }
             } else if carried.is_none() && (matches!(decision, Decision::Ask { .. }) || redisclose)
@@ -1896,8 +1935,22 @@ impl TurnExecutor {
         // covers the tool itself.
         let started = std::time::Instant::now();
         let control = self.sh.control.read().clone();
+        // `wait` may legitimately last up to its own cap (300 s); every other tool keeps the
+        // configured limit.
+        let tool_timeout = if tool.spec().name == "wait" {
+            g.tool_timeout.max(std::time::Duration::from_secs(
+                builtin_tools::wait::MAX_WAIT_SECS + 10,
+            ))
+        } else if tool.spec().name == builtin_tools::mail_wait::EMAIL_WAIT_FOR {
+            // The tool bounds itself (10 minutes, Stop cancels it).
+            g.tool_timeout.max(std::time::Duration::from_secs(
+                builtin_tools::mail_wait::MAX_MINUTES * 60 + 30,
+            ))
+        } else {
+            g.tool_timeout
+        };
         let outcome = crate::control::pause_aware_timeout(
-            g.tool_timeout,
+            tool_timeout,
             control,
             // The clock stops while the run waits for the computer slot or is parked on a card
             // (a call that asks the user from inside the tool, such as a script's inner call).
@@ -1955,6 +2008,11 @@ impl TurnExecutor {
         }
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let mut own_spill: Option<String> = None;
+        if tool.spec().name == builtin_tools::mail_wait::EMAIL_WAIT_FOR
+            && let Ok(Ok(out)) = &outcome
+        {
+            note_mail_links(ctx, out);
+        }
         let exposure = match &outcome {
             Ok(Ok(out)) => out.exposure.clone(),
             _ => None,
@@ -2083,6 +2141,29 @@ fn fact_note(ctx: &RunCtx, fact: &taint::ExecFact) {
         return;
     }
     fact.apply(&mut ctx.taint.lock());
+}
+
+/// Most followable links remembered per run.
+const MAX_MAIL_LINKS: usize = 20;
+
+/// Remember the links `email_wait_for` itself judged followable, from its own
+/// structured result (a JSON part the tool built; mail text only ever sits in
+/// string values below other keys). Only https links are kept.
+fn note_mail_links(ctx: &RunCtx, out: &ToolOutput) {
+    for part in &out.content {
+        let ContentPart::Json { data } = part else {
+            continue;
+        };
+        let Some(links) = data.get("followable_links").and_then(Value::as_array) else {
+            continue;
+        };
+        let mut known = ctx.mail_links.lock();
+        for link in links.iter().filter_map(Value::as_str) {
+            if link.starts_with("https://") && known.len() < MAX_MAIL_LINKS {
+                known.insert(link.to_owned());
+            }
+        }
+    }
 }
 
 fn note_metadata(ctx: &RunCtx, specs: &[ToolSpec], facts: &mut Vec<taint::ExecFact>) {

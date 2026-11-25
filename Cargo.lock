@@ -6346,6 +6346,7 @@ dependencies = [
  "protocol",
  "serde",
  "thiserror 2.0.21",
+ "url",
 ]
 
 [[package]]
@@ -6796,6 +6797,7 @@ dependencies = [
  "fs4",
  "futures",
  "httpdate",
+ "minisign-verify",
  "proptest",
  "reqwest 0.12.28",
  "secret-store",

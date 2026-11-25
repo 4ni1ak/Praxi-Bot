@@ -14,9 +14,6 @@ export type SidePanelReason =
 /** Below this window width the side panel always overlays instead of squeezing the main pane. */
 export const PANEL_DOCK_MIN_WIDTH = 1120;
 
-/** Minimum window width to dock the big screen view beside the chat column. */
-export const SCREEN_SPLIT_MIN_WIDTH = 960;
-
 export interface SidePanelInput {
   /** Whether a bot route (`chat` or `bot`) is active. */
   botInView: boolean;
@@ -28,8 +25,6 @@ export interface SidePanelInput {
   attentionDismissed?: boolean;
   /** Current live-view stream/session presence. */
   liveViewState: LiveViewPresence;
-  /** True when the main pane already shows the side-by-side chat + big screen split. */
-  bigScreenDocked?: boolean;
   /** Current viewport width in px. */
   viewportWidth: number;
   /** Stored preferred panel width in px. */
@@ -57,8 +52,9 @@ export interface SidePanelState {
  * - Closed by default; opens only on explicit owner action or an unanswerable-inline need.
  * - Arriving inline approvals or starting/stopping live view never resize the chat column or
  *   move the screen frame (`flowWidth` stays `0` in overlay mode).
- * - Below `PANEL_DOCK_MIN_WIDTH`, or whenever the big screen is active/docked, the panel slides
- *   in over the right edge as an overlay instead of reflowing the main pane.
+ * - Below `PANEL_DOCK_MIN_WIDTH`, or whenever the full-screen live view is open, the panel slides
+ *   in over the right edge as an overlay instead of reflowing the main pane. A preview stream
+ *   started by the computer card does not count: opening the panel never flips its mode afterwards.
  */
 export function deriveSidePanelState(input: SidePanelInput): SidePanelState {
   const max = panelMax(input.viewportWidth, input.railWidth, input.float);
@@ -84,7 +80,7 @@ export function deriveSidePanelState(input: SidePanelInput): SidePanelState {
     };
   }
 
-  if (input.bigScreenDocked || input.liveViewState !== "idle") {
+  if (input.liveViewState !== "idle") {
     return {
       mode: "overlay",
       visible: true,
@@ -111,6 +107,25 @@ export function deriveSidePanelState(input: SidePanelInput): SidePanelState {
     flowWidth: width,
     reason: "owner-docked"
   };
+}
+
+/** What can ask the side panel to go away. */
+export type PanelDismissTrigger =
+  | "close-button"
+  | "toggle"
+  | "escape"
+  | "outside-pointer"
+  | "focus-moved"
+  | "chat-activity";
+
+/**
+ * The one rule for dismissing the right-hand panel: only the owner's explicit acts close it, that
+ * is its own X, the control that opened it (bot chip, or the info button of the live view) and
+ * Escape. Clicking or focusing anything else (the chat, the composer, the screen share) never does:
+ * the owner reads the bot's activity while typing.
+ */
+export function panelDismissedBy(trigger: PanelDismissTrigger): boolean {
+  return trigger === "close-button" || trigger === "toggle" || trigger === "escape";
 }
 
 /**

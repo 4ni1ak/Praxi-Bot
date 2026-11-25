@@ -1,12 +1,24 @@
 /**
- * "What's new" after an update: the notes are bundled (`whats-new.json`, one entry per app version in
- * en/tr/de) and the last version the user saw lives in the local settings. Nothing is fetched.
+ * "What's new" after an update: notes come from the verified update saved locally, or bundled
+ * `whats-new.json` entries. The last version seen lives in local settings; no feed is fetched at startup.
  */
 export type NotesLang = "en" | "tr" | "de";
 
 export interface WhatsNewNotes {
   title: string;
   items: string[];
+  text?: string;
+}
+
+/** Feed content stays inert text, and belongs only to the version actually installed. */
+export function installedReleaseNotes(
+  notes: { version: string; notes: string } | null,
+  version: string,
+  title: string
+): WhatsNewNotes | null {
+  return notes?.version === version && notes.notes.trim()
+    ? { title, items: [], text: notes.notes }
+    : null;
 }
 
 export type WhatsNewFile = Record<string, Partial<Record<NotesLang, WhatsNewNotes>>>;

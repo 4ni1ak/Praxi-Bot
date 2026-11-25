@@ -625,6 +625,14 @@
       "warm": "Sıcak"
     }
   },
+  "approvalDock": {
+    "counter": "Onay {{current}} / {{total}}",
+    "keyAllow": "Bir kez izin ver",
+    "keyDeny": "Reddet",
+    "label": "Onayını bekliyor",
+    "next": "Sonraki onay",
+    "previous": "Önceki onay"
+  },
   "apps": {
     "access": {
       "all": "Tüm botlar",
@@ -1728,6 +1736,7 @@
         "policy": "Bu bot, bu tür bir işlemden önce sormaya ayarlı."
       }
     },
+    "approvalSkipped": "Bekleyen onay atlandı. Önce mesajına bakılıyor.",
     "attach": {
       "add": "Dosya veya görsel ekle",
       "command": "Dosyaları normal bir mesajla gönderin. Eğik çizgi komutu kullanmadan önce dosyaları kaldırın.",
@@ -1761,6 +1770,7 @@
       "uploading": "Sohbetin çalıştığı bilgisayara kopyalanıyor…"
     },
     "chain": {
+      "allowed": "İzin verdin",
       "details": "Ayrıntılar",
       "groupApp": "{{app}} ×{{count}}",
       "groupSame": "{{what}} ×{{count}}",
@@ -1771,6 +1781,7 @@
         "blocked": "Senin tarafından engellendi",
         "noAnswer": "Zamanında yanıt gelmedi",
         "other": "Çalışmadı",
+        "skipped": "Atlandı: yeni bir mesaj yazdın",
         "stopped": "Bitmeden durduruldu",
         "timeout": "Zaman aşımı",
         "timeoutAfter": "{{seconds}} sn sonra zaman aşımı"
@@ -1929,7 +1940,7 @@
     "pendingPinned": "Kararın bekleniyor. Kart mesaj kutusunun üstünde.",
     "placeholder": "Mesaj yaz…  / komutlar · @ botlar",
     "placeholderBusy": "Bot çalışıyor. Yazarsan mesaj sıraya girer",
-    "placeholderWaiting": "Onayını bekliyor. Yazdığın mesaj sıraya girer…",
+    "placeholderWaiting": "Yukarıdan yanıtla ya da planı değiştirmek için yaz",
     "question": {
       "answer": "Yanıtla",
       "answered": "Yanıtın: {{answer}}",
@@ -2286,6 +2297,11 @@
         "done": "Plan güncellendi",
         "failed": "Plan güncellenemedi",
         "running": "Plan güncelleniyor"
+      },
+      "wait": {
+        "done": "Beklendi",
+        "failed": "Beklenemedi",
+        "running": "Bekleniyor"
       },
       "web_read": {
         "done": "Sayfa okundu",
@@ -3698,7 +3714,7 @@
   },
   "home": {
     "admin": {
-      "byDesign": "{{name}} bazı şeyleri kendine saklar: yürütme politikası, komut satırı araç sunucuları, beceriler, e-posta hesapları ve kodlama CLI girişleri doğrudan {{name}} üzerinde değiştirilir.",
+      "byDesign": "{{name}} bazı şeyleri kendine saklar: yürütme politikası, komut satırı araç sunucuları, beceriler ve kodlama CLI girişleri doğrudan {{name}} üzerinde değiştirilir. E-posta, arama ve dikte hesapları bu bilgisayardan bağlanabilir.",
       "noSecrets": "{{name}} henüz anahtar saklayamıyor.",
       "notGranted": "{{name}} bu bilgisayarı henüz onaylamadı. Şunu {{name}} üzerinde bir kez çalıştır:",
       "title": "Bu bilgisayardan kurulum"
@@ -3791,10 +3807,11 @@
     },
     "newBotNeedsModel": "{{name}} sunucusunda henüz model yok, bu yüzden orada bot oluşturulamaz. Önce sunucuya bir model bağla.",
     "refusal": {
+      "adminRequired": "{{name}} bu bilgisayarı henüz yönetici olarak onaylamadı. {{name}} üzerinde bir kez `bot host admin --all-desktops` çalıştır, sonra tekrar dene.",
       "botPermissions": "Bir botun izinleri ve araçları {{name}} üzerinde yönetilir. Ad, kişilik ve model buradan değiştirilebilir.",
       "composio": "Uygulama bağlantıları {{name}} üzerinde değil, bu bilgisayarın sahibi tarafında yönetilir.",
       "connectionTest": "Anahtar testleri {{name}} üzerinde çalışır, bu uygulamadan yapılamaz.",
-      "credentials": "E-posta ve arama hesapları {{name}} üzerinde bağlanır.",
+      "credentials": "Bu e-posta ya da arama ayarı bu uygulamadan değil, {{name}} üzerinde değiştirilir.",
       "generic": "{{name}} buna izin vermedi: {{reason}}",
       "hostTransfer": "Sunucuyu taşıma ve kanal eşleştirme {{name}} üzerinde yapılır.",
       "knowledge": "Bilgi ayarları {{name}} üzerinde yönetilir.",
@@ -3959,7 +3976,10 @@
     "captureTab": "Tab tuşunu yakala",
     "chat": {
       "approve": "Onayla",
+      "button": "Sohbet",
+      "close": "Sohbeti kapat",
       "collapse": "Sohbeti daralt",
+      "expand": "Sohbeti büyüt",
       "reject": "Reddet",
       "replying": "Bot yanıt yazıyor…",
       "title": "Botla sohbet",
@@ -3990,11 +4010,11 @@
       "view_quota": "Sunucuda çok fazla ekran oturumu açık. Kullanmadığın bir ekranı kapat veya biraz sonra yeniden dene."
     },
     "expand": "Büyük görünümü aç",
-    "expandScreen": "Tam ekran",
     "focusTrapHint": "Klavye ekrana gider. Çıkmak için Shift+Esc.",
     "globalPauseNotice": "Devralma veya durdurma işlemi tüm bot çalışmalarını genel olarak duraklatır.",
     "handBackAction": "Geri ver",
     "hostLabel": "Sunucu: {{host}}",
+    "infoPanel": "Bot bilgisi",
     "interactive": "Etkileşimli",
     "kind": {
       "browser": "Tarayıcı",
@@ -4999,6 +5019,15 @@
       "botFixed": "Bir zamanlamanın botu değiştirilemez.",
       "cannotParse": "Bunu anlayamadım. \"her gün 09:00\", \"hafta içi her sabah 8\" ya da \"every day at 9\" deneyin veya Kolay sekmesini kullanın.",
       "cannotPreview": "Bu zamanlama önizlenemedi. Söz dizimini ve saat dilimini kontrol et.",
+      "catchupWindow": "Yalnızca şundan eskiyse yetişme",
+      "catchupWindowHint": "Bundan uzun süre kaçan çalıştırma geç başlatılmaz. Kaçırılan olarak listelenir ve isterseniz kendiniz çalıştırabilirsiniz.",
+      "catchupWindowOption": {
+        "0": "Sınır yok",
+        "3600": "1 saat",
+        "21600": "6 saat",
+        "86400": "1 gün",
+        "604800": "7 gün"
+      },
       "confirmParsed": "Bunu kastettiğinizi kontrol edin, sonra Oluştur'a basın.",
       "create": "Oluştur",
       "cron": "Cron ifadesi",
@@ -5081,6 +5110,7 @@
     "lastRun": "Son çalışma",
     "loading": "Zamanlamalar yükleniyor…",
     "missed": "Kapalıyken kaçırılan",
+    "missedWhy": "O sırada bilgisayar kapalıydı veya uygulama kapalıydı.",
     "movedTo": "{{name}} sunucusuna taşındı: orada çalışır, bu bilgisayarda dondurulmuştur.",
     "never": "Hiç",
     "new": "Yeni zamanlama",
@@ -5333,6 +5363,7 @@
       "description": "Arayüz görüntüleme dilini seç.",
       "en": "English",
       "es": "Español",
+      "fr": "Français",
       "title": "Dil",
       "tr": "Türkçe"
     },
@@ -5910,7 +5941,10 @@
       "saved": "Kaydedildi",
       "sentAnyway": "Yine de gönderildi",
       "softHint": "Bu ikisi engel değil, uyarıdır.",
-      "title": "Güvenli gönderim"
+      "title": "Güvenli gönderim",
+      "verifyDomains": "Doğrulama e-postasının bağlantı verebileceği ek siteler",
+      "verifyDomainsHint": "Bir sitede kayıt olan bot, doğrulama e-postasından yalnızca o sitenin bağlantılarını alır. Bir site e-postalarını başka bir hizmet üzerinden gönderiyorsa (örneğin bir izleme alan adı), o alan adını buraya satır başına bir tane ekleyin (example.com). Emin değilseniz boş bırakın: bot o zaman size sorar.",
+      "verifyDomainsPlaceholder": "posta.ornek.com"
     },
     "mode": {
       "moreHint": "İnce ayar için ek seçenekler",
@@ -6016,10 +6050,65 @@
       "saving": "Kaydediliyor…"
     },
     "search": "Ayarlarda ara",
+    "siteRules": {
+      "action": "Ne olsun",
+      "actions": {
+        "allow": "İzin ver",
+        "ask": "Her zaman sor",
+        "block": "Asla izin verme"
+      },
+      "addButton": "Kural ekle",
+      "addTitle": "Kural ekle",
+      "added": "Kural kaydedildi.",
+      "allowApp": "Bu programda bunu her zaman yapabilsin",
+      "allowHint": "İzin kuralı tam olarak bu siteyi kapsar, alt alan adlarını değil.",
+      "allowSite": "Bu sitede bunu her zaman yapabilsin",
+      "bot": "Bot",
+      "capabilities": {
+        "any": "her şey",
+        "interact": "tıklama ve yazma",
+        "read": "açma ve okuma",
+        "submit": "form gönderme ve tuş basma"
+      },
+      "capability": "Şunun için",
+      "confirm": "{{target}} üzerinde {{what}} her zaman sormadan izin verilsin mi?",
+      "confirmNo": "Vazgeç",
+      "confirmYes": "Evet, her zaman izin ver",
+      "empty": "Henüz kural yok.",
+      "expired": "süresi doldu",
+      "expiries": {
+        "day": "Bir gün",
+        "month": "30 gün",
+        "never": "Ben kaldırana kadar",
+        "week": "Bir hafta"
+      },
+      "expiry": "Bu kural ne kadar dursun",
+      "lead": "Tek bir web sitesi veya program için kurallar: her zaman sor, asla izin verme ya da sormadan izin ver. Yalnızca daha fazla dikkat ekleyebilir ya da burada seçtiğin onayı verebilir.",
+      "limits": "Güvenlik açık kalır: çalışma alanı dışındaki dosyalar, web sayfalarından gelen içerik ve asla izin verilmeyenler kendi kurallarına uymaya devam eder.",
+      "recentHint": "Yakınlarda onayladığın siteler ve programlar. Birine bir daha sormadan izin verebilirsin.",
+      "recentNone": "Henüz önerilecek bir şey yok.",
+      "recentTitle": "Son onaylarından",
+      "remove": "Kaldır",
+      "removed": "Kural kaldırıldı.",
+      "site": "Web sitesi",
+      "siteHint": "Sadece adı yaz, örneğin example.com (https:// ve yol olmadan).",
+      "subdomains": "Alt alan adlarını da kapsa (örneğin shop.example.com)",
+      "title": "Siteler ve programlar",
+      "until": "{{when}} tarihine kadar",
+      "withSubdomains": "(ve alt alan adları)"
+    },
     "title": "Ayarlar",
     "updates": {
       "appVersion": "Masaüstü uygulaması",
       "available": "{{version}} sürümü hazır.",
+      "buildId": "Derleme kimliği",
+      "channel": {
+        "description": "Kararlı sürüm önerilir. Önizleme, sorun içerebilecek erken sürümleri de sunar. Güncellemeler yalnızca Yükle seçeneğine bastığınızda yüklenir.",
+        "preview": "Önizleme",
+        "stable": "Kararlı",
+        "title": "Güncelleme kanalı",
+        "unavailable": "Bu derleme için önizleme güncellemeleri henüz yapılandırılmamış."
+      },
       "check": {
         "action": "Güncellemeleri denetle",
         "description": "Daha yeni bir sürüm olup olmadığına bakar ve yenilikleri gösterir. Siz seçmeden hiçbir şey kurulmaz.",
@@ -6037,6 +6126,7 @@
         "no_rollback": "Geri dönülebilecek daha eski bir sürüm yok.",
         "not_configured": "Bu sürümde güncelleme kurulu değil.",
         "nothing_to_install": "Lütfen önce güncellemeleri denetleyin.",
+        "preview_not_configured": "Önizleme güncellemeleri yapılandırılmamış. Kararlı kanalını seçin veya önizleme destekleyen bir derleme yükleyin.",
         "signature": "Güncellemenin gerçek olduğu doğrulanamadı, bu yüzden KURULMADI. Hiçbir şey değişmedi."
       },
       "install": {
@@ -6044,14 +6134,18 @@
         "hint": "Güncelleme kurulmadan önce gerçekliği denetlenir. İşlem bitince Praxi-Bot yeniden açılır.",
         "working": "Güncelleniyor…"
       },
-      "notConfigured": "Praxi-Bot'un bu sürümünde güncelleme hizmeti kurulu değil, bu yüzden kendini güncelleyemez. En yeni sürümü proje sayfasından indirin.",
+      "lastChecked": "Son kontrol: {{time}}",
+      "neverChecked": "Güncellemeler henüz kontrol edilmedi.",
+      "notConfigured": "Güncellemeler kullanılamıyor: bu derlemede güncelleme imzalama anahtarı veya güvenli güncelleme kaynağı yapılandırılmamış. Hiçbir şey indirilmeyecek veya yüklenmeyecek.",
       "rollback": {
         "action": "Önceki sürüme dön",
         "description": "{{version}} sürümü düzgün açılmadı. Çalışan son sürüme geri dönebilirsiniz.",
         "title": "Güncellemede bir sorun çıktı",
         "working": "Geri dönülüyor…"
       },
-      "title": "Güncellemeler ve sürüm",
+      "skip": "Bu sürümü atla",
+      "skipped": "{{version}} sürümü atlandı. Daha yeni sürümler sunulmaya devam edecek.",
+      "title": "Hakkında",
       "unknown": "Bilinmiyor",
       "upToDate": "En son sürümü kullanıyorsunuz."
     },

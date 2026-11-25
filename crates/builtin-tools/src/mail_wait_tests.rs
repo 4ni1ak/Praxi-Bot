@@ -1,0 +1,399 @@
+//! `email_wait_for` and the mail side of `account_register`, over a loopback
+//! `AgentMail` mock.
+
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use async_trait::async_trait;
+use connector_email::{
+    AccountConfig, AccountKind, AgentMailEndpoint, EmailConnector, IdentitySettings, ImapSettings,
+    MailHandle, PageOrigin, SmtpSettings, WaitPlan,
+};
+use secret_store::{FillSecrets, MemoryStore, SecretRef, SecretStore};
+use serde_json::{Value, json};
+use tool_registry::{ContentPart, Effect, PermissionCategory, Tool, ToolContext, ToolError};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+use crate::account_register::{AccountRegisterConfig, account_register_tool_with_mail};
+use crate::mail_wait::EmailWaitFor;
+
+const BOT_A: &str = "11111111-1111-4111-8111-111111111111";
+const BOT_B: &str = "22222222-2222-4222-8222-222222222222";
+
+fn account(name: &str, bot: Option<&str>, address: &str) -> AccountConfig {
+    AccountConfig {
+        name: name.into(),
+        address: address.into(),
+        username: String::new(),
+        password: SecretRef::new(format!("email/{name}/api_key")).unwrap(),
+        imap: ImapSettings::default(),
+        smtp: SmtpSettings::default(),
+        drafts_folder: "Drafts".into(),
+        extra_root_pem: None,
+        timeout_secs: 30,
+        bot: bot.map(str::to_owned),
+        allowed_senders: Vec::new(),
+        identity: IdentitySettings::default(),
+        kind: AccountKind::AgentMail,
+        inbox_id: Some(address.into()),
+    }
+}
+
+fn connector(server: &MockServer, accounts: Vec<AccountConfig>) -> Arc<EmailConnector> {
+    let store = Arc::new(MemoryStore::new());
+    for a in &accounts {
+        store
+            .set(a.password.name(), "am_tool_test_KEY_31ff")
+            .unwrap();
+    }
+    let c = EmailConnector::reloadable_with(
+        store,
+        AgentMailEndpoint::loopback_mock_for_tests(&server.uri()).unwrap(),
+    );
+    c.replace_accounts(accounts).unwrap();
+    Arc::new(c)
+}
+
+/// RFC 3339 UTC for `secs` since the epoch (civil-from-days, no date library).
+fn rfc3339(secs: u64) -> String {
+    let days = i64::try_from(secs / 86_400).unwrap();
+    let rem = secs % 86_400;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
+}
+
+fn recent() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    rfc3339(now - 20)
+}
+
+fn verification_mail(inbox: &str) -> Value {
+    json!({
+        "inbox_id": inbox, "thread_id": "t", "message_id": "msgone", "labels": ["unread"],
+        "timestamp": recent(), "from": "Example <no-reply@mail.example.com>", "to": [inbox],
+        "size": 10, "updated_at": recent(), "created_at": recent(),
+        "subject": "Confirm your account",
+        "text": "Your verification code is 482913.",
+        "html": "<a href=\"https://app.example.com/verify?token=abc\">Confirm</a> <a href=\"https://tracker.evil.test/p\">x</a>",
+        "attachments": []
+    })
+}
+
+async fn serve_mail(server: &MockServer, inbox: &str, messages: Vec<Value>) {
+    Mock::given(method("GET"))
+        .and(path(format!("/v0/inboxes/{inbox}/messages")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"count": messages.len(), "messages": messages})),
+        )
+        .mount(server)
+        .await;
+    for m in &messages {
+        let id = m["message_id"].as_str().unwrap();
+        Mock::given(method("GET"))
+            .and(path(format!("/v0/inboxes/{inbox}/messages/{id}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(m.clone()))
+            .mount(server)
+            .await;
+    }
+}
+
+struct Page(Option<&'static str>);
+
+#[async_trait]
+impl PageOrigin for Page {
+    async fn top_origin(&self, _: &ToolContext) -> Option<String> {
+        self.0.map(str::to_owned)
+    }
+}
+
+fn quick() -> WaitPlan {
+    WaitPlan {
+        timeout: Duration::from_millis(150),
+        max_age: Duration::from_secs(900),
+        first_pause: Duration::from_millis(20),
+        max_pause: Duration::from_millis(40),
+    }
+}
+
+fn ctx(bot: &str, run: &str) -> ToolContext {
+    ToolContext {
+        bot_id: Some(bot.to_owned()),
+        run_id: run.to_owned(),
+        ..ToolContext::default()
+    }
+}
+
+fn data(out: &tool_registry::ToolOutput) -> &Value {
+    let ContentPart::Json { data } = &out.content[0] else {
+        panic!("expected JSON")
+    };
+    data
+}
+
+fn tool(mail: &Arc<MailHandle>, page: Option<&'static str>) -> EmailWaitFor {
+    EmailWaitFor::new(Arc::clone(mail), Arc::new(Page(page)), Some(quick()))
+}
+
+async fn rig(accounts: Vec<AccountConfig>, inbox: &str, mails: Vec<Value>) -> Arc<MailHandle> {
+    let server = Box::leak(Box::new(MockServer::start().await));
+    serve_mail(server, inbox, mails).await;
+    let mail = Arc::new(MailHandle::new());
+    mail.set(connector(server, accounts));
+    mail
+}
+
+#[test]
+fn the_tool_is_a_read_of_the_messaging_family_and_asks_like_email_read() {
+    let t = EmailWaitFor::new(Arc::new(MailHandle::new()), Arc::new(Page(None)), None);
+    let s = t.spec();
+    assert_eq!(s.effect, Effect::Read);
+    assert_eq!(s.category, PermissionCategory::Messaging);
+    // Same class as email_read: untrusted, private and it reaches a remote
+    // mailbox, so a mail- or webhook-started (tainted) run is still asked.
+    assert!(s.content.ingests_untrusted && s.content.reads_private && s.content.egress);
+    assert!(!t.visible_to(Some("bot")), "no connector, no tool");
+}
+
+#[test]
+fn plan_is_capped_at_ten_minutes() {
+    let p = WaitPlan::minutes(99, Some(999));
+    assert_eq!(p.timeout, Duration::from_secs(600));
+    assert_eq!(p.max_age, Duration::from_secs(3600));
+}
+
+#[tokio::test]
+async fn a_bot_waits_on_its_own_inbox_and_gets_a_short_untrusted_answer() {
+    let mail = rig(
+        vec![account("a-mail", Some(BOT_A), "a@agentmail.to")],
+        "a@agentmail.to",
+        vec![verification_mail("a@agentmail.to")],
+    )
+    .await;
+    let t = tool(&mail, Some("https://app.example.com:443"));
+    assert!(t.visible_to(Some(BOT_A)));
+    assert!(
+        !t.visible_to(Some(BOT_B)),
+        "a bot without an identity does not see it"
+    );
+    assert!(
+        t.egress_extra(&ctx(BOT_A, "r1"), &json!({}))
+            .unwrap()
+            .contains("a@agentmail.to")
+    );
+    let out = t
+        .call(
+            &ctx(BOT_A, "r-found"),
+            json!({"site":"https://example.com","from_domain":"example.com"}),
+        )
+        .await
+        .unwrap();
+    let d = data(&out);
+    assert_eq!(d["found"], true);
+    assert_eq!(d["untrusted_data"], true);
+    assert_eq!(d["codes"], json!(["482913"]));
+    assert_eq!(
+        d["followable_links"],
+        json!(["https://app.example.com/verify?token=abc"])
+    );
+    assert!(d.to_string().contains("external link, not followed"));
+}
+
+#[tokio::test]
+async fn the_site_is_checked_against_the_live_page_not_the_models_word() {
+    let mail = rig(
+        vec![account("a-mail", Some(BOT_A), "a@agentmail.to")],
+        "a@agentmail.to",
+        vec![verification_mail("a@agentmail.to")],
+    )
+    .await;
+    // The model says example.com; the browser is really somewhere else.
+    let out = tool(&mail, Some("https://evil.test:443"))
+        .call(&ctx(BOT_A, "r-lie"), json!({"site":"https://example.com"}))
+        .await
+        .unwrap();
+    assert_eq!(data(&out)["followable_links"], json!([]));
+    // No browser page at all.
+    let out = tool(&mail, None)
+        .call(
+            &ctx(BOT_A, "r-nopage"),
+            json!({"site":"https://example.com"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(data(&out)["followable_links"], json!([]));
+}
+
+#[tokio::test]
+async fn other_bots_and_shared_accounts_are_refused() {
+    let mail = rig(
+        vec![
+            account("a-mail", Some(BOT_A), "a@agentmail.to"),
+            account("pool", None, "pool@agentmail.to"),
+        ],
+        "a@agentmail.to",
+        vec![verification_mail("a@agentmail.to")],
+    )
+    .await;
+    let t = tool(&mail, None);
+    // Bot B names A's account: refused like a missing one.
+    let e = t
+        .call(&ctx(BOT_B, "r-b"), json!({"account":"a-mail"}))
+        .await
+        .unwrap_err();
+    assert!(matches!(e, ToolError::InvalidInput(m) if m.contains("unknown account")));
+    // The account every bot may use is not anybody's OWN identity.
+    let e = t
+        .call(&ctx(BOT_A, "r-pool"), json!({"account":"pool"}))
+        .await
+        .unwrap_err();
+    assert!(matches!(e, ToolError::InvalidInput(m) if m.contains("own mail identity")));
+}
+
+#[tokio::test]
+async fn times_out_with_a_short_no_mail_answer_and_stop_cancels() {
+    let mail = rig(
+        vec![account("a-mail", Some(BOT_A), "a@agentmail.to")],
+        "a@agentmail.to",
+        vec![],
+    )
+    .await;
+    let out = tool(&mail, None)
+        .call(&ctx(BOT_A, "r-timeout"), json!({}))
+        .await
+        .unwrap();
+    assert_eq!(data(&out)["found"], false);
+    assert!(
+        data(&out)["note"]
+            .as_str()
+            .unwrap()
+            .contains("Do not guess")
+    );
+
+    // A long wait ends at once when the run is stopped.
+    let long = EmailWaitFor::new(
+        Arc::clone(&mail),
+        Arc::new(Page(None)),
+        Some(WaitPlan {
+            timeout: Duration::from_secs(600),
+            ..quick()
+        }),
+    );
+    let started = std::time::Instant::now();
+    let h = tokio::spawn(async move { long.call(&ctx(BOT_A, "r-stop"), json!({})).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    crate::wait::cancel_run_waits("r-stop");
+    let e = h.await.unwrap().unwrap_err();
+    assert!(e.to_string().contains("stopped"), "{e}");
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+fn register_rig(mail: &Arc<MailHandle>) -> (Arc<dyn Tool>, Arc<FillSecrets>) {
+    let secrets = Arc::new(FillSecrets::in_memory(Arc::new(MemoryStore::new())));
+    let tool = account_register_tool_with_mail(
+        Arc::clone(&secrets),
+        AccountRegisterConfig::default(),
+        Arc::clone(mail),
+    );
+    (tool, secrets)
+}
+
+#[tokio::test]
+async fn a_sign_up_uses_the_bots_identity_and_the_vault_records_which_one() {
+    let mail = rig(
+        vec![
+            account("a-mail", Some(BOT_A), "a@agentmail.to"),
+            account("pool", None, "pool@agentmail.to"),
+        ],
+        "a@agentmail.to",
+        vec![],
+    )
+    .await;
+    let (tool, secrets) = register_rig(&mail);
+    let c = ctx(BOT_A, "r-reg");
+    // No login, no mailbox named: the bot's own identity is used.
+    let input = json!({"site":"https://example.com"});
+    let card = tool.approval_details(&c, &input).await.unwrap().unwrap();
+    assert!(
+        card["login_id"]
+            .as_str()
+            .unwrap()
+            .contains("a@agentmail.to"),
+        "{card}"
+    );
+    assert!(
+        card["email_account"].as_str().unwrap().contains("a-mail"),
+        "{card}"
+    );
+    let out = tool.call(&c, input).await.unwrap();
+    let text = format!("{out:?}");
+    assert!(text.contains("a@agentmail.to"), "{text}");
+    assert!(text.contains("email_wait_for"), "{text}");
+    let accounts = secrets.accounts(Some(BOT_A)).unwrap();
+    assert_eq!(accounts[0].login_id, "a@agentmail.to");
+    assert_eq!(accounts[0].email_account.as_deref(), Some("a-mail"));
+
+    // A mailbox that is not one of the bot's own identities is refused: the shared
+    // owner mailbox, another bot's, and a made-up name.
+    let tool = register_rig(&mail).0;
+    for named in ["pool", "nothing-like-it"] {
+        let e = tool
+            .call(
+                &c,
+                json!({"site":"https://example.org","email_account":named}),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(e, ToolError::InvalidInput(_)), "{named}: {e:?}");
+    }
+    // Without any identity and without a login there is nothing to sign up with.
+    let e = tool
+        .call(&ctx(BOT_B, "r-b"), json!({"site":"https://example.net"}))
+        .await
+        .unwrap_err();
+    assert!(matches!(e, ToolError::InvalidInput(m) if m.contains("login_id")));
+}
+
+#[tokio::test]
+async fn the_probe_reports_the_page_the_browser_is_on_not_what_anyone_claims() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Arc::new(crate::browser::fake::FakeBrowser::default());
+    let slot = Arc::new(connector_email::PageOriginSlot::new());
+    // Before the browser tools exist the slot knows nothing.
+    assert_eq!(slot.top_origin(&ctx(BOT_A, "r-probe")).await, None);
+    let _tools = crate::browser::tools_with_origin(
+        fake.clone(),
+        dir.path(),
+        None,
+        None,
+        Some(Arc::clone(&slot)),
+    );
+    // No page yet.
+    assert_eq!(slot.top_origin(&ctx(BOT_A, "r-probe")).await, None);
+    *fake.url.lock() = Some("https://Accounts.Example.com/signup?a=1#x".to_owned());
+    assert_eq!(
+        slot.top_origin(&ctx(BOT_A, "r-probe")).await.as_deref(),
+        Some("https://accounts.example.com:443")
+    );
+    // A non-web page has no origin.
+    *fake.url.lock() = Some("about:blank".to_owned());
+    assert_eq!(slot.top_origin(&ctx(BOT_A, "r-probe")).await, None);
+}

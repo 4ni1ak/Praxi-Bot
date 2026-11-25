@@ -47,6 +47,7 @@ use crate::profile_share;
 use crate::profile_share_routes;
 use crate::routes;
 use crate::secret_request_routes;
+use crate::site_rule_routes;
 use crate::skill_hub;
 use crate::skill_management;
 use crate::skill_market;
@@ -326,6 +327,10 @@ impl Modify for Security {
         routes::resume_run,
         routes::retry_schedule_occurrence,
         routes::revoke_grant,
+        site_rule_routes::list_site_rules,
+        site_rule_routes::add_site_rule,
+        site_rule_routes::remove_site_rule,
+        site_rule_routes::recent_site_approvals,
         routes::run_schedule_now,
         routes::run_usage,
         routes::send_message,
@@ -521,6 +526,9 @@ impl Modify for Security {
         dto::ReloadResponse,
         dto::RememberResponse,
         dto::RevokeGrant,
+        site_rule_routes::SiteRuleDto,
+        site_rule_routes::SiteRuleInput,
+        site_rule_routes::SiteRuleSuggestionDto,
         dto::RunDto,
         dto::RunUsageDto,
         dto::RuntimeConfigDto,

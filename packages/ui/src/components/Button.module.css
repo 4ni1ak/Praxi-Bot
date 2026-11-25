@@ -7,7 +7,8 @@
   border: var(--size-border) solid transparent;
   font-family: var(--font-sans);
   font-weight: var(--font-weight-medium);
-  line-height: var(--line-height-tight);
+  line-height: var(--line-height-ui);
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
   user-select: none;
   text-decoration: none;
@@ -15,16 +16,24 @@
     background-color var(--motion-duration-fast) var(--motion-easing-standard),
     color var(--motion-duration-fast) var(--motion-easing-standard),
     border-color var(--motion-duration-fast) var(--motion-easing-standard),
-    box-shadow var(--motion-duration-fast) var(--motion-easing-standard);
+    box-shadow var(--motion-duration-fast) var(--motion-easing-standard),
+    transform var(--motion-duration-instant) var(--motion-easing-standard);
 }
 
+/* One focus ring for the whole app (keyboard only): see --shadow-focus. */
 .button:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
 }
 
+/* Pressed: a small scale instead of the global brightness filter (which would also darken icons). */
+.button:active:not(:disabled) {
+  transform: scale(var(--motion-press-scale));
+  filter: none;
+}
+
 .button:disabled {
-  opacity: 0.5;
+  opacity: var(--state-disabled-opacity);
   cursor: not-allowed;
 }
 
@@ -37,13 +46,13 @@
 .md {
   height: var(--size-control-md);
   padding: var(--space-0) var(--space-4);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-ui);
 }
 
 .lg {
   height: var(--size-control-lg);
   padding: var(--space-0) var(--space-5);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-sm);
 }
 
 .primary {
@@ -57,15 +66,25 @@
   border-color: transparent;
 }
 
+.primary:active:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-primary) 84%, var(--color-background));
+}
+
 .secondary {
   background-color: var(--color-surface-elevated);
   color: var(--color-text);
   border-color: var(--color-border);
 }
 
+/* State layers: the hover / pressed tint is mixed from the text colour, so it reads the same on every
+   surface, and the edge steps up one notch instead of flashing to the strong border. */
 .secondary:hover:not(:disabled) {
-  background-color: var(--color-surface-active);
-  border-color: var(--color-border-strong);
+  background-color: color-mix(in srgb, var(--color-surface-elevated), var(--color-text) var(--state-hover-strength));
+  border-color: var(--color-border-hover);
+}
+
+.secondary:active:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-surface-elevated), var(--color-text) var(--state-pressed-strength));
 }
 
 .ghost {
@@ -75,7 +94,12 @@
 }
 
 .ghost:hover:not(:disabled) {
-  background-color: var(--color-surface-elevated);
+  background-color: var(--state-hover);
+  color: var(--color-text);
+}
+
+.ghost:active:not(:disabled) {
+  background-color: var(--state-pressed);
   color: var(--color-text);
 }
 
@@ -85,10 +109,22 @@
   border-color: var(--color-danger);
 }
 
+.danger:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-danger) 90%, var(--color-background));
+}
+
+.danger:active:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-danger) 84%, var(--color-background));
+}
+
 .active {
   background-color: var(--color-accent-subtle);
   color: var(--color-accent-text);
   border-color: var(--color-accent);
+}
+
+.active:active:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-accent-subtle), var(--color-text) var(--state-pressed-strength));
 }
 
 .fullWidth {

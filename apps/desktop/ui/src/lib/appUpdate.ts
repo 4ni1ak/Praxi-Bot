@@ -7,10 +7,18 @@ export { updateErrorKey } from "./updateErrors";
 export interface UpdateStatus {
   enabled: boolean;
   currentVersion: string;
+  buildId: string;
+  channel: UpdateChannel;
+  previewAvailable: boolean;
+  lastChecked: number | null;
+  skippedVersion: string | null;
+  installedNotes: UpdateInfo | null;
   previousVersion: string | null;
   rollbackAdvised: boolean;
   rollbackAvailable: boolean;
 }
+
+export type UpdateChannel = "stable" | "preview";
 
 export interface UpdateInfo {
   version: string;
@@ -22,6 +30,12 @@ export interface UpdateInfo {
 const OFF: UpdateStatus = {
   enabled: false,
   currentVersion: "",
+  buildId: "",
+  channel: "stable",
+  previewAvailable: false,
+  lastChecked: null,
+  skippedVersion: null,
+  installedNotes: null,
   previousVersion: null,
   rollbackAdvised: false,
   rollbackAvailable: false
@@ -29,15 +43,19 @@ const OFF: UpdateStatus = {
 
 const inApp = () => isTauriRuntime() && !isMockMode();
 
-export async function updateStatus(): Promise<UpdateStatus> {
+export async function updateStatus(lang = "en"): Promise<UpdateStatus> {
   if (!inApp()) {
     return OFF;
   }
-  try {
-    return await invoke<UpdateStatus>("update_status");
-  } catch {
-    return OFF;
-  }
+  return invoke<UpdateStatus>("update_status", { lang });
+}
+
+export function setUpdateChannel(channel: UpdateChannel): Promise<void> {
+  return invoke("update_set_channel", { channel });
+}
+
+export function skipUpdate(): Promise<void> {
+  return invoke("update_skip");
 }
 
 /** `lang` is the UI language ("tr", "de", "en"); the shell picks the matching notes. */
