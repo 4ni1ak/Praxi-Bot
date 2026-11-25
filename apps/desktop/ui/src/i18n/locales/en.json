@@ -3698,7 +3698,7 @@
   },
   "home": {
     "admin": {
-      "byDesign": "{{name}} keeps some things to itself: the execution policy, command-line tool servers, skills, email accounts and coding-CLI sign-ins are changed on {{name}} directly.",
+      "byDesign": "{{name}} keeps some things to itself: the execution policy, command-line tool servers, skills and coding-CLI sign-ins are changed on {{name}} directly. Email, search and dictation accounts can be connected from this computer.",
       "noSecrets": "{{name}} cannot store keys yet.",
       "notGranted": "{{name}} has not confirmed this computer yet. Run this once on {{name}}:",
       "title": "Set up from this computer"
@@ -3791,10 +3791,11 @@
     },
     "newBotNeedsModel": "{{name}} has no model yet, so a bot cannot be created there. Connect a model on the server first.",
     "refusal": {
+      "adminRequired": "{{name}} has not confirmed this computer as its administrator yet. Run `bot host admin --all-desktops` once on {{name}}, then try again.",
       "botPermissions": "A bot's permissions and tools are managed on {{name}} itself. Name, persona and model can be changed here.",
       "composio": "App connections are managed on this computer's owner side, not on {{name}}.",
       "connectionTest": "Key tests run on {{name}} itself and are not available from this app.",
-      "credentials": "Email and search accounts are connected on {{name}} itself.",
+      "credentials": "This email or search setting is changed on {{name}} itself, not from this app.",
       "generic": "{{name}} did not allow this: {{reason}}",
       "hostTransfer": "Moving the host and pairing channels is done on {{name}} itself.",
       "knowledge": "Knowledge settings are managed on {{name}} itself.",
