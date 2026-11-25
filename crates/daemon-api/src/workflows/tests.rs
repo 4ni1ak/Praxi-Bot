@@ -394,6 +394,19 @@ async fn propose_review_save_list_replay_and_delete() {
         3
     );
     approvals.abort();
+    let (status, history) = request(
+        &env,
+        Method::GET,
+        "/v1/workflows/recorded/history",
+        None,
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(history[0]["run_id"], run.0.to_string());
+    let steps = history[0]["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 3);
+    assert!(steps.iter().all(|s| s["status"] == "ok"));
     env.state.agent().remember_route(run).unwrap();
     assert_eq!(
         request(&env, Method::DELETE, "/v1/workflows/recorded", None, true)
@@ -1115,4 +1128,254 @@ async fn safe_mode_never_replays_a_saved_workflow() {
         "endpoint replayed a workflow"
     );
     approvals.abort();
+}
+
+fn seed(env: &Env, name: &str) -> protocol::BotId {
+    use workflow_replay::format::{Navigate, Step};
+    let bot = env
+        .state
+        .storage()
+        .get_chat(env.chat)
+        .unwrap()
+        .unwrap()
+        .bot_id;
+    let mut wf = workflow_replay::Workflow::new(name);
+    wf.description = "demo".into();
+    wf.params = vec![
+        Param {
+            name: "who".into(),
+            ty: workflow_replay::format::ParamType::String,
+            default: Some("Ada".into()),
+            description: String::new(),
+        },
+        Param {
+            name: "token".into(),
+            ty: workflow_replay::format::ParamType::String,
+            default: None,
+            description: String::new(),
+        },
+    ];
+    wf.steps = ["a", "b", "c"]
+        .map(|p| {
+            Step::Navigate(Navigate {
+                url: format!("https://example.test/{p}/{{who}}"),
+                profile: None,
+            })
+        })
+        .to_vec();
+    wf.source = Some(workflow_replay::format::WorkflowSource {
+        run_id: "r".into(),
+        bot_id: bot.to_string(),
+        untrusted_content: false,
+        step_origins: vec![
+            "user_request".into(),
+            "run_content_or_model".into(),
+            "user_request".into(),
+        ],
+    });
+    WorkflowStore::new(env.dir.path())
+        .for_bot(&bot.to_string())
+        .unwrap()
+        .save(&wf)
+        .unwrap();
+    bot
+}
+
+fn edit_body(bot: protocol::BotId, revision: u64, steps: Value) -> Value {
+    json!({"bot_id":bot.0,"revision":revision,"name":"flow","description":"edited",
+        "params":[{"name":"who","default":"Grace","description":"who to greet"},{"name":"token","default":null,"description":""}],
+        "steps":steps,"success_check":{"kind":"browser_text","text":"Done"}})
+}
+
+#[tokio::test]
+async fn edit_reorders_drops_adds_waits_and_never_authors_other_steps() {
+    let env = setup();
+    let bot = seed(&env, "flow");
+    let ok = edit_body(
+        bot,
+        1,
+        json!([{"keep":2},{"wait":{"text":"Ready","timeout_secs":5}},{"keep":1}]),
+    );
+    let (status, saved) = request(
+        &env,
+        Method::PUT,
+        "/v1/workflows/flow",
+        Some(ok.clone()),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let urls: Vec<_> = saved["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            (
+                s["kind"].as_str().unwrap().to_owned(),
+                s["url"].as_str().map(str::to_owned),
+            )
+        })
+        .collect();
+    assert_eq!(urls[0].1.as_deref(), Some("https://example.test/c/{who}"));
+    assert_eq!(urls[1].0, "wait_for");
+    assert_eq!(urls[2].1.as_deref(), Some("https://example.test/b/{who}"));
+    assert_eq!(saved["revision"], 2);
+    assert_eq!(saved["params"][0]["default"], "Grace");
+    assert_eq!(
+        saved["source"]["step_origins"],
+        json!(["user_request", "user_request", "run_content_or_model"])
+    );
+    // a stale editor, a repeated step, a forged step, and a new default for an ask-every-time value are refused
+    assert_eq!(
+        request(&env, Method::PUT, "/v1/workflows/flow", Some(ok), true)
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    for steps in [
+        json!([{"keep":0},{"keep":0}]),
+        json!([{"keep":9}]),
+        json!([{"shell":{"command":"rm -rf /"}}]),
+        json!([]),
+    ] {
+        let (status, _) = request(
+            &env,
+            Method::PUT,
+            "/v1/workflows/flow",
+            Some(edit_body(bot, 2, steps)),
+            true,
+        )
+        .await;
+        assert!(status.is_client_error(), "{status}");
+    }
+    let mut body = edit_body(bot, 2, json!([{"keep":0}]));
+    body["params"][1]["default"] = json!("secret-value");
+    assert_eq!(
+        request(&env, Method::PUT, "/v1/workflows/flow", Some(body), true)
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    // owner only
+    let (status, _) = request(
+        &env,
+        Method::PUT,
+        "/v1/workflows/flow",
+        Some(edit_body(bot, 2, json!([{"keep":0}]))),
+        false,
+    )
+    .await;
+    assert!(
+        status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN,
+        "{status}"
+    );
+}
+
+#[tokio::test]
+async fn rename_duplicate_export_and_strict_untrusted_import() {
+    let env = setup();
+    let bot = seed(&env, "flow");
+    let (status, _) = request(
+        &env,
+        Method::POST,
+        "/v1/workflows/flow/duplicate",
+        Some(json!({"bot_id":bot.0,"new_name":"copy"})),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, _) = request(
+        &env,
+        Method::POST,
+        "/v1/workflows/flow/duplicate",
+        Some(json!({"bot_id":bot.0,"new_name":"copy"})),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let mut rename = edit_body(bot, 1, json!([{"keep":0}]));
+    rename["name"] = json!("renamed");
+    assert_eq!(
+        request(&env, Method::PUT, "/v1/workflows/copy", Some(rename), true)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        request(&env, Method::GET, "/v1/workflows/copy", None, true)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+
+    let (status, exported) =
+        request(&env, Method::GET, "/v1/workflows/flow/export", None, true).await;
+    assert_eq!(status, StatusCode::OK);
+    let content = exported["content"].as_str().unwrap().to_owned();
+    assert!(
+        !content.contains("\"source\""),
+        "where it was recorded stays here"
+    );
+    let import =
+        |content: String, name: Option<&str>| json!({"bot_id":bot.0,"content":content,"name":name});
+    let (status, imported) = request(
+        &env,
+        Method::POST,
+        "/v1/workflows/import",
+        Some(import(content.clone(), Some("from-file"))),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{imported}");
+    assert_eq!(imported["source"]["untrusted_content"], true);
+    assert_eq!(
+        imported["source"]["step_origins"],
+        json!([
+            "run_content_or_model",
+            "run_content_or_model",
+            "run_content_or_model"
+        ])
+    );
+    assert_eq!(
+        request(
+            &env,
+            Method::POST,
+            "/v1/workflows/import",
+            Some(import(content.clone(), Some("from-file"))),
+            true
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let mut with_extra: Value = serde_json::from_str(&content).unwrap();
+    with_extra["hook"] = json!("x");
+    let mut forged = serde_json::from_str::<Value>(&content).unwrap();
+    forged["name"] = json!("Bad Name!");
+    for bad in [
+        "x".repeat(edit::MAX_IMPORT_BYTES + 1),
+        "not json".to_owned(),
+        with_extra.to_string(),
+        forged.to_string(),
+        json!({"version":1,"name":"empty","steps":[]}).to_string(),
+    ] {
+        let (status, _) = request(
+            &env,
+            Method::POST,
+            "/v1/workflows/import",
+            Some(import(bad, None)),
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (status, _) = request(
+        &env,
+        Method::POST,
+        "/v1/workflows/import",
+        Some(import(content, Some("nope"))),
+        false,
+    )
+    .await;
+    assert!(status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN);
 }

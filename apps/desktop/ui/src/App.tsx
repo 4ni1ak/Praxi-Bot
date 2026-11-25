@@ -156,6 +156,7 @@ import { actionableCount } from "./lib/notificationHistory";
 import { restoreNotificationHistory, useNotificationHistory } from "./store/notificationHistoryStore";
 import { OnboardingView } from "./views/OnboardingView";
 import { SchedulesView } from "./views/SchedulesView";
+import { WorkflowsView } from "./views/WorkflowsView";
 import { AppsModal } from "./views/AppsModal";
 import { NewBotModal } from "./views/NewBotModal";
 import { MyBotsView } from "./views/MyBotsView";
@@ -208,7 +209,8 @@ type Route =
   | { kind: "chat"; chatId: string; botId: string; messageId?: string; jumpRequestId?: number; external?: boolean }
   | { kind: "needs" }
   | { kind: "notifications" }
-  | { kind: "schedules"; botId?: string };
+  | { kind: "schedules"; botId?: string }
+  | { kind: "workflows"; botId?: string };
 
 function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDispatcher> }) {
   const { t } = useTranslation();
@@ -1626,6 +1628,7 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
           onOpenChat={openChat}
           onSettings={(botId) => go({ kind: "bot", botId, edit: true })}
           onSchedule={(botId) => go({ kind: "schedules", botId })}
+          onWorkflows={(botId) => go({ kind: "workflows", botId })}
           onPause={async (botId) => {
             // Re-read before a global native action: a stale card must not pause another bot.
             const snapshot = await getControlState();
@@ -1634,6 +1637,7 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
             setControlState(await (action === "pause" ? pauseBotRun() : resumeBotRun()));
           }}
         /> : null}
+        {route.kind === "workflows" ? <WorkflowsView initialBotId={route.botId} /> : null}
         {route.kind === "schedules" ? (
           <SchedulesView onOpenChat={openChat} initialBotId={route.botId} />
         ) : null}

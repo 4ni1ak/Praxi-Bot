@@ -1,4 +1,4 @@
-import { Bot, CalendarDays, LayoutGrid, List, MessageSquarePlus, Pause, Play, Plus, RefreshCw, SearchX, Settings2 } from "lucide-react";
+import { Bot, CalendarDays, LayoutGrid, List, MessageSquarePlus, Pause, Play, Plus, RefreshCw, SearchX, Settings2, Workflow } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BotAvatar, Button, Card } from "ui";
@@ -13,13 +13,14 @@ import type { ControlSnapshot } from "../overlay/events";
 import { useDaemon } from "../state/DaemonContext";
 import styles from "./MyBotsView.module.css";
 
-export function MyBotsView({ control, onPause, onNewBot, onNewChat, onSettings, onSchedule, onOpenChat, newChatBusy }: {
+export function MyBotsView({ control, onPause, onNewBot, onNewChat, onSettings, onSchedule, onWorkflows, onOpenChat, newChatBusy }: {
   control: ControlSnapshot;
   onPause: (botId: string) => Promise<void>;
   onNewBot: () => void;
   onNewChat: (botId: string) => void;
   onSettings: (botId: string) => void;
   onSchedule: (botId: string) => void;
+  onWorkflows: (botId: string) => void;
   onOpenChat: (chatId: string) => void;
   newChatBusy: boolean;
 }) {
@@ -146,6 +147,7 @@ export function MyBotsView({ control, onPause, onNewBot, onNewChat, onSettings, 
                   <Button size="sm" disabled={disabled || !!busyId || (!nativeAction && !pausedRunId)} title={!nativeAction && !pausedRunId ? t("myBots.pauseUnavailable") : undefined} onClick={() => void pause(bot.id, pausedRunId)}>{canResume ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}{t(canResume ? "myBots.resume" : "myBots.pause")}</Button>
                   <Button size="sm" disabled={disabled} onClick={() => onSettings(bot.id)}><Settings2 aria-hidden="true" />{t("myBots.settings")}</Button>
                   <Button size="sm" disabled={disabled} onClick={() => onSchedule(bot.id)}><CalendarDays aria-hidden="true" />{t("myBots.schedule")}</Button>
+                  <Button size="sm" disabled={disabled} onClick={() => onWorkflows(bot.id)}><Workflow aria-hidden="true" />{t("myBots.workflows")}</Button>
                   {needsChatId ? <Button size="sm" disabled={disabled} onClick={() => onOpenChat(needsChatId)}>{t("myBots.review")}</Button> : null}
                 </div>
               </Card>

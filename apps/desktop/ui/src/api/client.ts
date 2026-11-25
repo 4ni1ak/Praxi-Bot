@@ -130,6 +130,11 @@ import type {
   ReleaseRequest,
   RememberResponse,
   WorkflowProposal,
+  EditWorkflow,
+  DuplicateWorkflow,
+  ImportWorkflow,
+  WorkflowExport,
+  WorkflowRunRecord,
   WorkflowDefinition,
   SaveWorkflow,
   RunWorkflow,
@@ -1066,6 +1071,21 @@ export class ApiClient {
   }
   runWorkflow(name: string, input: RunWorkflow): Promise<WorkflowRun> {
     return this.request("POST", `/workflows/${encodeURIComponent(name)}/run`, { body: input });
+  }
+  editWorkflow(name: string, body: EditWorkflow): Promise<WorkflowDefinition> {
+    return this.request("PUT", `/workflows/${encodeURIComponent(name)}`, { body });
+  }
+  duplicateWorkflow(name: string, body: DuplicateWorkflow): Promise<WorkflowDefinition> {
+    return this.request("POST", `/workflows/${encodeURIComponent(name)}/duplicate`, { body });
+  }
+  exportWorkflow(name: string, botId: string): Promise<WorkflowExport> {
+    return this.request("GET", `/workflows/${encodeURIComponent(name)}/export?bot_id=${encodeURIComponent(botId)}`);
+  }
+  importWorkflow(body: ImportWorkflow): Promise<WorkflowDefinition> {
+    return this.request("POST", "/workflows/import", { body });
+  }
+  workflowHistory(name: string, botId: string): Promise<WorkflowRunRecord[]> {
+    return this.request("GET", `/workflows/${encodeURIComponent(name)}/history?bot_id=${encodeURIComponent(botId)}`);
   }
   cancelRun(runId: string): Promise<Run> {
     return this.request("POST", `/runs/${runId}/cancel`);
