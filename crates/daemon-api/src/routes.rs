@@ -2282,9 +2282,16 @@ struct ScheduleParts {
     spec: ScheduleSpec,
     payload: Payload,
     policy: MisfirePolicy,
-    /// `Some(None)` = clear, `Some(Some(n))` = set, `None` = unchanged.
-    catchup_window_secs: Option<Option<u64>>,
+    catchup_window_secs: CatchupChange,
     chat_id: Option<ChatId>,
+}
+
+/// What an input does to a schedule's catch-up window.
+#[derive(Clone, Copy)]
+enum CatchupChange {
+    Keep,
+    Clear,
+    Set(u64),
 }
 
 /// Longest catch-up window the owner can pick.
@@ -2319,9 +2326,9 @@ fn schedule_parts(s: &AppState, input: &ScheduleInput) -> Result<ScheduleParts, 
             .ok_or_else(|| bad_schedule(format!("unknown misfire_policy {p:?}")))?,
     };
     let catchup_window_secs = match input.catchup_window_secs {
-        None => None,
-        Some(0) => Some(None),
-        Some(n) if n <= MAX_CATCHUP_WINDOW_SECS => Some(Some(n)),
+        None => CatchupChange::Keep,
+        Some(0) => CatchupChange::Clear,
+        Some(n) if n <= MAX_CATCHUP_WINDOW_SECS => CatchupChange::Set(n),
         Some(_) => {
             return Err(bad_schedule(
                 "catchup_window_secs must be between 1 second and 30 days",
@@ -2493,7 +2500,9 @@ pub(crate) async fn create_schedule(
         p.policy,
         now_ms(),
     )?;
-    sc.catchup_window_secs = p.catchup_window_secs.flatten();
+    if let CatchupChange::Set(n) = p.catchup_window_secs {
+        sc.catchup_window_secs = Some(n);
+    }
     if input.enabled == Some(false) {
         sc.enabled = false;
         sc.next_run_at = None;
@@ -2613,8 +2622,10 @@ pub(crate) async fn update_schedule(
     sc.chat_id = p.chat_id;
     sc.payload = p.payload;
     sc.misfire_policy = p.policy;
-    if let Some(w) = p.catchup_window_secs {
-        sc.catchup_window_secs = w;
+    match p.catchup_window_secs {
+        CatchupChange::Keep => {}
+        CatchupChange::Clear => sc.catchup_window_secs = None,
+        CatchupChange::Set(n) => sc.catchup_window_secs = Some(n),
     }
     sc.spec = p.spec;
     let trigger = schedule_extensions(&s, &mut sc, &input).await?;

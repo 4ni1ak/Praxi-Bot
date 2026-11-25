@@ -647,7 +647,7 @@ fn handle_misfire(
                 fresh.truncate(1);
             }
             missed.sort_unstable();
-            reserve_and_spawn_with_missed(inner, schedule, fresh, missed, next_future)
+            reserve_and_spawn_with_missed(inner, schedule, fresh, &missed, next_future)
         }
     }
 }
@@ -658,14 +658,14 @@ fn reserve_and_spawn(
     due_slots: Vec<i64>,
     next_future: Option<i64>,
 ) -> Result<()> {
-    reserve_and_spawn_with_missed(inner, schedule, due_slots, Vec::new(), next_future)
+    reserve_and_spawn_with_missed(inner, schedule, due_slots, &[], next_future)
 }
 
 fn reserve_and_spawn_with_missed(
     inner: &Arc<Inner>,
     schedule: &Schedule,
     due_slots: Vec<i64>,
-    missed_slots: Vec<i64>,
+    missed_slots: &[i64],
     next_future: Option<i64>,
 ) -> Result<()> {
     if due_slots.is_empty() {
@@ -675,7 +675,7 @@ fn reserve_and_spawn_with_missed(
             inner.store.reserve_occurrences_with_missed(
                 schedule,
                 &[],
-                &missed_slots,
+                missed_slots,
                 next_future,
             )?;
         }
@@ -688,7 +688,7 @@ fn reserve_and_spawn_with_missed(
     if inner.store.reserve_occurrences_with_missed(
         schedule,
         &due_slots,
-        &missed_slots,
+        missed_slots,
         next_future,
     )? {
         spawn_timer_executions(inner, schedule.id, schedule.revision, due_slots, guard);
