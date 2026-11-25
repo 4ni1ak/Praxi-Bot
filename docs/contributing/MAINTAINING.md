@@ -147,6 +147,41 @@ that `last_reviewed` is stale), review the curated table in
    bot catalog check --docs docs/guide/model-catalog.md
    ```
 
+## MCP catalog check
+
+The HTTP entries in `crates/mcp-bridge/catalog.json` are verified by a credential-free script.
+Run it by hand when editing the catalog, or read the weekly report from the
+`MCP catalog check` workflow (Mondays 05:17 UTC, main repository only):
+
+```sh
+python3 scripts/check_mcp_catalog.py --timeout 5
+python3 scripts/check_mcp_catalog.py --only linear --json /tmp/mcp-report.json
+python3 scripts/check_mcp_catalog.py --strict   # also fails on attention lines; manual use only
+```
+
+For each HTTP entry it POSTs an unauthenticated MCP `initialize`, then follows
+`WWW-Authenticate` / `/.well-known/oauth-protected-resource` /
+`/.well-known/oauth-authorization-server` to report whether dynamic client registration is
+advertised (`oauth-dcr`) or not (`oauth-no-dcr`). No authorization header or account is used, and
+no response bodies are stored. Stdio entries are skipped here; they are covered by
+`cargo test -p mcp-bridge --test catalog_contract`.
+
+`--strict` makes attention lines (dead endpoints, no-DCR servers) exit 1 as well; use it by hand
+only, never in a workflow that gates other work. The checker contacts only public `https` hosts:
+it refuses IP literals, `localhost`, private or non-global addresses, other schemes, and every
+redirect, including for the metadata URLs a vendor advertises. A vendor answer that cannot be
+parsed or fetched becomes an attention row for that entry, never a failed run.
+
+The text table is the human view; `--json` writes `checked_at`, `entries`, `attention` and
+`structural_errors`. `attention` covers dead/changed endpoints and no-DCR servers: these are
+reported in a single tracking issue (created, updated or closed by the scheduled workflow) and
+never fail unrelated CI. Only a broken catalog schema (exit 2) fails the scheduled job. The
+offline unit tests run in the normal `docs-check` CI job:
+
+```sh
+python3 -B -m unittest discover -s scripts/tests -p test_check_mcp_catalog.py -v
+```
+
 ## After merging
 
 - Close the linked issue if GitHub did not (`Closes #123` does it).
