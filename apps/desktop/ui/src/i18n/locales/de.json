@@ -10,7 +10,8 @@
     "settings": "Einstellungen",
     "shortcutSettings": "Strg ,",
     "updates": "Updates",
-    "usage": "Nutzung"
+    "usage": "Nutzung",
+    "vault": "Tresor"
   },
   "addServer": {
     "advanced": "Erweitert",
@@ -2013,7 +2014,8 @@
       "noMatch": "Keine Treffer",
       "schedules": "Geplante Aufgaben öffnen",
       "settings": "Einstellungen öffnen",
-      "stop": "Aktuellen Lauf stoppen"
+      "stop": "Aktuellen Lauf stoppen",
+      "vault": "Tresor öffnen"
     },
     "starters": {
       "calendar": "Meinen Kalender prüfen",
@@ -4039,7 +4041,28 @@
     "skippedFiles": "{{count}} Dateien übersprungen",
     "skippedFiles_one": "{{count}} Datei übersprungen",
     "title": "Wissen & Dateien",
-    "url": "URL der gespeicherten Seite"
+    "url": "URL der gespeicherten Seite",
+    "watch": {
+      "errors": {
+        "folder_missing": "Dieser Ordner wurde nicht gefunden. Verschieben Sie ihn zurück oder entfernen Sie die Quelle und fügen Sie den neuen Ort hinzu.",
+        "folder_unreadable": "Dieser Ordner kann nicht gelesen werden. Prüfen Sie, ob Sie noch Zugriff haben.",
+        "some_files_skipped": "Einige Dateien wurden übersprungen (zu groß, nicht lesbar oder sehen privat aus). Der Rest ist aktuell.",
+        "sync_failed": "Das letzte Update ist fehlgeschlagen. Es wird automatisch erneut versucht.",
+        "too_many_files": "Dieser Ordner enthält zu viele Dateien. Wählen Sie einen kleineren Ordner."
+      },
+      "files": "{{count}} Dateien indexiert",
+      "files_one": "{{count}} Datei indexiert",
+      "lastSync": "zuletzt aktualisiert {{time}}",
+      "neverSynced": "noch nicht aktualisiert",
+      "pause": "Updates pausieren",
+      "resume": "Updates fortsetzen",
+      "state": {
+        "backing_off": "Aktualisierungen verlangsamt; neuer Versuch automatisch",
+        "paused": "Automatische Updates pausiert",
+        "waiting": "Änderungen gefunden, Aktualisierung gleich",
+        "watching": "Wird automatisch aktualisiert"
+      }
+    }
   },
   "liveView": {
     "announce": {
@@ -4213,6 +4236,8 @@
         "release": "Bildschirm verlassen, um die Schaltflächen zu nutzen",
         "takeover": "Steuerung übernehmen"
       },
+      "screenFill": "Ohne Ränder füllen",
+      "screenFillHint": "Beschneidet die Bildschirmränder leicht, damit das Bild die Fläche füllt. Aus: der ganze Bildschirm mit Rändern.",
       "shortcuts": "Tastenkürzel",
       "takeoverHint": "Übernimm diesen Bildschirm selbst (Strg+Umschalt+D). Die Bots pausieren, bis du ihn zurückgibst.",
       "view": "Ansicht"
@@ -6885,6 +6910,118 @@
     "unknownCostNotice_one": "{{count}} Aufruf hatte keinen bekannten Preis und ist nicht in den Gesamtkosten enthalten.",
     "unknownUsageNotice": "{{count}} Aufrufe haben keine Token-Daten gemeldet und werden getrennt gezählt.",
     "unknownUsageNotice_one": "{{count}} Aufruf hat keine Token-Daten gemeldet und wird getrennt gezählt."
+  },
+  "vault": {
+    "actions": {
+      "clear": "Leeren",
+      "copy": "Kopieren",
+      "loading": "Tresor wird geladen…",
+      "retry": "Erneut versuchen",
+      "saving": "Wird gespeichert…"
+    },
+    "deleteConfirm": {
+      "body": "Dieses Geheimnis wird aus Ihrem lokalen Tresor auf diesem Computer entfernt. Bots können es dann nicht mehr ausfüllen.",
+      "title": "{{name}} löschen?"
+    },
+    "detail": {
+      "askHintOff": "Berechtigte Bots können dies ohne jedes Mal nachzufragen ausfüllen.",
+      "askHintOn": "Vor dem Ausfüllen durch einen Bot werden Sie um Bestätigung gebeten.",
+      "askTitle": "Vor Verwendung fragen",
+      "botsLabel": "Welche Bots diese Anmeldung verwenden dürfen",
+      "clearsIn": "Wird in {{seconds}} s gelöscht",
+      "copiedCleared": "{{what}} kopiert. Zwischenablage wird in {{seconds}} s geleert.",
+      "copyFailed": "Konnte nicht in die Zwischenablage kopiert werden.",
+      "deleted": "Aus dem Tresor entfernt.",
+      "hide": "Ausblenden",
+      "loginId": "Anmeldung / E-Mail",
+      "neverSentToModel": "Lokal auf diesem Computer gespeichert. Wird niemals an KI-Modelle gesendet oder in Protokolle geschrieben.",
+      "noBots": "Noch keine Bots vorhanden. Erstellen Sie zuerst einen Bot, um ihm Zugriff zu gewähren.",
+      "noBotsGrantedWarning": "Noch hat kein Bot Zugriff auf diesen Eintrag. Wählen Sie unten mindestens einen Bot aus, um das Ausfüllen zu erlauben.",
+      "note": "Notiz",
+      "origins": "Websites (Ursprünge)",
+      "password": "Passwort / Geheimnis",
+      "programs": "Desktop-Programme",
+      "reveal": "Anzeigen",
+      "showTyped": "Passwort anzeigen"
+    },
+    "empty": {
+      "noMatches": "Keine Einträge passen zu diesem Filter.",
+      "none": "Ihr Tresor ist leer. Fügen Sie eine Anmeldung hinzu oder importieren Sie aus einer Browser-CSV-Datei."
+    },
+    "form": {
+      "addTitle": "Neuer Tresor-Eintrag",
+      "badKey": "Geben Sie einen gültigen Referenzschlüssel ein (Buchstaben, Zahlen, _ oder -).",
+      "badOrigin": "Ungültiger Website-Ursprung: {{origin}}. Verwenden Sie eine vollständige URL wie https://example.com.",
+      "created": "Zum Tresor hinzugefügt.",
+      "editTitle": "Tresor-Eintrag bearbeiten",
+      "kindLabel": "Eintragstyp",
+      "loginLabel": "E-Mail oder Benutzername",
+      "loginPlaceholder": "sie@beispiel.de",
+      "needValue": "Geben Sie ein Passwort oder einen geheimen Wert ein.",
+      "noteLabel": "Notiz (optional)",
+      "notePlaceholder": "Wiederherstellungshinweis oder Verwendungszweck",
+      "originHint": "Kommagetrennte URLs oder Hosts (z. B. https://github.com).",
+      "originLabel": "Website-Adresse",
+      "refHint": "Stabile Kennung für die interne Zuordnung von Ausfüllanfragen.",
+      "refLabel": "Referenzschlüssel",
+      "saved": "Änderungen gespeichert.",
+      "secretKeepPlaceholder": "Leer lassen, um das vorhandene Passwort zu behalten",
+      "secretLabel": "Passwort oder Geheimnis",
+      "secretPlaceholder": "Passwort oder Geheimnis eingeben",
+      "siteLabel": "Website oder Bezeichnung",
+      "sitePlaceholder": "GitHub, Notion, Arbeit-SSH…"
+    },
+    "identity": {
+      "label": "Bot-Identitäten",
+      "manage": "Verwalten",
+      "none": "Noch keine Bot-E-Mail-Identität festgelegt"
+    },
+    "import": {
+      "andMore": "Und {{count}} weitere Einträge",
+      "chooseFile": "CSV-Datei auswählen…",
+      "confirm": "{{count}} Einträge importieren",
+      "deletePromptAck": "Fertig",
+      "deletePromptBody": "Ihre Passwörter sind nun sicher im Tresor gespeichert. Löschen Sie die Klartext-CSV-Datei dauerhaft von Ihrem Computer und leeren Sie den Papierkorb.",
+      "deletePromptTitle": "CSV-Datei sicher löschen",
+      "doneSubtitle": "Sie können den Zugriff pro Bot jederzeit überprüfen oder bearbeiten.",
+      "doneTitle": "{{count}} Anmeldungen importiert",
+      "formatsHint": "Unterstützt CSV-Exporte aus Google Chrome / Edge und Bitwarden.",
+      "importing": "Wird importiert…",
+      "previewTitle": "{{format}}-Export · {{count}} Anmeldungen bereit",
+      "skippedCount": "{{count}} übersprungen (fehlendes Passwort oder URL)",
+      "subtitle": "Importiert lokal, ohne etwas hochzuladen.",
+      "title": "Anmeldungen aus CSV importieren",
+      "toastDone": "{{count}} Einträge in Ihren Tresor importiert.",
+      "unrecognized": "Diese CSV-Datei entspricht nicht den Chrome- oder Bitwarden-Spalten mit Passwörtern.",
+      "warningBody": "Passwörter werden direkt auf diesem Computer importiert und sind standardmäßig für keinen Bot freigegeben, bis Sie unten Zugriff gewähren.",
+      "warningTitle": "Klartext-CSV-Datei"
+    },
+    "listLabel": "Tresor-Einträge",
+    "menu": {
+      "importCsv": "Aus CSV importieren…",
+      "login": "Anmeldung hinzufügen",
+      "other": "Anderes Geheimnis hinzufügen"
+    },
+    "newItem": "Neuer Eintrag",
+    "noBotAssigned": "Kein Bot hat Zugriff",
+    "noOrigin": "Keine Website",
+    "openButton": "Tresor öffnen",
+    "revealConfirm": {
+      "body": "Zeigen Sie dieses Geheimnis nur an und kopieren Sie es nur, wenn niemand sonst auf Ihren Bildschirm schaut. Kopierte Passwörter werden nach 30 Sekunden gelöscht.",
+      "copyConfirm": "Passwort kopieren",
+      "revealConfirm": "Passwort anzeigen",
+      "title": "Gespeichertes Geheimnis anzeigen?"
+    },
+    "searchPlaceholder": "Websites, Anmeldungen, Notizen durchsuchen…",
+    "selectHint": "Wählen Sie einen Eintrag aus, um Details anzuzeigen, das Geheimnis einzublenden oder Bot-Zugriffe festzulegen.",
+    "subtitle": "Lokal gespeicherte Anmeldungen, Passwörter und Bot-Identitäten mit Zugriffskontrolle pro Bot.",
+    "tabs": {
+      "all": "Alle",
+      "label": "Tresor-Filter",
+      "logins": "Anmeldungen",
+      "other": "Sonstige"
+    },
+    "title": "Tresor"
   },
   "voice": {
     "auto": "Automatisch (passend zur App-Sprache)",
