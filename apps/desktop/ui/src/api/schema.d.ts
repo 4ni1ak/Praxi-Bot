@@ -5900,6 +5900,8 @@ export interface components {
             bot?: string | null;
             /** @description Whether the account trusts an extra root certificate (a private CA). */
             custom_ca: boolean;
+            /** @description Bots that use this account as their default sender. */
+            default_for?: string[];
             /** @description Folder drafts are saved to. */
             drafts_folder: string;
             /** @description IMAP server (empty host for API-backed accounts). */
@@ -5915,6 +5917,10 @@ export interface components {
             password_set: boolean;
             /** @description Kind of mailbox. */
             provider: components["schemas"]["EmailProviderKind"];
+            /** @description Draft only, or ask the owner each time. */
+            send_mode?: components["schemas"]["EmailSendMode"];
+            /** @description Further bots (storage UUIDs) that may use the account besides `bot`. */
+            shared_with?: string[];
             /** @description SMTP server. */
             smtp: components["schemas"]["EmailSmtpServer"];
             /** @description Login name; empty = the address. */
@@ -5933,6 +5939,8 @@ export interface components {
             api_key?: string | null;
             /** @description Bot (storage UUID) that owns the account; absent / `null` = every bot. */
             bot?: string | null;
+            /** @description Bots that use this account as their default sender. */
+            default_for?: string[];
             /**
              * @description Custom (verified) domain for a new `agentmail` address; default the
              *     provider's shared domain.
@@ -5961,6 +5969,10 @@ export interface components {
              *     and `smtp` are not used and `api_key` is required.
              */
             provider?: components["schemas"]["EmailProviderKind"];
+            /** @description Draft only, or ask the owner each time (default). */
+            send_mode?: components["schemas"]["EmailSendMode"];
+            /** @description Further bots that may use the account besides `bot`. */
+            shared_with?: string[];
             /** @description SMTP server (`imap_smtp`). */
             smtp?: components["schemas"]["EmailSmtpServer"];
             /** @description Login name; default (empty) = the address. */
@@ -5981,11 +5993,16 @@ export interface components {
             api_key?: string | null;
             /** @description Owning bot; `null` = every bot; omit to keep. */
             bot?: string | null;
+            /** @description Bots that use this account as default sender; a present list replaces it. */
+            default_for?: string[] | null;
             /** @description Folder drafts are saved to. */
             drafts_folder?: string | null;
             imap?: null | components["schemas"]["EmailImapServer"];
             /** @description New password (write-only). */
             password?: string | null;
+            send_mode?: null | components["schemas"]["EmailSendMode"];
+            /** @description Further bots that may use the account; a present list replaces it. */
+            shared_with?: string[] | null;
             smtp?: null | components["schemas"]["EmailSmtpServer"];
             /** @description Login name; empty = the address. */
             username?: string | null;
@@ -6084,6 +6101,12 @@ export interface components {
          * @enum {string}
          */
         EmailSecurity: "implicit" | "start_tls";
+        /**
+         * @description What bots may do with a mail identity. Sending always needs the owner's
+         *     approval; this can only make it stricter.
+         * @enum {string}
+         */
+        EmailSendMode: "ask" | "draft_only";
         /** @description Answer of `POST /v1/email/accounts/{name}/send-test`. */
         EmailSendTestResponse: {
             /** @description The address the test message went to: always the mailbox's own address. */

@@ -1,5 +1,5 @@
 import type { EmailAccount } from "../api/types";
-import { useDaemon } from "../state/DaemonContext";
+import { useOptionalDaemonClient } from "../state/DaemonContext";
 import { identitiesFor, senderOf, switchReason } from "../lib/mailIdentity";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
@@ -235,7 +235,7 @@ function MailSenderBlock({
   onSwitch: (reason: string) => void;
 }) {
   const { t } = useTranslation();
-  const { client } = useDaemon();
+  const client = useOptionalDaemonClient();
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
   const [choice, setChoice] = useState("");
   useEffect(() => {
