@@ -492,7 +492,7 @@ async fn hung_secret_store_times_out() {
         timeout_secs: 1,
         bot: None,
         allowed_senders: Vec::new(),
-        identity: Default::default(),
+        identity: crate::IdentitySettings::default(),
         kind: crate::AccountKind::ImapSmtp,
         inbox_id: None,
     };

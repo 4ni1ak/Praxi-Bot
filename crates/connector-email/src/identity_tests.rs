@@ -71,7 +71,10 @@ async fn shared_account_is_usable_by_the_listed_bots_and_the_default_wins() {
     assert!(conn.scoped(Some(BOT_A)).resolve_name(None).is_ok());
     // A bot that was not listed neither sees nor reaches the account.
     assert!(conn.scoped(Some(BOT_C)).resolve_name(Some("work")).is_err());
-    assert!(conn.scoped(Some(BOT_C)).identities().is_empty());
+    assert!(matches!(
+        conn.scoped(Some(BOT_C)).identities().as_slice(),
+        []
+    ));
 }
 
 #[tokio::test]
@@ -142,6 +145,6 @@ send_mode = "draft_only"
     bad.identity.default_for = vec!["not a uuid!".into()];
     assert!(bad.validate().is_err());
     let mut plain = a;
-    plain.identity = Default::default();
+    plain.identity = crate::IdentitySettings::default();
     assert!(!toml::to_string(&plain).unwrap().contains("identity"));
 }

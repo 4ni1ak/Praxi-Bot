@@ -31,7 +31,7 @@ fn account(name: &str, bot: Option<&str>) -> AccountConfig {
         timeout_secs: 30,
         bot: bot.map(str::to_owned),
         allowed_senders: Vec::new(),
-        identity: Default::default(),
+        identity: crate::IdentitySettings::default(),
         kind: AccountKind::AgentMail,
         inbox_id: Some(INBOX.into()),
     }
