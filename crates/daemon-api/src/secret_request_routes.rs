@@ -187,7 +187,7 @@ async fn store(
     // Another bot's account is not replaceable through this bot's form, even when it
     // appeared after the card opened (the write below checks again under its lock).
     for (n, _) in &items {
-        svc.check_bot(n, Some(&info.bot_id))
+        svc.check_request_target(n, Some(&info.bot_id))
             .map_err(|e| crate::fill_routes::map(&e))?;
     }
     let existing = items.iter().any(|(n, _)| svc.exists(n));

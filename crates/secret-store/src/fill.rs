@@ -1245,6 +1245,20 @@ impl FillSecrets {
         }
     }
 
+    /// Whether `bot` may ask the owner to write over `name` (a `secret_request`):
+    /// refused only when `name` is another bot's ACCOUNT. The owner's own entries and
+    /// unknown names are fine to ask about (the owner answers the card).
+    ///
+    /// # Errors
+    /// [`FillError::NotAllowed`] (names the secret, nothing else).
+    pub fn check_request_target(&self, name: &str, bot: Option<&str>) -> Result<(), FillError> {
+        let meta = self.meta.lock();
+        match meta.secrets.get(name).filter(|e| e.account.is_some()) {
+            Some(e) => Self::scope_check(name, e, bot),
+            None => Ok(()),
+        }
+    }
+
     fn scope_check(name: &str, e: &Entry, bot: Option<&str>) -> Result<(), FillError> {
         if Self::bot_may_use(e, bot) {
             Ok(())

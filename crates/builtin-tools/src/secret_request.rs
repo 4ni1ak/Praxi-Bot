@@ -185,7 +185,7 @@ impl Tool for SecretRequest {
         // `replace` or not. The submit route repeats the check under the write lock.
         for n in entry_names(name, fields) {
             self.secrets
-                .check_bot(&n, ctx.bot_id.as_deref())
+                .check_request_target(&n, ctx.bot_id.as_deref())
                 .map_err(|e| crate::fill_secret::refused(&e))?;
         }
         let taken = entry_names(name, fields)
@@ -309,7 +309,10 @@ mod tests {
                     .call(&ctx(bot), ask("login/example.com-aaaa1111", replace))
                     .await
                     .unwrap_err();
-                assert!(err.to_string().contains("belongs to another bot"), "{err}");
+                assert!(
+                    err.to_string().contains("not enabled for this bot"),
+                    "{err}"
+                );
             }
         }
         assert!(
