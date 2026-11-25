@@ -194,7 +194,7 @@ async fn store(
     if existing && !info.replace {
         return Err(exists());
     }
-    let bot_ids = vec![info.bot_id.to_string()];
+    let bot_ids = vec![info.bot_id.clone()];
     let login_id = (info.fields == SecretFields::Login)
         .then(|| input.username.clone())
         .flatten();
