@@ -51,6 +51,7 @@ pub mod host_setup;
 mod knowledge;
 pub mod knowledge_runtime;
 mod knowledge_settings;
+mod knowledge_watch;
 pub mod live_view;
 mod local_install;
 mod local_models;
@@ -280,6 +281,7 @@ struct Inner {
     host_links: OnceLock<Arc<dyn host_links::HostLinks>>,
     host_setup: OnceLock<Arc<dyn host_setup::HostSetup>>,
     knowledge_runtime: OnceLock<Arc<knowledge_runtime::KnowledgeRuntime>>,
+    knowledge_watch: knowledge_watch::WatchHub,
     /// MCP server management (see [`AppState::set_mcp`]).
     mcp: OnceLock<Arc<dyn McpControl>>,
     mcp_server: parking_lot::Mutex<mcp_server::McpServerBook>,
@@ -490,6 +492,7 @@ impl AppState {
             host_links: OnceLock::new(),
             host_setup: OnceLock::new(),
             knowledge_runtime: OnceLock::new(),
+            knowledge_watch: knowledge_watch::WatchHub::default(),
             mcp: OnceLock::new(),
             mcp_server: parking_lot::Mutex::new(mcp_server::McpServerBook::default()),
             composio: OnceLock::new(),
@@ -1402,6 +1405,14 @@ fn api_routes() -> Router<AppState> {
             post(knowledge::reindex_source),
         )
         .route(
+            "/v1/bots/{bot}/knowledge/watch",
+            get(knowledge_watch::list_watch),
+        )
+        .route(
+            "/v1/bots/{bot}/knowledge/sources/{source}/watch",
+            put(knowledge_watch::set_watch_paused),
+        )
+        .route(
             "/v1/bots/{bot}/knowledge/sources/{source}/embed",
             post(knowledge::embed_source),
         )
@@ -1845,6 +1856,7 @@ fn api_routes() -> Router<AppState> {
             "/v1/fill-secrets",
             get(f::list_fill_secrets).post(f::create_fill_secret),
         )
+        .route("/v1/fill-secrets/reveal", post(f::reveal_fill_secret))
         .route(
             "/v1/fill-secrets/{*name}",
             put(f::update_fill_secret).delete(f::delete_fill_secret),
@@ -1999,6 +2011,7 @@ async fn serve_with_startup_timeout(
     }
     // A Smart recall model comes back after a restart (or recall falls back to Basic).
     memory_embed::restore_smart(&state);
+    knowledge_watch::spawn(&state);
     let stopping = state.clone();
     let served = axum::serve(listener, router(state.clone()))
         .with_graceful_shutdown(async move {

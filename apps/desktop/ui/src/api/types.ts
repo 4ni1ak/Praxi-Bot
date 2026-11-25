@@ -13,6 +13,7 @@ export type SaveWorkflow = S["SaveWorkflow"];
 export type RunWorkflow = S["RunWorkflow"];
 export type WorkflowRun = S["WorkflowRun"];
 export type KnowledgeSource = S["KnowledgeSourceDto"];
+export type KnowledgeWatchStatus = S["KnowledgeWatchStatus"];
 export type KnowledgeSourceInput = S["KnowledgeSourceInput"];
 export type KnowledgeSourceKind = S["KnowledgeSourceKind"];
 export type KnowledgeSourceChange = S["KnowledgeSourceChange"];
@@ -465,6 +466,10 @@ export interface GlobalEnvelope extends Envelope {
 export type SecretRequestAnswer = S["SecretRequestAnswer"];
 export type HandoverAnswer = S["HandoverAnswer"];
 export type FillSecretInfo = S["FillSecretDto"];
+export type VaultKind = S["VaultKindDto"];
+export type CreateFillSecretInput = S["CreateFillSecret"];
+export type UpdateFillSecretInput = S["UpdateFillSecret"];
+export type RevealFillSecretResponse = S["RevealFillSecretResponse"];
 
 // ---- MCP management API (`/v1/mcp/*`, `/v1/secrets/*`) ---------------------
 
