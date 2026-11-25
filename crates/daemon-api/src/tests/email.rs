@@ -32,7 +32,7 @@ pub(super) struct FakeEmail {
 }
 
 impl FakeEmail {
-    fn new() -> Arc<Self> {
+    pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {
             accounts: Mutex::new(Vec::new()),
             passwords: Mutex::new(Vec::new()),

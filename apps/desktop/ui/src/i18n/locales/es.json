@@ -3737,7 +3737,7 @@
   },
   "home": {
     "admin": {
-      "byDesign": "La política de ejecución, los servidores de herramientas de línea de comandos, las habilidades, las cuentas de correo y las sesiones de los CLI de programación de {{name}} se configuran directamente en {{name}}.",
+      "byDesign": "{{name}} se reserva algunas cosas: la política de ejecución, los servidores de herramientas de línea de comandos, las habilidades y las sesiones de los CLI de programación se configuran directamente en {{name}}. Las cuentas de correo, búsqueda y dictado se pueden conectar desde este equipo.",
       "noSecrets": "{{name}} aún no puede guardar claves.",
       "notGranted": "{{name}} aún no ha confirmado este equipo. Ejecuta esto una vez en {{name}}:",
       "title": "Configurar desde este equipo"
@@ -3830,10 +3830,11 @@
     },
     "newBotNeedsModel": "{{name}} aún no tiene un modelo. Conecta uno en el servidor antes de crear un bot allí.",
     "refusal": {
+      "adminRequired": "{{name}} aún no ha confirmado este equipo como administrador. Ejecuta una vez `bot host admin --all-desktops` en {{name}} y vuelve a intentarlo.",
       "botPermissions": "Los permisos y las herramientas de cada bot se gestionan en {{name}}. Desde aquí puedes cambiar su nombre, personalidad y modelo.",
       "composio": "Las conexiones a apps las gestiona el propietario de este equipo. No se gestionan en {{name}}.",
       "connectionTest": "Las claves solo se pueden probar desde {{name}}.",
-      "credentials": "Las cuentas de correo y búsqueda se conectan en {{name}}.",
+      "credentials": "Este ajuste de correo o búsqueda se cambia en {{name}}, no desde esta aplicación.",
       "generic": "{{name}} rechazó esta acción: {{reason}}",
       "hostTransfer": "El traslado del equipo anfitrión y la vinculación de canales se hacen en {{name}}.",
       "knowledge": "Los ajustes de conocimiento se gestionan en {{name}}.",

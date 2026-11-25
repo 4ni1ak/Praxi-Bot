@@ -16,10 +16,15 @@
 //! audited or kept in `providers.toml` (which only names the secret). The
 //! audit rows carry the provider id and whether a key was set, nothing else.
 //!
+//! The accounts and keys of mail (`/v1/email/accounts`), web search
+//! (`/v1/web/search`) and dictation (`/v1/voice`) are administered the same way
+//! (exact routes in `peer::host_admin_settings_class`; each change is audited
+//! as `host.admin.settings`, secrets are write-only).
+//!
 //! Not administrable from here (stays with the host's own user): the global
-//! execution policy (`/v1/policy`), stdio tool servers and skills, e-mail and
-//! web-search credentials, pairing and the host lifecycle, a bot's external
-//! engine and its knowledge settings. See the PR description for why.
+//! execution policy (`/v1/policy`), stdio tool servers and skills, the mail
+//! channel and guard, pairing and the host lifecycle, a bot's external
+//! engine and its knowledge settings.
 
 use axum::{
     Extension, Json,

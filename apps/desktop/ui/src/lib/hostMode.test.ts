@@ -49,6 +49,16 @@ test("every host refusal maps to a translated sentence, never the raw daemon tex
   assert.equal(hostRefusalKey(403, "something new"), "generic");
 });
 
+test("an unconfirmed desktop gets an actionable sentence with the command, not a dead end", () => {
+  const daemon = "the owner must confirm this desktop on the host: run `bot host admin --all-desktops`";
+  assert.equal(hostRefusalKey(403, daemon), "adminRequired");
+  for (const file of ["en", "tr", "de", "es"]) {
+    const text = flat(file)["hostMode.refusal.adminRequired"];
+    assert.ok(typeof text === "string" && text.includes("bot host admin --all-desktops"), file);
+    assert.ok((text as string).includes("{{name}}"), file);
+  }
+});
+
 test("a good host connection survives a missed poll instead of flickering to connecting", () => {
   let mem = settleHostState(null, { kind: "connected" }, 0);
   mem = settleHostState(mem, { kind: "connecting" }, 3_000);

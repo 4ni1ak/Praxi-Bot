@@ -3737,7 +3737,7 @@
   },
   "home": {
     "admin": {
-      "byDesign": "{{name}} behält einiges für sich: Die Ausführungsrichtlinie, Kommandozeilen-Werkzeugserver, Skills, E-Mail-Konten und Coding-CLI-Anmeldungen werden direkt auf {{name}} geändert.",
+      "byDesign": "{{name}} behält einiges für sich: Die Ausführungsrichtlinie, Kommandozeilen-Werkzeugserver, Skills und Coding-CLI-Anmeldungen werden direkt auf {{name}} geändert. E-Mail-, Such- und Diktierkonten lassen sich von diesem Computer aus verbinden.",
       "noSecrets": "{{name}} kann noch keine Schlüssel speichern.",
       "notGranted": "{{name}} hat diesen Computer noch nicht bestätigt. Führe das einmal auf {{name}} aus:",
       "title": "Von diesem Computer aus einrichten"
@@ -3830,10 +3830,11 @@
     },
     "newBotNeedsModel": "{{name}} hat noch kein Modell, daher kann dort kein Bot erstellt werden. Verbinde zuerst ein Modell auf dem Server.",
     "refusal": {
+      "adminRequired": "{{name}} hat diesen Computer noch nicht als Administrator bestätigt. Führe einmalig `bot host admin --all-desktops` auf {{name}} aus und versuche es dann erneut.",
       "botPermissions": "Berechtigungen und Werkzeuge eines Bots werden auf {{name}} selbst verwaltet. Name, Persona und Modell können hier geändert werden.",
       "composio": "App-Verbindungen werden auf der Besitzerseite dieses Computers verwaltet, nicht auf {{name}}.",
       "connectionTest": "Schlüsseltests laufen auf {{name}} selbst und sind in dieser App nicht möglich.",
-      "credentials": "E-Mail- und Suchkonten werden auf {{name}} selbst verbunden.",
+      "credentials": "Diese E-Mail- oder Suchoption wird auf {{name}} selbst geändert, nicht in dieser App.",
       "generic": "{{name}} hat das nicht erlaubt: {{reason}}",
       "hostTransfer": "Das Verschieben des Hosts und der Kopplungskanäle erfolgt auf {{name}} selbst.",
       "knowledge": "Wissenseinstellungen werden auf {{name}} selbst verwaltet.",
