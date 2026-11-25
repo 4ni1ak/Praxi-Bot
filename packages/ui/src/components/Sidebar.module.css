@@ -252,16 +252,20 @@
   --panel-edge: var(--size-border);
   transform: translateX(calc(100% + var(--space-4)));
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
   transition:
     transform var(--motion-duration-normal) var(--motion-easing-standard),
-    opacity var(--motion-duration-normal) ease-out;
+    opacity var(--motion-duration-normal) ease-out,
+    visibility var(--motion-duration-normal) step-end;
 }
 
 .panel[data-mode="overlay"][data-open="true"] {
   transform: translateX(var(--space-0));
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
+  transition-timing-function: var(--motion-easing-standard), ease-out, step-start;
   background-color: var(--color-background);
   box-shadow: var(--shadow-overlay);
 }
