@@ -41,8 +41,8 @@ unmaintained = "workspace"
 # Unmaintained is not a vulnerability. Added 2026-11-17; revisit when migrating to jiff/time or
 # when async-imap drops chrono, then delete these two entries.
 ignore = [
-    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained; no vulnerability, see note above" },
-    { id = "RUSTSEC-2026-0555", reason = "chrono-tz unmaintained; no vulnerability, see note above" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained; no vulnerability, see note above (expires: 2027-05-17)" },
+    { id = "RUSTSEC-2026-0555", reason = "chrono-tz unmaintained; no vulnerability, see note above (expires: 2027-05-17)" },
 ]
 
 [sources]

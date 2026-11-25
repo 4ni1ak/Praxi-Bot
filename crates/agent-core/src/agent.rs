@@ -113,6 +113,7 @@ impl AgentLoop {
                 spend: crate::spend::SpendState::default(),
                 control: RwLock::new(None),
                 computer_provider: RwLock::new(None),
+                mail: Arc::new(builtin_tools::connector_email::MailHandle::new()),
                 server_links: RwLock::new(None),
                 static_desktop: RwLock::new(None),
                 run_computers: Mutex::new(HashMap::new()),
@@ -261,8 +262,18 @@ impl AgentLoop {
         if let Some(secrets) = &cfg.fill_secrets {
             let _ = self.sh.fill_secrets.set(Arc::clone(secrets));
         }
+        // The tools and the run loop share ONE mail handle, so the host binds the
+        // connector once ([`AgentLoop::mail_handle`]) and both see it.
+        cfg.mail = Arc::clone(&self.sh.mail);
         let _ = builtin_tools::register_builtin_tools(&self.sh.tools, cfg);
         self
+    }
+
+    /// The late-bound mail connector the built-in tools and the run loop share.
+    /// The host binds the connector here once its mail accounts are loaded.
+    #[must_use]
+    pub fn mail_handle(&self) -> Arc<builtin_tools::connector_email::MailHandle> {
+        Arc::clone(&self.sh.mail)
     }
 
     /// Current filesystem roots and exact credential grants, from the registered file tools.

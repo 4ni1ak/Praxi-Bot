@@ -28,6 +28,7 @@ mod exec;
 mod history;
 mod knowledge;
 mod ledger;
+mod mail_prompt;
 mod memory;
 mod mention;
 pub mod page_guard;
@@ -58,6 +59,8 @@ mod cancel_supervisor;
 mod control_grant_tests;
 #[cfg(test)]
 mod egress_tests;
+#[cfg(test)]
+mod mail_tests;
 #[cfg(test)]
 mod mode_tests;
 #[cfg(test)]

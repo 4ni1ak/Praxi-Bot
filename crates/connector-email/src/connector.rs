@@ -424,6 +424,27 @@ impl Scoped<'_> {
             .collect()
     }
 
+    /// The identities that are THIS bot's own: accounts bound to it or shared
+    /// with it (not the unbound ones every bot may use), with the one a call
+    /// without `account` would pick marked. Names and addresses only.
+    #[must_use]
+    pub fn own_identities(&self) -> Vec<(AccountConfig, bool)> {
+        let all = self.conn.snapshot();
+        let chosen = self.account(None).ok().map(|a| a.name);
+        all.values()
+            .filter(|a| owned_by(a, self.bot))
+            .map(|a| (a.clone(), chosen.as_deref() == Some(a.name.as_str())))
+            .collect()
+    }
+
+    /// Whether the account a call with `account` would use is this bot's own
+    /// identity (bound to it or shared with it). `false` for an unbound
+    /// account, another bot's account and a call that resolves to nothing.
+    #[must_use]
+    pub fn owns(&self, account: Option<&str>) -> bool {
+        self.account(account).is_ok_and(|a| owned_by(&a, self.bot))
+    }
+
     /// The account a call with `account` would use.
     ///
     /// # Errors

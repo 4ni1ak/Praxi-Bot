@@ -902,11 +902,24 @@ pub fn check_catalog(data_dir: &Path, catalog: &Result<&Catalog, String>) -> Che
 /// warning, never a failure (Praxi works offline by design).
 #[must_use]
 pub fn check_catalog_freshness(now: SystemTime) -> Check {
-    check_catalog_freshness_for(
-        provider_catalog::embedded_metadata(),
-        now,
-        CATALOG_STALE_DAYS,
-    )
+    use provider_catalog::catalog_update::{active_metadata, online_catalog_date, status_line};
+    let table = active_metadata();
+    let base = check_catalog_freshness_for(&table, now, CATALOG_STALE_DAYS);
+    let online = online_catalog_date();
+    let (line, old) = status_line(&table, online.as_deref(), now);
+    // Already warned (90 days) -> keep that; otherwise nudge after 30 days.
+    if base.status == Status::Ok && old {
+        return Check::warn(
+            &base.id,
+            &base.title,
+            format!("{line} (older than 30 days)"),
+            "run `bot catalog update --check`; automatic daily updates are on unless you ran `bot catalog auto-update off`",
+        );
+    }
+    if online.is_some() && base.status == Status::Ok {
+        return Check::ok(&base.id, &base.title, format!("{line}; {}", base.detail));
+    }
+    base
 }
 
 /// Pure freshness check against an explicit metadata table and threshold

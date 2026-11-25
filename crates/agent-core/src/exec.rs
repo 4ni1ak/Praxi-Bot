@@ -768,6 +768,16 @@ impl TurnExecutor {
             (Some(p), None) => Some(p),
             (None, s) => s,
         };
+        // A bot with a mail identity of its own is told, every run, which address it has.
+        let skills = match (self.sh.mail_block(&ctx, &specs), skills) {
+            (Some(m), Some(s)) => Some(format!(
+                "{m}
+
+{s}"
+            )),
+            (Some(m), None) => Some(m),
+            (None, s) => s,
+        };
         // Which tool family fits which job; claims need the call behind them.
         let skills = match (self.sh.tool_guidance_block(&ctx, &specs), skills) {
             (Some(g), Some(s)) => Some(format!(
@@ -1930,6 +1940,11 @@ impl TurnExecutor {
             g.tool_timeout.max(std::time::Duration::from_secs(
                 builtin_tools::wait::MAX_WAIT_SECS + 10,
             ))
+        } else if tool.spec().name == builtin_tools::mail_wait::EMAIL_WAIT_FOR {
+            // The tool bounds itself (10 minutes, Stop cancels it).
+            g.tool_timeout.max(std::time::Duration::from_secs(
+                builtin_tools::mail_wait::MAX_MINUTES * 60 + 30,
+            ))
         } else {
             g.tool_timeout
         };
@@ -1992,6 +2007,11 @@ impl TurnExecutor {
         }
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let mut own_spill: Option<String> = None;
+        if tool.spec().name == builtin_tools::mail_wait::EMAIL_WAIT_FOR
+            && let Ok(Ok(out)) = &outcome
+        {
+            note_mail_links(ctx, out);
+        }
         let exposure = match &outcome {
             Ok(Ok(out)) => out.exposure.clone(),
             _ => None,
@@ -2120,6 +2140,29 @@ fn fact_note(ctx: &RunCtx, fact: &taint::ExecFact) {
         return;
     }
     fact.apply(&mut ctx.taint.lock());
+}
+
+/// Most followable links remembered per run.
+const MAX_MAIL_LINKS: usize = 20;
+
+/// Remember the links `email_wait_for` itself judged followable, from its own
+/// structured result (a JSON part the tool built; mail text only ever sits in
+/// string values below other keys). Only https links are kept.
+fn note_mail_links(ctx: &RunCtx, out: &ToolOutput) {
+    for part in &out.content {
+        let ContentPart::Json { data } = part else {
+            continue;
+        };
+        let Some(links) = data.get("followable_links").and_then(Value::as_array) else {
+            continue;
+        };
+        let mut known = ctx.mail_links.lock();
+        for link in links.iter().filter_map(Value::as_str) {
+            if link.starts_with("https://") && known.len() < MAX_MAIL_LINKS {
+                known.insert(link.to_owned());
+            }
+        }
+    }
 }
 
 fn note_metadata(ctx: &RunCtx, specs: &[ToolSpec], facts: &mut Vec<taint::ExecFact>) {

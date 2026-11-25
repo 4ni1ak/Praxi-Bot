@@ -12,7 +12,7 @@ Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font).
 Bundled locally through `@fontsource-variable/geist` and
 `@fontsource-variable/geist-mono` 5.3.0. Variable WOFF2 files include Latin and
 Latin Extended (Turkish) glyphs. No font CDN is used. Full notices ship in
-`apps/desktop/ui/public/licenses/geist.txt` and `geist-mono.txt`.
+`apps/desktop/ui/public/licenses/geist.txt` and `apps/desktop/ui/public/licenses/geist-mono.txt`.
 
 ## OpenDyslexic (SIL OFL 1.1)
 
@@ -236,3 +236,36 @@ Copyright (c) 2023-2026 The ggml authors) and a Qwen3 GGUF model from
 [unsloth](https://huggingface.co/unsloth) quantisations of Alibaba's Qwen3 (Apache-2.0).
 Each file is verified against a SHA-256 pinned in `manifest.rs`. No upstream source code is
 copied into this repository; the licence of each model is shown in the picker.
+
+## Rust workspace dependencies requiring explicit notices
+
+The complete generated dependency inventory lives in
+[docs/third-party-licenses.md](docs/third-party-licenses.md). Dependencies whose licences require
+explicit attribution, source-availability notices, or narrow exceptions in `deny.toml` are listed
+below:
+
+- **Independent JPEG Group (`IJG`) — `jpeg-encoder` (`(MIT OR Apache-2.0) AND IJG`):**
+  This software is based in part on the work of the Independent JPEG Group via
+  [jpeg-encoder](https://github.com/vstroebel/jpeg-encoder).
+- **Mozilla Public License 2.0 (`MPL-2.0`):**
+  Source code for the following unmodified crates is available from their upstream repositories:
+  `attohttpc` (<https://github.com/sbstp/attohttpc>),
+  `cssparser` and `cssparser-macros` (<https://github.com/servo/rust-cssparser>),
+  `dtoa-short` (<https://github.com/upsuper/dtoa-short>),
+  `option-ext` (<https://github.com/soc/option-ext.git>),
+  and `selectors` (<https://github.com/servo/stylo>).
+- **Unicode Licence v3 (`Unicode-3.0`):**
+  Unicode data and internationalisation crates retain the Unicode copyright and permission notice:
+  `icu_collections`, `icu_locale_core`, `icu_normalizer`, `icu_normalizer_data`,
+  `icu_properties`, `icu_properties_data`, `icu_provider`, `litemap`, `potential_utf`, `tinystr`,
+  `writeable`, `yoke`, `yoke-derive`, `zerofrom`, `zerofrom-derive`, `zerotrie`, `zerovec`, and
+  `zerovec-derive` (<https://github.com/unicode-org/icu4x>), plus `unicode-ident`
+  (<https://github.com/dtolnay/unicode-ident>), `unicode-normalization`
+  (<https://github.com/unicode-rs/unicode-normalization>), and `unicode-properties`
+  (<https://github.com/unicode-rs/unicode-properties>).
+- **Community Data License Agreement – Permissive 2.0 (`CDLA-Permissive-2.0`):**
+  Mozilla CA certificate bundle crates `webpki-root-certs` and `webpki-roots`
+  (<https://github.com/rustls/webpki-roots>).
+- **bzip2 (`bzip2-1.0.6`):**
+  `libbz2-rs-sys` (optional `local-voice` feature, permitted via `[[licenses.exceptions]]` in
+  `deny.toml`).

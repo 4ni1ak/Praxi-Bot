@@ -5959,7 +5959,10 @@
       "saved": "Guardado",
       "sentAnyway": "Enviado de todos modos",
       "softHint": "Estos dos son advertencias, no bloqueos.",
-      "title": "Envío seguro"
+      "title": "Envío seguro",
+      "verifyDomains": "Sitios adicionales a los que puede enlazar un correo de verificación",
+      "verifyDomainsHint": "Un bot que se registra en un sitio solo recibe del correo de verificación los enlaces de ese sitio. Si un sitio envía sus correos a través de otro servicio (por ejemplo un dominio de seguimiento), añada ese dominio aquí, uno por línea (example.com). Déjelo vacío si no está seguro: el bot le preguntará.",
+      "verifyDomainsPlaceholder": "correo.ejemplo.com"
     },
     "mode": {
       "moreHint": "Opciones adicionales",

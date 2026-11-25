@@ -1146,6 +1146,11 @@ pub fn serve(
     } else {
         let email = crate::email_host::start_email(data_dir, &mcp_tools, telegram_store.as_ref())
             .map(|(host, _)| host);
+        // The run loop and the built-in tools (`email_wait_for`, `account_register`)
+        // learn which mail identities exist from this one handle.
+        if let Some(host) = &email {
+            agent.mail_handle().set(Arc::clone(host.connector()));
+        }
         crate::homeassistant_host::start_homeassistant(
             data_dir,
             &mcp_tools,
@@ -1201,11 +1206,17 @@ pub fn serve(
         state.set_provider_host(host);
     }
 
+    // A verified, previously downloaded model catalog (offline, cheap).
+    let catalog_store = provider_catalog::catalog_update::CatalogStore::new(data_dir);
+    catalog_store.activate_cached();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     step("runtime built");
     rt.block_on(async {
+        // Daily signed catalog refresh: one GET of a fixed https URL, only
+        // while the owner allows it (`bot catalog auto-update off`).
+        tokio::spawn(provider_catalog::catalog_update::daily_loop(catalog_store));
         // Backstop poll: pick up secrets stored behind the daemon's back (the CLI,
         // the environment).  Runs with or without a secret store.
         let refresher = {

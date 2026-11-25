@@ -245,6 +245,7 @@ fn settings_dto(s: GuardSettings) -> EmailGuardSettingsDto {
         same_recipient_days: s.same_recipient_days,
         opt_out_line: s.opt_out_line,
         footer: s.footer,
+        verification_link_domains: s.verification_link_domains,
     }
 }
 
@@ -1006,6 +1007,7 @@ impl EmailControl for EmailHost {
             same_recipient_days: s.same_recipient_days,
             opt_out_line: s.opt_out_line,
             footer: s.footer,
+            verification_link_domains: s.verification_link_domains,
         };
         self.connector
             .guard()

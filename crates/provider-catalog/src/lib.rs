@@ -6,6 +6,7 @@
 pub mod anthropic;
 pub mod catalog;
 pub mod catalog_freshness;
+pub mod catalog_update;
 pub mod config;
 pub mod embedding;
 pub mod entry;

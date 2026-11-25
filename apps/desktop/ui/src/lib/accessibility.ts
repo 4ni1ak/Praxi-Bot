@@ -61,13 +61,14 @@ export function normalizeAccessibility(raw: Partial<Record<keyof AccessibilitySe
 
 /** Base sizes (px) of the tokens in packages/ui/tokens.css that follow the text size. */
 export const TEXT_TOKENS_PX: Record<string, number> = {
-  "--font-size-ui": 13,
+  "--font-size-2xs": 11,
   "--font-size-xs": 12,
+  "--font-size-ui": 13,
   "--font-size-sm": 14,
   "--font-size-md": 15,
-  "--font-size-lg": 20,
-  "--font-size-xl": 24,
-  "--font-size-display": 30
+  "--font-size-title": 17,
+  "--font-size-lg": 22,
+  "--font-size-display": 28
 };
 /** Base sizes (px) of the spacing tokens that follow the density. */
 export const SPACE_TOKENS_PX: Record<string, number> = {
@@ -80,11 +81,14 @@ export const SPACE_TOKENS_PX: Record<string, number> = {
   "--space-8": 32
 };
 const MOTION_TOKENS = [
+  "--motion-duration-instant",
   "--motion-duration-fast",
   "--motion-duration-normal",
+  "--motion-duration-exit",
   "--motion-duration-slow",
   "--motion-duration-ripple",
   "--motion-duration-pulse",
+  "--motion-duration-skeleton",
   "--motion-duration-avatar-hover",
   "--motion-duration-avatar-press",
   "--motion-duration-avatar-state"

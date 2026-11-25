@@ -5959,7 +5959,10 @@
       "saved": "Saved",
       "sentAnyway": "Sent anyway",
       "softHint": "These two are warnings, not blocks.",
-      "title": "Safe sending"
+      "title": "Safe sending",
+      "verifyDomains": "Autres sites vers lesquels un e-mail de vérification peut renvoyer",
+      "verifyDomainsHint": "Un bot qui s'inscrit sur un site ne reçoit, dans son e-mail de vérification, que les liens de ce site. Si un site envoie ses e-mails via un autre service (par exemple un domaine de suivi), ajoutez ce domaine ici, un par ligne (example.com). Laissez vide en cas de doute : le bot vous demandera alors.",
+      "verifyDomainsPlaceholder": "courrier.exemple.fr"
     },
     "mode": {
       "moreHint": "Extra controls for fine-tuning",

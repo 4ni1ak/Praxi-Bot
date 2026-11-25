@@ -21,6 +21,7 @@ export function MailGuardCard() {
   const [optOuts, setOptOuts] = useState<EmailOptOut[]>([]);
   const [log, setLog] = useState<EmailSendLogEntry[]>([]);
   const [entry, setEntry] = useState("");
+  const [domains, setDomains] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -32,6 +33,7 @@ export function MailGuardCard() {
         client.listMailSendLog(LOG_ROWS)
       ]);
       setSettings(s);
+      setDomains((s.verification_link_domains ?? []).join("\n"));
       setOptOuts(o);
       setLog(l);
     } catch (e) {
@@ -91,9 +93,23 @@ export function MailGuardCard() {
             onChange={(e) => setSettings({ ...settings, footer: e.target.value })} />
           <p className={formStyles.hint}>{t("settingsModal.mailGuard.footerHint")}</p>
         </div>
+        <div className={formStyles.field}>
+          <label className={formStyles.label} htmlFor="mg-verify">{t("settingsModal.mailGuard.verifyDomains")}</label>
+          <textarea id="mg-verify" className={formStyles.textarea} rows={3} maxLength={4000}
+            data-testid="mail-guard-verify-domains"
+            placeholder={t("settingsModal.mailGuard.verifyDomainsPlaceholder")}
+            value={domains}
+            onChange={(e) => setDomains(e.target.value)} />
+          <p className={formStyles.hint}>{t("settingsModal.mailGuard.verifyDomainsHint")}</p>
+        </div>
         <Button size="sm" disabled={busy} data-testid="mail-guard-save"
           onClick={() => void act(async () => {
-            setSettings(await client!.putMailGuardSettings(settings));
+            const saved = await client!.putMailGuardSettings({
+              ...settings,
+              verification_link_domains: domains.split(/[\s,;]+/).filter(Boolean)
+            });
+            setSettings(saved);
+            setDomains((saved.verification_link_domains ?? []).join("\n"));
             toast.show(t("settingsModal.mailGuard.saved"), "success");
           })}>
           {t("settingsModal.mailGuard.save")}
