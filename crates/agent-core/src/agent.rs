@@ -1678,7 +1678,11 @@ impl AgentLoop {
         } else {
             Verdict::Denied { by, reason: None }
         };
-        self.take_pending(call_id)?
+        let pending = self.take_pending(call_id)?;
+        if !done {
+            builtin_tools::handover_hub().disarm(&pending.run_id.to_string());
+        }
+        pending
             .tx
             .send(verdict)
             .map_err(|_| LoopError::NoPendingApproval(call_id))
@@ -1913,6 +1917,7 @@ impl AgentLoop {
     /// `false` so a forced stop does not arm another supervisor.
     fn cancel_user(&self, run_id: RunId, supervise: bool) -> Result<()> {
         self.sh.user_stopped.lock().insert(run_id);
+        builtin_tools::handover_hub().forget(&run_id.to_string());
         self.cancel_wait_pc_timer(run_id);
         self.sh.run_computers.lock().remove(&run_id);
         self.sh.directives.lock().remove(&run_id);
@@ -2775,6 +2780,7 @@ impl AgentLoop {
         }
         let run = self.sh.storage.get_run(run_id).ok().flatten();
         if !matches!(res, Ok(RunState::Paused)) {
+            builtin_tools::handover_hub().forget(&run_id.to_string());
             crate::usage::finish(&self.sh, run_id);
         }
         crate::compaction::forget_turn(run_id);

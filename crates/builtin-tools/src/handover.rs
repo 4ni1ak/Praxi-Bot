@@ -4,7 +4,7 @@
 //!
 //! * **CAPTCHA** (`kind: "captcha"`): the page shows a "prove you are human"
 //!   check. The bot may try a simple one itself, at most [`CAPTCHA_OWN_ATTEMPTS`]
-//!   looks in total (see [`HandoverHub::note_captcha`]); after that, or for a
+//!   actions per challenge (see [`HandoverHub::captcha_action`]); after that, or for a
 //!   behavioural one, it hands over: the owner takes control in the live view,
 //!   solves it and presses "Done". The daemon then checks that the check is gone
 //!   before the run resumes. No solver service, no evasion plugin.
@@ -21,7 +21,8 @@
 //! untrusted content.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use serde_json::Value;
 
@@ -33,7 +34,7 @@ pub const BROWSER_HANDOVER: &str = "browser_handover";
 /// `kind` of the JSON part the tool returns; the loop parks the run on it.
 pub const HANDOVER_CARD_KIND: &str = "handover_card";
 
-/// How many times the bot may look at the same CAPTCHA and try it itself.
+/// How many actions the bot may attempt on the same CAPTCHA.
 pub const CAPTCHA_OWN_ATTEMPTS: u32 = 2;
 
 /// What a handover asks the owner to do.
@@ -324,6 +325,17 @@ pub fn notice(challenge: &Challenge, seen: u32) -> String {
 
 // ── Hub ──────────────────────────────────────────────────────────────────────
 
+/// Empty documents and iframe placeholders are not evidence of a completed page.
+pub(crate) fn rendered_page(snapshot: &str) -> bool {
+    !snapshot.lines().any(|line| parts(line).1 == "iframe")
+        && snapshot.lines().skip(1).any(|line| {
+            matches!(
+                parts(line).1,
+                "heading" | "text" | "textbox" | "button" | "link" | "paragraph"
+            )
+        })
+}
+
 /// Why the daemon could not finish an owner's answer. The owner's card shows
 /// these in plain words and stays open so they can try again.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -355,18 +367,35 @@ impl std::fmt::Display for HandoverError {
     }
 }
 
+#[derive(Clone)]
 struct Armed {
     driver: Arc<dyn BrowserDriver>,
     kind: HandoverKind,
     origin: String,
+    fingerprint: u64,
+    cancelled: Arc<AtomicBool>,
+}
+
+#[derive(Default)]
+struct CaptchaBudget {
+    page: String,
+    attempts: u32,
+}
+
+fn fingerprint(snapshot: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    snapshot.hash(&mut hash);
+    hash.finish()
 }
 
 /// The armed handovers of the process, keyed by run id.
 #[derive(Default)]
 pub struct HandoverHub {
     armed: Mutex<HashMap<String, Armed>>,
-    /// Looks at a CAPTCHA per run (see [`Self::note_captcha`]).
-    seen: Mutex<HashMap<String, u32>>,
+    /// Own action budgets per run and challenge page.
+    seen: Mutex<HashMap<String, CaptchaBudget>>,
+    captures: Mutex<Vec<(Weak<dyn BrowserDriver>, String)>>,
 }
 
 /// The process-wide hub the browser tool arms and the daemon's owner route answers.
@@ -396,12 +425,74 @@ impl HandoverHub {
             .seen
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if seen.len() > 256 {
-            seen.clear();
+        let n = seen.entry(run_id.to_owned()).or_default();
+        n.attempts += 1;
+        n.attempts
+    }
+
+    /// Clear the attempt budget once the challenge has left the page.
+    pub fn clear_captcha(&self, run_id: &str) {
+        self.seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(run_id);
+    }
+
+    /// Admit one own action, never an unbounded batch or a third attempt.
+    ///
+    /// # Errors
+    /// Refuses hard challenges and actions after the second own attempt.
+    pub fn captcha_action(
+        &self,
+        run_id: &str,
+        snapshot: &str,
+        document: &str,
+    ) -> Result<(), String> {
+        if let Some(Challenge::Captcha { hard }) = detect(snapshot) {
+            let mut seen = self
+                .seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let n = seen.entry(run_id.to_owned()).or_default();
+            let page = document;
+            if n.page != page {
+                page.clone_into(&mut n.page);
+                n.attempts = 0;
+            }
+            if hard || n.attempts >= CAPTCHA_OWN_ATTEMPTS {
+                return Err("CAPTCHA own attempts exhausted: hand over with browser_handover(kind: captcha) before any further browser action".into());
+            }
+            n.attempts += 1;
+        } else if rendered_page(snapshot) {
+            self.clear_captcha(run_id);
         }
-        let n = seen.entry(run_id.to_owned()).or_insert(0);
-        *n += 1;
-        *n
+        Ok(())
+    }
+
+    /// Number of the next permitted own attempt (observations do not consume it).
+    pub fn next_captcha_attempt(&self, run_id: &str) -> u32 {
+        self.seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(run_id)
+            .map_or(1, |b| b.attempts + 1)
+    }
+
+    /// Suppress visual observations of a driver holding a freshly typed code.
+    /// The latch survives the approval/run ending; only navigation clears it.
+    pub async fn capture_latched(&self, driver: &Arc<dyn BrowserDriver>) -> bool {
+        let url = driver.capture_epoch().await.unwrap_or_default();
+        let mut captures = self
+            .captures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        captures.retain(|(d, at)| {
+            d.upgrade()
+                .is_some_and(|d| !Arc::ptr_eq(&d, driver) || *at == url)
+        });
+        captures
+            .iter()
+            .any(|(d, _)| d.upgrade().is_some_and(|d| Arc::ptr_eq(&d, driver)))
     }
 
     /// Remember what a handover of `run_id` needs to finish: the driver, the kind
@@ -412,6 +503,7 @@ impl HandoverHub {
         driver: Arc<dyn BrowserDriver>,
         kind: HandoverKind,
         origin: &str,
+        fingerprint: &str,
     ) {
         self.armed
             .lock()
@@ -422,27 +514,31 @@ impl HandoverHub {
                     driver,
                     kind,
                     origin: origin.to_owned(),
+                    fingerprint: self::fingerprint(fingerprint),
+                    cancelled: Arc::new(AtomicBool::new(false)),
                 },
             );
     }
 
-    /// Drop everything kept for `run_id` (the handover ended, whatever the way).
-    pub fn forget(&self, run_id: &str) {
-        self.armed
+    /// Invalidate the per-call token without restoring CAPTCHA attempts.
+    pub fn disarm(&self, run_id: &str) {
+        if let Some(a) = self
+            .armed
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(run_id);
-        self.seen
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(run_id);
+            .remove(run_id)
+        {
+            a.cancelled.store(true, Ordering::SeqCst);
+        }
     }
 
-    fn get(
-        &self,
-        run_id: &str,
-        kind: HandoverKind,
-    ) -> Result<(Arc<dyn BrowserDriver>, String), HandoverError> {
+    /// Drop run state after Stop or run completion.
+    pub fn forget(&self, run_id: &str) {
+        self.disarm(run_id);
+        self.clear_captcha(run_id);
+    }
+
+    fn get(&self, run_id: &str, kind: HandoverKind) -> Result<Armed, HandoverError> {
         let armed = self
             .armed
             .lock()
@@ -451,7 +547,7 @@ impl HandoverHub {
         if a.kind != kind {
             return Err(HandoverError::NotArmed);
         }
-        Ok((Arc::clone(&a.driver), a.origin.clone()))
+        Ok(a.clone())
     }
 
     /// Type the owner's one-time `code` into the page of `run_id`.
@@ -465,7 +561,12 @@ impl HandoverHub {
     /// See [`HandoverError`]; the message never contains the code.
     pub async fn type_code(&self, run_id: &str, code: &str) -> Result<(), HandoverError> {
         let code = clean_code(code)?;
-        let (driver, origin) = self.get(run_id, HandoverKind::Code)?;
+        let Armed {
+            driver,
+            origin,
+            cancelled,
+            ..
+        } = self.get(run_id, HandoverKind::Code)?;
         let here = driver
             .current_url()
             .await
@@ -483,9 +584,29 @@ impl HandoverHub {
             return Err(HandoverError::NoPrompt);
         };
         let want = origin.clone();
-        let accept = move |o: Option<String>| {
-            o.as_deref().and_then(crate::browser::origin_of).as_deref() == Some(want.as_str())
+        let accept = |o: Option<String>| {
+            let armed = self
+                .armed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            armed
+                .get(run_id)
+                .is_some_and(|a| Arc::ptr_eq(&a.cancelled, &cancelled))
+                && !cancelled.load(Ordering::SeqCst)
+                && o.as_deref().and_then(crate::browser::origin_of).as_deref()
+                    == Some(want.as_str())
         };
+        if !accept(driver.current_url().await) {
+            return Err(HandoverError::NotArmed);
+        }
+        let url = driver.capture_epoch().await.unwrap_or_default();
+        if !accept(driver.current_url().await) {
+            return Err(HandoverError::NotArmed);
+        }
+        self.captures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((Arc::downgrade(&driver), url));
         match driver.fill_secret(&field, &code, &accept).await {
             Ok(_) => Ok(()),
             Err(e) => Err(HandoverError::Typing(scrub(&e, &code))),
@@ -497,14 +618,47 @@ impl HandoverHub {
     /// # Errors
     /// [`HandoverError::StillThere`] while the page still shows it.
     pub async fn verify_solved(&self, run_id: &str) -> Result<(), HandoverError> {
-        let (driver, _origin) = self.get(run_id, HandoverKind::Captcha)?;
+        let Armed {
+            driver,
+            origin,
+            fingerprint: at_arm,
+            cancelled,
+            ..
+        } = self.get(run_id, HandoverKind::Captcha)?;
+        if driver
+            .current_url()
+            .await
+            .and_then(|u| crate::browser::origin_of(&u))
+            .as_deref()
+            != Some(origin.as_str())
+        {
+            return Err(HandoverError::WrongPage);
+        }
         let snap = driver
             .snapshot(false)
             .await
             .map_err(HandoverError::Typing)?;
-        match detect(&snap) {
-            Some(Challenge::Captcha { .. }) => Err(HandoverError::StillThere),
-            _ => Ok(()),
+        // Empty documents and iframe placeholders are not evidence of completion.
+        if cancelled.load(Ordering::SeqCst) {
+            return Err(HandoverError::NotArmed);
+        }
+        if driver
+            .current_url()
+            .await
+            .and_then(|u| crate::browser::origin_of(&u))
+            .as_deref()
+            != Some(origin.as_str())
+        {
+            return Err(HandoverError::WrongPage);
+        }
+        if !rendered_page(&snap)
+            || fingerprint(&snap) == at_arm
+            || matches!(detect(&snap), Some(Challenge::Captcha { .. }))
+        {
+            Err(HandoverError::StillThere)
+        } else {
+            self.clear_captcha(run_id);
+            Ok(())
         }
     }
 }

@@ -217,6 +217,10 @@ pub trait BrowserDriver: Send + Sync {
     async fn current_url(&self) -> Option<String> {
         None
     }
+    /// Browser document identity used to release a secret capture latch on navigation.
+    async fn capture_epoch(&self) -> Option<String> {
+        self.current_url().await
+    }
     /// Whether the user is watching this browser right now (a live view is
     /// attached). `None`: the driver cannot tell, so nothing is claimed.
     fn live_view_attached(&self) -> Option<bool> {
@@ -996,6 +1000,16 @@ impl BrowserDriver for CdpDriver {
         with_session!(self, None, false, |sess| {
             sess.page.focused_target().await
         })
+    }
+
+    async fn capture_epoch(&self) -> Option<String> {
+        let result: Result<String, String> = async {
+            with_session!(self, None, false, |sess| {
+                Ok::<_, browser_cdp::Error>(sess.page.capture_epoch())
+            })
+        }
+        .await;
+        result.ok()
     }
 
     async fn fill_secret(
@@ -2038,24 +2052,57 @@ impl BrowserTool {
         action: &str,
         label: String,
     ) -> Result<ActionPermit, ToolError> {
-        let Some(gate) = self.shared.control.as_ref() else {
-            return Ok(ActionPermit::default());
+        let permit = if let Some(gate) = self.shared.control.as_ref() {
+            let request = ControlRequest {
+                run_id: run_id.to_owned(),
+                rect: None,
+                label,
+                action: action.to_owned(),
+            };
+            crate::control::admit_or_inherit(gate.as_ref(), || async {
+                if self.shared.driver.on_desktop() {
+                    gate.admit_action(&request).await
+                } else {
+                    gate.admit_background_action(&request).await
+                }
+            })
+            .await
+            .map_err(exec_err)?
+        } else {
+            ActionPermit::default()
         };
-        let request = ControlRequest {
-            run_id: run_id.to_owned(),
-            rect: None,
-            label,
-            action: action.to_owned(),
-        };
-        crate::control::admit_or_inherit(gate.as_ref(), || async {
-            if self.shared.driver.on_desktop() {
-                gate.admit_action(&request).await
-            } else {
-                gate.admit_background_action(&request).await
+        let epoch = self
+            .shared
+            .control
+            .as_ref()
+            .map_or(0, |g| g.observation_epoch());
+        // Admission and stale-observation handling retain precedence over page reads.
+        if !permit.needs_observation()
+            && self
+                .shared
+                .observed_epoch
+                .load(std::sync::atomic::Ordering::SeqCst)
+                == epoch
+            && (self.op != Op::Open || self.shared.driver.current_url().await.is_some())
+        {
+            self.refuse_observation_while_latched()?;
+            let snapshot = self.shared.driver.snapshot(false).await.map_err(exec_err)?;
+            if self.op == Op::Eval
+                && matches!(
+                    crate::handover::detect(&snapshot),
+                    Some(crate::handover::Challenge::Captcha { .. })
+                )
+            {
+                return Err(exec_err(
+                    "CAPTCHA scripts cannot be bounded to two attempts: hand over with browser_handover(kind: captcha)",
+                ));
             }
-        })
-        .await
-        .map_err(exec_err)
+            let document = self.shared.driver.capture_epoch().await.unwrap_or_default();
+            crate::handover::handover_hub()
+                .captcha_action(run_id, &snapshot, &document)
+                .map_err(exec_err)?;
+        }
+        Ok(permit)
     }
 
     /// After a human takeover (or when an observation was invalidated) the action is not
@@ -2155,6 +2202,13 @@ impl BrowserTool {
             return Err(exec_err(message));
         }
         let d = Arc::clone(&self.shared.driver);
+        if matches!(self.op, Op::Screenshot | Op::Eval)
+            && crate::handover::handover_hub().capture_latched(&d).await
+        {
+            return Err(exec_err(
+                "observation refused while a typed one-time code is visible; submit the form or navigate first",
+            ));
+        }
         let text = match self.op {
             Op::Open => {
                 let i: OpenIn = parse(input)?;
@@ -2598,10 +2652,13 @@ impl BrowserTool {
     /// one-time-code prompt and what it may do about it (see `handover`).
     fn append_challenge_notice(ctx: &ToolContext, text: &mut String) {
         let Some(challenge) = crate::handover::detect(text) else {
+            if crate::handover::rendered_page(text) {
+                crate::handover::handover_hub().clear_captcha(&ctx.run_id);
+            }
             return;
         };
         let seen = if matches!(challenge, crate::handover::Challenge::Captcha { .. }) {
-            crate::handover::handover_hub().note_captcha(&ctx.run_id)
+            crate::handover::handover_hub().next_captcha_attempt(&ctx.run_id)
         } else {
             0
         };
@@ -2652,7 +2709,13 @@ impl BrowserTool {
             .await
             .and_then(|u| origin_of(&u))
             .ok_or_else(|| exec_err("the browser did not report which site this page is on"))?;
-        handover_hub().arm(&ctx.run_id, Arc::clone(&shared.driver), kind, &site);
+        handover_hub().arm(
+            &ctx.run_id,
+            Arc::clone(&shared.driver),
+            kind,
+            &site,
+            &snapshot,
+        );
         Ok(ToolOutput {
             content: vec![
                 tool_registry::ContentPart::Json {
@@ -3387,9 +3450,12 @@ mod tests {
             calls,
             vec![
                 "open:https://example.com:work",
+                "snapshot:false",
                 "click:e1",
+                "snapshot:false",
                 "fill:e2:hi",
                 "wait:Text(\"Welcome\")",
+                "snapshot:false",
                 "scroll:-:0:100"
             ]
         );
@@ -3410,14 +3476,14 @@ mod tests {
             .await
             .unwrap();
         let calls = fake.calls.lock().clone();
-        assert_eq!(calls.len(), 3, "{calls:?}");
-        assert!(calls[0].contains("pages: Some(1.0)"), "{calls:?}");
+        assert_eq!(calls.len(), 6, "{calls:?}");
+        assert!(calls[1].contains("pages: Some(1.0)"), "{calls:?}");
         assert!(
-            calls[1].contains("to: Some(\"bottom\")") && calls[1].contains("slow"),
+            calls[3].contains("to: Some(\"bottom\")") && calls[3].contains("slow"),
             "{calls:?}"
         );
         assert!(
-            calls[2].contains("into_view: true") && calls[2].contains("e3"),
+            calls[5].contains("into_view: true") && calls[5].contains("e3"),
             "{calls:?}"
         );
         // Nonsense is refused in plain words, before anything is done.
@@ -3436,7 +3502,7 @@ mod tests {
                 .to_string();
             assert!(err.contains(hint), "{bad}: {err}");
         }
-        assert_eq!(fake.calls.lock().len(), 3, "a refused scroll did nothing");
+        assert_eq!(fake.calls.lock().len(), 6, "a refused scroll did nothing");
     }
 
     #[tokio::test]
@@ -3457,9 +3523,11 @@ mod tests {
             .await
             .unwrap();
         let calls = fake.calls.lock().clone();
-        assert_eq!(calls[0], "hover:e7");
+        assert_eq!(calls[0], "snapshot:false");
+        assert_eq!(calls[1], "hover:e7");
+        assert_eq!(calls[2], "snapshot:false");
         assert!(
-            calls[1].contains("unit: \"word\"") && calls[1].contains("Orders ship"),
+            calls[3].contains("unit: \"word\"") && calls[3].contains("Orders ship"),
             "{calls:?}"
         );
         // Selecting needs something to select; a hover needs its ref.
@@ -3547,8 +3615,10 @@ mod tests {
         assert_eq!(
             calls,
             vec![
+                "snapshot:false",
                 "click:e1:accept:hello",
                 "open:https://example.com:-:dismiss",
+                "snapshot:false",
                 "back:accept",
             ]
         );

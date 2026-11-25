@@ -26,6 +26,7 @@ struct Page {
     url: StdMutex<Option<String>>,
     typed: StdMutex<Vec<(String, String)>>,
     fail_with_code: bool,
+    stop_on_snapshot: StdMutex<Option<String>>,
 }
 
 impl Page {
@@ -35,6 +36,7 @@ impl Page {
             url: StdMutex::new(Some(url.to_owned())),
             typed: StdMutex::new(Vec::new()),
             fail_with_code: false,
+            stop_on_snapshot: StdMutex::new(None),
         })
     }
     fn show(&self, snapshot: &str, url: &str) {
@@ -49,6 +51,9 @@ impl BrowserDriver for Page {
         Ok(self.snapshot.lock().unwrap().clone())
     }
     async fn snapshot(&self, _i: bool) -> Result<String, String> {
+        if let Some(run) = self.stop_on_snapshot.lock().unwrap().take() {
+            handover_hub().forget(&run);
+        }
         Ok(self.snapshot.lock().unwrap().clone())
     }
     async fn click(&self, _r: &str) -> Result<String, String> {
@@ -298,4 +303,92 @@ async fn a_captcha_handover_finishes_only_when_the_check_is_gone() {
         Err(HandoverError::NotArmed)
     );
     hub.forget("run-h4");
+}
+
+#[tokio::test]
+async fn regression_third_captcha_action_refused_and_new_challenge_resets() {
+    let page = Page::new(RECAPTCHA_PAGE, "https://shop.example/signup");
+    let click = tool(&page, "browser_click");
+    let context = ctx("regression-cap");
+    for _ in 0..2 {
+        click.call(&context, json!({"ref":"e2"})).await.unwrap();
+    }
+    let err = click.call(&context, json!({"ref":"e2"})).await.unwrap_err();
+    assert!(err.to_string().contains("browser_handover"));
+    handover_hub().disarm(&context.run_id);
+    assert!(
+        click.call(&context, json!({"ref":"e2"})).await.is_err(),
+        "cancelling a card cannot restore attempts"
+    );
+    page.show(LOGIN_PAGE, "https://shop.example/account");
+    tool(&page, "browser_snapshot")
+        .call(&context, json!({}))
+        .await
+        .unwrap();
+    page.show(RECAPTCHA_PAGE, "https://shop.example/signup");
+    click.call(&context, json!({"ref":"e2"})).await.unwrap();
+    handover_hub().forget(&context.run_id);
+}
+
+#[tokio::test]
+async fn regression_stop_during_code_preparation_types_nothing() {
+    let page = Page::new(CODE_PAGE, "https://bank.example/2fa");
+    tool(&page, "browser_handover")
+        .call(&ctx("regression-stop"), json!({"kind":"code"}))
+        .await
+        .unwrap();
+    *page.stop_on_snapshot.lock().unwrap() = Some("regression-stop".into());
+    assert_eq!(
+        handover_hub().type_code("regression-stop", "123456").await,
+        Err(HandoverError::NotArmed)
+    );
+    assert!(page.typed.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn regression_done_rejects_blank_foreign_and_unrendered_pages() {
+    let page = Page::new(RECAPTCHA_PAGE, "https://shop.example/signup");
+    tool(&page, "browser_handover")
+        .call(&ctx("regression-done"), json!({"kind":"captcha"}))
+        .await
+        .unwrap();
+    for (snapshot, url) in [
+        ("", "https://shop.example/signup"),
+        (LOGIN_PAGE, "https://evil.example/account"),
+        (
+            "# Loading\n  iframe \"verification\"",
+            "https://shop.example/signup",
+        ),
+    ] {
+        page.show(snapshot, url);
+        assert!(
+            handover_hub()
+                .verify_solved("regression-done")
+                .await
+                .is_err(),
+            "accepted {url}: {snapshot}"
+        );
+    }
+    handover_hub().forget("regression-done");
+}
+
+#[tokio::test]
+async fn regression_screenshot_refused_after_code_is_typed() {
+    let page = Page::new(CODE_PAGE, "https://bank.example/2fa");
+    let context = ctx("regression-capture");
+    tool(&page, "browser_handover")
+        .call(&context, json!({"kind":"code"}))
+        .await
+        .unwrap();
+    handover_hub()
+        .type_code(&context.run_id, "123456")
+        .await
+        .unwrap();
+    assert!(
+        tool(&page, "browser_screenshot")
+            .call(&context, json!({}))
+            .await
+            .is_err()
+    );
+    handover_hub().forget(&context.run_id);
 }

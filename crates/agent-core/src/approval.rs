@@ -1605,6 +1605,7 @@ impl Shared {
         if let Some(rt) = self.rt.get().and_then(Weak::upgrade) {
             rt.signal_cancel(run_id);
         }
+        builtin_tools::handover_hub().forget(&run_id.to_string());
         let drained: Vec<(ToolCallId, Pending)> = {
             let mut pending = self.pending.lock();
             let ids: Vec<ToolCallId> = pending
@@ -2384,7 +2385,7 @@ impl Shared {
             builtin_tools::HandoverKind::Code => HandoverKind::Code,
         };
         let refuse = |why: &str| {
-            builtin_tools::handover_hub().forget(&ctx.run_id.to_string());
+            builtin_tools::handover_hub().disarm(&ctx.run_id.to_string());
             self.audit(
                 ctx,
                 "system",
@@ -2452,7 +2453,7 @@ impl Shared {
         }
         guard.resume();
         self.handovers.lock().remove(&call_id);
-        builtin_tools::handover_hub().forget(&ctx.run_id.to_string());
+        builtin_tools::handover_hub().disarm(&ctx.run_id.to_string());
         let (done, why, decision) = match waited {
             Ok(Ok(Verdict::HandoverDone)) => (true, "", "approved"),
             Err(_) => (false, "the owner did not answer in time", "expired"),

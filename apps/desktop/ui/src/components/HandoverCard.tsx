@@ -96,7 +96,9 @@ export function HandoverCard({ item, botName, onSubmitCode, onDone, onCancel, on
       setError(t("handover.wrongFormat"));
       return;
     }
-    void run(() => onSubmitCode(cleanCode(raw)), true);
+    const code = cleanCode(raw);
+    wipe();
+    void run(() => onSubmitCode(code), true);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -165,7 +167,7 @@ export function HandoverCard({ item, botName, onSubmitCode, onDone, onCancel, on
               className={formStyles.input}
               type="text"
               inputMode="text"
-              autoComplete="off"
+              autoComplete="one-time-code"
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}

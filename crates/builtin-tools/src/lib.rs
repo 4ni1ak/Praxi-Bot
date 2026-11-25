@@ -670,7 +670,15 @@ mod tests {
         let _ = register_builtin_tools(&registry, config);
         registry.get("script_run").unwrap().call(&tool_registry::ToolContext::default(),serde_json::json!({"code":"await tools.call('browser_click',{ref:'e1'}); return await tools.call('browser_press',{key:'Enter'});"})).await.unwrap();
         assert_eq!(gate.0.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(browser.calls.lock().len(), 2);
+        assert_eq!(
+            *browser.calls.lock(),
+            [
+                "snapshot:false",
+                "click:e1",
+                "snapshot:false",
+                "press:Enter"
+            ]
+        );
     }
 
     /// The first admission waited out a pause (needs a fresh observation); the
@@ -890,9 +898,9 @@ mod tests {
         .await;
         assert!(!text.contains(": ran"), "{text}");
         assert_eq!(
-            calls.len(),
-            1,
-            "only the first click reached the browser: {calls:?}"
+            calls,
+            ["snapshot:false", "click:e1"],
+            "only the guard read and first click reached the browser: {calls:?}"
         );
     }
 
@@ -929,7 +937,17 @@ mod tests {
         .await;
         let _ = (&text, &epoch);
         // No epoch change here: every call is ordinary.
-        assert_eq!(calls.len(), 3, "{calls:?}");
+        assert_eq!(
+            calls,
+            [
+                "snapshot:false",
+                "click:e1",
+                "snapshot:false",
+                "press:Enter",
+                "snapshot:false",
+                "press:Tab"
+            ]
+        );
     }
 
     #[tokio::test]

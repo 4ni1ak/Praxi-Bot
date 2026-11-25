@@ -128,6 +128,8 @@ pub(crate) struct Shared {
     pub last_net: StdMutex<Option<Instant>>,
     /// Incremented on every main-frame navigation; invalidates refs.
     pub nav_gen: AtomicU64,
+    /// Navigation generation holding a visible secret; capture fails closed until navigation.
+    pub secret_capture: StdMutex<Option<u64>>,
     /// Incremented on DOM/AX/frame/network-completion mutations and page actions; invalidates snapshot cache.
     pub dom_gen: AtomicU64,
     /// Timestamp of the latest main-frame `Page.frameNavigated`.
@@ -161,6 +163,7 @@ impl Default for Shared {
             action_mark: StdMutex::default(),
             last_net: StdMutex::default(),
             nav_gen: AtomicU64::default(),
+            secret_capture: StdMutex::default(),
             dom_gen: AtomicU64::default(),
             last_nav_at: StdMutex::default(),
             target_closed: Arc::default(),
@@ -220,6 +223,15 @@ impl Drop for Page {
 }
 
 impl Page {
+    /// Identity of the current document, including same-URL reloads.
+    pub fn capture_epoch(&self) -> String {
+        format!(
+            "{}:{}",
+            self.session_id(),
+            self.shared.nav_gen.load(Ordering::SeqCst)
+        )
+    }
+
     /// Attach to an existing target and enable the CDP domains needed for snapshots and actions.
     pub async fn attach(client: Arc<CdpClient>, target_id: &str) -> Result<Self> {
         let rx = client.subscribe();
