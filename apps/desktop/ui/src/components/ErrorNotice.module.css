@@ -3,11 +3,32 @@
   align-items: flex-start;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  border: var(--size-border) solid var(--color-danger);
+  /* A recoverable error is calm: a faint danger edge and tint, the icon carries the colour. */
+  border: var(--size-border) solid color-mix(in srgb, var(--color-danger) 28%, var(--color-border));
   border-radius: var(--radius-card);
   background-color: var(--color-danger-subtle);
   color: var(--color-text);
   text-align: left;
+}
+
+/* Transient "starting / trying again": a neutral surface, not an error box. */
+.waiting {
+  border-color: var(--color-border);
+  background-color: var(--color-surface);
+}
+
+.waiting .icon {
+  color: var(--color-text-muted);
+}
+
+.spin {
+  animation: error-notice-spin var(--motion-duration-pulse) linear infinite;
+}
+
+@keyframes error-notice-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .compact {
@@ -33,7 +54,7 @@
 .title {
   margin: var(--space-0);
   font-size: var(--font-size-ui);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
 }
 
 .hint {
@@ -95,4 +116,10 @@
 .copy svg {
   width: var(--size-icon-sm);
   height: var(--size-icon-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
 }

@@ -22,13 +22,16 @@
   flex-wrap: wrap;
 }
 
-.header { justify-content: space-between; }
-.header h1 { margin: var(--space-0); font-size: var(--font-size-xl); }
-.header p, .empty p { color: var(--color-text-secondary); }
+.header { justify-content: space-between; align-items: flex-start; }
+.headerText { display: flex; flex: 1 1 calc(var(--size-control-lg) * 5); flex-direction: column; gap: var(--space-1); min-width: var(--space-0); }
+.header .actions { margin-left: auto; }
+.header h1 { margin: var(--space-0); font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); letter-spacing: var(--letter-spacing-display); line-height: var(--line-height-tight); }
+.header p { margin: var(--space-0); color: var(--color-text-muted); font-size: var(--font-size-sm); }
 
+/* Labels sit above their field in small type; the row wraps instead of squeezing the search. */
 .toolbar {
   display: flex;
-  align-items: end;
+  align-items: flex-end;
   gap: var(--space-3);
   flex-wrap: wrap;
 }
@@ -37,14 +40,16 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  font-size: var(--font-size-sm);
   min-width: var(--space-0);
   max-width: 100%;
 }
 
-.search { flex: 1; }
-.count, .footnote { margin: var(--space-0); color: var(--color-text-secondary); font-size: var(--font-size-sm); }
-.notice { color: var(--color-warning); }
+.fieldLabel { font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); color: var(--color-text-muted); }
+.search { flex: 2 1 calc(var(--size-control-lg) * 4); }
+.picker { flex: 1 1 calc(var(--size-control-lg) * 3); }
+.layoutSwitch { display: inline-flex; align-items: center; gap: var(--space-1); margin-left: auto; }
+.count, .footnote { margin: var(--space-0); color: var(--color-text-muted); font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
+.notice { color: var(--color-warning); font-size: var(--font-size-sm); }
 
 .grid, .list {
   list-style: none;
@@ -59,18 +64,21 @@
 .card { height: 100%; display: flex; flex-direction: column; gap: var(--space-3); }
 .identity { flex-wrap: nowrap; }
 .name { flex: 1; min-width: var(--space-0); overflow-wrap: anywhere; }
-.name h2, .empty h2 { margin: var(--space-0); font-size: var(--font-size-md); }
-.name > span { color: var(--color-text-secondary); font-size: var(--font-size-sm); }
-.status { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.name h2 { margin: var(--space-0); font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); }
+.name > span { color: var(--color-text-muted); font-size: var(--font-size-xs); }
+.status { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: var(--color-text-muted); }
+.status::before { content: ""; width: var(--size-status-dot); height: var(--size-status-dot); border-radius: var(--radius-pill); background: currentcolor; opacity: 0.7; }
 .status[data-status="running"] { color: var(--color-success); }
 .status[data-status="approval"], .status[data-status="paused"] { color: var(--color-warning); }
 .facts { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-0); }
 .facts > div { flex: 1; min-width: var(--space-0); overflow-wrap: anywhere; }
-.facts dt { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
-.facts dd { margin: var(--space-1) var(--space-0) var(--space-0); font-size: var(--font-size-sm); }
-.progress { width: 100%; height: var(--space-1); accent-color: var(--color-accent); }
+.facts dt { font-size: var(--font-size-xs); color: var(--color-text-muted); }
+.facts dd { margin: var(--space-1) var(--space-0) var(--space-0); font-size: var(--font-size-ui); font-variant-numeric: tabular-nums; }
+.progress { width: 100%; height: var(--space-1); appearance: none; border: none; border-radius: var(--radius-pill); background: var(--color-surface-active); overflow: hidden; accent-color: var(--color-accent); }
+.progress::-webkit-progress-bar { background: var(--color-surface-active); }
+.progress::-webkit-progress-value { background: var(--color-accent); border-radius: var(--radius-pill); }
+.progress::-moz-progress-bar { background: var(--color-accent); border-radius: var(--radius-pill); }
 .cardActions { margin-top: auto; }
-.empty { text-align: center; }
 
 .list .card { gap: var(--space-2); }
 .list .facts { justify-content: space-between; }

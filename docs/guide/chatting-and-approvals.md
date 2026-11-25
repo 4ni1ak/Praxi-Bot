@@ -278,6 +278,45 @@ data. The bot form has an explicit, off-by-default setting that skips this ask
 for that bot. Deny rules and the floors above still win. A run that has not
 read anything behaves as before.
 
+### Full level: working on the web after a read (owner-started runs)
+
+The **Full** preset ("Tam") is for people who want the bot to do the work, not to
+ask about every page. In a run that **you started yourself** (typed in the
+desktop app, or sent from your own admin desktop), reading web pages does not
+make the bot ask again for each further step in the managed browser. Opening a
+page already counts as "read something untrusted"; what decides whether the bot
+may keep going is whether the run also holds **your private data**: your files,
+mail, memory, screens or other bots' data, also from an earlier message of the same chat or from another bot's answer (then nothing can be compared, so a new site asks). Pages seen through a browser profile you named count as private too, because that profile may be signed in to your accounts. So do the pages of a bot's own browser once you took it over (for example to log in) or typed one of your stored secrets into it, and anything opened on this computer or your network (`localhost`, `file:`, a LAN address). Logins the bot made for itself with `account_register` do not count, so sign-up work stays free. The details you typed for the task (a
+company name, your email address) are not private for this purpose. You gave them
+so the bot can type them into forms.
+
+| Situation | Asks? |
+| --- | --- |
+| No private data in the run: opens any public site (new ones too), deep pages, query strings, goes back, switches tabs, clicks, scrolls, types the details you gave it, picks options, presses keys, submits forms | No |
+| Private data in the run, and it read a web page: deep pages, subdomains and forms of a site **you named** (or approved on an earlier card) | No |
+| Private data in the run, and it read a web page: a new site, or a form on a page that is not yours, **when the address or text contains a word of 6 or more letters (or three words in a row) of the private data, even split by dashes or dots, percent-encoded or accented differently**, looks like a key, access code, hash or encoded string, is long (over 120 characters of address, over 39 characters of form text), carries a `#fragment`, or the run has already sent more than about 600 characters to such places | **Yes** |
+| Private data in the run and it read a web page, but nothing in the address or text comes from the private data | No |
+| Types a card-like number or something shaped like a key into a page, in any run | **Yes** |
+| Types an owner-stored secret (`browser_fill` with `secret`) | **Yes**, every time |
+| Spends money, deletes something on the never-list, sends mail or a message through the mail tools, publishes, runs a page script (`browser_eval`), starts a program or shell command after it read an untrusted page, uses a named browser profile, opens a local or private-network address | **Yes** |
+
+Why this is safe enough: a site is never added to "yours" because the bot went there,
+only because you named it or approved it. A run without private data has nothing a
+hostile page could make the bot carry away. A run with private data keeps an
+in-memory record (salted hashes, never the text, dropped with the run) of the private
+words it read, and a call that repeats one asks. Floors, always-ask tools (mail
+sending among them: it keeps asking until the written mail policy exists) and the
+block rules are decided before this rule and are untouched. A run that is **not**
+started by you (a schedule, a webhook, an incoming mail, a channel, a paired device
+that is not your admin desktop, a subagent or a helper bot, an external agent) keeps the old rule
+and its one-time cards, and the Normal level and custom levels are unchanged.
+
+What it cannot stop: letter-by-letter spelling (`h-a-n-n-e-l-o-r-e`) and punycode host names, as well as private words shorter than 6 letters (a 4-digit PIN, a short first name) and anything shorter than three words are never recognised; a hostile page that talks the model into **re-encoding or
+paraphrasing** your private data into a fresh string (for example translating it, or
+spelling it with different words) and sending it to a new site, or private data the
+model knows that never came through a tool result of this run. Every call this rule
+lets through is written to the audit log as `mode.full.owner_browse`.
+
 ### Host-status commands on an always-on host
 
 Normally `shell_run` output marks a run untrusted ("command output"), which then
