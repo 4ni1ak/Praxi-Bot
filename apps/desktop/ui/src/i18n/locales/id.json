@@ -1575,6 +1575,7 @@
         "stillAsks": "It asks again for other programs, launching, commands, scripts, dragging, file dialogs, password fields and any other key. Terminals, browsers, launchers and remote-desktop viewers are recognised by file name only, which is a heuristic: a renamed copy is not recognised. The permission ends with the task and is withdrawn after any stopped or failed send."
       },
       "countdown": "Auto-deny in {{seconds}} s",
+      "decidedElsewhere": "Permintaan ini sudah ditangani atau sudah kedaluwarsa.",
       "deny": "Deny",
       "egress": {
         "hidden": "{{hidden}} invisible characters are shown as <U+XXXX>",
@@ -1963,6 +1964,7 @@
       "answer": "Answer",
       "answered": "You answered: {{answer}}",
       "closed": "This question is no longer open.",
+      "decidedElsewhere": "Pertanyaan ini sudah dijawab atau sudah kedaluwarsa.",
       "placeholder": "Type another answer…",
       "title": "The bot asks"
     },
@@ -4920,6 +4922,20 @@
     "directHint": "Direct: this app talks straight to the computer, which is the fastest way. The number is the delay.",
     "relay": "Relay · {{rtt}} ms",
     "relayHint": "Relayed: the connection goes through a helper server, so it can be a little slower. The number is the delay."
+  },
+  "popout": {
+    "chatFallbackTitle": "Jendela percakapan",
+    "connecting": "Menghubungkan…",
+    "focusFailed": "Jendela utama tidak dapat ditampilkan. Buka dari baki sistem.",
+    "focusMain": "Tampilkan jendela utama",
+    "openChat": "Buka di jendela baru",
+    "openChatTooltip": "Buka percakapan ini di jendela baru",
+    "openFailed": "Jendela baru tidak dapat dibuka. Silakan coba lagi.",
+    "openLive": "Buka tampilan langsung di jendela baru",
+    "openLiveShort": "Pisahkan jendela",
+    "pinFailed": "Pengaturan jendela agar selalu di depan tidak dapat diubah. Silakan coba lagi.",
+    "pinOnTop": "Selalu tampilkan jendela ini di depan",
+    "unpinOnTop": "Jangan selalu tampilkan di depan"
   },
   "profileShare": {
     "back": "Back",

@@ -1575,6 +1575,7 @@
         "stillAsks": "Şunlar için yine sorar: başka programlar, program başlatma, komutlar, betikler, sürükleme, dosya iletişim kutuları, parola alanları ve diğer tüm tuşlar. Terminaller, tarayıcılar, başlatıcılar ve uzak masaüstü görüntüleyicileri yalnızca dosya adına göre tanınır; bu bir tahmine dayanır, adı değiştirilmiş kopya tanınmaz. İzin görevle biter ve durdurulan veya başarısız olan her gönderimden sonra geri alınır."
       },
       "countdown": "{{seconds}} sn içinde otomatik reddedilir",
+      "decidedElsewhere": "Bu istek daha önce sonuçlandırıldı veya süresi doldu.",
       "deny": "Reddet",
       "egress": {
         "hidden": "{{hidden}} görünmeyen karakter <U+XXXX> olarak gösterilir",
@@ -1963,6 +1964,7 @@
       "answer": "Yanıtla",
       "answered": "Yanıtın: {{answer}}",
       "closed": "Bu soru artık açık değil.",
+      "decidedElsewhere": "Bu soru daha önce yanıtlandı veya süresi doldu.",
       "placeholder": "Başka bir yanıt yaz…",
       "title": "Bot soruyor"
     },
@@ -4920,6 +4922,20 @@
     "directHint": "Doğrudan: uygulama bilgisayarla birebir konuşuyor, en hızlı yol bu. Sayı gecikmedir.",
     "relay": "Röle · {{rtt}} ms",
     "relayHint": "Aktarmalı: bağlantı bir yardımcı sunucudan geçiyor, bu yüzden biraz yavaş olabilir. Sayı gecikmedir."
+  },
+  "popout": {
+    "chatFallbackTitle": "Sohbet penceresi",
+    "connecting": "Bağlanıyor...",
+    "focusFailed": "Ana pencere gösterilemedi. Sistem tepsisinden açın.",
+    "focusMain": "Ana pencereye geç",
+    "openChat": "Yeni pencerede aç",
+    "openChatTooltip": "Sohbeti yeni pencerede aç",
+    "openFailed": "Yeni pencere açılamadı. Lütfen yeniden deneyin.",
+    "openLive": "Canlı görünümü yeni pencerede aç",
+    "openLiveShort": "Ayır",
+    "pinFailed": "Pencerenin üstte kalma ayarı değiştirilemedi. Lütfen yeniden deneyin.",
+    "pinOnTop": "Pencereyi üstte tut",
+    "unpinOnTop": "Üstte tutmayı kaldır"
   },
   "profileShare": {
     "back": "Geri",

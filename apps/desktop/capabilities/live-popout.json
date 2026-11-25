@@ -1,0 +1,20 @@
+{
+  "identifier": "live-popout",
+  "description": "Minimal permissions for pop-out live view windows: window chrome, daemon connection, owner key for takeover control, pin-on-top and emergency stop",
+  "windows": ["live-*"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-is-maximized",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "allow-popout-connect",
+    "allow-popout-owner-key",
+    "allow-popout-set-always-on-top",
+    "allow-popout-focus-main",
+    "allow-get-control-state",
+    "allow-stop-bot-run"
+  ]
+}

@@ -1575,6 +1575,7 @@
         "stillAsks": "It asks again for other programs, launching, commands, scripts, dragging, file dialogs, password fields and any other key. Terminals, browsers, launchers and remote-desktop viewers are recognised by file name only, which is a heuristic: a renamed copy is not recognised. The permission ends with the task and is withdrawn after any stopped or failed send."
       },
       "countdown": "Auto-deny in {{seconds}} s",
+      "decidedElsewhere": "Esta solicitação já foi resolvida ou expirou.",
       "deny": "Deny",
       "egress": {
         "hidden": "{{hidden}} invisible characters are shown as <U+XXXX>",
@@ -1963,6 +1964,7 @@
       "answer": "Answer",
       "answered": "You answered: {{answer}}",
       "closed": "This question is no longer open.",
+      "decidedElsewhere": "Esta pergunta já foi respondida ou expirou.",
       "placeholder": "Type another answer…",
       "title": "The bot asks"
     },
@@ -4920,6 +4922,20 @@
     "directHint": "Direct: this app talks straight to the computer, which is the fastest way. The number is the delay.",
     "relay": "Relay · {{rtt}} ms",
     "relayHint": "Relayed: the connection goes through a helper server, so it can be a little slower. The number is the delay."
+  },
+  "popout": {
+    "chatFallbackTitle": "Janela de conversa",
+    "connecting": "Conectando…",
+    "focusFailed": "Não foi possível mostrar a janela principal. Abra-a pela bandeja do sistema.",
+    "focusMain": "Mostrar a janela principal",
+    "openChat": "Abrir em uma nova janela",
+    "openChatTooltip": "Abrir esta conversa em uma nova janela",
+    "openFailed": "Não foi possível abrir a nova janela. Tente novamente.",
+    "openLive": "Abrir a visualização ao vivo em uma nova janela",
+    "openLiveShort": "Destacar",
+    "pinFailed": "Não foi possível alterar a opção de manter em primeiro plano. Tente novamente.",
+    "pinOnTop": "Manter esta janela em primeiro plano",
+    "unpinOnTop": "Deixar de manter em primeiro plano"
   },
   "profileShare": {
     "back": "Back",

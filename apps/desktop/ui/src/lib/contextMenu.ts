@@ -380,6 +380,7 @@ export interface ChatRowCtx {
   /** The export needs the daemon connection. */
   canExport: boolean;
   onOpen: () => void;
+  onPopOut?: () => void;
   onRename: () => void;
   onPin: () => void;
   onExport: () => void;
@@ -392,6 +393,7 @@ export interface ChatRowCtx {
 export function chatRowMenu(c: ChatRowCtx): MenuSpec {
   const items = tidyItems([
     { kind: "action", id: "open", label: c.t("contextMenu.open"), icon: "open", run: c.onOpen },
+    c.onPopOut ? { kind: "action", id: "popOut", label: c.t("popout.openChat"), icon: "external", run: c.onPopOut } : null,
     SEP,
     { kind: "action", id: "rename", label: c.t("chatManage.rename"), icon: "edit", disabled: c.busy, run: c.onRename },
     { kind: "action", id: "pin", label: c.t(c.pinned ? "chatManage.unpin" : "chatManage.pin"), icon: c.pinned ? "pinOff" : "pin", disabled: c.busy, run: c.onPin },
@@ -401,6 +403,21 @@ export function chatRowMenu(c: ChatRowCtx): MenuSpec {
     { kind: "action", id: "delete", label: c.t("chatManage.delete"), icon: "trash", danger: true, confirms: true, disabled: c.busy, run: c.onRequestDelete }
   ]);
   return { label: c.t("chatManage.menuLabel", { title: c.title }), items };
+}
+
+export interface LiveComputerCtx {
+  t: Translate;
+  onPopOut: () => void;
+  onOpenFull?: () => void;
+}
+
+/** Computer card / live view context menu: open full view or pop out into a dedicated window. */
+export function liveComputerMenu(c: LiveComputerCtx): MenuSpec {
+  const items = tidyItems([
+    c.onOpenFull ? { kind: "action", id: "open", label: c.t("computerCard.big"), icon: "open", run: c.onOpenFull } : null,
+    { kind: "action", id: "popOut", label: c.t("popout.openLive"), icon: "external", run: c.onPopOut }
+  ]);
+  return { label: c.t("computerCard.title"), items };
 }
 
 export interface BotRowCtx {

@@ -1575,6 +1575,7 @@
         "stillAsks": "Praxi fragt erneut bei anderen Programmen, beim Starten, bei Befehlen, Skripten, Ziehen, Dateidialogen, Passwortfeldern und jeder anderen Taste. Terminals, Browser, Launcher und Remote-Desktop-Viewer werden nur am Dateinamen erkannt, was eine Heuristik ist: Eine umbenannte Kopie wird nicht erkannt. Die Berechtigung endet mit der Aufgabe und wird nach jedem gestoppten oder fehlgeschlagenen Senden zurückgezogen."
       },
       "countdown": "Automatische Ablehnung in {{seconds}} s",
+      "decidedElsewhere": "Diese Anfrage wurde bereits bearbeitet oder ist abgelaufen.",
       "deny": "Ablehnen",
       "egress": {
         "hidden": "{{hidden}} unsichtbare Zeichen werden als <U+XXXX> angezeigt",
@@ -1963,6 +1964,7 @@
       "answer": "Antworten",
       "answered": "Du hast geantwortet: {{answer}}",
       "closed": "Diese Frage ist nicht mehr offen.",
+      "decidedElsewhere": "Diese Frage wurde bereits beantwortet oder ist abgelaufen.",
       "placeholder": "Andere Antwort eingeben …",
       "title": "Der Bot fragt"
     },
@@ -4920,6 +4922,20 @@
     "directHint": "Direkt: Die App spricht unmittelbar mit dem Computer, das ist der schnellste Weg. Die Zahl ist die Verzögerung.",
     "relay": "Relay · {{rtt}} ms",
     "relayHint": "Über Relay: Die Verbindung läuft über einen Hilfsserver und kann etwas langsamer sein. Die Zahl ist die Verzögerung."
+  },
+  "popout": {
+    "chatFallbackTitle": "Chatfenster",
+    "connecting": "Verbindung wird hergestellt...",
+    "focusFailed": "Das Hauptfenster konnte nicht angezeigt werden. Öffne es über den Infobereich.",
+    "focusMain": "Hauptfenster fokussieren",
+    "openChat": "In neuem Fenster öffnen",
+    "openChatTooltip": "Chat in neuem Fenster öffnen",
+    "openFailed": "Das neue Fenster konnte nicht geöffnet werden. Bitte versuche es erneut.",
+    "openLive": "Live-Ansicht in neuem Fenster öffnen",
+    "openLiveShort": "Abdocken",
+    "pinFailed": "Die Einstellung „Immer im Vordergrund“ konnte nicht geändert werden. Bitte versuche es erneut.",
+    "pinOnTop": "Fenster immer im Vordergrund",
+    "unpinOnTop": "Vordergrund-Fixierung aufheben"
   },
   "profileShare": {
     "back": "Zurück",

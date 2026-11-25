@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "ui/tokens.css";
@@ -11,54 +10,28 @@ import { ApiClient } from "./api/client";
 import { App } from "./App";
 import "./global.css";
 import "./i18n";
+import { currentWindowLabel, popoutOwnerKey, resolveWindowRoute } from "./lib/popout";
 import { isTauriRuntime } from "./overlay/events";
 import { OverlayWindow } from "./overlay/OverlayWindow";
+import { PopoutWindow } from "./popout/PopoutWindow";
 import { QuickAskWindow } from "./quickask/QuickAskWindow";
 import { WidgetWindow } from "./overlay/WidgetWindow";
 import { paintSavedAppearanceEarly } from "./state/useApplyAppearance";
 
-type WindowKind = "main" | "overlay" | "widget" | "quick-ask";
-
-function resolveWindowKind(): WindowKind {
-  if (typeof window !== "undefined") {
-    const queryKind = new URLSearchParams(window.location.search).get("window");
-    if (queryKind === "overlay" || queryKind === "widget" || queryKind === "quick-ask") {
-      return queryKind;
-    }
-    if (window.location.hash === "#overlay") {
-      return "overlay";
-    }
-    if (window.location.hash === "#widget") {
-      return "widget";
-    }
-    if (isTauriRuntime()) {
-      try {
-        const label = getCurrentWebviewWindow().label;
-        if (label.startsWith("overlay")) {
-          return "overlay";
-        }
-        if (label === "widget") {
-          return "widget";
-        }
-        if (label === "quick-ask") {
-          return "quick-ask";
-        }
-      } catch {
-        // Fall back to main window
-      }
-    }
-  }
-  return "main";
-}
-
-const windowKind = resolveWindowKind();
+const resolvedRoute =
+  typeof window !== "undefined"
+    ? resolveWindowRoute(window.location.search, window.location.hash, currentWindowLabel())
+    : ({ kind: "main" } as const);
+const windowKind = resolvedRoute.kind;
 document.documentElement.dataset.windowKind = windowKind;
 
-// The owner key of this app's daemon (main window only; the overlay, widget and Quick ask windows
-// get none). Requested once and kept in memory; every call to THIS computer's daemon carries it.
+// The owner key of this app's daemon (`main` and pop-out windows only; the overlay, widget and
+// Quick ask windows get none). Requested once and kept in memory.
 let ownerKey: Promise<string | null> | null = null;
 if (isTauriRuntime() && windowKind === "main") {
   ApiClient.ownerKeyProvider = () => (ownerKey ??= invoke<string>("owner_key").catch(() => null));
+} else if (isTauriRuntime() && (windowKind === "chat" || windowKind === "live")) {
+  ApiClient.ownerKeyProvider = () => (ownerKey ??= popoutOwnerKey().catch(() => null));
 }
 
 paintSavedAppearanceEarly(windowKind !== "main");
@@ -110,12 +83,14 @@ if (showAvatarGallery) {
 } else {
   root.render(
     <StrictMode>
-      {windowKind === "overlay" ? (
+      {resolvedRoute.kind === "overlay" ? (
         <OverlayWindow />
-      ) : windowKind === "widget" ? (
+      ) : resolvedRoute.kind === "widget" ? (
         <WidgetWindow />
-      ) : windowKind === "quick-ask" ? (
+      ) : resolvedRoute.kind === "quick-ask" ? (
         <QuickAskWindow />
+      ) : resolvedRoute.kind === "chat" || resolvedRoute.kind === "live" ? (
+        <PopoutWindow route={resolvedRoute} />
       ) : (
         <App />
       )}

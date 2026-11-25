@@ -583,7 +583,20 @@ function useDaemonData(conn: Connection | null, computerId: string): DaemonData 
  * so the local heartbeat, Stop and approval overlays keep working while a host is
  * selected.
  */
-export function DaemonProvider({ children }: { children: ReactNode }) {
+export function DaemonProvider({
+  children,
+  connect = connectDaemon,
+  allowStartupDiagnostics = true,
+  initialComputerId
+}: {
+  children: ReactNode;
+  /** Connection provider (`daemon_connect` in main window, `popout_connect` in pop-outs). */
+  connect?: () => Promise<Connection>;
+  /** Disabled in pop-out windows (which do not hold `daemon_diagnostics` permission). */
+  allowStartupDiagnostics?: boolean;
+  /** Optional explicit starting computer (`local` or paired host id) for pop-out windows. */
+  initialComputerId?: string;
+}) {
   const [phase, setPhase] = useState<Phase>("connecting");
   const [error, setError] = useState<string | null>(null);
   const [localConn, setLocalConn] = useState<Connection | null>(null);
@@ -595,7 +608,11 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
   const [home, setHome] = useState<Home>(LOCAL_HOME);
   const [homeRead, setHomeRead] = useState<"waiting" | "ready" | "offline">("waiting");
   const [initialComputerSelected, setInitialComputerSelected] = useState(false);
-  const [workLocalNow, setWorkLocalNowState] = useState(() => !isMockMode() && readRunPlace() === "this");
+  const [workLocalNow, setWorkLocalNowState] = useState(
+    () => initialComputerId === LOCAL_COMPUTER || (!isMockMode() && readRunPlace() === "this")
+  );
+  const connectRef = useRef(connect);
+  connectRef.current = connect;
   const setWorkLocalNow = useCallback((on: boolean) => {
     setWorkLocalNowState(on);
     writeRunPlace(on ? "this" : "server");
@@ -655,7 +672,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     setPhase("connecting");
-    connectDaemon()
+    connectRef.current()
       .then((c) => {
         if (!cancelled) {
           setLocalConn(c);
@@ -703,7 +720,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
   // The shell's view of a start that is slow (>15 s) or failed: stage, exit code, last log lines.
   const [startup, setStartup] = useState<StartupDiagnostics | null>(null);
   useEffect(() => {
-    if (phase === "ready") {
+    if (!allowStartupDiagnostics || phase === "ready") {
       setStartup(null);
       return undefined;
     }
@@ -723,7 +740,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
       stopped = true;
       window.clearInterval(id);
     };
-  }, [phase]);
+  }, [phase, allowStartupDiagnostics]);
 
   // 2. paired hosts and their channel state (polled from this computer's daemon)
   const refreshHosts = useCallback(async () => {
@@ -803,7 +820,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
 
   // The app follows the home by itself: at startup, after a reconnect and when the owner adopts a
   // host. Only the explicit "work on this computer for now" mode keeps it on this computer.
-  const wanted = wantedComputer(home, workLocalNow, LOCAL_COMPUTER);
+  const wanted = initialComputerId ?? wantedComputer(home, workLocalNow, LOCAL_COMPUTER);
   const initialSelectionReady = (homeRead === "ready" || isMockMode() || workLocalNow) && activeId === wanted;
   useEffect(() => {
     if (initialSelectionReady) setInitialComputerSelected(true);
@@ -897,7 +914,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
           }
         }
         setHostStarting(true);
-        const c = await connectDaemon();
+        const c = await connectRef.current();
         setLocalConn((prev) => (prev && prev.base_url === c.base_url && prev.token === c.token ? prev : c));
         setPhase("ready");
         setError(null);
@@ -922,7 +939,9 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
   const restartDaemon = useCallback(async (safe?: boolean, reason?: string) => {
     setPhase("connecting");
     try {
-      const c = await connectDaemon(true, typeof safe === "boolean" ? safe : undefined, reason);
+      const c = allowStartupDiagnostics
+        ? await connectDaemon(true, typeof safe === "boolean" ? safe : undefined, reason)
+        : await connectRef.current();
       setLocalConn(c);
       setPhase("ready");
       setError(null);
@@ -930,7 +949,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");
     }
-  }, []);
+  }, [allowStartupDiagnostics]);
 
   const value: DaemonContextValue = {
     ...data,

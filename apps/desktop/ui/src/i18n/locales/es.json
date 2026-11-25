@@ -1575,6 +1575,7 @@
         "stillAsks": "Se pedirá permiso de nuevo para usar otros programas, iniciar aplicaciones, ejecutar comandos o scripts, arrastrar, abrir cuadros de selección de archivos, escribir en campos de contraseña o pulsar cualquier otra tecla. Las terminales, los navegadores, los lanzadores y los visores de escritorio remoto se identifican solo por el nombre del archivo. Si el nombre cambió, no se reconocen. El permiso termina con la tarea y se revoca si se detiene o falla un envío."
       },
       "countdown": "Se rechazará automáticamente en {{seconds}} s",
+      "decidedElsewhere": "Esta solicitud ya se ha resuelto o ha caducado.",
       "deny": "Rechazar",
       "egress": {
         "hidden": "Se muestran {{hidden}} caracteres invisibles como <U+XXXX>",
@@ -1963,6 +1964,7 @@
       "answer": "Responder",
       "answered": "Respondiste: {{answer}}",
       "closed": "Esta pregunta ya está cerrada.",
+      "decidedElsewhere": "Esta pregunta ya se ha respondido o ha caducado.",
       "placeholder": "Escribe otra respuesta…",
       "title": "El bot pregunta"
     },
@@ -4920,6 +4922,20 @@
     "directHint": "La app se comunica directamente con el equipo. Es la conexión más rápida. El número indica el tiempo de respuesta.",
     "relay": "Indirecta · {{rtt}} ms",
     "relayHint": "La conexión pasa por un servidor intermediario y puede ser un poco más lenta. El número indica el tiempo de respuesta."
+  },
+  "popout": {
+    "chatFallbackTitle": "Ventana de chat",
+    "connecting": "Conectando...",
+    "focusFailed": "No se pudo mostrar la ventana principal. Ábrela desde la bandeja del sistema.",
+    "focusMain": "Enfocar ventana principal",
+    "openChat": "Abrir en nueva ventana",
+    "openChatTooltip": "Abrir el chat en una nueva ventana",
+    "openFailed": "No se pudo abrir la nueva ventana. Inténtalo de nuevo.",
+    "openLive": "Abrir vista en vivo en nueva ventana",
+    "openLiveShort": "Separar",
+    "pinFailed": "No se pudo cambiar si esta ventana permanece en primer plano. Inténtalo de nuevo.",
+    "pinOnTop": "Fijar ventana siempre visible",
+    "unpinOnTop": "Desfijar ventana"
   },
   "profileShare": {
     "back": "Back",

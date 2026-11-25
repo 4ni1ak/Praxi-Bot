@@ -17,6 +17,7 @@ import {
   keepNativeMenu,
   linkInfo,
   linkMenu,
+  liveComputerMenu,
   messageMenu,
   navigate,
   placeMenu,
@@ -79,6 +80,20 @@ test("chat row: busy chats pause changes, archived chats offer unarchive, no dae
   assert.equal(get("archive").label, "chatManage.unarchive");
   for (const id of ["rename", "pin", "archive", "delete", "export"]) assert.equal(get(id).disabled, true, id);
   assert.equal(get("open").disabled, undefined);
+  assert.equal(get("popOut"), undefined);
+
+  const withPopOut = chatRowMenu({
+    t, title: "x", pinned: false, archived: false, busy: false, canExport: true,
+    onOpen: noop, onPopOut: noop, onRename: noop, onPin: noop, onExport: noop, onArchive: noop, onRequestDelete: noop
+  });
+  assert.deepEqual(ids(withPopOut), ["open", "popOut", "|", "rename", "pin", "export", "archive", "|", "delete"]);
+});
+
+test("live computer menu includes open full view when supplied and always offers pop out", () => {
+  const withFull = liveComputerMenu({ t, onOpenFull: noop, onPopOut: noop });
+  assert.deepEqual(ids(withFull), ["open", "popOut"]);
+  const popOnly = liveComputerMenu({ t, onPopOut: noop });
+  assert.deepEqual(ids(popOnly), ["popOut"]);
 });
 
 test("bot row: mute is a checkbox that follows the state; main bot and single-bot setups lose Make main", () => {

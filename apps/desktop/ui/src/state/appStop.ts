@@ -34,6 +34,10 @@ function webviewSession(): string {
 
 function localStore(): LedgerStorage | undefined {
   try {
+    // Pop-outs have an independent observer of daemon state. Never read or overwrite the
+    // main window's recovery ledger from another webview.
+    const kind = new URLSearchParams(window.location.search).get("window");
+    if (kind === "chat" || kind === "live") return undefined;
     const store = window.localStorage;
     return {
       load: () => store.getItem(STOP_STORAGE_KEY),

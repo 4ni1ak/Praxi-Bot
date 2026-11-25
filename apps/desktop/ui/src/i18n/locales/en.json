@@ -1575,6 +1575,7 @@
         "stillAsks": "It asks again for other programs, launching, commands, scripts, dragging, file dialogs, password fields and any other key. Terminals, browsers, launchers and remote-desktop viewers are recognised by file name only, which is a heuristic: a renamed copy is not recognised. The permission ends with the task and is withdrawn after any stopped or failed send."
       },
       "countdown": "Auto-deny in {{seconds}} s",
+      "decidedElsewhere": "This request has already been handled or has expired.",
       "deny": "Deny",
       "egress": {
         "hidden": "{{hidden}} invisible characters are shown as <U+XXXX>",
@@ -1963,6 +1964,7 @@
       "answer": "Answer",
       "answered": "You answered: {{answer}}",
       "closed": "This question is no longer open.",
+      "decidedElsewhere": "This question has already been answered or has expired.",
       "placeholder": "Type another answer…",
       "title": "The bot asks"
     },
@@ -4920,6 +4922,20 @@
     "directHint": "Direct: this app talks straight to the computer, which is the fastest way. The number is the delay.",
     "relay": "Relay · {{rtt}} ms",
     "relayHint": "Relayed: the connection goes through a helper server, so it can be a little slower. The number is the delay."
+  },
+  "popout": {
+    "chatFallbackTitle": "Chat window",
+    "connecting": "Connecting...",
+    "focusFailed": "Could not show the main window. Open it from the tray.",
+    "focusMain": "Focus main window",
+    "openChat": "Open in new window",
+    "openChatTooltip": "Open chat in new window",
+    "openFailed": "Could not open the new window. Please try again.",
+    "openLive": "Open live view in new window",
+    "openLiveShort": "Pop out",
+    "pinFailed": "Could not change whether this window stays on top. Please try again.",
+    "pinOnTop": "Pin window on top",
+    "unpinOnTop": "Unpin window"
   },
   "profileShare": {
     "back": "Back",
