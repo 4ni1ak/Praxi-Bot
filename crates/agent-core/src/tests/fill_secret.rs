@@ -509,6 +509,70 @@ async fn an_exact_standing_grant_skips_the_card_and_is_audited() {
     assert!(!used[0].detail.to_string().contains(VALUE));
 }
 
+/// Defence in depth for the signed webhook / mail / external-schedule runs: even
+/// with an exact standing grant row, an externally started run neither
+/// consumes it (`standing_grant` stays `None`, so the card is asked) nor can it
+/// create a new "Always" grant. A human run is the positive control.
+#[tokio::test]
+async fn an_external_run_never_uses_or_creates_a_standing_grant() {
+    use crate::shared::GrantTarget;
+    let r = rig(Policy::full(), false, vec![]);
+    r.secrets.grant_create("login/github", GITHUB).unwrap();
+    let ctx_for = |kind: String| {
+        let run =
+            r.lp.rt
+                .create_run(r.env.user, r.env.bot, Some(r.env.chat), &kind)
+                .unwrap();
+        let row = r.env.storage.get_run(run).unwrap().unwrap();
+        r.lp.sh.ctx(&row).unwrap()
+    };
+    let human = ctx_for("turn".into());
+    let hook = ctx_for(format!("turn:incoming_webhook:{}:x", uuid::Uuid::now_v7()));
+    let mail = ctx_for("turn:incoming_email:x".into());
+    let ext = ctx_for(format!(
+        "turn:external_schedule:{}",
+        protocol::TaskId::new()
+    ));
+    assert_eq!(hook.initiator, protocol::InitiatorKind::ExternalSchedule);
+    let input = json!({"ref": "e5", "secret": "login/github"});
+    // Positive control: the same grant covers the human run.
+    assert!(
+        r.lp.sh
+            .standing_grant(&human, "browser_fill", &input)
+            .await
+            .is_some()
+    );
+    for ctx in [&hook, &mail, &ext] {
+        assert!(
+            r.lp.sh
+                .standing_grant(ctx, "browser_fill", &input)
+                .await
+                .is_none(),
+            "an external run consumed a standing grant"
+        );
+    }
+    // Creation: a human run records an Always grant, an external one cannot.
+    let always = |name: &str| GrantTarget::Tool(name.into());
+    let count = || r.lp.sh.grants.lock().always.len();
+    let before = count();
+    for ctx in [&hook, &mail, &ext] {
+        r.lp.sh.add_grant(
+            ctx,
+            always("browser_fill"),
+            tool_registry::PermissionCategory::Browser,
+            "browser_fill",
+        );
+    }
+    assert_eq!(count(), before, "an external run created a standing grant");
+    r.lp.sh.add_grant(
+        &human,
+        always("browser_fill"),
+        tool_registry::PermissionCategory::Browser,
+        "browser_fill",
+    );
+    assert_eq!(count(), before + 1);
+}
+
 /// Guard: the production redactor masks a value a page echoes in tool output
 /// (registered through the secrets service, and through a store refresh).
 #[tokio::test]

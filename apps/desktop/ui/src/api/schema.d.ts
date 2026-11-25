@@ -9274,6 +9274,11 @@ export interface components {
             /** @description How it was delivered. */
             delivery: components["schemas"]["DeliveryKind"];
             /**
+             * @description Only when `delivery` is `queued`: who the queued turn will start as
+             *     (`human`, `schedule`, `channel`, ...). Fixed when the message is queued.
+             */
+            queued_initiator?: string | null;
+            /**
              * Format: uuid
              * @description The run to follow (`null` when queued: the turn has no run yet).
              */
