@@ -2354,17 +2354,6 @@
     "steps": "Schritte des Bots",
     "title": "Chat exportieren"
   },
-  "chatHistory": {
-    "count": "{{count}} passende Nachrichten",
-    "count_one": "{{count}} passende Nachricht",
-    "count_other": "{{count}} passende Nachrichten",
-    "more": "Weitere Ergebnisse",
-    "noneYet": "Auf dieser Seite noch keine sichtbaren Treffer",
-    "results": "Ergebnisse der Nachrichtensuche",
-    "search": "Alle Chatnachrichten durchsuchen …",
-    "searching": "Nachrichten werden durchsucht …",
-    "submit": "Nachrichten durchsuchen"
-  },
   "chatManage": {
     "allArchived": "Alle Chats sind archiviert.",
     "archive": "Archivieren",
@@ -3601,6 +3590,8 @@
     "menuDismiss": "Menü schließen",
     "menuMove": "Durch das Slash-/Erwähnungsmenü navigieren",
     "menuNav": "Durch Popup-Menüs navigieren",
+    "messageSearch": "Alle Nachrichten durchsuchen",
+    "messageSearchMove": "Nachrichtensuche: bewegen und öffnen",
     "newline": "Neue Zeile",
     "openHelp": "Diese Liste anzeigen (wenn kein Textfeld fokussiert ist)",
     "palette": "Befehlspalette",
@@ -4348,6 +4339,31 @@
       "m": "Min.",
       "s": "s"
     }
+  },
+  "messageSearch": {
+    "allBots": "Alle Bots",
+    "bot": "Bot",
+    "clear": "Leeren",
+    "clearRecent": "Leeren",
+    "filters": "Filter",
+    "hasFile": "Datei",
+    "hasLink": "Link",
+    "hint": "Tippen, um alle Chats zu durchsuchen",
+    "keywords": "nachrichten suchen verlauf chats finden",
+    "more": "Weitere Treffer",
+    "none": "Keine Nachrichten gefunden",
+    "open": "Nachrichten durchsuchen",
+    "placeholder": "Alle Nachrichten durchsuchen",
+    "recent": "Zuletzt gesucht",
+    "reset": "Zurücksetzen",
+    "results": "Nachrichtentreffer",
+    "searching": "Suche läuft…",
+    "title": "Nachrichten durchsuchen",
+    "when": "Datum",
+    "when_any": "Jederzeit",
+    "when_day": "Letzte 24 Stunden",
+    "when_month": "Letzte 30 Tage",
+    "when_week": "Letzte 7 Tage"
   },
   "modelPicker": {
     "addEngines": "Coding-CLI hinzufügen",
@@ -6076,7 +6092,6 @@
     "reorderHint": "Zeile ziehen oder diesen Griff fokussieren und die Pfeiltaste nach oben/unten drücken",
     "reorderMoved": "{{name}} wurde auf Position {{pos}} verschoben",
     "schedules": "Geplante Aufgaben",
-    "searchBots": "Bots suchen",
     "settings": "Einstellungen",
     "unread": "Ungelesene Nachricht",
     "unreadBot": "Neue Nachrichten von diesem Bot",

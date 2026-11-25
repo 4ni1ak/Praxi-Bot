@@ -116,6 +116,24 @@ fn restore_search_snippet(content: &str, snippet: &str) -> String {
     )
 }
 
+/// Optional narrowing for [`Storage::search_messages`]. Every field is applied in SQL
+/// before pagination, so pages never come back short because of a later filter.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SearchFilter {
+    /// Only chats of this bot.
+    pub bot: Option<BotId>,
+    /// Only this chat.
+    pub chat: Option<ChatId>,
+    /// Only messages at or after this time (ms since epoch).
+    pub from_ms: Option<i64>,
+    /// Only messages before this time (ms since epoch, exclusive).
+    pub to_ms: Option<i64>,
+    /// Only messages that carry an attachment.
+    pub has_file: bool,
+    /// Only messages that contain an http(s) link.
+    pub has_link: bool,
+}
+
 /// Synchronous SQLite repository.  Cheap to share behind an `Arc`; calls
 /// serialise on an internal mutex.
 #[derive(Debug)]
@@ -977,8 +995,7 @@ impl Storage {
     pub fn search_messages(
         &self,
         user: UserId,
-        bot: Option<BotId>,
-        chat: Option<ChatId>,
+        filter: SearchFilter,
         query: &str,
         offset: u32,
         limit: u32,
@@ -992,6 +1009,9 @@ impl Storage {
              JOIN chats c ON c.id = m.chat_id
              WHERE chat_messages_fts MATCH ?1 AND m.user_id = ?2 AND c.user_id = ?2
              AND (?3 IS NULL OR c.bot_id = ?3) AND (?4 IS NULL OR c.id = ?4)
+             AND (?7 IS NULL OR m.created_at_ms >= ?7) AND (?8 IS NULL OR m.created_at_ms < ?8)
+             AND (?9 = 0 OR instr(m.content, '[[praxi-attachments:') > 0)
+             AND (?10 = 0 OR instr(m.content, 'http://') > 0 OR instr(m.content, 'https://') > 0)
              ORDER BY rank, m.created_at_ms DESC, m.id LIMIT ?5 OFFSET ?6",
         )?;
         let phrase = format!(
@@ -1006,10 +1026,14 @@ impl Storage {
                 params![
                     phrase,
                     user.to_string(),
-                    bot.map(|v| v.to_string()),
-                    chat.map(|v| v.to_string()),
+                    filter.bot.map(|v| v.to_string()),
+                    filter.chat.map(|v| v.to_string()),
                     limit.min(100),
-                    offset.min(10_000)
+                    offset.min(10_000),
+                    filter.from_ms,
+                    filter.to_ms,
+                    i64::from(filter.has_file),
+                    i64::from(filter.has_link)
                 ],
                 |r| {
                     let message = message_row(r)?;
@@ -2483,7 +2507,7 @@ mod tests {
         insert("old English phrase", true, "user");
         insert("old English phrase", false, "tool");
         let search = |q| {
-            f.st.search_messages(f.user.id, None, None, q, 0, 100)
+            f.st.search_messages(f.user.id, SearchFilter::default(), q, 0, 100)
                 .unwrap()
         };
         assert_eq!(search("istanbul guzel sehir")[0].0.id, old);
@@ -2494,18 +2518,36 @@ mod tests {
         assert_eq!(ranked[0].0.content, "old English phrase");
         assert!(ranked[1].1.len() < 320);
         assert_eq!(
-            f.st.search_messages(UserId::new(), None, None, "old", 0, 30)
+            f.st.search_messages(UserId::new(), SearchFilter::default(), "old", 0, 30)
                 .unwrap(),
             vec![]
         );
         assert_eq!(
-            f.st.search_messages(f.user.id, Some(BotId::new()), None, "old", 0, 30)
-                .unwrap(),
+            f.st.search_messages(
+                f.user.id,
+                SearchFilter {
+                    bot: Some(BotId::new()),
+                    ..SearchFilter::default()
+                },
+                "old",
+                0,
+                30,
+            )
+            .unwrap(),
             vec![]
         );
         assert_eq!(
-            f.st.search_messages(f.user.id, None, Some(ChatId::new()), "old", 0, 30)
-                .unwrap(),
+            f.st.search_messages(
+                f.user.id,
+                SearchFilter {
+                    chat: Some(ChatId::new()),
+                    ..SearchFilter::default()
+                },
+                "old",
+                0,
+                30,
+            )
+            .unwrap(),
             vec![]
         );
         f.st.set_messages_superseded(&[old], true).unwrap();
@@ -2514,6 +2556,106 @@ mod tests {
         assert_eq!(search("istanbul").len(), 1);
         f.st.delete_chat(f.chat.id).unwrap();
         assert_eq!(search("old"), vec![]);
+    }
+
+    fn message_at(f: &Fx, text: &str, at: i64) -> Message {
+        Message {
+            id: Uuid::now_v7(),
+            user_id: f.user.id,
+            chat_id: f.chat.id,
+            run_id: None,
+            role: "user".into(),
+            content: text.into(),
+            created_at_ms: at,
+            exposure_untrusted: false,
+            exposure_private: false,
+            exposure_sources: vec![],
+        }
+    }
+
+    #[test]
+    fn history_search_filters_by_date_file_and_link_before_paging() {
+        let f = fx();
+        let plain = message_at(&f, "rapor taslağı", 1_000);
+        let linked = message_at(&f, "rapor https://example.com/a", 2_000);
+        let filed = message_at(
+            &f,
+            "rapor ekte
+
+[[praxi-attachments:[{\"name\":\"a.pdf\"}]]]",
+            3_000,
+        );
+        for m in [&plain, &linked, &filed] {
+            f.st.insert_message(m).unwrap();
+        }
+        let ids = |filter: SearchFilter| {
+            f.st.search_messages(f.user.id, filter, "RAPOR", 0, 30)
+                .unwrap()
+                .into_iter()
+                .map(|(m, _)| m.id)
+                .collect::<std::collections::HashSet<_>>()
+        };
+        assert_eq!(ids(SearchFilter::default()).len(), 3);
+        let only = |m: &Message| std::collections::HashSet::from([m.id]);
+        let with_link = SearchFilter {
+            has_link: true,
+            ..SearchFilter::default()
+        };
+        assert_eq!(ids(with_link), only(&linked));
+        let with_file = SearchFilter {
+            has_file: true,
+            ..SearchFilter::default()
+        };
+        assert_eq!(ids(with_file), only(&filed));
+        let window = SearchFilter {
+            from_ms: Some(1_500),
+            to_ms: Some(2_500),
+            ..SearchFilter::default()
+        };
+        assert_eq!(ids(window), only(&linked));
+    }
+
+    #[test]
+    fn history_search_stays_fast_with_fifty_thousand_messages() {
+        let f = fx();
+        {
+            let mut conn = f.st.conn();
+            let tx = conn.transaction().unwrap();
+            let mut st = tx
+                .prepare(
+                    "INSERT INTO messages (id, user_id, chat_id, run_id, role, content, created_at_ms,
+                     exposure_untrusted, exposure_private, exposure_sources) VALUES (?1, ?2, ?3, NULL, 'user', ?4, ?5, 0, 0, '[]')",
+                )
+                .unwrap();
+            for i in 0..50_000_i64 {
+                let text = if i == 49_999 {
+                    "Yarın İstanbul'a uçuyorum".to_owned()
+                } else {
+                    format!("mesaj {i} günlük notlar toplantı özeti çalışma planı")
+                };
+                st.execute(params![
+                    Uuid::now_v7().to_string(),
+                    f.user.id.to_string(),
+                    f.chat.id.to_string(),
+                    text,
+                    i
+                ])
+                .unwrap();
+            }
+            drop(st);
+            tx.commit().unwrap();
+        }
+        let started = std::time::Instant::now();
+        let hits =
+            f.st.search_messages(f.user.id, SearchFilter::default(), "istanbul", 0, 30)
+                .unwrap();
+        let broad =
+            f.st.search_messages(f.user.id, SearchFilter::default(), "toplanti", 0, 30)
+                .unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(broad.len(), 30);
+        assert!(elapsed.as_millis() < 1500, "search took {elapsed:?}");
     }
 
     #[test]

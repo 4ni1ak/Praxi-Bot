@@ -91,6 +91,27 @@
   content-visibility: visible;
 }
 
+/* The message a search result jumped to glows once, then settles. */
+.timeline > [data-flash="true"] {
+  border-radius: var(--radius-md);
+  animation: jumpFlash 1600ms var(--motion-easing-standard);
+}
+
+@keyframes jumpFlash {
+  0%,
+  55% {
+    background-color: var(--color-accent-subtle);
+    box-shadow: 0 0 0 var(--size-border-thick) var(--color-accent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline > [data-flash="true"] {
+    animation-duration: 1600ms;
+    animation-timing-function: steps(1, end);
+  }
+}
+
 /* A new turn starts further down than the rows of one bot block. */
 .timeline > .userRow:not(:first-child),
 .timeline > .conversationLabel + .userRow {

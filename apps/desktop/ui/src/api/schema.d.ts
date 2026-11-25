@@ -12813,6 +12813,14 @@ export interface operations {
                 q: string;
                 bot_id: string | null;
                 chat_id: string | null;
+                /** @description Only messages at or after this time (ms since epoch). */
+                from_ms: number | null;
+                /** @description Only messages before this time (ms since epoch). */
+                to_ms: number | null;
+                /** @description Only messages that carry an attachment. */
+                has_file: boolean | null;
+                /** @description Only messages that contain a web link. */
+                has_link: boolean | null;
                 /** @description Ranked offset, at most 10,000. */
                 offset: number | null;
                 /** @description Page size, 1–100 (default 30). */

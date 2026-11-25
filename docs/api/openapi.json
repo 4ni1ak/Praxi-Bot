@@ -4106,6 +4106,56 @@
             }
           },
           {
+            "name": "from_ms",
+            "in": "path",
+            "description": "Only messages at or after this time (ms since epoch).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "to_ms",
+            "in": "path",
+            "description": "Only messages before this time (ms since epoch).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "has_file",
+            "in": "path",
+            "description": "Only messages that carry an attachment.",
+            "required": true,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "has_link",
+            "in": "path",
+            "description": "Only messages that contain a web link.",
+            "required": true,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
             "name": "offset",
             "in": "path",
             "description": "Ranked offset, at most 10,000.",

@@ -882,8 +882,13 @@ export class ApiClient {
     });
   }
 
-  searchChatHistory(q: string, offset = 0, signal?: AbortSignal): Promise<import("./types").SearchPage> {
-    return this.request("GET", "/chats/search", { query: { q, offset }, signal });
+  searchChatHistory(
+    q: string,
+    offset = 0,
+    signal?: AbortSignal,
+    filters: Record<string, string | number | boolean> = {}
+  ): Promise<import("./types").SearchPage> {
+    return this.request("GET", "/chats/search", { query: { q, offset, ...filters }, signal });
   }
   exportChat(
     chatId: string,
