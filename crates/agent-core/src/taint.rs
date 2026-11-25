@@ -396,6 +396,7 @@ pub(crate) fn source_label(name: &str, input: &Value) -> String {
         }
         "web_search" => format!("page {}", str_field("query").unwrap_or("a search")),
         "web_extract"
+        | "web_scrape"
         | "web_feed"
         | "web_sitemap"
         | "web_metadata"
@@ -469,9 +470,8 @@ pub(crate) fn egress_payload(name: &str, input: &Value) -> (String, String, &'st
             search_host(input.get("backend").and_then(Value::as_str)),
             "query",
         ),
-        "web_extract" | "web_feed" | "web_sitemap" | "web_metadata" | "browser_open" => {
-            (host_of_url(&str_field("url")), "url")
-        }
+        "web_extract" | "web_scrape" | "web_feed" | "web_sitemap" | "web_metadata"
+        | "browser_open" => (host_of_url(&str_field("url")), "url"),
         "email_send" | "email_draft" => {
             let mut everyone = all_addrs(input.get("to"));
             everyone.extend(all_addrs(input.get("cc")));

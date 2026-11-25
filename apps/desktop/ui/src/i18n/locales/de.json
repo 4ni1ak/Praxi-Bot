@@ -6599,6 +6599,10 @@
     "switch": "Zu diesem Computer wechseln"
   },
   "toolPacks": {
+    "ack": {
+      "label": "Verstanden",
+      "text": "Das ist eine eigenständige Software unter {{license}}, vom Autor heruntergeladen. Praxi liefert sie nicht mit und ändert sie nicht."
+    },
     "back": "Zurück",
     "basicSet": "Basis-Set auswählen",
     "button": "Werkzeuge",
@@ -6610,6 +6614,8 @@
     "dontClose": "Das kann ein paar Minuten dauern. Du kannst die App weiter benutzen.",
     "found": "Gefundene Programme: {{n}}",
     "lead": "Programme, die deine Bots auf diesem Server nutzen können.",
+    "licenseMixed": "Gemischte Lizenzen",
+    "licenseName": "Lizenz {{name}}",
     "listLabel": "Werkzeugpakete",
     "loading": "Server wird angesehen…",
     "noLogin": {
@@ -6637,6 +6643,11 @@
       "office": {
         "desc": "Word, Excel, PowerPoint und PDF-Export, mit türkischen Schriften",
         "name": "Office-Dateien"
+      },
+      "scrape": {
+        "desc": "Liest Seiten sauberer und kann einigen Links folgen",
+        "name": "Web-Scraping",
+        "note": "Nicht für Seiten mit Anmeldung"
       }
     },
     "planning": "Es wird geprüft, was sich ändern würde…",
@@ -6655,9 +6666,17 @@
         "body": "Der Server hat es abgebrochen, zum Beispiel weil die Platte voll ist oder gerade ein anderes Update läuft. Dein Server ist in Ordnung; du kannst es erneut versuchen.",
         "title": "Nicht abgeschlossen"
       },
+      "needs_ack": {
+        "body": "Lesen und bestätigen Sie den Lizenzhinweis, prüfen Sie dann erneut.",
+        "title": "Bitte bestätigen Sie die Lizenz"
+      },
       "needs_admin": {
         "body": "Nimm einen Serverzugang mit Administratorrechten (sudo ohne Passwort) und versuche es erneut.",
         "title": "Mit diesem Zugang lässt sich keine Software installieren"
+      },
+      "needs_python": {
+        "body": "Installieren Sie zuerst „Entwicklerwerkzeuge“ auf diesem Server und fügen Sie dann Web-Scraping hinzu.",
+        "title": "Zuerst wird Python benötigt"
       },
       "shared": {
         "body": "Praxi entfernt diese nicht: Dein Server braucht sie.",
@@ -6699,6 +6718,7 @@
     "safeRemove": "Nur diese Werkzeuge werden entfernt",
     "safeRemoveBody": "Deine Einstellungen und andere Software bleiben unverändert.",
     "size": "etwa {{value}} {{unit}}",
+    "source": "Quelle",
     "status": {
       "installed": "Installiert",
       "partial": "Unvollständig"
@@ -6708,6 +6728,7 @@
     "title": "Werkzeuge",
     "titleFor": "Werkzeuge auf {{name}}",
     "tryAgain": "Erneut versuchen",
+    "versionLabel": "Version {{version}}",
     "willInstall": "Wird installiert",
     "willRemove": "Wird entfernt"
   },

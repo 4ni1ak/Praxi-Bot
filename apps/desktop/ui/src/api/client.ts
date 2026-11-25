@@ -779,8 +779,8 @@ export class ApiClient {
     return this.request("GET", `/hosts/setup/packs/${encodeURIComponent(hostId)}`);
   }
   /** Dry run: what installing or removing packs would do. Changes nothing (owner only; the owner key is added for the local daemon). */
-  planHostPacks(hostId: string, action: PackAction, packs: string[]): Promise<PackPlan> {
-    return this.request("POST", "/hosts/setup/packs/plan", { body: { host_id: hostId, action, packs } });
+  planHostPacks(hostId: string, action: PackAction, packs: string[], acknowledged: string[] = []): Promise<PackPlan> {
+    return this.request("POST", "/hosts/setup/packs/plan", { body: { host_id: hostId, action, packs, acknowledged } });
   }
   /** Run exactly the plan the owner saw (single use). Returns a job to poll with getHostSetup. */
   applyHostPacks(planId: string): Promise<HostSetupJob> {

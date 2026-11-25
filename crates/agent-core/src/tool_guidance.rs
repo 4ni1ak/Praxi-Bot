@@ -18,6 +18,8 @@ use std::fmt::Write as _;
 pub(crate) struct Families {
     pub web_search: bool,
     pub web_fetch: bool,
+    /// The optional scraping add-on (`web_scrape`) is offered.
+    pub web_scrape: bool,
     /// The assistant's own managed browser (`browser_*`).
     pub browser: bool,
     /// `browser_act` (several browser steps in one call) is offered.
@@ -46,6 +48,7 @@ impl Families {
             match name {
                 "web_search" => f.web_search = true,
                 "web_extract" => f.web_fetch = true,
+                "web_scrape" => f.web_scrape = true,
                 "shell_run" => f.shell = true,
                 "wait" => f.wait = true,
                 "browser_act" => {
@@ -70,6 +73,11 @@ pub(crate) fn block(f: Families) -> Option<String> {
         out.push_str(
             "\n- To look something up, read an article or check a fact or a price, use web_search and web_extract \
 (fast, plain text, no browser window). Do this BEFORE opening a browser.",
+        );
+    }
+    if f.web_scrape {
+        out.push_str(
+            "\n- web_scrape (the optional scraping add-on) is a second step: try web_extract first, and use web_scrape only for cleaner article text, a page's link list, or a small crawl (max_pages up to 10) of ONE site. It obeys robots.txt: if it says a page is blocked, do not look for another way in, tell the user. It does not log in and is not for private pages.",
         );
     }
     if f.browser {
@@ -138,6 +146,15 @@ mod tests {
         assert!(with.contains("call `wait`"), "{with}");
         let without = block(Families::of(["fs_read"])).unwrap();
         assert!(!without.contains("`wait`"));
+    }
+
+    #[test]
+    fn web_scrape_is_taught_as_the_second_step_and_respects_robots() {
+        let b = block(Families::of(["web_extract", "web_scrape"])).unwrap();
+        assert!(b.contains("try web_extract first"), "{b}");
+        assert!(b.contains("do not look for another way in"), "{b}");
+        let without = block(Families::of(["web_extract"])).unwrap();
+        assert!(!without.contains("web_scrape"), "{without}");
     }
 
     #[test]

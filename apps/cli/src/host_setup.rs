@@ -93,6 +93,8 @@ struct StoredPlan {
     id: String,
     host_id: String,
     action: Action,
+    /// Pack ids whose licence notice the owner acknowledged in this plan.
+    acknowledged: Vec<String>,
     /// Only the items that can run: catalog id and the hash of the exact package list the
     /// owner saw in the plan (the server refuses a different list).
     packs: Vec<(String, String)>,
@@ -359,7 +361,11 @@ impl HostSetup for CliHostSetup {
                     noop: false,
                     blocked: Some(code.to_owned()),
                 };
+                let acked = input.acknowledged.contains(&pack.id);
                 match &server {
+                    _ if action == Action::Install && pack.installable(acked).is_err() => {
+                        blocked(PackError::NeedsAcknowledgement.code())
+                    }
                     Err(e) => blocked(e.code()),
                     Ok(f) if !f.supported => blocked("unsupported"),
                     Ok(f) if action == Action::Install && !f.can_admin => blocked("needs_admin"),
@@ -402,6 +408,7 @@ impl HostSetup for CliHostSetup {
                 id: plan_id.clone(),
                 host_id: input.host_id.clone(),
                 action,
+                acknowledged: input.acknowledged.clone(),
                 packs: runnable.clone(),
                 made: Instant::now(),
             });
@@ -460,6 +467,7 @@ impl HostSetup for CliHostSetup {
                             cancel: cancel.clone(),
                         },
                         &plan.packs,
+                        &plan.acknowledged,
                         plan.action,
                         &cancel,
                     ),
@@ -605,6 +613,7 @@ fn ssh_key_hints() -> Vec<SshKeyHint> {
 }
 
 fn pack_info(p: &packs::Pack, status: PackStatus) -> HostPackInfo {
+    let lic = p.license.as_ref();
     HostPackInfo {
         id: p.id.clone(),
         status: match status {
@@ -616,6 +625,14 @@ fn pack_info(p: &packs::Pack, status: PackStatus) -> HostPackInfo {
         size_mb: p.size_mb,
         base: p.base,
         removable: p.removable,
+        license: lic.map(|l| l.spdx.clone()).unwrap_or_default(),
+        copyleft: lic.is_some_and(|l| l.copyleft),
+        distro: lic.is_some_and(|l| l.distro),
+        needs_ack: p.needs_acknowledgement(),
+        source_url: lic.map(|l| l.source_url.clone()).unwrap_or_default(),
+        notice_url: lic.map(|l| l.notice_url.clone()).unwrap_or_default(),
+        version: lic.map(|l| l.version.clone()).unwrap_or_default(),
+        lock_sha256: (p.id == packs::SCRAPE).then(packs::scrape_lock_sha),
     }
 }
 
@@ -624,6 +641,7 @@ fn blocked_code(b: Blocked) -> &'static str {
         Blocked::Shared => "shared",
         Blocked::Dependants => "dependants",
         Blocked::Unavailable => "unavailable",
+        Blocked::NeedsPython => "needs_python",
     }
 }
 
@@ -636,6 +654,7 @@ fn run_packs(
     job_id: &str,
     ssh: &dyn Transport,
     approved: &[(String, String)],
+    acknowledged: &[String],
     action: Action,
     cancel: &AtomicBool,
 ) -> bool {
@@ -653,7 +672,12 @@ fn run_packs(
                 s.job.notes.push(format!("{verb} {pack}"));
             }
         });
-        let result = runner.apply(pack, action, list_sha);
+        let result = runner.apply_acknowledged(
+            pack,
+            action,
+            list_sha,
+            acknowledged.iter().any(|a| a == pack),
+        );
         let ok = result.is_ok();
         let step = HostSetupStep {
             id: format!("pack.{pack}"),
@@ -1310,6 +1334,7 @@ port_busy=0
             host_id: "hostid1".into(),
             action,
             packs: packs.iter().map(|p| (*p).to_owned()).collect(),
+            acknowledged: Vec::new(),
         }
     }
 
@@ -1423,6 +1448,7 @@ port_busy=0
                 log: Arc::default(),
             },
             &approved,
+            &[],
             Action::Install,
             &AtomicBool::new(false),
         );

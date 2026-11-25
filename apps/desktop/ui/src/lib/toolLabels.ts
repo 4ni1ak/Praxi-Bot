@@ -99,6 +99,7 @@ const secondsChip = (i: Record<string, unknown>): StepChip[] => {
 const TABLE: Record<string, Entry> = {
   web_search: { id: "web_search", icon: "search", chips: queryChip },
   web_extract: { id: "web_read", icon: "globe", chips: urlChip },
+  web_scrape: { id: "web_read", icon: "globe", chips: urlChip },
   web_feed: { id: "web_read", icon: "globe", chips: urlChip },
   web_metadata: { id: "web_read", icon: "globe", chips: urlChip },
   web_sitemap: { id: "web_read", icon: "globe", chips: urlChip },

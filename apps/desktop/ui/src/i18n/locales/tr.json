@@ -6599,6 +6599,10 @@
     "switch": "Bu bilgisayara geç"
   },
   "toolPacks": {
+    "ack": {
+      "label": "Anladım",
+      "text": "Bu, yazarından indirilen ve {{license}} lisanslı ayrı bir yazılımdır. Praxi onu dağıtmaz ve değiştirmez."
+    },
     "back": "Geri",
     "basicSet": "Temel seti seç",
     "button": "Araçlar",
@@ -6610,6 +6614,8 @@
     "dontClose": "Birkaç dakika sürebilir. Uygulamayı kullanmaya devam edebilirsin.",
     "found": "Bulunan programlar: {{n}}",
     "lead": "Botlarının bu sunucuda kullanabileceği programlar.",
+    "licenseMixed": "Karışık lisanslar",
+    "licenseName": "Lisans {{name}}",
     "listLabel": "Araç paketleri",
     "loading": "Sunucuya bakılıyor…",
     "noLogin": {
@@ -6637,6 +6643,11 @@
       "office": {
         "desc": "Word, Excel, PowerPoint ve PDF çıktısı, Türkçe yazı tipleriyle",
         "name": "Ofis dosyaları"
+      },
+      "scrape": {
+        "desc": "Sayfaları daha temiz okur, birkaç bağlantıyı izleyebilir",
+        "name": "Web tarama",
+        "note": "Giriş yapmanız gereken sayfalar için değil"
       }
     },
     "planning": "Neyin değişeceği kontrol ediliyor…",
@@ -6655,9 +6666,17 @@
         "body": "Sunucu işlemi durdurdu; örneğin disk dolu ya da başka bir güncelleme sürüyor olabilir. Sunucun sağlam; tekrar deneyebilirsin.",
         "title": "Tamamlanamadı"
       },
+      "needs_ack": {
+        "body": "Lisans bildirimini okuyup onaylayın, sonra yeniden inceleyin.",
+        "title": "Lütfen lisansı onaylayın"
+      },
       "needs_admin": {
         "body": "Yönetici yetkisi olan bir sunucu girişi kullan (parolasız sudo), sonra tekrar dene.",
         "title": "Bu giriş yazılım kuramıyor"
+      },
+      "needs_python": {
+        "body": "Bu sunucuda önce “Geliştirici araçları”nı kurun, sonra Web taramayı ekleyin.",
+        "title": "Önce Python gerekli"
       },
       "shared": {
         "body": "Praxi bunları kaldırmaz: sunucunun bunlara ihtiyacı var.",
@@ -6699,6 +6718,7 @@
     "safeRemove": "Yalnızca bu araçlar kaldırılır",
     "safeRemoveBody": "Ayarların ve diğer yazılımlar olduğu gibi kalır.",
     "size": "yaklaşık {{value}} {{unit}}",
+    "source": "Kaynak",
     "status": {
       "installed": "Kurulu",
       "partial": "Eksik"
@@ -6708,6 +6728,7 @@
     "title": "Araçlar",
     "titleFor": "{{name}} sunucusundaki araçlar",
     "tryAgain": "Tekrar dene",
+    "versionLabel": "Sürüm {{version}}",
     "willInstall": "Kurulacak",
     "willRemove": "Kaldırılacak"
   },

@@ -1,0 +1,12 @@
+# Licence facts shown for EVERY pack (chip + source link) and checked by tests. One line per pack:
+#   id|license_spdx|copyleft|distro|source_url|notice_url|version
+# copyleft=1: GPL/AGPL family. distro=1: installed from the server's own Debian/Ubuntu software
+# sources (the distribution ships it; Praxi ships nothing). A pack that is copyleft AND
+# not from the distribution (distro=0: downloaded from its author) can only be installed after
+# the owner acknowledged the licence notice. version is empty for distribution packs.
+office|MPL-2.0|0|1|https://www.libreoffice.org/about-us/source-code/|https://www.libreoffice.org/about-us/licenses/|
+docs|GPL-2.0-or-later AND AGPL-3.0-or-later AND Apache-2.0|1|1|https://github.com/jgm/pandoc|https://www.gnu.org/licenses/gpl-2.0.html|
+ocr|Apache-2.0|0|1|https://github.com/tesseract-ocr/tesseract|https://github.com/tesseract-ocr/tesseract/blob/main/LICENSE|
+media|LGPL-2.1-or-later AND GPL-2.0-or-later|1|1|https://ffmpeg.org/download.html|https://ffmpeg.org/legal.html|
+dev|GPL-2.0-only AND MIT AND Apache-2.0|1|1|https://git-scm.com/downloads|https://git-scm.com/about/free-and-open-source|
+scrape|Apache-2.0|0|0|https://github.com/adbar/trafilatura|https://github.com/adbar/trafilatura/blob/v2.4.0/LICENSE|2.4.0

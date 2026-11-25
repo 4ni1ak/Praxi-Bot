@@ -6599,6 +6599,10 @@
     "switch": "Switch to this computer"
   },
   "toolPacks": {
+    "ack": {
+      "label": "Saya mengerti",
+      "text": "Ini adalah perangkat lunak terpisah berlisensi {{license}}, diunduh dari penulisnya. Praxi tidak mendistribusikan atau mengubahnya."
+    },
     "back": "Back",
     "basicSet": "Select the basic set",
     "button": "Tools",
@@ -6610,6 +6614,8 @@
     "dontClose": "This can take a few minutes. You can keep using the app.",
     "found": "Programs found: {{n}}",
     "lead": "Programs your bots can use on this server.",
+    "licenseMixed": "Lisensi campuran",
+    "licenseName": "Lisensi {{name}}",
     "listLabel": "Tool packs",
     "loading": "Looking at the server…",
     "noLogin": {
@@ -6637,6 +6643,11 @@
       "office": {
         "desc": "Word, Excel, PowerPoint and PDF export, with Turkish fonts",
         "name": "Office files"
+      },
+      "scrape": {
+        "desc": "Membaca halaman dengan lebih bersih dan dapat mengikuti beberapa tautan",
+        "name": "Pengambilan data web",
+        "note": "Tidak untuk halaman yang memerlukan login"
       }
     },
     "planning": "Checking what would change…",
@@ -6655,9 +6666,17 @@
         "body": "The server stopped it, for example because the disk is full or another update is running. Your server is fine; you can try again.",
         "title": "It did not finish"
       },
+      "needs_ack": {
+        "body": "Baca dan konfirmasi pemberitahuan lisensi, lalu tinjau kembali.",
+        "title": "Harap konfirmasi lisensi"
+      },
       "needs_admin": {
         "body": "Use a server login with administrator rights (sudo without a password), then try again.",
         "title": "This login can't install software"
+      },
+      "needs_python": {
+        "body": "Instal “Developer tools” di server ini terlebih dahulu, lalu tambahkan pengambilan data web.",
+        "title": "Python diperlukan terlebih dahulu"
       },
       "shared": {
         "body": "Praxi does not remove these: your server needs them.",
@@ -6699,6 +6718,7 @@
     "safeRemove": "Only these tools are removed",
     "safeRemoveBody": "Your settings and other software stay as they are.",
     "size": "about {{value}} {{unit}}",
+    "source": "Sumber",
     "status": {
       "installed": "Installed",
       "partial": "Incomplete"
@@ -6708,6 +6728,7 @@
     "title": "Tools",
     "titleFor": "Tools on {{name}}",
     "tryAgain": "Try again",
+    "versionLabel": "Versi {{version}}",
     "willInstall": "Will be installed",
     "willRemove": "Will be removed"
   },

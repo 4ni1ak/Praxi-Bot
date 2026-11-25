@@ -238,6 +238,7 @@ need_apt() { have_apt || die "not-available: only Debian and Ubuntu servers are 
 has_candidate() { apt-cache policy "$1" 2>/dev/null | grep -q 'Candidate: [^(]'; }
 
 pack_status() {
+  if [[ "${PACK_ID}" == scrape ]]; then scrape_status; return; fi
   local p have=0 total=0
   for p in ${PACK_PKGS}; do
     total=$((total + 1))
@@ -279,6 +280,102 @@ plan_check() {
   [[ "$(pack_list_sha "$1")" == "${want}" ]] || die "plan-mismatch: the package list differs from the plan that was approved"
 }
 
+# ---- web scraping add-on (pack `scrape`) ---------------------------------------------------------
+# A small local page reader (packs/scrape/) in a pinned Python environment. The app uploads its three
+# files and sends their SHA-256 on stdin; they must match before anything is installed. Everything
+# is installed from the hash-pinned requirements.lock (wheels only, no build step) into
+# ${SCRAPE_DIR}/venv and runs as its own throwaway service user.
+SCRAPE_DIR="${PREFIX}/packs/scrape"
+SCRAPE_UNIT=/etc/systemd/system/praxi-scrape.service
+SCRAPE_DROPIN_DIR=/etc/systemd/system/praxi-scrape.service.d
+SCRAPE_TOKEN=/etc/praxi/scrape.token
+SCRAPE_PORT=47811
+SCRAPE_VERSION=1
+
+scrape_status() {
+  if [[ -x "${SCRAPE_DIR}/venv/bin/python" && -f "${SCRAPE_DIR}/.installed" && -f "${SCRAPE_UNIT}" ]]; then printf installed
+  elif [[ -e "${SCRAPE_DIR}" || -f "${SCRAPE_UNIT}" ]]; then printf partial
+  else printf missing; fi
+}
+
+# What the add-on needs from the server: Python 3.10+ with venv (the "dev" tools pack brings it).
+scrape_prereq() {
+  command -v python3 >/dev/null 2>&1 || { printf 'python3'; return 0; }
+  python3 -c 'import sys, venv, ensurepip; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1 || printf 'python3-venv'
+}
+
+scrape_verify_staged() {
+  local pair key file want have
+  for pair in scrape_service:praxi_scrape.py scrape_lock:scrape-requirements.lock scrape_unit:praxi-scrape.service; do
+    key="${pair%%:*}"; file="${STAGE}/${pair#*:}"; want="${P[${key}]:-}"
+    [[ "${want}" =~ ^[0-9a-f]{64}$ ]] || die "bad checksum for ${key}"
+    [[ -f "${file}" ]] || die "not-available: the add-on files were not uploaded"
+    have="$(sha256sum "${file}" | awk '{print $1}')"
+    [[ "${have}" == "${want}" ]] || die "catalog-mismatch: a staged add-on file does not match the app's"
+  done
+}
+
+# Re-allow the computer's own DNS servers: many clouds keep DNS on a private address, which the
+# unit's IPAddressDeny would otherwise cut off. Only plain IP addresses are written.
+scrape_dns_dropin() {
+  local ns allow=""
+  while read -r _ ns _; do
+    if [[ "${ns}" =~ ^[0-9a-fA-F:.]{2,45}$ ]]; then allow="${allow:+${allow} }${ns}"; fi
+  done < <(grep -E '^nameserver[[:space:]]' /etc/resolv.conf 2>/dev/null || true)
+  mkdir -p "${SCRAPE_DROPIN_DIR}"
+  if [[ -n "${allow}" ]]; then
+    printf '[Service]\nIPAddressAllow=%s\n' "${allow}" > "${SCRAPE_DROPIN_DIR}/10-dns.conf"
+  else
+    rm -f "${SCRAPE_DROPIN_DIR}/10-dns.conf"
+  fi
+}
+
+scrape_install() {
+  scrape_verify_staged
+  local need; need="$(scrape_prereq)"
+  [[ -z "${need}" ]] || die "not-available: Python 3.10 or newer with venv is needed first (install the Developer tools pack)"
+  id -u praxi >/dev/null 2>&1 || die "not-available: Praxi itself must be installed on this server first"
+  [[ -d /run/systemd/system ]] || die "not-available: this server has no systemd"
+  install -d -m 755 "${SCRAPE_DIR}"
+  # Build the new environment beside the old one and swap, so an interrupted run never leaves a
+  # half-installed add-on in place.
+  rm -rf "${SCRAPE_DIR}/venv.new"
+  python3 -m venv "${SCRAPE_DIR}/venv.new"
+  "${SCRAPE_DIR}/venv.new/bin/python" -I -m pip install --no-cache-dir --disable-pip-version-check \
+    --only-binary=:all: --require-hashes -r "${STAGE}/scrape-requirements.lock"
+  rm -rf "${SCRAPE_DIR}/venv.old"
+  if [[ -d "${SCRAPE_DIR}/venv" ]]; then mv "${SCRAPE_DIR}/venv" "${SCRAPE_DIR}/venv.old"; fi
+  mv "${SCRAPE_DIR}/venv.new" "${SCRAPE_DIR}/venv"
+  rm -rf "${SCRAPE_DIR}/venv.old"
+  install -m 644 "${STAGE}/praxi_scrape.py" "${SCRAPE_DIR}/praxi_scrape.py"
+  # One random token per install: root and the praxi service user can read it, nobody else.
+  if [[ ! -s "${SCRAPE_TOKEN}" ]]; then
+    ( umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "${SCRAPE_TOKEN}.new" )
+    chown root:praxi "${SCRAPE_TOKEN}.new"; chmod 640 "${SCRAPE_TOKEN}.new"
+    mv "${SCRAPE_TOKEN}.new" "${SCRAPE_TOKEN}"
+  fi
+  install -m 644 "${STAGE}/praxi-scrape.service" "${SCRAPE_UNIT}"
+  scrape_dns_dropin
+  printf '%s\n' "${SCRAPE_VERSION}" > "${SCRAPE_DIR}/.installed"
+  systemctl daemon-reload
+  systemctl enable praxi-scrape.service >/dev/null 2>&1
+  systemctl restart praxi-scrape.service
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if python3 -I -c "import urllib.request,sys; sys.exit(0 if b'ok' in urllib.request.urlopen('http://127.0.0.1:${SCRAPE_PORT}/health', timeout=2).read() else 1)" >/dev/null 2>&1; then
+      kv scrape_health 1; return 0
+    fi
+    sleep 1
+  done
+  die "the web scraping add-on was installed but did not start; see: journalctl -u praxi-scrape"
+}
+
+scrape_remove() {
+  systemctl disable --now praxi-scrape.service >/dev/null 2>&1 || true
+  rm -f "${SCRAPE_UNIT}" "${SCRAPE_TOKEN}"
+  rm -rf "${SCRAPE_DROPIN_DIR}" "${SCRAPE_DIR}"
+  systemctl daemon-reload
+}
+
 cmd_packs_facts() {
   [[ -f "${CATALOG}" ]] || die "not-available: the pack catalog was not uploaded"
   local id pkgs tools t alt found
@@ -288,7 +385,7 @@ cmd_packs_facts() {
   kv os_id "$( (. /etc/os-release 2>/dev/null && printf '%s' "${ID:-}") || true)"
   while IFS='|' read -r id _ _ _ pkgs tools; do
     [[ "${id}" =~ ^[a-z]{2,16}$ ]] || continue
-    if have_apt; then PACK_PKGS="${pkgs}"; kv "pack_${id}" "$(pack_status)"; else kv "pack_${id}" missing; fi
+    if have_apt; then PACK_ID="${id}"; PACK_PKGS="${pkgs}"; kv "pack_${id}" "$(pack_status)"; else kv "pack_${id}" missing; fi
     for t in ${tools}; do
       found=0
       for alt in ${t//\// }; do if command -v "${alt}" >/dev/null 2>&1; then found=1; fi; done
@@ -301,10 +398,16 @@ cmd_packs_facts() {
 cmd_packs_plan() {
   read_params
   catalog_check; need_apt; pack_load "${P[pack]:-}"
-  local action="${P[action]:-install}" p missing="" unavailable="" have="" outsider="" n
+  local action="${P[action]:-install}" p missing="" unavailable="" have="" outsider="" n need=""
   kv pack "${PACK_ID}"; kv action "${action}"
   case "${action}" in
     install)
+      if [[ "${PACK_ID}" == scrape ]]; then
+        need="$(scrape_prereq)"
+        if [[ -n "${need}" ]]; then kv missing ""; kv unavailable "${need}"; return 0; fi
+        if [[ "$(scrape_status)" != installed ]]; then kv missing praxi-scrape; else kv missing ""; fi
+        kv unavailable ""; return 0
+      fi
       for p in ${PACK_PKGS}; do
         if pkg_installed "${p}"; then continue; fi
         missing="${missing:+${missing},}${p}"
@@ -318,6 +421,10 @@ cmd_packs_plan() {
       fi ;;
     remove)
       if [[ "${PACK_REMOVABLE}" != "1" ]]; then kv blocked shared; return 0; fi
+      if [[ "${PACK_ID}" == scrape ]]; then
+        if [[ "$(scrape_status)" == missing ]]; then kv missing ""; else kv missing praxi-scrape; fi
+        return 0
+      fi
       for p in ${PACK_PKGS}; do
         if pkg_installed "${p}"; then have="${have:+${have} }${p}"; fi
       done
@@ -334,6 +441,7 @@ cmd_packs_plan() {
 cmd_pack_install() {
   need_root; read_params
   catalog_check; need_apt; pack_load "${P[pack]:-}"; plan_check install
+  if [[ "${PACK_ID}" == scrape ]]; then scrape_install; kv "pack_${PACK_ID}" "$(pack_status)"; return 0; fi
   local p
   apt_without_restarts update -qq || log "apt update reported a problem; trying with the known package lists"
   for p in ${PACK_PKGS}; do
@@ -349,6 +457,7 @@ cmd_pack_remove() {
   catalog_check; need_apt; pack_load "${P[pack]:-}"
   [[ "${PACK_REMOVABLE}" == "1" ]] || die "blocked: this pack holds shared system tools and is not removed"
   plan_check remove
+  if [[ "${PACK_ID}" == scrape ]]; then scrape_remove; kv "pack_${PACK_ID}" "$(pack_status)"; return 0; fi
   local p have="" outsider
   for p in ${PACK_PKGS}; do
     if pkg_installed "${p}"; then have="${have:+${have} }${p}"; fi

@@ -312,5 +312,16 @@
       "Informationen für einen Fehlerbericht sammeln"
     ],
     "summary": "Beginne mit bot status. Der Befehl zeigt, ob der Hintergrunddienst (Daemon) läuft, ob dein Token akzeptiert wird und wie viele Genehmigungen auf dich warten. Wenn du kein Terminal benutzt, schau zuer…"
+  },
+  {
+    "doc": "de/web-scraping.md",
+    "title": "Web-Scraping-Zusatz (optional)",
+    "headings": [
+      "Hinzufügen oder entfernen",
+      "Was der Zusatz tut und nicht tut",
+      "Lizenzen",
+      "Personenbezogene Daten"
+    ],
+    "summary": "Die eingebauten Web-Werkzeuge lesen die meisten Seiten bereits. Der"
   }
 ]

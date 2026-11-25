@@ -7496,8 +7496,23 @@ export interface components {
         HostPackInfo: {
             /** @description Part of the wizard's one-switch basic set. */
             base: boolean;
+            /** @description GPL/AGPL family. */
+            copyleft: boolean;
+            /** @description Installed from the server's own Debian/Ubuntu software sources (Praxi ships nothing). */
+            distro: boolean;
             /** @description Catalog id (`office`, `docs`, `ocr`, `media`, `dev`). The app shows its own localised name. */
             id: string;
+            /** @description SPDX licence expression of the software the pack installs (shown as a chip for every pack). */
+            license: string;
+            /** @description SHA-256 of the pinned requirements file, for packs that have one. */
+            lock_sha256?: string | null;
+            /**
+             * @description Separate copyleft software downloaded from its author: the owner must acknowledge the
+             *     licence notice (`PackPlanInput.acknowledged`) before it is installed.
+             */
+            needs_ack: boolean;
+            /** @description The licence text. */
+            notice_url: string;
             /** @description False for shared system tools that Praxi never removes. */
             removable: boolean;
             /**
@@ -7505,8 +7520,12 @@ export interface components {
              * @description Rough download size.
              */
             size_mb: number;
+            /** @description Where the software's source lives. */
+            source_url: string;
             /** @description `installed`, `partial` (an interrupted install) or `missing`. */
             status: string;
+            /** @description Pinned upstream version (empty for distribution packs). */
+            version: string;
         };
         /** @description `GET /v1/hosts/setup/packs/{host_id}`: the server's "installed tools" fact sheet. */
         HostPacks: {
@@ -9169,6 +9188,11 @@ export interface components {
         };
         /** @description `POST /v1/hosts/setup/packs/plan`. */
         PackPlanInput: {
+            /**
+             * @description Catalog ids whose licence notice the owner has read and accepted. A pack that needs it
+             *     (`HostPackInfo.needs_ack`) cannot be installed without its id here.
+             */
+            acknowledged?: string[];
             action: components["schemas"]["PackAction"];
             /** @description Paired host id (`GET /v1/hosts`). */
             host_id: string;
@@ -9178,8 +9202,8 @@ export interface components {
         /** @description What would happen to one pack. Nothing has been changed yet. */
         PackPlanItem: {
             /**
-             * @description Why it cannot run: `shared`, `dependants`, `unavailable`, `needs_admin`, `unsupported`,
-             *     `connection` or `failed`.
+             * @description Why it cannot run: `shared`, `dependants`, `unavailable`, `needs_python`, `needs_ack`,
+             *     `needs_admin`, `unsupported`, `connection` or `failed`.
              */
             blocked?: string | null;
             /** @description Already as wanted: nothing to do. */

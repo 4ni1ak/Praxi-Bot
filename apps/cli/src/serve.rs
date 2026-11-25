@@ -753,6 +753,12 @@ pub fn web_tools_config(
         spill_dir: Some(data_dir.join("spill")),
         ..web_tools::WebToolsConfig::default()
     };
+    // The optional web scraping add-on: `web_scrape` exists only on a computer where the owner
+    // installed it (its per-install token file is there). Nothing to configure.
+    let scrape = web_tools::ScrapeConfig::default();
+    if scrape.installed() {
+        cfg.scrape = Some(scrape);
+    }
     let s = &file.search;
     cfg.search.searxng_url = s.searxng_url.clone().filter(|u| !u.trim().is_empty());
     if let Some(d) = s.duckduckgo {
