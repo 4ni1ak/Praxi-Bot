@@ -2286,6 +2286,7 @@ impl Shared {
                 name: name.to_owned(),
                 fields,
                 replace: card.replace,
+                bot_id: ctx.bot_id.to_string(),
             },
         );
         self.audit(

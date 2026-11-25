@@ -440,6 +440,15 @@ pub fn validate_fill_name(name: &str) -> Result<(), FillError> {
     Ok(())
 }
 
+/// Who a multi-entry write is for.
+#[derive(Clone, Copy)]
+enum WriteScope<'a> {
+    /// The owner's own write: no bot scope applies.
+    Owner,
+    /// On behalf of a bot (`None`: a call without a bot id, which owns no account).
+    Bot(Option<&'a str>),
+}
+
 fn store_key(name: &str) -> String {
     format!("{FILL_PREFIX}{name}")
 }
@@ -605,6 +614,37 @@ impl FillSecrets {
         programs: &[String],
         replace: bool,
     ) -> Result<bool, FillError> {
+        self.upsert_all_scoped(items, origins, programs, replace, WriteScope::Owner)
+    }
+
+    /// [`Self::upsert_all`] for a write that a BOT asked for (a `secret_request` the
+    /// owner answers): an existing entry that is another bot's account is refused
+    /// ([`FillError::NotAllowed`]) before anything is written, under the same lock as
+    /// the write, so bot B cannot get the owner to overwrite bot A's account value
+    /// whatever the form said. Owner-made entries (no account facts) stay replaceable.
+    ///
+    /// # Errors
+    /// As [`Self::upsert_all`], plus [`FillError::NotAllowed`] for another bot's account.
+    pub fn upsert_all_for_bot(
+        &self,
+        items: &[(String, String)],
+        origins: &[String],
+        programs: &[String],
+        replace: bool,
+        bot: Option<&str>,
+    ) -> Result<bool, FillError> {
+        self.upsert_all_scoped(items, origins, programs, replace, WriteScope::Bot(bot))
+    }
+
+    /// `scope`: who the write is for (see [`WriteScope`]).
+    fn upsert_all_scoped(
+        &self,
+        items: &[(String, String)],
+        origins: &[String],
+        programs: &[String],
+        replace: bool,
+        scope: WriteScope<'_>,
+    ) -> Result<bool, FillError> {
         for (n, v) in items {
             validate_fill_name(n)?;
             check_value_size(v)?;
@@ -612,6 +652,13 @@ impl FillSecrets {
         let origins = clean_origins(origins)?;
         let programs = clean_programs(programs)?;
         let mut meta = self.meta.lock();
+        if let WriteScope::Bot(bot) = scope {
+            for (n, _) in items {
+                if let Some(e) = meta.secrets.get(n) {
+                    Self::scope_check(n, e, bot)?;
+                }
+            }
+        }
         let replaced = items.iter().any(|(n, _)| meta.secrets.contains_key(n));
         if replaced && !replace {
             let name = items
@@ -780,21 +827,22 @@ impl FillSecrets {
     /// Unknown name, not this bot's bot-made account, or a backend failure.
     pub fn discard_account(&self, name: &str, bot: Option<&str>) -> Result<(), FillError> {
         validate_fill_name(name)?;
-        {
-            let meta = self.meta.lock();
-            let e = meta
-                .secrets
-                .get(name)
-                .ok_or_else(|| FillError::Unknown(name.to_owned()))?;
-            Self::scope_check(name, e, bot)?;
-            if e.account.as_ref().is_none_or(|a| a.created_by != "bot") {
-                return Err(FillError::NotAllowed(format!(
-                    "the secret `{}` was not made by a bot; only the owner can remove it",
-                    sanitize_label(name, 80)
-                )));
-            }
+        // ONE lock for the check and the delete: what was checked is what is deleted.
+        let mut meta = self.meta.lock();
+        let e = meta
+            .secrets
+            .get(name)
+            .ok_or_else(|| FillError::Unknown(name.to_owned()))?;
+        Self::scope_check(name, e, bot)?;
+        if e.account.as_ref().is_none_or(|a| a.created_by != "bot") {
+            return Err(FillError::NotAllowed(format!(
+                "the secret `{}` was not made by a bot; only the owner can remove it",
+                sanitize_label(name, 80)
+            )));
         }
-        self.delete(name).map(|_| ())
+        #[cfg(test)]
+        tests::between_check_and_delete(self);
+        self.delete_locked(&mut meta, name).map(|_| ())
     }
 
     /// Whether `bot` may use the secret. Entries without account facts (the
@@ -884,10 +932,15 @@ impl FillSecrets {
     pub fn delete(&self, name: &str) -> Result<bool, FillError> {
         validate_fill_name(name)?;
         let mut meta = self.meta.lock();
+        self.delete_locked(&mut meta, name)
+    }
+
+    /// [`Self::delete`] for a caller that already holds the metadata lock.
+    fn delete_locked(&self, meta: &mut Meta, name: &str) -> Result<bool, FillError> {
         let before = meta.clone();
         let existed = meta.secrets.remove(name).is_some();
         meta.grants.retain(|g| g.secret != name);
-        if existed && let Err(e) = self.persist(&meta) {
+        if existed && let Err(e) = self.persist(meta) {
             *meta = before;
             return Err(e);
         }
@@ -1494,6 +1547,163 @@ mod tests {
             .unwrap();
         s.resolve_value_for("h/one", None).unwrap();
         assert_eq!(n.load(Ordering::SeqCst), 2);
+    }
+
+    type GapFn = Box<dyn Fn(&FillSecrets)>;
+
+    thread_local! {
+        /// Runs inside `discard_account`, after its check and before its delete.
+        static GAP: std::cell::RefCell<Option<GapFn>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// The seam `discard_account` calls between its check and its delete (tests only).
+    pub(super) fn between_check_and_delete(s: &FillSecrets) {
+        GAP.with(|g| {
+            if let Some(f) = &*g.borrow() {
+                f(s);
+            }
+        });
+    }
+
+    #[test]
+    fn discard_account_holds_the_lock_from_the_check_to_the_delete() {
+        let s = FillSecrets::in_memory(Arc::new(MemoryStore::new()));
+        let name = registered_account(&s);
+        let held = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = Arc::clone(&held);
+        GAP.with(|g| {
+            *g.borrow_mut() = Some(Box::new(move |s: &FillSecrets| {
+                // Another writer (the owner's delete, a re-register) would need this lock.
+                seen.store(s.meta.try_lock().is_none(), Ordering::SeqCst);
+            }));
+        });
+        s.discard_account(name, Some("bot-a")).unwrap();
+        GAP.with(|g| *g.borrow_mut() = None);
+        assert!(
+            held.load(Ordering::SeqCst),
+            "the metadata lock was released between the check and the delete"
+        );
+        assert!(!s.exists(name));
+        assert_eq!(s.accounts(None).unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn a_bot_write_cannot_replace_another_bots_account() {
+        let s = FillSecrets::in_memory(Arc::new(MemoryStore::new()));
+        let name = registered_account(&s); // bot-a's account
+        let before = s
+            .resolve_value_for(name, Some("bot-a"))
+            .unwrap()
+            .expose()
+            .to_owned();
+        let items = vec![(name.to_owned(), "chosen-by-someone-else".to_owned())];
+        for bot in [Some("bot-b"), None] {
+            for replace in [true, false] {
+                let err = s
+                    .upsert_all_for_bot(&items, &[], &[], replace, bot)
+                    .unwrap_err();
+                assert!(matches!(err, FillError::NotAllowed(_)), "{bot:?}: {err:?}");
+            }
+        }
+        let still = s.resolve_value_for(name, Some("bot-a")).unwrap();
+        assert_eq!(still.expose(), before, "the account value was overwritten");
+        // The owning bot may ask (the owner still sees the card), and an owner-made
+        // secret stays replaceable on behalf of any bot.
+        assert!(
+            s.upsert_all_for_bot(&items, &[], &[], true, Some("bot-a"))
+                .is_ok()
+        );
+        s.upsert("login/owner-made", Some("x"), None, None).unwrap();
+        let owner_item = vec![("login/owner-made".to_owned(), "y".to_owned())];
+        assert!(
+            s.upsert_all_for_bot(&owner_item, &[], &[], true, Some("bot-b"))
+                .is_ok()
+        );
+    }
+
+    /// A store that "kills the daemon" (panics) right after the password is written.
+    struct CrashAfterSet(Arc<MemoryStore>, std::sync::atomic::AtomicBool);
+    impl SecretStore for CrashAfterSet {
+        fn get(&self, n: &str) -> Result<Option<crate::SecretValue>, crate::SecretError> {
+            self.0.get(n)
+        }
+        fn set(&self, n: &str, v: &str) -> Result<(), crate::SecretError> {
+            self.0.set(n, v)?;
+            assert!(
+                !self.1.swap(false, Ordering::SeqCst),
+                "daemon stopped after writing the password, before the metadata"
+            );
+            Ok(())
+        }
+        fn delete(&self, n: &str) -> Result<bool, crate::SecretError> {
+            self.0.delete(n)
+        }
+        fn list_names(&self) -> Result<Vec<String>, crate::SecretError> {
+            self.0.list_names()
+        }
+    }
+
+    fn new_account(name: &str) -> NewAccount<'_> {
+        NewAccount {
+            name,
+            site: "https://example.com",
+            login_id: "me",
+            email_account: None,
+            bot_id: "bot-a",
+            note: None,
+            password_len: 20,
+            symbols: true,
+        }
+    }
+
+    /// The order is: generate, write the password, write the metadata. A crash or a
+    /// failure at any point must leave either nothing, or a password nobody can reach
+    /// (no metadata, so no bot may use it) that the next sign-up simply replaces;
+    /// never an account entry without its password.
+    #[test]
+    fn a_crash_between_generating_and_saving_never_leaves_a_usable_half_account() {
+        let name = "login/example.com-aaaa1111";
+        let key = store_key(name);
+        let dir = tempfile::tempdir().unwrap();
+        let inner = Arc::new(MemoryStore::new());
+
+        // 1. The daemon stops after the password was stored, before the metadata.
+        let crashing = Arc::new(CrashAfterSet(
+            Arc::clone(&inner),
+            std::sync::atomic::AtomicBool::new(true),
+        ));
+        let s = FillSecrets::open(crashing, dir.path()).unwrap();
+        let died = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            s.register_account(&new_account(name))
+        }));
+        assert!(died.is_err(), "the simulated crash did not happen");
+        drop(s);
+        let orphan = inner.get(&key).unwrap().expect("the password was written");
+
+        // 2. Restart: no account, nothing a bot can resolve or list.
+        let s = FillSecrets::open(inner.clone(), dir.path()).unwrap();
+        assert_eq!(s.accounts(None).unwrap(), Vec::new());
+        assert_eq!(s.list().unwrap(), Vec::new());
+        assert!(s.resolve_value_for(name, Some("bot-a")).is_err());
+        assert!(s.discard_account(name, Some("bot-a")).is_err());
+
+        // 3. The retry succeeds and replaces the orphan with a fresh password.
+        let info = s.register_account(&new_account(name)).unwrap();
+        assert!(info.has_value && info.unused);
+        let fresh = s.resolve_value_for(name, Some("bot-a")).unwrap();
+        assert_ne!(fresh.expose(), orphan.expose(), "the orphan was reused");
+        drop(s);
+
+        // 4. A metadata write that fails (the data folder is gone) rolls the password
+        // back: no account entry exists without a password, no password without an entry.
+        let dir2 = tempfile::tempdir().unwrap();
+        let inner2 = Arc::new(MemoryStore::new());
+        let s = FillSecrets::open(inner2.clone(), dir2.path()).unwrap();
+        std::fs::remove_dir_all(dir2.path()).unwrap();
+        assert!(s.register_account(&new_account(name)).is_err());
+        assert!(inner2.get(&key).unwrap().is_none(), "password left behind");
+        assert_eq!(s.accounts(None).unwrap(), Vec::new());
     }
 
     #[test]

@@ -553,3 +553,131 @@ async fn the_model_can_list_secret_names_but_never_values() {
     );
     assert!(!result.contains(VALUE));
 }
+
+/// Guard: the password the DAEMON generated for `account_register` is really typed
+/// through `browser_fill {secret}` (the page echoes whatever it receives), and it
+/// appears in no sink afterwards: model history, event stream, stored steps /
+/// approvals / audit / messages, files on disk, logs, the account listing. The
+/// planted string (typed as ordinary text) proves each scan can see its place.
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // one ordered scenario: run, then scan every sink
+async fn a_generated_password_typed_through_browser_fill_is_in_no_sink() {
+    let log = Arc::new(Mutex::new(String::new()));
+    let _guard = tracing::subscriber::set_default(crate::account_register_tests::LogCapture(
+        Arc::clone(&log),
+    ));
+    let r = rig(Policy::full(), true, vec![]);
+    let bot = r.env.bot.to_string();
+    let bot8: String = bot
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(8)
+        .collect();
+    let name = format!("login/example.com-{bot8}");
+    r.lp.sh.tools.register(builtin_tools::account_register_tool(
+        Arc::clone(&r.secrets),
+        builtin_tools::AccountRegisterConfig::default(),
+    ));
+    r.page
+        .targets
+        .lock()
+        .insert("e7".into(), target("https://example.com"));
+    r.fake.replies.lock().extend([
+        calls(&[("p1", "browser_fill", json!({"ref": "e7", "text": PLANTED}))]),
+        calls(&[(
+            "a1",
+            "account_register",
+            json!({"site": "https://example.com", "login_id": "me@example.org"}),
+        )]),
+        calls(&[(
+            "a2",
+            "browser_fill",
+            json!({"ref": "e7", "secret": name.clone()}),
+        )]),
+        text("done"),
+    ]);
+
+    let mut rx = r.lp.subscribe();
+    let mut whole = r.lp.subscribe();
+    let run = r.lp.run_turn(r.env.chat, "sign me up").unwrap();
+    let wait = r.lp.wait(run);
+    tokio::pin!(wait);
+    let mut approvals = 0;
+    let state = loop {
+        tokio::select! {
+            done = &mut wait => break done.unwrap(),
+            Ok(i) = rx.recv() => {
+                if let Event::ApprovalNeeded(a) = &i.envelope.event {
+                    approvals += 1;
+                    r.lp.approve(a.call_id, ApprovalScope::Once, r.env.user).unwrap();
+                }
+            }
+        }
+    };
+    assert_eq!(state, RunState::Succeeded);
+    assert_eq!(approvals, 2, "the sign-up and the typing each asked");
+    r.lp.shutdown(Duration::from_millis(300)).await;
+
+    // The password was generated, stored, and REALLY typed (the page received it).
+    let account = r.secrets.accounts(None).unwrap().remove(0);
+    assert_eq!(account.name, name);
+    assert!(!account.unused, "typing marks the account used");
+    let pw = r
+        .secrets
+        .resolve_value_for(&name, Some(&bot))
+        .unwrap()
+        .expose()
+        .to_owned();
+    assert!(pw.len() >= 20);
+    assert_eq!(
+        r.page.typed_secrets.lock().as_slice(),
+        [pw.as_str()],
+        "the page did not receive the generated password"
+    );
+    assert_eq!(r.page.typed_text.lock().as_slice(), [PLANTED]);
+
+    let mut sent = String::new();
+    for i in 0..r.fake.n_requests() {
+        sent.push_str(&serde_json::to_string(&r.fake.request(i).messages).unwrap());
+    }
+    let mut streamed = String::new();
+    while let Ok(i) = whole.try_recv() {
+        streamed.push_str(&serde_json::to_string(&i.envelope.event).unwrap());
+    }
+    let stored = sinks_text(&r);
+    let logs = log.lock().clone();
+    let listing = format!("{:?}{:?}", r.secrets.accounts(None), r.secrets.list());
+
+    // Controls: each scanned place does contain things from this run.
+    assert!(
+        sent.contains(PLANTED) && sent.contains(&name),
+        "control: history"
+    );
+    assert!(streamed.contains(PLANTED), "control: event stream");
+    assert!(stored.contains(PLANTED), "control: stored steps");
+    assert!(
+        !files_containing(r.env.dir.path(), PLANTED).is_empty(),
+        "control: files"
+    );
+    assert!(listing.contains("example.com"), "control: listing");
+    // The result of the typing, as the model read it, names the field and not the value.
+    let last = r.fake.request(r.fake.n_requests() - 1);
+    let results = tool_messages(&last).join("\n");
+    assert!(results.contains("filled e7"), "{results}");
+
+    for (place, haystack) in [
+        ("model history", &sent),
+        ("event stream", &streamed),
+        ("stored rows", &stored),
+        ("logs", &logs),
+        ("listing", &listing),
+        ("tool results", &results),
+    ] {
+        assert!(!haystack.contains(&pw), "{place} leaked the password");
+    }
+    assert_eq!(
+        files_containing(r.env.dir.path(), &pw),
+        Vec::<String>::new(),
+        "files leaked the password"
+    );
+}
