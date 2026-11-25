@@ -122,7 +122,6 @@ interface LiveViewContextValue {
   selectTarget: (targetId: string) => void;
   refreshTargets: () => Promise<void>;
   setCardDemand: (active: boolean, botId: string | null) => void;
-  setDockedDemand: (active: boolean, botId: string | null) => void;
   /** The owner's picture-quality choice (Auto adapts to this computer and the link). */
   qualityMode: QualityMode;
   setQualityMode: (mode: QualityMode) => void;
@@ -247,10 +246,6 @@ export function LiveViewProvider({
   const { t } = useTranslation();
   const [viewerOpen, setViewerOpen] = useState<boolean>(initialMockViewerOpen);
   const [cardDemand, setCardDemandState] = useState<{
-    active: boolean;
-    botId: string | null;
-  }>({ active: false, botId: null });
-  const [dockedDemand, setDockedDemandState] = useState<{
     active: boolean;
     botId: string | null;
   }>({ active: false, botId: null });
@@ -490,19 +485,13 @@ export function LiveViewProvider({
   }, [client, ingestControlSnapshot, registry, sequencer]);
 
   useEffect(() => {
-    if (client && (viewerOpen || cardDemand.active || dockedDemand.active)) {
+    if (client && (viewerOpen || cardDemand.active)) {
       void refreshTargets();
     }
-  }, [client, viewerOpen, cardDemand.active, dockedDemand.active, refreshTargets]);
+  }, [client, viewerOpen, cardDemand.active, refreshTargets]);
 
-  const botFocus =
-    cardDemand.botId ??
-    dockedDemand.botId ??
-    (bots.length > 0 ? bots[0].id : null);
-  const preferDesktop =
-    (cardDemand.active || dockedDemand.active) &&
-    !viewerOpen &&
-    !isControlBusy(state);
+  const botFocus = cardDemand.botId ?? (bots.length > 0 ? bots[0].id : null);
+  const preferDesktop = cardDemand.active && !viewerOpen && !isControlBusy(state);
   const preferredTargetId = preferDesktop ? null : selectedTargetId;
   const selectedTarget = useMemo(
     () =>
@@ -548,12 +537,11 @@ export function LiveViewProvider({
   }, [selectedTarget, updateState]);
 
   // Determine whether a view session is currently needed and at what quality/profile.
-  const screenOpen = viewerOpen || dockedDemand.active;
   const wantSession = computeWantSession({
     hasClient: Boolean(client),
     documentHidden,
     target: selectedTarget,
-    viewerOpen: screenOpen && !viewerTimedOut,
+    viewerOpen: viewerOpen && !viewerTimedOut,
     cardRequested: cardDemand.active
   });
 
@@ -576,7 +564,7 @@ export function LiveViewProvider({
     maxHeight: desiredMaxHeight,
     quality: desiredQuality
   } = sessionRequest({
-    viewerOpen: screenOpen,
+    viewerOpen,
     owning,
     mode: qualityMode,
     level: adaptLevelFor(qualityMode, { ...INITIAL_ADAPT, level: adaptLevel }),
@@ -586,7 +574,7 @@ export function LiveViewProvider({
   const activeSessionRef = useRef<SessionInfo | null>(null);
 
   useEffect(() => {
-    if (!screenOpen) {
+    if (!viewerOpen) {
       setViewerTimedOut(false);
       return undefined;
     }
@@ -598,7 +586,7 @@ export function LiveViewProvider({
       }
     }, SCREEN_START_TIMEOUT_MS);
     return () => window.clearTimeout(id);
-  }, [screenOpen, frameUrl, streamAttempt, viewerTimedOut]);
+  }, [viewerOpen, frameUrl, streamAttempt, viewerTimedOut]);
 
   // Create/delete view session strictly based on panel/viewer demand and target identity.
   useEffect(() => {
@@ -760,7 +748,7 @@ export function LiveViewProvider({
             codecs: selectedTarget.capabilities.codecs,
             ...(() => {
               const r = sessionRequest({
-                viewerOpen: screenOpen,
+                viewerOpen,
                 owning: false,
                 mode: qualityModeRef.current,
                 dpr: window.devicePixelRatio || 1
@@ -1312,17 +1300,6 @@ export function LiveViewProvider({
     []
   );
 
-  const setDockedDemand = useCallback(
-    (active: boolean, botId: string | null) => {
-      setDockedDemandState((prev) =>
-        prev.active === active && prev.botId === botId
-          ? prev
-          : { active, botId }
-      );
-    },
-    []
-  );
-
   const isLocalClient = client ? isLocalBaseUrl(client.baseUrl) : false;
   // The host's admin desktop may clear a pause on the host (the daemon decides);
   // anything else stays hidden. Failure or no admin grant keeps it false.
@@ -1371,7 +1348,6 @@ export function LiveViewProvider({
       selectTarget,
       refreshTargets,
       setCardDemand,
-      setDockedDemand,
       qualityMode,
       setQualityMode,
       requestTakeover,
@@ -1414,7 +1390,6 @@ export function LiveViewProvider({
       selectTarget,
       refreshTargets,
       setCardDemand,
-      setDockedDemand,
       qualityMode,
       setQualityMode,
       requestTakeover,

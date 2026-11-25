@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  loadChatOpen,
-  saveChatOpen,
   toggleFit,
   viewerAnnouncementKey,
   viewerShortcut,
@@ -39,26 +37,6 @@ test("no shortcut fires while typing into the remote screen or a text field", ()
 test("toggleFit flips between fit and fill", () => {
   assert.equal(toggleFit("fit"), "fill");
   assert.equal(toggleFit("fill"), "fit");
-});
-
-test("the chat strip is collapsed by default and remembers its state", () => {
-  const store = new Map<string, string>();
-  const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
-  assert.equal(loadChatOpen(storage), false);
-  saveChatOpen(true, storage);
-  assert.equal(loadChatOpen(storage), true);
-  saveChatOpen(false, storage);
-  assert.equal(loadChatOpen(storage), false);
-  const broken = {
-    getItem: () => {
-      throw new Error("blocked");
-    },
-    setItem: () => {
-      throw new Error("blocked");
-    }
-  };
-  assert.equal(loadChatOpen(broken), false);
-  assert.doesNotThrow(() => saveChatOpen(true, broken));
 });
 
 test("the spoken status names reconnecting, stalled and connecting", () => {

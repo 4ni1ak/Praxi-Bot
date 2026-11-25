@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   deriveSidePanelState,
   hasUnanswerableNeed,
+  panelDismissedBy,
   PANEL_DOCK_MIN_WIDTH,
   type SidePanelInput
 } from "./sidePanelState.ts";
@@ -13,7 +14,6 @@ const BASE: SidePanelInput = {
   unanswerableNeed: false,
   attentionDismissed: false,
   liveViewState: "idle",
-  bigScreenDocked: true,
   viewportWidth: 1280,
   storedPanelWidth: 320,
   railWidth: 264,
@@ -84,16 +84,13 @@ test("unanswerable need opens panel as overlay with flowWidth 0 (no chat or scre
   assert.equal(dismissed.flowWidth, 0);
 });
 
-test("starting or stopping live view never changes chat column width or moves screen frame", () => {
+test("while the full-screen live view is open the panel overlays and never takes flow width", () => {
   for (const ownerOpen of [false, true]) {
-    const idle = deriveSidePanelState({ ...BASE, ownerOpen, liveViewState: "idle" });
     const starting = deriveSidePanelState({ ...BASE, ownerOpen, liveViewState: "starting" });
     const live = deriveSidePanelState({ ...BASE, ownerOpen, liveViewState: "live" });
-    assert.equal(idle.flowWidth, 0);
     assert.equal(starting.flowWidth, 0);
     assert.equal(live.flowWidth, 0);
     if (ownerOpen) {
-      assert.equal(idle.mode, "overlay");
       assert.equal(starting.mode, "overlay");
       assert.equal(live.mode, "overlay");
     }
@@ -104,7 +101,6 @@ test("below PANEL_DOCK_MIN_WIDTH the panel stays overlay even without big screen
   const narrow = deriveSidePanelState({
     ...BASE,
     ownerOpen: true,
-    bigScreenDocked: false,
     liveViewState: "idle",
     viewportWidth: PANEL_DOCK_MIN_WIDTH - 1
   });
@@ -115,7 +111,6 @@ test("below PANEL_DOCK_MIN_WIDTH the panel stays overlay even without big screen
   const wide = deriveSidePanelState({
     ...BASE,
     ownerOpen: true,
-    bigScreenDocked: false,
     liveViewState: "idle",
     viewportWidth: PANEL_DOCK_MIN_WIDTH
   });
@@ -135,4 +130,23 @@ test("non-bot routes always keep the side panel hidden", () => {
   assert.equal(s.visible, false);
   assert.equal(s.flowWidth, 0);
   assert.equal(s.reason, "no-bot");
+});
+
+test("only the panel's own X, its toggle and Escape dismiss it; a click on the chat never does", () => {
+  assert.equal(panelDismissedBy("close-button"), true);
+  assert.equal(panelDismissedBy("toggle"), true);
+  assert.equal(panelDismissedBy("escape"), true);
+  assert.equal(panelDismissedBy("outside-pointer"), false);
+  assert.equal(panelDismissedBy("focus-moved"), false);
+  assert.equal(panelDismissedBy("chat-activity"), false);
+});
+
+test("the open panel does not change shape when a computer preview starts streaming", () => {
+  // The computer card starts a preview stream by itself; App feeds `liveViewState` only from the
+  // full-screen viewer, so the mode a wide window opened with is the mode it keeps.
+  const opened = deriveSidePanelState({ ...BASE, ownerOpen: true, liveViewState: "idle" });
+  assert.equal(opened.mode, "docked");
+  const viewer = deriveSidePanelState({ ...BASE, ownerOpen: true, liveViewState: "live" });
+  assert.equal(viewer.mode, "overlay");
+  assert.equal(viewer.flowWidth, 0);
 });

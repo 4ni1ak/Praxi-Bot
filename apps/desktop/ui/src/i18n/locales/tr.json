@@ -3959,7 +3959,10 @@
     "captureTab": "Tab tuşunu yakala",
     "chat": {
       "approve": "Onayla",
+      "button": "Sohbet",
+      "close": "Sohbeti kapat",
       "collapse": "Sohbeti daralt",
+      "expand": "Sohbeti büyüt",
       "reject": "Reddet",
       "replying": "Bot yanıt yazıyor…",
       "title": "Botla sohbet",
@@ -3990,11 +3993,11 @@
       "view_quota": "Sunucuda çok fazla ekran oturumu açık. Kullanmadığın bir ekranı kapat veya biraz sonra yeniden dene."
     },
     "expand": "Büyük görünümü aç",
-    "expandScreen": "Tam ekran",
     "focusTrapHint": "Klavye ekrana gider. Çıkmak için Shift+Esc.",
     "globalPauseNotice": "Devralma veya durdurma işlemi tüm bot çalışmalarını genel olarak duraklatır.",
     "handBackAction": "Geri ver",
     "hostLabel": "Sunucu: {{host}}",
+    "infoPanel": "Bot bilgisi",
     "interactive": "Etkileşimli",
     "kind": {
       "browser": "Tarayıcı",
