@@ -7,9 +7,10 @@ use std::sync::{Arc, PoisonError, RwLock};
 use secret_store::SecretStore;
 
 use crate::agentmail::{AgentMailClient, AgentMailEndpoint, AgentMailProvider, ApiKey};
-use crate::config::{AccountConfig, AccountKind};
+use crate::config::{AccountConfig, AccountKind, SendMode};
 use crate::cred::resolve_secret;
 use crate::error::EmailError;
+use crate::guard::MailGuard;
 use crate::imap::{FolderInfo, SearchQuery};
 use crate::imap_provider::ImapSmtpProvider;
 use crate::message::{MessageDetail, MessageSummary};
@@ -45,23 +46,39 @@ pub struct EmailConnector {
     client: RwLock<Option<AgentMailClient>>,
     /// Where downloaded attachments are saved (`None` = downloads refused).
     attachments_dir: RwLock<Option<PathBuf>>,
+    /// Outgoing-mail guardrails (send log, opt-out list, limits).
+    guard: RwLock<Arc<MailGuard>>,
 }
 
-/// A bound account is usable only by its bot (ids compare case-insensitively,
-/// they are UUIDs); an unbound one by every caller. `bot == None` (not a bot)
-/// is never "every bot": it reaches unbound accounts only.
+fn is_bot(id: &str, bot: Option<&str>) -> bool {
+    bot.is_some_and(|b| id.eq_ignore_ascii_case(b))
+}
+
+/// A bound account is usable only by its bot and the bots it is shared with
+/// (ids compare case-insensitively, they are UUIDs); an unbound one by every
+/// caller. `bot == None` (not a bot) is never "every bot": it reaches unbound
+/// accounts only.
 fn usable_by(acct: &AccountConfig, bot: Option<&str>) -> bool {
     match &acct.bot {
         None => true,
-        Some(owner) => bot.is_some_and(|b| owner.eq_ignore_ascii_case(b)),
+        Some(owner) => {
+            is_bot(owner, bot) || acct.identity.shared_with.iter().any(|s| is_bot(s, bot))
+        }
     }
 }
 
 fn owned_by(acct: &AccountConfig, bot: Option<&str>) -> bool {
-    match (&acct.bot, bot) {
-        (Some(owner), Some(b)) => owner.eq_ignore_ascii_case(b),
-        _ => false,
-    }
+    acct.bot.as_deref().is_some_and(|o| is_bot(o, bot))
+        || acct.identity.shared_with.iter().any(|s| is_bot(s, bot))
+}
+
+/// The account `bot` has marked as its default sender, if it may use it.
+fn default_of<'a>(
+    all: &'a BTreeMap<String, AccountConfig>,
+    bot: Option<&str>,
+) -> Option<&'a AccountConfig> {
+    all.values()
+        .find(|a| usable_by(a, bot) && a.identity.default_for.iter().any(|d| is_bot(d, bot)))
 }
 
 impl EmailConnector {
@@ -98,7 +115,20 @@ impl EmailConnector {
             endpoint,
             client: RwLock::new(None),
             attachments_dir: RwLock::new(None),
+            guard: RwLock::new(Arc::new(MailGuard::in_memory())),
         }
+    }
+
+    /// The outgoing-mail guard (shared; the host reads and edits the log and the lists here).
+    #[must_use]
+    pub fn guard(&self) -> Arc<MailGuard> {
+        Arc::clone(&self.guard.read().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Keep the send log, opt-out list and settings in `dir` (loads what is there).
+    pub fn set_guard_dir(&self, dir: PathBuf) {
+        *self.guard.write().unwrap_or_else(PoisonError::into_inner) =
+            Arc::new(MailGuard::open(dir));
     }
 
     /// Set the directory attachments are saved in (created on first use).
@@ -358,6 +388,9 @@ impl Scoped<'_> {
                 .cloned()
                 .ok_or_else(|| EmailError::Input(format!("unknown account {n:?}")));
         }
+        if let Some(default) = default_of(&all, self.bot) {
+            return Ok(default.clone());
+        }
         let mine: Vec<&AccountConfig> = all.values().filter(|a| owned_by(a, self.bot)).collect();
         let pool: Vec<&AccountConfig> = if mine.is_empty() {
             all.values().filter(|a| a.bot.is_none()).collect()
@@ -379,6 +412,26 @@ impl Scoped<'_> {
         }
     }
 
+    /// The accounts this bot may use as a sender, with the one a call without
+    /// `account` would pick marked. Names and addresses only: no secrets.
+    #[must_use]
+    pub fn identities(&self) -> Vec<(AccountConfig, bool)> {
+        let all = self.conn.snapshot();
+        let chosen = self.account(None).ok().map(|a| a.name);
+        all.values()
+            .filter(|a| usable_by(a, self.bot))
+            .map(|a| (a.clone(), chosen.as_deref() == Some(a.name.as_str())))
+            .collect()
+    }
+
+    /// The account a call with `account` would use.
+    ///
+    /// # Errors
+    /// [`EmailError::Input`] as for any call.
+    pub fn resolve(&self, account: Option<&str>) -> Result<AccountConfig, EmailError> {
+        self.account(account)
+    }
+
     /// Name of the account a call with `account` would use.
     ///
     /// # Errors
@@ -387,12 +440,31 @@ impl Scoped<'_> {
         self.account(account).map(|a| a.name)
     }
 
+    /// Name and sending address of the account a call would use.
+    ///
+    /// # Errors
+    /// [`EmailError::Input`] as for any call.
+    pub fn resolve_sender(&self, account: Option<&str>) -> Result<(String, String), EmailError> {
+        self.account(account).map(|a| (a.name, a.address))
+    }
+
     async fn provider(
         &self,
         account: Option<&str>,
     ) -> Result<Box<dyn MailboxProvider>, EmailError> {
         let acct = self.account(account)?;
         self.conn.provider_for(&acct).await
+    }
+
+    /// The account of a call that is about to **send**. An identity the owner
+    /// limited to drafts never sends, whoever the caller is: the check lives
+    /// here so no path (tool, channel, workflow) can skip it.
+    fn sendable(&self, account: Option<&str>) -> Result<AccountConfig, EmailError> {
+        let acct = self.account(account)?;
+        if acct.identity.send_mode == SendMode::DraftOnly {
+            return Err(EmailError::Input("draft only".into()));
+        }
+        Ok(acct)
     }
 
     /// What the mailbox of this call can do.
@@ -558,7 +630,8 @@ impl Scoped<'_> {
         account: Option<&str>,
         mail: &OutgoingMail,
     ) -> Result<Receipt, EmailError> {
-        self.provider(account).await?.send(mail).await
+        let acct = self.sendable(account)?;
+        self.conn.provider_for(&acct).await?.send(mail).await
     }
 
     /// Reply in the thread of a message. **Sends immediately**; callers must
@@ -573,7 +646,9 @@ impl Scoped<'_> {
         mail: &OutgoingMail,
         reply_all: bool,
     ) -> Result<Receipt, EmailError> {
-        self.provider(account)
+        let acct = self.sendable(account)?;
+        self.conn
+            .provider_for(&acct)
             .await?
             .reply(message_id, mail, reply_all)
             .await

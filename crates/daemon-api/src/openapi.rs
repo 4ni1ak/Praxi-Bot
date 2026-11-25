@@ -33,6 +33,7 @@ use crate::host_admin;
 use crate::host_copy;
 use crate::host_import;
 use crate::host_links;
+use crate::host_packs;
 use crate::host_setup;
 use crate::incoming_webhook;
 use crate::knowledge;
@@ -147,6 +148,13 @@ impl Modify for Security {
         email_routes::list_email_accounts,
         email_routes::list_email_messages,
         email_routes::send_email_test,
+        email_routes::get_guard_settings,
+        email_routes::put_guard_settings,
+        email_routes::list_opt_outs,
+        email_routes::add_opt_out,
+        email_routes::remove_opt_out,
+        email_routes::get_send_log,
+        email_routes::export_send_log,
         email_routes::test_email_account,
         email_routes::test_email_draft,
         email_routes::update_email_account,
@@ -206,6 +214,9 @@ impl Modify for Security {
         host_setup::bootstrap,
         host_setup::start,
         host_setup::start_update,
+        host_packs::get,
+        host_packs::plan,
+        host_packs::apply,
         host_links::host_version,
         knowledge::create_source,
         knowledge::delete_source,
@@ -549,6 +560,10 @@ impl Modify for Security {
         email::EmailProviderKind,
         email::EmailSecurity,
         email::EmailSendTestResponse,
+        email::EmailGuardSettingsDto,
+        email::EmailOptOutDto,
+        email::EmailOptOutInput,
+        email::EmailSendLogDto,
         email::EmailSmtpServer,
         email::EmailTestReport,
         error::ErrorBody,
@@ -634,6 +649,14 @@ impl Modify for Security {
         host_setup::HostKeyPrompt,
         host_setup::HostJobKind,
         host_setup::HostSetupJob,
+        host_packs::PackAction,
+        host_packs::HostPackInfo,
+        host_packs::HostToolFact,
+        host_packs::HostPacks,
+        host_packs::PackPlanInput,
+        host_packs::PackPlanItem,
+        host_packs::PackPlan,
+        host_packs::PackApplyInput,
         host_setup::StartHostUpdateInput,
         host_links::HostVersion,
         host_setup::HostSetupState,

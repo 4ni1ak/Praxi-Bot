@@ -308,6 +308,13 @@
     },
     "noDaemon": "El servicio local de Praxi no está en ejecución. Reinicia la app e inténtalo de nuevo.",
     "noKeys": "No se encontró ningún archivo de clave en tu carpeta .ssh. Escribe la ruta de la clave que descargaste.",
+    "packs": {
+      "body": "Actívalo para ver el plan cuando el servidor esté añadido: {{list}}; {{size}} en total. No se instala nada hasta que hayas visto exactamente qué cambiaría y lo confirmes.",
+      "planBody": "El servidor está añadido. Revisa exactamente qué se instalaría y confírmalo para empezar.",
+      "planOpen": "Ver el plan",
+      "planTitle": "Las herramientas aún no están instaladas",
+      "title": "Preparar las herramientas básicas tras añadir"
+    },
     "pairChecks": {
       "models": {
         "fix": "Aún falta permiso. Ejecuta bot host admin --all-desktops en el servidor. Puedes enviar modelos más adelante desde la página del servidor.",
@@ -1571,6 +1578,31 @@
         "label": "Lo que recibirá {{name}} exactamente",
         "shortened": "Texto abreviado: solo se muestran los primeros {{shown}} caracteres."
       },
+      "mail": {
+        "another": "Enviar desde otra dirección…",
+        "bcc": "Cco",
+        "cc": "Cc",
+        "draftOnly": "Solo borradores",
+        "from": "De",
+        "legal": "Escribir a alguien que se dio de baja, o enviar correo comercial sin línea de baja, puede ser ilegal (en Turquía: Ley 6563, ETK) y acarrear multas. Esto no es asesoramiento jurídico.",
+        "optOutOff": "No se añadirá ninguna línea de baja a este correo.",
+        "optOutOn": "El sistema añade al final una línea de baja (se ve arriba).",
+        "ownerOnly": "Solo usted puede decidirlo. El bot no puede saltarse estas advertencias por su cuenta.",
+        "sendAnyway": "Enviar de todos modos",
+        "subject": "Asunto",
+        "switchLabel": "Enviar desde otra dirección",
+        "title": "¿Enviar este correo?",
+        "to": "Para",
+        "useThis": "Usar esta dirección",
+        "warning": {
+          "daily_limit": "Con esto serían {{count}} correos desde esta cuenta en 24 horas. Su límite es {{limit}}.",
+          "guard_unreadable": "La protección de correo no pudo leer su archivo guardado ({{list}}). El archivo dañado se apartó, no se borró; por eso pueden faltar bajas y nadie se comprueba contra ellas.",
+          "no_opt_out_line": "Este correo saldría sin la línea que permite darse de baja.",
+          "opt_out_listed": "Estas personas pidieron que no se les escriba: {{list}}.",
+          "same_recipient": "Ya escribió a {{list}} en los últimos {{days}} días."
+        },
+        "warningsTitle": "Revise antes de enviar"
+      },
       "memory": {
         "always": "Permitir siempre {{target}} para este bot",
         "target": {
@@ -2100,6 +2132,11 @@
         "failed": "No pudo redactar el correo",
         "running": "Redactando un correo"
       },
+      "email_identities": {
+        "done": "Direcciones de correo comprobadas",
+        "failed": "No se pudieron comprobar las direcciones de correo",
+        "running": "Comprueba qué direcciones de correo puede usar"
+      },
       "email_mark": {
         "done": "Cambió el estado de lectura de un correo",
         "failed": "No pudo cambiar el estado de lectura del correo",
@@ -2337,17 +2374,6 @@
     "save": "Guardar archivo…",
     "steps": "Pasos del bot",
     "title": "Exportar chat"
-  },
-  "chatHistory": {
-    "count": "{{count}} mensajes coincidentes",
-    "count_one": "{{count}} mensaje coincidente",
-    "count_other": "{{count}} mensajes coincidentes",
-    "more": "Más resultados",
-    "noneYet": "Aún no hay coincidencias visibles en esta página",
-    "results": "Resultados de la búsqueda de mensajes",
-    "search": "Buscar en todos los mensajes de chat…",
-    "searching": "Buscando mensajes…",
-    "submit": "Buscar mensajes"
   },
   "chatManage": {
     "allArchived": "Todos los chats están archivados.",
@@ -3614,6 +3640,8 @@
     "menuDismiss": "Cerrar el menú",
     "menuMove": "Moverte por el menú de comandos o menciones",
     "menuNav": "Moverte por los menús emergentes",
+    "messageSearch": "Buscar en todos los mensajes",
+    "messageSearchMove": "Búsqueda de mensajes: moverse y abrir",
     "newline": "Salto de línea",
     "openHelp": "Mostrar esta lista si ningún campo de texto tiene el foco",
     "palette": "Paleta de comandos",
@@ -4361,6 +4389,31 @@
       "m": "min",
       "s": "s"
     }
+  },
+  "messageSearch": {
+    "allBots": "Todos los bots",
+    "bot": "Bot",
+    "clear": "Borrar",
+    "clearRecent": "Borrar",
+    "filters": "Filtros",
+    "hasFile": "Archivo",
+    "hasLink": "Enlace",
+    "hint": "Escribe para buscar en todos los chats",
+    "keywords": "buscar mensajes historial chats",
+    "more": "Más resultados",
+    "none": "No se encontraron mensajes",
+    "open": "Buscar mensajes",
+    "placeholder": "Buscar en todos los mensajes",
+    "recent": "Recientes",
+    "reset": "Restablecer",
+    "results": "Resultados de mensajes",
+    "searching": "Buscando…",
+    "title": "Buscar mensajes",
+    "when": "Fecha",
+    "when_any": "Cualquier fecha",
+    "when_day": "Último día",
+    "when_month": "Último mes",
+    "when_week": "Última semana"
   },
   "modelPicker": {
     "addEngines": "Add a coding CLI",
@@ -5678,10 +5731,12 @@
         "own": "Connect my own mailbox",
         "ownText": "Use a mailbox you already have (Gmail, Outlook, iCloud, your own server) over IMAP and SMTP."
       },
+      "defaultTag": "Predeterminada de {{count}}",
       "delete": "Delete",
       "deleteConfirm": "Delete this mailbox?",
       "deletedBot": "deleted bot",
       "description": "Mailboxes your bots can read and write with. A mailbox can belong to one bot.",
+      "draftOnlyTag": "Solo borradores",
       "edit": "Edit",
       "empty": "No mailboxes yet.",
       "errors": {
@@ -5704,6 +5759,8 @@
         },
         "address": "E-mail address",
         "create": "Add mailbox",
+        "defaultFor": "Remitente predeterminado de",
+        "defaultForHint": "Si el bot no indica una dirección, envía desde esta.",
         "imapHost": "IMAP server",
         "implicit": "TLS",
         "name": "Name",
@@ -5722,6 +5779,13 @@
         },
         "save": "Save",
         "security": "SMTP security",
+        "sendMode": {
+          "ask": "Preguntarme cada vez",
+          "askHint": "Cada mensaje se te muestra primero: De, Para, asunto y texto.",
+          "draftOnly": "Solo borradores",
+          "draftOnlyHint": "Los bots pueden escribir borradores desde esta dirección, pero nunca enviar.",
+          "label": "Envío"
+        },
         "senders": "Allowed senders",
         "sendersHint": "Addresses or @domains, one per line. Stored for the coming inbound-mail feature; nothing reacts to incoming mail yet.",
         "smtpHost": "SMTP server",
@@ -5753,6 +5817,7 @@
         "tls": "TLS failed",
         "unreachable": "Cannot connect"
       },
+      "sharedDomain": "Esta dirección compartida no sirve para correo en frío. Usa tu propio dominio para la prospección.",
       "test": "Test connection",
       "testing": "Testing…",
       "title": "Correo",
@@ -5772,6 +5837,7 @@
       "enable": "Activar el canal de correo",
       "folder": "Carpeta que se vigila",
       "folderHint": "Normalmente INBOX. Solo se pasa el correo que llega después de activarlo.",
+      "fromLine": "De: {{from}}. Modo de envío: cada envío necesita tu aprobación.",
       "full": "Mostrar al bot el texto completo de cada correo, no solo un resumen",
       "noAccount": "Primero añade un buzón arriba.",
       "note": "El correo lo escriben otras personas, así que el bot lo trata como información, nunca como órdenes. Por defecto solo ve el remitente, el asunto y las primeras líneas. Los adjuntos no se abren nunca. No se envía nada a menos que permitas las respuestas y apruebes cada una aquí.",
@@ -5843,6 +5909,39 @@
           "title": "Safe mode"
         }
       }
+    },
+    "mailGuard": {
+      "colBot": "Bot",
+      "colNote": "Nota",
+      "colSubject": "Asunto",
+      "colTime": "Cuándo",
+      "colTo": "Para",
+      "daily": "Avisar por encima de este número de correos al día, por buzón (0 = nunca)",
+      "days": "Avisar si ya escribí a alguien dentro de este número de días (0 = nunca)",
+      "description": "Límites, una lista de bajas y un registro de cada correo que envían sus bots.",
+      "export": "Exportar como CSV",
+      "footer": "Texto de la línea de baja",
+      "footerHint": "{sender} se sustituye por la dirección remitente. La línea la añade la aplicación, no el bot, y el bot no puede quitarla. Puede enviar un correo sin ella aprobándolo en la tarjeta, que muestra una advertencia. El programa no lee las respuestas: si alguien responde «STOP», añada usted mismo su dirección a la lista de bajas aquí.",
+      "footerPlaceholder": "Déjelo vacío para usar el texto integrado (turco e inglés)",
+      "intro": "Cada correo que envía un bot sigue pidiéndole permiso primero. Estos ajustes solo deciden cuándo la pregunta lleva una advertencia. Una advertencia nunca le bloquea: siempre puede elegir \"Enviar de todos modos\", y esa elección queda en el registro.",
+      "kindAddress": "dirección",
+      "kindDomain": "dominio entero",
+      "loading": "Cargando…",
+      "logEmpty": "Todavía no se ha enviado ningún correo.",
+      "logHint": "Quién recibió un correo, cuándo y desde qué bot. Solo aparecen los correos realmente enviados.",
+      "logTitle": "Registro de correos enviados",
+      "optOutAdd": "Añadir",
+      "optOutEmpty": "Todavía no hay nadie en la lista.",
+      "optOutHint": "Añada una dirección (ana@ejemplo.com) o un dominio entero (ejemplo.com). Si un bot intenta escribirles, verá una advertencia en su tarjeta de aprobación.",
+      "optOutLine": "Añadir por defecto una línea de baja a los correos",
+      "optOutPlaceholder": "ana@ejemplo.com o ejemplo.com",
+      "optOutRemove": "Quitar {{value}}",
+      "optOutTitle": "Personas a las que no escribiré",
+      "save": "Guardar",
+      "saved": "Guardado",
+      "sentAnyway": "Enviado de todos modos",
+      "softHint": "Estos dos son advertencias, no bloqueos.",
+      "title": "Envío seguro"
     },
     "mode": {
       "moreHint": "Opciones adicionales",
@@ -6056,7 +6155,6 @@
     "reorderHint": "Arrastra la fila o enfoca este control y pulsa la flecha arriba o abajo",
     "reorderMoved": "{{name}} se movió a la posición {{pos}}",
     "schedules": "Tareas programadas",
-    "searchBots": "Buscar bots",
     "settings": "Ajustes",
     "unread": "Mensaje sin leer",
     "unreadBot": "Mensajes nuevos de este bot",
@@ -6246,6 +6344,119 @@
   "thisComputerOnly": {
     "body": "Los modelos locales se ejecutan donde se ejecuta el bot. {{name}} es un servidor. Para configurar modelos en este equipo, selecciona «Este equipo».",
     "switch": "Cambiar a este equipo"
+  },
+  "toolPacks": {
+    "back": "Atrás",
+    "basicSet": "Elegir el conjunto básico",
+    "button": "Herramientas",
+    "confirmInstall": "Instalar",
+    "confirmRemove": "Quitar",
+    "doneInstall": "Herramientas instaladas",
+    "doneInstallBody": "Tus bots de este servidor ya pueden usarlas.",
+    "doneRemove": "Herramientas quitadas",
+    "dontClose": "Puede tardar unos minutos. Puedes seguir usando la aplicación.",
+    "found": "Programas encontrados: {{n}}",
+    "lead": "Programas que tus bots pueden usar en este servidor.",
+    "listLabel": "Paquetes de herramientas",
+    "loading": "Mirando el servidor…",
+    "noLogin": {
+      "body": "Praxi instala las herramientas con tu propio acceso SSH. Vuelve a añadir el servidor con «Avanzado: usar SSH» o instala las herramientas tú mismo en el servidor.",
+      "title": "Este servidor se añadió sin acceso guardado"
+    },
+    "nothingToDo": "Ya está hecho",
+    "packs": {
+      "dev": {
+        "desc": "git, GitHub, Python, Node y búsqueda rápida",
+        "name": "Herramientas de desarrollo"
+      },
+      "docs": {
+        "desc": "Convertir documentos, leer y unir PDF",
+        "name": "Documentos y PDF"
+      },
+      "media": {
+        "desc": "Convertir, cortar y redimensionar contenido multimedia",
+        "name": "Audio, vídeo e imágenes"
+      },
+      "ocr": {
+        "desc": "Leer texto de escaneos y fotos (turco, inglés)",
+        "name": "Texto de imágenes"
+      },
+      "office": {
+        "desc": "Word, Excel, PowerPoint y exportación a PDF, con fuentes turcas",
+        "name": "Archivos de Office"
+      }
+    },
+    "planning": "Comprobando qué cambiaría…",
+    "previewLabel": "Qué cambiaría",
+    "progress": "Progreso",
+    "reason": {
+      "connection": {
+        "body": "Comprueba que el servidor está encendido y accesible y vuelve a intentarlo.",
+        "title": "Praxi no pudo conectar con el servidor"
+      },
+      "dependants": {
+        "body": "Algo más del servidor usa estas herramientas, así que se quedan.",
+        "title": "Otro software las necesita"
+      },
+      "failed": {
+        "body": "El servidor lo detuvo, por ejemplo porque el disco está lleno o hay otra actualización en curso. Tu servidor está bien; puedes intentarlo de nuevo.",
+        "title": "No terminó"
+      },
+      "needs_admin": {
+        "body": "Usa un acceso al servidor con derechos de administrador (sudo sin contraseña) y vuelve a intentarlo.",
+        "title": "Este acceso no puede instalar software"
+      },
+      "shared": {
+        "body": "Praxi no las quita: tu servidor las necesita.",
+        "title": "Herramientas compartidas del sistema"
+      },
+      "unavailable": {
+        "body": "Las fuentes de software del servidor no tienen esta herramienta.",
+        "title": "Este servidor no la ofrece"
+      },
+      "unknown_pack": {
+        "body": "Actualiza la aplicación e inténtalo de nuevo.",
+        "title": "Paquete de herramientas desconocido"
+      },
+      "unsupported": {
+        "body": "En otros sistemas, instala las herramientas tú mismo en el servidor.",
+        "title": "Solo se admiten servidores Debian y Ubuntu"
+      }
+    },
+    "remove": "Quitar",
+    "removeWarning": "Estos programas también pueden ser usados por otro software o por cosas que configuraste tú mismo en este servidor. Quitarlos los elimina para todo, no solo para Praxi.",
+    "review": "Revisar ({{size}})",
+    "reviewNone": "Revisar",
+    "rowState": {
+      "install": {
+        "done": "Instalado",
+        "failed": "No terminó",
+        "pending": "En espera",
+        "running": "Instalando…"
+      },
+      "remove": {
+        "done": "Quitado",
+        "failed": "No terminó",
+        "pending": "En espera",
+        "running": "Quitando…"
+      }
+    },
+    "safeInstall": "No cambia nada más",
+    "safeInstallBody": "Las herramientas vienen de las fuentes de software de tu propio servidor. Hace falta un acceso con derechos de administrador.",
+    "safeRemove": "Solo se quitan estas herramientas",
+    "safeRemoveBody": "Tus ajustes y el resto del software se quedan como están.",
+    "size": "unos {{value}} {{unit}}",
+    "status": {
+      "installed": "Instalado",
+      "partial": "Incompleto"
+    },
+    "stop": "Parar tras este",
+    "thisServer": "este servidor",
+    "title": "Herramientas",
+    "titleFor": "Herramientas en {{name}}",
+    "tryAgain": "Intentar de nuevo",
+    "willInstall": "Se instalará",
+    "willRemove": "Se quitará"
   },
   "tray": {
     "needs": "Requiere tu atención ({n})",

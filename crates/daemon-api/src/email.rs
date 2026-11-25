@@ -34,6 +34,18 @@ pub enum EmailProviderKind {
     Agentmail,
 }
 
+/// What bots may do with a mail identity. Sending always needs the owner's
+/// approval; this can only make it stricter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EmailSendMode {
+    /// Every send is shown to the owner for approval (default).
+    #[default]
+    Ask,
+    /// Bots can only save drafts from this address.
+    DraftOnly,
+}
+
 /// An IMAP server (always implicit TLS).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct EmailImapServer {
@@ -108,6 +120,15 @@ pub struct EmailAccountDto {
     /// Senders whose mail may start a run (stored now, enforced by the inbound
     /// trigger).
     pub allowed_senders: Vec<String>,
+    /// Further bots (storage UUIDs) that may use the account besides `bot`.
+    #[serde(default)]
+    pub shared_with: Vec<String>,
+    /// Bots that use this account as their default sender.
+    #[serde(default)]
+    pub default_for: Vec<String>,
+    /// Draft only, or ask the owner each time.
+    #[serde(default)]
+    pub send_mode: EmailSendMode,
     /// Whether the secret (password, or the API key of an `agentmail` account)
     /// is stored. The secret itself is never returned.
     pub password_set: bool,
@@ -159,6 +180,15 @@ pub struct EmailAccountInput {
     /// Senders whose mail may start a run (addresses or `@domain`).
     #[serde(default)]
     pub allowed_senders: Vec<String>,
+    /// Further bots that may use the account besides `bot`.
+    #[serde(default)]
+    pub shared_with: Vec<String>,
+    /// Bots that use this account as their default sender.
+    #[serde(default)]
+    pub default_for: Vec<String>,
+    /// Draft only, or ask the owner each time (default).
+    #[serde(default)]
+    pub send_mode: EmailSendMode,
     /// The account password or app password. **Write-only**: it goes to the
     /// secret store and is never returned or logged. Required on create.
     #[serde(default)]
@@ -204,6 +234,15 @@ pub struct EmailAccountPatch {
     /// Allowed senders; present list replaces the stored one.
     #[serde(default)]
     pub allowed_senders: Option<Vec<String>>,
+    /// Further bots that may use the account; a present list replaces it.
+    #[serde(default)]
+    pub shared_with: Option<Vec<String>>,
+    /// Bots that use this account as default sender; a present list replaces it.
+    #[serde(default)]
+    pub default_for: Option<Vec<String>>,
+    /// Draft only, or ask each time.
+    #[serde(default)]
+    pub send_mode: Option<EmailSendMode>,
     /// New password (write-only).
     #[serde(default)]
     pub password: Option<String>,
@@ -275,6 +314,70 @@ pub struct EmailMessageDto {
 pub struct EmailSendTestResponse {
     /// The address the test message went to: always the mailbox's own address.
     pub sent_to: String,
+}
+
+/// Outgoing-mail guard values the owner can change (`GET`/`PUT /v1/email/guard/settings`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct EmailGuardSettingsDto {
+    /// Warn above this many sends per account in 24 hours (`0` = no warning). Default 20.
+    pub daily_limit: u32,
+    /// Warn when a recipient got mail within this many days (`0` = no warning). Default 14.
+    pub same_recipient_days: u32,
+    /// Add the opt-out line to outgoing mail by default.
+    pub opt_out_line: bool,
+    /// Text of the opt-out line (`{sender}` = the sending address); empty = built-in text.
+    pub footer: String,
+}
+
+/// One address or domain the owner will not write to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct EmailOptOutDto {
+    /// `ann@example.com` or `example.com`.
+    pub value: String,
+    /// `address` or `domain`.
+    pub kind: String,
+    /// Unix seconds when it was added.
+    pub added_at: u64,
+    /// The owner's note.
+    pub note: String,
+}
+
+/// Body of `POST /v1/email/guard/opt-out`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EmailOptOutInput {
+    /// An address (`ann@example.com`) or a domain (`example.com`).
+    pub value: String,
+    /// Optional note (at most 200 characters are kept).
+    #[serde(default)]
+    pub note: String,
+}
+
+/// One sent mail in the send log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct EmailSendLogDto {
+    /// Unix seconds.
+    pub at: u64,
+    /// The same moment in UTC.
+    pub at_utc: String,
+    /// Bot that sent it.
+    pub bot: Option<String>,
+    /// Run that sent it.
+    pub run: String,
+    /// Account name.
+    pub account: String,
+    /// Sending address.
+    pub from: String,
+    /// All recipients.
+    pub recipients: Vec<String>,
+    /// First characters of the subject.
+    pub subject: String,
+    /// Provider message id.
+    pub message_id: String,
+    /// The opt-out line was added.
+    pub opt_out_line: bool,
+    /// Warnings the owner sent past with "Send anyway" (empty = none).
+    pub send_anyway: Vec<String>,
 }
 
 /// Why an [`EmailControl`] operation failed.
@@ -383,6 +486,62 @@ pub trait EmailControl: Send + Sync {
             "sending a test message is not supported here".into(),
         ))
     }
+    /// The outgoing-mail guard values.
+    ///
+    /// # Errors
+    /// The default says the embedder does not support it.
+    fn guard_settings(&self) -> Result<EmailGuardSettingsDto, EmailControlError> {
+        Err(guard_unsupported())
+    }
+    /// Replace the guard values.
+    ///
+    /// # Errors
+    /// [`EmailControlError::Invalid`] for unusable values.
+    fn set_guard_settings(
+        &self,
+        settings: EmailGuardSettingsDto,
+    ) -> Result<EmailGuardSettingsDto, EmailControlError> {
+        let _ = settings;
+        Err(guard_unsupported())
+    }
+    /// The opt-out list, newest first.
+    ///
+    /// # Errors
+    /// Default: unsupported.
+    fn opt_outs(&self) -> Result<Vec<EmailOptOutDto>, EmailControlError> {
+        Err(guard_unsupported())
+    }
+    /// Add an opt-out entry.
+    ///
+    /// # Errors
+    /// [`EmailControlError::Invalid`] for a malformed entry.
+    fn add_opt_out(&self, input: EmailOptOutInput) -> Result<EmailOptOutDto, EmailControlError> {
+        let _ = input;
+        Err(guard_unsupported())
+    }
+    /// Remove an opt-out entry.
+    ///
+    /// # Errors
+    /// [`EmailControlError::NotFound`] when it is not on the list.
+    fn remove_opt_out(&self, value: &str) -> Result<(), EmailControlError> {
+        let _ = value;
+        Err(guard_unsupported())
+    }
+    /// The send log, newest first.
+    ///
+    /// # Errors
+    /// Default: unsupported.
+    fn send_log(&self, limit: usize) -> Result<Vec<EmailSendLogDto>, EmailControlError> {
+        let _ = limit;
+        Err(guard_unsupported())
+    }
+    /// The whole send log as CSV.
+    ///
+    /// # Errors
+    /// Default: unsupported.
+    fn send_log_csv(&self) -> Result<String, EmailControlError> {
+        Err(guard_unsupported())
+    }
     /// A bot was deleted: remove the accounts bound to it (and the passwords
     /// they owned). **Never** turn a bound account into an unbound one: that
     /// would widen who may use it. Returns how many accounts were removed.
@@ -390,4 +549,8 @@ pub trait EmailControl: Send + Sync {
     /// # Errors
     /// The first [`EmailControlError`] (the remaining accounts are still tried).
     async fn forget_bot(&self, bot_id: &str) -> Result<usize, EmailControlError>;
+}
+
+fn guard_unsupported() -> EmailControlError {
+    EmailControlError::Invalid("the mail guard is not available here".into())
 }

@@ -343,6 +343,7 @@ pub fn account(imap: &Server, smtp: &Server, security: SmtpSecurity) -> AccountC
         timeout_secs: 3,
         bot: None,
         allowed_senders: Vec::new(),
+        identity: crate::IdentitySettings::default(),
         kind: crate::AccountKind::ImapSmtp,
         inbox_id: None,
     }

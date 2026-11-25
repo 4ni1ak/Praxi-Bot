@@ -56,8 +56,12 @@ import dialog from "./Dialog.module.css";
 import { Callout, DialogFooter, DialogHeader, Field } from "./DialogParts";
 import form from "./Form.module.css";
 import { Modal } from "./Modal";
+import { Switch } from "./SettingsUi";
+import { ToolPacksModal } from "./ToolPacksModal";
+import packStyles from "./ToolPacksModal.module.css";
 import { useToast } from "./Toast";
 import { humanLine } from "../lib/humanError";
+import { BASE_PACKS, BASE_SET_MB, PLAN_REQUIRED_STEP, sizeParts } from "../lib/toolPacks";
 
 const POLL_MS = 800;
 
@@ -251,6 +255,17 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
   useEffect(() => {
     if (succeeded) void refreshHosts();
   }, [succeeded, refreshHosts]);
+
+  // The basic set was asked for: nothing was installed. Open the Tools plan (dry run first) once.
+  const wantsTools = succeeded && Boolean(job?.host_id) && Boolean(job?.steps.some((s) => s.id === PLAN_REQUIRED_STEP));
+  const [toolsFor, setToolsFor] = useState<string | null>(null);
+  const toolsOffered = useRef<string | null>(null);
+  useEffect(() => {
+    if (wantsTools && job?.host_id && toolsOffered.current !== job.id) {
+      toolsOffered.current = job.id;
+      setToolsFor(job.host_id);
+    }
+  }, [wantsTools, job?.id, job?.host_id]);
 
   const start = useCallback(
     async (body: StartHostSetupInput) => {
@@ -704,6 +719,22 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
               <Callout tone="info">{t("addServer.agentHint")}</Callout>
             )}
             <Callout tone="info">{t("addServer.passwordNote")}</Callout>
+            <div className={packStyles.basic} data-testid="add-server-packs">
+              <span className={packStyles.text}>
+                <b>{t("addServer.packs.title")}</b>
+                <small>
+                  {t("addServer.packs.body", {
+                    list: BASE_PACKS.map((p) => `${t(`toolPacks.packs.${p.id}.name`)} (${sizeLabel(t, p.mb)})`).join(", "),
+                    size: sizeLabel(t, BASE_SET_MB)
+                  })}
+                </small>
+              </span>
+              <Switch
+                checked={w.basePacks}
+                onChange={(on) => dispatch({ type: "basePacks", on })}
+                label={t("addServer.packs.title")}
+              />
+            </div>
             <details className={styles.advanced}>
               <summary>{t("addServer.advanced")}</summary>
               <Field
@@ -773,7 +804,7 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
             ) : null}
             {view === "failed" ? <Failure job={job} typed={w} /> : null}
             {view === "done" ? (
-              <Success job={job} hasScreen={hasScreen} />
+              <Success job={job} hasScreen={hasScreen} onTools={() => job.host_id && setToolsFor(job.host_id)} />
             ) : (
               <details className={styles.advanced} data-testid="add-server-log">
                 <summary>{t("addServer.showLog")}</summary>
@@ -843,6 +874,7 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
           </DialogFooter>
         </>
       ) : null}
+      <ToolPacksModal open={toolsFor !== null} hostId={toolsFor ?? ""} planBase onClose={() => setToolsFor(null)} />
     </div>
   );
 }
@@ -914,10 +946,24 @@ function Bar({ job }: { job: HostSetupJob }) {
   );
 }
 
-function Success({ job, hasScreen }: { job: HostSetupJob; hasScreen: boolean }) {
+function sizeLabel(t: (k: string, o?: Record<string, unknown>) => string, mb: number): string {
+  const { value, unit } = sizeParts(mb);
+  return t("toolPacks.size", { value, unit });
+}
+
+function Success({ job, hasScreen, onTools }: { job: HostSetupJob; hasScreen: boolean; onTools: () => void }) {
   const { t } = useTranslation();
+  const planNeeded = job.steps.some((s) => s.id === PLAN_REQUIRED_STEP);
   return (
     <>
+      {planNeeded ? (
+        <Callout tone="info" title={t("addServer.packs.planTitle")} role="status">
+          <p>{t("addServer.packs.planBody")}</p>
+          <Button variant="ghost" onClick={onTools} data-testid="add-server-open-tools">
+            {t("addServer.packs.planOpen")}
+          </Button>
+        </Callout>
+      ) : null}
       <Callout tone="success" title={t("addServer.doneTitle", { name: job.host_name ?? job.target })}>
         {hasScreen ? t("addServer.doneScreen") : t("addServer.doneNoScreen")}
       </Callout>

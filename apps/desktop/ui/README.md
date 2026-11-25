@@ -55,6 +55,16 @@ pnpm --dir apps/desktop/ui check:visual:update      # all screens; add -- --only
 
 In CI the job `Visual regression` is non-blocking (not part of `ci-result`) and uploads the screenshots.
 
+**Refreshing the baselines.** The thumbnails depend on the fonts of the OS that renders them, and the job runs on
+Linux, so baselines written on Windows or macOS are not comparable. After an intended design change (or when the job
+is red because a merge moved the layout), take them from CI instead of from your machine:
+
+1. Open the pull request's `Visual regression` job and download the artifact `visual-regression` (kept 7 days).
+2. Copy its `baselines.candidate.json` over `apps/desktop/ui/tests/visual/baselines.json` (same format, one screen per
+   line) and commit it. The file is only written by a complete run (all screens, no errors, no `--only`).
+3. Push; the job is green when the screens match the new baselines. Look at the PNGs in the same artifact first: the
+   baselines record whatever the page looked like, so they must only be refreshed when that is the intended look.
+
 ## Real-app smoke run
 
 `pnpm --dir apps/desktop/ui smoke` drives the production UI bundle against a real

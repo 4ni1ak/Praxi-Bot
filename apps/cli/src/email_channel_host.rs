@@ -118,14 +118,16 @@ impl EmailChannelHost {
             ));
         }
         let provider = Arc::new(ImapSmtpProvider::new(acct.clone(), self.email.secrets()));
-        EmailChannel::new(
+        let channel = EmailChannel::for_account(
             provider,
-            &acct.address,
-            &acct.allowed_senders,
+            &acct,
             s.clone(),
             Some(self.data_dir.join(STATE_FILE)),
         )
-        .map_err(|e| EmailControlError::Invalid(e.to_string()))
+        .map_err(|e| EmailControlError::Invalid(e.to_string()))?;
+        // Approved replies use the same guard (opt-out list, limits) and send log as email_send.
+        channel.attach_guard(self.email.connector().guard(), &acct.name);
+        Ok(channel)
     }
 
     fn halt(&self) {
@@ -267,6 +269,8 @@ impl EmailChannelControl for EmailChannelHost {
                 subject: p.subject,
                 body: p.body,
                 created_ms: p.created_ms,
+                from: p.from,
+                send_mode: p.send_mode,
             })
             .collect()
     }
@@ -275,6 +279,16 @@ impl EmailChannelControl for EmailChannelHost {
         let channel = self
             .channel()
             .ok_or_else(|| EmailControlError::NotFound("that reply is no longer waiting".into()))?;
+        // The owner may have switched the account to "draft only" after the
+        // channel was built: look at the live setting, not the built one.
+        let account = self.settings.lock().account.clone();
+        if self.email.connector().accounts().iter().any(|a| {
+            a.name == account && a.identity.send_mode == connector_email::SendMode::DraftOnly
+        }) {
+            return Err(EmailControlError::Invalid(
+                "this mail account is set to draft only; nothing is sent from it".into(),
+            ));
+        }
         channel
             .approve_reply(id)
             .await

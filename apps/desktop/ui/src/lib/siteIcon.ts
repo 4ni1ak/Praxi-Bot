@@ -1,7 +1,8 @@
 /**
  * The small chip in front of a web step. It never calls a third-party favicon service (that would
  * tell a stranger which sites the bot visits): the chip is the site's first letter, or a globe
- * when there is no usable host. A real site icon, once the daemon serves one, plugs in here.
+ * when there is no usable host. This is the fallback; the real icon (the daemon's own
+ * `/v1/favicons/{domain}`, only for a finished step) is chosen in `faviconPolicy.ts`.
  */
 export interface SiteIcon {
   kind: "letter" | "globe";

@@ -1,3 +1,6 @@
+import type { EmailAccount } from "../api/types";
+import { useOptionalDaemonClient } from "../state/DaemonContext";
+import { daemonSender, identitiesFor, senderOf, switchReason } from "../lib/mailIdentity";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   AppWindow,
@@ -7,6 +10,7 @@ import {
   Clock,
   ShieldAlert,
   ShieldCheck,
+  TriangleAlert,
   Wrench
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -35,6 +39,8 @@ import {
   brainDetails,
   memoryOffer,
   scheduleDetails,
+  mailSendDetails,
+  type MailSendApprovalDetails,
   type ControlGrantDetails,
   type EgressApprovalDetails,
   type ScheduleApprovalDetails
@@ -51,6 +57,7 @@ import {
   INPUT_LIMIT,
   actionArguments,
   actionCommand,
+  escapeInvisible,
   approvalCompactPreview,
   approvalHeadline,
   approvalTargetDomain,
@@ -215,6 +222,87 @@ export interface ApprovalCardProps {
   /** Name of the server that is the bots' home; `null` when the home is this computer. */
   serverName?: string | null;
   onTrustFolder?: (folder: string) => Promise<void>;
+  /** The bot that made the call (to list the addresses it may send from). */
+  botId?: string | null;
+}
+
+/** "From" line of a mail card, and the way to send from another address instead. */
+function MailSenderBlock({
+  tool,
+  botId,
+  disabled,
+  onSwitch
+}: {
+  tool: ToolItem;
+  botId?: string | null;
+  disabled: boolean;
+  onSwitch: (reason: string) => void;
+}) {
+  const { t } = useTranslation();
+  const client = useOptionalDaemonClient();
+  const [accounts, setAccounts] = useState<EmailAccount[]>([]);
+  const [choice, setChoice] = useState("");
+  useEffect(() => {
+    let live = true;
+    void client
+      ?.listEmailAccounts()
+      .then((list) => live && setAccounts(list))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [client]);
+  // The daemon's own `from:` line wins; the local guess is only for events without one.
+  const sent = mailSendDetails(tool.details);
+  const told =
+    sent?.from && sent.account
+      ? { address: sent.from, name: sent.account }
+      : daemonSender(egressDetails(tool.details)?.payload);
+  const sender: Pick<EmailAccount, "name" | "address" | "send_mode"> | null = told
+    ? (accounts.find((a) => a.name === told.name) ?? { ...told, send_mode: undefined })
+    : senderOf(accounts, botId, tool.input);
+  if (!sender) return null;
+  const others = botId ? identitiesFor(accounts, botId).filter((a) => a.name !== sender.name) : [];
+  const picked = others.find((a) => a.name === choice);
+  return (
+    <div className={styles.mailFrom} data-testid="approval-mail-from">
+      <span className={styles.bodyLabel}>{t("chat.approval.mail.from")}</span>
+      <span className={styles.mailFromAddress}>{sender.address}</span>
+      <span className={styles.bodyLabel}>
+        {sender.send_mode === "draft_only" ? t("chat.approval.mail.draftOnly") : sender.name}
+      </span>
+      {others.length > 0 ? (
+        <span className={styles.mailSwitch}>
+          <select
+            className={formStyles.select}
+            aria-label={t("chat.approval.mail.switchLabel")}
+            value={choice}
+            disabled={disabled}
+            data-testid="approval-mail-switch"
+            onChange={(e) => setChoice(e.target.value)}
+          >
+            <option value="">{t("chat.approval.mail.another")}</option>
+            {others.map((a) => (
+              <option key={a.name} value={a.name}>
+                {a.address}
+              </option>
+            ))}
+          </select>
+          {picked ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={disabled}
+              data-testid="approval-mail-switch-go"
+              onClick={() => onSwitch(switchReason(picked))}
+            >
+              {t("chat.approval.mail.useThis")}
+            </Button>
+          ) : null}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 /** What a bot-made schedule will do, shown before the user approves it. */
@@ -374,6 +462,61 @@ function ControlGrantBody({ d }: { d: ControlGrantDetails }) {
   );
 }
 
+/** Every guard warning about an outgoing e-mail, always visible next to the buttons. */
+function MailWarnings({ d }: { d: MailSendApprovalDetails }) {
+  const { t } = useTranslation();
+  if (d.warnings.length === 0) return null;
+  return (
+    <div role="alert" data-testid="approval-mail-warnings">
+      <p className={styles.approvalSummary}>
+        <TriangleAlert size={16} aria-hidden /> {t("chat.approval.mail.warningsTitle")}
+      </p>
+      <ul>
+        {d.warnings.map((w) => (
+          <li key={w.code}>
+            {t(`chat.approval.mail.warning.${w.code}`, {
+              defaultValue: w.text,
+              list: escapeInvisible(w.addresses.join(", ")),
+              count: w.count,
+              limit: w.limit,
+              days: w.limit
+            })}
+          </li>
+        ))}
+      </ul>
+      {d.legalNotice ? <p className={styles.bodyLabel}>{t("chat.approval.mail.legal")}</p> : null}
+      <p className={styles.bodyLabel}>{t("chat.approval.mail.ownerOnly")}</p>
+    </div>
+  );
+}
+
+/** The exact e-mail, including the opt-out line the system adds, before the owner approves. */
+function MailSendBody({ d }: { d: MailSendApprovalDetails }) {
+  const { t } = useTranslation();
+  // Invisible and bidi characters are written out, like on every other send card.
+  const list = (addresses: string[]) => escapeInvisible(addresses.join(", "));
+  const rows: [string, string][] = [
+    [t("chat.approval.mail.from"), escapeInvisible(d.from)],
+    [t("chat.approval.mail.to"), list(d.to)],
+    ...(d.cc.length ? [[t("chat.approval.mail.cc"), list(d.cc)] as [string, string]] : []),
+    ...(d.bcc.length ? [[t("chat.approval.mail.bcc"), list(d.bcc)] as [string, string]] : []),
+    [t("chat.approval.mail.subject"), escapeInvisible(d.subject)]
+  ];
+  return (
+    <div className={styles.scheduleBody} data-testid="approval-mail">
+      {rows.map(([label, value]) => (
+        <p key={label} className={styles.bodyText}>
+          <strong>{label}:</strong> {value}
+        </p>
+      ))}
+      <pre className={styles.code} tabIndex={0} data-testid="approval-mail-body">{escapeInvisible(d.body)}</pre>
+      <p className={styles.bodyLabel}>
+        {t(d.optOutLine ? "chat.approval.mail.optOutOn" : "chat.approval.mail.optOutOff")}
+      </p>
+    </div>
+  );
+}
+
 /** The complete profile a bot-made bot will have (or loses), shown before the user approves. */
 function BotApprovalBody({ d }: { d: BotApprovalDetails }) {
   const { t } = useTranslation();
@@ -465,7 +608,8 @@ export function ApprovalCard({
   onDecide,
   expiresAtMs,
   serverName = null,
-  onTrustFolder
+  onTrustFolder,
+  botId
 }: ApprovalCardProps) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
@@ -475,6 +619,7 @@ export function ApprovalCard({
   const bot = botDetails(tool.details);
   const remaining = useCountdown(expiresAtMs);
   const schedule = scheduleDetails(tool.details);
+  const mail = mailSendDetails(tool.details);
   const egress = egressDetails(tool.details);
   const computer = computerDetails(tool.details);
   const control = controlGrantDetails(tool.details);
@@ -549,7 +694,8 @@ export function ApprovalCard({
     memory?.kind === "origin"
       ? t("chat.approval.compact.alwaysSite")
       : t("chat.approval.compact.alwaysTool");
-  const openDetailsByDefault = egress?.reviewFullPayload === true || (app ? app.count <= 1000 : false);
+  const openDetailsByDefault =
+    egress?.reviewFullPayload === true || mail !== null || (app ? app.count <= 1000 : false);
 
   return (
     <div
@@ -578,10 +724,19 @@ export function ApprovalCard({
               </span>
             ) : null}
           </div>
+          {mail ? <MailWarnings d={mail} /> : null}
           {compactPreview ? (
             <p className={styles.compactPreview} data-testid="approval-compact-preview">
               {compactPreview.text}
             </p>
+          ) : null}
+          {call.name === "email_send" || call.name === "email_draft" ? (
+            <MailSenderBlock
+              tool={tool}
+              botId={botId}
+              disabled={disabled}
+              onSwitch={(why) => void decide("deny", undefined, why)}
+            />
           ) : null}
           <div className={styles.actions}>
             <Button
@@ -590,7 +745,7 @@ export function ApprovalCard({
               disabled={disabled || reviewPending || unrenderable}
               onClick={() => void decide("approve", "once")}
             >
-              {t("chat.approval.compact.allow")}
+              {mail?.sendAnyway ? t("chat.approval.mail.sendAnyway") : t("chat.approval.compact.allow")}
             </Button>
             {showAlways ? (
               <Button
@@ -652,6 +807,13 @@ export function ApprovalCard({
               {brain.sources.length ? <ul aria-label={t("knowledge.brainSources")}>{brain.sources.map((source) => <li key={source.id}>{source.label} · {source.id} · v{source.revision}</li>)}</ul> : null}
               <pre className={styles.brainContent}>{brain.content}</pre>
             </section>
+          ) : mail ? (
+            <>
+              <MailSendBody d={mail} />
+              <div className={styles.approvalMeta}>
+                <span className={styles.approvalTool}>{tool.name}</span>
+              </div>
+            </>
           ) : schedule ? (
             <>
               <ScheduleApprovalBody d={schedule} />

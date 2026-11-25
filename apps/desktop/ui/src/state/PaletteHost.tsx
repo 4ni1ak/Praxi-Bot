@@ -37,7 +37,8 @@ export function PaletteHost({
   onBot,
   onChat,
   onSettingsPage,
-  onHelp
+  onHelp,
+  onSearch
 }: {
   currentBotId: string | undefined;
   onScreen: (screen: PaletteScreen) => void;
@@ -45,6 +46,7 @@ export function PaletteHost({
   onChat: (chatId: string, botId: string) => void;
   onSettingsPage: (page: SettingsPageId) => void;
   onHelp: () => void;
+  onSearch: () => void;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -112,6 +114,13 @@ export function PaletteHost({
         run: () => onScreen(s)
       });
     }
+    out.push({
+      id: "search-messages",
+      title: t("messageSearch.open"),
+      group: t("palette.group.navigate"),
+      keywords: t("messageSearch.keywords").split(" "),
+      run: onSearch
+    });
     out.push({
       id: "help-center",
       title: t("palette.help"),
@@ -184,7 +193,7 @@ export function PaletteHost({
       });
     }
     return out;
-  }, [t, bots, chats, schedules, currentBotId, onScreen, onBot, onChat, onSettingsPage, onHelp, newChat, client, toast]);
+  }, [t, bots, chats, schedules, currentBotId, onScreen, onBot, onChat, onSettingsPage, onHelp, onSearch, newChat, client, toast]);
 
   return open ? (
     <CommandPalette commands={commands} onClose={() => setOpen(false)} />

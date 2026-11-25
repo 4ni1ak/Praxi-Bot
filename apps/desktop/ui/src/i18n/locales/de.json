@@ -308,6 +308,13 @@
     },
     "noDaemon": "Der lokale Praxi-Dienst läuft nicht. Starte die App neu und versuche es erneut.",
     "noKeys": "Im Ordner .ssh wurde keine Schlüsseldatei gefunden. Gib den Pfad der heruntergeladenen Schlüsseldatei ein.",
+    "packs": {
+      "body": "Aktivieren, um nach dem Hinzufügen des Servers den Plan zu sehen: {{list}}; insgesamt {{size}}. Es wird nichts installiert, bevor du genau gesehen hast, was sich ändern würde, und bestätigt hast.",
+      "planBody": "Der Server ist hinzugefügt. Sieh dir genau an, was installiert würde, und bestätige, um zu starten.",
+      "planOpen": "Plan ansehen",
+      "planTitle": "Werkzeuge sind noch nicht installiert",
+      "title": "Basiswerkzeuge nach dem Hinzufügen vorbereiten"
+    },
     "pairChecks": {
       "models": {
         "fix": "Noch nicht erlaubt. Führe auf dem Server aus: bot host admin --all-desktops . Modelle kannst du später von der Seite des Servers senden.",
@@ -1571,6 +1578,31 @@
         "label": "Genau das erhält {{name}}",
         "shortened": "Gekürzt: Es werden nur die ersten {{shown}} Zeichen angezeigt."
       },
+      "mail": {
+        "another": "Von anderer Adresse senden…",
+        "bcc": "Bcc",
+        "cc": "Cc",
+        "draftOnly": "Nur Entwürfe",
+        "from": "Von",
+        "legal": "Jemanden anzuschreiben, der sich abgemeldet hat, oder Werbe-E-Mails ohne Abmeldezeile zu senden, kann rechtswidrig sein (in der Türkei: Gesetz Nr. 6563, ETK) und zu Bußgeldern führen. Das ist keine Rechtsberatung.",
+        "optOutOff": "Dieser E-Mail wird keine Abmeldezeile hinzugefügt.",
+        "optOutOn": "Das System fügt am Ende eine Abmeldezeile hinzu (oben zu sehen).",
+        "ownerOnly": "Das können nur Sie entscheiden. Der Bot kann diese Warnungen nicht selbst übergehen.",
+        "sendAnyway": "Trotzdem senden",
+        "subject": "Betreff",
+        "switchLabel": "Von anderer Adresse senden",
+        "title": "Diese E-Mail senden?",
+        "to": "An",
+        "useThis": "Diese Adresse verwenden",
+        "warning": {
+          "daily_limit": "Damit wären es {{count}} E-Mails von diesem Konto in 24 Stunden. Ihr Limit liegt bei {{limit}}.",
+          "guard_unreadable": "Der E-Mail-Schutz konnte seine gespeicherte Datei ({{list}}) nicht lesen. Die beschädigte Datei wurde beiseitegelegt, nicht gelöscht; Abmeldungen können daher fehlen und niemand wird dagegen geprüft.",
+          "no_opt_out_line": "Diese E-Mail würde ohne die Zeile zum Abmelden verschickt.",
+          "opt_out_listed": "Diese Personen möchten nicht angeschrieben werden: {{list}}.",
+          "same_recipient": "Sie haben {{list}} in den letzten {{days}} Tagen bereits geschrieben."
+        },
+        "warningsTitle": "Bitte vor dem Senden prüfen"
+      },
       "memory": {
         "always": "{{target}} für diesen Bot immer erlauben",
         "target": {
@@ -2100,6 +2132,11 @@
         "failed": "Eine E-Mail wurde nicht entworfen",
         "running": "Entwirft eine E-Mail"
       },
+      "email_identities": {
+        "done": "E-Mail-Adressen geprüft",
+        "failed": "E-Mail-Adressen konnten nicht geprüft werden",
+        "running": "Prüft, welche E-Mail-Adressen er nutzen kann"
+      },
       "email_mark": {
         "done": "Den Lesestatus von E-Mails geändert",
         "failed": "Der Lesestatus von E-Mails wurde nicht geändert",
@@ -2337,17 +2374,6 @@
     "save": "Datei speichern…",
     "steps": "Schritte des Bots",
     "title": "Chat exportieren"
-  },
-  "chatHistory": {
-    "count": "{{count}} passende Nachrichten",
-    "count_one": "{{count}} passende Nachricht",
-    "count_other": "{{count}} passende Nachrichten",
-    "more": "Weitere Ergebnisse",
-    "noneYet": "Auf dieser Seite noch keine sichtbaren Treffer",
-    "results": "Ergebnisse der Nachrichtensuche",
-    "search": "Alle Chatnachrichten durchsuchen …",
-    "searching": "Nachrichten werden durchsucht …",
-    "submit": "Nachrichten durchsuchen"
   },
   "chatManage": {
     "allArchived": "Alle Chats sind archiviert.",
@@ -3614,6 +3640,8 @@
     "menuDismiss": "Menü schließen",
     "menuMove": "Durch das Slash-/Erwähnungsmenü navigieren",
     "menuNav": "Durch Popup-Menüs navigieren",
+    "messageSearch": "Alle Nachrichten durchsuchen",
+    "messageSearchMove": "Nachrichtensuche: bewegen und öffnen",
     "newline": "Neue Zeile",
     "openHelp": "Diese Liste anzeigen (wenn kein Textfeld fokussiert ist)",
     "palette": "Befehlspalette",
@@ -4361,6 +4389,31 @@
       "m": "Min.",
       "s": "s"
     }
+  },
+  "messageSearch": {
+    "allBots": "Alle Bots",
+    "bot": "Bot",
+    "clear": "Leeren",
+    "clearRecent": "Leeren",
+    "filters": "Filter",
+    "hasFile": "Datei",
+    "hasLink": "Link",
+    "hint": "Tippen, um alle Chats zu durchsuchen",
+    "keywords": "nachrichten suchen verlauf chats finden",
+    "more": "Weitere Treffer",
+    "none": "Keine Nachrichten gefunden",
+    "open": "Nachrichten durchsuchen",
+    "placeholder": "Alle Nachrichten durchsuchen",
+    "recent": "Zuletzt gesucht",
+    "reset": "Zurücksetzen",
+    "results": "Nachrichtentreffer",
+    "searching": "Suche läuft…",
+    "title": "Nachrichten durchsuchen",
+    "when": "Datum",
+    "when_any": "Jederzeit",
+    "when_day": "Letzte 24 Stunden",
+    "when_month": "Letzte 30 Tage",
+    "when_week": "Letzte 7 Tage"
   },
   "modelPicker": {
     "addEngines": "Coding-CLI hinzufügen",
@@ -5678,10 +5731,12 @@
         "own": "Mein eigenes Postfach verbinden",
         "ownText": "Nutze ein bereits vorhandenes Postfach (Gmail, Outlook, iCloud, dein eigener Server) über IMAP und SMTP."
       },
+      "defaultTag": "Standard für {{count}}",
       "delete": "Löschen",
       "deleteConfirm": "Dieses Postfach löschen?",
       "deletedBot": "gelöschter Bot",
       "description": "Postfächer, mit denen deine Bots lesen und schreiben können. Ein Postfach kann zu einem Bot gehören.",
+      "draftOnlyTag": "Nur Entwürfe",
       "edit": "Bearbeiten",
       "empty": "Noch keine Postfächer.",
       "errors": {
@@ -5704,6 +5759,8 @@
         },
         "address": "E-Mail-Adresse",
         "create": "Postfach hinzufügen",
+        "defaultFor": "Standardabsender für",
+        "defaultForHint": "Nennt der Bot keine Adresse, sendet er von dieser.",
         "imapHost": "IMAP-Server",
         "implicit": "TLS",
         "name": "Name",
@@ -5722,6 +5779,13 @@
         },
         "save": "Speichern",
         "security": "SMTP-Sicherheit",
+        "sendMode": {
+          "ask": "Jedes Mal fragen",
+          "askHint": "Jede Nachricht wird dir zuerst gezeigt: Von, An, Betreff und Text.",
+          "draftOnly": "Nur Entwürfe",
+          "draftOnlyHint": "Bots können von dieser Adresse Entwürfe schreiben, aber nie senden.",
+          "label": "Versand"
+        },
         "senders": "Erlaubte Absender",
         "sendersHint": "Adressen oder @Domains, eine pro Zeile. Für die kommende Funktion für eingehende E-Mails gespeichert; bisher reagiert nichts auf eingehende E-Mails.",
         "smtpHost": "SMTP-Server",
@@ -5753,6 +5817,7 @@
         "tls": "TLS fehlgeschlagen",
         "unreachable": "Verbindung nicht möglich"
       },
+      "sharedDomain": "Diese gemeinsame Adresse eignet sich nicht für Kaltakquise. Nutze dafür deine eigene Domain.",
       "test": "Verbindung testen",
       "testing": "Wird getestet …",
       "title": "E-Mail",
@@ -5772,6 +5837,7 @@
       "enable": "E-Mail-Kanal einschalten",
       "folder": "Ordner, der beobachtet wird",
       "folderHint": "Meist INBOX. Nur Mails, die nach dem Einschalten eintreffen, werden weitergegeben.",
+      "fromLine": "Von: {{from}}. Sendemodus: Jedes Senden braucht Ihre Freigabe.",
       "full": "Dem Bot den ganzen Text jeder Mail zeigen, nicht nur eine Zusammenfassung",
       "noAccount": "Fügen Sie zuerst oben ein Postfach hinzu.",
       "note": "Mails stammen von anderen Personen, deshalb behandelt der Bot sie als Information, nie als Anweisung. Standardmäßig sieht er nur Absender, Betreff und die ersten Zeilen. Anhänge werden nie geöffnet. Es wird nichts gesendet, außer Sie erlauben Antworten und bestätigen jede einzelne hier.",
@@ -5843,6 +5909,39 @@
           "title": "Sicherer Modus"
         }
       }
+    },
+    "mailGuard": {
+      "colBot": "Bot",
+      "colNote": "Hinweis",
+      "colSubject": "Betreff",
+      "colTime": "Wann",
+      "colTo": "An",
+      "daily": "Warnen ab dieser Zahl E-Mails pro Tag und Postfach (0 = nie)",
+      "days": "Warnen, wenn ich jemandem innerhalb dieser Tage schon geschrieben habe (0 = nie)",
+      "description": "Grenzen, eine Sperrliste und ein Protokoll jeder E-Mail, die Ihre Bots senden.",
+      "export": "Als CSV exportieren",
+      "footer": "Text der Abmeldezeile",
+      "footerHint": "{sender} wird durch die Absenderadresse ersetzt. Die Zeile fügt die App hinzu, nicht der Bot, und der Bot kann sie nicht entfernen. Eine einzelne E-Mail ohne Zeile können Sie auf der Karte freigeben; dort erscheint eine Warnung. Das Programm liest keine Antworten: Wenn jemand „STOP“ antwortet, tragen Sie die Adresse hier selbst in die Sperrliste ein.",
+      "footerPlaceholder": "Leer lassen für den eingebauten Text (Türkisch und Englisch)",
+      "intro": "Jede E-Mail eines Bots wird Ihnen weiterhin zuerst vorgelegt. Diese Einstellungen bestimmen nur, wann die Rückfrage eine Warnung enthält. Eine Warnung blockiert Sie nie: Sie können immer \"Trotzdem senden\" wählen, und diese Wahl wird im Protokoll festgehalten.",
+      "kindAddress": "Adresse",
+      "kindDomain": "ganze Domain",
+      "loading": "Wird geladen…",
+      "logEmpty": "Es wurde noch keine E-Mail gesendet.",
+      "logHint": "Wer wann eine E-Mail bekam und von welchem Bot. Nur wirklich gesendete E-Mails stehen hier.",
+      "logTitle": "Protokoll gesendeter E-Mails",
+      "optOutAdd": "Hinzufügen",
+      "optOutEmpty": "Die Liste ist noch leer.",
+      "optOutHint": "Fügen Sie eine Adresse (anna@beispiel.de) oder eine ganze Domain (beispiel.de) hinzu. Versucht ein Bot, sie anzuschreiben, erscheint eine Warnung auf Ihrer Freigabekarte.",
+      "optOutLine": "E-Mails standardmäßig eine Abmeldezeile hinzufügen",
+      "optOutPlaceholder": "anna@beispiel.de oder beispiel.de",
+      "optOutRemove": "{{value}} entfernen",
+      "optOutTitle": "Personen, die ich nicht anschreibe",
+      "save": "Speichern",
+      "saved": "Gespeichert",
+      "sentAnyway": "Trotzdem gesendet",
+      "softHint": "Diese beiden sind Warnungen, keine Sperren.",
+      "title": "Sicher senden"
     },
     "mode": {
       "moreHint": "Zusätzliche Feineinstellungen",
@@ -6056,7 +6155,6 @@
     "reorderHint": "Zeile ziehen oder diesen Griff fokussieren und die Pfeiltaste nach oben/unten drücken",
     "reorderMoved": "{{name}} wurde auf Position {{pos}} verschoben",
     "schedules": "Geplante Aufgaben",
-    "searchBots": "Bots suchen",
     "settings": "Einstellungen",
     "unread": "Ungelesene Nachricht",
     "unreadBot": "Neue Nachrichten von diesem Bot",
@@ -6246,6 +6344,119 @@
   "thisComputerOnly": {
     "body": "Lokale Modelle laufen auf dem Computer, auf dem der Bot läuft. {{name}} ist ein Server, richte sie daher auf Diesem Computer ein.",
     "switch": "Zu diesem Computer wechseln"
+  },
+  "toolPacks": {
+    "back": "Zurück",
+    "basicSet": "Basis-Set auswählen",
+    "button": "Werkzeuge",
+    "confirmInstall": "Installieren",
+    "confirmRemove": "Entfernen",
+    "doneInstall": "Werkzeuge installiert",
+    "doneInstallBody": "Deine Bots auf diesem Server können sie jetzt nutzen.",
+    "doneRemove": "Werkzeuge entfernt",
+    "dontClose": "Das kann ein paar Minuten dauern. Du kannst die App weiter benutzen.",
+    "found": "Gefundene Programme: {{n}}",
+    "lead": "Programme, die deine Bots auf diesem Server nutzen können.",
+    "listLabel": "Werkzeugpakete",
+    "loading": "Server wird angesehen…",
+    "noLogin": {
+      "body": "Praxi installiert Werkzeuge über deinen eigenen SSH-Zugang. Füge den Server mit „Erweitert: SSH verwenden“ erneut hinzu oder installiere die Werkzeuge selbst auf dem Server.",
+      "title": "Dieser Server wurde ohne Zugang hinzugefügt"
+    },
+    "nothingToDo": "Schon erledigt",
+    "packs": {
+      "dev": {
+        "desc": "git, GitHub, Python, Node und schnelle Suche",
+        "name": "Entwicklerwerkzeuge"
+      },
+      "docs": {
+        "desc": "Dokumente umwandeln, PDFs lesen und zusammenfügen",
+        "name": "Dokumente und PDF"
+      },
+      "media": {
+        "desc": "Medien umwandeln, schneiden und verkleinern",
+        "name": "Audio, Video und Bilder"
+      },
+      "ocr": {
+        "desc": "Text in Scans und Fotos lesen (Türkisch, Englisch)",
+        "name": "Text aus Bildern"
+      },
+      "office": {
+        "desc": "Word, Excel, PowerPoint und PDF-Export, mit türkischen Schriften",
+        "name": "Office-Dateien"
+      }
+    },
+    "planning": "Es wird geprüft, was sich ändern würde…",
+    "previewLabel": "Was sich ändern würde",
+    "progress": "Fortschritt",
+    "reason": {
+      "connection": {
+        "body": "Prüfe, ob der Server eingeschaltet und erreichbar ist, und versuche es erneut.",
+        "title": "Praxi konnte den Server nicht erreichen"
+      },
+      "dependants": {
+        "body": "Etwas anderes auf dem Server nutzt diese Werkzeuge, deshalb bleiben sie.",
+        "title": "Andere Software braucht sie"
+      },
+      "failed": {
+        "body": "Der Server hat es abgebrochen, zum Beispiel weil die Platte voll ist oder gerade ein anderes Update läuft. Dein Server ist in Ordnung; du kannst es erneut versuchen.",
+        "title": "Nicht abgeschlossen"
+      },
+      "needs_admin": {
+        "body": "Nimm einen Serverzugang mit Administratorrechten (sudo ohne Passwort) und versuche es erneut.",
+        "title": "Mit diesem Zugang lässt sich keine Software installieren"
+      },
+      "shared": {
+        "body": "Praxi entfernt diese nicht: Dein Server braucht sie.",
+        "title": "Gemeinsame Systemwerkzeuge"
+      },
+      "unavailable": {
+        "body": "In den Softwarequellen des Servers gibt es dieses Werkzeug nicht.",
+        "title": "Von diesem Server nicht angeboten"
+      },
+      "unknown_pack": {
+        "body": "Aktualisiere die App und versuche es erneut.",
+        "title": "Unbekanntes Werkzeugpaket"
+      },
+      "unsupported": {
+        "body": "Auf anderen Systemen installierst du die Werkzeuge selbst auf dem Server.",
+        "title": "Nur Debian- und Ubuntu-Server werden unterstützt"
+      }
+    },
+    "remove": "Entfernen",
+    "removeWarning": "Diese Programme werden womöglich auch von anderer Software oder von dir selbst eingerichteten Dingen auf diesem Server genutzt. Das Entfernen nimmt sie für alles weg, nicht nur für Praxi.",
+    "review": "Prüfen ({{size}})",
+    "reviewNone": "Prüfen",
+    "rowState": {
+      "install": {
+        "done": "Installiert",
+        "failed": "Nicht abgeschlossen",
+        "pending": "Wartet",
+        "running": "Wird installiert…"
+      },
+      "remove": {
+        "done": "Entfernt",
+        "failed": "Nicht abgeschlossen",
+        "pending": "Wartet",
+        "running": "Wird entfernt…"
+      }
+    },
+    "safeInstall": "Sonst ändert sich nichts",
+    "safeInstallBody": "Die Werkzeuge kommen aus den eigenen Softwarequellen deines Servers. Dafür braucht es einen Zugang mit Administratorrechten.",
+    "safeRemove": "Nur diese Werkzeuge werden entfernt",
+    "safeRemoveBody": "Deine Einstellungen und andere Software bleiben unverändert.",
+    "size": "etwa {{value}} {{unit}}",
+    "status": {
+      "installed": "Installiert",
+      "partial": "Unvollständig"
+    },
+    "stop": "Nach diesem anhalten",
+    "thisServer": "diesem Server",
+    "title": "Werkzeuge",
+    "titleFor": "Werkzeuge auf {{name}}",
+    "tryAgain": "Erneut versuchen",
+    "willInstall": "Wird installiert",
+    "willRemove": "Wird entfernt"
   },
   "tray": {
     "needs": "Braucht dich ({n})",

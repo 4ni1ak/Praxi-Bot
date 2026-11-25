@@ -151,10 +151,11 @@ allowed_senders = ["alice@example.com", "@corp.example"]   # stored; used by a l
 
 ## Available tools
 
-Once enabled, six tools are registered under the `Messaging` permission category:
+Once enabled, seven tools are registered under the `Messaging` permission category:
 
 | Tool | Effect | Description |
 | --- | --- | --- |
+| `email_identities` | Read | List the mail identities (addresses) the bot may use, its default and each send mode; no secrets |
 | `email_list_folders` | Read | List folders and attributes via IMAP LIST |
 | `email_search` | Read | Search messages with sender/subject/date/unread filters; returns UID summaries |
 | `email_read` | Read | Read message content and attachment metadata by UID using BODY.PEEK |
@@ -162,12 +163,35 @@ Once enabled, six tools are registered under the `Messaging` permission category
 | `email_draft` | Write | Save a message as a draft in the drafts folder (never contacts SMTP) |
 | `email_send` | Destructive | Send an e-mail immediately over SMTP (**requires human approval**) |
 
+## Several mail identities
+
+You can add several mailboxes (your own IMAP/SMTP mailbox, an AgentMail address for the bot, ...) in **Settings > Mail**. For each one you choose:
+
+- **Who can use it**: any bot, or only the bots you pick.
+- **Default sender for**: the bots that send from it when they name no address. A bot has one default.
+- **Sending**: *Ask me each time* (default) or *Drafts only*. A drafts-only address saves what a bot wants to send as a draft and never sends it. This holds on every path: the mail channel does not queue replies from it, an approval cannot send from it, and **Send test mail** is refused for it (the test would send a real message).
+
+The bot lists its identities with `email_identities`, picks one from the task ("send from my work address") and says which one it used. The approval card always shows **From**, To, subject and text; choose another address on the card and the bot is asked to send the same message from it, so you read the new card in full before anything leaves. Passwords and API keys stay in the secret store and are never shown to the model.
+
+The shared `agentmail.to` domain is not suitable for cold mail; use an address on your own domain for outreach.
+
 ## Approvals and security
 
 - **Sending requires approval**: `email_send` is an external effect marked `Effect::Destructive`. It sends an e-mail to external recipients and cannot be undone. Under standard permission presets (`approve-destructive`, `read-and-draft`), the engine always prompts for explicit approval before dispatching mail.
 - **Mandatory TLS**: IMAP requires implicit TLS (port 993). SMTP requires implicit TLS (port 465) or mandatory STARTTLS (port 587). Hostname and certificate validation against Mozilla roots are always enforced; plaintext connections and insecure certificates are rejected.
 - **Safe credentials**: Passwords are never echoed or written to logs; credentials resolve lazily from the secret store when establishing connections.
 - **Drafts**: `email_draft` saves directly to your IMAP drafts folder and never contacts SMTP.
+
+## Safe sending (send log, opt-out list, limits)
+
+These guards live in code, not in the model. Settings > Mail > **Safe sending** shows and edits them; the routes (`/v1/email/guard/*`) need the owner key.
+
+- **Send log**: every e-mail that was really sent is recorded (time, bot, run, account, recipients, subject start, message id, whether the opt-out line was added, whether you chose "Send anyway"). You can open it in the app and export it as CSV. It is stored in `<data dir>/email-guard/send-log.jsonl`.
+- **Opt-out list**: addresses or whole domains you will not write to (`email-guard/opt-out.json`).
+- **Opt-out line**: the app appends it to the body of every `email_send` (default text in Turkish and English, editable, `{sender}` = the sending address). The bot does not write it and cannot remove it. A bot may ask to leave it out (`opt_out_line: false`); that only makes the approval card show a warning.
+- **Limits**: a warning above 20 e-mails per 24 hours per account, and when someone got mail from the account in the last 14 days. Both numbers are settings (0 turns a warning off).
+- **Warnings are not blocks.** When a send hits the opt-out list, a limit or the missing opt-out line, the approval card lists the warnings (and once, the note that ignoring an opt-out on commercial mail can be unlawful, in Turkey under Law 6563, ETK) and its button reads **Send anyway**. Only you can click it; it is logged. A model cannot override a warning: the tool accepts a send past a warning only when it matches, exactly, a card that was shown to you, once.
+- `email_send` always asks, whatever the permission preset or grants.
 
 ## Give a bot its own address (AgentMail)
 

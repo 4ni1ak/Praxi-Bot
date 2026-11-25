@@ -235,6 +235,94 @@ async fn replies_are_off_by_default_and_never_sent_without_approval() {
     ));
 }
 
+fn draft_only_account() -> crate::AccountConfig {
+    let mut a: crate::AccountConfig = toml::from_str(
+        r#"
+name = "main"
+address = "me@example.com"
+password = "email/main"
+[imap]
+host = "imap.example.com"
+[smtp]
+host = "smtp.example.com"
+[identity]
+send_mode = "draft_only"
+"#,
+    )
+    .unwrap();
+    a.allowed_senders.clear();
+    a
+}
+
+#[tokio::test]
+async fn a_draft_only_account_never_queues_or_sends_a_channel_reply() {
+    let f = Fake::new(vec![]);
+    let settings = EmailChannelSettings {
+        replies_enabled: true,
+        ..EmailChannelSettings::default()
+    };
+    let ch = EmailChannel::for_account(f.clone(), &draft_only_account(), settings, None).unwrap();
+    ch.poll_once().await.unwrap();
+    f.arrive(summary(8, "Ann <ann@example.com>", "Question"));
+    ch.poll_once().await.unwrap();
+    // The model proposing a reply is told why it is refused.
+    let err = ch
+        .send(
+            ChatRef("ann@example.com".into()),
+            OutgoingMessage::text("hi"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(&err, ChannelError::InvalidInput(m) if m.contains("draft only")));
+    // Even a reply that got into the queue some other way is not sent.
+    let id = ch
+        .core
+        .gate
+        .lock()
+        .unwrap()
+        .propose(
+            now_ms(),
+            "r1".into(),
+            &["ann@example.com".into()],
+            "s",
+            "body",
+            |_| true,
+        )
+        .unwrap()
+        .id;
+    assert!(matches!(
+        ch.approve_reply(&id).await,
+        Err(EmailError::Input(_))
+    ));
+    assert!(f.sent.lock().unwrap().is_empty(), "nothing was sent");
+}
+
+#[tokio::test]
+async fn the_reply_card_names_the_identity_and_its_mode() {
+    let f = Fake::new(vec![]);
+    let mut a = draft_only_account();
+    a.identity.send_mode = crate::SendMode::Ask;
+    let settings = EmailChannelSettings {
+        replies_enabled: true,
+        ..EmailChannelSettings::default()
+    };
+    let ch = EmailChannel::for_account(f.clone(), &a, settings, None).unwrap();
+    ch.poll_once().await.unwrap();
+    f.arrive(summary(8, "Ann <ann@example.com>", "Question"));
+    ch.poll_once().await.unwrap();
+    ch.send(
+        ChatRef("ann@example.com".into()),
+        OutgoingMessage::text("hi"),
+    )
+    .await
+    .unwrap();
+    let card = ch.pending_replies()[0].card();
+    assert!(
+        card.contains("From: me@example.com (account: main) (send mode: ask)"),
+        "{card}"
+    );
+}
+
 #[test]
 fn gate_limits_denies_and_expires() {
     let mut g = ReplyGate::default();
@@ -392,4 +480,45 @@ async fn changed_uidvalidity_resets_the_position_without_replaying_mail() {
     let got = ch.poll_once().await.unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].sender.id, "z@example.com");
+}
+
+#[tokio::test]
+async fn an_approved_reply_goes_through_the_guard_and_the_send_log() {
+    let f = Fake::new(vec![]);
+    let ch = channel(&f, true, &[]);
+    let guard = Arc::new(MailGuard::in_memory());
+    ch.attach_guard(guard.clone(), "work");
+    ch.poll_once().await.unwrap();
+    for (uid, who) in [(8, "Ann <ann@example.com>"), (9, "Bob <bob@example.com>")] {
+        f.arrive(summary(uid, who, "Question"));
+    }
+    ch.poll_once().await.unwrap();
+    let propose = |to: &str| {
+        let ch = ch.clone();
+        let to = to.to_owned();
+        async move {
+            ch.send(ChatRef(to), OutgoingMessage::text("Subject: Re: Q\nYes."))
+                .await
+                .unwrap()
+        }
+    };
+    // Ann asked not to be written to (spelled differently): the approval is refused, nothing goes
+    // out and the reply keeps waiting.
+    guard.add_opt_out("ANN+x@example.com", "").unwrap();
+    let ann = propose("ann@example.com").await;
+    let e = ch.approve_reply(&ann).await.unwrap_err();
+    assert!(
+        matches!(e, EmailError::Input(ref m) if m.contains("Not sent")),
+        "{e:?}"
+    );
+    assert!(f.sent.lock().unwrap().is_empty());
+    assert_eq!(ch.pending_replies().len(), 1);
+    // Bob is fine: it is sent and logged.
+    let bob = propose("bob@example.com").await;
+    ch.approve_reply(&bob).await.unwrap();
+    assert_eq!(f.sent.lock().unwrap().len(), 1);
+    let log = guard.log(10);
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].recipients, ["bob@example.com"]);
+    assert_eq!(log[0].run, "email-channel-reply");
 }

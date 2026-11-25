@@ -9,12 +9,14 @@ import { buildRows, capRows, chainSummary, collapsedRows, groupHost, type ChainR
 import { isInFlight, isOrphanStep, isSlowStep } from "../lib/stepStuck";
 import { showStepDuration, type StepState, stepState } from "../lib/stepState";
 import { humanToolError } from "../lib/humanError";
+import { chipFaviconDomain } from "../lib/faviconPolicy";
 import { siteIcon } from "../lib/siteIcon";
 import { stepReason } from "../lib/stepReason";
 import { describeTool, stepPhase } from "../lib/toolLabels";
 import type { ToolItem } from "../state/timeline";
 import { ToolBody } from "./ChatCards";
 import { Markdown } from "./Markdown";
+import { useFaviconUrl } from "./SiteFavicon";
 import { StepIcon } from "./StepIcon";
 import styles from "./ThinkingChain.module.css";
 
@@ -69,6 +71,28 @@ function StateMark({ state }: { state: StepState }) {
   );
 }
 
+/**
+ * The mark in front of a site name: the letter / globe at once, swapped for the site's real icon
+ * only after the step finished (the origin was approved and visited in this run) and only if the
+ * daemon has one. The box has a fixed size, so the swap never moves the line.
+ */
+function SiteMark({ host, status }: { host: string; status: string }) {
+  const domain = chipFaviconDomain(status, host);
+  const { src, failed, onError } = useFaviconUrl(domain ?? "", domain !== null);
+  const icon = siteIcon(host);
+  return (
+    <span className={styles.siteMark} aria-hidden="true" data-testid="step-site-mark">
+      {domain && src && !failed ? (
+        <img src={src} alt="" className={styles.siteImg} draggable={false} onError={onError} />
+      ) : icon.kind === "letter" ? (
+        icon.letter
+      ) : (
+        <Globe />
+      )}
+    </span>
+  );
+}
+
 function ToolStep({ tool, times, live }: { tool: ToolItem; times: MessageTimes; live: boolean }) {
   const { t, i18n } = useTranslation();
   const ms = stepMs(tool);
@@ -107,7 +131,6 @@ function ToolStep({ tool, times, live }: { tool: ToolItem; times: MessageTimes; 
         : t(`chat.chain.reason.${reason.kind}`)
     : null;
   const site = label.chips.find((c) => c.icon === "globe");
-  const icon = site ? siteIcon(site.text) : null;
   const timeText =
     ms !== undefined && showStepDuration(ms, state)
       ? formatStepDuration(ms, i18n.language, {
@@ -124,11 +147,9 @@ function ToolStep({ tool, times, live }: { tool: ToolItem; times: MessageTimes; 
       <div className={styles.stepLine}>
         <StateMark state={state} />
         <b className={active ? styles.shim : styles.stepLabel}>{text}</b>
-        {site && icon ? (
+        {site ? (
           <span className={styles.site} data-testid="step-site" title={site.text}>
-            <span className={styles.siteMark} aria-hidden="true">
-              {icon.kind === "letter" ? icon.letter : <Globe />}
-            </span>
+            <SiteMark host={site.text} status={tool.status} />
             <span className={styles.siteName}>{site.text}</span>
           </span>
         ) : (
@@ -217,15 +238,12 @@ function GroupRow({ tools, sameAction, times, live }: { tools: ToolItem[]; sameA
           s: t("chat.duration.shortSeconds"),
           m: t("chat.duration.shortMinutes")
         });
-  const icon = host ? siteIcon(host) : null;
   return (
     <li className={styles.step} data-testid="tool-group">
       <div className={styles.stepLine}>
         <span className={styles.groupMark}>
-          {icon ? (
-            <span className={styles.siteMark} aria-hidden="true">
-              {icon.kind === "letter" ? icon.letter : <Globe />}
-            </span>
+          {host ? (
+            <SiteMark host={host} status={tools.every((x) => x.status === "done") ? "done" : "running"} />
           ) : (
             <StepIcon icon={label.icon} brand={label.brand} size={16} />
           )}

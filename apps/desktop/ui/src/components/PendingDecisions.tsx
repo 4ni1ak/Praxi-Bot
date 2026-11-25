@@ -130,6 +130,7 @@ export function PendingCard({ entry }: { entry: NeedsYouEntry }): ReactNode {
         tool={entry.tool}
         serverName={actions.serverName}
         onTrustFolder={actions.trustFolder}
+        botId={entry.botId}
         onDecide={actions.decide(entry.callId)}
       />
     );

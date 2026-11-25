@@ -262,6 +262,41 @@ export async function flows(ctx) {
     await send(page, '@Nova say hi');
     await page.getByTestId('guest-author').first().waitFor(T);
   });
+  // Message search: type a word from the first chat, see it grouped and highlighted, jump to it and watch it flash.
+  // One screenshot per core theme (smoke-search-<theme>.png) next to the usual step screenshots.
+  await run(s, 'message search finds a message in every theme and jumps to it', async (page) => {
+    for (const theme of ['obsidian', 'cobalt', 'raven', 'clay']) {
+      await page.evaluate((mode) => {
+        const raw = JSON.parse(window.localStorage.getItem('desktop_ui_settings') ?? '{}');
+        window.localStorage.setItem('desktop_ui_settings', JSON.stringify({ ...raw, themeMode: mode }));
+      }, theme);
+      await page.reload();
+      await page.getByTestId('message-search-button').waitFor(T);
+      await page.getByTestId('message-search-button').click();
+      const box = page.getByRole('combobox', { name: /search/i });
+      await box.fill('SMOKE');
+      const hit = page.getByRole('option').filter({ hasText: /hello smoke/i }).first();
+      await hit.waitFor(T);
+      if ((await page.locator('mark').count()) === 0) throw new Error('the matched word is not highlighted');
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: join(ctx.shots, `smoke-search-${theme}.png`), timeout: 5000 });
+      if (theme === 'obsidian') {
+        await box.press('ArrowDown');
+        await box.press('Enter');
+        await page.getByRole('combobox', { name: /search/i }).waitFor({ state: 'hidden', timeout: 5000 });
+        await page.locator('[data-flash="true"]').first().waitFor(T);
+        await page.screenshot({ path: join(ctx.shots, 'smoke-search-jump.png'), timeout: 5000 });
+      } else {
+        await page.keyboard.press('Escape');
+      }
+    }
+    await page.evaluate(() => {
+      const raw = JSON.parse(window.localStorage.getItem('desktop_ui_settings') ?? '{}');
+      window.localStorage.setItem('desktop_ui_settings', JSON.stringify({ ...raw, themeMode: 'obsidian' }));
+    });
+    await page.reload();
+    await gotoChat(page, 'Atlas');
+  });
   await run(s, 'Settings > Bots & models lists providers and the CLI engines section renders', async (page) => {
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.getByTestId('settings-nav-models').click();

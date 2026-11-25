@@ -628,6 +628,10 @@ async fn no_paired_peer_can_start_a_server_update_or_probe_a_server() {
     ] {
         for (method, path) in [
             (Method::POST, "/v1/hosts/setup/update"),
+            (Method::GET, "/v1/hosts/setup/packs/abcd"),
+            (Method::HEAD, "/v1/hosts/setup/packs/abcd"),
+            (Method::POST, "/v1/hosts/setup/packs/plan"),
+            (Method::POST, "/v1/hosts/setup/packs/apply"),
             (Method::GET, "/v1/hosts/abcd/version"),
         ] {
             let r = peer_call(
@@ -642,6 +646,8 @@ async fn no_paired_peer_can_start_a_server_update_or_probe_a_server() {
         }
     }
     assert_eq!(count_audit(&t, "host_update.start"), 0);
+    assert_eq!(count_audit(&t, "host_packs.plan"), 0);
+    assert_eq!(count_audit(&t, "host_packs.apply"), 0);
 }
 
 #[tokio::test]

@@ -24,6 +24,8 @@ import type {
   GrantTarget,
   EmailAccount,
   EmailAccountInput,
+  EmailGuardSettings,
+  EmailOptOut,
   EmailChannelSettings,
   EmailPendingReply,
   InputBatch,
@@ -872,6 +874,7 @@ export class MockApiClient extends ApiClient {
   readonly repairs: string[] = [];
   private readonly liveView = new MockLiveViewService();
   private readonly hostSetup = new MockHostSetup();
+  private lastPlan: import("./types.ts").PackPlan | null = null;
   private webSearchConfig: WebSearchConfig = {
     order: ["searxng", "brave", "tavily", "duckduckgo", "duckduckgo_lite", "bing"],
     active_backends: ["duckduckgo", "duckduckgo_lite", "bing"],
@@ -1093,6 +1096,15 @@ export class MockApiClient extends ApiClient {
       if (!seg[2] && method === "POST") return ok(this.hostSetup.start(opts.body as never));
       if (seg[2] === "update" && method === "POST") return ok(this.hostSetup.startUpdate((opts.body as { host_id: string }).host_id));
       if (seg[2] === "ssh-keys") return ok({ keys: this.hostSetup.keys() });
+      if (seg[2] === "packs") {
+        if (seg[3] === "plan") {
+          const b = opts.body as { host_id: string; action: "install" | "remove"; packs: string[] };
+          this.lastPlan = this.hostSetup.plan(b.host_id, b.action, b.packs);
+          return ok(this.lastPlan);
+        }
+        if (seg[3] === "apply") return ok(this.hostSetup.startPacks((opts.body as { plan_id: string }).plan_id, this.lastPlan));
+        return ok(this.hostSetup.packs(seg[3]));
+      }
       if (seg[2] === "bootstrap") {
         const command = ["S=; [ \"$(id -u)\" -eq 0 ] || S=sudo; $S bash -s <<'PRAXI_SETUP'", "PRAXI_TAG=v0.1.0", "# (mock)", "praxi_main </dev/null", "PRAXI_SETUP", ""].join("\n");
         return ok({ release_tag: "v0.1.0", command, ticket_minutes: 30, published: true });
@@ -2338,8 +2350,49 @@ export class MockApiClient extends ApiClient {
     return this.getBotSkillsState(botId);
   }
 
+  private mailGuardSettings: EmailGuardSettings = {
+    daily_limit: 20,
+    same_recipient_days: 14,
+    opt_out_line: true,
+    footer: ""
+  };
+  private mailOptOuts: EmailOptOut[] = [];
+
+  private mailGuard(method: string, name: string | undefined, action: string | undefined, body: unknown): unknown {
+    if (name === "settings") {
+      if (method === "PUT") {
+        this.mailGuardSettings = { ...(body as EmailGuardSettings) };
+      }
+      return this.mailGuardSettings;
+    }
+    if (name === "opt-out") {
+      if (method === "DELETE") {
+        this.mailOptOuts = this.mailOptOuts.filter((o) => o.value !== action);
+        return undefined;
+      }
+      if (method === "POST") {
+        const input = body as { value: string; note?: string };
+        const value = input.value.trim().toLowerCase().replace(/^@/, "");
+        const entry: EmailOptOut = { value, kind: value.includes("@") ? "address" : "domain", added_at: 1_795_000_000, note: input.note ?? "" };
+        this.mailOptOuts = [entry, ...this.mailOptOuts.filter((o) => o.value !== value)];
+        return entry;
+      }
+      return this.mailOptOuts;
+    }
+    if (name === "send-log.csv") {
+      return "time_utc,bot,run,account,from,recipients,subject,message_id,opt_out_line,send_anyway\r\n";
+    }
+    if (name === "send-log") {
+      return [];
+    }
+    throw new ApiError(404, "not_found", "mock email guard");
+  }
+
   private email(method: string, seg: string[], body: unknown): unknown {
     const [, sub, name, action] = seg;
+    if (sub === "guard") {
+      return this.mailGuard(method, name, action, body);
+    }
     if (sub === "test") {
       const draft = (body ?? {}) as EmailAccountInput;
       return draft.provider === "agentmail"

@@ -33,6 +33,14 @@ pub(crate) struct SearchQuery {
     q: String,
     bot_id: Option<Uuid>,
     chat_id: Option<Uuid>,
+    /// Only messages at or after this time (ms since epoch).
+    from_ms: Option<i64>,
+    /// Only messages before this time (ms since epoch).
+    to_ms: Option<i64>,
+    /// Only messages that carry an attachment.
+    has_file: Option<bool>,
+    /// Only messages that contain a web link.
+    has_link: Option<bool>,
     /// Ranked offset, at most 10,000.
     offset: Option<u32>,
     /// Page size, 1–100 (default 30).
@@ -99,8 +107,14 @@ fn search_page(s: &AppState, q: &SearchQuery) -> Result<SearchPage, ApiError> {
     for _ in 0..MAX_SCAN_PAGES {
         let rows = s.storage().search_messages(
             s.user_id(),
-            q.bot_id.map(BotId),
-            q.chat_id.map(ChatId),
+            storage::SearchFilter {
+                bot: q.bot_id.map(BotId),
+                chat: q.chat_id.map(ChatId),
+                from_ms: q.from_ms,
+                to_ms: q.to_ms,
+                has_file: q.has_file.unwrap_or(false),
+                has_link: q.has_link.unwrap_or(false),
+            },
             text,
             next,
             limit,

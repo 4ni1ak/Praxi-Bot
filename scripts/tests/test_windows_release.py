@@ -180,7 +180,7 @@ class VerifyWindowsScript(unittest.TestCase):
             fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
         self.log = self.dir / "gh.log"
 
-    def run_script(self, *args, gh_exit=0, gh_version="2.80.0"):
+    def run_script(self, *args, gh_exit=0, gh_version="2.80.0", tag="v0.0.0"):
         env = dict(os.environ)
         env.update(
             PATH=str(self.fake_bin) + os.pathsep + env.get("PATH", ""),
@@ -189,7 +189,8 @@ class VerifyWindowsScript(unittest.TestCase):
             FAKE_GH_VERSION=gh_version,
         )
         return subprocess.run(
-            [PWSH, "-NoProfile", "-File", str(VERIFY), "-InstallerPath", str(self.installer), *args],
+            [PWSH, "-NoProfile", "-File", str(VERIFY), "-InstallerPath", str(self.installer),
+             *(["-Tag", tag] if tag else []), *args],
             capture_output=True, text=True, env=env, timeout=120,
         )
 
@@ -211,7 +212,7 @@ class VerifyWindowsScript(unittest.TestCase):
 
     def test_provenance_is_asked_from_the_release_workflow_of_this_repository(self):
         (self.dir / "praxi-bot-windows.sigstore.json").write_text("{}", encoding="utf-8")
-        done = self.run_script("-Tag", "v0.0.0")
+        done = self.run_script()
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         args = self.log.read_text(encoding="utf-8")
         for expected in (
@@ -223,6 +224,16 @@ class VerifyWindowsScript(unittest.TestCase):
             "--bundle",
         ):
             self.assertIn(expected, args)
+
+    def test_the_release_tag_is_required(self):
+        # No -Tag: stop before reading or checking anything, with a plain message and no gh call.
+        for extra in ((), ("-SkipProvenance",)):
+            done = self.run_script(*extra, tag=None)
+            self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+            self.assertIn("-Tag", done.stdout)
+            self.assertIn("Nothing was checked", done.stdout)
+            self.assertNotIn("Checksum", done.stdout)
+        self.assertFalse(self.log.exists())
 
     def test_failed_provenance_or_old_gh_is_refused(self):
         failed = self.run_script(gh_exit=1)

@@ -13,6 +13,8 @@ pub enum StageFile {
     Provision,
     Installer,
     SetupHeadless,
+    /// The capability pack catalog (`packs.txt`).
+    Packs,
 }
 
 /// `provision.sh` subcommands (fixed set).
@@ -31,6 +33,11 @@ pub enum Sub {
     Revoke,
     Uninstall,
     Purge,
+    /// Capability packs: read-only facts, dry-run plan (no root), install and remove (root).
+    PacksFacts,
+    PacksPlan,
+    PackInstall,
+    PackRemove,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +88,7 @@ impl RemoteCmd {
             Self::Stage(StageFile::Provision) => stage_cmd!("provision.sh"),
             Self::Stage(StageFile::Installer) => stage_cmd!("install-linux.sh"),
             Self::Stage(StageFile::SetupHeadless) => stage_cmd!("setup-headless.sh"),
+            Self::Stage(StageFile::Packs) => stage_cmd!("packs.txt"),
             Self::Provision(Sub::Preflight) => user_cmd!("preflight"),
             Self::Provision(Sub::Status) => user_cmd!("status"),
             Self::Provision(Sub::InstallGh) => root_cmd!("install-gh"),
@@ -93,6 +101,10 @@ impl RemoteCmd {
             Self::Provision(Sub::Revoke) => root_cmd!("revoke"),
             Self::Provision(Sub::Uninstall) => root_cmd!("uninstall"),
             Self::Provision(Sub::Purge) => root_cmd!("purge"),
+            Self::Provision(Sub::PacksFacts) => user_cmd!("packs-facts"),
+            Self::Provision(Sub::PacksPlan) => user_cmd!("packs-plan"),
+            Self::Provision(Sub::PackInstall) => root_cmd!("pack-install"),
+            Self::Provision(Sub::PackRemove) => root_cmd!("pack-remove"),
         }
     }
 }
@@ -192,6 +204,11 @@ mod tests {
             RemoteCmd::Stage(StageFile::Provision),
             RemoteCmd::Stage(StageFile::Installer),
             RemoteCmd::Stage(StageFile::SetupHeadless),
+            RemoteCmd::Stage(StageFile::Packs),
+            RemoteCmd::Provision(PacksFacts),
+            RemoteCmd::Provision(PacksPlan),
+            RemoteCmd::Provision(PackInstall),
+            RemoteCmd::Provision(PackRemove),
             RemoteCmd::Provision(Preflight),
             RemoteCmd::Provision(Install),
             RemoteCmd::Provision(Purge),

@@ -739,8 +739,12 @@ export function ChatView({
         appliedJump.current = request;
         row.scrollIntoView({ block: "center" });
         row.focus({ preventScroll: true });
+        // A short glow shows which message the search meant (CSS drops the motion when reduced).
+        row.setAttribute("data-flash", "true");
+        window.setTimeout(() => row.removeAttribute("data-flash"), 1600);
       }
     });
+    // The flash timer is left running on purpose: it only removes the attribute from that row.
     return () => cancelAnimationFrame(frame);
   }, [jumpMessageId, jumpRequestId, messages]);
 
@@ -1434,6 +1438,7 @@ export function ChatView({
             tool={item}
             serverName={decisions.serverName}
             onTrustFolder={decisions.trustFolder}
+            botId={chat?.bot_id}
             onDecide={decisions.decide(item.callId)}
           />
         ) : (

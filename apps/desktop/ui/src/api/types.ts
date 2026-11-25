@@ -96,6 +96,11 @@ export type PcRequestList = S["PcRequestList"];
 export type HostLinkList = S["HostLinkList"];
 export type StartHostSetupInput = S["StartHostSetupInput"];
 export type HostSetupJob = S["HostSetupJob"];
+export type HostPacks = S["HostPacks"];
+export type HostPackInfo = S["HostPackInfo"];
+export type PackAction = S["PackAction"];
+export type PackPlan = S["PackPlan"];
+export type PackPlanItem = S["PackPlanItem"];
 export type BootstrapCommand = S["BootstrapCommand"];
 export type HostStatus = S["HostStatus"];
 export type HostVersion = S["HostVersion"];
@@ -487,10 +492,15 @@ export type EmailSecurity = S["EmailSecurity"];
 /** `imap_smtp` (own mailbox) or `agentmail` (an inbox created with the user's key). */
 export type EmailProviderKind = S["EmailProviderKind"];
 export type EmailProbeStatus = S["EmailProbeStatus"];
+/** `ask` (every send needs approval) or `draft_only`. */
+export type EmailSendMode = S["EmailSendMode"];
 export type EmailTestReport = S["EmailTestReport"];
 /** One inbox row: headers only; every text field is untrusted, show it as plain text. */
 export type EmailMessage = S["EmailMessageDto"];
 export type EmailSendTestResponse = S["EmailSendTestResponse"];
+export type EmailGuardSettings = S["EmailGuardSettingsDto"];
+export type EmailOptOut = S["EmailOptOutDto"];
+export type EmailSendLogEntry = S["EmailSendLogDto"];
 
 export type VoiceConfig = S["VoiceConfigDto"];
 export type VoiceConfigInput = S["VoiceConfigInput"];

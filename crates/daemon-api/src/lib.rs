@@ -46,6 +46,7 @@ pub mod host_admin;
 pub mod host_copy;
 pub mod host_import;
 pub mod host_links;
+pub mod host_packs;
 pub mod host_setup;
 mod knowledge;
 pub mod knowledge_runtime;
@@ -1254,6 +1255,9 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/hosts/setup/ssh-keys", get(host_setup::ssh_keys))
         .route("/v1/hosts/setup/bootstrap", get(host_setup::bootstrap))
         .route("/v1/hosts/setup/update", post(host_setup::start_update))
+        .route("/v1/hosts/setup/packs/plan", post(host_packs::plan))
+        .route("/v1/hosts/setup/packs/apply", post(host_packs::apply))
+        .route("/v1/hosts/setup/packs/{host_id}", get(host_packs::get))
         .route("/v1/hosts/{id}/version", get(host_links::host_version))
         .route("/v1/hosts/setup/{job}", get(host_setup::get))
         .route("/v1/hosts/setup/{job}/host-key", post(host_setup::host_key))
@@ -1690,6 +1694,20 @@ fn api_routes() -> Router<AppState> {
             "/v1/email/channel/replies/{id}/deny",
             post(email_channel::deny_reply),
         )
+        .route(
+            "/v1/email/guard/settings",
+            get(e::get_guard_settings).put(e::put_guard_settings),
+        )
+        .route(
+            "/v1/email/guard/opt-out",
+            get(e::list_opt_outs).post(e::add_opt_out),
+        )
+        .route(
+            "/v1/email/guard/opt-out/{value}",
+            axum::routing::delete(e::remove_opt_out),
+        )
+        .route("/v1/email/guard/send-log", get(e::get_send_log))
+        .route("/v1/email/guard/send-log.csv", get(e::export_send_log))
         .route(
             "/v1/web/search",
             get(w::get_web_search).put(w::update_web_search),

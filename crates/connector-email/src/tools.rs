@@ -16,8 +16,9 @@ use tool_registry::{
     ToolOutput, ToolSpec,
 };
 
-use crate::config::AccountKind;
-use crate::connector::EmailConnector;
+use crate::config::{AccountKind, SendMode};
+use crate::connector::{EmailConnector, Scoped};
+use crate::guard::{self, GuardReport, MailFacts, SendLogEntry};
 use crate::imap::{DEFAULT_LIMIT, MAX_LIMIT, SearchQuery};
 use crate::message::{DEFAULT_MAX_BODY_CHARS, MAX_BODY_CHARS};
 use crate::smtp::OutgoingMail;
@@ -35,11 +36,23 @@ pub const DRAFT: &str = "email_draft";
 /// `email_send`.
 pub const SEND: &str = "email_send";
 
+/// `email_identities`.
+pub const IDENTITIES: &str = "email_identities";
+
 /// All tool names, in registration order.
-pub const TOOL_NAMES: [&str; 6] = [LIST_FOLDERS, SEARCH, READ, MARK_READ, DRAFT, SEND];
+pub const TOOL_NAMES: [&str; 7] = [
+    IDENTITIES,
+    LIST_FOLDERS,
+    SEARCH,
+    READ,
+    MARK_READ,
+    DRAFT,
+    SEND,
+];
 
 #[derive(Clone, Copy)]
 enum Kind {
+    Identities,
     ListFolders,
     Search,
     Read,
@@ -71,6 +84,8 @@ fn spec(name: &str, description: &str, schema: Value, effect: Effect) -> ToolSpe
             // mark_read does not return the message, but the folder and the
             // message id are sent to the remote mailbox, same as a draft or a send.
             DRAFT | SEND | MARK_READ => ContentClass::egress(),
+            // `email_identities` reads local settings only (names, addresses,
+            // modes): no mail content, nothing leaves.
             _ => ContentClass::none(),
         },
     }
@@ -106,8 +121,61 @@ mod class_tests {
     }
 }
 
+/// The `email_identities` answer: local settings only, never a secret.
+fn identities_output(c: &Scoped<'_>) -> ToolOutput {
+    let list: Vec<Value> = c
+        .identities()
+        .into_iter()
+        .map(|(a, default)| {
+            json!({
+                "account": a.name,
+                "address": a.address,
+                "kind": a.kind.as_str(),
+                "default": default,
+                "send_mode": match a.identity.send_mode {
+                    SendMode::Ask => "ask",
+                    SendMode::DraftOnly => "draft_only",
+                },
+            })
+        })
+        .collect();
+    json_out(json!({ "identities": list }))
+}
+
+/// `email_draft`: save a draft from the chosen identity.
+async fn draft_output(c: &Scoped<'_>, i: &MailInput) -> Result<ToolOutput, ToolError> {
+    let acct = c.resolve(i.account.as_deref())?;
+    let folder = c.save_draft(Some(&acct.name), &i.mail).await?;
+    Ok(json_out(json!({
+        "saved": true,
+        "folder": folder,
+        "sent": false,
+        "from": acct.address,
+        "account": acct.name,
+    })))
+}
+
+/// `email_send` on an identity the owner limited to drafts: keep a draft, send
+/// nothing, say so. Runs before the guard and before any send call (which
+/// refuses draft-only identities on its own as a second line of defence).
+async fn draft_fallback(
+    c: &Scoped<'_>,
+    acct: &crate::config::AccountConfig,
+    mail: &OutgoingMail,
+) -> Result<ToolOutput, ToolError> {
+    let folder = c.save_draft(Some(&acct.name), mail).await?;
+    Ok(json_out(json!({
+        "sent": false,
+        "saved_as_draft": true,
+        "folder": folder,
+        "from": acct.address,
+        "account": acct.name,
+        "reason": "this address is set to draft only by the owner; tell the user the message is waiting in the drafts folder",
+    })))
+}
+
 fn account_prop() -> Value {
-    json!({"type":"string","description":"Account name. Optional: a bot's own account is used by default, else the only available one."})
+    json!({"type":"string","description":"Mail identity (account name), see email_identities. Optional: the bot's default identity is used, else its own, else the only available one. When the user names an address (\"from my work address\"), pick the matching identity and say which one you used."})
 }
 
 fn mail_props() -> Value {
@@ -120,8 +188,28 @@ fn mail_props() -> Value {
     })
 }
 
+fn send_props() -> Value {
+    let mut p = mail_props();
+    if let Some(o) = p.as_object_mut() {
+        o.insert(
+            "opt_out_line".into(),
+            json!({"type":"boolean","description":"Default true: the system appends an opt-out line. false only asks to leave it out; that makes the owner's approval card show a warning and the owner decides."}),
+        );
+    }
+    p
+}
+
 fn specs() -> Vec<(Kind, ToolSpec)> {
     vec![
+        (
+            Kind::Identities,
+            spec(
+                IDENTITIES,
+                "List the mail identities (addresses) this bot may use: name, address, kind, whether it is the default and its send mode (`ask` = every send needs the owner's approval, `draft_only` = drafts only). Call it before sending when the user names a sender, then pass the matching `account` to email_send / email_draft and tell the user which identity you used. Example: {}",
+                json!({"type":"object","properties":{}}),
+                Effect::Read,
+            ),
+        ),
         (
             Kind::ListFolders,
             spec(
@@ -199,8 +287,11 @@ fn specs() -> Vec<(Kind, ToolSpec)> {
                 SEND,
                 "Send an e-mail NOW from the account. Irreversible and visible to third parties: requires user approval. \
                  Prefer email_draft unless the user asked to send. \
+                 An opt-out line is added to the body by the system: do not write one yourself. \
+                 The system warns the owner about opt-out addresses, daily volume and repeat recipients; \
+                 only the owner can send past a warning, you cannot. \
                  Example: {\"to\":[\"bob@example.com\"],\"subject\":\"Hi\",\"body\":\"...\"}",
-                json!({"type":"object","properties":mail_props(),"required":["to","subject","body"]}),
+                json!({"type":"object","properties":send_props(),"required":["to","subject","body"]}),
                 Effect::Destructive,
             ),
         ),
@@ -333,6 +424,87 @@ struct MailInput {
     mail: OutgoingMail,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SendInput {
+    account: Option<String>,
+    opt_out_line: Option<bool>,
+    #[serde(flatten)]
+    mail: OutgoingMail,
+}
+
+/// A process-unique id for one approval card (never shown to the user).
+fn next_token() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    format!(
+        "mail-{}-{}",
+        guard::now_secs(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
+}
+
+/// Everything about one send that the card, the guard and the log need.
+struct SendPlan {
+    account: String,
+    from: String,
+    recipients: Vec<String>,
+    line_on: bool,
+    report: GuardReport,
+    key: String,
+}
+
+impl EmailTool {
+    fn plan_send(&self, ctx: &ToolContext, i: &SendInput) -> Result<SendPlan, ToolError> {
+        let c = self.conn.scoped(ctx.bot_id.as_deref());
+        let (account, from) = c
+            .resolve_sender(i.account.as_deref())
+            .map_err(|e| ToolError::InvalidInput(e.to_string()))?;
+        let mut recipients = Vec::new();
+        for a in i.mail.to.iter().chain(&i.mail.cc).chain(&i.mail.bcc) {
+            // The same parse that builds the SMTP envelope, then the guard's canonical form.
+            let email = crate::smtp::envelope_address(a)
+                .map_err(|e| ToolError::InvalidInput(e.to_string()))?;
+            let keys = guard::canonical_address(&email)
+                .ok_or_else(|| ToolError::InvalidInput(format!("invalid address {a:?}")))?;
+            recipients.push(keys.full);
+        }
+        recipients.sort();
+        recipients.dedup();
+        let guard = self.conn.guard();
+        let default_on = guard.opt_out_line_default();
+        let line_on = i.opt_out_line.unwrap_or(default_on);
+        // Asking to drop a line the owner wants on is a warning; the owner's own default-off is not.
+        let dropped = !line_on && default_on;
+        let mut report = guard.check(&MailFacts {
+            bot: ctx.bot_id.as_deref(),
+            account: &account,
+            from: &from,
+            recipients: &recipients,
+            opt_out_line: !dropped,
+        });
+        if !line_on {
+            report.footer = None;
+        }
+        let key = json!([
+            ctx.bot_id,
+            account,
+            recipients,
+            i.mail.subject,
+            i.mail.body,
+            line_on
+        ])
+        .to_string();
+        Ok(SendPlan {
+            account,
+            from,
+            recipients,
+            line_on,
+            report,
+            key,
+        })
+    }
+}
+
 fn attachment_line(item: &Value) -> (String, u64) {
     let (name, path) = match item {
         Value::String(text) => (file_name(text), Some(text.as_str())),
@@ -363,10 +535,118 @@ fn file_name(path: &str) -> String {
         .unwrap_or_else(|| path.to_owned())
 }
 
+impl EmailTool {
+    /// `email_send`: the guard checks, the opt-out line, the provider call and the log entry.
+    async fn send(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
+        let i: SendInput = parse(input)?;
+        let c = self.conn.scoped(ctx.bot_id.as_deref());
+        let chosen = c
+            .resolve(i.account.as_deref())
+            .map_err(|e| ToolError::InvalidInput(e.to_string()))?;
+        if chosen.identity.send_mode == SendMode::DraftOnly {
+            return draft_fallback(&c, &chosen, &i.mail).await;
+        }
+        let plan = self.plan_send(ctx, &i)?;
+        let guard = self.conn.guard();
+        // Consumes the card the owner was shown. No argument of the model reaches this.
+        let overridden = guard.take_override(&plan.key, &plan.report);
+        if !plan.report.warnings.is_empty() && !overridden {
+            let why: Vec<&str> = plan
+                .report
+                .warnings
+                .iter()
+                .map(|w| w.text.as_str())
+                .collect();
+            return Err(ToolError::Execution(format!(
+                "Not sent. {} Only the owner can send past these warnings, by approving the \
+                     e-mail card that shows them (\"Send anyway\"). You cannot override this: \
+                     tell the owner in plain words and do not retry on your own.",
+                why.join(" ")
+            )));
+        }
+        let mut mail = i.mail.clone();
+        if let Some(f) = &plan.report.footer {
+            mail.body = guard::with_footer(&mail.body, f);
+        }
+        let receipt = c.send_receipt(Some(&plan.account), &mail).await?;
+        guard.record(SendLogEntry {
+            at: guard::now_secs(),
+            at_utc: String::new(),
+            bot: ctx.bot_id.clone(),
+            run: ctx.run_id.clone(),
+            account: plan.account,
+            from: plan.from,
+            recipients: plan.recipients,
+            subject: i.mail.subject.clone(),
+            message_id: receipt.id.clone(),
+            opt_out_line: plan.line_on,
+            overridden: if overridden {
+                plan.report.codes()
+            } else {
+                Vec::new()
+            },
+        });
+        Ok(json_out(json!({
+            "sent": true,
+            "recipients": i.mail.to.len() + i.mail.cc.len() + i.mail.bcc.len(),
+            "opt_out_line_added": plan.line_on,
+            "owner_sent_anyway": overridden,
+            "server_response": receipt.id,
+        })))
+    }
+}
+
 #[async_trait]
 impl Tool for EmailTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
+    }
+
+    /// A send is confirmed every time: no grant, preset or "this chat" allowance waives the card,
+    /// because the card is where the owner sees the opt-out and volume warnings.
+    fn always_ask(&self) -> bool {
+        matches!(self.kind, Kind::Send)
+    }
+
+    fn approval_closed(&self, _ctx: &ToolContext, _input: &Value, token: Option<&str>) {
+        if let (Kind::Send, Some(t)) = (self.kind, token) {
+            self.conn.guard().discard(t);
+        }
+    }
+
+    async fn approval_details(
+        &self,
+        ctx: &ToolContext,
+        input: &Value,
+    ) -> Result<Option<Value>, ToolError> {
+        if !matches!(self.kind, Kind::Send) {
+            return Ok(None);
+        }
+        let i: SendInput = parse(input.clone())?;
+        let plan = self.plan_send(ctx, &i)?;
+        let token = next_token();
+        // The owner is about to be shown exactly these warnings; a later call that matches this
+        // card (and nothing else) may go through when the owner approves.
+        self.conn.guard().freeze(&plan.key, &plan.report, &token);
+        let body = plan.report.footer.as_deref().map_or_else(
+            || i.mail.body.clone(),
+            |f| guard::with_footer(&i.mail.body, f),
+        );
+        Ok(Some(json!({
+            "kind": "mail_send",
+            "account": plan.account,
+            "from": plan.from,
+            "to": i.mail.to,
+            "cc": i.mail.cc,
+            "bcc": i.mail.bcc,
+            "subject": i.mail.subject,
+            "body": body,
+            "opt_out_line": plan.line_on,
+            "warnings": plan.report.warnings,
+            "legal_notice": plan.report.legal_notice,
+            "send_anyway": !plan.report.warnings.is_empty(),
+            "approval_ref": token,
+        })))
     }
 
     fn egress_extra(&self, ctx: &ToolContext, input: &Value) -> Option<String> {
@@ -374,10 +654,28 @@ impl Tool for EmailTool {
             return None;
         }
         let mut lines = Vec::new();
-        if input.get("account").and_then(Value::as_str).is_none()
-            && let Ok(name) = self.conn.scoped(ctx.bot_id.as_deref()).resolve_name(None)
+        if matches!(self.kind, Kind::Send)
+            && let Ok(i) = serde_json::from_value::<SendInput>(input.clone())
+            && let Ok(plan) = self.plan_send(ctx, &i)
         {
-            lines.push(format!("account: {name} (default)"));
+            for w in &plan.report.warnings {
+                lines.push(format!("warning: {}", w.text));
+            }
+            if let Some(f) = &plan.report.footer {
+                lines.push(format!("opt-out line added by the system: {f}"));
+            }
+        }
+        // The sender is always named, whether the model passed it or not.
+        let named = input.get("account").and_then(Value::as_str);
+        if let Ok(acct) = self.conn.scoped(ctx.bot_id.as_deref()).resolve(named) {
+            let default = if named.is_none() { " (default)" } else { "" };
+            lines.push(format!(
+                "from: {} (account: {}){default}",
+                acct.address, acct.name
+            ));
+            if matches!(self.kind, Kind::Send) && acct.identity.send_mode == SendMode::DraftOnly {
+                lines.push("send mode: draft only, saved as a draft and not sent".to_owned());
+            }
         }
         if let Some(items) = input.get("attachments").and_then(Value::as_array) {
             for item in items {
@@ -388,7 +686,10 @@ impl Tool for EmailTool {
         if lines.is_empty() {
             None
         } else {
-            Some(lines.join("\n"))
+            Some(lines.join(
+                "
+",
+            ))
         }
     }
 
@@ -402,6 +703,7 @@ impl Tool for EmailTool {
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         let c = self.conn.scoped(ctx.bot_id.as_deref());
         match self.kind {
+            Kind::Identities => Ok(identities_output(&c)),
             Kind::ListFolders => {
                 let i: AccountOnly = parse(input)?;
                 let kind = c.kind(i.account.as_deref())?;
@@ -478,20 +780,9 @@ impl Tool for EmailTool {
             }
             Kind::Draft => {
                 let i: MailInput = parse(input)?;
-                let folder = c.save_draft(i.account.as_deref(), &i.mail).await?;
-                Ok(json_out(
-                    json!({"saved": true, "folder": folder, "sent": false}),
-                ))
+                draft_output(&c, &i).await
             }
-            Kind::Send => {
-                let i: MailInput = parse(input)?;
-                let resp = c.send(i.account.as_deref(), &i.mail).await?;
-                Ok(json_out(json!({
-                    "sent": true,
-                    "recipients": i.mail.to.len() + i.mail.cc.len() + i.mail.bcc.len(),
-                    "server_response": resp,
-                })))
-            }
+            Kind::Send => self.send(ctx, input).await,
         }
     }
 }

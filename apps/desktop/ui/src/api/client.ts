@@ -82,6 +82,9 @@ import type {
   HostStatus,
   PcRequestList,
   HostSetupJob,
+  HostPacks,
+  PackAction,
+  PackPlan,
   HostVersion,
   SshKeyHint,
   StartHostSetupInput,
@@ -94,6 +97,9 @@ import type {
   EmailPendingReply,
   EmailMessage,
   EmailSendTestResponse,
+  EmailGuardSettings,
+  EmailOptOut,
+  EmailSendLogEntry,
   EmailTestReport,
   InputBatch,
   InputResult,
@@ -733,6 +739,18 @@ export class ApiClient {
   startHostUpdate(hostId: string): Promise<HostSetupJob> {
     return this.request("POST", "/hosts/setup/update", { body: { host_id: hostId } });
   }
+  /** What a server has installed and what each tool pack would add (owner only; SSH, read-only). */
+  getHostPacks(hostId: string): Promise<HostPacks> {
+    return this.request("GET", `/hosts/setup/packs/${encodeURIComponent(hostId)}`);
+  }
+  /** Dry run: what installing or removing packs would do. Changes nothing (owner only; the owner key is added for the local daemon). */
+  planHostPacks(hostId: string, action: PackAction, packs: string[]): Promise<PackPlan> {
+    return this.request("POST", "/hosts/setup/packs/plan", { body: { host_id: hostId, action, packs } });
+  }
+  /** Run exactly the plan the owner saw (single use). Returns a job to poll with getHostSetup. */
+  applyHostPacks(planId: string): Promise<HostSetupJob> {
+    return this.request("POST", "/hosts/setup/packs/apply", { body: { plan_id: planId } });
+  }
   /** The version a paired server runs (fails when it is off). */
   getHostVersion(hostId: string): Promise<HostVersion> {
     return this.request("GET", `/hosts/${encodeURIComponent(hostId)}/version`);
@@ -880,8 +898,13 @@ export class ApiClient {
     });
   }
 
-  searchChatHistory(q: string, offset = 0, signal?: AbortSignal): Promise<import("./types").SearchPage> {
-    return this.request("GET", "/chats/search", { query: { q, offset }, signal });
+  searchChatHistory(
+    q: string,
+    offset = 0,
+    signal?: AbortSignal,
+    filters: Record<string, string | number | boolean> = {}
+  ): Promise<import("./types").SearchPage> {
+    return this.request("GET", "/chats/search", { query: { q, offset, ...filters }, signal });
   }
   exportChat(
     chatId: string,
@@ -1607,6 +1630,31 @@ export class ApiClient {
   }
   denyEmailReply(id: string): Promise<void> {
     return this.request("POST", `/email/channel/replies/${encodeURIComponent(id)}/deny`);
+  }
+  /** Outgoing-mail guard values: limits, opt-out line (owner-only). */
+  getMailGuardSettings(): Promise<EmailGuardSettings> {
+    return this.request("GET", "/email/guard/settings");
+  }
+  putMailGuardSettings(body: EmailGuardSettings): Promise<EmailGuardSettings> {
+    return this.request("PUT", "/email/guard/settings", { body });
+  }
+  /** Addresses and domains the owner will not write to (owner-only). */
+  listMailOptOuts(): Promise<EmailOptOut[]> {
+    return this.request("GET", "/email/guard/opt-out");
+  }
+  addMailOptOut(value: string, note = ""): Promise<EmailOptOut> {
+    return this.request("POST", "/email/guard/opt-out", { body: { value, note } });
+  }
+  removeMailOptOut(value: string): Promise<void> {
+    return this.request("DELETE", `/email/guard/opt-out/${encodeURIComponent(value)}`);
+  }
+  /** Who got mail, when and from which bot, newest first (owner-only). */
+  listMailSendLog(limit = 100): Promise<EmailSendLogEntry[]> {
+    return this.request("GET", "/email/guard/send-log", { query: { limit: String(limit) } });
+  }
+  /** The whole send log as CSV text (owner-only). */
+  exportMailSendLog(): Promise<string> {
+    return this.requestText("GET", "/email/guard/send-log.csv");
   }
   /** The same for an account that is not saved (nothing is stored). */
   testEmailDraft(input: EmailAccountInput): Promise<EmailTestReport> {

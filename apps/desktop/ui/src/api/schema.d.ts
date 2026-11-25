@@ -1803,6 +1803,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/email/guard/opt-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The opt-out list (owner only). */
+        get: operations["list_opt_outs"];
+        put?: never;
+        /** Add an address or domain to the opt-out list (owner only). */
+        post: operations["add_opt_out"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/email/guard/opt-out/{value}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove an entry from the opt-out list (owner only). */
+        delete: operations["remove_opt_out"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/email/guard/send-log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The send log, newest first (owner only: it lists recipients). */
+        get: operations["get_send_log"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/email/guard/send-log.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The whole send log as a CSV file (owner only). */
+        get: operations["export_send_log"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/email/guard/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The values the outgoing-mail guard uses (owner only). */
+        get: operations["get_guard_settings"];
+        /** Change the guard values (owner only). */
+        put: operations["put_guard_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/email/test": {
         parameters: {
             query?: never;
@@ -2350,6 +2437,54 @@ export interface paths {
             cookie?: never;
         };
         get: operations["hosts_setup_bootstrap"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup/packs/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_packs_apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup/packs/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hosts_packs_plan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/hosts/setup/packs/{host_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["hosts_packs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5957,6 +6092,8 @@ export interface components {
             bot?: string | null;
             /** @description Whether the account trusts an extra root certificate (a private CA). */
             custom_ca: boolean;
+            /** @description Bots that use this account as their default sender. */
+            default_for?: string[];
             /** @description Folder drafts are saved to. */
             drafts_folder: string;
             /** @description IMAP server (empty host for API-backed accounts). */
@@ -5972,6 +6109,10 @@ export interface components {
             password_set: boolean;
             /** @description Kind of mailbox. */
             provider: components["schemas"]["EmailProviderKind"];
+            /** @description Draft only, or ask the owner each time. */
+            send_mode?: components["schemas"]["EmailSendMode"];
+            /** @description Further bots (storage UUIDs) that may use the account besides `bot`. */
+            shared_with?: string[];
             /** @description SMTP server. */
             smtp: components["schemas"]["EmailSmtpServer"];
             /** @description Login name; empty = the address. */
@@ -5990,6 +6131,8 @@ export interface components {
             api_key?: string | null;
             /** @description Bot (storage UUID) that owns the account; absent / `null` = every bot. */
             bot?: string | null;
+            /** @description Bots that use this account as their default sender. */
+            default_for?: string[];
             /**
              * @description Custom (verified) domain for a new `agentmail` address; default the
              *     provider's shared domain.
@@ -6018,6 +6161,10 @@ export interface components {
              *     and `smtp` are not used and `api_key` is required.
              */
             provider?: components["schemas"]["EmailProviderKind"];
+            /** @description Draft only, or ask the owner each time (default). */
+            send_mode?: components["schemas"]["EmailSendMode"];
+            /** @description Further bots that may use the account besides `bot`. */
+            shared_with?: string[];
             /** @description SMTP server (`imap_smtp`). */
             smtp?: components["schemas"]["EmailSmtpServer"];
             /** @description Login name; default (empty) = the address. */
@@ -6038,11 +6185,16 @@ export interface components {
             api_key?: string | null;
             /** @description Owning bot; `null` = every bot; omit to keep. */
             bot?: string | null;
+            /** @description Bots that use this account as default sender; a present list replaces it. */
+            default_for?: string[] | null;
             /** @description Folder drafts are saved to. */
             drafts_folder?: string | null;
             imap?: null | components["schemas"]["EmailImapServer"];
             /** @description New password (write-only). */
             password?: string | null;
+            send_mode?: null | components["schemas"]["EmailSendMode"];
+            /** @description Further bots that may use the account; a present list replaces it. */
+            shared_with?: string[] | null;
             smtp?: null | components["schemas"]["EmailSmtpServer"];
             /** @description Login name; empty = the address. */
             username?: string | null;
@@ -6083,6 +6235,23 @@ export interface components {
             /** @description The bot may propose replies (each needs the owner's approval). */
             replies_enabled: boolean;
         };
+        /** @description Outgoing-mail guard values the owner can change (`GET`/`PUT /v1/email/guard/settings`). */
+        EmailGuardSettingsDto: {
+            /**
+             * Format: int32
+             * @description Warn above this many sends per account in 24 hours (`0` = no warning). Default 20.
+             */
+            daily_limit: number;
+            /** @description Text of the opt-out line (`{sender}` = the sending address); empty = built-in text. */
+            footer: string;
+            /** @description Add the opt-out line to outgoing mail by default. */
+            opt_out_line: boolean;
+            /**
+             * Format: int32
+             * @description Warn when a recipient got mail within this many days (`0` = no warning). Default 14.
+             */
+            same_recipient_days: number;
+        };
         /** @description An IMAP server (always implicit TLS). */
         EmailImapServer: {
             /** @description Host name. */
@@ -6110,6 +6279,27 @@ export interface components {
             /** @description Not read yet. */
             unread: boolean;
         };
+        /** @description One address or domain the owner will not write to. */
+        EmailOptOutDto: {
+            /**
+             * Format: int64
+             * @description Unix seconds when it was added.
+             */
+            added_at: number;
+            /** @description `address` or `domain`. */
+            kind: string;
+            /** @description The owner's note. */
+            note: string;
+            /** @description `ann@example.com` or `example.com`. */
+            value: string;
+        };
+        /** @description Body of `POST /v1/email/guard/opt-out`. */
+        EmailOptOutInput: {
+            /** @description Optional note (at most 200 characters are kept). */
+            note?: string;
+            /** @description An address (`ann@example.com`) or a domain (`example.com`). */
+            value: string;
+        };
         /** @description A reply waiting for the owner's approval. */
         EmailPendingReplyDto: {
             /** @description The whole body, exactly as it will be sent. Plain text: show it as text. */
@@ -6119,8 +6309,12 @@ export interface components {
              * @description When it was proposed (Unix ms).
              */
             created_ms: number;
+            /** @description The identity it is sent from: `address (account: name)`. */
+            from?: string;
             /** @description Id used to approve or deny. */
             id: string;
+            /** @description That identity's send mode (`ask`: the owner approves every send). */
+            send_mode?: string;
             /** @description Subject. */
             subject: string;
             /** @description Exact recipients. */
@@ -6141,6 +6335,40 @@ export interface components {
          * @enum {string}
          */
         EmailSecurity: "implicit" | "start_tls";
+        /** @description One sent mail in the send log. */
+        EmailSendLogDto: {
+            /** @description Account name. */
+            account: string;
+            /**
+             * Format: int64
+             * @description Unix seconds.
+             */
+            at: number;
+            /** @description The same moment in UTC. */
+            at_utc: string;
+            /** @description Bot that sent it. */
+            bot?: string | null;
+            /** @description Sending address. */
+            from: string;
+            /** @description Provider message id. */
+            message_id: string;
+            /** @description The opt-out line was added. */
+            opt_out_line: boolean;
+            /** @description All recipients. */
+            recipients: string[];
+            /** @description Run that sent it. */
+            run: string;
+            /** @description Warnings the owner sent past with "Send anyway" (empty = none). */
+            send_anyway: string[];
+            /** @description First characters of the subject. */
+            subject: string;
+        };
+        /**
+         * @description What bots may do with a mail identity. Sending always needs the owner's
+         *     approval; this can only make it stricter.
+         * @enum {string}
+         */
+        EmailSendMode: "ask" | "draft_only";
         /** @description Answer of `POST /v1/email/accounts/{name}/send-test`. */
         EmailSendTestResponse: {
             /** @description The address the test message went to: always the mailbox's own address. */
@@ -6713,7 +6941,7 @@ export interface components {
          * @description What a job does on the server.
          * @enum {string}
          */
-        HostJobKind: "setup" | "update";
+        HostJobKind: "setup" | "update" | "packs";
         /** @description `POST /v1/hosts/setup/{job}/host-key`. */
         HostKeyAnswer: {
             accept: boolean;
@@ -6786,6 +7014,36 @@ export interface components {
         HostLinkState: "idle" | "connecting" | "connected" | "offline" | "unreachable";
         /** @enum {string} */
         HostMode: "standalone" | "host" | "client";
+        /** @description One pack on one server. */
+        HostPackInfo: {
+            /** @description Part of the wizard's one-switch basic set. */
+            base: boolean;
+            /** @description Catalog id (`office`, `docs`, `ocr`, `media`, `dev`). The app shows its own localised name. */
+            id: string;
+            /** @description False for shared system tools that Praxi never removes. */
+            removable: boolean;
+            /**
+             * Format: int32
+             * @description Rough download size.
+             */
+            size_mb: number;
+            /** @description `installed`, `partial` (an interrupted install) or `missing`. */
+            status: string;
+        };
+        /** @description `GET /v1/hosts/setup/packs/{host_id}`: the server's "installed tools" fact sheet. */
+        HostPacks: {
+            /** @description The saved login can install software without a password prompt. */
+            can_admin: boolean;
+            /** @description Set when the server could not be read: `connection`, `unsupported` or `failed`. */
+            error?: string | null;
+            /** @description Technical detail for "copy details" (sanitised, redacted). */
+            error_detail?: string | null;
+            host_id: string;
+            packs: components["schemas"]["HostPackInfo"][];
+            /** @description Debian and Ubuntu servers only. */
+            supported: boolean;
+            tools: components["schemas"]["HostToolFact"][];
+        };
         HostPeer: {
             /** @description The device holds host administration (may send keys and settings here). */
             admin: boolean;
@@ -6860,6 +7118,11 @@ export interface components {
             /** Format: int64 */
             total_ram_mb: number;
             version: string;
+        };
+        /** @description One program the fact sheet looked for. */
+        HostToolFact: {
+            name: string;
+            present: boolean;
         };
         /** @description `GET /v1/hosts/{id}/version`: what a paired server runs. */
         HostVersion: {
@@ -8377,6 +8640,59 @@ export interface components {
             /** @description Skill version string. */
             version: string;
         };
+        /**
+         * @description What the owner wants done with the chosen packs.
+         * @enum {string}
+         */
+        PackAction: "install" | "remove";
+        /** @description `POST /v1/hosts/setup/packs/apply`: run exactly the plan the owner saw. */
+        PackApplyInput: {
+            plan_id: string;
+        };
+        /** @description The dry-run preview the owner approves. `plan_id` is single use and expires. */
+        PackPlan: {
+            action: components["schemas"]["PackAction"];
+            /** Format: int32 */
+            expires_in_secs: number;
+            host_id: string;
+            items: components["schemas"]["PackPlanItem"][];
+            plan_id: string;
+            /** @description True when at least one item can run. */
+            runnable: boolean;
+            /**
+             * Format: int32
+             * @description Rough download size of what would be installed (0 for a removal).
+             */
+            size_mb: number;
+        };
+        /** @description `POST /v1/hosts/setup/packs/plan`. */
+        PackPlanInput: {
+            action: components["schemas"]["PackAction"];
+            /** @description Paired host id (`GET /v1/hosts`). */
+            host_id: string;
+            /** @description Catalog ids. Anything else is refused. */
+            packs: string[];
+        };
+        /** @description What would happen to one pack. Nothing has been changed yet. */
+        PackPlanItem: {
+            /**
+             * @description Why it cannot run: `shared`, `dependants`, `unavailable`, `needs_admin`, `unsupported`,
+             *     `connection` or `failed`.
+             */
+            blocked?: string | null;
+            /** @description Already as wanted: nothing to do. */
+            noop: boolean;
+            pack: string;
+            /** @description The catalog's packages that would be installed or removed. */
+            packages: string[];
+            /** Format: int32 */
+            size_mb: number;
+            /**
+             * Format: int32
+             * @description Packages apt would unpack in total, dependencies included (0 when unknown).
+             */
+            total_packages: number;
+        };
         /** @description A one-time pairing code (`POST /v1/channels/telegram/pair-code`). */
         PairCodeDto: {
             /** @description The 6-digit code the user sends as `/pair <code>`. */
@@ -9538,6 +9854,13 @@ export interface components {
         };
         /** @description `POST /v1/hosts/setup`. */
         StartHostSetupInput: {
+            /**
+             * @description The owner wants the basic tool set (office, documents, media, developer tools). This only
+             *     records the intent: nothing is installed by the setup. The job ends with a `packs.plan`
+             *     step (`plan_required`) and the app opens the tools plan, where the owner sees the dry run
+             *     and approves it (`/v1/hosts/setup/packs/plan` and `/apply`).
+             */
+            base_packs?: boolean;
             /** @description Host name or IP address of the server. */
             host: string;
             /**
@@ -12737,6 +13060,14 @@ export interface operations {
                 q: string;
                 bot_id: string | null;
                 chat_id: string | null;
+                /** @description Only messages at or after this time (ms since epoch). */
+                from_ms: number | null;
+                /** @description Only messages before this time (ms since epoch). */
+                to_ms: number | null;
+                /** @description Only messages that carry an attachment. */
+                has_file: boolean | null;
+                /** @description Only messages that contain a web link. */
+                has_link: boolean | null;
                 /** @description Ranked offset, at most 10,000. */
                 offset: number | null;
                 /** @description Page size, 1–100 (default 30). */
@@ -14872,6 +15203,231 @@ export interface operations {
             };
         };
     };
+    list_opt_outs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailOptOutDto"][];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    add_opt_out: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailOptOutInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailOptOutDto"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    remove_opt_out: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The address or domain */
+                value: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_send_log: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description How many lines, newest first (default 200, at most 5000). */
+                limit: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailSendLogDto"][];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    export_send_log: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_guard_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailGuardSettingsDto"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_guard_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailGuardSettingsDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailGuardSettingsDto"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     test_email_draft: {
         parameters: {
             query?: never;
@@ -15921,6 +16477,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BootstrapCommand"];
+                };
+            };
+        };
+    };
+    hosts_packs_apply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PackApplyInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSetupJob"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hosts_packs_plan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PackPlanInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackPlan"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hosts_packs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostPacks"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };
