@@ -334,8 +334,14 @@ export async function flows(ctx) {
     // A fresh chat: exposure of earlier turns rides on the chat's messages, and
     // the previous flow's shell output would make the first search ask instead.
     const fresh = page.getByTestId('bot-panel-new-chat');
+    // The side panel opens only on request now: ask for it through the bot chip.
+    if (!(await fresh.isVisible().catch(() => false))) {
+      await page.getByTestId('bot-chip').click();
+      await page.getByTestId('bot-panel').waitFor(T);
+    }
     if (await fresh.isVisible().catch(() => false)) {
       await fresh.click();
+      await page.keyboard.press('Escape');
       // The old chat's composer stays visible until the switch: wait for its last reply to go.
       await page.getByText(/tool said: .*smoke-one/).first().waitFor({ state: 'hidden', timeout: 15000 });
     }
