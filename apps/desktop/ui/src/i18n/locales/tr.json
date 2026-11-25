@@ -1308,6 +1308,7 @@
     "computer": "Bilgisayar",
     "edit": "Botu düzenle",
     "isMain": "Bu, ana bot",
+    "liteFullHint": "Hafif bir model seçili. Uzun, çok adımlı işler için daha güçlü bir model daha iyi çalışır: bu model durup soru sorabilir ya da yolunu kaybedebilir. Botun ayarlarından değiştirebilirsin.",
     "mail": {
       "agentmail": "Kendi adresi",
       "check": "Bağlantıyı denetle",

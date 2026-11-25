@@ -1308,6 +1308,7 @@
     "computer": "Computer",
     "edit": "Edit bot",
     "isMain": "This is the main bot",
+    "liteFullHint": "Hay un modelo ligero seleccionado. Para tareas largas de muchos pasos funciona mejor un modelo más potente: este puede detenerse a preguntar o perder el hilo. Puedes cambiarlo en los ajustes del bot.",
     "mail": {
       "agentmail": "Own address",
       "check": "Check connection",

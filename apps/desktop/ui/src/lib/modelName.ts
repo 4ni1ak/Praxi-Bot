@@ -142,3 +142,18 @@ export function modelLine(ref: string | null | undefined): ModelLine {
     isDefault: false
   };
 }
+
+const LITE_TOKENS = new Set(["lite", "mini", "nano", "haiku", "tiny"]);
+
+/**
+ * A light model tier ("Flash Lite", "mini", "nano", "Haiku"): fine for a chat, weak at long
+ * multi-step work, where it tends to stop and ask or lose track.  Used for one gentle hint when
+ * such a model runs a bot on the Full level.  Judged from the id's own words, never from a size
+ * tag, so a local `llama3.2:3b` is not called "lite" by guesswork.
+ */
+export function isLiteModel(ref: string | null | undefined): boolean {
+  const text = (ref ?? "").trim().toLowerCase();
+  if (!text || isPlaceholderModel(text)) return false;
+  const leaf = text.slice(text.lastIndexOf("/") + 1).split(":")[0] ?? "";
+  return leaf.split(/[-_.\s]+/).some((token) => LITE_TOKENS.has(token));
+}

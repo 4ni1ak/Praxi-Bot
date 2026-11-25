@@ -1308,6 +1308,7 @@
     "computer": "Computer",
     "edit": "Bot bearbeiten",
     "isMain": "Das ist der Haupt-Bot",
+    "liteFullHint": "Es ist ein leichtes Modell eingestellt. Für lange Aufgaben mit vielen Schritten funktioniert ein stärkeres Modell besser: Dieses hält vielleicht an, um nachzufragen, oder verliert den Faden. Du kannst es in den Einstellungen des Bots ändern.",
     "mail": {
       "agentmail": "Eigene Adresse",
       "check": "Verbindung prüfen",

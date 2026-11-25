@@ -283,10 +283,13 @@ read anything behaves as before.
 The **Full** preset ("Tam") is for people who want the bot to do the work, not to
 ask about every page. In a run that **you started yourself** (typed in the
 desktop app, or sent from your own admin desktop), reading web pages does not
-make the bot ask again for each further step in the managed browser. Opening a
+make the bot ask again for each further step in the managed browser **or in the
+public-web read tools** (`web_search`, `web_extract`, `web_feed`, `web_sitemap`,
+`web_metadata`): a search, a page, a feed or a sitemap on a new site follows the
+same rule as opening that site in the browser. Opening a
 page already counts as "read something untrusted"; what decides whether the bot
 may keep going is whether the run also holds **your private data**: your files,
-mail, memory, screens or other bots' data, also from an earlier message of the same chat or from another bot's answer (then nothing can be compared, so a new site asks). Pages seen through a browser profile you named count as private too, because that profile may be signed in to your accounts. So do the pages of a bot's own browser once you took it over (for example to log in) or typed one of your stored secrets into it, and anything opened on this computer or your network (`localhost`, `file:`, a LAN address). Logins the bot made for itself with `account_register` do not count, so sign-up work stays free. The details you typed for the task (a
+mail, memory, screens or other bots' data, also from an earlier message of the same chat or from another bot's answer. What the bot **recalled from memory**, found in your **knowledge base** or said in an **earlier reply** is private too, but its words are known to the run (as salted hashes), so only a call that **copies** one of those words or phrases asks. Private data whose text cannot be compared (a signed-in browser, a window or screen, an attached file, another bot's answer, an MCP tool's result, or a result too large to keep) makes every new site ask. Pages seen through a browser profile you named count as private too, because that profile may be signed in to your accounts. So do the pages of a bot's own browser once you took it over (for example to log in) or typed one of your stored secrets into it, and anything opened on this computer or your network (`localhost`, `file:`, a LAN address). Logins the bot made for itself with `account_register` do not count, so sign-up work stays free. The details you typed for the task (a
 company name, your email address) are not private for this purpose. You gave them
 so the bot can type them into forms.
 
@@ -294,7 +297,7 @@ so the bot can type them into forms.
 | --- | --- |
 | No private data in the run: opens any public site (new ones too), deep pages, query strings, goes back, switches tabs, clicks, scrolls, types the details you gave it, picks options, presses keys, submits forms | No |
 | Private data in the run, and it read a web page: deep pages, subdomains and forms of a site **you named** (or approved on an earlier card) | No |
-| Private data in the run, and it read a web page: a new site, or a form on a page that is not yours, **when the address or text contains a word of 6 or more letters (or three words in a row) of the private data, even split by dashes or dots, percent-encoded or accented differently**, looks like a key, access code, hash or encoded string, is long (over 120 characters of address, over 39 characters of form text), carries a `#fragment`, or the run has already sent more than about 600 characters to such places | **Yes** |
+| Private data in the run, and it read a web page: a new site, a search query, or a form on a page that is not yours, **when the address or text contains a word of 6 or more letters (or three words in a row) of the private data, even split by dashes or dots, percent-encoded or accented differently**, looks like a key, access code, hash or encoded string, is long (over 120 characters of address, over 39 characters of form text, 160 characters of search query), carries a `#fragment`, or the run has already sent more than about 1500 characters to such places | **Yes** |
 | Private data in the run and it read a web page, but nothing in the address or text comes from the private data | No |
 | Types a card-like number or something shaped like a key into a page, in any run | **Yes** |
 | Types an owner-stored secret (`browser_fill` with `secret`) | **Yes**, every time |
@@ -314,8 +317,30 @@ and its one-time cards, and the Normal level and custom levels are unchanged.
 What it cannot stop: letter-by-letter spelling (`h-a-n-n-e-l-o-r-e`) and punycode host names, as well as private words shorter than 6 letters (a 4-digit PIN, a short first name) and anything shorter than three words are never recognised; a hostile page that talks the model into **re-encoding or
 paraphrasing** your private data into a fresh string (for example translating it, or
 spelling it with different words) and sending it to a new site, or private data the
-model knows that never came through a tool result of this run. Every call this rule
-lets through is written to the audit log as `mode.full.owner_browse`.
+model knows that never came through a tool result of this run. Private data from an
+**earlier turn** is compared through that turn's reply, which is still in the chat,
+not through the original mail or file; and a search query a few words long goes to
+the search provider, so a paraphrase of private data in it is not recognised either
+(the volume is capped by the budget above). Every call this rule
+lets through is written to the audit log as `mode.full.owner_browse` (the web read tools too).
+
+**What the bot is told.** On the Full level the bot's base instructions say: carry
+the task through to the end without asking "shall I start?" or for a go-ahead;
+choose sensible defaults itself (which sites, names, wording) and say what it chose;
+ask you only for what only you know (a password, a personal choice) or at a hard
+stop (spending money, deleting outside the workspace, secrets, messaging third
+parties, a CAPTCHA or 2FA handover); and finish with "Done:" and what is left. A
+small model may still stop and ask. **Agentic work needs a stronger model than a
+"lite" tier** (for example Flash-Lite, mini, nano or Haiku models): they follow
+long multi-step instructions less reliably. The bot panel shows a hint when a
+bot on the Full level runs on such a model.
+
+**What still asks in the Full level.** Starting a program or shell command after
+the run read a web page (a page must not choose a command) always asks, and so do
+the hard stops above. A run that came in through **Telegram** (or any channel, the
+local API or a paired device that is not your admin desktop) is not owner-started
+by this rule: its web and browser steps keep the one-time cards. That is the
+current state, not a promise about the future.
 
 ### Host-status commands on an always-on host
 
