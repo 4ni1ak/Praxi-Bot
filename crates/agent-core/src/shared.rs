@@ -171,6 +171,10 @@ pub enum Delivery {
     Queued(InitiatorKind),
     /// The message was the `/stop` command: the running turn was cancelled.
     Stopped(RunId),
+    /// The turn waited for the owner's approval and the owner wrote instead of answering: the
+    /// approval was denied, the turn (this run) was stopped as Stop does, and the message starts
+    /// the next turn at once.
+    Redirected(RunId),
 }
 
 /// The permission picture of one bot: its stored policy merged with its
@@ -711,6 +715,19 @@ pub(crate) struct Pending {
     pub run_id: RunId,
     /// The persisted approval row of this park.
     pub approval_id: uuid::Uuid,
+    /// What the card asks for.
+    pub kind: PendingKind,
+}
+
+/// What a parked card asks the owner for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PendingKind {
+    /// A tool call that needs the owner's approval.
+    Approval,
+    /// A question of the bot (`ask_user`).
+    Question,
+    /// A credential request.
+    Secret,
 }
 
 /// Browser actions that act on the page open right now: their allowance is bound to its origin.
@@ -1071,6 +1088,8 @@ pub(crate) struct Shared {
     /// `browser_handover` calls waiting for the owner (see `approval.rs`).
     pub handovers: Mutex<HashMap<ToolCallId, HandoverInfo>>,
     pub grants: Mutex<Grants>,
+    /// Per-site / per-app permission rules of every bot (see `site_profiles`).
+    pub profile_rules: Mutex<Vec<(BotId, permission_engine::ProfileRule)>>,
     pub active: Mutex<HashMap<ChatId, RunId>>,
     pub queued: Mutex<HashMap<ChatId, VecDeque<QueuedMessage>>>,
     /// Bots still to answer one user message that mentioned several bots
@@ -1109,6 +1128,11 @@ pub(crate) struct Shared {
     /// Runs the owner stopped. An approval abandoned by that stop is a denial,
     /// not a timeout. Cleared when the run is concluded.
     pub user_stopped: Mutex<HashSet<RunId>>,
+    /// Runs stopped because the owner wrote a new message while they waited on an approval: the
+    /// denial says so, and the chat hands over to the queued message instead of staying free.
+    pub redirected: Mutex<HashSet<RunId>>,
+    /// A note for the next turn of a chat whose pending approval was skipped by a new message.
+    pub turn_notes: Mutex<HashMap<ChatId, TurnNote>>,
     /// Runs whose terminal bookkeeping has started. A second conclude (the
     /// drive task waking after the stop supervisor already finished the run)
     /// must not emit another `run_finished` or start a queued turn.
@@ -1155,6 +1179,15 @@ pub(crate) struct Shared {
     /// grant mechanics with a generic tool. Never set outside tests.
     #[cfg(test)]
     pub legacy_always: AtomicBool,
+}
+
+/// What the model is told at the start of the turn that follows a skipped approval.
+#[derive(Debug, Clone)]
+pub(crate) struct TurnNote {
+    /// When the approval was skipped.
+    pub at_ms: i64,
+    /// The summaries of the actions that did not run (quoted to the model as data).
+    pub skipped: Vec<String>,
 }
 
 /// A message waiting for the running turn to end. Its initiator kind is fixed

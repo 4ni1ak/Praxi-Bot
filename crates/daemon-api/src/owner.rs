@@ -139,6 +139,9 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/v1/bots/{}/engine"),
     ("POST", "/v1/bots/{}/engine/kill"),
     ("DELETE", "/v1/bots/{}/grants"),
+    // per-site / per-app rules: an allow rule is an explicit owner grant
+    ("POST", "/v1/bots/{}/site-rules"),
+    ("DELETE", "/v1/bots/{}/site-rules/{}"),
     ("PUT", "/v1/bots/{}/skills"),
     ("POST", "/v1/bots/{}/knowledge/sources"),
     ("PUT", "/v1/bots/{}/knowledge/sources/{}"),

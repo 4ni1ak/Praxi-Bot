@@ -67,6 +67,32 @@ class InstallerWorkflowPolicy(unittest.TestCase):
             self.assertNotIn("secrets.", self.jobs[name], name)
         self.assertIn("TAURI_SIGNING_PRIVATE_KEY", self.jobs["windows-installer"])
 
+    @unittest.skipUnless(PWSH, "PowerShell (pwsh) is not installed")
+    def test_preview_build_keeps_the_full_release_version_for_signed_updates(self):
+        step = self.text.split("- name: Build installer\n", 1)[1].split("\n      - name:", 1)[0]
+        script = step.split("        run: |\n", 1)[1]
+        script = "\n".join(line[10:] for line in script.splitlines())
+        # Exercise the actual workflow script, replacing only the expensive build command.
+        stub = """
+function pnpm {
+    param([Parameter(ValueFromRemainingArguments=$true)][string[]]$BuildArgs)
+    if ($BuildArgs.Count -ne 3 -or $BuildArgs[0] -ne 'build:desktop' -or $BuildArgs[1] -ne '--config') {
+        throw 'Expected desktop build with a configuration file'
+    }
+    $config = Get-Content -Raw -LiteralPath $BuildArgs[2] | ConvertFrom-Json
+    Write-Output ('CONFIG=' + ($config | ConvertTo-Json -Compress -Depth 4))
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {**os.environ, "RUNNER_TEMP": tmp, "GITHUB_REF_TYPE": "tag",
+                   "GITHUB_REF_NAME": "v0.1.0-alpha.2", "TAURI_SIGNING_PRIVATE_KEY": "fixture",
+                   "PRAXI_UPDATER_PUBKEY": "fixture"}
+            result = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-Command", stub + script],
+                                    env=env, capture_output=True, text=True, timeout=20, check=True)
+            config = json.loads(next(line[7:] for line in result.stdout.splitlines() if line.startswith("CONFIG=")))
+            self.assertEqual(config["version"], "0.1.0-alpha.2")
+            self.assertTrue(config["bundle"]["createUpdaterArtifacts"])
+
     def test_attestation_and_publication_never_run_for_pull_requests_or_forks(self):
         for name in ("attest", "attach-to-release"):
             condition = re.search(r"(?ms)^    if: >-\n(.*?)^    runs-on:", self.jobs[name]).group(1)

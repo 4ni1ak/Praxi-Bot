@@ -625,6 +625,14 @@
       "warm": "Sıcak"
     }
   },
+  "approvalDock": {
+    "counter": "Onay {{current}} / {{total}}",
+    "keyAllow": "Bir kez izin ver",
+    "keyDeny": "Reddet",
+    "label": "Onayını bekliyor",
+    "next": "Sonraki onay",
+    "previous": "Önceki onay"
+  },
   "apps": {
     "access": {
       "all": "Tüm botlar",
@@ -1728,6 +1736,7 @@
         "policy": "Bu bot, bu tür bir işlemden önce sormaya ayarlı."
       }
     },
+    "approvalSkipped": "Bekleyen onay atlandı. Önce mesajına bakılıyor.",
     "attach": {
       "add": "Dosya veya görsel ekle",
       "command": "Dosyaları normal bir mesajla gönderin. Eğik çizgi komutu kullanmadan önce dosyaları kaldırın.",
@@ -1761,6 +1770,7 @@
       "uploading": "Sohbetin çalıştığı bilgisayara kopyalanıyor…"
     },
     "chain": {
+      "allowed": "İzin verdin",
       "details": "Ayrıntılar",
       "groupApp": "{{app}} ×{{count}}",
       "groupSame": "{{what}} ×{{count}}",
@@ -1771,6 +1781,7 @@
         "blocked": "Senin tarafından engellendi",
         "noAnswer": "Zamanında yanıt gelmedi",
         "other": "Çalışmadı",
+        "skipped": "Atlandı: yeni bir mesaj yazdın",
         "stopped": "Bitmeden durduruldu",
         "timeout": "Zaman aşımı",
         "timeoutAfter": "{{seconds}} sn sonra zaman aşımı"
@@ -1929,7 +1940,7 @@
     "pendingPinned": "Kararın bekleniyor. Kart mesaj kutusunun üstünde.",
     "placeholder": "Mesaj yaz…  / komutlar · @ botlar",
     "placeholderBusy": "Bot çalışıyor. Yazarsan mesaj sıraya girer",
-    "placeholderWaiting": "Onayını bekliyor. Yazdığın mesaj sıraya girer…",
+    "placeholderWaiting": "Yukarıdan yanıtla ya da planı değiştirmek için yaz",
     "question": {
       "answer": "Yanıtla",
       "answered": "Yanıtın: {{answer}}",
@@ -6069,10 +6080,65 @@
       "saving": "Kaydediliyor…"
     },
     "search": "Ayarlarda ara",
+    "siteRules": {
+      "action": "Ne olsun",
+      "actions": {
+        "allow": "İzin ver",
+        "ask": "Her zaman sor",
+        "block": "Asla izin verme"
+      },
+      "addButton": "Kural ekle",
+      "addTitle": "Kural ekle",
+      "added": "Kural kaydedildi.",
+      "allowApp": "Bu programda bunu her zaman yapabilsin",
+      "allowHint": "İzin kuralı tam olarak bu siteyi kapsar, alt alan adlarını değil.",
+      "allowSite": "Bu sitede bunu her zaman yapabilsin",
+      "bot": "Bot",
+      "capabilities": {
+        "any": "her şey",
+        "interact": "tıklama ve yazma",
+        "read": "açma ve okuma",
+        "submit": "form gönderme ve tuş basma"
+      },
+      "capability": "Şunun için",
+      "confirm": "{{target}} üzerinde {{what}} her zaman sormadan izin verilsin mi?",
+      "confirmNo": "Vazgeç",
+      "confirmYes": "Evet, her zaman izin ver",
+      "empty": "Henüz kural yok.",
+      "expired": "süresi doldu",
+      "expiries": {
+        "day": "Bir gün",
+        "month": "30 gün",
+        "never": "Ben kaldırana kadar",
+        "week": "Bir hafta"
+      },
+      "expiry": "Bu kural ne kadar dursun",
+      "lead": "Tek bir web sitesi veya program için kurallar: her zaman sor, asla izin verme ya da sormadan izin ver. Yalnızca daha fazla dikkat ekleyebilir ya da burada seçtiğin onayı verebilir.",
+      "limits": "Güvenlik açık kalır: çalışma alanı dışındaki dosyalar, web sayfalarından gelen içerik ve asla izin verilmeyenler kendi kurallarına uymaya devam eder.",
+      "recentHint": "Yakınlarda onayladığın siteler ve programlar. Birine bir daha sormadan izin verebilirsin.",
+      "recentNone": "Henüz önerilecek bir şey yok.",
+      "recentTitle": "Son onaylarından",
+      "remove": "Kaldır",
+      "removed": "Kural kaldırıldı.",
+      "site": "Web sitesi",
+      "siteHint": "Sadece adı yaz, örneğin example.com (https:// ve yol olmadan).",
+      "subdomains": "Alt alan adlarını da kapsa (örneğin shop.example.com)",
+      "title": "Siteler ve programlar",
+      "until": "{{when}} tarihine kadar",
+      "withSubdomains": "(ve alt alan adları)"
+    },
     "title": "Ayarlar",
     "updates": {
       "appVersion": "Masaüstü uygulaması",
       "available": "{{version}} sürümü hazır.",
+      "buildId": "Derleme kimliği",
+      "channel": {
+        "description": "Kararlı sürüm önerilir. Önizleme, sorun içerebilecek erken sürümleri de sunar. Güncellemeler yalnızca Yükle seçeneğine bastığınızda yüklenir.",
+        "preview": "Önizleme",
+        "stable": "Kararlı",
+        "title": "Güncelleme kanalı",
+        "unavailable": "Bu derleme için önizleme güncellemeleri henüz yapılandırılmamış."
+      },
       "check": {
         "action": "Güncellemeleri denetle",
         "description": "Daha yeni bir sürüm olup olmadığına bakar ve yenilikleri gösterir. Siz seçmeden hiçbir şey kurulmaz.",
@@ -6090,6 +6156,7 @@
         "no_rollback": "Geri dönülebilecek daha eski bir sürüm yok.",
         "not_configured": "Bu sürümde güncelleme kurulu değil.",
         "nothing_to_install": "Lütfen önce güncellemeleri denetleyin.",
+        "preview_not_configured": "Önizleme güncellemeleri yapılandırılmamış. Kararlı kanalını seçin veya önizleme destekleyen bir derleme yükleyin.",
         "signature": "Güncellemenin gerçek olduğu doğrulanamadı, bu yüzden KURULMADI. Hiçbir şey değişmedi."
       },
       "install": {
@@ -6097,14 +6164,18 @@
         "hint": "Güncelleme kurulmadan önce gerçekliği denetlenir. İşlem bitince Praxi-Bot yeniden açılır.",
         "working": "Güncelleniyor…"
       },
-      "notConfigured": "Praxi-Bot'un bu sürümünde güncelleme hizmeti kurulu değil, bu yüzden kendini güncelleyemez. En yeni sürümü proje sayfasından indirin.",
+      "lastChecked": "Son kontrol: {{time}}",
+      "neverChecked": "Güncellemeler henüz kontrol edilmedi.",
+      "notConfigured": "Güncellemeler kullanılamıyor: bu derlemede güncelleme imzalama anahtarı veya güvenli güncelleme kaynağı yapılandırılmamış. Hiçbir şey indirilmeyecek veya yüklenmeyecek.",
       "rollback": {
         "action": "Önceki sürüme dön",
         "description": "{{version}} sürümü düzgün açılmadı. Çalışan son sürüme geri dönebilirsiniz.",
         "title": "Güncellemede bir sorun çıktı",
         "working": "Geri dönülüyor…"
       },
-      "title": "Güncellemeler ve sürüm",
+      "skip": "Bu sürümü atla",
+      "skipped": "{{version}} sürümü atlandı. Daha yeni sürümler sunulmaya devam edecek.",
+      "title": "Hakkında",
       "unknown": "Bilinmiyor",
       "upToDate": "En son sürümü kullanıyorsunuz."
     },

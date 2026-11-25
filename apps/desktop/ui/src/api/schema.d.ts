@@ -795,6 +795,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{id}/site-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The rules of one bot. */
+        get: operations["list_site_rules"];
+        put?: never;
+        /** Add a rule. Owner key required. */
+        post: operations["add_site_rule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{id}/site-rules/recent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Sites and programs this bot's recent approvals were for, newest first. */
+        get: operations["recent_site_approvals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{id}/site-rules/{rule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a rule. Owner key required. */
+        delete: operations["remove_site_rule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots/{id}/skills": {
         parameters: {
             query?: never;
@@ -1022,7 +1074,10 @@ export interface paths {
         put?: never;
         /**
          * Send a user message.  Starts a turn when the chat is idle (returns its run
-         *     id); otherwise `mode` decides between steering and queueing.
+         *     id); otherwise `mode` decides between steering and queueing.  A message the
+         *     owner's own app sends while the owner's turn waits for a tool approval is
+         *     not queued behind it: the approval is denied, the turn stops and the message
+         *     starts the next turn (`delivery` = `redirected`).
          */
         post: operations["send_message"];
         delete?: never;
@@ -6007,7 +6062,7 @@ export interface components {
          * @description How a sent message was delivered.
          * @enum {string}
          */
-        DeliveryKind: "new_turn" | "steered" | "queued" | "stopped";
+        DeliveryKind: "new_turn" | "steered" | "queued" | "stopped" | "redirected";
         /** @description A detected coding CLI engine (`GET /v1/providers/detected`). */
         DetectedProviderDto: {
             /** @description Account label (email or org name, max 160 chars, or null). */
@@ -9685,6 +9740,71 @@ export interface components {
              */
             exclude: string[];
         };
+        /** @description One rule as the owner sees it. */
+        SiteRuleDto: {
+            /** @description `block`, `ask` or `allow`. */
+            action: string;
+            /**
+             * @description `read` (opening the site), `interact` (click, type, pick), `submit` (key presses,
+             *     page scripts) or `any`.
+             */
+            capability: string;
+            /**
+             * Format: int64
+             * @description When the rule was created (ms since the Unix epoch).
+             */
+            created_at_ms: number;
+            /** @description The expiry has passed: the rule no longer applies. */
+            expired: boolean;
+            /**
+             * Format: int64
+             * @description When the rule stops applying, if it expires.
+             */
+            expires_at_ms?: number | null;
+            /** @description Rule id (use it to remove the rule). */
+            id: string;
+            /** @description Sites only: the rule also covers every subdomain. */
+            include_subdomains: boolean;
+            /** @description Host name (sites) or program path (apps). */
+            key: string;
+            /** @description `site` or `app`. */
+            kind: string;
+        };
+        /** @description `POST /v1/bots/{id}/site-rules`. */
+        SiteRuleInput: {
+            /** @description `block`, `ask` or `allow`. */
+            action: string;
+            /** @description `read`, `interact`, `submit` or `any` (`any` is not allowed with `allow`). */
+            capability: string;
+            /**
+             * Format: int32
+             * @description The rule stops applying after this many hours (omit for no expiry).
+             */
+            expires_in_hours?: number | null;
+            /** @description Sites only, and never with `allow`: also cover every subdomain. */
+            include_subdomains?: boolean;
+            /**
+             * @description A plain host name (`example.com`, no `https://`, port or path) or an absolute
+             *     program path.
+             */
+            key: string;
+            /** @description `site` or `app`. */
+            kind: string;
+        };
+        /** @description A site or program a recent approval was for ("add from a recent approval"). */
+        SiteRuleSuggestionDto: {
+            /**
+             * Format: int64
+             * @description When it was approved (ms since the Unix epoch).
+             */
+            approved_at_ms: number;
+            /** @description The class of the approved call. */
+            capability: string;
+            /** @description Host name or program path. */
+            key: string;
+            /** @description `site` or `app`. */
+            kind: string;
+        };
         /**
          * @description Per-bot skill assignment mode.
          * @enum {string}
@@ -12722,6 +12842,139 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_site_rules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteRuleDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    add_site_rule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SiteRuleInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteRuleDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the rule is not valid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    recent_site_approvals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteRuleSuggestionDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    remove_site_rule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+                /** @description Rule id */
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

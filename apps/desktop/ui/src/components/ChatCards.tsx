@@ -45,6 +45,7 @@ import {
   type EgressApprovalDetails,
   type ScheduleApprovalDetails
 } from "../lib/approvalDetails";
+import { approvalKeyAction } from "../lib/approvalKeys";
 import { brandIcon } from "../lib/brandIcons";
 import { describeTool, resolveToolCall } from "../lib/toolLabels";
 import { SiteFavicon } from "./SiteFavicon";
@@ -224,7 +225,23 @@ export interface ApprovalCardProps {
   onTrustFolder?: (folder: string) => Promise<void>;
   /** The bot that made the call (to list the addresses it may send from). */
   botId?: string | null;
+  /** `dock`: the card docked above the composer (attached to it, same radius, Enter / Esc keys). */
+  variant?: "inline" | "dock";
+  /** This is the card the Enter / Esc keys answer (only the visible card of the dock). */
+  keyboard?: boolean;
 }
+
+/** Enter may allow this card once: it carries nothing the owner has to read first. */
+export function enterMayAllow(tool: ToolItem): boolean {
+  return (
+    !isOutboundSend(tool.name) &&
+    (mailSendDetails(tool.details) ?? null) === null &&
+    !egressDetails(tool.details)
+  );
+}
+
+/** How long a card is on screen before Enter may allow it, so a keypress meant for the composer cannot. */
+const KEY_ARM_MS = 600;
 
 /** "From" line of a mail card, and the way to send from another address instead. */
 function MailSenderBlock({
@@ -609,7 +626,9 @@ export function ApprovalCard({
   expiresAtMs,
   serverName = null,
   onTrustFolder,
-  botId
+  botId,
+  variant = "inline",
+  keyboard = false
 }: ApprovalCardProps) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
@@ -697,9 +716,46 @@ export function ApprovalCard({
   const openDetailsByDefault =
     egress?.reviewFullPayload === true || mail !== null || (app ? app.count <= 1000 : false);
 
+  // Enter allows once, Esc denies: only for the card the dock shows, never for a card that has to
+  // be read (a payload to review, an outgoing message, a mail) and never in the first moments.
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!keyboard) return undefined;
+    const id = window.setTimeout(() => setArmed(true), KEY_ARM_MS);
+    return () => window.clearTimeout(id);
+  }, [keyboard, tool.callId]);
+  const keyState = {
+    armed,
+    canAllow:
+      !disabled && !reviewPending && !unrenderable && enterMayAllow(tool)
+  };
+  const keyDecide = useRef<(k: "allow" | "deny") => void>(() => undefined);
+  keyDecide.current = (k) => {
+    if (busy || remaining === 0) return;
+    if (k === "allow") void decide("approve", "once");
+    else void decide("deny", undefined, reason || undefined);
+  };
+  const keyStateRef = useRef(keyState);
+  keyStateRef.current = keyState;
+  useEffect(() => {
+    if (!keyboard) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      const action = approvalKeyAction(e, keyStateRef.current);
+      if (!action) return;
+      e.preventDefault();
+      keyDecide.current(action);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [keyboard]);
+
   return (
     <div
-      className={[styles.approval, outbound ? styles.outbound : ""]
+      className={[
+        styles.approval,
+        variant === "dock" ? styles.approvalDock : "",
+        outbound ? styles.outbound : ""
+      ]
         .filter(Boolean)
         .join(" ")}
       role="group"

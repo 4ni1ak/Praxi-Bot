@@ -24,14 +24,15 @@ use crate::approval::{LoopGate, grant_detail, grant_target};
 use crate::config::{LoopConfig, ModelPrice};
 use crate::control::{ControlGate, LoopControl};
 use crate::exec::TurnExecutor;
-use crate::history::{status_of, step_output};
+use crate::history::{status_of, step_output, truncate_utf8};
 use crate::profile::BotProfile;
 use crate::shared::{
     ApprovalScope, COMPUTER_IDENTITY_UNBOUND_NOTICE, COMPUTER_PREPARE_TIMEOUT_NOTICE,
     CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, Grants, LoopError,
-    MessageMode, ModelOut, Pending, Providers, QueuedMessage, STEP_MODEL, STEP_NUDGE, STEP_TOOLS,
-    STEP_USER, ScheduleWork, Shared, StreamItem, Verdict, initiator_of, is_occurrence_kind,
-    kind_for, kind_for_mention, kind_for_schedule, mention_message_id, occurrence_kind,
+    MessageMode, ModelOut, Pending, PendingKind, Providers, QueuedMessage, STEP_MODEL, STEP_NUDGE,
+    STEP_TOOLS, STEP_USER, ScheduleWork, Shared, StreamItem, TurnNote, Verdict, initiator_of,
+    is_occurrence_kind, kind_for, kind_for_mention, kind_for_schedule, mention_message_id,
+    occurrence_kind,
 };
 use crate::{AUDIT_GRANT_ALWAYS, AUDIT_GRANT_INERT, AUDIT_GRANT_REVOKED};
 
@@ -127,6 +128,7 @@ impl AgentLoop {
                 runs: Mutex::new(HashMap::new()),
                 pending: Mutex::new(HashMap::new()),
                 grants: Mutex::new(load_grants(&storage)),
+                profile_rules: Mutex::new(crate::site_profiles::load_profile_rules(&storage)),
                 active: Mutex::new(HashMap::new()),
                 queued: Mutex::new(HashMap::new()),
                 mention_chain: Mutex::new(HashMap::new()),
@@ -146,6 +148,8 @@ impl AgentLoop {
                 router: crate::router::Router::default(),
                 directives: Mutex::new(HashMap::new()),
                 user_stopped: Mutex::new(HashSet::new()),
+                redirected: Mutex::new(HashSet::new()),
+                turn_notes: Mutex::new(HashMap::new()),
                 concluded: Mutex::new(crate::shared::RecentRuns::new(crate::shared::CONCLUDED_CAP)),
                 approval_paused: Mutex::new(HashSet::new()),
                 identity_paused: Mutex::new(HashSet::new()),
@@ -1350,6 +1354,10 @@ impl AgentLoop {
             self.sh.refresh_redactor();
             self.sh.redact(text.to_owned())
         });
+        // The owner writes while a turn of theirs waits on an approval: look at the message
+        // instead of leaving it behind the approval (decided before the active lock is taken).
+        let redirect = self.approval_redirect_of(chat_id, source);
+        let mut redirected_run = None;
         {
             let active = self.sh.active.lock();
             if self
@@ -1364,7 +1372,32 @@ impl AgentLoop {
                 ));
             }
             if let Some(&run_id) = active.get(&chat_id) {
-                if let Some(content) = steering {
+                if let Some((target, skipped)) = redirect
+                    && target == run_id
+                {
+                    // The approval is denied (not approved) by the stop below, the message
+                    // starts the next turn the moment this run has ended, and that turn is
+                    // told the previous action did not run.
+                    self.sh.redirected.lock().insert(run_id);
+                    self.sh.turn_notes.lock().insert(
+                        chat_id,
+                        TurnNote {
+                            at_ms: now_ms(),
+                            skipped,
+                        },
+                    );
+                    self.sh
+                        .queued
+                        .lock()
+                        .entry(chat_id)
+                        .or_default()
+                        .push_back(QueuedMessage {
+                            text: text.to_owned(),
+                            source,
+                            initiator: InitiatorKind::Human,
+                        });
+                    redirected_run = Some(run_id);
+                } else if let Some(content) = steering {
                     let ctx = self.sh.runs.lock().get(&run_id).cloned();
                     if let Some(ctx) = ctx {
                         let mut st = ctx.state.lock();
@@ -1382,25 +1415,34 @@ impl AgentLoop {
                         }
                     }
                 }
-                // The kind is read now, from the run that is active now, and
-                // travels with the message until its turn starts.
-                let initiator = self
-                    .sh
-                    .storage
-                    .get_run(run_id)?
-                    .map_or(InitiatorKind::Human, |r| initiator_of(&r.kind));
-                self.sh
-                    .queued
-                    .lock()
-                    .entry(chat_id)
-                    .or_default()
-                    .push_back(QueuedMessage {
-                        text: text.to_owned(),
-                        source,
-                        initiator,
-                    });
-                return Ok(Delivery::Queued(initiator));
+                if redirected_run.is_none() {
+                    // The kind is read now, from the run that is active now, and
+                    // travels with the message until its turn starts.
+                    let initiator = self
+                        .sh
+                        .storage
+                        .get_run(run_id)?
+                        .map_or(InitiatorKind::Human, |r| initiator_of(&r.kind));
+                    self.sh
+                        .queued
+                        .lock()
+                        .entry(chat_id)
+                        .or_default()
+                        .push_back(QueuedMessage {
+                            text: text.to_owned(),
+                            source,
+                            initiator,
+                        });
+                    return Ok(Delivery::Queued(initiator));
+                }
             }
+        }
+        if let Some(run_id) = redirected_run {
+            // Stop's own path: the token is cancelled first, then every open card of the run
+            // (and of its subagents) is denied with the "wrote a new message" reason, so no
+            // tool runs. When the run has ended the queued message starts the next turn.
+            let _ = self.cancel(run_id);
+            return Ok(Delivery::Redirected(run_id));
         }
         Ok(Delivery::NewTurn(self.start_turn_from(
             chat_id,
@@ -1410,6 +1452,53 @@ impl AgentLoop {
             None,
             source,
         )?))
+    }
+
+    /// The turn to skip when the owner writes: the chat's active turn is the owner's own, one of
+    /// its tool approvals (its own or a subagent's) is still open, and the message comes from the
+    /// owner's own app. A question or a credential request is answered, not skipped, and a turn
+    /// that a webhook, a mail, a schedule or another agent started is never touched.
+    fn approval_redirect_of(
+        &self,
+        chat_id: ChatId,
+        source: &'static str,
+    ) -> Option<(RunId, Vec<String>)> {
+        if !matches!(source, "owner" | "peer_admin") {
+            return None;
+        }
+        let run_id = *self.sh.active.lock().get(&chat_id)?;
+        let run = self.sh.storage.get_run(run_id).ok().flatten()?;
+        if initiator_of(&run.kind) != InitiatorKind::Human {
+            return None;
+        }
+        let mut tree = vec![run_id];
+        let mut next = 0;
+        while let Some(&id) = tree.get(next) {
+            next += 1;
+            for kid in self.sh.storage.list_child_runs(id).ok()? {
+                tree.push(kid.id);
+            }
+        }
+        let open: Vec<uuid::Uuid> = self
+            .sh
+            .pending
+            .lock()
+            .values()
+            .filter(|p| p.kind == PendingKind::Approval && tree.contains(&p.run_id))
+            .map(|p| p.approval_id)
+            .collect();
+        if open.is_empty() {
+            return None;
+        }
+        let mut skipped = Vec::new();
+        for id in tree {
+            for a in self.sh.storage.list_approvals(id).ok()? {
+                if open.contains(&a.id) && skipped.len() < 5 {
+                    skipped.push(truncate_utf8(&a.summary, 200).to_owned());
+                }
+            }
+        }
+        Some((run_id, skipped))
     }
 
     /// Re-run the chat's last user turn as a NEW run (regenerate), or replace
@@ -1864,6 +1953,103 @@ impl AgentLoop {
             )?;
         }
         Ok(removed)
+    }
+
+    /// The per-site / per-app rules of a bot (expired ones included, so the owner sees them).
+    #[must_use]
+    pub fn list_profile_rules(&self, bot_id: BotId) -> Vec<permission_engine::ProfileRule> {
+        self.sh
+            .profile_rules
+            .lock()
+            .iter()
+            .filter(|(b, _)| *b == bot_id)
+            .map(|(_, r)| r.clone())
+            .collect()
+    }
+
+    /// Add a per-site / per-app rule (audited). The route that calls this is owner-only: an
+    /// `allow` rule is an explicit owner grant.
+    ///
+    /// # Errors
+    /// Fails if the bot is unknown, the rule is not valid (see
+    /// [`permission_engine::ProfileRule::new`]), the bot holds too many rules, or the audit
+    /// entry cannot be written.
+    pub fn add_profile_rule(
+        &self,
+        bot_id: BotId,
+        new: &permission_engine::profiles::NewRule<'_>,
+    ) -> Result<permission_engine::ProfileRule> {
+        let bot = self
+            .sh
+            .storage
+            .get_bot(bot_id)?
+            .ok_or_else(|| LoopError::NotFound(format!("bot {bot_id}")))?;
+        let rule =
+            permission_engine::ProfileRule::new(Uuid::now_v7().to_string(), new, storage::now_ms())
+                .map_err(|e| LoopError::Profile(e.to_string()))?;
+        let mut all = self.sh.profile_rules.lock();
+        if all.iter().filter(|(b, _)| *b == bot_id).count()
+            >= crate::site_profiles::MAX_RULES_PER_BOT
+        {
+            return Err(LoopError::Profile("too many site and program rules".into()));
+        }
+        // Audit first: a rule that cannot be recorded must not be in force.
+        self.sh.storage.append_audit(
+            bot.user_id,
+            None,
+            "user",
+            crate::site_profiles::AUDIT_PROFILE_SET,
+            &serde_json::json!({ "bot_id": bot_id.to_string(), "rule": rule }),
+        )?;
+        all.push((bot_id, rule.clone()));
+        Ok(rule)
+    }
+
+    /// Remove one rule (audited). Returns whether it existed.
+    ///
+    /// # Errors
+    /// Fails if the bot is unknown or the audit entry cannot be written.
+    pub fn remove_profile_rule(&self, bot_id: BotId, rule_id: &str) -> Result<bool> {
+        let bot = self
+            .sh
+            .storage
+            .get_bot(bot_id)?
+            .ok_or_else(|| LoopError::NotFound(format!("bot {bot_id}")))?;
+        let mut all = self.sh.profile_rules.lock();
+        if !all.iter().any(|(b, r)| *b == bot_id && r.id == rule_id) {
+            return Ok(false);
+        }
+        self.sh.storage.append_audit(
+            bot.user_id,
+            None,
+            "user",
+            crate::site_profiles::AUDIT_PROFILE_REMOVED,
+            &serde_json::json!({ "bot_id": bot_id.to_string(), "rule_id": rule_id }),
+        )?;
+        all.retain(|(b, r)| !(*b == bot_id && r.id == rule_id));
+        Ok(true)
+    }
+
+    /// Sites and programs this bot's recent approvals were for (newest first), to offer
+    /// "always allow this on this site".
+    ///
+    /// # Errors
+    /// Fails if the bot is unknown.
+    pub fn recent_approval_subjects(
+        &self,
+        bot_id: BotId,
+    ) -> Result<Vec<crate::site_profiles::ApprovalSubject>> {
+        let bot = self
+            .sh
+            .storage
+            .get_bot(bot_id)?
+            .ok_or_else(|| LoopError::NotFound(format!("bot {bot_id}")))?;
+        Ok(crate::site_profiles::recent_subjects(
+            &self.sh.storage,
+            bot.user_id,
+            bot_id,
+            20,
+        ))
     }
 
     /// Whether a guard (step limit, token budget, repeat detector) ended the
@@ -2925,7 +3111,10 @@ impl AgentLoop {
         };
         // Stop leaves queued messages where they are and frees the chat so a
         // later send is not Busy. It does not start them.
-        if matches!(res, Ok(RunState::Cancelled)) {
+        // The one exception is a run the owner redirected by writing a new message: that
+        // message is queued for exactly this moment and starts now.
+        let redirected = self.sh.redirected.lock().remove(&run_id);
+        if matches!(res, Ok(RunState::Cancelled)) && !redirected {
             self.release_chat_keep_queue(&run, run_id);
         } else {
             self.start_next_queued(&run, run_id);
