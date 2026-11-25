@@ -50,6 +50,7 @@ export const DAEMON_ERROR_CODES = [
   "host_not_permitted",
   "host_outdated",
   "host_setup_conflict",
+  "host_terminal_failed",
   "host_unreachable",
   "input_busy",
   "input_rate_limited",

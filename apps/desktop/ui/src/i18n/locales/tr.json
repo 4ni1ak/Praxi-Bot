@@ -2914,6 +2914,10 @@
         "hint": "Süren kurulumun bitmesini bekleyip yeniden dene.",
         "title": "O bilgisayar zaten kuruluyor"
       },
+      "host_terminal_failed": {
+        "hint": "Bilgisayar çevrimiçi ve yanıt verdi, ama terminali bir hata bildirdi. Aşağıdaki ayrıntılara bak, sonra yeniden dene.",
+        "title": "Terminal o bilgisayarda çalışmadı"
+      },
       "host_unreachable": {
         "hint": "Oradaki kopya hâlâ çalışıyor olabilir. Yeniden dene ya da yine de geri getirmeyi onayla.",
         "title": "Sunucu yanıt vermedi"

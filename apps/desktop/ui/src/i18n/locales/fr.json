@@ -2914,6 +2914,10 @@
         "hint": "Wait for the current setup to finish, then try again.",
         "title": "That computer is already being set up"
       },
+      "host_terminal_failed": {
+        "hint": "L'ordinateur est en ligne et a répondu, mais son terminal a signalé une erreur. Consulte les détails ci-dessous, puis réessaie.",
+        "title": "Le terminal a échoué sur cet ordinateur"
+      },
       "host_unreachable": {
         "hint": "Its copy may still be running. Try again, or confirm to bring the schedule back anyway.",
         "title": "The server did not answer"

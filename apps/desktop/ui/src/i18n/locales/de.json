@@ -2914,6 +2914,10 @@
         "hint": "Warte, bis die aktuelle Einrichtung abgeschlossen ist, und versuche es dann erneut.",
         "title": "Dieser Computer wird bereits eingerichtet"
       },
+      "host_terminal_failed": {
+        "hint": "Der Computer ist online und hat geantwortet, aber sein Terminal meldete einen Fehler. Sieh dir unten die Details an und versuche es dann erneut.",
+        "title": "Das Terminal ist auf diesem Computer fehlgeschlagen"
+      },
       "host_unreachable": {
         "hint": "Seine Kopie läuft möglicherweise noch. Versuche es erneut oder bestätige, den Zeitplan trotzdem zurückzuholen.",
         "title": "Der Server hat nicht geantwortet"

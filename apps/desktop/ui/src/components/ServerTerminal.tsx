@@ -3,7 +3,7 @@ import { Terminal as TerminalIcon, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, type ApiClient } from "../api/client";
-import { humanLine } from "../lib/humanError";
+import { humanError } from "../lib/humanError";
 import { TerminalLink, type TerminalApiLike } from "../lib/terminalSession";
 import styles from "./ServerTerminal.module.css";
 import { UpdateServerModal } from "./UpdateServerModal";
@@ -50,6 +50,8 @@ export function ServerTerminal({
   const holder = useRef<HTMLDivElement | null>(null);
   const [phase, setPhase] = useState<Phase>("starting");
   const [problem, setProblem] = useState<string | null>(null);
+  // The raw status and text of the failure, secrets removed, for the "Details" disclosure.
+  const [detail, setDetail] = useState("");
   const [attempt, setAttempt] = useState(0);
   // The server runs an older version with no terminal: offer the update right here.
   const [outdated, setOutdated] = useState(false);
@@ -66,6 +68,7 @@ export function ServerTerminal({
     let term: import("@xterm/xterm").Terminal | null = null;
     setPhase("starting");
     setProblem(null);
+    setDetail("");
     setOutdated(false);
     void (async () => {
       const [{ Terminal }, { FitAddon }] = await Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")]);
@@ -93,7 +96,9 @@ export function ServerTerminal({
         write: (bytes) => term?.write(bytes),
         ended: () => setPhase("ended"),
         failed: (e) => {
-          setProblem(humanLine(e));
+          const h = humanError(e);
+          setProblem(h.hint ? `${h.title}. ${h.hint}` : h.title);
+          setDetail(h.details);
           setOutdated(e instanceof ApiError && e.code === "host_outdated");
           setPhase("failed");
         }
@@ -147,7 +152,7 @@ export function ServerTerminal({
       </header>
       <div className={styles.screen} ref={holder} />
       {phase === "failed" || phase === "ended" ? (
-        <p className={styles.note} role="alert">
+        <div className={styles.note} role="alert">
           {phase === "failed" ? (problem ?? t("terminal.failed")) : t("terminal.ended")}
           {phase === "failed" && outdated ? (
             <button type="button" className={styles.again} onClick={() => setUpdating(true)} data-testid="terminal-update-server">
@@ -157,7 +162,13 @@ export function ServerTerminal({
           <button type="button" className={styles.again} onClick={() => setAttempt((n) => n + 1)}>
             {t("terminal.again")}
           </button>
-        </p>
+          {phase === "failed" && detail ? (
+            <details className={styles.details} data-testid="terminal-details">
+              <summary>{t("errors.details")}</summary>
+              <code className={styles.raw}>{detail}</code>
+            </details>
+          ) : null}
+        </div>
       ) : (
         <p className={styles.note}>{t("terminal.note")}</p>
       )}
