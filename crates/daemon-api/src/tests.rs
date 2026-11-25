@@ -963,7 +963,10 @@ async fn approval_flow_approve() {
     let q = send_msg(&t, &chat, "later", "queue").await;
     assert_eq!(q["delivery"], "queued");
     assert!(q["run_id"].is_null());
+    // The kind the queued turn will start under is fixed and reported now.
+    assert_eq!(q["queued_initiator"], "human");
     let s = send_msg(&t, &chat, "now", "steer").await;
+    assert!(s.get("queued_initiator").is_none());
     assert_eq!(s["delivery"], "steered");
     assert_eq!(s["run_id"], run.as_str());
 

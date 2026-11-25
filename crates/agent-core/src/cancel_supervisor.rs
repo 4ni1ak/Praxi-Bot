@@ -296,7 +296,7 @@ async fn stop_keeps_queued_messages_and_does_not_start_them() {
     assert_eq!(
         lp.send_user_message(env.chat, "two", MessageMode::Queue)
             .unwrap(),
-        crate::Delivery::Queued
+        crate::Delivery::Queued(protocol::InitiatorKind::Human)
     );
     lp.cancel(run).unwrap();
     cancelled_within(&lp, run).await;
@@ -307,7 +307,7 @@ async fn stop_keeps_queued_messages_and_does_not_start_them() {
         .queued
         .lock()
         .get(&env.chat)
-        .and_then(|q| q.front().map(|(text, _)| text.clone()));
+        .and_then(|q| q.front().map(|m| m.text.clone()));
     assert_eq!(queued.as_deref(), Some("two"));
     assert!(
         lp.run_turn(env.chat, "three").is_ok(),

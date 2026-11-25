@@ -28925,6 +28925,13 @@
             "$ref": "#/components/schemas/DeliveryKind",
             "description": "How it was delivered."
           },
+          "queued_initiator": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only when `delivery` is `queued`: who the queued turn will start as\n(`human`, `schedule`, `channel`, ...). Fixed when the message is queued."
+          },
           "run_id": {
             "type": [
               "string",

@@ -166,8 +166,9 @@ pub enum Delivery {
     NewTurn(RunId),
     /// Injected into the running turn.
     Steered(RunId),
-    /// Queued behind the running turn.
-    Queued,
+    /// Queued behind the running turn. The turn will start under this
+    /// initiator kind, fixed now (the run active when it was queued).
+    Queued(InitiatorKind),
     /// The message was the `/stop` command: the running turn was cancelled.
     Stopped(RunId),
 }
@@ -1052,7 +1053,7 @@ pub(crate) struct Shared {
     pub secret_requests: Mutex<HashMap<ToolCallId, SecretRequestInfo>>,
     pub grants: Mutex<Grants>,
     pub active: Mutex<HashMap<ChatId, RunId>>,
-    pub queued: Mutex<HashMap<ChatId, VecDeque<(String, &'static str)>>>,
+    pub queued: Mutex<HashMap<ChatId, VecDeque<QueuedMessage>>>,
     /// Bots still to answer one user message that mentioned several bots
     /// (`@A @B`), with that message's text. Only the user's own text fills it.
     pub mention_chain: Mutex<HashMap<ChatId, VecDeque<(BotId, Uuid)>>>,
@@ -1092,7 +1093,11 @@ pub(crate) struct Shared {
     /// Runs whose terminal bookkeeping has started. A second conclude (the
     /// drive task waking after the stop supervisor already finished the run)
     /// must not emit another `run_finished` or start a queued turn.
-    pub concluded: Mutex<HashSet<RunId>>,
+    /// Bounded: the oldest ids fall out once [`CONCLUDED_CAP`] is reached (run
+    /// ids are time-ordered UUIDs and never reused, so a forgotten id cannot
+    /// collide with a new run). Stop does not depend on this set: it rests on
+    /// `user_stopped`, the run token and the stored `Cancelled` state.
+    pub concluded: Mutex<RecentRuns>,
     /// Runs that paused because nobody answered an approval in time.
     pub approval_paused: Mutex<HashSet<RunId>>,
     /// Runs left paused because this boot could not read the local identity.
@@ -1131,6 +1136,66 @@ pub(crate) struct Shared {
     /// grant mechanics with a generic tool. Never set outside tests.
     #[cfg(test)]
     pub legacy_always: AtomicBool,
+}
+
+/// A message waiting for the running turn to end. Its initiator kind is fixed
+/// when it is queued: it must not take the kind of whichever run happens to end
+/// before it starts (a Stop leaves it queued across runs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedMessage {
+    /// The message text.
+    pub text: String,
+    /// Server-authenticated origin of the message.
+    pub source: &'static str,
+    /// The initiator kind its turn will start under.
+    pub initiator: InitiatorKind,
+}
+
+/// How many concluded run ids [`Shared::concluded`] remembers.
+pub(crate) const CONCLUDED_CAP: usize = 4096;
+
+/// A set of run ids that keeps only the most recently inserted ones, so a
+/// long-lived daemon does not grow it without bound.
+#[derive(Debug)]
+pub struct RecentRuns {
+    ids: HashSet<RunId>,
+    order: VecDeque<RunId>,
+    cap: usize,
+}
+
+impl RecentRuns {
+    pub(crate) fn new(cap: usize) -> Self {
+        Self {
+            ids: HashSet::new(),
+            order: VecDeque::new(),
+            cap: cap.max(1),
+        }
+    }
+
+    /// `true` when `id` was not in the set (it is now). The oldest id is
+    /// forgotten when the set is full.
+    pub(crate) fn insert(&mut self, id: RunId) -> bool {
+        if !self.ids.insert(id) {
+            return false;
+        }
+        self.order.push_back(id);
+        while self.order.len() > self.cap {
+            if let Some(old) = self.order.pop_front() {
+                self.ids.remove(&old);
+            }
+        }
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn contains(&self, id: &RunId) -> bool {
+        self.ids.contains(id)
+    }
 }
 
 /// Test-only hook invoked under `exec_gate` before the pre-tool deny recheck.
@@ -1206,6 +1271,16 @@ pub(crate) const COMPUTER_PREPARE_TIMEOUT_NOTICE: &str =
     "computer prepare timed out; using the cached desktop list without dialing";
 
 pub(crate) const KIND_PREFIX: &str = "turn";
+
+/// The run was started by data or an agent outside the owner's own hands (a
+/// signed webhook, a received mail, an external schedule trigger, an external
+/// MCP agent). Such a run never creates or consumes a standing grant.
+pub(crate) fn is_external_initiator(i: InitiatorKind) -> bool {
+    matches!(
+        i,
+        InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
+    )
+}
 
 pub(crate) fn kind_for(i: InitiatorKind) -> String {
     match i {

@@ -451,6 +451,10 @@ pub struct SendResponse {
     pub delivery: DeliveryKind,
     /// The run to follow (`null` when queued: the turn has no run yet).
     pub run_id: Option<Uuid>,
+    /// Only when `delivery` is `queued`: who the queued turn will start as
+    /// (`human`, `schedule`, `channel`, ...). Fixed when the message is queued.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queued_initiator: Option<String>,
 }
 
 /// Response of `POST /v1/runs/{id}/remember`.
