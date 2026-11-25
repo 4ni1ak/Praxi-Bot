@@ -184,7 +184,7 @@ async fn constant_churn_backs_off_instead_of_indexing() {
     // Still the first version: churn never settled.
     let store = KnowledgeStore::open(host.state.data_dir(), host.owner).unwrap();
     assert_eq!(store.list_documents(host.source).unwrap().len(), 1);
-    assert!(host.state.0.knowledge_watch.sources.lock()[&host.source].next_check_ms > 6_000);
+    assert!(host.state.0.knowledge_watch.sources.lock()[&host.source].next_check_ms >= 6_000);
 }
 
 #[tokio::test]
@@ -326,6 +326,7 @@ async fn watch_routes_require_the_owner_and_enforce_bot_scope() {
                 Request::builder()
                     .method(method)
                     .uri(&path)
+                    .header("host", "127.0.0.1:47821")
                     .header("authorization", "Bearer test-token")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"paused":true}"#))
@@ -348,6 +349,7 @@ async fn watch_routes_require_the_owner_and_enforce_bot_scope() {
                         "/v1/bots/{bot}/knowledge/sources/{}/watch",
                         host.source
                     ))
+                    .header("host", "127.0.0.1:47821")
                     .header("authorization", "Bearer test-token")
                     .header(
                         "x-praxi-owner-key",

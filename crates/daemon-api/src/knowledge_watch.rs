@@ -282,6 +282,8 @@ fn index(
         budget.used += page_size;
         let done =
             crate::knowledge::reindex_limited(s, owner, &source, w.cursor.as_deref(), page_size)?;
+        let attempted = done.indexing.processed + done.indexing.failures.len();
+        budget.used -= page_size.saturating_sub(attempted);
         w.skipped_files += done.indexing.failures.len();
         if let Some(cursor) = done.indexing.next_cursor {
             w.cursor = Some(cursor);
