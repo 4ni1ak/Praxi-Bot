@@ -16,13 +16,12 @@ bot channels discord pair      # prints a one-time 6-digit code (valid 10 minute
 2. Open **Bot**, press **Reset Token** and copy the token.
 3. On the same page, under **Privileged Gateway Intents**, switch **Message Content Intent** on. Without it Discord sends the bot empty messages.
 4. Run `bot channels discord setup` and paste the token. It goes into your secret store and is never shown again.
-5. The setup ends with a connection test in plain words and an invite link. You only need the link if you want to use a server channel.
+5. The setup ends with a connection test and an invite link. Use the link to add the bot to a server you manage, then open its profile in the member list and choose **Message**.
 6. In Discord, open a **private message** with your bot and send `!pair 123456` (your code).
 
 Use `bot channels discord setup --lang tr` or `--lang de` for Turkish or German setup steps and default replies. You can change replies later with `!lang`.
 
-`bot channels discord test` repeats the connection test at any time. You can also
-test from the app (Connection test, channel `discord`).
+`bot channels discord test` repeats the connection test at any time.
 
 ## Who can talk to the bot
 
@@ -47,7 +46,7 @@ Commands start with `!` (a `/` also works if you send it as plain text).
 | anything else | Sent to the selected bot |
 
 In an allowed server channel **every** message you write goes to the bot, so pick
-a channel that is only for this.
+a private channel that is only for this. Anyone who can read that channel can see the bot's replies.
 
 ## Approvals
 
@@ -72,3 +71,5 @@ once, within 10 minutes.
 - Discord messages travel through Discord's servers. Do not use it for anything you would not send through Discord.
 - `bot channels discord status` shows whether the channel is configured, enabled and running and whether an owner is paired. `bot channels discord disable` turns it off at the next `bot serve`; the token stays stored.
 - If the bot says nothing: check `bot channels discord test` (token and Message Content Intent), and that `bot serve` was restarted after setup.
+
+- Keep `bot serve` running. Messages sent while it is off are not collected later.

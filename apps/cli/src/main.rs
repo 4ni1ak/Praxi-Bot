@@ -820,10 +820,7 @@ fn run() -> Result<()> {
                 | Command::Channels {
                     action: ChannelsCmd::Telegram {
                         action: TelegramCmd::Pair
-                    }
-                }
-                | Command::Channels {
-                    action: ChannelsCmd::Discord {
+                    } | ChannelsCmd::Discord {
                         action: DiscordCmd::Pair
                     }
                 }
@@ -904,14 +901,13 @@ fn run() -> Result<()> {
         | Command::Mcp { .. }
         | Command::Grants { .. }
         | Command::Channels {
-            action: ChannelsCmd::Telegram {
-                action: TelegramCmd::Pair,
-            },
-        }
-        | Command::Channels {
-            action: ChannelsCmd::Discord {
-                action: DiscordCmd::Pair,
-            },
+            action:
+                ChannelsCmd::Telegram {
+                    action: TelegramCmd::Pair,
+                }
+                | ChannelsCmd::Discord {
+                    action: DiscordCmd::Pair,
+                },
         } => {
             return run_client(&cli, command, &data_dir);
         }
@@ -1450,6 +1446,7 @@ async fn proxy_hold(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()

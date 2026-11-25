@@ -17,13 +17,12 @@ bot channels discord pair      # gibt einen einmaligen 6-stelligen Code aus (10 
 2. Öffnen Sie **Bot**, klicken Sie auf **Reset Token** und kopieren Sie das Token.
 3. Schalten Sie auf derselben Seite unter **Privileged Gateway Intents** den Schalter **Message Content Intent** ein. Ohne ihn schickt Discord dem Bot leere Nachrichten.
 4. Führen Sie `bot channels discord setup` aus und fügen Sie das Token ein. Es landet in Ihrem Geheimnisspeicher und wird nie wieder angezeigt.
-5. Das Setup endet mit einem Verbindungstest in einfachen Worten und einem Einladungslink. Den Link brauchen Sie nur für einen Server-Kanal.
+5. Das Setup endet mit einem Verbindungstest und einem Einladungslink. Fügen Sie den Bot damit einem eigenen Server hinzu. Öffnen Sie dann sein Profil in der Mitgliederliste und wählen Sie **Nachricht**.
 6. Öffnen Sie in Discord eine **private Nachricht** an Ihren Bot und senden Sie `!pair 123456` (Ihr Code).
 
 Für deutsche Einrichtungsschritte und Antworten verwenden Sie `bot channels discord setup --lang de`. Die Sprache der Antworten können Sie später mit `!lang` ändern.
 
-`bot channels discord test` wiederholt den Verbindungstest jederzeit. Sie können
-auch in der App testen (Verbindungstest, Kanal `discord`).
+`bot channels discord test` wiederholt den Verbindungstest jederzeit.
 
 ## Wer mit dem Bot sprechen darf
 
@@ -73,3 +72,6 @@ in dem die Karte erschien, einmal und innerhalb von 10 Minuten.
 - Discord-Nachrichten laufen über die Server von Discord. Nutzen Sie es nicht für etwas, das Sie nicht über Discord senden würden.
 - `bot channels discord status` zeigt, ob der Kanal eingerichtet, aktiv und laufend ist und ob ein Besitzer gekoppelt ist. `bot channels discord disable` schaltet ihn beim nächsten `bot serve` ab; das Token bleibt gespeichert.
 - Sagt der Bot nichts: Prüfen Sie mit `bot channels discord test` Token und Message Content Intent und ob `bot serve` nach dem Setup neu gestartet wurde.
+
+- Wer den Server-Kanal lesen kann, sieht auch die Antworten des Bots. Wählen Sie einen privaten Kanal.
+- Lassen Sie `bot serve` laufen. Nachrichten aus der Zeit, in der der Dienst ausgeschaltet war, werden später nicht abgeholt.

@@ -16,13 +16,12 @@ bot channels discord pair      # tek kullanımlık 6 haneli kod verir (10 dakika
 2. **Bot** bölümünü açın, **Reset Token**'a basın ve belirteci kopyalayın.
 3. Aynı sayfada **Privileged Gateway Intents** altında **Message Content Intent**'i açın. Kapalıysa Discord bota boş mesaj gönderir.
 4. `bot channels discord setup` komutunu çalıştırıp belirteci yapıştırın. Gizli bilgi deponuza kaydedilir ve bir daha gösterilmez.
-5. Kurulum, sade dille bir bağlantı sınamasıyla ve bir davet bağlantısıyla biter. Bağlantıyı yalnızca sunucu kanalı kullanacaksanız kullanırsınız.
+5. Kurulum bir bağlantı sınaması ve davet bağlantısıyla biter. Bu bağlantıyla botu yönettiğiniz bir sunucuya ekleyin; ardından üye listesinden profilini açıp **Mesaj** seçeneğini seçin.
 6. Discord'da botunuzla **özel mesaj** açın ve `!pair 123456` (kendi kodunuz) yazın.
 
 Kurulum adımlarını ve varsayılan cevapları Türkçe görmek için `bot channels discord setup --lang tr` kullanın. Daha sonra `!lang` ile değiştirebilirsiniz.
 
 `bot channels discord test` bağlantı sınamasını istediğiniz zaman tekrarlar.
-Uygulamadan da sınayabilirsiniz (Bağlantı sınaması, kanal `discord`).
 
 ## Bota kimler yazabilir
 
@@ -72,3 +71,6 @@ kez ve 10 dakika içinde basabilirsiniz.
 - Discord mesajları Discord sunucularından geçer. Discord üzerinden göndermeyeceğiniz hiçbir şey için kullanmayın.
 - `bot channels discord status` kanalın kurulu, açık ve çalışıyor olup olmadığını ve bir sahibin eşleşip eşleşmediğini gösterir. `bot channels discord disable` sonraki `bot serve`'de kapatır; belirteç saklı kalır.
 - Bot hiçbir şey söylemiyorsa: `bot channels discord test` ile belirteci ve Message Content Intent'i kontrol edin, kurulumdan sonra `bot serve`'i yeniden başlattığınızdan emin olun.
+
+- Sunucu kanalını okuyabilen herkes botun cevaplarını da görebilir. Özel bir kanal seçin.
+- `bot serve` hizmetini açık tutun. Kapalıyken gönderilen mesajlar sonradan alınmaz.

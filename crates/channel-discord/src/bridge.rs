@@ -119,7 +119,7 @@ impl DiscordConfig {
             state_path: None,
             extra_redactor_secrets: Vec::new(),
             language: Lang::En,
-            reconnect_backoff: Duration::from_secs(2),
+            reconnect_backoff: Duration::from_secs(5),
             send_burst: 5,
             send_window: Duration::from_secs(5),
             queue_poll: Duration::from_secs(2),
@@ -458,8 +458,12 @@ impl Inner {
                 let chat = ev.chat.clone();
                 let sender = ev.sender.id.clone();
                 // An authenticated gateway can still deliver a flood of clicks.
-                if self.mem.lock().tasks.len() >= MAX_PENDING {
-                    return;
+                {
+                    let mut mem = self.mem.lock();
+                    mem.tasks.retain(|task| !task.is_finished());
+                    if mem.tasks.len() >= MAX_PENDING {
+                        return;
+                    }
                 }
                 self.spawn(async move {
                     if let Err(e) = this
@@ -548,6 +552,17 @@ impl Inner {
             self.stranger(chat, sender).await;
             return;
         }
+        // An authenticated owner must be able to stop a run even after
+        // reaching the normal message budget.
+        if command.as_ref().is_some_and(|(cmd, _)| cmd == "stop") {
+            if let Err(e) = self
+                .forward(chat, parts.channel_id, "/stop", event_id)
+                .await
+            {
+                self.fail(chat, &e).await;
+            }
+            return;
+        }
         match self.within_rate() {
             Some(true) => {}
             Some(false) => {
@@ -600,15 +615,6 @@ impl Inner {
                     }
                     return;
                 }
-                "stop" => {
-                    if let Err(e) = self
-                        .forward(chat, parts.channel_id, "/stop", event_id)
-                        .await
-                    {
-                        self.fail(chat, &e).await;
-                    }
-                    return;
-                }
                 _ => {}
             }
         }
@@ -623,7 +629,12 @@ impl Inner {
 
     async fn fail(&self, chat: &ChatRef, e: &DiscordError) {
         Self::log("message not delivered", e);
-        let short: String = e.to_string().chars().take(200).collect();
+        let short: String = self
+            .transport
+            .redact(&e.to_string())
+            .chars()
+            .take(200)
+            .collect();
         self.say(chat, &Msg::Failed(&short).render(self.lang()))
             .await;
     }
@@ -1130,7 +1141,7 @@ impl Inner {
     ) -> Result<()> {
         let lang = self.lang();
         if !self.authorized(chat, sender) {
-            self.answer(query_id, &Msg::NotYours.render(lang)).await;
+            // A stranger clicking a public card must not spend our REST budget.
             return Ok(());
         }
         if let Some((call_id, decision, scope)) = parse_approval_callback(data) {

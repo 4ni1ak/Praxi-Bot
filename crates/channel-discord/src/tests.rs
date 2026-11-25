@@ -236,6 +236,12 @@ impl DaemonClient for FakeDaemon {
     }
     async fn send_message(&self, _chat: ChatId, text: &str) -> DResult<SendOutcome> {
         self.sent.lock().push(text.to_owned());
+        if text == "/stop" {
+            return Ok(SendOutcome {
+                delivery: DeliveryKind::Stopped,
+                run_id: None,
+            });
+        }
         Ok(SendOutcome {
             delivery: DeliveryKind::NewTurn,
             run_id: Some(RunId::new()),
@@ -315,6 +321,10 @@ struct Harness {
 }
 
 async fn harness(daemon: Arc<FakeDaemon>) -> Harness {
+    harness_with_limit(daemon, 30).await
+}
+
+async fn harness_with_limit(daemon: Arc<FakeDaemon>, incoming_per_minute: usize) -> Harness {
     let gw = FakeGateway::start().await;
     let rest = mock_rest().await;
     let dir = tempfile::tempdir().unwrap();
@@ -324,6 +334,7 @@ async fn harness(daemon: Arc<FakeDaemon>) -> Harness {
     cfg.state_path = Some(dir.path().join("discord_state.json"));
     cfg.send_window = Duration::from_millis(1);
     cfg.queue_poll = Duration::from_millis(10);
+    cfg.incoming_per_minute = incoming_per_minute;
     let channel = DiscordChannel::start(cfg, daemon.clone()).unwrap();
     Harness {
         gw,
@@ -562,7 +573,7 @@ async fn approval_buttons_are_owner_only_low_risk_once_or_deny() {
         .send(press_json("503", OWNER, (None, "778"), &ids[0]))
         .unwrap();
     for _ in 0..300 {
-        if callbacks(&h.rest).await.len() >= 3 {
+        if callbacks(&h.rest).await.len() >= 2 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -581,7 +592,7 @@ async fn approval_buttons_are_owner_only_low_risk_once_or_deny() {
         .send(press_json("505", OWNER, (None, "777"), &ids[0]))
         .unwrap();
     for _ in 0..300 {
-        if callbacks(&h.rest).await.len() >= 6 {
+        if callbacks(&h.rest).await.len() >= 5 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -666,8 +677,17 @@ async fn rest_waits_out_a_rate_limit_and_keeps_the_token_out_of_errors() {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "7"})))
         .mount(&server)
         .await;
-    let rest = DiscordRest::new(SecretValue::new(TOKEN), &server.uri());
+    let rest = DiscordRest::new(SecretValue::new(TOKEN), &server.uri())
+        .with_send_limit(100, Duration::from_millis(1));
     assert_eq!(rest.create_message("1", "hi", None).await.unwrap(), "7");
+    let started = std::time::Instant::now();
+    for _ in 0..26 {
+        rest.create_message("1", "hi", None).await.unwrap();
+    }
+    assert!(
+        started.elapsed() >= Duration::from_millis(850),
+        "global sends were not paced"
+    );
     assert!(rest.create_message("1/../x", "hi", None).await.is_err());
     let dbg = format!("{rest:?}");
     assert!(!dbg.contains(TOKEN));
@@ -789,4 +809,52 @@ fn plaintext_endpoints_are_limited_to_real_loopback_hosts() {
     cfg.api_base_url = "http://127.0.0.1:1234".into();
     cfg.gateway_url = "ws://127.0.0.1:1235".into();
     assert!(DiscordChannel::new(cfg, daemon).is_ok());
+}
+
+#[tokio::test]
+async fn discord_daemon_messages_keep_channel_source_and_owner_authentication() {
+    use channel_telegram::HttpDaemonClient;
+    use wiremock::matchers::header;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/v1/chats/[^/]+/messages$"))
+        .and(header("x-praxi-message-source", "discord"))
+        .and(header("x-praxi-owner-key", "owner-secret"))
+        .and(header("authorization", "Bearer daemon-secret"))
+        .and(header("idempotency-key", "dc:msg:111"))
+        .respond_with(
+            ResponseTemplate::new(202).set_body_json(json!({"delivery":"queued", "run_id":null})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = HttpDaemonClient::new(server.uri(), SecretValue::new("daemon-secret"))
+        .with_owner_key(Some(SecretValue::new("owner-secret")))
+        .with_message_source("discord");
+    assert_eq!(
+        client
+            .send_message_idempotent(ChatId::new(), "hi", "dc:msg:111")
+            .await
+            .unwrap()
+            .delivery,
+        DeliveryKind::Queued
+    );
+}
+
+#[tokio::test]
+async fn owner_messages_are_limited_but_stop_still_works() {
+    let h = harness_with_limit(FakeDaemon::new(vec![vec![finished()]], false), 1).await;
+    pair_owner(&h).await;
+    h.gw.message("2", OWNER, (None, "777"), "first");
+    wait_sent(&h.rest, 2).await;
+    h.gw.message("3", OWNER, (None, "777"), "too many");
+    wait_sent(&h.rest, 3).await;
+    assert_eq!(h.daemon.sent.lock().as_slice(), ["first"]);
+    h.gw.message("4", "99", (None, "888"), "!stop");
+    wait_sent(&h.rest, 4).await;
+    assert_eq!(h.daemon.sent.lock().as_slice(), ["first"]);
+    h.gw.message("5", OWNER, (None, "777"), "!stop");
+    wait_sent(&h.rest, 5).await;
+    assert_eq!(h.daemon.sent.lock().as_slice(), ["first", "/stop"]);
+    h.channel.shutdown().await;
 }

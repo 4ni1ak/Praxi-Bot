@@ -317,7 +317,7 @@ mod tests {
         state.inner.lock().invites.create(
             "123456".into(),
             Duration::from_secs(1),
-            Instant::now() - Duration::from_secs(2),
+            Instant::now().checked_sub(Duration::from_secs(2)).unwrap(),
         );
         assert_eq!(state.redeem("42", "123456").unwrap(), PairOutcome::Expired);
         let code = state.create_code();

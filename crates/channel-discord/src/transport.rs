@@ -38,6 +38,7 @@ pub struct DiscordTransport {
 impl DiscordTransport {
     /// Build a transport; nothing connects until [`Channel::receive`] is called.
     #[must_use]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         rest: Arc<DiscordRest>,
         gateway_url: String,

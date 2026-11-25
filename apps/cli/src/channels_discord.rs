@@ -113,8 +113,8 @@ fn next_steps(invite: &str, lang: Lang) -> String {
             localized(
                 lang,
                 "",
-                "Sunucu kanalı kullanacaksanız botu bu bağlantıdan ekleyin:",
-                "Für einen Server-Kanal fügen Sie den Bot über diesen Link hinzu:"
+                "Botu yönettiğiniz bir sunucuya ekleyin; ardından üye listesinden botun profilini açıp Mesaj seçeneğini seçin:",
+                "Fügen Sie den Bot über diesen Link einem eigenen Server hinzu. Öffnen Sie dann sein Profil in der Mitgliederliste und wählen Sie Nachricht:"
             ),
             localized(
                 lang,
@@ -125,7 +125,7 @@ fn next_steps(invite: &str, lang: Lang) -> String {
         );
     }
     format!(
-        "Next:\n  1. Add the bot to a server you own (only needed for server channels): {invite}\n  \
+        "Next:\n  1. Add the bot to a server you manage, then open its profile in the member list and choose Message: {invite}\n  \
          2. Restart `bot serve`, then run `bot channels discord pair`.\n  \
          3. Send the code to the bot in a private message: `!pair <code>`."
     )
@@ -297,20 +297,17 @@ pub async fn check_token(store: &dyn SecretStore, api_base_url: &str) -> (R, Opt
         }
     };
     // The privileged switch cannot be seen from the token alone, but Discord reports it.
-    let enabled = match rest.message_content_enabled().await {
-        Ok(enabled) => enabled,
-        Err(_) => {
-            return (
-                R::failed(
-                    "channel",
-                    O::Unknown,
-                    None,
-                    None,
-                    "the token works, but Discord's Message Content setting could not be checked; try again",
-                ),
-                Some(me),
-            );
-        }
+    let Ok(enabled) = rest.message_content_enabled().await else {
+        return (
+            R::failed(
+                "channel",
+                O::Unknown,
+                None,
+                None,
+                "the token works, but Discord's Message Content setting could not be checked; try again",
+            ),
+            Some(me),
+        );
     };
     if !enabled {
         return (
@@ -480,7 +477,7 @@ pub fn discord_runtime(
         }
         cfg.state_path = Some(data_dir.join(DISCORD_STATE_FILE));
         if let Some(url) = api_base_url {
-            cfg.api_base_url = url.to_owned();
+            url.clone_into(&mut cfg.api_base_url);
         }
         cfg
     });

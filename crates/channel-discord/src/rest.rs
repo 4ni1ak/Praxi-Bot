@@ -69,6 +69,9 @@ impl fmt::Debug for DiscordRest {
 
 impl DiscordRest {
     /// Build a client for `base` (no trailing slash needed).
+    ///
+    /// # Panics
+    /// Panics if the TLS backend cannot be initialised.
     #[must_use]
     pub fn new(token: SecretValue, base: &str) -> Self {
         Self {
@@ -95,23 +98,24 @@ impl DiscordRest {
 
     /// Wait until this channel may receive another message.
     async fn pace(&self, channel_id: &str) {
+        self.pace_with(channel_id, self.burst, self.window).await;
+    }
+
+    async fn pace_with(&self, key: &str, burst: usize, window: Duration) {
         loop {
             let wait = {
                 let mut sent = self.sent.lock();
                 let now = Instant::now();
-                let q = sent.entry(channel_id.to_owned()).or_default();
-                while q
-                    .front()
-                    .is_some_and(|t| now.duration_since(*t) >= self.window)
-                {
+                let q = sent.entry(key.to_owned()).or_default();
+                while q.front().is_some_and(|t| now.duration_since(*t) >= window) {
                     q.pop_front();
                 }
-                if q.len() < self.burst {
+                if q.len() < burst {
                     q.push_back(now);
                     return;
                 }
                 q.front().map_or(Duration::ZERO, |t| {
-                    self.window.saturating_sub(now.duration_since(*t))
+                    window.saturating_sub(now.duration_since(*t))
                 })
             };
             tokio::time::sleep(wait.max(Duration::from_millis(5))).await;
@@ -127,6 +131,9 @@ impl DiscordRest {
     ) -> Result<Value> {
         let mut attempt = 0;
         loop {
+            // Include interaction acknowledgements and retries in the global
+            // budget, in addition to per-channel pacing and service cooldowns.
+            self.pace_with("*", 25, Duration::from_secs(1)).await;
             let deadline = {
                 let waits = self.cooldowns.lock();
                 waits
