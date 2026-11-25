@@ -437,6 +437,27 @@ impl Shared {
                 d = Decision::Deny;
             }
         }
+        // The owner's per-site / per-app rules. A block and an ask only ever tighten: they
+        // sit above grants, read shortcuts and the autonomy mode. An allow is one more
+        // remembered grant (below), never above a floor or the untrusted-content gate.
+        let profile = self.profile_verdict(ctx, name, input, target);
+        let mut profile_allows = false;
+        if let Some(v) = &profile {
+            match v.action {
+                permission_engine::ProfileAction::Block => {
+                    self.audit_profile_applied(ctx, name, v);
+                    return (Decision::Deny, None);
+                }
+                permission_engine::ProfileAction::Ask => {
+                    self.audit_profile_applied(ctx, name, v);
+                    if d == Decision::Allow {
+                        d = Decision::ask();
+                    }
+                    return (d, None);
+                }
+                permission_engine::ProfileAction::Allow => profile_allows = true,
+            }
+        }
         let must_ask = self.gate_must_ask(ctx, name, input);
         // Only a call that already has to ask can be covered, so the lookup is
         // skipped for every other call.
@@ -504,8 +525,17 @@ impl Shared {
         if must_ask {
             return (d, None);
         }
-        let granted =
-            control_covered || run_tool_covered || self.plain_granted(ctx, name, category, input);
+        let granted = control_covered
+            || run_tool_covered
+            || profile_allows
+            || self.plain_granted(ctx, name, category, input);
+        if profile_allows
+            && !control_covered
+            && !run_tool_covered
+            && let Some(v) = &profile
+        {
+            self.audit_profile_applied(ctx, name, v);
+        }
         let read_skip = effect == Effect::Read
             && if name.starts_with(builtin_tools::pc::PC_PREFIX) {
                 !pc_read_pending
@@ -2597,6 +2627,18 @@ impl ExecPermit {
             "user",
             "approval.approved",
             &json!({
+                "bot_id": self.ctx.bot_id.to_string(),
+                "subject": crate::site_profiles::approval_subject(
+                    &self.name,
+                    &self.input,
+                    self.page_origin.as_deref(),
+                    self.target.as_ref(),
+                )
+                .map(|(kind, key, capability)| json!({
+                    "kind": kind.as_str(),
+                    "key": key,
+                    "capability": capability.as_str(),
+                })),
                 "tool": self.name,
                 "scope": format!("{scope:?}"),
                 "policy_revision": policy_revision(&self.sh),

@@ -1055,6 +1055,8 @@ pub(crate) struct Shared {
     /// `secret_request` calls waiting for the owner's form (see `approval.rs`).
     pub secret_requests: Mutex<HashMap<ToolCallId, SecretRequestInfo>>,
     pub grants: Mutex<Grants>,
+    /// Per-site / per-app permission rules of every bot (see `site_profiles`).
+    pub profile_rules: Mutex<Vec<(BotId, permission_engine::ProfileRule)>>,
     pub active: Mutex<HashMap<ChatId, RunId>>,
     pub queued: Mutex<HashMap<ChatId, VecDeque<QueuedMessage>>>,
     /// Bots still to answer one user message that mentioned several bots

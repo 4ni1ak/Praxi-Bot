@@ -6035,6 +6035,53 @@
       "saving": "Saving…"
     },
     "search": "Search settings",
+    "siteRules": {
+      "action": "Qué debe pasar",
+      "actions": {
+        "allow": "Permitir",
+        "ask": "Preguntar siempre",
+        "block": "No permitir nunca"
+      },
+      "addButton": "Añadir regla",
+      "addTitle": "Añadir una regla",
+      "added": "Regla guardada.",
+      "allowApp": "Permitir siempre esto en este programa",
+      "allowHint": "Una regla de permitir cubre exactamente este sitio, no sus subdominios.",
+      "allowSite": "Permitir siempre esto en este sitio",
+      "bot": "Bot",
+      "capabilities": {
+        "any": "todo",
+        "interact": "hacer clic y escribir",
+        "read": "abrir y leer",
+        "submit": "enviar formularios y pulsar teclas"
+      },
+      "capability": "Para",
+      "confirm": "¿Permitir siempre {{what}} en {{target}} sin preguntar?",
+      "confirmNo": "Cancelar",
+      "confirmYes": "Sí, permitir siempre",
+      "empty": "Aún no hay reglas.",
+      "expired": "caducada",
+      "expiries": {
+        "day": "Un día",
+        "month": "30 días",
+        "never": "Hasta que la quite",
+        "week": "Una semana"
+      },
+      "expiry": "Mantener esta regla",
+      "lead": "Reglas para un sitio web o programa: preguntar siempre, no permitir nunca o permitir sin preguntar. Solo pueden añadir cautela o dar un visto bueno que tú eliges aquí.",
+      "limits": "La seguridad sigue activa: los archivos fuera del área de trabajo, el contenido de páginas web y lo marcado como nunca permitido siguen sus propias reglas.",
+      "recentHint": "Sitios y programas que aprobaste hace poco. Puedes permitir uno sin volver a preguntar.",
+      "recentNone": "Aún no hay nada que sugerir.",
+      "recentTitle": "De un visto bueno reciente",
+      "remove": "Quitar",
+      "removed": "Regla quitada.",
+      "site": "Sitio web",
+      "siteHint": "Solo el nombre, como example.com (sin https:// ni ruta).",
+      "subdomains": "Incluir también sus subdominios (como shop.example.com)",
+      "title": "Sitios y programas",
+      "until": "hasta {{when}}",
+      "withSubdomains": "(y sus subdominios)"
+    },
     "title": "Settings",
     "updates": {
       "appVersion": "Desktop app",
