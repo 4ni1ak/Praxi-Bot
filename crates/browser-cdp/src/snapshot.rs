@@ -364,6 +364,13 @@ pub struct FrameInput {
     /// True when the DOM snapshot for this frame could not be captured. Without it sensitive
     /// inputs cannot be recognised, so every text-entry value is masked (fail closed).
     pub extras_failed: bool,
+    /// Backend ids of elements and text a person looking at the page cannot see (opacity 0, tiny
+    /// font, off-screen, same colour as the background, clipped away: see [`crate::hidden`]).
+    /// They are left out of the snapshot and counted.
+    pub hidden: HashSet<i64>,
+    /// Backend ids of elements whose `title` / `alt` / `aria-label` is a long, instruction-like
+    /// text: their accessible name is left out.
+    pub suspicious_names: HashSet<i64>,
 }
 
 /// What a ref points to.
@@ -535,9 +542,23 @@ pub struct Snapshot {
     pub title: String,
     /// Tree lines.
     pub nodes: Vec<SnapNode>,
+    /// Items (a hidden block of text, a hidden link, a long instruction-like `alt` / `title`)
+    /// that were left out because a person looking at the page cannot see them.
+    pub hidden_removed: usize,
 }
 
 impl Snapshot {
+    /// The note that tells the reader some page content was left out, if any was.
+    pub fn hidden_note(&self) -> Option<String> {
+        (self.hidden_removed > 0).then(|| {
+            format!(
+                "[{} hidden item{} removed: content a person looking at this page cannot see]",
+                self.hidden_removed,
+                if self.hidden_removed == 1 { "" } else { "s" }
+            )
+        })
+    }
+
     /// The tree as text, one line per node.
     pub fn to_text(&self) -> String {
         self.nodes
@@ -549,7 +570,12 @@ impl Snapshot {
 
     /// `# title (url)` line followed by the tree.
     pub fn render(&self) -> String {
-        format!("# {} ({})\n{}", self.title, self.url, self.to_text())
+        let mut out = format!("# {} ({})\n{}", self.title, self.url, self.to_text());
+        if let Some(note) = self.hidden_note() {
+            out.push('\n');
+            out.push_str(&note);
+        }
+        out
     }
 
     /// Number of nodes carrying a ref.
@@ -718,6 +744,8 @@ struct Builder<'a, 'b> {
     node_capped: bool,
     /// Whether the node being pushed holds a secret (set around `push`).
     cur_sensitive: bool,
+    /// Hidden items left out so far.
+    hidden_removed: usize,
 }
 
 /// Maximum AX nesting (hidden levels included) followed before the walk is cut off. Guards the
@@ -737,6 +765,15 @@ pub fn build_snapshot(
     opts: &SnapshotOptions,
     refs: &mut RefMap,
 ) -> Vec<SnapNode> {
+    build_snapshot_counted(frames, opts, refs).0
+}
+
+/// [`build_snapshot`] plus the number of hidden items that were left out.
+pub fn build_snapshot_counted(
+    frames: &[FrameInput],
+    opts: &SnapshotOptions,
+    refs: &mut RefMap,
+) -> (Vec<SnapNode>, usize) {
     refs.begin();
     let parsed = frames
         .iter()
@@ -766,6 +803,7 @@ pub fn build_snapshot(
         truncated: false,
         node_capped: false,
         cur_sensitive: false,
+        hidden_removed: 0,
     };
     if !frames.is_empty() {
         b.emit_frame(0, 0, 0);
@@ -790,11 +828,12 @@ pub fn build_snapshot(
             states: Vec::new(),
         });
     }
+    let hidden_removed = b.hidden_removed;
     let mut out = b.out;
     if opts.compact && !opts.interactive_only {
         prune_empty(&mut out);
     }
-    out
+    (out, hidden_removed)
 }
 
 impl Builder<'_, '_> {
@@ -822,6 +861,12 @@ impl Builder<'_, '_> {
             {
                 continue;
             }
+            if frame.hidden.contains(&e.backend_id)
+                || frame.suspicious_names.contains(&e.backend_id)
+            {
+                self.hidden_removed += 1;
+                continue;
+            }
             let d = if self.ctx.opts.interactive_only {
                 0
             } else {
@@ -840,6 +885,25 @@ impl Builder<'_, '_> {
                 );
             }
         }
+    }
+
+    /// Whether the AX subtree under `n` would have shown any text (bounded walk).
+    fn subtree_has_text(&self, f: usize, n: usize) -> bool {
+        let nodes = &self.ctx.parsed[f].nodes;
+        let mut stack = vec![n];
+        let mut seen = 0usize;
+        while let Some(i) = stack.pop() {
+            seen += 1;
+            if seen > 2_000 {
+                return true;
+            }
+            let node = &nodes[i];
+            if !node.ignored && !node.name.trim().is_empty() {
+                return true;
+            }
+            stack.extend(node.children.iter().copied());
+        }
+        false
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -891,6 +955,16 @@ impl Builder<'_, '_> {
             return;
         }
         let node = &self.ctx.parsed[f].nodes[n];
+        // Hidden from a person looking at the page: left out with everything below it.
+        if node
+            .backend
+            .is_some_and(|b| self.ctx.frames[f].hidden.contains(&b))
+        {
+            if self.subtree_has_text(f, n) {
+                self.hidden_removed += 1;
+            }
+            return;
+        }
         let extra: Option<&DomExtra> = node
             .backend
             .and_then(|b| self.ctx.parsed[f].extras.get(&b))
@@ -901,6 +975,18 @@ impl Builder<'_, '_> {
             extra.map_or("", |e| e.text.as_str())
         } else {
             node.name.as_ref()
+        };
+        // A long, instruction-like `title` / `alt` / `aria-label` is not something a person
+        // reads: the element keeps its role and ref but loses that name.
+        let label: &str = if !label.trim().is_empty()
+            && node
+                .backend
+                .is_some_and(|b| self.ctx.frames[f].suspicious_names.contains(&b))
+        {
+            self.hidden_removed += 1;
+            ""
+        } else {
+            label
         };
         let clickable = !interactive
             && !node.ignored
@@ -1076,6 +1162,63 @@ mod tests {
         let e = refs.get("@e1").unwrap();
         assert_eq!(e.backend_id, 20);
         assert_eq!(e.role, "link");
+    }
+
+    #[test]
+    fn hidden_text_and_links_are_left_out_and_counted() {
+        // 15 = the paragraph's text, 20 = the "Learn more" link (with its text 21 below it).
+        let mut frame = main_frame(EXAMPLE);
+        frame.hidden = [15, 20].into_iter().collect();
+        let mut refs = RefMap::new();
+        let (nodes, removed) =
+            build_snapshot_counted(&[frame], &SnapshotOptions::default(), &mut refs);
+        let t = nodes.iter().map(SnapNode::line).collect::<Vec<_>>().join(
+            "
+",
+        );
+        assert!(t.contains("Example Domain"), "visible heading stays: {t}");
+        assert!(!t.contains("This domain is for use"), "{t}");
+        assert!(!t.contains("Learn more"), "{t}");
+        assert_eq!(removed, 2);
+        assert_eq!(refs.len(), 0, "a hidden link gets no ref");
+        let snap = Snapshot {
+            url: "https://example.com/".into(),
+            title: "Example".into(),
+            nodes,
+            hidden_removed: removed,
+        };
+        assert!(
+            snap.render().ends_with(
+                "[2 hidden items removed: content a person looking at this page cannot see]"
+            ),
+            "{}",
+            snap.render()
+        );
+        // Nothing hidden: no note.
+        let none = Snapshot {
+            hidden_removed: 0,
+            ..snap
+        };
+        assert!(!none.render().contains("hidden item"));
+    }
+
+    #[test]
+    fn a_long_instruction_like_name_is_dropped_but_the_link_stays() {
+        let mut frame = main_frame(EXAMPLE);
+        frame.suspicious_names = [20].into_iter().collect();
+        let mut refs = RefMap::new();
+        let (nodes, removed) =
+            build_snapshot_counted(&[frame], &SnapshotOptions::default(), &mut refs);
+        let t = nodes.iter().map(SnapNode::line).collect::<Vec<_>>().join(
+            "
+",
+        );
+        assert_eq!(removed, 1);
+        assert!(
+            t.contains("[e1] link"),
+            "the link keeps its role and ref: {t}"
+        );
+        assert!(!t.contains("[e1] link \"Learn more\""), "{t}");
     }
 
     #[test]

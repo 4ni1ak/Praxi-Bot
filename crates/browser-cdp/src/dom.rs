@@ -32,8 +32,9 @@ pub fn is_editable_attrs<'a>(attr: impl Fn(&str) -> Option<&'a str>) -> bool {
         })
 }
 
-/// Computed styles requested from `DOMSnapshot.captureSnapshot`.
-pub const COMPUTED_STYLES: &[&str] = &["cursor"];
+/// Computed styles requested from `DOMSnapshot.captureSnapshot` (`cursor` first; the rest feed
+/// the hidden-content filter in [`crate::hidden`]).
+pub const COMPUTED_STYLES: &[&str] = crate::hidden::COMPUTED_STYLES;
 
 fn attr_str<'a>(pairs: &[i64], strings: &[&'a str], key: &str) -> Option<&'a str> {
     let s = |i: i64| -> &'a str {

@@ -16,7 +16,7 @@ use crate::dom::{self, COMPUTED_STYLES};
 use crate::error::{Error, Result};
 use crate::live_view::{BrowserViewConfig, BrowserViewTarget};
 use crate::snapshot::{
-    DomExtra, FrameInput, RefEntry, RefMap, Snapshot, SnapshotOptions, build_snapshot,
+    DomExtra, FrameInput, RefEntry, RefMap, Snapshot, SnapshotOptions, build_snapshot_counted,
 };
 
 /// Default navigation / wait timeout.
@@ -493,6 +493,7 @@ impl Page {
             return;
         };
         let extras: Vec<DomExtra> = dom::parse_dom_snapshot(&resp);
+        let hidden_docs = crate::hidden::parse_hidden(&resp);
         let root = frames
             .iter()
             .find(|f| {
@@ -506,6 +507,15 @@ impl Page {
                 f.session_id.as_deref() == session && Some(&f.frame_id) == target.as_ref()
             }) {
                 f.extras.push(e);
+            }
+        }
+        for d in hidden_docs {
+            let target = d.frame_id.clone().or_else(|| root.clone());
+            if let Some(f) = frames.iter_mut().find(|f| {
+                f.session_id.as_deref() == session && Some(&f.frame_id) == target.as_ref()
+            }) {
+                f.hidden.extend(d.hidden);
+                f.suspicious_names.extend(d.suspicious_names);
             }
         }
     }
@@ -647,6 +657,8 @@ impl Page {
                             ax_nodes: root_ax_opt.take().unwrap_or_default(),
                             extras: Vec::new(),
                             extras_failed: false,
+                            hidden: HashSet::new(),
+                            suspicious_names: HashSet::new(),
                         });
                     } else if root && job.session.is_some() {
                         let pid = if parent.is_none() {
@@ -673,6 +685,8 @@ impl Page {
                             ax_nodes: root_ax_opt.take().unwrap_or_default(),
                             extras: Vec::new(),
                             extras_failed: false,
+                            hidden: HashSet::new(),
+                            suspicious_names: HashSet::new(),
                         });
                     } else {
                         child_fetches.push(ChildFetch {
@@ -734,6 +748,8 @@ impl Page {
                             ax_nodes: Self::take_ax_nodes(ax_res),
                             extras: Vec::new(),
                             extras_failed: false,
+                            hidden: HashSet::new(),
+                            suspicious_names: HashSet::new(),
                         }
                     });
                     frames.extend(futures_util::future::join_all(futs).await);
@@ -838,11 +854,13 @@ impl Page {
                     st.refs.clear();
                 }
                 st.gen_seen = nav_now;
-                let nodes = build_snapshot(&cached.frames, opts, &mut st.refs);
+                let (nodes, hidden_removed) =
+                    build_snapshot_counted(&cached.frames, opts, &mut st.refs);
                 let snap = Snapshot {
                     url: cached.url.clone(),
                     title: cached.title.clone(),
                     nodes,
+                    hidden_removed,
                 };
                 st.last = Some(snap.clone());
                 st.opts = opts.clone();
@@ -857,11 +875,12 @@ impl Page {
             st.refs.clear();
         }
         st.gen_seen = gen_now;
-        let nodes = build_snapshot(&frames, opts, &mut st.refs);
+        let (nodes, hidden_removed) = build_snapshot_counted(&frames, opts, &mut st.refs);
         let snap = Snapshot {
             url: url.clone(),
             title: title.clone(),
             nodes,
+            hidden_removed,
         };
         st.last = Some(snap.clone());
         st.opts = opts.clone();
