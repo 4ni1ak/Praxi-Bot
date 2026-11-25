@@ -1690,6 +1690,7 @@ fn api_routes() -> Router<AppState> {
             "/v1/channels/telegram/pair-code",
             post(r::telegram_pair_code),
         )
+        .route("/v1/channels/discord/pair-code", post(r::discord_pair_code))
         .route(
             "/v1/mcp/servers",
             get(m::list_mcp_servers).post(m::create_mcp_server),

@@ -21,6 +21,7 @@ deutsche Seite, wenn es sie gibt.
 | [Ausgabenlimits für Bots](bot-spending-limits.md) | Tages-, Wochen- und Monatslimits. |
 | [Gedächtnis](memory.md) | Sieh, korrigiere, vergiss und schalte aus, woran sich deine Bots erinnern. |
 | [Telegram](telegram.md) | Mit deinen Bots vom Handy aus sprechen. |
+| [Discord](discord.md) | Mit deinen Bots über Discord sprechen. |
 | [Kalender](calendar.md) | Bots lesen und erstellen Termine in einem CalDAV-Kalender. |
 | [Home Assistant](home-assistant.md) | Bots lesen und steuern Geräte im Haus. |
 | [Computersteuerung](computer-use.md) | Bots benutzen Apps auf deinem eigenen Windows-PC. |
