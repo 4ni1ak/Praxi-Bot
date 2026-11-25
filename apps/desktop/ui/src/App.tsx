@@ -1,4 +1,4 @@
-import { BellDot, BellRing, Bot, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Monitor, Plus, Search, Server, ServerOff, Settings2 } from "lucide-react";
+import { BellDot, BellRing, Bot, ChevronDown, FlaskConical, GripVertical, Star, LoaderCircle, MessageSquare, Plus, Search, ServerOff, Settings2 } from "lucide-react";
 import { effectiveWallpaperMotion } from "./lib/accessibility";
 import { unreadBotIds } from "./lib/unread";
 import { useReadState } from "./store/readStateStore";
@@ -23,6 +23,7 @@ import {
   resolveTheme,
 } from "ui";
 import styles from "./App.module.css";
+import { TITLEBAR_LEAD_ID } from "./lib/titleBar";
 import { AppsPill } from "./components/AppsPill";
 import { BotPanel } from "./components/BotPanel";
 import { WindowControls } from "./components/WindowControls";
@@ -226,8 +227,6 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
     deleteChat,
     retry,
     restartDaemon,
-    home,
-    workLocalNow,
     homeStale,
     serviceProblem,
     startup,
@@ -418,7 +417,7 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
       const params = new URLSearchParams(window.location.search);
       const mock = isMockMode();
       const merged: AppSettings = { ...loaded, autostart: osAutostart,
-        ...(mock ? { onboardingCompleted: true, language: (["en", "de", "es"] as const).find((l) => l === params.get("lang")) ?? ("tr" as const) } : {}),
+        ...(mock ? { onboardingCompleted: true, language: (["en", "de", "es", "pt"] as const).find((l) => l === params.get("lang")) ?? ("tr" as const) } : {}),
       };
       if (mock) Object.assign(merged, appearanceFromQuery(params, merged));
       if (mock) {
@@ -1302,6 +1301,7 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
           />
           <SidebarHeader>
             <div className={styles.brand}>
+              <img className={styles.brandMark} src="/apple-touch-icon.png" alt="" width={28} height={28} draggable={false} data-testid="brand-mark" />
               <b className={styles.brandName}>{PRODUCT_CONFIG.appName}</b>
               <div className={styles.topActions}>
                 <button className={styles.iconButton} title={t("myBots.title")} aria-label={t("myBots.title")} aria-current={route.kind === "myBots" ? "page" : undefined} data-testid="my-bots-button" onClick={() => go({ kind: "myBots" })}><Bot /></button>
@@ -1313,8 +1313,8 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
           <SidebarSection>
             <span className={styles.srOnly} role="status" aria-live="polite">{orderNote}</span>
             <div ref={reorder.containerRef} className={styles.botList} data-stale={homeStale ? "true" : undefined}>
-            {needs.length > 0 ? <SidebarItem className={styles.railItem} active={route.kind === "needs"} title={t("sidebar.needsYou")} aria-label={mini ? t("sidebar.needsYouCount", { count: needs.length }) : undefined} onClick={openNeeds}><BellDot /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.needsYou")}</span><span className={styles.needsBadge} data-testid="needs-you-badge" aria-label={t("sidebar.needsYouCount", { count: needs.length })}>{needs.length}</span></SidebarItem> : null}
-            {notifyHistory.length > 0 || route.kind === "notifications" ? <SidebarItem className={styles.railItem} active={route.kind === "notifications"} title={t("sidebar.notifications")} aria-label={mini && notifyActionCount > 0 ? t("sidebar.notificationsCount", { count: notifyActionCount }) : mini ? t("sidebar.notifications") : undefined} onClick={() => go({ kind: "notifications" })} data-testid="sidebar-notifications"><BellRing /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.notifications")}</span>{notifyActionCount > 0 ? <span className={styles.notifyBadge} data-testid="notify-history-badge" aria-label={t("sidebar.notificationsCount", { count: notifyActionCount })}>{notifyActionCount}</span> : null}</SidebarItem> : null}
+            {needs.length > 0 ? <SidebarItem className={`${styles.railItem} ${styles.railLink}`} active={route.kind === "needs"} title={t("sidebar.needsYou")} aria-label={mini ? t("sidebar.needsYouCount", { count: needs.length }) : undefined} onClick={openNeeds}><BellDot /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.needsYou")}</span><span className={styles.needsBadge} data-testid="needs-you-badge" aria-label={t("sidebar.needsYouCount", { count: needs.length })}>{needs.length}</span></SidebarItem> : null}
+            {notifyHistory.length > 0 || route.kind === "notifications" ? <SidebarItem className={`${styles.railItem} ${styles.railLink}`} active={route.kind === "notifications"} title={t("sidebar.notifications")} aria-label={mini && notifyActionCount > 0 ? t("sidebar.notificationsCount", { count: notifyActionCount }) : mini ? t("sidebar.notifications") : undefined} onClick={() => go({ kind: "notifications" })} data-testid="sidebar-notifications"><BellRing /><span className={`${styles.botName} ${styles.railText}`}>{t("sidebar.notifications")}</span>{notifyActionCount > 0 ? <span className={styles.notifyBadge} data-testid="notify-history-badge" aria-label={t("sidebar.notificationsCount", { count: notifyActionCount })}>{notifyActionCount}</span> : null}</SidebarItem> : null}
             {bots.map((bot) => {
               const view = botView(bot);
               const latest = botChats(chats, bot.id).find((c) => !c.archived);
@@ -1352,8 +1352,8 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
           <SidebarFooter className={styles.railFoot}>
             {import.meta.env.DEV && new URLSearchParams(window.location.search).get("dev") === "1" ? <Button variant="ghost" onClick={handleSimulateBotRun}><FlaskConical />{mini ? null : t("dev.simulateBotRun")}</Button> : null}
             <div className={styles.footRow}>
-              <AccountMenu name={settings.accountName} computerTarget={settings.computerTarget} compact={mini} onAction={handleAccountAction} />
               <AppsPill connected={appServers.filter(s => s.status === "connected").map(s => s.name)} onClick={() => setAppsOpen(true)} />
+              <AccountMenu name={settings.accountName} computerTarget={settings.computerTarget} compact={mini} onAction={handleAccountAction} />
             </div>
           </SidebarFooter>
         </Sidebar>
@@ -1361,7 +1361,8 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
     >
       <div id="main-content" tabIndex={-1} className={styles.mainColumn}>
         <div className={styles.titleBar} data-tauri-drag-region>
-          <span className={styles.runtimeLabel} data-tauri-drag-region title={home.kind === "host" && !workLocalNow ? home.name || t("computerPicker.host") : t("account.localComputer")}><i className={styles.liveDot} aria-hidden="true" />{home.kind === "host" && !workLocalNow ? <Server className={styles.runtimeIcon} aria-hidden="true" /> : <Monitor className={styles.runtimeIcon} aria-hidden="true" />}<span className={styles.runtimeName}>{home.kind === "host" && !workLocalNow ? home.name || t("computerPicker.host") : t("account.localComputer")}</span></span>
+          {/* One place picker only (the one on the right). This cell is the header's leading slot (drag region, room for a Back button) and keeps the bot chip centred. */}
+          <div className={styles.titleLead} id={TITLEBAR_LEAD_ID} data-tauri-drag-region />
           {botInView && panelBotView ? (
             <button
               ref={chipRef}

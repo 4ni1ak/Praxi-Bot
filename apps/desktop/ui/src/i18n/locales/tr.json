@@ -1238,7 +1238,7 @@
         "name": "Özel"
       },
       "full": {
-        "hint": "Sormadan çalışır (silme ve gönderim dahil); yalnızca Para, zamanlanmış görev etkinleştirme ve yasaklı listedeki yıkıcı komutlarda sorar. Güvenilmeyen içerik okuduktan sonra veri göndermeden veya program çalıştırmadan önce yine sorar. İstisna: tarayıcı olarak bağladığın bir tarayıcının içindeki işlemler (Playwright: açma, bakma, tıklama, yazma, sayfa betiği çalıştırma) yalnızca bir web sayfası okunduysa sormaz; görev ayrıca özel bir şey okuduysa (dosya, posta, hafıza, ekranın) sorar. Sayfanın dışında kod çalıştırmak ve dosya taşımak her zaman sorar.",
+        "hint": "Sormadan çalışır (silme dahil); yalnızca Para, e-posta gönderme, zamanlanmış görev etkinleştirme ve yasaklı listedeki yıkıcı komutlarda sorar. Çalışmayı sen başlattıysan, bir sayfa okuduktan sonra bile her genel siteyi gezer, kayıt olur ve formları sormadan doldurur. Yalnızca çalışma özel verini (dosya, posta, hafıza) de tutuyorsa ve yeni bir site ya da form bunlardan bir parça içeriyorsa, kayıtlı bir sır için, sayfa betiği için ve güvenilmeyen içerik okuduktan sonra program çalıştırmak için yine sorar.",
         "name": "Tam"
       },
       "read-and-draft": {
@@ -1689,6 +1689,15 @@
         }
       },
       "reasonPlaceholder": "Reddetme gerekçesi (isteğe bağlı)",
+      "risk": {
+        "allowDelete": "Silmeye izin ver",
+        "allowSend": "Göndermeye izin ver",
+        "change": "Değişiklik yapar",
+        "delete": "Siler",
+        "read": "Sadece bakar",
+        "run": "Komut çalıştırır",
+        "send": "Dışarı bir şey gönderir"
+      },
       "runTool": "Bu görev için izin ver",
       "schedule": {
         "allowed": "Sormadan izin verilenler: {{list}}.",
@@ -1864,6 +1873,9 @@
       "undoFile": "Geri al",
       "undoUndo": "Bu geri almayı geri al",
       "viaLink": "Bağlantı üzerinden: {{path}}"
+    },
+    "composerMenu": {
+      "label": "Ekle"
     },
     "conversationLabel": "Bugün",
     "copyMessage": "Mesajı kopyala",
@@ -5382,6 +5394,7 @@
       "en": "English",
       "es": "Español",
       "fr": "Français",
+      "pt": "Português",
       "title": "Dil",
       "tr": "Türkçe"
     },

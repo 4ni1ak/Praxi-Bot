@@ -8,10 +8,16 @@ import {
   CalendarClock,
   ChevronDown,
   Clock,
+  Eye,
+  PenLine,
+  Send,
   ShieldAlert,
   ShieldCheck,
+  SquareTerminal,
+  Trash2,
   TriangleAlert,
-  Wrench
+  Wrench,
+  type LucideIcon
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
@@ -46,6 +52,7 @@ import {
   type ScheduleApprovalDetails
 } from "../lib/approvalDetails";
 import { approvalKeyAction } from "../lib/approvalKeys";
+import { approvalRisk, type ApprovalRisk } from "../lib/approvalRisk";
 import { brandIcon } from "../lib/brandIcons";
 import { describeTool, resolveToolCall } from "../lib/toolLabels";
 import { SiteFavicon } from "./SiteFavicon";
@@ -230,6 +237,14 @@ export interface ApprovalCardProps {
   /** This is the card the Enter / Esc keys answer (only the visible card of the dock). */
   keyboard?: boolean;
 }
+
+const RISK_ICON: Record<ApprovalRisk, LucideIcon> = {
+  read: Eye,
+  change: PenLine,
+  run: SquareTerminal,
+  send: Send,
+  delete: Trash2
+};
 
 /** Enter may allow this card once: it carries nothing the owner has to read first. */
 export function enterMayAllow(tool: ToolItem): boolean {
@@ -706,6 +721,16 @@ export function ApprovalCard({
     brandName
   );
   const compactPreview = approvalCompactPreview(tool.name, tool.input, tool.details);
+  // How much the call can change: only the look of the card (tone, chip, the words of Allow).
+  const risk = approvalRisk(tool.name, tool.input, tool.details);
+  const RiskIcon = risk ? RISK_ICON[risk] : null;
+  const allowLabel = mail?.sendAnyway
+    ? t("chat.approval.mail.sendAnyway")
+    : risk === "delete"
+      ? t("chat.approval.risk.allowDelete")
+      : risk === "send"
+        ? t("chat.approval.risk.allowSend")
+        : t("chat.approval.compact.allow");
   const plainReason = egress ? reasonLine(egress, tt) : null;
   const blockedAlways = isAlwaysBlockedAction(call.name, call.input, tool.details);
   const showAlways = !onceOnly && alwaysOffered && !blockedAlways;
@@ -762,6 +787,7 @@ export function ApprovalCard({
       aria-label={t(outbound ? "chat.approval.sendTitle" : "chat.approval.title")}
       data-testid={outbound ? "approval-card-outbound" : "approval-card"}
       data-call-id={tool.callId}
+      data-risk={risk ?? undefined}
     >
       <div className={styles.approvalTopRow}>
         <span className={styles.approvalIcon}>
@@ -774,6 +800,12 @@ export function ApprovalCard({
         <div className={styles.approvalMain}>
           <div className={styles.approvalHead}>
             <p className={styles.approvalSummary}>{headline}</p>
+            {risk && RiskIcon ? (
+              <span className={styles.riskChip} data-risk={risk} data-testid="approval-risk">
+                <RiskIcon aria-hidden="true" />
+                {t(`chat.approval.risk.${risk}`)}
+              </span>
+            ) : null}
             {remaining !== null ? (
               <span className={styles.countdown} role="timer" aria-live="off">
                 {t("chat.approval.countdown", { seconds: remaining })}
@@ -797,11 +829,11 @@ export function ApprovalCard({
           <div className={styles.actions}>
             <Button
               size="sm"
-              variant="primary"
+              variant={risk === "delete" ? "secondary" : "primary"}
               disabled={disabled || reviewPending || unrenderable}
               onClick={() => void decide("approve", "once")}
             >
-              {mail?.sendAnyway ? t("chat.approval.mail.sendAnyway") : t("chat.approval.compact.allow")}
+              {allowLabel}
             </Button>
             {showAlways ? (
               <Button
@@ -817,8 +849,8 @@ export function ApprovalCard({
             ) : null}
             <Button
               size="sm"
-              variant="ghost"
-              className={styles.denyButton}
+              variant={risk === "delete" ? "primary" : "ghost"}
+              className={risk === "delete" ? undefined : styles.denyButton}
               disabled={disabled}
               onClick={() => void decide("deny", undefined, reason || undefined)}
             >

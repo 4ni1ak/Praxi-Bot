@@ -15,7 +15,7 @@
 
 .botName {
   font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text);
   line-height: var(--line-height-tight);
 }
@@ -284,19 +284,10 @@
   width: 100%;
 }
 
-.needsBadge {
-  margin-left: auto;
-  min-width: var(--size-control-sm);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-pill);
-  background-color: var(--color-warning-subtle);
-  color: var(--color-warning);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-bold);
-  text-align: center;
-}
-
+/* Count badges at the right end of a rail row: one size, one rhythm; the tint says what kind. */
+.needsBadge,
 .notifyBadge {
+  flex: none;
   margin-left: auto;
   display: inline-flex;
   align-items: center;
@@ -305,12 +296,21 @@
   height: var(--space-5);
   padding: var(--space-0) var(--space-2);
   border-radius: var(--radius-pill);
-  background-color: var(--color-accent-subtle);
-  color: var(--color-accent-text);
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums;
+  line-height: 1;
   text-align: center;
+}
+
+.needsBadge {
+  background-color: var(--color-warning-subtle);
+  color: var(--color-warning);
+}
+
+.notifyBadge {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent-text);
 }
 
 .unreadDot {
@@ -320,14 +320,21 @@
   margin-left: auto;
   border-radius: var(--radius-pill);
   background-color: var(--color-accent-text);
+  transition: opacity var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+/* Icon rail: the dot sits on the avatar's corner and needs a ring to separate from it. */
+.railMini .unreadDot {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  margin: 0;
   box-shadow: 0 0 0 var(--size-border-thick) var(--color-surface);
 }
 
-.railMini .unreadDot {
-  position: absolute;
-  top: var(--space-1);
-  right: var(--space-2);
-  margin: 0;
+/* The reorder grip takes the dot's place while the row is hovered. */
+.botRow:has(.grip):hover .unreadDot {
+  opacity: 0;
 }
 
 .mainColumn {
@@ -381,15 +388,15 @@
   display: none;
 }
 
-:global(:root[data-veil="on"]) .runtimeLabel,
+/* Text plates exist only over a wallpaper: the header's chips get one then, never on a plain page. */
+:global(:root[data-veil="on"]) .botChip,
 :global(:root[data-veil="on"]) .windowActions {
-  justify-self: start;
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-pill);
   background-color: var(--on-wallpaper-fill);
 }
 :global(:root[data-veil="on"]) .windowActions {
   justify-self: end;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill);
 }
 
 .runBannerWrap {
@@ -410,10 +417,9 @@
 }
 
 
-.brandMark { display: inline-flex; align-items: center; justify-content: center; width: var(--size-avatar-sm); height: var(--size-avatar-sm); border-radius: var(--radius-md); background: var(--color-accent); color: var(--color-accent-contrast); box-shadow: var(--shadow-sm); }
 .emptyIcon { width: var(--space-10); height: var(--space-10); color: var(--color-accent-text); margin-bottom: var(--space-3); }
 
-.botRole { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-ui); font-weight: var(--font-weight-regular); }
+.botRole { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-xs); font-weight: var(--font-weight-regular); }
 
 .emptyStateCard { border: none; box-shadow: none; background: transparent; }
 
@@ -425,8 +431,10 @@
 @media (prefers-reduced-motion: reduce) {
   .spin { animation: none; }
   .colorSwatch,
+  .iconButton,
   .botChip,
-  .botChip > svg { transition: none; }
+  .botChip > svg,
+  .unreadDot { transition: none; }
 }
 
 .skipLink {
@@ -469,19 +477,33 @@
 .iconButton {
   display: inline-grid;
   place-items: center;
-  width: var(--space-8);
-  height: var(--space-8);
+  flex: none;
+  width: var(--size-control-md);
+  height: var(--size-control-md);
   padding: 0;
   border: none;
   border-radius: var(--radius-md);
   background: none;
   color: var(--color-text-muted);
   cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-easing-standard),
+    color var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
 .iconButton:hover {
-  background-color: var(--color-surface-elevated);
+  background-color: var(--state-hover);
   color: var(--color-text);
+}
+
+.iconButton:active {
+  background-color: var(--state-pressed);
+}
+
+/* The page this button opens is the one on screen. */
+.iconButton[aria-current="page"] {
+  background-color: var(--state-selected);
+  color: var(--color-accent-text);
 }
 
 .iconButton:focus-visible {
@@ -491,6 +513,7 @@
 
 .topActions {
   display: flex;
+  flex: none;
   gap: var(--space-1);
 }
 
@@ -499,12 +522,21 @@
   min-width: 0;
 }
 
+/* Brand: the app mark, the name, the three page actions. */
 .brand {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
+}
+
+.brandMark {
+  flex: none;
+  width: var(--size-avatar-sm);
+  height: var(--size-avatar-sm);
+  object-fit: contain;
+  user-select: none;
 }
 
 .brandName {
@@ -519,31 +551,88 @@
   color: var(--color-text);
 }
 
-.railItem {
-  border-radius: var(--radius-card);
+/* Narrow rail: the wordmark steps aside for the mark so it never shows as "Pra…". */
+:global([data-rail-tier="narrow"]) .brandName {
+  display: none;
 }
 
-.railItem:hover {
-  background-color: color-mix(in srgb, var(--color-surface-elevated) 60%, transparent);
+:global([data-rail-tier="narrow"]) .brand {
+  justify-content: space-between;
 }
 
-/* Selected row must read differently from hover and from a bot-tinted backdrop (254-F). */
-.railItem[aria-current="page"] {
-  background-color: var(--color-surface-active);
-  box-shadow: inset var(--size-border-thick) 0 0 var(--color-accent-text);
+/* Rows: 56 px, 8 px radius.  Hover and pressed are the shared state layers (Sidebar); selected is the
+   accent state layer plus a straight marker at the row's left edge. */
+.rail .railItem {
+  position: relative;
+  min-height: calc(var(--space-12) + var(--space-2));
+  padding: var(--space-2) var(--space-3);
+  gap: var(--space-3);
+  border-radius: var(--radius-md);
 }
 
-.railItem[aria-current="page"]:focus-visible {
-  box-shadow: inset var(--size-border-thick) 0 0 var(--color-accent-text), var(--shadow-focus);
+.rail .railItem[aria-current="page"],
+.rail .railItem[aria-current="page"]:hover,
+.rail .railItem[aria-current="page"]:active {
+  background-color: var(--state-selected);
+}
+
+.rail .railItem[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: var(--space-half);
+  width: calc(var(--size-border-thick) * 1.5);
+  height: var(--space-5);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-accent-text);
+  transform: translateY(-50%);
+}
+
+/* Page links (Needs you, Notifications): compact rows above the bots, then a hairline. */
+.rail .railLink {
+  min-height: var(--size-control-lg);
+  padding-block: var(--space-1);
+}
+
+.railLink > svg {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.railLink[aria-current="page"] > svg {
+  color: var(--color-accent-text);
+}
+
+.railLink .botName {
+  font-weight: var(--font-weight-medium);
+}
+
+.railLink + .botRow {
+  margin-top: var(--space-3);
+}
+
+.railLink + .botRow::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--space-2) * -1);
+  left: var(--space-3);
+  right: var(--space-3);
+  height: var(--size-border);
+  background-color: var(--color-border);
 }
 
 .railFoot {
-  gap: var(--space-2);
+  gap: var(--space-1);
+}
+
+.rail .railFoot {
+  padding: var(--space-3);
 }
 
 .footRow {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: var(--space-1);
   min-width: 0;
 }
@@ -564,22 +653,33 @@
 }
 
 .railMini .railItem {
-  position: relative;
   justify-content: center;
   padding-inline: 0;
 }
 
-.railMini .needsBadge {
+.railMini .needsBadge,
+.railMini .notifyBadge {
   position: absolute;
-  top: var(--space-1);
+  top: var(--space-half);
   right: var(--space-2);
-  min-width: 0;
+  min-width: var(--space-4);
+  height: var(--space-4);
+  margin: 0;
   padding: 0 var(--space-1);
-  font-size: var(--font-size-xs);
+}
+
+/* Icon rail: the marker sits in the gutter, clear of the character. */
+.railMini .railItem[aria-current="page"]::before {
+  left: calc(var(--space-2) * -1);
+}
+
+.railMini .railLink + .botRow::before {
+  left: var(--space-2);
+  right: var(--space-2);
 }
 
 .railMini .footRow {
-  flex-direction: column-reverse;
+  align-items: center;
   justify-content: center;
 }
 
@@ -587,11 +687,13 @@
   margin: 0;
 }
 
-/* Title bar: where the bot runs, the bot chip, window actions. */
+/* Title bar: a leading slot (drag region, room for Back), the bot chip, then the place picker and
+   settings.  The bar keeps its 52 px height: the overlay panel starts below it (Sidebar.module.css). */
 .titleBar {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  /* The bot chip is centred while the picker fits; when it needs more room the leading slot gives way. */
+  grid-template-columns: minmax(0, 1fr) auto minmax(max-content, 1fr);
   align-items: center;
   flex-shrink: 0;
   gap: var(--space-3);
@@ -599,48 +701,48 @@
   padding: var(--space-2) var(--space-3) var(--space-2) var(--space-5);
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
+  container: chat-header / inline-size;
 }
 
-.runtimeLabel {
-  display: inline-flex;
+.titleLead {
+  display: flex;
   align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  white-space: nowrap;
-}
-
-.liveDot {
-  width: calc(var(--space-1) * 1.5);
-  height: calc(var(--space-1) * 1.5);
-  border-radius: 50%;
-  background-color: var(--color-success);
+  min-width: var(--space-0);
 }
 
 .windowActions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  min-width: var(--space-0);
+  max-width: 100%;
+}
+
+.windowActions > :first-child {
+  min-width: var(--space-0);
 }
 
 .botChip {
   display: inline-flex;
   align-items: center;
+  justify-self: center;
   gap: var(--space-2);
+  min-width: var(--space-0);
   max-width: 100%;
-  height: var(--space-10);
-  padding: 0 var(--space-3) 0 var(--space-2);
+  height: var(--size-control-md);
+  padding: 0 var(--space-3) 0 var(--space-1);
   border: var(--size-border) solid var(--color-border);
   border-radius: var(--radius-pill);
   background-color: color-mix(in srgb, var(--color-surface-elevated) 80%, transparent);
   color: var(--color-text);
   font-family: inherit;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-ui);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
   transition:
-    background-color var(--motion-duration-fast) ease-out,
-    border-color var(--motion-duration-fast) ease-out;
+    background-color var(--motion-duration-fast) var(--motion-easing-standard),
+    border-color var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
 .botChip:hover,
@@ -649,15 +751,24 @@
   background-color: var(--color-surface-active);
 }
 
+.botChip:active {
+  background-color: var(--color-surface-active);
+}
+
 .botChip:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
 }
 
+.botChip > :first-child,
+.botChip > svg {
+  flex-shrink: 0;
+}
+
 .botChip > svg {
   width: var(--size-icon-sm);
   height: var(--size-icon-sm);
-  color: var(--color-text-faint);
+  color: var(--color-text-muted);
   transition: transform var(--motion-duration-normal) var(--motion-easing-standard);
 }
 
@@ -666,10 +777,20 @@
 }
 
 .botChipName {
-  min-width: 0;
+  min-width: var(--space-0);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* stylelint-disable-next-line unit-disallowed-list -- header container breakpoint */
+@container chat-header (width < 36em) {
+  .windowActions { gap: var(--space-1); }
+  .botChip { gap: var(--space-1); padding-inline: var(--space-1); }
+}
+/* stylelint-disable-next-line unit-disallowed-list -- header container breakpoint */
+@container chat-header (width < 30em) {
+  .botChipName { display: none; }
 }
 
 /* ---- Sidebar bot order (254-F): drag rows, keyboard grip, main-bot mark ---- */
@@ -785,23 +906,3 @@
   filter: grayscale(0.6);
   pointer-events: none;
 }
-
-.titleBar { container: chat-header / inline-size; }
-.runtimeName { min-width: var(--space-0); overflow: hidden; text-overflow: ellipsis; }
-.liveDot, .botChip > :first-child, .botChip > svg { flex-shrink: 0; }
-.botChip { min-width: var(--space-0); justify-self: center; background-color: var(--on-wallpaper-fill); }
-.runtimeLabel, .windowActions { min-width: var(--space-0); max-width: 100%; }
-.windowActions > :first-child { min-width: var(--space-0); }
-.runtimeLabel { border-radius: var(--radius-pill); padding: var(--space-1) var(--space-2); background-color: var(--on-wallpaper-fill); color: var(--on-wallpaper-muted); }
-/* stylelint-disable-next-line unit-disallowed-list -- header container breakpoint */
-@container chat-header (width < 40em) {
-  .windowActions { gap: var(--space-1); }
-  .botChip { gap: var(--space-1); padding-inline: var(--space-1); }
-}
-/* stylelint-disable-next-line unit-disallowed-list -- header container breakpoint */
-@container chat-header (width < 34em) {
-  .runtimeName, .botChipName { display: none; }
-  .runtimeLabel { justify-self: start; }
-}
-
-.runtimeIcon { flex: none; width: var(--size-icon-sm); height: var(--size-icon-sm); }

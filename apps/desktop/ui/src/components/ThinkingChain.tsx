@@ -3,7 +3,7 @@ import { type ReactNode, useEffect, useId, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { brandIcon } from "../lib/brandIcons";
-import { formatClock, formatStamp, formatStepDuration, type MessageTimes } from "../lib/messageTime";
+import { formatStamp, formatStepDuration, type MessageTimes } from "../lib/messageTime";
 import { type Chain, chainSeconds, type ChainStep } from "../lib/thinkingChain";
 import { buildRows, capRows, chainSummary, collapsedRows, groupHost, type ChainRow } from "../lib/chainRows";
 import { isInFlight, isOrphanStep, isSlowStep } from "../lib/stepStuck";
@@ -96,7 +96,6 @@ function SiteMark({ host, status }: { host: string; status: string }) {
 function ToolStep({ tool, times, live }: { tool: ToolItem; times: MessageTimes; live: boolean }) {
   const { t, i18n } = useTranslation();
   const ms = stepMs(tool);
-  const clock = times === "off" ? null : formatClock(tool.requestedMs, i18n.language, true);
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const label = describeTool(tool.name, tool.input, brandName);
@@ -177,13 +176,14 @@ function ToolStep({ tool, times, live }: { tool: ToolItem; times: MessageTimes; 
           </span>
         ) : null}
         <span className={styles.stepEnd}>
-          {clock || timeText ? (
+          {/* How long it took, not the wall clock (noise while a run goes on); the date and time of the step are in the tooltip. */}
+          {timeText ? (
             <span
               className={styles.stepTime}
-              title={formatStamp(tool.requestedMs, i18n.language)}
+              title={times === "off" ? undefined : formatStamp(tool.requestedMs, i18n.language)}
               data-testid="step-time"
             >
-              {[clock, timeText].filter(Boolean).join(" · ")}
+              {timeText}
             </span>
           ) : null}
           <button

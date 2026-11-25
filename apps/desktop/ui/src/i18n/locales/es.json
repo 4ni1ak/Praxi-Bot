@@ -1238,7 +1238,7 @@
         "name": "Custom"
       },
       "full": {
-        "hint": "Runs without asking (including deletes and sends), except Money, schedule activation and catastrophic never-list commands. After reading untrusted content it still asks before sending data out or running a program. Exception: actions inside a browser you connected as a browser (Playwright: open, look, click, type, run a page script) do not ask after a web page alone; they ask once the task also read something private (files, mail, memory, your screen). Running code outside the page and moving files always ask.",
+        "hint": "Funciona sin preguntar (incluidos borrados), salvo Dinero, el envío de correo, la activación de tareas programadas y los comandos catastróficos de la lista prohibida. Si inicias tú la ejecución, también visita cualquier sitio público, se registra y rellena formularios sin preguntar, incluso después de leer una página. Solo vuelve a preguntar si la ejecución también contiene tus datos privados (archivos, correo, memoria) y un sitio nuevo o un formulario incluye un fragmento de ellos, ante un secreto guardado, un script de página y, tras leer contenido no fiable, antes de ejecutar un programa.",
         "name": "Full"
       },
       "read-and-draft": {
@@ -1689,6 +1689,15 @@
         }
       },
       "reasonPlaceholder": "Motivo del rechazo (opcional)",
+      "risk": {
+        "allowDelete": "Permitir eliminar",
+        "allowSend": "Permitir enviar",
+        "change": "Hace cambios",
+        "delete": "Elimina",
+        "read": "Solo mira",
+        "run": "Ejecuta un comando",
+        "send": "Envía algo al exterior"
+      },
       "runTool": "Permitir durante esta tarea",
       "schedule": {
         "allowed": "Permitido sin preguntar: {{list}}.",
@@ -1864,6 +1873,9 @@
       "undoFile": "Deshacer",
       "undoUndo": "Revertir esta restauración",
       "viaLink": "A través del enlace {{path}}"
+    },
+    "composerMenu": {
+      "label": "Añadir"
     },
     "conversationLabel": "Hoy",
     "copyMessage": "Copiar mensaje",
@@ -5382,6 +5394,7 @@
       "en": "English",
       "es": "Español",
       "fr": "Français",
+      "pt": "Português",
       "title": "Language",
       "tr": "Türkçe"
     },

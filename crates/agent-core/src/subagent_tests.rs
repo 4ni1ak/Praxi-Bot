@@ -2160,3 +2160,87 @@ async fn stop_force_stops_a_child_blocked_in_a_non_polling_tool() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
+
+/// A subagent in a Full owner run keeps the old rule: it asks for a new site after reading a
+/// page, where the owner-started parent run would not.
+#[tokio::test]
+async fn a_subagent_in_a_full_run_still_asks_for_a_new_site_after_a_page() {
+    let env = setup();
+    let b = PermissionCategory::Browser;
+    let open = Arc::new(with_class(
+        "browser_open",
+        Effect::Write,
+        b,
+        builtin_tools::classify("browser_open").unwrap(),
+        "page text",
+    ));
+    let snapshot = Arc::new(with_class(
+        "browser_snapshot",
+        Effect::Read,
+        b,
+        builtin_tools::classify("browser_snapshot").unwrap(),
+        "page text",
+    ));
+    let tools = vec![
+        Arc::clone(&open) as Arc<dyn Tool>,
+        Arc::clone(&snapshot) as Arc<dyn Tool>,
+    ];
+    let brain = Brain::new(|req| {
+        if is_child(req) {
+            match results(req).len() {
+                0 => call(&[(
+                    "k1",
+                    "browser_open",
+                    json!({"url": "https://webioo.com.tr/"}),
+                )]),
+                1 => call(&[("k2", "browser_snapshot", json!({}))]),
+                2 => call(&[(
+                    "k3",
+                    "browser_open",
+                    json!({"url": "https://other.example/catalog"}),
+                )]),
+                _ => say("done"),
+            }
+        } else if results(req).is_empty() {
+            call(&[(
+                "p1",
+                "spawn_subagent",
+                json!({"task": "browse", "tools": ["browser_open", "browser_snapshot"]}),
+            )])
+        } else {
+            say("done")
+        }
+    });
+    let lp = make(
+        &env.storage,
+        env.bot,
+        &brain,
+        &tools,
+        profile("[permissions]\npreset = \"full\"\n"),
+        cfg(Policy::full()),
+    );
+    let mut rx = lp.subscribe();
+    let crate::Delivery::NewTurn(parent) = lp
+        .send_user_message_from(
+            env.chat,
+            "webioo.com.tr adresine gir",
+            crate::MessageMode::Steer,
+            "owner",
+        )
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let event = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    let Event::ApprovalNeeded(a) = event else {
+        unreachable!()
+    };
+    assert_eq!(a.tool_name, "browser_open");
+    assert_eq!(a.input["url"], "https://other.example/catalog");
+    assert_eq!(
+        open.count.load(Ordering::SeqCst),
+        1,
+        "only the first open ran"
+    );
+    lp.cancel(parent).unwrap();
+}

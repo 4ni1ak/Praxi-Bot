@@ -12,7 +12,7 @@ Hesap menüsünden **Ayarlar**'ı, sonra **Güvenlik ve izinler**'i aç. Bir sev
 | --- | --- | --- |
 | **Dikkatli** | Dosya okur, bir şeyleri araştırır, taslak yazar. | Dosya düzenleme ya da kaydetme, mesaj veya e-posta gönderme, web sayfası açma, komut çalıştırma. |
 | **Dengeli** (önerilen) | Okur, gezinir, çalışma alanındaki dosyaları düzenler. | Bir şeyleri silme, mesaj veya e-posta gönderme, para harcama, kendi bilgisayarını kullanma. |
-| **Serbest** | Neredeyse her şeyi, dosya silme ve mesaj gönderme dahil. | Para harcama, tehlikeli komutlar ve güvenilmeyen bir sayfayı okuduktan sonraki her şey. |
+| **Serbest** | Neredeyse her şeyi, dosya silme ve mesaj gönderme dahil. Çalışmayı sen başlattıysan bir sayfa okuduktan sonra bile sormadan web'de gezer, tıklar ve yazar. | Para harcama, tehlikeli komutlar, kayıtlı bir sırrı yazmak, e-posta göndermek ve güvenilmeyen bir sayfayı okuduktan sonra program çalıştırmak. Çalışma ayrıca özel verini (dosya, posta, hafıza) tutuyorsa, bunlardan bir parçayı içeren yeni bir site ya da form. |
 
 İlk kurulum ekranı aynı fikir için **Sorar**, **Dengeli** ve **Serbest** adlarını kullanır. **Sorar**, **Dikkatli**'ye yakındır. İlk kurulumdaki **Serbest**, ayarlardaki **Serbest** seviyesine (İngilizce arayüzde "Hands-off") denk gelir.
 
