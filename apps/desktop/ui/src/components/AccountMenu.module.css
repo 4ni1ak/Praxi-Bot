@@ -1,22 +1,29 @@
 .trigger {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
+  width: 100%;
   min-width: var(--space-0);
-  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
+  height: var(--size-control-lg);
+  padding: 0 var(--space-2);
   border: none;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-md);
   background: none;
   color: var(--color-text);
   font-family: inherit;
   font-weight: var(--font-weight-medium);
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
-.trigger:hover,
+.trigger:hover {
+  background-color: var(--state-hover);
+}
+
+.trigger:active,
 .trigger[aria-expanded="true"] {
-  background-color: var(--color-surface-elevated);
+  background-color: var(--state-pressed);
 }
 
 .trigger:focus-visible {
@@ -24,12 +31,26 @@
   box-shadow: var(--shadow-focus);
 }
 
+/* Collapsed rail: just the avatar. */
+.trigger:not(:has(.name)) {
+  justify-content: center;
+  width: var(--size-control-lg);
+  padding: 0;
+}
+
+.chevron {
+  flex: none;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  color: var(--color-text-muted);
+}
+
 .avatar {
   flex-shrink: 0;
   display: inline-grid;
   place-items: center;
-  width: calc(var(--space-8) - var(--space-1));
-  height: calc(var(--space-8) - var(--space-1));
+  width: var(--size-avatar-sm);
+  height: var(--size-avatar-sm);
   border-radius: var(--radius-pill);
   background: linear-gradient(135deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 35%, var(--color-surface-elevated)));
   color: var(--color-accent-contrast);
@@ -45,6 +66,7 @@
 }
 
 .name {
+  flex: 1;
   min-width: var(--space-0);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -96,16 +118,15 @@
   gap: calc(var(--space-1) * 1.5);
   padding: var(--space-3) var(--space-1) var(--space-2);
   border: none;
-  border-radius: calc(var(--radius-card) * 1.1);
-  background-color: color-mix(in srgb, var(--color-text) 5%, transparent);
+  border-radius: var(--radius-md);
+  background-color: var(--state-hover);
   color: var(--color-text-muted);
   font-family: inherit;
   font-size: var(--font-size-xs);
   cursor: pointer;
   transition:
-    background-color var(--motion-duration-fast) ease-out,
-    color var(--motion-duration-fast) ease-out,
-    transform var(--motion-duration-fast) ease-out;
+    background-color var(--motion-duration-fast) var(--motion-easing-standard),
+    color var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
 .tile > svg {
@@ -115,9 +136,8 @@
 .tile:hover,
 .tile:focus-visible {
   outline: none;
-  background-color: var(--color-surface-active);
+  background-color: var(--state-pressed);
   color: var(--color-text);
-  transform: translateY(calc(var(--size-border) * -1));
 }
 
 .tile:focus-visible {
@@ -128,10 +148,10 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  height: var(--space-10);
+  height: var(--size-control-lg);
   padding: 0 var(--space-3);
   border: none;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-md);
   background: none;
   color: var(--color-text);
   font-family: inherit;
@@ -151,7 +171,7 @@
 .item:hover,
 .item:focus-visible {
   outline: none;
-  background-color: var(--color-surface-active);
+  background-color: var(--state-hover);
 }
 
 .item:focus-visible {
@@ -162,7 +182,7 @@
   padding: var(--size-border) calc(var(--space-1) * 1.5);
   border: var(--size-border) solid var(--color-border);
   border-radius: var(--radius-sm);
-  background-color: color-mix(in srgb, var(--color-text) 4%, transparent);
+  background-color: var(--state-hover);
   color: var(--color-text-muted);
   font: var(--font-weight-medium) var(--font-size-xs) var(--font-mono);
 }
