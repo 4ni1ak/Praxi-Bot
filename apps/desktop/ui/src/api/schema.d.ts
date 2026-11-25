@@ -719,6 +719,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{bot}/triggers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["triggers_list"];
+        put?: never;
+        post: operations["triggers_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/triggers/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["triggers_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/triggers/{trigger}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["triggers_update"];
+        post?: never;
+        delete: operations["triggers_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots/{id}": {
         parameters: {
             query?: never;
@@ -7915,12 +7963,12 @@ export interface components {
              * Format: uuid
              * @description New chat the run lives in.
              */
-            chat_id: string;
+            chat_id?: string | null;
             /**
              * Format: uuid
              * @description Run that was started.
              */
-            run_id: string;
+            run_id?: string | null;
             /** @description Always `accepted`. */
             status: string;
             /**
@@ -10857,6 +10905,40 @@ export interface components {
             /** @description The recognised text. */
             text: string;
         };
+        TriggerDto: {
+            /** Format: uuid */
+            bot_id: string;
+            config: unknown;
+            count_today?: number | null;
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            instruction: string;
+            /** @description Fixed reason code; the UI translates it, never displays provider errors. */
+            last_error?: string | null;
+            /** Format: int64 */
+            last_fired_at_ms?: number | null;
+            name: string;
+            /** @description `rule`, or an existing `schedule` / `webhook` ready for owner adoption. */
+            origin: string;
+            queued?: number | null;
+        };
+        TriggerInput: {
+            /** @description Source, filters, `quiet_hours`, limits and `bot_limits`. Never credentials. */
+            config: unknown;
+            enabled?: boolean;
+            instruction: string;
+            name: string;
+        };
+        TriggerPreview: {
+            matches: boolean;
+            text: string;
+        };
+        TriggerSample: {
+            config: unknown;
+            instruction: string;
+            sample: unknown;
+        };
         TrustFolderInput: {
             /** @description An existing directory (an absolute path). */
             path: string;
@@ -13126,6 +13208,187 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    triggers_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerDto"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    triggers_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerInput"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    triggers_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerSample"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerPreview"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    triggers_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                trigger: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    triggers_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                trigger: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
