@@ -184,6 +184,12 @@ async fn store(
     input: &SubmitSecretRequest,
 ) -> Result<(), ApiError> {
     let items = entries(&info.name, info.fields, input)?;
+    // Another bot's account is not replaceable through this bot's form, even when it
+    // appeared after the card opened (the write below checks again under its lock).
+    for (n, _) in &items {
+        svc.check_bot(n, Some(&info.bot_id))
+            .map_err(|e| crate::fill_routes::map(&e))?;
+    }
     let existing = items.iter().any(|(n, _)| svc.exists(n));
     if existing && !info.replace {
         return Err(exists());
@@ -202,16 +208,20 @@ async fn store(
     )?;
     // One all-or-nothing operation: validated first, and a failed write puts the
     // previous username AND password back (a half-replaced login never remains).
-    let (svc2, origins, programs, replace) = (
+    // The write is on behalf of the bot that asked: another bot's account is refused
+    // under the write lock, whatever the form says.
+    let (svc2, origins, programs, replace, bot) = (
         std::sync::Arc::clone(svc),
         input.origins.clone(),
         input.programs.clone(),
         info.replace,
+        info.bot_id.clone(),
     );
-    let done =
-        tokio::task::spawn_blocking(move || svc2.upsert_all(&items, &origins, &programs, replace))
-            .await
-            .map_err(ApiError::internal)?;
+    let done = tokio::task::spawn_blocking(move || {
+        svc2.upsert_all_for_bot(&items, &origins, &programs, replace, Some(&bot))
+    })
+    .await
+    .map_err(ApiError::internal)?;
     match done {
         Ok(_) => Ok(()),
         // Another writer created the name between the check above and the write.

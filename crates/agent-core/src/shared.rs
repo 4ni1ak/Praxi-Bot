@@ -671,6 +671,9 @@ pub struct SecretRequestInfo {
     /// The bot asked to replace an existing entry; without it the submit route
     /// must refuse a name that exists.
     pub replace: bool,
+    /// The bot that asked (its id as text); the submit route writes on its behalf, so
+    /// it cannot replace another bot's account.
+    pub bot_id: String,
 }
 
 // Independent offer flags of one card; folding them into an enum would hide which

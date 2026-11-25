@@ -145,7 +145,7 @@ impl Tool for SecretRequest {
         &self.spec
     }
 
-    async fn call(&self, _ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
+    async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
         let name = input
             .get("name")
             .and_then(Value::as_str)
@@ -180,6 +180,14 @@ impl Tool for SecretRequest {
                 ));
             }
         };
+        // An entry that is another bot's account (or any account, for a call without a
+        // bot) is not this bot's to ask the owner to replace: refused before any card,
+        // `replace` or not. The submit route repeats the check under the write lock.
+        for n in entry_names(name, fields) {
+            self.secrets
+                .check_bot(&n, ctx.bot_id.as_deref())
+                .map_err(|e| crate::fill_secret::refused(&e))?;
+        }
         let taken = entry_names(name, fields)
             .iter()
             .any(|n| self.secrets.exists(n));
@@ -270,6 +278,49 @@ mod tests {
             )
             .await
             .is_ok()
+        );
+    }
+
+    /// Bot B must not get the owner to replace bot A's account value, with or
+    /// without `replace`; bot A itself, and any bot for an owner-made secret, may ask.
+    #[tokio::test]
+    async fn a_bot_cannot_ask_the_owner_to_replace_another_bots_account() {
+        let (s, t) = tool();
+        s.register_account(&secret_store::NewAccount {
+            name: "login/example.com-aaaa1111",
+            site: "https://example.com",
+            login_id: "me",
+            email_account: None,
+            bot_id: "bot-a",
+            note: None,
+            password_len: 20,
+            symbols: true,
+        })
+        .unwrap();
+        s.upsert("login/owner-made", Some("x"), None, None).unwrap();
+        let ctx = |bot: Option<&str>| ToolContext {
+            bot_id: bot.map(str::to_owned),
+            ..ToolContext::default()
+        };
+        let ask = |name: &str, replace: bool| json!({"name": name, "purpose": "Sign in", "replace": replace});
+        for bot in [Some("bot-b"), None] {
+            for replace in [true, false] {
+                let err = t
+                    .call(&ctx(bot), ask("login/example.com-aaaa1111", replace))
+                    .await
+                    .unwrap_err();
+                assert!(err.to_string().contains("belongs to another bot"), "{err}");
+            }
+        }
+        assert!(
+            t.call(&ctx(Some("bot-a")), ask("login/example.com-aaaa1111", true))
+                .await
+                .is_ok()
+        );
+        assert!(
+            t.call(&ctx(Some("bot-b")), ask("login/owner-made", true))
+                .await
+                .is_ok()
         );
     }
 }

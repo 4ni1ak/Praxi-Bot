@@ -20,7 +20,7 @@ fn secrets() -> Arc<FillSecrets> {
 }
 
 /// Captures every log line (message and fields) any thread of the test emits.
-struct LogCapture(Arc<parking_lot::Mutex<String>>);
+pub(crate) struct LogCapture(pub(crate) Arc<parking_lot::Mutex<String>>);
 
 impl tracing::Subscriber for LogCapture {
     fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
