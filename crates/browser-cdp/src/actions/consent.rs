@@ -15,7 +15,7 @@ use crate::page::Page;
 
 /// The in-page finder: evaluates to `{found, kind, cmp, label, x, y, origin}` or
 /// `{found: false, banner, frame_hint, origin}`.
-const FINDER_JS: &str = include_str!("consent.js");
+const FINDER_JS: &str = include_str!("consent_finder.js.txt");
 
 /// Which button the finder chose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
