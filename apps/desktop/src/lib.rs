@@ -1138,7 +1138,8 @@ pub fn run() {
     let daemon_for_exit = Arc::clone(&daemon_handle);
     let daemon_for_setup = Arc::clone(&daemon_handle);
 
-    let (update_plugin, update_runtime) = update::init();
+    let context = tauri::generate_context!();
+    let (update_plugin, update_runtime) = update::init(&context.package_info().version.to_string());
 
     #[cfg(any(windows, target_os = "linux"))]
     let cold_link = deep_link::from_argv(&std::env::args_os().collect::<Vec<_>>());
@@ -1274,6 +1275,8 @@ pub fn run() {
             shell::set_tray_labels,
             shell::set_keep_in_tray,
             update::update_status,
+            update::update_set_channel,
+            update::update_skip,
             update::update_check,
             update::update_install,
             update::update_rollback,
@@ -1282,7 +1285,7 @@ pub fn run() {
             quick_ask::quick_ask_hide,
             quick_ask::quick_ask_open_in_app,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application");
 
     app.run(move |app_handle, event| {
@@ -1563,6 +1566,8 @@ mod acl_tests {
         ("set_tray_labels", "MAIN_ONLY"),
         ("set_keep_in_tray", "MAIN_ONLY"),
         ("update_status", "MAIN_ONLY"),
+        ("update_set_channel", "MAIN_ONLY"),
+        ("update_skip", "MAIN_ONLY"),
         ("update_check", "MAIN_ONLY"),
         ("update_install", "MAIN_ONLY"),
         ("update_rollback", "MAIN_ONLY"),

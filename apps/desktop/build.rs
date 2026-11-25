@@ -6,6 +6,36 @@ include!("src/command_names.rs");
 
 fn main() {
     println!("cargo:rerun-if-changed=src/command_names.rs");
+    println!("cargo:rerun-if-env-changed=PRAXI_BUILD_HASH");
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+            .filter(|s| !s.is_empty())
+    };
+    // HEAD is a symbolic ref on normal builds: also watch its branch ref and packed refs.
+    let mut refs = vec!["HEAD".to_owned(), "packed-refs".to_owned()];
+    if let Some(branch) = git(&["symbolic-ref", "-q", "HEAD"]) {
+        refs.push(branch);
+    }
+    for reference in refs {
+        if let Some(path) = git(&["rev-parse", "--git-path", &reference]) {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
+    let hash = env::var("PRAXI_BUILD_HASH")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| git(&["rev-parse", "--short=8", "HEAD"]));
+    if let Some(hash) =
+        hash.filter(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_alphanumeric()))
+    {
+        println!("cargo:rustc-env=PRAXI_BUILD_HASH={hash}");
+    }
+
     let dist_dir = Path::new("ui/dist");
     if !dist_dir.exists() {
         let _ = fs::create_dir_all(dist_dir);

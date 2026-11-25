@@ -6039,6 +6039,14 @@
     "updates": {
       "appVersion": "Desktop app",
       "available": "Version {{version}} is available.",
+      "buildId": "Build ID",
+      "channel": {
+        "description": "Stable is recommended. Preview includes early releases that may have problems. Updates install only when you choose Install.",
+        "preview": "Preview",
+        "stable": "Stable",
+        "title": "Update channel",
+        "unavailable": "Preview updates have not been configured for this build."
+      },
       "check": {
         "action": "Check for updates",
         "description": "Looks for a newer version and shows what is new. Nothing is installed until you choose to.",
@@ -6056,6 +6064,7 @@
         "no_rollback": "No earlier version is available to go back to.",
         "not_configured": "Updates are not set up in this build.",
         "nothing_to_install": "Please check for updates first.",
+        "preview_not_configured": "Preview updates are not configured. Choose Stable or install a build with Preview support.",
         "signature": "The update could not be verified as genuine, so it was NOT installed. Nothing was changed."
       },
       "install": {
@@ -6063,14 +6072,18 @@
         "hint": "The update is checked for authenticity before it is installed. Praxi-Bot restarts when it is done.",
         "working": "Updating…"
       },
-      "notConfigured": "This build of Praxi-Bot has no update service set up, so it cannot update itself. Download the newest version from the project page instead.",
+      "lastChecked": "Last checked: {{time}}",
+      "neverChecked": "Updates have not been checked yet.",
+      "notConfigured": "Updates are unavailable: this build has no updater signing key or secure update feed configured. Nothing will be downloaded or installed.",
       "rollback": {
         "action": "Go back to the previous version",
         "description": "Version {{version}} did not start properly. You can go back to the last version that worked.",
         "title": "Something went wrong with the update",
         "working": "Going back…"
       },
-      "title": "Updates & version",
+      "skip": "Skip this version",
+      "skipped": "Version {{version}} is skipped. Newer versions will still be offered.",
+      "title": "About",
       "unknown": "Unknown",
       "upToDate": "You have the latest version."
     },

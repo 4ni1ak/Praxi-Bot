@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { notesFor, whatsNewAction, type WhatsNewFile } from "./whatsNew.ts";
+import { installedReleaseNotes, notesFor, whatsNewAction, type WhatsNewFile } from "./whatsNew.ts";
 
 const read = (rel: string) => JSON.parse(readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8"));
 
@@ -32,4 +32,16 @@ test("show once after an update; a fresh install or a note-less version only rec
   assert.equal(whatsNewAction({ ...base, lastSeen: "", onboardingCompleted: true }), "show");
   assert.equal(whatsNewAction({ ...base, hasNotes: false }), "record");
   assert.equal(whatsNewAction({ ...base, version: "" }), "none");
+});
+
+test("installed feed notes are inert text for the running version and shown once", () => {
+  const body = '<img src=x onerror="alert(1)">\n[click](javascript:alert(1))';
+  const notes = { version: "2.0.0", notes: body };
+  const selected = installedReleaseNotes(notes, "2.0.0", "What's new");
+  assert.deepEqual(selected, { title: "What's new", items: [], text: body });
+  assert.equal(installedReleaseNotes(notes, "1.0.0", "What's new"), null);
+  assert.equal(installedReleaseNotes({ ...notes, notes: " " }, "2.0.0", "What's new"), null);
+  const args = { version: "2.0.0", lastSeen: "1.0.0", onboardingCompleted: true, hasNotes: selected !== null };
+  assert.equal(whatsNewAction(args), "show");
+  assert.equal(whatsNewAction({ ...args, lastSeen: "2.0.0" }), "none");
 });
