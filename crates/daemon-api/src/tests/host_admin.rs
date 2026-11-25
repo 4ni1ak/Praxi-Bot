@@ -1937,3 +1937,158 @@ async fn the_migration_is_one_time_even_when_it_first_runs_on_an_empty_host() {
     let bot = r.t.state.storage().get_bot(id).unwrap().unwrap();
     assert_eq!(bot.config["runtime"]["computer"], "pc");
 }
+
+// ------------------------------------------ settings of the host (mail, search, dictation)
+
+/// Requests of the "accounts and keys" settings that the owner's confirmed desktop may send.
+fn settings_calls() -> Vec<(Method, &'static str, Value)> {
+    vec![
+        (
+            Method::POST,
+            "/v1/email/accounts",
+            json!({"name": "agent", "provider": "agentmail", "address": "x@agentmail.to", "api_key": KEY}),
+        ),
+        (
+            Method::PUT,
+            "/v1/email/accounts/agent",
+            json!({"api_key": KEY}),
+        ),
+        (Method::DELETE, "/v1/email/accounts/agent", json!(null)),
+        (
+            Method::POST,
+            "/v1/email/test",
+            json!({"name": "agent", "provider": "agentmail", "api_key": KEY}),
+        ),
+        (Method::POST, "/v1/email/accounts/agent/test", json!(null)),
+        (
+            Method::POST,
+            "/v1/email/accounts/agent/send-test",
+            json!(null),
+        ),
+        (Method::PUT, "/v1/web/search", json!({"bing": true})),
+        (Method::POST, "/v1/web/search/test", json!({})),
+        (Method::PUT, "/v1/voice", json!({"stt_key": KEY})),
+        // Spelling variants reach the same routes and are classified the same way.
+        (Method::PUT, "/v1/web/search/", json!({"bing": true})),
+        (Method::PUT, "//v1//voice", json!({"stt_key": KEY})),
+    ]
+}
+
+#[tokio::test]
+async fn a_confirmed_desktop_configures_mail_search_and_dictation_on_its_host() {
+    let r = rig().await;
+    r.t.state.set_email(super::email::FakeEmail::new());
+    let admin = Some((r.admin_key.as_str(), crate::PeerRole::Desktop));
+    // The AgentMail key lands on the host, and the answer never carries it.
+    let created = peer_call(
+        &r.t,
+        admin,
+        Method::POST,
+        "/v1/email/accounts",
+        Some(settings_calls()[0].2.clone()),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.json());
+    assert!(!String::from_utf8_lossy(&created.body).contains(KEY));
+    let listed = peer_call(&r.t, admin, Method::GET, "/v1/email/accounts", None).await;
+    assert_eq!(listed.status, StatusCode::OK);
+    assert!(!String::from_utf8_lossy(&listed.body).contains(KEY));
+    // Every class passes the guard (the fixture has no web/voice backends: 503, never 403).
+    for (method, path, body) in settings_calls().into_iter().skip(1) {
+        let resp = peer_call(&r.t, admin, method.clone(), path, Some(body)).await;
+        assert_ne!(resp.status, StatusCode::FORBIDDEN, "{method} {path}");
+        assert!(!String::from_utf8_lossy(&resp.body).contains(KEY));
+    }
+    // One audit row per change, naming the desktop and the route, never a value.
+    let audit = r.t.state.storage().list_audit(r.t.state.user_id()).unwrap();
+    let rows: Vec<_> = audit
+        .iter()
+        .filter(|a| a.action == "host.admin.settings")
+        .collect();
+    assert_eq!(rows.len(), settings_calls().len());
+    assert!(rows.iter().all(|a| a.actor.starts_with("desktop-admin:")));
+    assert!(!format!("{audit:?}").contains(KEY));
+    r.net.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_unconfirmed_desktop_is_told_how_to_get_confirmed() {
+    let r = rig().await;
+    r.t.state.set_email(super::email::FakeEmail::new());
+    let legacy = Some((r.legacy_key.as_str(), crate::PeerRole::Desktop));
+    for (method, path, body) in settings_calls() {
+        let resp = peer_call(&r.t, legacy, method.clone(), path, Some(body)).await;
+        assert_eq!(resp.status, StatusCode::FORBIDDEN, "{method} {path}");
+        assert_eq!(
+            resp.json()["error"]["code"],
+            "host_admin_required",
+            "{path}"
+        );
+        assert!(
+            resp.json()["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(crate::host_admin::CONFIRM_COMMAND)
+        );
+    }
+    let none = peer_call(&r.t, legacy, Method::GET, "/v1/email/accounts", None).await;
+    assert_eq!(
+        none.json().as_array().map(Vec::len),
+        Some(0),
+        "nothing stored"
+    );
+    r.net.shutdown().await;
+}
+
+#[tokio::test]
+async fn phones_nodes_and_hosts_never_change_mail_search_or_dictation_settings() {
+    let r = rig().await;
+    r.t.state.set_email(super::email::FakeEmail::new());
+    // The admin key under another role proves the role, not the key, decides.
+    for role in [
+        crate::PeerRole::Phone,
+        crate::PeerRole::Node,
+        crate::PeerRole::Host,
+    ] {
+        for (method, path, body) in settings_calls() {
+            let resp = peer_call(
+                &r.t,
+                Some((r.admin_key.as_str(), role)),
+                method.clone(),
+                path,
+                Some(body),
+            )
+            .await;
+            assert_eq!(
+                resp.status,
+                StatusCode::FORBIDDEN,
+                "{role:?} {method} {path}"
+            );
+        }
+    }
+    r.net.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_confirmed_desktop_still_cannot_reach_the_rest_of_the_owner_only_routes() {
+    let r = rig().await;
+    let admin = Some((r.admin_key.as_str(), crate::PeerRole::Desktop));
+    for (method, path) in [
+        (Method::PUT, "/v1/email/channel"),
+        (Method::POST, "/v1/email/channel/replies/1/approve"),
+        (Method::PUT, "/v1/email/guard/settings"),
+        (Method::GET, "/v1/email/guard/send-log"),
+        (Method::HEAD, "/v1/email/guard/settings"),
+        (Method::PATCH, "/v1/email/accounts/agent"),
+        (Method::POST, "/v1/connection-test/email"),
+        (Method::POST, "/v1/connection-test/web"),
+        (Method::POST, "/v1/mcp/servers"),
+        (Method::PUT, "/v1/policy"),
+        (Method::POST, "/v1/secrets/provider/key"),
+        (Method::POST, "/v1/host/invite"),
+    ] {
+        let resp = peer_call(&r.t, admin, method.clone(), path, Some(json!({}))).await;
+        assert_eq!(resp.status, StatusCode::FORBIDDEN, "{method} {path}");
+    }
+    r.net.shutdown().await;
+}
