@@ -1,3 +1,13 @@
+/* Same two-state plate tokens as ChatView.module.css (this view can load without it). */
+:global(:root) {
+  --chat-plate-fill: transparent;
+  --chat-plate-pad: var(--space-0);
+}
+:global(:root[data-backdrop="on"]) {
+  --chat-plate-fill: var(--on-wallpaper-fill);
+  --chat-plate-pad: var(--space-1) var(--space-3);
+}
+
 .pane {
   flex: 1;
   display: grid;
@@ -19,9 +29,9 @@
 
 .title {
   margin: var(--space-3) var(--space-0) var(--space-0);
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-tight);
+  letter-spacing: var(--letter-spacing-display);
   line-height: var(--line-height-tight);
   overflow-wrap: anywhere;
   color: var(--color-text);
@@ -45,9 +55,8 @@
 .suggestTitle {
   margin: var(--space-0);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  text-transform: uppercase;
-  color: var(--color-text-faint);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-muted);
 }
 
 .suggestList {
@@ -110,12 +119,13 @@
   }
 }
 
+/* Plates only over a backdrop (see ChatView.module.css): on the plain theme the words sit on the page. */
 .title, .text, .suggestTitle {
-  padding: var(--space-1) var(--space-3);
+  padding: var(--chat-plate-pad, var(--space-0));
   border-radius: var(--radius-md);
-  background-color: var(--on-wallpaper-fill);
+  background-color: var(--chat-plate-fill, transparent);
   color: var(--on-wallpaper-muted);
 }
 .title { color: var(--on-wallpaper-text); }
-.suggestChip { background-color: var(--on-wallpaper-fill); color: var(--on-wallpaper-text); border-color: var(--on-wallpaper-border); }
-.suggestChip:hover:not(:disabled) { background-color: var(--on-wallpaper-hover); }
+.suggestChip { background-color: var(--chat-plate-fill, transparent); color: var(--color-text-secondary); border-color: var(--color-border); }
+.suggestChip:hover:not(:disabled) { background-color: var(--state-hover); border-color: var(--color-border-hover); color: var(--color-text); }

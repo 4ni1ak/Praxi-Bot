@@ -77,8 +77,12 @@
 
 .copyBtn:hover,
 .copyBtn:focus-visible {
-  background-color: var(--color-surface-active);
+  background-color: var(--state-hover);
   color: var(--color-text);
+}
+
+.copyBtn:active {
+  background-color: var(--state-pressed);
 }
 
 .copyBtn:focus-visible {
@@ -94,7 +98,7 @@
 
 .copyBtn[data-copied="true"] {
   padding-inline: var(--space-1) calc(var(--space-1) * 1.5);
-  background-color: color-mix(in srgb, var(--color-success) 14%, transparent);
+  background-color: color-mix(in srgb, var(--color-success) 12%, transparent);
   color: var(--color-success);
   opacity: 1;
 }
