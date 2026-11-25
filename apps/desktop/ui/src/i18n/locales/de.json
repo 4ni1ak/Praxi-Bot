@@ -4213,6 +4213,8 @@
         "release": "Bildschirm verlassen, um die Schaltflächen zu nutzen",
         "takeover": "Steuerung übernehmen"
       },
+      "screenFill": "Ohne Ränder füllen",
+      "screenFillHint": "Beschneidet die Bildschirmränder leicht, damit das Bild die Fläche füllt. Aus: der ganze Bildschirm mit Rändern.",
       "shortcuts": "Tastenkürzel",
       "takeoverHint": "Übernimm diesen Bildschirm selbst (Strg+Umschalt+D). Die Bots pausieren, bis du ihn zurückgibst.",
       "view": "Ansicht"
