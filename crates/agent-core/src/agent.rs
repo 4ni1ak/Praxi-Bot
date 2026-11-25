@@ -141,6 +141,7 @@ impl AgentLoop {
                 skills: OnceLock::new(),
                 fill_secrets: OnceLock::new(),
                 secret_requests: Mutex::new(HashMap::new()),
+                handovers: Mutex::new(HashMap::new()),
                 skill_hints: RwLock::new(None),
                 router: crate::router::Router::default(),
                 directives: Mutex::new(HashMap::new()),
@@ -1634,6 +1635,46 @@ impl AgentLoop {
         self.sh.secret_requests.lock().remove(&call_id);
         let verdict = if stored {
             Verdict::SecretStored
+        } else {
+            Verdict::Denied { by, reason: None }
+        };
+        self.take_pending(call_id)?
+            .tx
+            .send(verdict)
+            .map_err(|_| LoopError::NoPendingApproval(call_id))
+    }
+
+    /// The facts of a parked `browser_handover` (run and kind, never a code).
+    /// `None` when none waits under `call_id`.
+    #[must_use]
+    pub fn handover(&self, call_id: ToolCallId) -> Option<crate::HandoverInfo> {
+        self.sh.handovers.lock().get(&call_id).cloned()
+    }
+
+    /// Claim a waiting handover for an answer: exactly one caller gets it. Put it
+    /// back with [`Self::restore_handover`] when the answer failed (a wrong code
+    /// field, a CAPTCHA that is still there) so the owner can try again.
+    #[must_use]
+    pub fn claim_handover(&self, call_id: ToolCallId) -> Option<crate::HandoverInfo> {
+        self.sh.handovers.lock().remove(&call_id)
+    }
+
+    /// Undo [`Self::claim_handover`] after a failed answer.
+    pub fn restore_handover(&self, call_id: ToolCallId, info: crate::HandoverInfo) {
+        if self.sh.pending.lock().contains_key(&call_id) {
+            self.sh.handovers.lock().insert(call_id, info);
+        }
+    }
+
+    /// End a handover: `done` after the daemon typed the code or saw the page move
+    /// on, otherwise the owner gave up. The model learns only which one.
+    ///
+    /// # Errors
+    /// [`LoopError::NoPendingApproval`] if the request already ended.
+    pub fn finish_handover(&self, call_id: ToolCallId, done: bool, by: UserId) -> Result<()> {
+        self.sh.handovers.lock().remove(&call_id);
+        let verdict = if done {
+            Verdict::HandoverDone
         } else {
             Verdict::Denied { by, reason: None }
         };

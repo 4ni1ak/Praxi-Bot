@@ -27,6 +27,7 @@ use crate::error;
 use crate::favicon;
 use crate::file_access;
 use crate::fill_routes;
+use crate::handover_routes;
 use crate::host;
 use crate::host_admin;
 use crate::host_copy;
@@ -160,6 +161,9 @@ impl Modify for Security {
         fill_routes::list_fill_secrets,
         fill_routes::revoke_fill_grant,
         fill_routes::update_fill_secret,
+        handover_routes::cancel_handover,
+        handover_routes::finish_handover_done,
+        handover_routes::submit_handover_code,
         secret_request_routes::cancel_secret_request,
         secret_request_routes::submit_secret_request,
         host::activate,
@@ -554,6 +558,8 @@ impl Modify for Security {
         fill_routes::FillGrantDto,
         fill_routes::FillSecretDto,
         fill_routes::UpdateFillSecret,
+        handover_routes::HandoverAnswer,
+        handover_routes::SubmitHandoverCode,
         secret_request_routes::SecretRequestAnswer,
         secret_request_routes::SubmitSecretRequest,
         host::ActivateInput,

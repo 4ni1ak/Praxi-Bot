@@ -321,6 +321,17 @@ export type DaemonEvent =
       options: string[];
     }
   | {
+      /** A bot needs the owner for a CAPTCHA or a 2FA code. The card posts to /v1/handovers/{call_id}/...; never carries a code. */
+      type: "handover_requested";
+      run_id: string;
+      call_id: string;
+      kind: "captcha" | "code";
+      /** Origin the browser reported for the page. */
+      site: string;
+      untrusted_content: boolean;
+      expires_in_secs: number;
+    }
+  | {
       /** A bot asked the owner for a credential. The card posts to /v1/secret-requests/{call_id}; never carries a value. */
       type: "secret_requested";
       run_id: string;
@@ -432,6 +443,7 @@ export interface GlobalEnvelope extends Envelope {
 
 // ---- Credential requests and the vault (`/v1/secret-requests/*`, `/v1/fill-secrets`) -----
 export type SecretRequestAnswer = S["SecretRequestAnswer"];
+export type HandoverAnswer = S["HandoverAnswer"];
 export type FillSecretInfo = S["FillSecretDto"];
 
 // ---- MCP management API (`/v1/mcp/*`, `/v1/secrets/*`) ---------------------

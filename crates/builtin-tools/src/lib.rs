@@ -25,6 +25,7 @@ pub mod files;
 pub mod fill_secret;
 #[cfg(test)]
 mod fill_secret_tests;
+pub mod handover;
 pub mod knowledge;
 pub mod knowledge_brain;
 pub mod meta;
@@ -77,6 +78,10 @@ pub use control::{
 pub use desktop::{DesktopSettings, SharedOcr, resolve_input_target};
 pub use files::{try_with_exclusive_file_access, with_checkpoint_access, workspace_refusal};
 pub use fill_secret::{SECRETS_LIST, secrets_list_tool};
+pub use handover::{
+    BROWSER_HANDOVER, CAPTCHA_OWN_ATTEMPTS, HANDOVER_CARD_KIND, HandoverCard, HandoverError,
+    HandoverHub, HandoverKind, handover_hub,
+};
 pub use meta::{META_TOOL_NAMES, QUESTION_CARD_KIND, TODO_LIST_KIND, TodoItem, TodoStatus};
 pub use notes::NOTES_TOOL_NAMES;
 pub use pure_tools::PURE_TOOL_NAMES;
@@ -555,6 +560,7 @@ mod tests {
             ("browser_back", W, B),
             ("browser_tabs", W, B),
             ("browser_screenshot", R, B),
+            ("browser_handover", R, Me),
             ("browser_eval", W, Sc),
             ("fs_read", R, Fs),
             ("fs_list", R, Fs),

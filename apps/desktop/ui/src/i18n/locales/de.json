@@ -2020,6 +2020,11 @@
         "failed": "Ein Feld wurde nicht ausgefüllt",
         "running": "Füllt ein Feld aus"
       },
+      "browser_handover": {
+        "done": "Einen Schritt an dich übergeben",
+        "failed": "Schritt konnte nicht übergeben werden",
+        "running": "Bittet dich um einen Schritt"
+      },
       "browser_hover": {
         "done": "Mit der Maus über etwas auf einer Seite gefahren",
         "failed": "Konnte nicht über etwas fahren",
@@ -2803,6 +2808,14 @@
         "hint": "Diese Aktion ist nur auf dem Computer verfügbar, auf dem der Bot läuft.",
         "title": "Das ist hier nicht erlaubt"
       },
+      "handover_gone": {
+        "hint": "Sie wurde beantwortet, abgebrochen oder ist abgelaufen. Bitte den Bot, es erneut zu versuchen, falls es noch nötig ist.",
+        "title": "Diese Anfrage ist nicht mehr offen"
+      },
+      "handover_not_ready": {
+        "hint": "Sieh dir die Seite an und versuche es erneut. Es wurde nichts eingetippt, was du nicht selbst eingegeben hast.",
+        "title": "Die Seite kann das gerade nicht annehmen"
+      },
       "host_admin_forbidden": {
         "hint": "Nur der gekoppelte Desktop des Besitzers kann die Einrichtung des Servers ändern.",
         "title": "Dieser Computer darf diesen Server nicht verwalten"
@@ -3523,6 +3536,27 @@
     "stateDone": "erledigt",
     "stateOpen": "noch nicht erledigt",
     "title": "Erste Schritte"
+  },
+  "handover": {
+    "cancel": "Abbrechen",
+    "cancelled": "Abgebrochen. Der Bot weiß, dass dieser Schritt nicht erledigt ist.",
+    "captchaBody": "Der Bot kam an dieser Prüfung nicht allein vorbei. Übernimm den Browser, löse sie und drücke dann Fertig. Praxi prüft, dass die Seite weitergegangen ist, bevor der Bot fortfährt.",
+    "captchaTitle": "{{bot}}: Diese Seite verlangt einen Beweis, dass du ein Mensch bist",
+    "closed": "Diese Anfrage ist nicht mehr offen.",
+    "codeBody": "Gib den Code von deinem Handy oder aus deiner E-Mail ein. Praxi tippt ihn in die Seite. Der Bot sieht ihn nie und Praxi speichert ihn nicht.",
+    "codeLabel": "Code",
+    "codeTitle": "{{bot}} braucht einen Code von dir",
+    "done": "Erledigt. Der Bot macht weiter.",
+    "doneButton": "Fertig",
+    "expired": "Diese Anfrage ist abgelaufen. Der Bot weiß, dass dieser Schritt nicht erledigt ist.",
+    "expiresIn": "Verbleibende Zeit zum Antworten",
+    "notConnected": "Keine Verbindung zum Dienst. Es wurde nichts gesendet und deine Eingabe ist noch da.",
+    "siteLabel": "Seite:",
+    "submit": "Code senden",
+    "takeControl": "Steuerung übernehmen",
+    "takeControlHint": "Drücke in der Ansicht auf die Übernehmen-Taste, löse die Prüfung, komm dann hierher zurück und drücke Fertig.",
+    "untrusted": "Dieser Lauf hat Inhalte von außen gelesen. Eine Seite kann vortäuschen, einen Code zu verlangen. Gib nur einen Code ein, den du gerade selbst bei dieser Seite angefordert hast.",
+    "wrongFormat": "Ein Code besteht aus 4 bis 12 Buchstaben oder Ziffern."
   },
   "health": {
     "connected": "Lokaler Dienst läuft",

@@ -41,6 +41,8 @@ export const DAEMON_ERROR_CODES = [
   "email_provider_error",
   "engine_owner_only",
   "forbidden",
+  "handover_gone",
+  "handover_not_ready",
   "host_admin_forbidden",
   "host_admin_required",
   "host_link_failed",

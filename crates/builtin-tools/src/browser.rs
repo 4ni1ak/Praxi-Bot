@@ -1231,6 +1231,7 @@ enum Op {
     Screenshot,
     Eval,
     Act,
+    Handover,
 }
 
 struct Shared {
@@ -1601,6 +1602,18 @@ fn tools_with_pool(
                 }}),
                 Effect::Read,
                 b,
+            ),
+        ),
+        (
+            Op::Handover,
+            spec(
+                "browser_handover",
+                "Hand a step over to the owner when the page asks for something you must not do alone. kind `captcha`: the page shows a CAPTCHA you could not solve (or a behavioural one: do not try those); the owner takes control and solves it. kind `code`: the page asks for a one-time code (2FA); the owner types it into a private card and Praxi types it into the page, you never see it. NEVER ask for the code in chat. Use it only after browser_snapshot shows such a prompt (the page is checked again). Returns `done` or `cancelled`. Example: {\"kind\":\"code\"}",
+                json!({"type":"object","properties":{
+                    "kind":{"type":"string","enum":["captcha","code"],"description":"captcha or code."}
+                },"required":["kind"]}),
+                Effect::Read,
+                PermissionCategory::Meta,
             ),
         ),
         (
@@ -2537,6 +2550,9 @@ impl BrowserTool {
                 Ok(format!("screenshot: {path}"))
             }
             Op::Act => return self.run_act(run_id, input, bot).await,
+            Op::Handover => {
+                return Err(exec_err("browser_handover runs through the handover path"));
+            }
             Op::Eval => {
                 let i: EvalIn = parse(input)?;
                 let label: String = i.js.trim().chars().take(80).collect();
@@ -2578,6 +2594,80 @@ impl BrowserTool {
 }
 
 impl BrowserTool {
+    /// Tell the model, in the daemon's own words, that the page shows a CAPTCHA or a
+    /// one-time-code prompt and what it may do about it (see `handover`).
+    fn append_challenge_notice(ctx: &ToolContext, text: &mut String) {
+        let Some(challenge) = crate::handover::detect(text) else {
+            return;
+        };
+        let seen = if matches!(challenge, crate::handover::Challenge::Captcha { .. }) {
+            crate::handover::handover_hub().note_captcha(&ctx.run_id)
+        } else {
+            0
+        };
+        text.push('\n');
+        text.push_str(&crate::handover::notice(&challenge, seen));
+    }
+
+    /// `browser_handover`: check that the page really shows the prompt, arm the
+    /// answer and return the card the agent loop parks the run on.
+    async fn handover(
+        &self,
+        ctx: &ToolContext,
+        shared: &Arc<Shared>,
+        input: &Value,
+    ) -> Result<ToolOutput, ToolError> {
+        use crate::handover::{Challenge, HandoverKind, browser_handover_card, handover_hub};
+        let kind = match input.get("kind").and_then(Value::as_str) {
+            Some("captcha") => HandoverKind::Captcha,
+            Some("code") => HandoverKind::Code,
+            _ => {
+                return Err(ToolError::InvalidInput(
+                    "`kind` must be `captcha` or `code`".into(),
+                ));
+            }
+        };
+        let probe = BrowserTool {
+            spec: self.spec.clone(),
+            op: Op::Snapshot,
+            shared: Arc::clone(shared),
+        };
+        probe.refuse_observation_while_latched()?;
+        let snapshot = shared.driver.snapshot(false).await.map_err(exec_err)?;
+        let found = crate::handover::detect(&snapshot);
+        let matches = matches!(
+            (&found, kind),
+            (Some(Challenge::Captcha { .. }), HandoverKind::Captcha)
+                | (Some(Challenge::Code { .. }), HandoverKind::Code)
+        );
+        if !matches {
+            return Err(exec_err(format!(
+                "the page does not show a {} prompt right now: take a browser_snapshot and look again",
+                kind.as_str()
+            )));
+        }
+        let site = shared
+            .driver
+            .current_url()
+            .await
+            .and_then(|u| origin_of(&u))
+            .ok_or_else(|| exec_err("the browser did not report which site this page is on"))?;
+        handover_hub().arm(&ctx.run_id, Arc::clone(&shared.driver), kind, &site);
+        Ok(ToolOutput {
+            content: vec![
+                tool_registry::ContentPart::Json {
+                    data: browser_handover_card(kind, &site),
+                },
+                tool_registry::ContentPart::Text {
+                    text: "No request was made: only the agent loop can show the owner a card."
+                        .into(),
+                },
+            ],
+            spill: None,
+            exposure: None,
+        })
+    }
+
     async fn current_origin_in_lane(&self, ctx: &ToolContext, input: &Value) -> Option<String> {
         // Only the actions that act on the page that is open now (not open/eval/tabs/back).
         if !matches!(
@@ -2697,17 +2787,23 @@ impl BrowserTool {
                 )));
             }
         }
+        if self.op == Op::Handover {
+            return self.handover(ctx, &shared, &input).await;
+        }
         let selected = BrowserTool {
             spec: self.spec.clone(),
             op: self.op,
             shared,
         };
-        let text = EXPECTED_PAGE_ORIGIN
+        let mut text = EXPECTED_PAGE_ORIGIN
             .scope(
                 ctx.expected_origin.clone(),
                 selected.run(&ctx.run_id, input, ctx.bot_id.as_deref()),
             )
             .await?;
+        if matches!(self.op, Op::Open | Op::Snapshot) {
+            Self::append_challenge_notice(ctx, &mut text);
+        }
         let view = selected.shared.driver.live_view_attached();
         let mut out = finish_text(ctx, &self.shared.data_dir.join("spill"), text);
         // Honest "seen by user" signal, after any truncation so it is never cut.

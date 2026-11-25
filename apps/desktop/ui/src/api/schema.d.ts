@@ -2055,6 +2055,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/handovers/{call_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** The owner gives up: nothing is typed, the run learns `cancelled`. */
+        post: operations["cancel_handover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/handovers/{call_id}/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer a one-time-code card: the daemon types the code into the page and the
+         *     run learns `done`. The code is not stored.
+         */
+        post: operations["submit_handover_code"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/handovers/{call_id}/done": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The owner says the CAPTCHA is solved: the daemon checks that the page moved on
+         *     before the run resumes.
+         */
+        post: operations["finish_handover_done"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/health": {
         parameters: {
             query?: never;
@@ -6500,6 +6557,21 @@ export interface components {
             /** @description Tool name. */
             tool: string;
         };
+        /** @description How a handover ended. Never carries a code. */
+        HandoverAnswer: {
+            /**
+             * Format: uuid
+             * @description The request that was answered.
+             */
+            call_id: string;
+            /** @description `done` or `cancelled`. */
+            outcome: string;
+            /**
+             * @description The waiting run was told. `false` when the run stopped or the request
+             *     expired in the same instant.
+             */
+            run_notified: boolean;
+        };
         /** @description Detected hardware. Every field is null/false when it could not be determined. */
         HardwareDto: {
             arch: string;
@@ -9596,6 +9668,11 @@ export interface components {
          * @enum {string}
          */
         StopScope: "all_existing" | "listed";
+        /** @description Body of `POST /v1/handovers/{call_id}/code`. */
+        SubmitHandoverCode: {
+            /** @description The one-time code, 4 to 12 letters or digits (write-only: no route returns it). */
+            code: string;
+        };
         /**
          * @description Body of `POST /v1/secret-requests/{call_id}`. Give `value` for a `secret`
          *     request, or `username` and `password` for a `login` request.
@@ -15341,6 +15418,157 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    cancel_handover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Tool call id from the handover_requested event */
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HandoverAnswer"];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description code handover_gone: not waiting any more */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    submit_handover_code: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Tool call id from the handover_requested event */
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitHandoverCode"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HandoverAnswer"];
+                };
+            };
+            /** @description not a code; the request keeps waiting */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description code handover_gone: not waiting any more */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description code handover_not_ready: the page cannot take the code now; the request keeps waiting */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    finish_handover_done: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Tool call id from the handover_requested event */
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HandoverAnswer"];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description code handover_gone: not waiting any more */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description code handover_not_ready: the page still shows the check; the request keeps waiting */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -131,6 +131,7 @@ import type {
   Run,
   Schedule,
   ScheduleHistoryEntry,
+  HandoverAnswer,
   SecretRequestAnswer,
   FillSecretInfo,
   ScheduleInput,
@@ -1049,6 +1050,23 @@ export class ApiClient {
     body: { value?: string; username?: string; password?: string; origins: string[]; programs: string[] }
   ): Promise<SecretRequestAnswer> {
     return this.request("POST", `/secret-requests/${encodeURIComponent(callId)}`, { body });
+  }
+
+  /**
+   * Answer a bot's one-time-code card: the daemon types the code into the page and forgets it;
+   * the run only learns `done`. Owner-only. The code is never logged here.
+   */
+  submitHandoverCode(callId: string, code: string): Promise<HandoverAnswer> {
+    return this.request("POST", `/handovers/${encodeURIComponent(callId)}/code`, { body: { code } });
+  }
+
+  /** The owner solved the CAPTCHA: the daemon checks that the page moved on, then the run resumes. */
+  finishHandover(callId: string): Promise<HandoverAnswer> {
+    return this.request("POST", `/handovers/${encodeURIComponent(callId)}/done`);
+  }
+
+  cancelHandover(callId: string): Promise<HandoverAnswer> {
+    return this.request("POST", `/handovers/${encodeURIComponent(callId)}/cancel`);
   }
 
   cancelSecretRequest(callId: string): Promise<SecretRequestAnswer> {

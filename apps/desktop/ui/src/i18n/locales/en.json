@@ -2020,6 +2020,11 @@
         "failed": "Didn't fill in a field",
         "running": "Filling in a field"
       },
+      "browser_handover": {
+        "done": "Handed a step over to you",
+        "failed": "Couldn't hand a step over",
+        "running": "Asking you for a step"
+      },
       "browser_hover": {
         "done": "Hovered over something on a page",
         "failed": "Couldn't hover on a page",
@@ -2803,6 +2808,14 @@
         "hint": "This action is only available on the computer that runs the bot.",
         "title": "You are not allowed to do that here"
       },
+      "handover_gone": {
+        "hint": "It was answered, cancelled or timed out. Ask the bot to try again if it is still needed.",
+        "title": "That request is no longer open"
+      },
+      "handover_not_ready": {
+        "hint": "Look at the page, then try again. Nothing was typed that you did not enter yourself.",
+        "title": "The page can't take that yet"
+      },
       "host_admin_forbidden": {
         "hint": "Only the owner's paired desktop can change the server's setup.",
         "title": "This computer may not manage that server"
@@ -3523,6 +3536,27 @@
     "stateDone": "done",
     "stateOpen": "not done yet",
     "title": "Getting started"
+  },
+  "handover": {
+    "cancel": "Cancel",
+    "cancelled": "Cancelled. The bot was told this step is not done.",
+    "captchaBody": "The bot could not get past this check on its own. Take control of the browser, solve it, then press Done. Praxi checks that the page moved on before the bot continues.",
+    "captchaTitle": "{{bot}}: this site wants proof you are human",
+    "closed": "This request is no longer open.",
+    "codeBody": "Enter the code from your phone or e-mail. Praxi types it into the page. The bot never sees it and Praxi does not keep it.",
+    "codeLabel": "Code",
+    "codeTitle": "{{bot}} needs a code from you",
+    "done": "Done. The bot continues.",
+    "doneButton": "Done",
+    "expired": "This request ran out of time. The bot was told this step is not done.",
+    "expiresIn": "Time left to answer",
+    "notConnected": "No connection to the service. Nothing was sent and what you typed is still here.",
+    "siteLabel": "Site:",
+    "submit": "Send code",
+    "takeControl": "Take control",
+    "takeControlHint": "In the view, press the take-over button, solve the check, then come back here and press Done.",
+    "untrusted": "This run has read content from outside. A page can pretend to ask for a code. Only enter a code you just asked this site for yourself.",
+    "wrongFormat": "A code has 4 to 12 letters or digits."
   },
   "health": {
     "connected": "Local service running",

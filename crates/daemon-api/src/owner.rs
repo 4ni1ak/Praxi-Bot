@@ -236,6 +236,10 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("GET", "/v1/email/channel/replies"),
     ("POST", "/v1/email/channel/replies/{}/approve"),
     ("POST", "/v1/email/channel/replies/{}/deny"),
+    // a bot's hand-over card (a CAPTCHA, a 2FA code): the owner's own action; the code is typed into the page
+    ("POST", "/v1/handovers/{}/code"),
+    ("POST", "/v1/handovers/{}/done"),
+    ("POST", "/v1/handovers/{}/cancel"),
     ("POST", "/v1/email/accounts"),
     ("PUT", "/v1/email/accounts/{}"),
     ("DELETE", "/v1/email/accounts/{}"),

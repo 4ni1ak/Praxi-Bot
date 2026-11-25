@@ -81,7 +81,8 @@ pub use computer_target::{
     WAIT_FOR_PC_REASON, resolve as resolve_computer_target,
 };
 pub use config::{
-    DEFAULT_APPROVAL_TIMEOUT, DEFAULT_DIRECT_TOOL_LIMIT, DEFAULT_MAX_SECRET_REQUESTS_PER_RUN,
+    DEFAULT_APPROVAL_TIMEOUT, DEFAULT_DIRECT_TOOL_LIMIT, DEFAULT_HANDOVER_TIMEOUT,
+    DEFAULT_MAX_HANDOVERS_PER_RUN, DEFAULT_MAX_SECRET_REQUESTS_PER_RUN,
     DEFAULT_SCHEDULE_APPROVAL_TIMEOUT, DEFAULT_SECRET_REQUEST_TIMEOUT, DEFAULT_WAIT_FOR_PC_TIMEOUT,
     Guards, JournalSlot, LoopConfig, MemoryConfig, ModelPrice, RedactorRefreshFn, SharedRedactor,
     secret_variants,
@@ -97,9 +98,10 @@ pub use profile::{
 };
 pub use scoped_grant::{Scope, ScopeKind};
 pub use shared::{
-    ApprovalScope, CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, LoopError,
-    MessageMode, Providers, ScheduleWork, SecretRequestInfo, SkillHintFn, SkillHints, StreamItem,
-    build_providers, embedding_key_resolver, initiator_of, occurrence_kind, schedule_id_of,
+    ApprovalScope, CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, HandoverInfo,
+    LoopError, MessageMode, Providers, ScheduleWork, SecretRequestInfo, SkillHintFn, SkillHints,
+    StreamItem, build_providers, embedding_key_resolver, initiator_of, occurrence_kind,
+    schedule_id_of,
 };
 pub use subagent::MAX_DEPTH as MAX_SUBAGENT_DEPTH;
 pub use usage::CallPurpose;

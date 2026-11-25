@@ -54,6 +54,7 @@ import {
 } from "../components/ChatCards";
 import { ApprovalBatchCard } from "../components/ApprovalBatchCard";
 import { PendingDecisions, useDecisionActions } from "../components/PendingDecisions";
+import { HandoverCard } from "../components/HandoverCard";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { PastedSecretWarning } from "../components/PastedSecretWarning";
 import { detectSecrets, kindsToWarn, planStore, removeSecrets } from "../lib/secretDetect";
@@ -1459,6 +1460,20 @@ export function ChatView({
             botName={bots.find((b) => b.id === run?.botId)?.name ?? bot?.name ?? ""}
             onSubmit={decisions.submitSecret(runId, item.callId)}
             onCancel={decisions.cancelSecret(runId, item.callId)}
+          />
+        );
+      case "handover":
+        if (nested && item.outcome === undefined && !item.closed) {
+          return <p className={ccStyles.nestedText}>{t("chat.pendingPinned")}</p>;
+        }
+        return (
+          <HandoverCard
+            item={item}
+            botName={bots.find((b) => b.id === run?.botId)?.name ?? bot?.name ?? ""}
+            onSubmitCode={decisions.submitCode(runId, item.callId)}
+            onDone={decisions.handoverDone(runId, item.callId)}
+            onCancel={decisions.cancelHandover(runId, item.callId)}
+            onTakeControl={decisions.takeControl}
           />
         );
       case "todo":
