@@ -3218,6 +3218,36 @@
       "title": "Das funktioniert nur in der Desktop-App"
     },
     "details": "Details",
+    "emailProvider": {
+      "auth": {
+        "hint": "Prüfe, ob du den ganzen Schlüssel aus deinem AgentMail-Konto kopiert hast, und versuche es erneut.",
+        "title": "AgentMail hat diesen API-Schlüssel nicht akzeptiert"
+      },
+      "forbidden": {
+        "hint": "Erstelle in deinem AgentMail-Konto einen Schlüssel, der Postfächer anlegen darf.",
+        "title": "Dieser AgentMail-Schlüssel darf das nicht"
+      },
+      "quota": {
+        "hint": "Lösche ein ungenutztes Postfach oder erhöhe den Tarif bei AgentMail und versuche es erneut.",
+        "title": "Dein AgentMail-Tarif hat sein Limit erreicht"
+      },
+      "rateLimited": {
+        "hint": "Warte eine Minute und versuche es erneut.",
+        "title": "AgentMail bittet dich, langsamer zu machen"
+      },
+      "rejected": {
+        "hint": "Prüfe den Schlüssel und den Adressnamen (Buchstaben, Zahlen, Bindestriche) und versuche es erneut.",
+        "title": "AgentMail hat diese Anfrage nicht akzeptiert"
+      },
+      "taken": {
+        "hint": "Die Namen auf agentmail.to teilen sich alle. Wähle einen anderen Namen; ein vermutlich freier ist schon eingetragen.",
+        "title": "Dieser Adressname ist bei AgentMail schon vergeben"
+      },
+      "transient": {
+        "hint": "Das Problem liegt bei AgentMail. Versuche es in ein paar Minuten erneut.",
+        "title": "AgentMail ist gerade nicht erreichbar"
+      }
+    },
     "engineNeedsNative": {
       "hint": "Es arbeitet mit seinen eigenen Werkzeugen. Drücke „Beheben“, um das für diesen Bot zu erlauben.",
       "title": "Dieses Modell braucht zuerst dein OK"
@@ -3868,7 +3898,7 @@
       "bots": "Auf diesem Server sind Bots bereit.",
       "model": "Ein Modell ist verbunden."
     },
-    "managedOnServer": "Schlüssel, Berechtigungen, Werkzeuge und Kopplung werden auf {{name}} selbst verwaltet. Hier kannst du Bots erstellen und bearbeiten, chatten und seinen Bildschirm beobachten.",
+    "managedOnServer": "Sobald dieser Computer auf {{name}} als Administrator bestätigt ist, verwaltest du Schlüssel, Berechtigungen, Werkzeuge und E-Mail auch von hier. Gerätekopplung und Updates von {{name}} bleiben auf {{name}} selbst.",
     "missing": {
       "bots": "Auf diesem Server gibt es noch keine Bots.",
       "model": "Auf diesem Server ist noch kein Modell verbunden."
@@ -3884,23 +3914,16 @@
     "newBotNeedsModel": "{{name}} hat noch kein Modell, daher kann dort kein Bot erstellt werden. Verbinde zuerst ein Modell auf dem Server.",
     "refusal": {
       "adminRequired": "{{name}} hat diesen Computer noch nicht als Administrator bestätigt. Führe einmalig `bot host admin --all-desktops` auf {{name}} aus und versuche es dann erneut.",
-      "botPermissions": "Berechtigungen und Werkzeuge eines Bots werden auf {{name}} selbst verwaltet. Name, Persona und Modell können hier geändert werden.",
-      "composio": "App-Verbindungen werden auf der Besitzerseite dieses Computers verwaltet, nicht auf {{name}}.",
-      "connectionTest": "Schlüsseltests laufen auf {{name}} selbst und sind in dieser App nicht möglich.",
-      "credentials": "Diese E-Mail- oder Suchoption wird auf {{name}} selbst geändert, nicht in dieser App.",
-      "generic": "{{name}} hat das nicht erlaubt: {{reason}}",
+      "generic": "{{name}} hat das nicht erlaubt, es wurde nichts geändert. Den technischen Grund findest du unter Details.",
+      "hostOnly": "Das wird absichtlich nur auf {{name}} selbst erledigt. Diese App kann es nicht.",
       "hostTransfer": "Das Verschieben des Hosts und der Kopplungskanäle erfolgt auf {{name}} selbst.",
-      "knowledge": "Wissenseinstellungen werden auf {{name}} selbst verwaltet.",
-      "lifecycle": "Kopplung und Host-Updates erfolgen auf {{name}} selbst.",
+      "lifecycle": "Neue Geräte koppeln und {{name}} aktualisieren erfolgt absichtlich auf {{name}} selbst mit den `bot host`-Befehlen.",
       "localOnly": "Das kann nur die Person an {{name}} tun, nicht diese App.",
-      "localProviders": "Lokale Modelle und Programmier-Tools gehören zu dem Computer, auf dem der Bot läuft. Wechsle zu Dieser Computer, um sie einzurichten.",
+      "needsAdmin": "{{name}} hat das von der App nicht akzeptiert. Bestätige diesen Computer einmalig mit `bot host admin --all-desktops` auf {{name}}, aktualisiere {{name}} auf die neueste Version und versuche es dann erneut.",
       "overlay": "Nur die Person an {{name}} kann diese Aufforderung beantworten.",
       "ownerOnly": "Das kann nur auf {{name}} selbst erledigt werden.",
-      "policy": "Die Ausführungsrichtlinie wird auf {{name}} selbst festgelegt, nicht über diese App.",
       "role": "{{name}} erlaubt diesem Computer das nicht.",
-      "screenInput": "{{name}} hat diesem Computer die Steuerung des Bildschirms nicht erlaubt. Erlaube sie in Praxi auf {{name}}.",
-      "secrets": "Schlüssel und Zugangsdaten werden auf {{name}} selbst hinzugefügt, nicht über diese App.",
-      "tools": "Werkzeugserver und Skills werden auf {{name}} selbst verwaltet."
+      "screenInput": "{{name}} hat diesem Computer die Steuerung des Bildschirms nicht erlaubt. Erlaube sie in Praxi auf {{name}}."
     },
     "state": {
       "connected": "Verbunden",
@@ -4469,6 +4492,7 @@
     "recent": "Zuletzt gesucht",
     "reset": "Zurücksetzen",
     "results": "Nachrichtentreffer",
+    "retry": "Erneut versuchen",
     "searching": "Suche läuft…",
     "title": "Nachrichten durchsuchen",
     "when": "Datum",
@@ -5813,6 +5837,7 @@
         "noColdOutreach": "Kaltakquise und Massenversand sind auf der gemeinsamen Domain agentmail.to verboten. Nutze sie für E-Mails, die du oder dein Bot aus gutem Grund sendest.",
         "ownAccount": "Du brauchst dein eigenes kostenloses AgentMail-Konto. Praxi-Bot verwahrt keinen Schlüssel für dich: Füge den API-Schlüssel aus deinem Konto ein.",
         "pricing": "Preise ansehen",
+        "suggested": "Versuche stattdessen „{{name}}“.",
         "title": "Einem Bot eine eigene Adresse geben",
         "viaApi": "AgentMail-Postfach"
       },
@@ -6032,6 +6057,7 @@
       "optOutPlaceholder": "anna@beispiel.de oder beispiel.de",
       "optOutRemove": "{{value}} entfernen",
       "optOutTitle": "Personen, die ich nicht anschreibe",
+      "retry": "Erneut versuchen",
       "save": "Speichern",
       "saved": "Gespeichert",
       "sentAnyway": "Trotzdem gesendet",

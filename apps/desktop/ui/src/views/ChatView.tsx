@@ -115,7 +115,7 @@ import { activeRunAfterCancel, composerButton } from "../lib/composerRun";
 import { ATTACHMENT_ACCEPT, filesOf } from "../lib/attachments";
 import { AttachmentDraft } from "../lib/attachmentDraft";
 import { ComposerFiles } from "../components/Attachments";
-import { enqueue, putBack, removeQueued, takeForNow, takeForRunEnd } from "../lib/messageQueue";
+import { enqueue, putBack, queuesLocally, removeQueued, takeForNow, takeForRunEnd } from "../lib/messageQueue";
 import { groupPending, shouldBatch } from "../lib/approvalBatch";
 import { approvalHeadline, type T as PlainT } from "../lib/approvalPlain";
 import { useChatQueue } from "../state/useChatQueue";
@@ -904,8 +904,11 @@ export function ChatView({
     // as /stop still go straight to the daemon). It is delivered when the run ends or by "Simdi gonder".
     // While the run waits on an approval the message is not queued behind it: it goes to the daemon,
     // which skips the approval (a denial) and starts the next turn with this message.
-    const approvalWaits = pending.own.some((e) => e.kind === "approval");
-    if (active && !approvalWaits && !body.startsWith("/") && !hasFiles) {
+    // `waitLost`: the host says the run waits for the user but the card never reached this app (a paired
+    // host's events can lag or miss). The message must still go to the daemon, never sit in a local queue
+    // behind a run that will not move on its own.
+    const approvalWaits = pending.own.some((e) => e.kind === "approval") || waitLost;
+    if (queuesLocally({ runActive: active, approvalWaits, slashCommand: body.startsWith("/"), hasFiles })) {
       const id = crypto.randomUUID();
       queuedHere.current.add(id);
       updateQueue((q) => enqueue(q, body, id, Date.now()));

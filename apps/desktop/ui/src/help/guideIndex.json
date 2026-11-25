@@ -691,6 +691,7 @@
     "headings": [
       "What protects you",
       "What it does not protect you from",
+      "Who counts as the owner on a host",
       "Daemon process guard (defence in depth)",
       "Good practice",
       "Reporting a vulnerability",

@@ -3218,6 +3218,36 @@
       "title": "This only works in the desktop app"
     },
     "details": "Details",
+    "emailProvider": {
+      "auth": {
+        "hint": "Comprueba que copiaste la clave completa de tu cuenta de AgentMail y vuelve a intentarlo.",
+        "title": "AgentMail no aceptó esta clave de API"
+      },
+      "forbidden": {
+        "hint": "Crea en tu cuenta de AgentMail una clave que pueda crear buzones.",
+        "title": "Esta clave de AgentMail no tiene permiso para eso"
+      },
+      "quota": {
+        "hint": "Elimina un buzón que no uses o mejora el plan en AgentMail y vuelve a intentarlo.",
+        "title": "Tu plan de AgentMail alcanzó su límite"
+      },
+      "rateLimited": {
+        "hint": "Espera un minuto y vuelve a intentarlo.",
+        "title": "AgentMail te pide que vayas más despacio"
+      },
+      "rejected": {
+        "hint": "Revisa la clave y el nombre de la dirección (letras, números y guiones) y vuelve a intentarlo.",
+        "title": "AgentMail no aceptó esta solicitud"
+      },
+      "taken": {
+        "hint": "Los nombres de agentmail.to los comparte todo el mundo. Elige otro; ya te pusimos uno que parece libre.",
+        "title": "Ese nombre de dirección ya está ocupado en AgentMail"
+      },
+      "transient": {
+        "hint": "El problema es de su lado. Vuelve a intentarlo en unos minutos.",
+        "title": "AgentMail no está disponible ahora"
+      }
+    },
     "engineNeedsNative": {
       "hint": "It works with its own tools. Press Fix to allow that for this bot.",
       "title": "This model needs your OK first"
@@ -3868,7 +3898,7 @@
       "bots": "Los bots de este servidor están listos.",
       "model": "Hay un modelo conectado."
     },
-    "managedOnServer": "Las claves, los permisos, las herramientas y la vinculación se gestionan en {{name}}. Desde aquí puedes crear y editar bots, hablar con ellos y ver la pantalla del servidor.",
+    "managedOnServer": "Cuando este equipo esté confirmado como administrador en {{name}}, también podrás gestionar desde aquí claves, permisos, herramientas y correo. La vinculación de dispositivos y las actualizaciones de {{name}} se quedan en {{name}}.",
     "missing": {
       "bots": "Todavía no hay bots en este servidor.",
       "model": "Todavía no hay ningún modelo conectado en este servidor."
@@ -3884,23 +3914,16 @@
     "newBotNeedsModel": "{{name}} aún no tiene un modelo. Conecta uno en el servidor antes de crear un bot allí.",
     "refusal": {
       "adminRequired": "{{name}} aún no ha confirmado este equipo como administrador. Ejecuta una vez `bot host admin --all-desktops` en {{name}} y vuelve a intentarlo.",
-      "botPermissions": "Los permisos y las herramientas de cada bot se gestionan en {{name}}. Desde aquí puedes cambiar su nombre, personalidad y modelo.",
-      "composio": "Las conexiones a apps las gestiona el propietario de este equipo. No se gestionan en {{name}}.",
-      "connectionTest": "Las claves solo se pueden probar desde {{name}}.",
-      "credentials": "Este ajuste de correo o búsqueda se cambia en {{name}}, no desde esta aplicación.",
-      "generic": "{{name}} rechazó esta acción: {{reason}}",
+      "generic": "{{name}} no permitió esto y no se cambió nada. El motivo técnico está en Detalles.",
+      "hostOnly": "Esto se hace solo en {{name}}, a propósito. La app no puede hacerlo.",
       "hostTransfer": "El traslado del equipo anfitrión y la vinculación de canales se hacen en {{name}}.",
-      "knowledge": "Los ajustes de conocimiento se gestionan en {{name}}.",
-      "lifecycle": "La vinculación y las actualizaciones del equipo anfitrión se hacen en {{name}}.",
+      "lifecycle": "Vincular dispositivos nuevos y actualizar {{name}} se hace en {{name}} con sus comandos `bot host`, a propósito.",
       "localOnly": "Solo la persona que está en {{name}} puede hacer esto.",
-      "localProviders": "Los modelos locales y las herramientas de programación pertenecen al equipo que ejecuta el bot. Cambia a «Este equipo» para configurarlos.",
+      "needsAdmin": "{{name}} no aceptó esto desde la app. Confirma este equipo una vez con `bot host admin --all-desktops` en {{name}}, actualiza {{name}} a la última versión y vuelve a intentarlo.",
       "overlay": "Solo la persona que está en {{name}} puede responder a ese aviso.",
       "ownerOnly": "Esto solo se puede hacer en {{name}}.",
-      "policy": "La política de ejecución se configura únicamente en {{name}}.",
       "role": "{{name}} no permite que este equipo haga eso.",
-      "screenInput": "{{name}} no ha autorizado a este equipo a controlar su pantalla. Concede el permiso en Praxi desde {{name}}.",
-      "secrets": "Las claves y otras credenciales solo se añaden en {{name}}.",
-      "tools": "Los servidores de herramientas y las skills se gestionan en {{name}}."
+      "screenInput": "{{name}} no ha autorizado a este equipo a controlar su pantalla. Concede el permiso en Praxi desde {{name}}."
     },
     "state": {
       "connected": "Conectado",
@@ -4469,6 +4492,7 @@
     "recent": "Recientes",
     "reset": "Restablecer",
     "results": "Resultados de mensajes",
+    "retry": "Reintentar",
     "searching": "Buscando…",
     "title": "Buscar mensajes",
     "when": "Fecha",
@@ -5813,6 +5837,7 @@
         "noColdOutreach": "Cold outreach and bulk mailing are prohibited on the shared agentmail.to domain. Use it for mail you or your bot have a reason to send.",
         "ownAccount": "You need your own free AgentMail account. Praxi-Bot does not hold any key for you: paste the API key from your account.",
         "pricing": "See their pricing",
+        "suggested": "Prueba con «{{name}}».",
         "title": "Give a bot its own address",
         "viaApi": "AgentMail inbox"
       },
@@ -6032,6 +6057,7 @@
       "optOutPlaceholder": "ana@ejemplo.com o ejemplo.com",
       "optOutRemove": "Quitar {{value}}",
       "optOutTitle": "Personas a las que no escribiré",
+      "retry": "Reintentar",
       "save": "Guardar",
       "saved": "Guardado",
       "sentAnyway": "Enviado de todos modos",

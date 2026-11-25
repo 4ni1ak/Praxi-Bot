@@ -89,7 +89,9 @@ test("the chat asks approvals only in the dock: no inline card, no second strip,
   // (It is always mounted so it can fade out after the last answer; it renders nothing without pages.)
   assert.match(view, /<div className=\{styles\.boxWrap\}[^>]*>\s*<ApprovalDock pages=\{dockPages\}/);
   // A message typed while an approval waits goes to the daemon (which skips the approval).
-  assert.match(view, /active && !approvalWaits && !body\.startsWith\("\/"\)/);
+  // (`queuesLocally` is false while `approvalWaits`, which also holds when the host says the run waits but no card arrived.)
+  assert.match(view, /queuesLocally\(\{ runActive: active, approvalWaits, slashCommand: body\.startsWith\("\/"\), hasFiles \}\)/);
+  assert.match(view, /approvalWaits = pending\.own\.some\(\(e\) => e\.kind === "approval"\) \|\| waitLost/);
 });
 
 test("the card shows how much the call can change: a calm chip to look, a red one and its own words to delete", () => {

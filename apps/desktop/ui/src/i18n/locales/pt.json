@@ -3218,6 +3218,36 @@
       "title": "This only works in the desktop app"
     },
     "details": "Details",
+    "emailProvider": {
+      "auth": {
+        "hint": "Confira se você copiou a chave inteira da sua conta AgentMail e tente de novo.",
+        "title": "O AgentMail não aceitou esta chave de API"
+      },
+      "forbidden": {
+        "hint": "Crie na sua conta AgentMail uma chave que possa criar caixas de entrada.",
+        "title": "Esta chave do AgentMail não tem permissão para isso"
+      },
+      "quota": {
+        "hint": "Apague uma caixa que não usa ou melhore o plano no AgentMail e tente de novo.",
+        "title": "O seu plano do AgentMail atingiu o limite"
+      },
+      "rateLimited": {
+        "hint": "Espere um minuto e tente de novo.",
+        "title": "O AgentMail pede que você vá mais devagar"
+      },
+      "rejected": {
+        "hint": "Confira a chave e o nome do endereço (letras, números e hífens) e tente de novo.",
+        "title": "O AgentMail não aceitou este pedido"
+      },
+      "taken": {
+        "hint": "Os nomes em agentmail.to são compartilhados por todos. Escolha outro; um que parece livre já foi preenchido.",
+        "title": "Esse nome de endereço já está em uso no AgentMail"
+      },
+      "transient": {
+        "hint": "O problema é do lado deles. Tente de novo em alguns minutos.",
+        "title": "O AgentMail não está disponível agora"
+      }
+    },
     "engineNeedsNative": {
       "hint": "It works with its own tools. Press Fix to allow that for this bot.",
       "title": "This model needs your OK first"
@@ -3868,7 +3898,7 @@
       "bots": "Bots are ready on this server.",
       "model": "A model is connected."
     },
-    "managedOnServer": "Keys, permissions, tools and pairing are managed on {{name}} itself. Here you can create and edit bots, chat and watch its screen.",
+    "managedOnServer": "Depois que este computador for confirmado como administrador em {{name}}, você também gerencia daqui chaves, permissões, ferramentas e e-mail. O emparelhamento de dispositivos e as atualizações de {{name}} continuam em {{name}}.",
     "missing": {
       "bots": "No bots on this server yet.",
       "model": "No model connected on this server yet."
@@ -3883,24 +3913,17 @@
     },
     "newBotNeedsModel": "{{name}} has no model yet, so a bot cannot be created there. Connect a model on the server first.",
     "refusal": {
-      "adminRequired": "{{name}} has not confirmed this computer as its administrator yet. Run `bot host admin --all-desktops` once on {{name}}, then try again.",
-      "botPermissions": "A bot's permissions and tools are managed on {{name}} itself. Name, persona and model can be changed here.",
-      "composio": "App connections are managed on this computer's owner side, not on {{name}}.",
-      "connectionTest": "Key tests run on {{name}} itself and are not available from this app.",
-      "credentials": "This email or search setting is changed on {{name}} itself, not from this app.",
-      "generic": "{{name}} did not allow this: {{reason}}",
-      "hostTransfer": "Moving the host and pairing channels is done on {{name}} itself.",
-      "knowledge": "Knowledge settings are managed on {{name}} itself.",
-      "lifecycle": "Pairing and host updates are done on {{name}} itself.",
-      "localOnly": "Only the person at {{name}} can do this, not this app.",
-      "localProviders": "Local models and coding tools belong to the computer where the bot runs. Switch to This computer to set them up.",
-      "overlay": "Only the person at {{name}} can answer that prompt.",
-      "ownerOnly": "This can only be done on {{name}} itself.",
-      "policy": "The execution policy is set on {{name}} itself, not from this app.",
-      "role": "{{name}} does not allow this computer to do that.",
-      "screenInput": "{{name}} has not allowed this computer to control its screen. Allow it in Praxi on {{name}}.",
-      "secrets": "Keys and secrets are added on {{name}} itself, not from this app.",
-      "tools": "Tool servers and skills are managed on {{name}} itself."
+      "adminRequired": "{{name}} ainda não confirmou este computador como administrador. Execute `bot host admin --all-desktops` uma vez em {{name}} e tente de novo.",
+      "generic": "{{name}} não permitiu isto e nada foi alterado. O motivo técnico está em Detalhes.",
+      "hostOnly": "Isto é feito apenas em {{name}}, de propósito. O app não pode fazer isso.",
+      "hostTransfer": "Mover o host e emparelhar canais é feito no próprio {{name}}.",
+      "lifecycle": "Emparelhar novos dispositivos e atualizar {{name}} é feito em {{name}} com os comandos `bot host`, de propósito.",
+      "localOnly": "Só a pessoa em {{name}} pode fazer isso, não este app.",
+      "needsAdmin": "{{name}} não aceitou isto vindo do app. Confirme este computador uma vez com `bot host admin --all-desktops` em {{name}}, atualize {{name}} para a versão mais recente e tente de novo.",
+      "overlay": "Só a pessoa em {{name}} pode responder a esta pergunta.",
+      "ownerOnly": "Isto só pode ser feito no próprio {{name}}.",
+      "role": "{{name}} não permite que este computador faça isso.",
+      "screenInput": "{{name}} não deu a este computador permissão para controlar a tela. Permita isso no Praxi em {{name}}."
     },
     "state": {
       "connected": "Connected",
@@ -4469,6 +4492,7 @@
     "recent": "Recent",
     "reset": "Reset",
     "results": "Message results",
+    "retry": "Tentar de novo",
     "searching": "Searching…",
     "title": "Search messages",
     "when": "Date",
@@ -5813,6 +5837,7 @@
         "noColdOutreach": "Cold outreach and bulk mailing are prohibited on the shared agentmail.to domain. Use it for mail you or your bot have a reason to send.",
         "ownAccount": "You need your own free AgentMail account. Praxi-Bot does not hold any key for you: paste the API key from your account.",
         "pricing": "See their pricing",
+        "suggested": "Tente “{{name}}” no lugar.",
         "title": "Give a bot its own address",
         "viaApi": "AgentMail inbox"
       },
@@ -6032,6 +6057,7 @@
       "optOutPlaceholder": "ann@example.com or example.com",
       "optOutRemove": "Remove {{value}}",
       "optOutTitle": "People I will not write to",
+      "retry": "Tentar de novo",
       "save": "Save",
       "saved": "Saved",
       "sentAnyway": "Sent anyway",
