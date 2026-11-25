@@ -40,7 +40,7 @@ Bots folgen einer von drei Stufen, solange du einem Bot keine eigenen Regeln geg
 | --- | --- | --- |
 | **Vorsichtig** | Dateien lesen, etwas nachschlagen, Texte entwerfen. | Eine Datei ändern oder speichern, eine Nachricht oder E-Mail senden, eine Webseite öffnen, einen Befehl ausführen. |
 | **Ausgewogen** (empfohlen) | Lesen, surfen, Dateien im Arbeitsbereich ändern. | Dinge löschen, Nachrichten oder E-Mails senden, Geld ausgeben, deinen eigenen Computer benutzen. |
-| **Freie Hand** | Fast alles, auch Löschen und Senden. | Geld ausgeben, gefährliche Befehle und alles, was nach dem Lesen einer nicht vertrauenswürdigen Seite kommt. |
+| **Freie Hand** | Fast alles, auch Löschen und Senden. In einem selbst gestarteten Lauf surft, klickt und tippt der Bot im Web auch nach dem Lesen einer Seite ohne Nachfrage. | Geld ausgeben, gefährliche Befehle, ein gespeichertes Geheimnis eintippen und, nach dem Lesen einer nicht vertrauenswürdigen Seite, ein Programm starten oder etwas senden, das wie kopierte Daten aussieht. |
 
 Das sind die Daemon-Vorlagen `read-and-draft`, `approve-destructive` und `full`. Die ältere Vorlage „Nur lesen“
 und die Regeln pro Kategorie bleiben auf derselben Seite unter **Erweitert** verfügbar.

@@ -62,6 +62,25 @@ impl Drop for ClosedGuard {
     }
 }
 
+/// Audit reason code of a browser call the Full level let through after a page was read.
+const FULL_BROWSE_REASON: &str = "mode.full.owner_browse";
+
+/// The managed browser's calls that Full lets an owner-started run make after reading a page:
+/// open, go back, click, type, select, press, select text, tabs and the batch. NOT
+/// `browser_eval` (a page script can send anything anywhere) and not the user's own computer
+/// (`pc_*`).
+const FULL_BROWSER_CALLS: [&str; 9] = [
+    "browser_open",
+    "browser_back",
+    "browser_click",
+    "browser_fill",
+    "browser_select",
+    "browser_press",
+    "browser_select_text",
+    "browser_tabs",
+    "browser_act",
+];
+
 /// What a call's card says when nobody decided it in time (the model sees it as the denial reason).
 pub(crate) const EXPIRED_REASON: &str = "expired: nobody answered in time";
 /// Reason on the denial a Stop records for an approval that was still open.
@@ -481,6 +500,10 @@ impl Shared {
             // A clean Allow becomes an ask once the run is tainted and this
             // call can leave the machine. A Deny is unchanged.
             if d == Decision::Allow && must_ask && !self.gate_waived(ctx, name, input) {
+                // The owner's Full level: an owner-started run browses after reading a page.
+                if self.full_mode_waives(ctx, name, input) {
+                    return (Decision::Allow, Some(FULL_BROWSE_REASON));
+                }
                 return (Decision::ask(), None);
             }
             return (d, None);
@@ -923,6 +946,102 @@ impl Shared {
                     && (said.scheme() == url.scheme()
                         || (scheme.is_none() && url.scheme() == "https"))
             })
+    }
+
+    /// The site of `url` is one this run may treat as known: the page the browser is on, a site
+    /// the owner approved for this chat, or one the owner named in a message they typed.
+    fn known_site(&self, ctx: &RunCtx, url: &str) -> bool {
+        let Some(origin) = Self::origin_of(url) else {
+            return false;
+        };
+        if ctx
+            .page_origin
+            .lock()
+            .as_deref()
+            .and_then(Self::origin_of)
+            .is_some_and(|o| o == origin)
+        {
+            return true;
+        }
+        if self
+            .grants
+            .lock()
+            .nav_origin
+            .contains(&(ctx.chat_id, ctx.bot_id, origin.clone()))
+        {
+            return true;
+        }
+        let Some(host) = url::Url::parse(url).ok().and_then(|u| {
+            u.host_str()
+                .map(|h| h.trim_end_matches('.').to_ascii_lowercase())
+        }) else {
+            return false;
+        };
+        let Ok(texts) = self.storage.owner_message_texts(ctx.chat_id) else {
+            return false;
+        };
+        texts.iter().flat_map(|m| m.split_whitespace()).any(|w| {
+            let w = w.trim_matches([
+                '.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '<', '>', '"', '\'',
+            ]);
+            let rest = w.split_once("://").map_or(w, |(_, r)| r);
+            rest.split(['/', '?', '#'])
+                .next()
+                .is_some_and(|a| a.trim_end_matches('.').eq_ignore_ascii_case(&host))
+        })
+    }
+
+    /// The owner's Full level: an OWNER-STARTED run (typed in the desktop app, or sent from the
+    /// owner's admin desktop) keeps browsing after it read a page, without a card.
+    ///
+    /// Without this a page read taints the run (every browser call counts as reading the page
+    /// AND as private) and every later open, type or key press asked: a deep page, a query
+    /// string, a new site. In Full that is the whole point of "do it for me" lost, so here the
+    /// browser's own page traffic passes, with ONE protection that does not annoy: a call whose
+    /// arguments look like data carried out (see `full_autonomy`) still asks.
+    ///
+    /// What this never covers, whatever the level: an owner-stored secret typed with
+    /// `browser_fill` (always-ask, decided before this), money and the never-list (floors),
+    /// `browser_eval`, a program start (`executes`), a named browser profile, the user's own
+    /// computer, a non-public address, hidden characters and anything the redactor would change.
+    /// A run that is not owner-started (schedule, webhook, mail, a peer, a subagent) is
+    /// unchanged. Only the preset "full" gets it: Balanced, Ask and custom levels keep the gate.
+    fn full_mode_waives(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
+        if !FULL_BROWSER_CALLS.contains(&name)
+            || ctx.profile.permissions.mode() != AutonomyMode::Full
+            || !self.pc_owner_started(ctx)
+        {
+            return false;
+        }
+        // A named profile may be signed in: keep asking, like the Balanced lane does.
+        if input
+            .get("profile")
+            .and_then(Value::as_str)
+            .is_some_and(|p| !p.is_empty() && p != "isolated")
+        {
+            return false;
+        }
+        if self.content_class(ctx, name, input).executes
+            || crate::browser_url::opens_non_public(name, input)
+            || taint::input_forbids_egress(input)
+            || taint::input_needs_a_card_to_show(input)
+        {
+            return false;
+        }
+        if let Some(r) = &self.cfg.redactor {
+            let mut shown = input.clone();
+            if crate::shared::redact_value(r, &mut shown) {
+                return false;
+            }
+        }
+        let reach_of = |url: &str| {
+            if self.known_site(ctx, url) {
+                crate::full_autonomy::Reach::KnownSite
+            } else {
+                crate::full_autonomy::Reach::NewSite
+            }
+        };
+        !crate::full_autonomy::input_carries_data(input, &reach_of)
     }
 
     /// A call that only the taint gate (not the policy, not an always-ask tool, not a floor)

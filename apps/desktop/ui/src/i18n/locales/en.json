@@ -1230,7 +1230,7 @@
         "name": "Custom"
       },
       "full": {
-        "hint": "Runs without asking (including deletes and sends), except Money, schedule activation and catastrophic never-list commands. After reading untrusted content it still asks before sending data out or running a program. Exception: actions inside a browser you connected as a browser (Playwright: open, look, click, type, run a page script) do not ask after a web page alone; they ask once the task also read something private (files, mail, memory, your screen). Running code outside the page and moving files always ask.",
+        "hint": "Runs without asking (including deletes and sends), except Money, schedule activation and catastrophic never-list commands. When you start the run yourself, it also browses, clicks and types on the web without asking, even after reading a page. Still asks: a link or form text that looks like copied data (a key, a token, a long encoded string), typing a stored secret, and, after reading untrusted content, running a program or sending data out another way (search, fetch, mail). Actions in a browser you connected as a browser ask once the task also read something private.",
         "name": "Full"
       },
       "read-and-draft": {

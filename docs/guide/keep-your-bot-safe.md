@@ -12,7 +12,7 @@ Open **Settings** from the account menu, then **Safety & permissions**. You pick
 | --- | --- | --- |
 | **Careful** | Reads files, looks things up, writes drafts. | Editing or saving a file, sending a message or email, opening a web page, running a command. |
 | **Balanced** (recommended) | Reads, browses, edits files in its work area. | Deleting things, sending messages or email, spending money, using your own computer. |
-| **Hands-off** | Almost everything, including deleting files and sending messages. | Spending money, dangerous commands, and anything after reading an untrusted page. |
+| **Hands-off** | Almost everything, including deleting files and sending messages. When you start the run yourself it also browses, clicks and types on the web without asking, even after reading a page. | Spending money, dangerous commands, typing a stored secret, and, after reading an untrusted page, running a program or sending data out in a way that looks like copied data. |
 
 The first-run screen uses the names **Ask**, **Balanced** and **Free** for the same idea. **Ask** is close to **Careful**. **Free** is close to **Hands-off**.
 

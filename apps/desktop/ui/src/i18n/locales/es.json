@@ -1230,7 +1230,7 @@
         "name": "Custom"
       },
       "full": {
-        "hint": "Runs without asking (including deletes and sends), except Money, schedule activation and catastrophic never-list commands. After reading untrusted content it still asks before sending data out or running a program. Exception: actions inside a browser you connected as a browser (Playwright: open, look, click, type, run a page script) do not ask after a web page alone; they ask once the task also read something private (files, mail, memory, your screen). Running code outside the page and moving files always ask.",
+        "hint": "Funciona sin preguntar (incluidos borrados y envíos), salvo Dinero, la activación de tareas programadas y los comandos catastróficos de la lista prohibida. Si inicias tú la ejecución, también navega, hace clic y escribe en la web sin preguntar, incluso después de leer una página. Sigue preguntando ante un enlace o un texto de formulario que parezca datos copiados (una clave, un token, una cadena larga codificada), al teclear un secreto guardado y, tras leer contenido no fiable, antes de ejecutar un programa o enviar datos por otra vía (búsqueda, descarga, correo). Las acciones en un navegador que conectaste como navegador preguntan cuando la tarea también leyó algo privado.",
         "name": "Full"
       },
       "read-and-draft": {

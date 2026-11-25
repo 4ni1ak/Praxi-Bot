@@ -12,7 +12,7 @@ Dein Bot arbeitet auf deinem Computer, also behältst du die Kontrolle. Diese Se
 | --- | --- | --- |
 | **Vorsichtig** | Dateien lesen, Dinge nachschlagen, Entwürfe schreiben. | Datei bearbeiten oder speichern, Nachricht oder E-Mail senden, Webseite öffnen, Befehl ausführen. |
 | **Ausgewogen** (empfohlen) | Lesen, surfen, Dateien im Arbeitsbereich bearbeiten. | Dinge löschen, Nachrichten oder E-Mails senden, Geld ausgeben, deinen eigenen Computer benutzen. |
-| **Freie Hand** | Fast alles, auch Dateien löschen und Nachrichten senden. | Geld ausgeben, gefährliche Befehle und alles nach dem Lesen einer nicht vertrauenswürdigen Seite. |
+| **Freie Hand** | Fast alles, auch Dateien löschen und Nachrichten senden. Wenn du den Lauf selbst startest, surft, klickt und tippt der Bot im Web auch nach dem Lesen einer Seite ohne Nachfrage. | Geld ausgeben, gefährliche Befehle, ein gespeichertes Geheimnis eintippen und, nach dem Lesen einer nicht vertrauenswürdigen Seite, ein Programm starten oder etwas senden, das wie kopierte Daten aussieht. |
 
 Der Einrichtungsbildschirm nennt dieselbe Idee **Fragen**, **Ausgewogen** und **Frei**. **Fragen** entspricht ungefähr **Vorsichtig**. **Frei** entspricht ungefähr **Freie Hand**.
 

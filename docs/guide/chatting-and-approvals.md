@@ -278,6 +278,34 @@ data. The bot form has an explicit, off-by-default setting that skips this ask
 for that bot. Deny rules and the floors above still win. A run that has not
 read anything behaves as before.
 
+### Full level: browsing after a read (owner-started runs)
+
+The **Full** preset ("Tam") is for people who want the bot to do the work, not to
+ask about every page. In a run that **you started yourself** (typed in the
+desktop app, or sent from your own admin desktop), reading a web page does not
+make the bot ask again for each further step in the managed browser. The same
+run keeps going without a card when it:
+
+| It does | Asks? |
+| --- | --- |
+| opens a public page: another page of the site it is on, a new site, a normal query string (`?page=2`, `?q=web+design`) | No |
+| goes back, switches tabs, clicks, scrolls, hovers, selects text | No |
+| types ordinary text into a field, picks an option, presses a key | No |
+| saves files and works in its workspace | No (as before) |
+| opens or sends a link, or types text, that **looks like copied data**: a long encoded string, a hex digest, a key or token, a card-like number, a fragment on a site it has not been on, a very long URL or text | **Yes** |
+| types an owner-stored secret into a page (`browser_fill` with `secret`) | **Yes**, every time |
+| spends money, deletes something on the never-list, sends mail or a message, publishes | **Yes** (floors and always-ask tools are decided before this rule) |
+| runs a page script (`browser_eval`), starts a program or shell command after it read an untrusted page, uses a named browser profile, opens a local or private-network address | **Yes** |
+
+Why this is safe enough: the daemon cannot tell which text came from the page, so
+it judges what it can see in the call itself. Normal navigation and form text pass;
+anything shaped like a stolen value is stopped by a card that shows it, which is the
+one attack a prompt-injected page can try from inside the browser. A run that is
+**not** started by you (a schedule, a webhook, an incoming mail, a paired device that
+is not your admin desktop, a subagent) keeps the old rule and its one-time cards, and
+the Normal level and custom levels are unchanged. Every call this rule lets through is
+written to the audit log as `mode.full.owner_browse`.
+
 ### Host-status commands on an always-on host
 
 Normally `shell_run` output marks a run untrusted ("command output"), which then

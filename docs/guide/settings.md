@@ -40,7 +40,7 @@ Bots follow one of three levels unless you gave a bot its own rules:
 | --- | --- | --- |
 | **Careful** | Read files, look things up, draft text. | Edit or save a file, send a message or email, open a web page, run a command. |
 | **Balanced** (recommended) | Read, browse, edit files in the work area. | Delete things, send messages or email, spend money, use your own computer. |
-| **Hands-off** | Almost everything, including deleting and sending. | Spending money, dangerous commands, and anything after reading an untrusted page. |
+| **Hands-off** | Almost everything, including deleting and sending. In a run you start yourself it also browses, clicks and types on the web without asking, even after reading a page. | Spending money, dangerous commands, typing a stored secret, and, after reading an untrusted page, running a program or sending out something that looks like copied data. |
 
 These are the daemon presets `read-and-draft`, `approve-destructive` and `full`. The older "Read-only" preset
 and per-category rules stay available under **Advanced** on the same page.
