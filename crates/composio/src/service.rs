@@ -185,6 +185,8 @@ pub(crate) struct Inner {
     catalog_refreshing: std::sync::atomic::AtomicBool,
     catalog_error: Mutex<Option<&'static str>>,
     catalog_attempt: Mutex<Option<Instant>>,
+    /// Composio refused the stored credential (401/403) and nothing renewed it yet.
+    rejected: std::sync::atomic::AtomicBool,
     login: Mutex<Option<LoginSession>>,
     router_session: Mutex<Option<String>>,
     pub(crate) pending_since: Mutex<HashMap<String, Instant>>,
@@ -235,6 +237,7 @@ impl ComposioService {
             catalog_refreshing: false.into(),
             catalog_error: Mutex::new(None),
             catalog_attempt: Mutex::new(None),
+            rejected: false.into(),
             login: Mutex::new(None),
             router_session: Mutex::new(None),
             pending_since: Mutex::new(HashMap::new()),
@@ -262,6 +265,29 @@ impl ComposioService {
         self.0
             .key_present
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Composio refused the stored credential and nothing has renewed it
+    /// since: the owner has to sign in to Composio again (a retry cannot help).
+    #[must_use]
+    pub fn login_expired(&self) -> bool {
+        self.configured() && self.0.rejected.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Remember whether Composio accepts the credential: a 401/403 marks it
+    /// rejected, any success clears the mark.  The result passes through.
+    fn note<T>(&self, r: Result<T>) -> Result<T> {
+        use std::sync::atomic::Ordering::Relaxed;
+        match &r {
+            Ok(_) => self.0.rejected.store(false, Relaxed),
+            Err(ComposioError::Unauthorized) if self.configured() => {
+                if !self.0.rejected.swap(true, Relaxed) {
+                    self.audit("composio.login_rejected", json!({}));
+                }
+            }
+            Err(_) => {}
+        }
+        r
     }
 
     fn save_state(&self, change: impl FnOnce(&mut StateFile)) -> Result<()> {
@@ -296,7 +322,7 @@ impl ComposioService {
         let auth = match Stored::parse(&stored) {
             Stored::Project(key) => Auth::Project(key),
             Stored::User(key) => {
-                let ids = self.0.state.lock().login.clone().unwrap_or_default();
+                let ids = self.repaired_ids(&key).await;
                 Auth::User {
                     key,
                     org_id: ids.org_id,
@@ -307,6 +333,33 @@ impl ComposioService {
         let c = Arc::new(self.build_with(&auth)?);
         *self.0.client.lock() = Some(Arc::clone(&c));
         Ok(c)
+    }
+
+    /// The org and project ids sent with a login key.  Installations that
+    /// linked before the project NANO id was read hold the project UUID, which
+    /// Composio refuses on every call: read the ids again once and save them.
+    async fn repaired_ids(&self, key: &str) -> LoginIds {
+        let ids = self.0.state.lock().login.clone().unwrap_or_default();
+        let stale = [&ids.project_id, &ids.org_id]
+            .into_iter()
+            .any(|id| id.as_deref().is_some_and(crate::client::looks_like_uuid));
+        if !stale {
+            return ids;
+        }
+        let fresh = match self.build_with(&Auth::User {
+            key: key.to_owned(),
+            org_id: None,
+            project_id: None,
+        }) {
+            Ok(c) => c.session_info().await.ok(),
+            Err(_) => None,
+        };
+        let fresh = fresh.map_or_else(LoginIds::default, |(org_id, project_id)| LoginIds {
+            org_id,
+            project_id,
+        });
+        let _ = self.save_state(|st| st.login = Some(fresh.clone()));
+        fresh
     }
 
     fn build_client(&self, key: &str) -> Result<ComposioClient> {
@@ -365,7 +418,7 @@ impl ComposioService {
     /// # Errors
     /// Only local failures (secret store, state file).
     pub async fn login_poll(&self) -> Result<LoginState> {
-        if self.linkage() == Linkage::Login {
+        if self.linkage() == Linkage::Login && !self.login_expired() {
             return Ok(LoginState::Linked);
         }
         let id = {
@@ -405,11 +458,37 @@ impl ComposioService {
             Ok((org_id, project_id)) => LoginIds { org_id, project_id },
             Err(_) => LoginIds::default(),
         };
+        // A fresh key that Composio refuses at once is a failed login, not a
+        // linked one: tried with the ids first, then with the key alone.
+        let mut ids = ids;
+        match self.probe_login(&key, &ids).await {
+            Err(ComposioError::Transport(_) | ComposioError::RateLimited { .. }) => {
+                return Ok(LoginState::Pending);
+            }
+            Err(ComposioError::Unauthorized) => {
+                ids = LoginIds::default();
+                match self.probe_login(&key, &ids).await {
+                    Err(ComposioError::Unauthorized) => {
+                        *self.0.login.lock() = None;
+                        return Ok(LoginState::Failed);
+                    }
+                    Err(ComposioError::Transport(_) | ComposioError::RateLimited { .. }) => {
+                        return Ok(LoginState::Pending);
+                    }
+                    _ => {}
+                }
+            }
+            // Accepted, or any other answer: it says nothing against the key.
+            Ok(()) | Err(_) => {}
+        }
         self.0.keys.set(&Stored::encode_user(&key)).await?;
         self.save_state(|st| st.login = Some(ids.clone()))?;
         *self.0.client.lock() = None;
         *self.0.router_session.lock() = None;
         *self.0.login.lock() = None;
+        self.0
+            .rejected
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         self.0
             .key_present
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -418,6 +497,18 @@ impl ComposioService {
         let bg = self.clone();
         tokio::spawn(async move { bg.refresh_all().await });
         Ok(LoginState::Linked)
+    }
+
+    /// One cheap authenticated call with a login key and these ids.
+    async fn probe_login(&self, key: &str, ids: &LoginIds) -> Result<()> {
+        self.build_with(&Auth::User {
+            key: key.to_owned(),
+            org_id: ids.org_id.clone(),
+            project_id: ids.project_id.clone(),
+        })?
+        .list_toolkits(None, None, None, 1)
+        .await
+        .map(|_| ())
     }
 
     /// Validate `key` against Composio, then store it.  The key is never
@@ -450,6 +541,9 @@ impl ComposioService {
         *self.0.client.lock() = Some(client);
         *self.0.router_session.lock() = None;
         self.0
+            .rejected
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.0
             .key_present
             .store(true, std::sync::atomic::Ordering::Relaxed);
         self.save_state(|st| st.login = None)?;
@@ -465,6 +559,9 @@ impl ComposioService {
     pub async fn remove_key(&self) -> Result<()> {
         self.0.keys.clear().await?;
         *self.0.client.lock() = None;
+        self.0
+            .rejected
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         self.0
             .key_present
             .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -503,11 +600,12 @@ impl ComposioService {
         {
             return Ok(page.clone());
         }
-        let page = self
-            .client()
-            .await?
-            .list_toolkits(search, category, cursor, limit)
-            .await?;
+        let page = self.note(
+            self.client()
+                .await?
+                .list_toolkits(search, category, cursor, limit)
+                .await,
+        )?;
         let mut cache = self.0.catalog.lock();
         if cache.len() >= CATALOG_CACHE_MAX {
             cache.clear();
@@ -632,6 +730,7 @@ impl ComposioService {
             Ok::<(), ComposioError>(())
         }
         .await;
+        let result = self.note(result);
         *self.0.catalog_error.lock() = result.as_ref().err().map(|e| match e {
             ComposioError::Unauthorized => "unauthorized",
             ComposioError::Transport(_) => "offline",
@@ -719,11 +818,12 @@ impl ComposioService {
     }
 
     async fn refresh(&self, slug: &str) -> Result<()> {
-        let accounts = self
-            .client()
-            .await?
-            .list_accounts(&self.user_id(), Some(slug))
-            .await?;
+        let accounts = self.note(
+            self.client()
+                .await?
+                .list_accounts(&self.user_id(), Some(slug))
+                .await,
+        )?;
         if let Err(e) = self.check_accounts(slug, &accounts) {
             self.0.statuses.lock().remove(slug);
             self.unregister_app(slug);
@@ -775,27 +875,27 @@ impl ComposioService {
             return Err(ComposioError::Invalid("invalid app slug".into()));
         }
         let client = self.client().await?;
-        let catalog = client.list_toolkits(Some(slug), None, None, 100).await?;
+        let catalog = self.note(client.list_toolkits(Some(slug), None, None, 100).await)?;
         if !catalog.items.iter().any(|toolkit| toolkit.slug == slug) {
             return Err(ComposioError::Invalid(
                 "unknown or unsupported app toolkit; connection refused".into(),
             ));
         }
         let link = if self.linkage() == Linkage::Login {
-            self.router_link(&client, slug).await?
+            self.note(self.router_link(&client, slug).await)?
         } else {
             let cached = self.0.auth_configs.lock().get(slug).cloned();
             let auth_config = if let Some(id) = cached {
                 id
             } else {
-                let id = client.ensure_auth_config(slug).await?;
+                let id = self.note(client.ensure_auth_config(slug).await)?;
                 self.0
                     .auth_configs
                     .lock()
                     .insert(slug.to_owned(), id.clone());
                 id
             };
-            client.create_link(&auth_config, &self.user_id()).await?
+            self.note(client.create_link(&auth_config, &self.user_id()).await)?
         };
         self.save_state(|s| {
             let app = s.apps.entry(slug.to_owned()).or_default();

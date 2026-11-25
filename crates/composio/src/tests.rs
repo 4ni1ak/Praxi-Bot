@@ -983,3 +983,167 @@ async fn catalog_serves_bundled_then_cache_instantly_and_survives_a_dead_network
     assert_eq!(offline.source, crate::CatalogSource::Cache);
     assert_eq!(offline.items.len(), 1);
 }
+
+// --- Composio refuses the saved login (owner report 2026-11-25) --------------
+
+const PROJECT_UUID: &str = "f7aea111-2222-4333-8444-555566667777";
+
+async fn mount_session_info(h: &Harness) {
+    Mock::given(method("GET"))
+        .and(path("/auth/session/info"))
+        .and(header("x-user-api-key", USER_KEY))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "project": {"id": PROJECT_UUID, "nano_id": "proj_nano1", "org": {"id": "org_1"}}
+        })))
+        .mount(&h.server)
+        .await;
+}
+
+/// Composio answers the toolkit and router calls only for the NANO project id
+/// (the live API refuses the UUID with a 401/403 on every call).
+async fn mount_strict_router(h: &Harness) {
+    Mock::given(method("GET"))
+        .and(path("/toolkits"))
+        .and(header("x-user-api-key", USER_KEY))
+        .and(header("x-project-id", "proj_nano1"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"items":[{"slug":"gmail","name":"Gmail"}]})),
+        )
+        .mount(&h.server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/tool_router/session"))
+        .and(header("x-project-id", "proj_nano1"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({"session_id": "trs_1"})))
+        .mount(&h.server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/tool_router/session/trs_1/link"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "redirect_url": "https://connect.composio.dev/link/lk_1", "connected_account_id": "ca_1"})))
+        .mount(&h.server)
+        .await;
+    // Anything else (the UUID, no ids) is refused like the live API does.
+    Mock::given(method("GET"))
+        .and(path("/toolkits"))
+        .respond_with(ResponseTemplate::new(401))
+        .with_priority(10)
+        .mount(&h.server)
+        .await;
+}
+
+#[tokio::test]
+async fn login_sends_the_project_nano_id_never_the_uuid() {
+    let h = harness().await;
+    Mock::given(method("POST"))
+        .and(path("/cli/create-session"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"id": "sess-1", "expiresAt": ""})),
+        )
+        .mount(&h.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/cli/get-session"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"status": "linked", "api_key": USER_KEY})),
+        )
+        .mount(&h.server)
+        .await;
+    mount_session_info(&h).await;
+    mount_strict_router(&h).await;
+    h.svc.login_start().await.unwrap();
+    assert_eq!(h.svc.login_poll().await.unwrap(), crate::LoginState::Linked);
+    let toml = std::fs::read_to_string(h.svc.state_path()).unwrap();
+    assert!(
+        toml.contains("proj_nano1") && !toml.contains(PROJECT_UUID),
+        "{toml}"
+    );
+    let link = h.svc.connect("gmail").await.unwrap();
+    assert_eq!(link.redirect_url, "https://connect.composio.dev/link/lk_1");
+    assert!(!h.svc.login_expired());
+}
+
+#[tokio::test]
+async fn a_state_file_saved_with_the_project_uuid_is_repaired_on_first_use() {
+    let h = harness().await;
+    h.store
+        .set(KEY_SECRET, &format!("user-login:{USER_KEY}"))
+        .unwrap();
+    std::fs::write(
+        h.dir.path().join(crate::FILE_NAME),
+        format!(
+            "user_id = \"praxi-{}\"\n[login]\norg_id = \"org_1\"\nproject_id = \"{PROJECT_UUID}\"\n",
+            uuid::Uuid::new_v4()
+        ),
+    )
+    .unwrap();
+    mount_session_info(&h).await;
+    mount_strict_router(&h).await;
+    let svc = ComposioService::new(ServiceConfig {
+        data_dir: h.dir.path().to_path_buf(),
+        keys: Arc::new(crate::LocalKeySource::new(h.store.clone())),
+        registry: ToolRegistry::new(),
+        redact: Arc::new(str::to_owned),
+        register_secret: Arc::new(|_| {}),
+        audit: h.rows.clone(),
+        loopback_base: Some(h.server.uri()),
+    })
+    .unwrap();
+    svc.refresh_catalog().await.unwrap();
+    assert!(!svc.login_expired());
+    assert!(
+        std::fs::read_to_string(svc.state_path())
+            .unwrap()
+            .contains("proj_nano1")
+    );
+}
+
+#[tokio::test]
+async fn a_refused_login_is_flagged_not_retried_and_a_new_login_renews_it() {
+    let h = harness().await;
+    logged_in(&h).await;
+    h.server.reset().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&h.server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/tool_router/session"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&h.server)
+        .await;
+    assert!(!h.svc.login_expired());
+    assert_eq!(
+        h.svc.connect("github").await.unwrap_err(),
+        ComposioError::Unauthorized
+    );
+    assert!(h.svc.login_expired());
+    assert!(h.svc.refresh_catalog().await.is_err());
+    assert_eq!(h.svc.catalog_error(), Some("unauthorized"));
+    // The saved login is useless: polling must not report it as linked again.
+    assert_eq!(h.svc.login_poll().await.unwrap(), crate::LoginState::Idle);
+    h.server.reset().await;
+    mount_login(&h, true).await;
+    mount_router(&h, "INITIATED").await;
+    h.svc.login_start().await.unwrap();
+    assert_eq!(h.svc.login_poll().await.unwrap(), crate::LoginState::Linked);
+    assert!(!h.svc.login_expired());
+    assert!(h.svc.connect("github").await.is_ok());
+}
+
+#[tokio::test]
+async fn a_fresh_login_key_that_composio_refuses_at_once_is_a_failed_login() {
+    let h = harness().await;
+    mount_login(&h, true).await;
+    Mock::given(method("GET"))
+        .and(path("/toolkits"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&h.server)
+        .await;
+    h.svc.login_start().await.unwrap();
+    assert_eq!(h.svc.login_poll().await.unwrap(), crate::LoginState::Failed);
+    assert!(!h.svc.configured());
+    assert!(h.store.get(KEY_SECRET).unwrap().is_none());
+}

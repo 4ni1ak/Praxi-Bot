@@ -56,6 +56,7 @@ impl ComposioControl for Fake {
             configured: self.calls.load(Ordering::SeqCst) > 0,
             mode: ComposioLinkMode::None,
             key_setup_url: "https://platform.composio.dev/".into(),
+            login_expired: false,
         }
     }
     async fn login_start(&self) -> Result<ComposioLoginDto, ComposioControlError> {
@@ -109,8 +110,11 @@ impl ComposioControl for Fake {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(app(slug))
     }
-    async fn connect(&self, _: &str) -> Result<ComposioConnectDto, ComposioControlError> {
+    async fn connect(&self, slug: &str) -> Result<ComposioConnectDto, ComposioControlError> {
         self.before("composio.connect_started");
+        if slug == "expired_login" {
+            return Err(ComposioControlError::LoginExpired);
+        }
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(ComposioConnectDto {
             redirect_url: "https://connect.composio.dev/link/x".into(),
@@ -197,6 +201,21 @@ async fn a_logo_is_served_to_the_local_owner_with_nosniff_and_a_locked_down_csp(
     ));
     let denied = send(&t.app, Method::GET, "/v1/composio/logos/gmail", None, &[]).await;
     assert_eq!(denied.status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_rejected_composio_login_is_a_409_with_its_own_code_not_a_bare_502() {
+    let t = setup();
+    t.state.set_composio(Arc::new(Fake::default()));
+    let r = call(
+        &t,
+        Method::POST,
+        "/v1/composio/apps/expired_login/connect",
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    assert_eq!(r.json()["error"]["code"], "composio_login_expired");
 }
 
 #[tokio::test]

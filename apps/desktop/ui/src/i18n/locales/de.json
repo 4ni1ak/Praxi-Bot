@@ -732,7 +732,7 @@
         "failed": "Die App-Liste konnte nicht aktualisiert werden: Die gespeicherte wird angezeigt.",
         "offline": "Keine Verbindung: Die gespeicherte App-Liste wird angezeigt.",
         "rate_limited": "Composio ist ausgelastet: Die gespeicherte App-Liste wird angezeigt.",
-        "unauthorized": "Die Composio-Anmeldung ist abgelaufen: Die gespeicherte App-Liste wird angezeigt."
+        "unauthorized": "Composio akzeptiert die gespeicherte Anmeldung nicht mehr: Es wird die gespeicherte App-Liste angezeigt."
       },
       "connectedSection": "Verbunden",
       "disable": "Ausschalten",
@@ -757,6 +757,7 @@
       "loading": "Apps werden geladen …",
       "noResults": "Keine passenden Apps.",
       "openFailed": "Der Anmeldelink wurde nicht geöffnet, weil er kein Composio-Link ist.",
+      "relogin": "Erneut bei Composio anmelden",
       "retry": "Erneut versuchen",
       "state": {
         "active": "Verbunden",
@@ -846,8 +847,11 @@
       "failed": {
         "app_link": "Die Seite für {{name}} konnte nicht vorbereitet werden. Versuche es erneut.",
         "app_open": "Die Seite für {{name}} konnte nicht geöffnet werden.",
+        "login_expired": "Composio akzeptiert die gespeicherte Anmeldung nicht mehr, deshalb kann {{name}} noch nicht verbunden werden. Melde dich erneut bei Composio an.",
         "login_failed": "Die Anmeldung wurde nicht abgeschlossen. Versuche es erneut.",
-        "login_open": "Die Anmeldeseite konnte nicht geöffnet werden."
+        "login_open": "Die Anmeldeseite konnte nicht geöffnet werden.",
+        "rate_limited": "Composio ist gerade ausgelastet. Warte eine Minute und versuche es mit {{name}} erneut.",
+        "upstream": "Composio war nicht erreichbar oder hat nicht geantwortet. Prüfe die Verbindung des Computers, auf dem die Bots laufen, und versuche es erneut."
       },
       "login": "Die Anmeldeseite wurde in deinem Browser geöffnet. Schließe die Anmeldung dort ab, danach öffnet sich {{name}} von selbst.",
       "opened": "Die Seite von {{name}} ist in deinem Browser geöffnet. Erlaube dort den Zugriff; hier erscheint die App dann als „Verbunden“.",
@@ -2833,6 +2837,10 @@
       "composio_error": {
         "hint": "Versuche es gleich noch einmal. Wenn es weiter fehlschlägt, verbinde die App neu.",
         "title": "Composio konnte das nicht abschließen"
+      },
+      "composio_login_expired": {
+        "hint": "Öffne Apps und tippe auf Erneut bei Composio anmelden. Im Browser genügt ein Klick.",
+        "title": "Composio akzeptiert deine Anmeldung nicht mehr"
       },
       "composio_not_configured": {
         "hint": "Füge deinen Composio-Schlüssel unter Apps hinzu und versuche es dann erneut.",

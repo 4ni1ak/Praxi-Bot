@@ -57,7 +57,7 @@ export function ConnectSheet({
           <>
             {flow.step !== "cancelled" ? (
               <Button size="sm" variant="secondary" data-testid="connect-sheet-retry" onClick={onRetry}>
-                {t("apps.composio.retry")}
+                {flow.step === "failed" && flow.reason === "login_expired" ? t("apps.composio.relogin") : t("apps.composio.retry")}
               </Button>
             ) : null}
             <Button size="sm" variant="ghost" onClick={onClose}>

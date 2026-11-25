@@ -76,6 +76,10 @@ pub struct ComposioStatusDto {
     pub mode: ComposioLinkMode,
     /// Where an owner who wants their own project key creates it (advanced).
     pub key_setup_url: String,
+    /// Composio refused the saved credential (401/403) and nothing renewed it:
+    /// the owner has to sign in to Composio again, a retry cannot succeed.
+    #[serde(default)]
+    pub login_expired: bool,
 }
 
 /// Body of `PUT /v1/composio/key`.  Write-only.
@@ -202,6 +206,8 @@ pub enum ComposioControlError {
     Invalid(String),
     /// Not linked to Composio yet (`409`).
     NotConfigured,
+    /// Composio no longer accepts the saved login or key (`409`): sign in again.
+    LoginExpired,
     /// Composio rate limit (`429`).
     RateLimited(String),
     /// Composio failed or is unreachable (`502`).

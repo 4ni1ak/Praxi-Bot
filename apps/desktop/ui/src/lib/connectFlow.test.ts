@@ -1,14 +1,31 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { settledApps } from "./appTiles.ts";
-import { type FlowCancel, type FlowDeps, type FlowState, flowActive, progressDot, runConnectFlow } from "./connectFlow.ts";
+import {
+  type FlowCancel,
+  type FlowDeps,
+  type FlowState,
+  classifyLinkFailure,
+  flowActive,
+  progressDot,
+  runConnectFlow
+} from "./connectFlow.ts";
 
-function rig(opts: { configured: boolean; polls?: Array<"pending" | "linked" | "failed"> }) {
+function rig(opts: {
+  configured: boolean;
+  expired?: boolean;
+  /** Errors `appConnect` throws, one per call, before it succeeds. */
+  connectErrors?: unknown[];
+  polls?: Array<"pending" | "linked" | "failed">;
+}) {
   const log: string[] = [];
   const polls = [...(opts.polls ?? ["linked"])];
   let clock = 0;
+  const errors = [...(opts.connectErrors ?? [])];
   const deps: FlowDeps = {
     configured: () => opts.configured,
+    loginExpired: () => opts.expired === true,
+    classify: classifyLinkFailure,
     loginStart: async () => {
       log.push("loginStart");
       return { login_url: "https://dashboard.composio.dev/?cliKey=k" };
@@ -19,6 +36,10 @@ function rig(opts: { configured: boolean; polls?: Array<"pending" | "linked" | "
     },
     appConnect: async (slug) => {
       log.push(`appConnect:${slug}`);
+      const err = errors.shift();
+      if (err !== undefined) {
+        throw err;
+      }
       return { redirect_url: `https://connect.composio.dev/link/${slug}` };
     },
     open: async (url, login) => {
@@ -104,4 +125,53 @@ test("an app that is still waiting in the browser is never listed as connected",
   const app = (slug: string, state: string) => ({ slug, name: slug, state, enabled: true, native_first: false, bots: null, tools: 0 });
   const kept = settledApps([app("gmail", "active"), app("notion", "pending"), app("slack", "expired"), app("x", "failed")] as never);
   assert.deepEqual(kept.map((a) => a.slug), ["gmail", "slack"]);
+});
+
+const loginExpired = Object.assign(new Error("Composio no longer accepts the saved login"), { code: "composio_login_expired" });
+
+test("a saved login Composio refuses sends the flow through the sign-in first, never to a dead retry", async () => {
+  const { deps, log } = rig({ configured: true, expired: true, polls: ["linked"] });
+  const { seen, report } = states();
+  const end = await runConnectFlow(deps, "gmail", "Gmail", report, { cancelled: false });
+  assert.deepEqual(log, ["loginStart", "open:login", "loginStatus", "appConnect:gmail", "open:app"]);
+  assert.equal(end.step, "opened");
+  assert.equal(end.firstTime, true);
+  assert.deepEqual(seen.map((s) => s.step), ["login", "app", "opened"]);
+});
+
+test("when the link request itself says the login expired, the same flow signs in again and retries once", async () => {
+  const { deps, log } = rig({ configured: true, connectErrors: [loginExpired], polls: ["linked"] });
+  const { seen, report } = states();
+  const end = await runConnectFlow(deps, "gmail", "Gmail", report, { cancelled: false });
+  assert.deepEqual(log, [
+    "appConnect:gmail",
+    "loginStart",
+    "open:login",
+    "loginStatus",
+    "appConnect:gmail",
+    "open:app"
+  ]);
+  assert.equal(end.step, "opened");
+  assert.deepEqual(seen.map((s) => s.step), ["app", "login", "app", "opened"]);
+});
+
+test("a login that is refused again right after signing in ends with a plain login_expired message, not a loop", async () => {
+  const { deps, log } = rig({ configured: true, expired: true, connectErrors: [loginExpired], polls: ["linked"] });
+  const { report } = states();
+  const end = await runConnectFlow(deps, "gmail", "Gmail", report, { cancelled: false });
+  assert.equal(end.step, "failed");
+  assert.equal(end.reason, "login_expired");
+  assert.equal(log.filter((l) => l === "loginStart").length, 1);
+});
+
+test("link failures are told apart by the daemon code, in plain reasons", async () => {
+  assert.equal(classifyLinkFailure({ code: "composio_login_expired" }), "login");
+  assert.equal(classifyLinkFailure({ code: "composio_not_configured" }), "login");
+  assert.equal(classifyLinkFailure({ code: "composio_rate_limited" }), "rate_limited");
+  assert.equal(classifyLinkFailure({ code: "composio_error" }), "upstream");
+  assert.equal(classifyLinkFailure(new Error("boom")), "other");
+  const { deps } = rig({ configured: true, connectErrors: [{ code: "composio_error" }] });
+  const { report } = states();
+  const end = await runConnectFlow(deps, "gmail", "Gmail", report, { cancelled: false });
+  assert.equal(end.reason, "upstream");
 });

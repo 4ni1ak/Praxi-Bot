@@ -33,6 +33,7 @@ export const DAEMON_ERROR_CODES = [
   "busy",
   "component_conflict",
   "composio_error",
+  "composio_login_expired",
   "composio_not_configured",
   "composio_rate_limited",
   "conflict",

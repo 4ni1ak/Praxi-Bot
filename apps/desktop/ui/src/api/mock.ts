@@ -2690,7 +2690,7 @@ export class MockApiClient extends ApiClient {
   private composio(method: string, seg: string[], body: unknown): unknown {
     const [, sub, slug, action] = seg;
     const configured = this.mockComposioMode !== "none";
-    const status = { configured, mode: this.mockComposioMode, key_setup_url: "https://platform.composio.dev/" };
+    const status = { configured, mode: this.mockComposioMode, key_setup_url: "https://platform.composio.dev/", login_expired: false };
     const kit = (s: string, name: string, description: string, group: string): ComposioToolkit => ({
       slug: s, name, description, categories: [], tools_count: 24, group, logo: null,
       native_first: false, state: "not_connected", enabled: false

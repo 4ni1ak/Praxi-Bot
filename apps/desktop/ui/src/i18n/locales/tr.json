@@ -732,7 +732,7 @@
         "failed": "Uygulama listesi yenilenemedi: kayıtlı liste gösteriliyor.",
         "offline": "Bağlantı yok: kayıtlı uygulama listesi gösteriliyor.",
         "rate_limited": "Composio meşgul: kayıtlı uygulama listesi gösteriliyor.",
-        "unauthorized": "Composio girişinin süresi doldu: kayıtlı uygulama listesi gösteriliyor."
+        "unauthorized": "Composio kayıtlı girişi artık kabul etmiyor: kayıtlı uygulama listesi gösteriliyor."
       },
       "connectedSection": "Bağlı",
       "disable": "Kapat",
@@ -757,6 +757,7 @@
       "loading": "Uygulamalar yükleniyor…",
       "noResults": "Eşleşen uygulama yok.",
       "openFailed": "Giriş bağlantısı Composio bağlantısı olmadığı için açılmadı.",
+      "relogin": "Composio'ya yeniden giriş yap",
       "retry": "Yeniden dene",
       "state": {
         "active": "Bağlı",
@@ -846,8 +847,11 @@
       "failed": {
         "app_link": "{{name}} sayfası hazırlanamadı. Yeniden dene.",
         "app_open": "{{name}} sayfası açılamadı.",
+        "login_expired": "Composio kayıtlı girişi artık kabul etmiyor, bu yüzden {{name}} henüz bağlanamıyor. Composio'ya yeniden giriş yap.",
         "login_failed": "Giriş tamamlanmadı. Yeniden dene.",
-        "login_open": "Giriş sayfası açılamadı."
+        "login_open": "Giriş sayfası açılamadı.",
+        "rate_limited": "Composio şu an meşgul. Bir dakika bekleyip {{name}} için yeniden dene.",
+        "upstream": "Composio'ya ulaşılamadı ya da yanıt vermedi. Botların çalıştığı bilgisayarın bağlantısını kontrol edip yeniden dene."
       },
       "login": "Giriş sayfası tarayıcında açıldı. Orada bitir; {{name}} sayfası ardından kendiliğinden açılır.",
       "opened": "{{name}} sayfası tarayıcında açık. Orada izin ver; burada Bağlı olarak görünür.",
@@ -2833,6 +2837,10 @@
       "composio_error": {
         "hint": "Biraz sonra yeniden dene. Sürerse uygulamayı yeniden bağla.",
         "title": "Composio bunu tamamlayamadı"
+      },
+      "composio_login_expired": {
+        "hint": "Uygulamalar'ı aç ve Composio'ya yeniden giriş yap'a bas. Tarayıcıda tek tık yeter.",
+        "title": "Composio girişini artık kabul etmiyor"
       },
       "composio_not_configured": {
         "hint": "Uygulamalar bölümünde Composio anahtarını ekleyip yeniden dene.",
