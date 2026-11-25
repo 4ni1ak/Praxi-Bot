@@ -2287,6 +2287,11 @@
         "failed": "No pudo actualizar el plan",
         "running": "Actualizando el plan"
       },
+      "wait": {
+        "done": "Espera terminada",
+        "failed": "No se pudo esperar",
+        "running": "Esperando"
+      },
       "web_read": {
         "done": "Leyó una página",
         "failed": "No pudo leer la página",
@@ -4999,6 +5004,15 @@
       "botFixed": "The bot of a schedule cannot be changed.",
       "cannotParse": "I could not understand that. Try \"every day at 9\", \"weekdays at 8:30\" or \"her gün 09:00\", or use the Easy tab.",
       "cannotPreview": "Could not preview this schedule. Check the syntax and timezone.",
+      "catchupWindow": "Recuperar solo si no es más antigua que",
+      "catchupWindowHint": "Una ejecución perdida durante más tiempo no se inicia tarde. Aparece como perdida y puedes ejecutarla tú.",
+      "catchupWindowOption": {
+        "0": "Sin límite",
+        "3600": "1 hora",
+        "21600": "6 horas",
+        "86400": "1 día",
+        "604800": "7 días"
+      },
       "confirmParsed": "Check this is what you meant, then press Create.",
       "create": "Create",
       "cron": "Cron expression",
@@ -5081,6 +5095,7 @@
     "lastRun": "Last run",
     "loading": "Loading schedules…",
     "missed": "Missed while off",
+    "missedWhy": "El equipo estaba apagado o la app estaba cerrada en ese momento.",
     "movedTo": "Moved to {{name}}: it runs there and is frozen on this computer.",
     "never": "Never",
     "new": "New schedule",

@@ -23,6 +23,9 @@ export type SchedulePayload =
   | { kind: "unknown" };
 
 export type MisfirePolicy = "skip" | "run_once" | "run_all";
+
+/** Catch-up window choices in seconds (`0` = no limit). */
+export const CATCHUP_WINDOWS: readonly number[] = [0, 3600, 21600, 86400, 604800];
 export const MISFIRE_POLICIES: readonly MisfirePolicy[] = [
   "skip",
   "run_once",
@@ -192,6 +195,8 @@ export interface ScheduleDraft {
   prompt: string;
   enabled: boolean;
   misfire: MisfirePolicy;
+  /** Seconds a missed run may still be caught up (`0` = no limit). */
+  catchupWindow: number;
 }
 
 export function emptyDraft(botId: string): ScheduleDraft {
@@ -204,7 +209,8 @@ export function emptyDraft(botId: string): ScheduleDraft {
     cron: "",
     prompt: "",
     enabled: true,
-    misfire: "skip"
+    misfire: "skip",
+    catchupWindow: 0
   };
 }
 
@@ -222,7 +228,8 @@ export function draftFromSchedule(s: Schedule): ScheduleDraft {
     cron: spec && "cron" in spec ? spec.cron : "",
     prompt: payload.kind === "agent_prompt" ? payload.text : "",
     enabled: s.enabled,
-    misfire
+    misfire,
+    catchupWindow: s.catchup_window_secs ?? 0
   };
 }
 
@@ -303,6 +310,8 @@ export function buildInput(
     payload,
     enabled: d.enabled,
     misfire_policy: d.misfire,
+    // `skip` never runs late, so a window means nothing there: clear it
+    catchup_window_secs: d.misfire === "skip" ? 0 : d.catchupWindow,
     // keep an existing chat on edit; a new schedule gets the daemon default
     chat_id: editing?.chat_id ?? null
   };

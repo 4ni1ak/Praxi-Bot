@@ -50,6 +50,7 @@ mod peer_knowledge;
 mod profile_share;
 mod safe_mode;
 mod schedules;
+mod schedules_catchup;
 mod secret_requests;
 mod skills;
 mod voice;

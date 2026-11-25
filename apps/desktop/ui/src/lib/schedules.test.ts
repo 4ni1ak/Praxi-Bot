@@ -376,3 +376,20 @@ test("a draft from the easy builder saves the spec the builder made", () => {
   assert.deepEqual(buildInput(d, spec).spec, spec);
   assert.throws(() => buildInput(d, null));
 });
+
+test("catch-up window: sent with run_once/run_all, cleared for skip, restored on edit", () => {
+  const base = { ...emptyDraft("b1"), name: "n", prompt: "p" };
+  const spec = { cron: "0 8 * * * Europe/Istanbul" };
+  assert.equal(
+    buildInput({ ...base, misfire: "run_once", catchupWindow: 21600 }, spec).catchup_window_secs,
+    21600
+  );
+  // skip never runs late, so a leftover window is cleared (0 = remove)
+  assert.equal(
+    buildInput({ ...base, misfire: "skip", catchupWindow: 21600 }, spec).catchup_window_secs,
+    0
+  );
+  const d = draftFromSchedule(sched({ misfire_policy: "run_once", catchup_window_secs: 3600 }));
+  assert.equal(d.catchupWindow, 3600);
+  assert.equal(draftFromSchedule(sched()).catchupWindow, 0);
+});

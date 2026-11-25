@@ -75,8 +75,23 @@ prechecks](../schedule-triggers-prechecks.md).
 If the daemon was stopped or the computer asleep when a schedule was due, the
 schedule's **misfire policy** decides: `skip` (default: ignore missed runs),
 `run_once` (run once for the missed window) or `run_all` (run every missed
-occurrence, at most 10). The policy is set through the API; the CLI always uses
-the default.
+occurrence, at most 10). In the form these read "Skip missed runs", "Run once
+when the computer is back" and "Catch up: run every missed time (up to 10)".
+
+With `run_once` or `run_all` you can also set a **catch-up window** (1 hour, 6
+hours, 1 day, 7 days, or no limit; API field `catchup_window_secs`). A run
+missed for longer than the window is not started late: a daily 08:00 job is not
+run at 22:00. It is recorded as **missed**, shown in the schedule's history with
+a **Run now** button, and never dropped silently. The default is no limit, so
+existing schedules behave as before.
+
+## Short bursts: use one run, not a schedule
+
+A bot may not create a schedule that fires more often than every 5 minutes (the
+limit applies to schedules a bot makes; you can set your own). For something
+like "every 5 seconds, 4 times" the bot repeats the action inside one run and
+calls the `wait` tool between rounds (1 to 300 seconds per call, 30 minutes per
+run in total; Stop ends a wait at once).
 
 ## Approvals in unattended runs
 
