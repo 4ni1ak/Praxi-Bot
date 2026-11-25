@@ -12,6 +12,7 @@ import {
 import { createPortal } from "react-dom";
 import { layerStack } from "../lib/modalStack";
 import { popoverEscapeAction, popoverPressAction } from "../lib/popoverLayers";
+import { usePresence } from "../lib/presence";
 import styles from "./Popover.module.css";
 
 export type PopoverPlacement = "top-start" | "top-end" | "bottom-start" | "bottom-end";
@@ -56,6 +57,10 @@ export function Popover({
   children: ReactNode;
 }) {
   const pop = useRef<HTMLDivElement | null>(null);
+  // Stays mounted for its exit animation, showing what it showed when it was last open.
+  const { mounted, closing } = usePresence(open);
+  const lastChildren = useRef(children);
+  if (open) lastChildren.current = children;
   const [pos, setPos] = useState<CSSProperties | null>(null);
   // Taken at open time (render), like Modal, so opening order decides who is on top.
   const seqRef = useRef(0);
@@ -85,9 +90,13 @@ export function Popover({
     );
   }, [anchor, placement]);
 
+  // A popover that is gone starts hidden again until it is placed (see `place`).
+  useEffect(() => {
+    if (!mounted) setPos(null);
+  }, [mounted]);
+
   useLayoutEffect(() => {
     if (!open) {
-      setPos(null);
       return undefined;
     }
     place();
@@ -134,7 +143,7 @@ export function Popover({
     };
   }, [open, anchor, onClose, initialFocus, role]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     const root = pop.current;
@@ -183,11 +192,14 @@ export function Popover({
       role={role}
       aria-label={label}
       aria-modal={role === "dialog" ? false : undefined}
+      aria-hidden={closing || undefined}
+      inert={closing}
+      data-state={closing ? "closing" : "open"}
       tabIndex={-1}
       style={{ ...(pos ?? { opacity: 0, left: 0, top: 0 }), ...(width ? { width: Math.min(width, window.innerWidth - EDGE * 2) } : null) }}
       onKeyDown={onKeyDown}
     >
-      {children}
+      {open ? children : lastChildren.current}
     </div>,
     document.body
   );

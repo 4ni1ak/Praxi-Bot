@@ -12,9 +12,6 @@
 .notice { display: flex; align-items: flex-start; gap: var(--space-2); margin: var(--space-0); font-size: var(--font-size-xs); color: var(--color-text-muted); line-height: var(--line-height-normal); }
 .notice svg { flex-shrink: 0; width: var(--size-icon-sm); height: var(--size-icon-sm); margin-top: var(--space-1); }
 
-.skeleton { min-height: var(--size-control-lg); background: linear-gradient(90deg, var(--color-surface-elevated), var(--color-surface-active), var(--color-surface-elevated)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
-@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
-@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 
 .quiet { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-0); font-size: var(--font-size-xs); color: var(--color-text-muted); }
 
