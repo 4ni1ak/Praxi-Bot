@@ -4670,6 +4670,24 @@
     "typingPreview": "Escribiendo",
     "youAreInControl": "Tienes el control"
   },
+  "pageReader": {
+    "bot": "Bot",
+    "description": "Cómo lee un bot las páginas web, los correos y otros textos escritos por desconocidos.",
+    "legend": "Lector de páginas",
+    "mode": {
+      "always": "Siempre",
+      "auto": "Automático (recomendado)",
+      "off": "Desactivado"
+    },
+    "modeHint": {
+      "always": "Un modelo auxiliar independiente lee primero todas las páginas, aunque no haya datos privados. Es más lento y gasta un poco más de tu cuota.",
+      "auto": "Mientras el bot trabaja con tus archivos, correos o memoria privados, un modelo auxiliar independiente lee primero cada página y solo pasa los datos. Si no, el bot lee las páginas por sí mismo.",
+      "off": "El bot lee las páginas por sí mismo. El texto de la página siempre llega marcado como datos externos y lo que una persona no puede ver ya se ha eliminado."
+    },
+    "noBot": "Crea primero un bot.",
+    "note": "El auxiliar no tiene herramientas y nunca ve tus datos privados. Una página aún puede intentar engañarlo, así que las aprobaciones para enviar y borrar siguen vigentes.",
+    "title": "Leer páginas web de forma segura"
+  },
   "pairHost": {
     "failed": "No se pudo vincular. Comprueba que el equipo anfitrión esté encendido y que el ticket sea reciente.",
     "hint": "El ticket se usa una sola vez y no se guarda.",

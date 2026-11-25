@@ -778,6 +778,7 @@ export class MockApiClient extends ApiClient {
   ];
   private readonly memoryUndoSnapshots = new Map<string, MemoryItem>();
   private readonly memorySettings = new Map<string, BotMemorySettings>();
+  private readonly pageReader = new Map<string, string>();
   private memoryEmbedding: MemoryEmbedding = {
     mode: "basic",
     state: "ready",
@@ -1327,6 +1328,12 @@ export class MockApiClient extends ApiClient {
         };
       }
       return ok(structuredClone(this.memoryEmbedding));
+    }
+    if (seg[0] === "bots" && seg[2] === "page-reader") {
+      if (method === "PUT") {
+        this.pageReader.set(seg[1] ?? "", (opts.body as { mode: string }).mode);
+      }
+      return ok({ mode: this.pageReader.get(seg[1] ?? "") ?? "auto" });
     }
     if (seg[0] === "bots" && seg[2] === "memory" && seg[3] === "settings") {
       if (method === "PUT") {

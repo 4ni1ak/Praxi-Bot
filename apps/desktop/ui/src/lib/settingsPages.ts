@@ -88,6 +88,7 @@ export const CARD_META: Record<string, CardMeta> = {
 
   // Safety (Your bots): 4 basic, 2 under "More options"
   "safety-levels": { page: "safety", learn: "permissions" },
+  "page-reader": { page: "safety" },
   "trusted-folders": { page: "safety", risk: "folders", learn: "folders" },
   "allowed-grants": { page: "safety", learn: "permissions" },
   "audit-log": { page: "safety" },

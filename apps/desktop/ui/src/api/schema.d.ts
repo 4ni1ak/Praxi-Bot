@@ -795,6 +795,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{id}/page-reader": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A bot's page-reader setting. */
+        get: operations["get_page_reader"];
+        /** Change a bot's page-reader setting (owner only). Effective from the bot's next tool result. */
+        put: operations["put_page_reader"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots/{id}/skills": {
         parameters: {
             query?: never;
@@ -8631,6 +8649,14 @@ export interface components {
              */
             total_packages: number;
         };
+        /** @description How outside text reaches a bot. */
+        PageReaderDto: {
+            /**
+             * @description `off`: the bot reads pages itself (inside a data block). `auto`: through the reader
+             *     while the run holds private data (files, mail, memory). `always`: every page.
+             */
+            mode: string;
+        };
         /** @description A one-time pairing code (`POST /v1/channels/telegram/pair-code`). */
         PairCodeDto: {
             /** @description The 6-digit code the user sends as `/pair <code>`. */
@@ -8872,6 +8898,11 @@ export interface components {
         PutBotSpendLimitsInput: {
             /** @description The new limits; every field left `null` is unlimited. Replaces all previous values. */
             limits: components["schemas"]["BotLimitsDto"];
+        };
+        /** @description `PUT /v1/bots/{id}/page-reader`. */
+        PutPageReaderInput: {
+            /** @description `off`, `auto` or `always`. */
+            mode: string;
         };
         /** @enum {string} */
         Reason: "browser_idle" | "viewer_idle" | "time_limit" | "remote_node_live_view" | "unsupported" | "unavailable" | "expired" | "revoked" | "disconnected" | "stale" | "geometry_changed" | "refresh_pending" | "frame_budget_exceeded" | "drain_timeout" | "audit_failed" | "reset_failed" | "partial_injection" | "rate_limited" | "restart" | "persistence_failed" | "local_override";
@@ -12626,6 +12657,86 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BotMemorySettingsDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_page_reader: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageReaderDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_page_reader: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutPageReaderInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageReaderDto"];
                 };
             };
             400: {
