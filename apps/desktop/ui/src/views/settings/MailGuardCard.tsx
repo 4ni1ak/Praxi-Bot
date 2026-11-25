@@ -99,7 +99,7 @@ export function MailGuardCard() {
           {t("settingsModal.mailGuard.save")}
         </Button>
 
-        <h4>{t("settingsModal.mailGuard.optOutTitle")}</h4>
+        <h3>{t("settingsModal.mailGuard.optOutTitle")}</h3>
         <p className={formStyles.hint}>{t("settingsModal.mailGuard.optOutHint")}</p>
         <div className={formStyles.row}>
           <input className={formStyles.input} aria-label={t("settingsModal.mailGuard.optOutAdd")}
@@ -137,7 +137,7 @@ export function MailGuardCard() {
           </ul>
         )}
 
-        <h4>{t("settingsModal.mailGuard.logTitle")}</h4>
+        <h3>{t("settingsModal.mailGuard.logTitle")}</h3>
         <p className={formStyles.hint}>{t("settingsModal.mailGuard.logHint")}</p>
         <Button size="sm" variant="secondary" disabled={busy} data-testid="mail-guard-export"
           onClick={() => void act(async () => {
