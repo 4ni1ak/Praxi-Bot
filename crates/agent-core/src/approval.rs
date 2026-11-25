@@ -333,6 +333,16 @@ impl Shared {
         // Taint is kept on the top-level run so subagents spawned after a
         // tainted replay inherit it and no per-child entry has to be cleaned up.
         let root = self.root_run_id(ctx);
+        // A browser call that names a profile other than the throw-away one may be signed in to
+        // the owner's accounts: what the run reads from then on is private and cannot be compared.
+        if name.starts_with("browser_")
+            && input
+                .get("profile")
+                .and_then(Value::as_str)
+                .is_some_and(|p| !p.is_empty() && p != "isolated")
+        {
+            ctx.taint.lock().mark_private_unhashed();
+        }
         if let Some(root) = root
             && workflow_replay::replay::source_tainted()
         {
@@ -1033,7 +1043,10 @@ impl Shared {
     /// owner-started (schedule, webhook, mail, channel, a peer, a subagent, an external agent)
     /// is unchanged, and so are the Normal, Ask and custom levels.
     fn full_mode_waives(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
-        if !FULL_BROWSER_CALLS.contains(&name)
+        // A subagent (and a helper bot another bot called) keeps the old rule: it never inherits
+        // the owner's Full autonomy from the run that started it.
+        if ctx.parent_run_id.is_some()
+            || !FULL_BROWSER_CALLS.contains(&name)
             || ctx.profile.permissions.mode() != AutonomyMode::Full
             || !self.pc_owner_started(ctx)
         {

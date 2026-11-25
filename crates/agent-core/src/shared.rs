@@ -1900,6 +1900,12 @@ impl Shared {
                 schedule_id_of(&run.kind),
             );
             taint.exposure.inherit(prior.exposure);
+            // Private data an earlier turn read (a mailbox, a file, another bot's answer) is in
+            // front of the model without its text: the run holds private data it cannot
+            // compare against. Web pages alone (label "page ...") do not count.
+            if prior.exposure.private && prior.sources.is_empty() {
+                taint.mark_private_unhashed();
+            }
             for label in prior.sources {
                 taint.note_label(&label);
             }

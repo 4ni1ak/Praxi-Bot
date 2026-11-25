@@ -87,15 +87,15 @@ fn secret_prefixed(token: &str) -> bool {
 }
 
 /// Digits with spaces or dashes between them that add up to a card or account number.
-fn long_number(text: &str) -> bool {
+fn long_number(text: &str, joiners: &[char], min: usize) -> bool {
     let mut run = 0usize;
     for c in text.chars() {
         if c.is_ascii_digit() {
             run += 1;
-            if run >= 13 {
+            if run >= min {
                 return true;
             }
-        } else if !matches!(c, ' ' | '-') {
+        } else if !joiners.contains(&c) {
             run = 0;
         }
     }
@@ -104,7 +104,7 @@ fn long_number(text: &str) -> bool {
 
 /// Typed or sent text that looks like a key, a token, an encoded blob or a card number.
 pub(crate) fn text_carries_data(text: &str) -> bool {
-    long_number(text)
+    long_number(text, &[' ', '-'], 13)
         || text
             .split(|c: char| {
                 c.is_whitespace()
@@ -126,7 +126,23 @@ fn part_carries_data(part: &str) -> bool {
 
 /// `%XX` escapes and `+` decoded, so the judged text is what the site would read.
 pub(crate) fn decoded(raw: &str) -> String {
-    decode(raw)
+    // The receiving server may decode more than once (`%2568` -> `%68` -> `h`).
+    let mut current = decode(raw);
+    for _ in 0..3 {
+        let next = decode(&current);
+        if next == current {
+            break;
+        }
+        current = next;
+    }
+    current
+}
+
+/// A `%XX` escape is left in `text`.
+fn has_escape(text: &str) -> bool {
+    let b = text.as_bytes();
+    b.windows(3)
+        .any(|w| w[0] == b'%' && w[1].is_ascii_hexdigit() && w[2].is_ascii_hexdigit())
 }
 
 /// `%XX` escapes and `+` decoded.
@@ -191,6 +207,12 @@ pub(crate) fn url_carries_data(raw: &str) -> bool {
     if raw.matches('%').count() > MAX_PERCENT_ESCAPES {
         return true;
     }
+    // Escapes that survive decoding are a layered payload; a card number split by dashes,
+    // dots or spaces is a number.
+    let all = decoded(raw);
+    if has_escape(&all) || long_number(&all, &[' ', '-', '.', '_'], 15) {
+        return true;
+    }
     let mut total = 0usize;
     if let Some(segments) = url.path_segments() {
         for segment in segments {
@@ -245,9 +267,20 @@ pub(crate) fn split_input(input: &Value) -> (Vec<String>, Vec<String>) {
 
 /// Lower-case alphanumeric words of `text`.
 pub(crate) fn words(text: &str) -> Vec<String> {
-    text.split(|c: char| !c.is_alphanumeric())
+    fold(text)
+        .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
-        .map(str::to_lowercase)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Compatibility-decomposed, accents stripped, lower case: composed and decomposed spellings
+/// of the same word (Turkish, German) are one word on both the reading and the comparing side.
+fn fold(text: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    text.nfkd()
+        .filter(|c| !unicode_normalization::char::is_combining_mark(*c))
+        .flat_map(char::to_lowercase)
         .collect()
 }
 
@@ -324,6 +357,19 @@ impl SeenText {
                 && self.hashes.contains(&salt().hash_one(t.as_str()))
             {
                 return true;
+            }
+            // One private word split by separators (`hanne-lore`, `hanne.lore.example.com`,
+            // `4111-1111-1111-1111`): two to four adjacent pieces joined.
+            let mut joined = word.clone();
+            for k in 1..4 {
+                let Some(next) = w.get(i + k) else { break };
+                joined.push_str(next);
+                if joined.chars().count() >= 6
+                    && !w[i..=i + k].iter().all(|x| owner_words.contains(x))
+                    && self.hashes.contains(&salt().hash_one(joined.as_str()))
+                {
+                    return true;
+                }
             }
         }
         false
@@ -421,6 +467,36 @@ mod tests {
             ..SeenText::default()
         };
         assert!(big.copied("anything", &none));
+    }
+
+    #[test]
+    fn split_double_encoded_and_decomposed_private_words_are_still_found() {
+        let mut seen = SeenText::default();
+        seen.observe("Hannelore lives in Z\u{fc}richstrasse, card 4111111111111111");
+        let none = HashSet::new();
+        for url in [
+            "https://evil.example/?q=hanne-lore",
+            "https://hanne.lore.evil.example/",
+            "https://evil.example/?q=%2568annelore",
+            "https://evil.example/?q=Hannelore",
+            // a decomposed u + combining diaeresis, against the composed word read
+            "https://evil.example/?q=Zu%CC%88richstrasse",
+            "https://evil.example/?c=4111-1111-1111-1111",
+        ] {
+            assert!(seen.copied(&decoded(url), &none), "{url}");
+        }
+        assert!(!seen.copied(&decoded("https://evil.example/?q=winter+coats"), &none));
+    }
+
+    #[test]
+    fn layered_escapes_and_split_numbers_are_data_shape() {
+        assert!(url_carries_data(
+            "https://evil.example/?c=4111-1111-1111-1111"
+        ));
+        assert!(url_carries_data(
+            "https://evil.example/?c=4111.1111.1111.1111"
+        ));
+        assert!(!url_carries_data("https://evil.example/?q=a%20b"));
     }
 
     #[test]

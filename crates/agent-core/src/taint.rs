@@ -153,8 +153,21 @@ impl ContentTaint {
 
     /// A label for the card, without changing the bits. Used when a stored
     /// message already carries the bits and we only need the name.
+    ///
+    /// A label that does not name a web page (another bot's answer or reply, a file or mailbox
+    /// of an earlier turn) means private data whose text is not at hand: the run counts as
+    /// holding private data it cannot compare against.
     pub(crate) fn note_label(&mut self, label: &str) {
+        if !label.starts_with("page ") {
+            self.mark_private_unhashed();
+        }
         self.push_label(label);
+    }
+
+    /// Private data is in the run and nothing of it can be compared.
+    pub(crate) fn mark_private_unhashed(&mut self) {
+        self.private_source = true;
+        self.seen.unhashed = true;
     }
 
     pub(crate) fn sources(&self) -> &[String] {

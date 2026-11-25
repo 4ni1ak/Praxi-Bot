@@ -286,7 +286,7 @@ desktop app, or sent from your own admin desktop), reading web pages does not
 make the bot ask again for each further step in the managed browser. Opening a
 page already counts as "read something untrusted"; what decides whether the bot
 may keep going is whether the run also holds **your private data**: your files,
-mail, memory, screens or other bots' data. The details you typed for the task (a
+mail, memory, screens or other bots' data, also from an earlier message of the same chat or from another bot's answer (then nothing can be compared, so a new site asks). Pages seen through a browser profile you named count as private too, because that profile may be signed in to your accounts. The details you typed for the task (a
 company name, your email address) are not private for this purpose. You gave them
 so the bot can type them into forms.
 
@@ -294,7 +294,7 @@ so the bot can type them into forms.
 | --- | --- |
 | No private data in the run: opens any public site (new ones too), deep pages, query strings, goes back, switches tabs, clicks, scrolls, types the details you gave it, picks options, presses keys, submits forms | No |
 | Private data in the run, and it read a web page: deep pages, subdomains and forms of a site **you named** (or approved on an earlier card) | No |
-| Private data in the run, and it read a web page: a new site, or a form on a page that is not yours, **when the address or text contains a word of the private data**, looks like a key, access code, hash or encoded string, is long (over 120 characters of address, over 39 characters of form text), carries a `#fragment`, or the run has already sent more than about 600 characters to such places | **Yes** |
+| Private data in the run, and it read a web page: a new site, or a form on a page that is not yours, **when the address or text contains a word of 6 or more letters (or three words in a row) of the private data, even split by dashes or dots, percent-encoded or accented differently**, looks like a key, access code, hash or encoded string, is long (over 120 characters of address, over 39 characters of form text), carries a `#fragment`, or the run has already sent more than about 600 characters to such places | **Yes** |
 | Private data in the run and it read a web page, but nothing in the address or text comes from the private data | No |
 | Types a card-like number or something shaped like a key into a page, in any run | **Yes** |
 | Types an owner-stored secret (`browser_fill` with `secret`) | **Yes**, every time |
@@ -308,10 +308,10 @@ words it read, and a call that repeats one asks. Floors, always-ask tools (mail
 sending among them: it keeps asking until the written mail policy exists) and the
 block rules are decided before this rule and are untouched. A run that is **not**
 started by you (a schedule, a webhook, an incoming mail, a channel, a paired device
-that is not your admin desktop, a subagent, an external agent) keeps the old rule
+that is not your admin desktop, a subagent or a helper bot, an external agent) keeps the old rule
 and its one-time cards, and the Normal level and custom levels are unchanged.
 
-What it cannot stop: a hostile page that talks the model into **re-encoding or
+What it cannot stop: private words shorter than 6 letters (a 4-digit PIN, a short first name) and anything shorter than three words are never recognised; a hostile page that talks the model into **re-encoding or
 paraphrasing** your private data into a fresh string (for example translating it, or
 spelling it with different words) and sending it to a new site, or private data the
 model knows that never came through a tool result of this run. Every call this rule
