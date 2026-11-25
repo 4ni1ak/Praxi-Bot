@@ -74,7 +74,7 @@ export function BotPanelTriggers({ botId }: { botId: string }) {
         {row.origin === "rule" ? <><p className={styles.note}>{t("botPanel.triggers.count", { count: row.count_today ?? 0 })} · {t("botPanel.triggers.queued", { count: row.queued ?? 0 })}</p>
         <p className={styles.note}>{t("botPanel.triggers.limitSummary", { hour: row.config.limits.per_hour, day: row.config.limits.per_day })}</p></> : <p className={styles.note}>{tr("existingHint")}</p>}
         {row.last_fired_at_ms && <p className={styles.note}>{tr("lastFired")} {new Date(row.last_fired_at_ms).toLocaleString(i18n.language)}</p>}
-        {row.last_error && <p className={styles.error}>{tr(row.last_error === "source" ? "sourceError" : "runError")}</p>}
+        {row.last_error && <p className={styles.error}>{tr(row.last_error === "source" ? "sourceError" : row.last_error === "queue" ? "queueError" : "runError")}</p>}
       </li>; })}
     </ul>
     {!rows.length && !draft && <p className={styles.empty}>{tr("empty")}</p>}

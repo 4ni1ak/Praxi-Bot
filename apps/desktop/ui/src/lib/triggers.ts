@@ -24,7 +24,7 @@ export interface BotTrigger extends TriggerInput {
   last_fired_at_ms: number | null;
   count_today: number | null;
   queued: number | null;
-  last_error: "run" | "source" | null;
+  last_error: "run" | "source" | "queue" | null;
 }
 export interface TriggerPreview { text: string; matches: boolean }
 

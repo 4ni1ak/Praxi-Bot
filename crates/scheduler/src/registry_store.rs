@@ -181,10 +181,7 @@ impl ScheduleStore {
             };
             for event in events {
                 if !state.enqueue(event) {
-                    state.last_error = Some(
-                        "The event queue is full. Narrow the filters, then turn this on again."
-                            .into(),
-                    );
+                    state.last_error = Some("queue".into());
                     tx.execute(
                         "UPDATE schedules SET enabled=0,next_run_at_ms=NULL WHERE id=?1",
                         [schedule.id.to_string()],
@@ -262,9 +259,7 @@ impl ScheduleStore {
         if get_schedule(&tx, schedule.id)?.is_some_and(|s| s.revision == schedule.revision)
             && let Some((_, mut state)) = read_rule(&tx, schedule.id)?
         {
-            state.last_error = Some(
-                "The last run did not finish. Check its activity, then turn this on again.".into(),
-            );
+            state.last_error = Some("run".into());
             save_state(&tx, schedule.id, &state)?;
             tx.execute(
                 "UPDATE schedules SET enabled=0,next_run_at_ms=NULL WHERE id=?1",

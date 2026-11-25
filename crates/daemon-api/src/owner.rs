@@ -204,6 +204,7 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/v1/skills/{}"),
     ("DELETE", "/v1/skills/{}"),
     ("GET", "/v1/bots/{}/triggers"),
+    ("HEAD", "/v1/bots/{}/triggers"),
     ("POST", "/v1/bots/{}/triggers"),
     ("PUT", "/v1/bots/{}/triggers/{}"),
     ("DELETE", "/v1/bots/{}/triggers/{}"),

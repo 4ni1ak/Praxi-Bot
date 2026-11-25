@@ -1452,6 +1452,7 @@
       "poll": "Check every (seconds)",
       "preview": "Show what the bot receives",
       "previewHint": "Exact instruction and protected event text, capped for size. No run starts and no tools are used.",
+      "queueError": "Too many events are waiting. Narrow the filters, then turn this rule on again.",
       "queued": "{{count}} waiting",
       "queued_one": "{{count}} waiting",
       "queued_other": "{{count}} waiting",

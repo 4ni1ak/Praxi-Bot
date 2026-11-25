@@ -311,12 +311,18 @@ impl DaemonExecutor {
             };
         }
         let work = work_of(&payload)?;
+        let registered = self.store.registry(schedule.id)?.is_some();
         let run = self
             .leader
             .with_active(|| {
                 let note = schedule
                     .precheck_failed
                     .then_some(scheduler::precheck::FAILURE_NOTE);
+                if registered && let Payload::AgentPrompt { text } = &payload {
+                    return self
+                        .agent
+                        .run_trigger_prompt(chat, schedule.id, occurrence, text);
+                }
                 match (external, occurrence) {
                     (true, Some((due, attempt))) => self.agent.run_scheduled_external_occurrence(
                         chat,
@@ -833,10 +839,19 @@ mod c225_tests {
         assert!(run.kind.starts_with("turn:external_schedule:"));
         let messages = storage.list_messages(run.chat_id.unwrap()).unwrap();
         let answer = messages.iter().find(|m| m.role == "assistant").unwrap();
+        let delivered = answer.content.strip_prefix("echo: ").unwrap();
+        let stored = messages
+            .iter()
+            .find(|m| m.role == "external_schedule")
+            .unwrap();
+        assert_eq!(
+            delivered, stored.content,
+            "preview text must reach the model unchanged"
+        );
         assert!(
-            answer.content.contains("trigger.mail")
-                && answer.content.contains("Summarize invoices.")
-                && answer.content.contains("\"trust\":\"untrusted\"")
+            delivered.contains("trigger.mail")
+                && delivered.contains("Summarize invoices.")
+                && delivered.contains("\"trust\":\"untrusted\"")
         );
         assert!(!answer.content.contains("PRIVATE_FULL_BODY"));
         scheduler.shutdown().await;

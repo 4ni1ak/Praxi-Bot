@@ -1274,6 +1274,37 @@ impl AgentLoop {
         )
     }
 
+    /// Start an owner-authored registry prompt with its already wrapped event.
+    /// The daemon supplies the complete instruction/data boundary. Keep the
+    /// external-schedule approval floor and isolation, but bypass the legacy
+    /// router's second JSON envelope so previews match model input exactly.
+    /// The durable suffix preserves this boundary on restart and resume.
+    ///
+    /// # Errors
+    /// Existing chat history or normal run-start errors.
+    pub fn run_trigger_prompt(
+        &self,
+        chat_id: ChatId,
+        schedule_id: TaskId,
+        occurrence: Option<(i64, u32)>,
+        prompt: &str,
+    ) -> Result<RunId> {
+        let base = occurrence.map_or_else(
+            || format!("turn:external_schedule:{schedule_id}"),
+            |(due, attempt)| occurrence_kind(true, schedule_id, due, attempt),
+        );
+        let kind = format!("{base}:registry");
+        if let Some(run) = self.existing_occurrence_run(chat_id, &kind)? {
+            return Ok(run);
+        }
+        self.run_scheduled_external_kind(
+            chat_id,
+            ScheduleWork::Prompt(prompt.to_owned()),
+            None,
+            &kind,
+        )
+    }
+
     fn run_scheduled_external_kind(
         &self,
         chat_id: ChatId,

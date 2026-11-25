@@ -106,10 +106,14 @@ fn validate(s: &AppState, bot: BotId, input: &TriggerInput) -> Result<Rule, ApiE
             "use a short name and an instruction of 1 to 4,000 visible characters",
         ));
     }
-    no_secrets(
-        s,
-        &serde_json::to_string(input).map_err(|_| bad_trigger("invalid trigger"))?,
-    )?;
+    // Inspect decoded strings: JSON escaping must not hide a registered secret.
+    s.agent().refresh_external_redactor();
+    let value = serde_json::to_value(input).map_err(|_| bad_trigger("invalid trigger"))?;
+    if redact_value(s, value.clone()) != value {
+        return Err(bad_trigger(
+            "use an account reference; remove secret text from this trigger",
+        ));
+    }
     let rule = rule_of(&input.config)?;
     match &rule.source {
         TriggerSource::Mail {
@@ -166,8 +170,8 @@ fn dto(s: &AppState, row: &Schedule) -> Result<TriggerDto, ApiError> {
     let checks = store.check_state(row)?;
     let now = storage::now_ms();
     let today = now.div_euclid(86_400_000);
-    let last_error = if state.last_error.is_some() {
-        Some("run".into())
+    let last_error = if let Some(reason) = &state.last_error {
+        Some(if reason == "queue" { "queue" } else { "run" }.into())
     } else if checks.trigger_errors >= 10 {
         Some("source".into())
     } else {
@@ -222,7 +226,7 @@ pub(crate) fn clean_sample(value: &Value) -> Value {
     }
 }
 
-#[utoipa::path(get,path="/v1/bots/{bot}/triggers",tag="triggers",params(("bot"=String,Path)),security(("bearer"=[])),responses((status=200,body=Vec<TriggerDto>),(status=403,body=ErrorBody)))]
+#[utoipa::path(get,path="/v1/bots/{bot}/triggers",tag="triggers",operation_id="triggers_list",params(("bot"=String,Path)),security(("bearer"=[])),responses((status=200,body=Vec<TriggerDto>),(status=403,body=ErrorBody)))]
 pub(crate) async fn list(
     State(s): State<AppState>,
     Path(bot): Path<String>,
@@ -299,7 +303,7 @@ fn redact_value(s: &AppState, value: Value) -> Value {
         Value::Object(values) => Value::Object(
             values
                 .into_iter()
-                .map(|(k, v)| (k, redact_value(s, v)))
+                .map(|(k, v)| (s.agent().redact_external_text(k), redact_value(s, v)))
                 .collect(),
         ),
         other => other,
@@ -336,7 +340,7 @@ fn existing_dto(
     }
 }
 
-#[utoipa::path(post,path="/v1/bots/{bot}/triggers",tag="triggers",params(("bot"=String,Path)),request_body=TriggerInput,security(("bearer"=[])),responses((status=201,body=TriggerDto),(status=422,body=ErrorBody),(status=403,body=ErrorBody)))]
+#[utoipa::path(post,path="/v1/bots/{bot}/triggers",tag="triggers",operation_id="triggers_create",params(("bot"=String,Path)),request_body=TriggerInput,security(("bearer"=[])),responses((status=201,body=TriggerDto),(status=422,body=ErrorBody),(status=403,body=ErrorBody)))]
 pub(crate) async fn create(
     State(s): State<AppState>,
     Path(bot): Path<String>,
@@ -377,7 +381,7 @@ pub(crate) async fn create(
     )?;
     Ok((StatusCode::CREATED, Json(dto(&s, &row)?)))
 }
-#[utoipa::path(put,path="/v1/bots/{bot}/triggers/{trigger}",tag="triggers",params(("bot"=String,Path),("trigger"=Uuid,Path)),request_body=TriggerInput,security(("bearer"=[])),responses((status=200,body=TriggerDto),(status=422,body=ErrorBody),(status=403,body=ErrorBody)))]
+#[utoipa::path(put,path="/v1/bots/{bot}/triggers/{trigger}",tag="triggers",operation_id="triggers_update",params(("bot"=String,Path),("trigger"=Uuid,Path)),request_body=TriggerInput,security(("bearer"=[])),responses((status=200,body=TriggerDto),(status=422,body=ErrorBody),(status=403,body=ErrorBody)))]
 pub(crate) async fn update(
     State(s): State<AppState>,
     Path((bot, id)): Path<(String, Uuid)>,
@@ -420,7 +424,7 @@ pub(crate) async fn update(
             .ok_or_else(|| ApiError::not_found("trigger"))?,
     )?))
 }
-#[utoipa::path(delete,path="/v1/bots/{bot}/triggers/{trigger}",tag="triggers",params(("bot"=String,Path),("trigger"=Uuid,Path)),security(("bearer"=[])),responses((status=204),(status=403,body=ErrorBody)))]
+#[utoipa::path(delete,path="/v1/bots/{bot}/triggers/{trigger}",tag="triggers",operation_id="triggers_delete",params(("bot"=String,Path),("trigger"=Uuid,Path)),security(("bearer"=[])),responses((status=204),(status=403,body=ErrorBody)))]
 pub(crate) async fn delete(
     State(s): State<AppState>,
     Path((bot, id)): Path<(String, Uuid)>,
@@ -434,7 +438,7 @@ pub(crate) async fn delete(
     store.delete(row.id)?;
     Ok(StatusCode::NO_CONTENT)
 }
-#[utoipa::path(post,path="/v1/bots/{bot}/triggers/preview",tag="triggers",params(("bot"=String,Path)),request_body=TriggerSample,security(("bearer"=[])),responses((status=200,body=TriggerPreview),(status=422,body=ErrorBody),(status=403,body=ErrorBody)))]
+#[utoipa::path(post,path="/v1/bots/{bot}/triggers/preview",tag="triggers",operation_id="triggers_preview",params(("bot"=String,Path)),request_body=TriggerSample,security(("bearer"=[])),responses((status=200,body=TriggerPreview),(status=422,body=ErrorBody),(status=403,body=ErrorBody)))]
 pub(crate) async fn preview(
     State(s): State<AppState>,
     Path(bot): Path<String>,
@@ -446,10 +450,8 @@ pub(crate) async fn preview(
         return Err(bad_trigger("write an instruction of 1 to 4,000 characters"));
     }
     no_secrets(&s, &input.instruction)?;
-    let sample = clean_sample(&input.sample);
-    let raw = serde_json::to_string(&sample).map_err(|_| bad_trigger("invalid sample"))?;
-    let raw = s.agent().redact_host_text(raw);
-    let sample: Value = serde_json::from_str(&raw).map_err(|_| bad_trigger("invalid sample"))?;
+    s.agent().refresh_external_redactor();
+    let sample = clean_sample(&redact_value(&s, input.sample));
     let events = if matches!(rule.source, TriggerSource::Mail { .. }) {
         crate::schedule::registry_mail_observations(
             &serde_json::json!({"messages":[sample]}),

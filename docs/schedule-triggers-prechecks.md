@@ -120,8 +120,11 @@ The daemon and sample preview share `wrapped_instruction`, using
 `untrusted_data_block_capped` with `trigger.mail`, `trigger.webhook`, or
 `trigger.schedule`. AgentPrompt input substitution is disabled at the payload
 model too: only typed tool/workflow parameters retain explicit input binding.
-Owner prompt text is never replaced by raw incoming text. Every external run
-keeps the existing isolated external_schedule initiator and once-only tool
+Owner prompt text is never replaced by raw incoming text. Registry prompts use
+a durable `:registry` suffix on the existing external-schedule run kind; this
+skips the legacy router's second JSON envelope and recall, so preview text is
+exactly the user message delivered to the model, including after resume.
+Every external run keeps the existing isolated external_schedule initiator and once-only tool
 approval floor, including egress, resume and child runs. The old note above
 about pre-native taint describes that implementation's origin; current main also
 has native taint/egress protection, which remains in force.

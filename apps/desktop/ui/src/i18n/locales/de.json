@@ -1452,6 +1452,7 @@
       "poll": "Prüfintervall (Sekunden)",
       "preview": "Eingabe für den Bot anzeigen",
       "previewHint": "Der genaue Auftrag und geschützte Ereignistext, mit Größenbegrenzung. Startet keine Ausführung und verwendet keine Werkzeuge.",
+      "queueError": "Zu viele Ereignisse warten. Grenzen Sie die Filter ein und schalten Sie die Regel wieder ein.",
       "queued": "{{count}} warten",
       "queued_one": "{{count}} wartet",
       "queued_other": "{{count}} warten",

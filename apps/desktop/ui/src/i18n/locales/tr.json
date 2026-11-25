@@ -1452,6 +1452,7 @@
       "poll": "Kontrol aralığı (saniye)",
       "preview": "Botun alacağı metni göster",
       "previewHint": "Boyutu sınırlanmış, tam talimat ve korumalı olay metni. Çalıştırma başlamaz, araç kullanılmaz.",
+      "queueError": "Çok fazla olay bekliyor. Filtreleri daraltıp bu kuralı yeniden açın.",
       "queued": "{{count}} bekliyor",
       "queued_one": "{{count}} bekliyor",
       "queued_other": "{{count}} bekliyor",

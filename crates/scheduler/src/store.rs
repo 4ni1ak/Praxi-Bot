@@ -494,7 +494,11 @@ impl ScheduleStore {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current = get_schedule(&tx, definition.id)?;
-        let has_source:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM schedule_triggers WHERE schedule_id=?1 AND json_extract(trigger_json,'$.kind') IN ('file_watch','email')) AND NOT EXISTS (SELECT 1 FROM trigger_registry r WHERE r.schedule_id=schedules.id AND json_extract(r.config_json, '$.source.kind')='webhook')",[definition.id.to_string()],|row|row.get(0))?;
+        let has_source: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schedule_triggers WHERE schedule_id=?1 AND json_extract(trigger_json,'$.kind') IN ('file_watch','email')) OR EXISTS(SELECT 1 FROM trigger_registry WHERE schedule_id=?1)",
+            [definition.id.to_string()],
+            |row| row.get(0),
+        )?;
         // Preserve legacy plain-timer concurrent-toggle semantics. Anything
         // with an external source/validated precheck uses the strict revision.
         let strict = trigger.is_some()

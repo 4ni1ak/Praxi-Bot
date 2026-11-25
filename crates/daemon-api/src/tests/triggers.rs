@@ -20,7 +20,7 @@ async fn trigger_definitions_refuse_known_secrets_and_preview_redacts_event_text
     let mut bad = input();
     bad["instruction"] = json!(secret);
     let rejected = call(&t, Method::POST, &base, Some(bad)).await;
-    assert_eq!(rejected.status, StatusCode::BAD_REQUEST);
+    assert_eq!(rejected.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(!rejected.json().to_string().contains("canary-value"));
     let preview=call(&t,Method::POST,&format!("{base}/preview"),Some(json!({"instruction":"Summarize events.","config":input()["config"],"sample":{"body":secret}}))).await;
     assert_eq!(preview.status, StatusCode::OK, "{:?}", preview.json());
@@ -71,13 +71,14 @@ async fn existing_prompt_schedule_is_visible_and_adoption_pauses_it_and_takes_ow
         store.get(old.id).unwrap().unwrap().origin,
         scheduler::ScheduleOrigin::User
     );
-    assert!(
+    assert_eq!(
         call(&t, Method::GET, "/v1/schedules", None)
             .await
             .json()
             .as_array()
             .unwrap()
-            .is_empty()
+            .len(),
+        0
     );
     assert_eq!(
         call_token_only(&t, Method::GET, &format!("/v1/schedules/{}", old.id), None)
@@ -94,6 +95,7 @@ async fn trigger_registry_is_owner_only_and_saved_off_before_enable() {
     let base = format!("/v1/bots/{bot}/triggers");
     for (method, path, body) in [
         (Method::GET, base.clone(), None),
+        (Method::HEAD, base.clone(), None),
         (Method::POST, base.clone(), Some(input())),
         (
             Method::POST,
@@ -169,12 +171,13 @@ async fn trigger_preview_returns_the_production_wrapped_projection_and_never_run
         text,
         crate::triggers::wrapped_instruction(instruction, "trigger.mail", &payload)
     );
-    assert!(
+    assert_eq!(
         t.state
             .storage()
             .list_runs(t.state.user_id())
             .unwrap()
-            .is_empty()
+            .len(),
+        0
     );
 }
 
@@ -249,11 +252,12 @@ async fn signed_webhook_adapter_queues_the_linked_rule_and_keeps_replay_protecti
     }
     let listed = call(&t, Method::GET, &base, None).await.json();
     assert_eq!(listed[0]["queued"], 1);
-    assert!(
+    assert_eq!(
         t.state
             .storage()
             .list_runs(t.state.user_id())
             .unwrap()
-            .is_empty()
+            .len(),
+        0
     );
 }

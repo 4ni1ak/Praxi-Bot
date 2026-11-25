@@ -1452,6 +1452,7 @@
       "poll": "Consultar cada (segundos)",
       "preview": "Mostrar lo que recibe el bot",
       "previewHint": "La instrucción exacta y el texto del evento protegido, con límite de tamaño. No inicia ejecuciones ni usa herramientas.",
+      "queueError": "Hay demasiados eventos pendientes. Ajusta los filtros y vuelve a activar la regla.",
       "queued": "{{count}} en espera",
       "queued_one": "{{count}} en espera",
       "queued_other": "{{count}} en espera",

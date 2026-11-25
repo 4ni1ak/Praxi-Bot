@@ -335,3 +335,26 @@ async fn registry_one_shot_waits_for_quiet_end_then_disables_after_one_run() {
     assert_eq!(host.runs.lock().len(), 1);
     scheduler.shutdown().await;
 }
+
+#[test]
+fn registry_queue_overflow_pauses_with_a_distinct_bounded_reason() {
+    let store = ScheduleStore::open_in_memory().unwrap();
+    let s = definition(BotId::new());
+    let rule = mail_rule();
+    store
+        .insert_registry_config(&s, rule.trigger().as_ref(), Some(&rule))
+        .unwrap();
+    let burst = (0..=registry::QUEUE_CAP)
+        .map(|id| json!({"id":id}))
+        .collect();
+    assert!(
+        store
+            .registry_dispatch(&s, Some(Value::Array(burst)), 0)
+            .unwrap()
+            .is_none()
+    );
+    assert!(!store.get(s.id).unwrap().unwrap().enabled);
+    let (_, state) = store.registry(s.id).unwrap().unwrap();
+    assert_eq!(state.pending.len(), registry::QUEUE_CAP);
+    assert_eq!(state.last_error.as_deref(), Some("queue"));
+}
