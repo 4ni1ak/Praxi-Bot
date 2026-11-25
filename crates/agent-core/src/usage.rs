@@ -474,7 +474,7 @@ fn check_bot_limits(
     }
     Ok(Some((
         Reservation {
-            bot: bot,
+            bot,
             usd: est_usd.unwrap_or(0.0),
             tokens: est_tokens,
         },

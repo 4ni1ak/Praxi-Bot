@@ -1,7 +1,13 @@
 //! `ask_bot`: one bot asks another for help. Every test drives the real loop
 //! with scripted models that DO try the forbidden thing.
 
-#![allow(clippy::similar_names, clippy::needless_pass_by_value)]
+#![allow(
+    clippy::similar_names,
+    clippy::assert_is_empty,
+    clippy::filter_map_next,
+    clippy::needless_pass_by_value,
+    clippy::unused_async
+)]
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -495,7 +501,7 @@ async fn the_helpers_calls_count_toward_the_asking_bots_limits_too() {
     let _ = w.lp.wait(run).await.unwrap();
     // No request reached the provider for the helper: the asker's cap stopped it.
     assert!(
-        !w.brain.requests.lock().iter().any(|r| is_child(r)),
+        !w.brain.requests.lock().iter().any(is_child),
         "the helper must not be called when the asking bot is over its limit"
     );
     // And what the helper spends is counted for both bots.

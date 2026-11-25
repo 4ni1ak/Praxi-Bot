@@ -19,6 +19,8 @@
 //! * Audit entries `delegation.started` / `delegation.refused` /
 //!   `delegation.finished` carry ids and limits, never the text.
 
+#![allow(clippy::similar_names)] // "caller" and "callee" are the design's words
+
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
@@ -483,7 +485,7 @@ impl TurnExecutor {
 
         // One admission gate: no `.await` while it is held.
         let child = {
-            let _gate = sh.spawn_gate.lock();
+            let gate = sh.spawn_gate.lock();
             let kids = sh
                 .storage
                 .list_child_runs(run.id)
@@ -496,7 +498,7 @@ impl TurnExecutor {
                 // helper: finished work is returned, anything else stops.
                 let id = existing.id;
                 let state = RunState::parse(&existing.state);
-                drop(_gate);
+                drop(gate);
                 return match state {
                     Some(s) if s.is_terminal() => {
                         let (text, is_error) = self.child_result(id, s);
@@ -587,14 +589,13 @@ impl TurnExecutor {
 
         let waited =
             tokio::time::timeout(CHILD_DEADLINE, self.wait_child(&rt, run.id, child)).await;
-        let (state, timed_out) = match waited {
-            Ok(r) => (r?, false),
-            Err(_) => {
-                // Out of time: stop the helper and everything under it.
-                lp.cancel_descendants(run.id, true);
-                let st = rt.state(child).map_err(|e| e.to_string())?;
-                (st, true)
-            }
+        let (state, timed_out) = if let Ok(r) = waited {
+            (r?, false)
+        } else {
+            // Out of time: stop the helper and everything under it.
+            lp.cancel_descendants(run.id, true);
+            let st = rt.state(child).map_err(|e| e.to_string())?;
+            (st, true)
         };
         let (text, is_error) = if timed_out {
             (

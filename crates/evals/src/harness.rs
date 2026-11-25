@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agent_core::{
-    AgentLoop, ApprovalScope, BotProfile, Guards, LoopConfig, MessageMode, ModelPrice, Providers,
+    AgentLoop, ApprovalScope, BotProfile, Delivery, Guards, LoopConfig, MessageMode, ModelPrice,
+    Providers,
 };
 use permission_engine::Policy;
 use protocol::{BotId, ChatId, Event, ToolCallId, UserId};
