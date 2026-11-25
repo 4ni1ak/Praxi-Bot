@@ -20,7 +20,7 @@
 //! the card names the site the BROWSER reports and warns when the run has read
 //! untrusted content.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
@@ -108,21 +108,34 @@ pub enum Challenge {
     },
 }
 
-/// Markers that name a CAPTCHA wherever they appear.
+/// Prompts that name a CAPTCHA wherever they appear (a challenge the user is asked to pass).
 const CAPTCHA_STRONG: &[&str] = &[
-    "recaptcha",
-    "hcaptcha",
-    "turnstile",
     "not a robot",
     "verify you are human",
     "verify you're human",
     "verify that you are human",
     "prove you are human",
+    "security challenge",
     "robot değilim",
     "insan olduğunuzu",
     "ich bin kein roboter",
     "sind sie ein mensch",
     "bestätigen sie, dass sie ein mensch",
+];
+
+/// Names of CAPTCHA widgets. On their own they are not a challenge: reCAPTCHA v3 puts a
+/// passive badge (an iframe titled "reCAPTCHA") and a "protected by reCAPTCHA" footer on
+/// a very large number of ordinary forms.
+const CAPTCHA_WIDGETS: &[&str] = &["recaptcha", "hcaptcha", "turnstile", "captcha"];
+
+/// Text of a passive notice (badge, footer) that a CAPTCHA service is merely present.
+const CAPTCHA_PASSIVE: &[&str] = &[
+    "protected by recaptcha",
+    "protected by hcaptcha",
+    "protected by turnstile",
+    "recaptcha privacy",
+    "hcaptcha privacy",
+    "this site is protected",
 ];
 
 /// Markers of a puzzle that needs pointer behaviour or picture tiles.
@@ -257,6 +270,7 @@ fn parts(line: &str) -> (Option<String>, &str, String) {
 #[must_use]
 pub fn detect(snapshot: &str) -> Option<Challenge> {
     let mut captcha = false;
+    let mut widget_seen = false;
     let mut hard = false;
     let mut prompt = false;
     let mut field: Option<String> = None;
@@ -265,14 +279,26 @@ pub fn detect(snapshot: &str) -> Option<Challenge> {
         let low = line.to_lowercase();
         let (r, role, name) = parts(line);
         let name_low = name.to_lowercase();
+        let widget = CAPTCHA_WIDGETS.iter().any(|m| low.contains(m));
+        // A bare iframe titled like the service, or the footer sentence, is a passive badge.
+        let passive = widget
+            && (CAPTCHA_PASSIVE.iter().any(|m| low.contains(m))
+                || (role.eq_ignore_ascii_case("iframe")
+                    && CAPTCHA_WIDGETS.iter().any(|m| name_low.trim() == *m)));
         if CAPTCHA_STRONG.iter().any(|m| low.contains(m))
-            || (low.contains("captcha")
-                && matches!(
-                    role,
-                    "iframe" | "checkbox" | "img" | "image" | "textbox" | "button" | "group"
-                ))
+            || (widget
+                && !passive
+                && (low.contains("challenge")
+                    || low.contains("widget")
+                    || matches!(
+                        role,
+                        "iframe" | "checkbox" | "img" | "image" | "textbox" | "button" | "group"
+                    )))
         {
             captcha = true;
+        }
+        if widget && !passive {
+            widget_seen = true;
         }
         if CAPTCHA_HARD.iter().any(|m| low.contains(m)) {
             hard = true;
@@ -291,7 +317,8 @@ pub fn detect(snapshot: &str) -> Option<Challenge> {
             }
         }
     }
-    if captcha {
+    // A picture or pointer puzzle next to a named (non-passive) widget is a CAPTCHA too.
+    if captcha || (hard && widget_seen) {
         return Some(Challenge::Captcha {
             hard: hard || snapshot.to_lowercase().contains("hcaptcha"),
         });
@@ -361,7 +388,9 @@ impl std::fmt::Display for HandoverError {
             Self::BadCode => "a code has 4 to 12 letters or digits",
             Self::WrongPage => "the browser is not on the site the card named any more",
             Self::NoPrompt => "the page does not ask for a code any more",
-            Self::StillThere => "the page still shows the check",
+            Self::StillThere => {
+                "the page still shows the check and looks unchanged; if it is solved, press Done again to continue anyway"
+            }
             Self::Typing(m) => m,
         })
     }
@@ -374,20 +403,42 @@ struct Armed {
     origin: String,
     fingerprint: u64,
     cancelled: Arc<AtomicBool>,
+    /// Fingerprint of the page at the owner's last "Done" that found the check still
+    /// there: pressing Done again on the very same page is the owner's own confirmation.
+    unconfirmed: Arc<Mutex<Option<u64>>>,
 }
 
-/// What the daemon remembers about CAPTCHAs one run met.
+/// How a CAPTCHA handover was settled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SolvedBy {
+    /// The daemon saw the page move on (same site, a changed page, no challenge).
+    Page,
+    /// The page still looked the same, and the owner pressed Done a second time on it.
+    OwnerConfirmed,
+}
+
+/// What the daemon remembers about CAPTCHAs one run (and its subagents) met.
 ///
-/// The attempt budget belongs to a SITE (origin), never to a page or a moment: leaving
-/// the page, opening another site, coming back or refreshing does not give tries back.
-/// Only the owner's verified "Done" ([`HandoverHub::verify_solved`]) or the end of the run
+/// The attempt budget belongs to a SITE, never to a page, a moment or a child run:
+/// leaving the page, opening another site, coming back, refreshing or asking a subagent
+/// to try gives no attempt back. Only the owner's "Done" ([`HandoverHub::verify_solved`])
 /// clears it.
 #[derive(Default)]
 struct CaptchaBudget {
-    /// Own actions spent, per origin (`""` when the browser did not report one).
+    /// Own actions spent, per site key (see [`site_key`]).
     attempts: HashMap<String, u32>,
-    /// Origins whose challenge is still unresolved (seen on the page, not seen gone).
-    active: HashSet<String>,
+}
+
+/// The budget key of an origin: scheme and port do not matter, and `www.` is the same site.
+fn site_key(origin: Option<&str>) -> String {
+    let o = origin.unwrap_or_default().to_ascii_lowercase();
+    let host = o.split_once("://").map_or(o.as_str(), |(_, h)| h);
+    let host = host.split('/').next().unwrap_or_default();
+    let host = match host.rsplit_once(':') {
+        Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => host,
+    };
+    host.strip_prefix("www.").unwrap_or(host).to_owned()
 }
 
 fn fingerprint(snapshot: &str) -> u64 {
@@ -401,8 +452,12 @@ fn fingerprint(snapshot: &str) -> u64 {
 #[derive(Default)]
 pub struct HandoverHub {
     armed: Mutex<HashMap<String, Armed>>,
-    /// Own action budgets per run and challenge page.
+    /// Own action budgets per ROOT run.
     seen: Mutex<HashMap<String, CaptchaBudget>>,
+    /// Subagent run -> root run of its family.
+    parents: Mutex<HashMap<String, String>>,
+    /// The browser each run last used (to look at its page when a desktop tool is called).
+    browsers: Mutex<HashMap<String, Weak<dyn BrowserDriver>>>,
     captures: Mutex<Vec<(Weak<dyn BrowserDriver>, String)>>,
 }
 
@@ -427,36 +482,45 @@ fn clean_code(raw: &str) -> Result<String, HandoverError> {
 }
 
 impl HandoverHub {
+    /// The run at the top of `run_id`'s family (itself for a top-level run).
+    fn root(&self, run_id: &str) -> String {
+        let parents = self
+            .parents
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut at = run_id;
+        for _ in 0..8 {
+            match parents.get(at) {
+                Some(p) => at = p,
+                None => break,
+            }
+        }
+        at.to_owned()
+    }
+
+    /// Tell the hub `child` is a subagent run of `parent`: they share one CAPTCHA budget.
+    pub fn link_child(&self, child: &str, parent: &str) {
+        let root = self.root(parent);
+        self.parents
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(child.to_owned(), root);
+    }
+
     fn with_budget<T>(&self, run_id: &str, f: impl FnOnce(&mut CaptchaBudget) -> T) -> T {
+        let root = self.root(run_id);
         let mut seen = self
             .seen
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        f(seen.entry(run_id.to_owned()).or_default())
+        f(seen.entry(root).or_default())
     }
 
-    /// Record what an observation of the page at `origin` showed. A challenge marks the
-    /// site as unresolved; a rendered page WITHOUT it clears only that mark, never the
-    /// attempts already spent there, and nothing at all for any other origin.
-    pub fn observed(&self, run_id: &str, origin: Option<&str>, snapshot: &str) {
-        let key = origin.unwrap_or_default().to_owned();
-        let challenge = matches!(detect(snapshot), Some(Challenge::Captcha { .. }));
-        if challenge || rendered_page(snapshot) {
-            self.with_budget(run_id, |b| {
-                if challenge {
-                    b.active.insert(key);
-                } else {
-                    b.active.remove(&key);
-                }
-            });
-        }
-    }
-
-    /// Clear the budget of one site after the owner's verified "Done".
+    /// Clear the budget of one site after the owner's "Done".
     fn clear_captcha(&self, run_id: &str, origin: &str) {
+        let key = site_key(Some(origin));
         self.with_budget(run_id, |b| {
-            b.attempts.remove(origin);
-            b.active.remove(origin);
+            b.attempts.remove(&key);
         });
     }
 
@@ -470,11 +534,10 @@ impl HandoverHub {
         origin: Option<&str>,
         snapshot: &str,
     ) -> Result<(), String> {
-        let key = origin.unwrap_or_default();
         if let Some(Challenge::Captcha { hard }) = detect(snapshot) {
+            let key = site_key(origin);
             return self.with_budget(run_id, |b| {
-                b.active.insert(key.to_owned());
-                let n = b.attempts.entry(key.to_owned()).or_default();
+                let n = b.attempts.entry(key).or_default();
                 if hard || *n >= CAPTCHA_OWN_ATTEMPTS {
                     return Err("CAPTCHA own attempts exhausted: hand over with browser_handover(kind: captcha) before any further browser action".to_owned());
                 }
@@ -482,38 +545,58 @@ impl HandoverHub {
                 Ok(())
             });
         }
-        self.observed(run_id, origin, snapshot);
         Ok(())
     }
 
     /// Number of the next permitted own attempt at `origin` (observations do not consume it).
     pub fn next_captcha_attempt(&self, run_id: &str, origin: Option<&str>) -> u32 {
-        self.with_budget(run_id, |b| {
-            b.attempts
-                .get(origin.unwrap_or_default())
-                .copied()
-                .unwrap_or(0)
-                + 1
-        })
+        let key = site_key(origin);
+        self.with_budget(run_id, |b| b.attempts.get(&key).copied().unwrap_or(0) + 1)
     }
 
-    /// Whether this run met a CAPTCHA it has not seen gone, or has a CAPTCHA handover
-    /// waiting. The desktop input tools refuse then: a visible browser window could be
-    /// clicked through them without the attempt cap.
-    pub fn captcha_unresolved(&self, run_id: &str) -> bool {
-        let armed = self
+    /// Remember the browser `run_id` is using, so a desktop tool can look at its page.
+    pub fn remember_browser(&self, run_id: &str, driver: &Arc<dyn BrowserDriver>) {
+        self.browsers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(run_id.to_owned(), Arc::downgrade(driver));
+    }
+
+    /// Whether a CAPTCHA is on the page of this run's VISIBLE managed browser right now
+    /// (read fresh from the browser, not remembered), or a CAPTCHA handover is waiting.
+    /// The desktop input tools refuse then: a visible browser window could be clicked
+    /// through them without the attempt cap.
+    pub async fn captcha_on_screen(&self, run_id: &str) -> bool {
+        if self
             .armed
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(run_id)
-            .is_some_and(|a| a.kind == HandoverKind::Captcha);
-        armed
-            || self
-                .seen
+            .is_some_and(|a| a.kind == HandoverKind::Captcha)
+        {
+            return true;
+        }
+        let root = self.root(run_id);
+        let driver = {
+            let browsers = self
+                .browsers
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            browsers
                 .get(run_id)
-                .is_some_and(|b| !b.active.is_empty())
+                .or_else(|| browsers.get(&root))
+                .and_then(Weak::upgrade)
+        };
+        let Some(driver) = driver else {
+            return false;
+        };
+        if !driver.on_desktop() {
+            return false;
+        }
+        driver
+            .snapshot(false)
+            .await
+            .is_ok_and(|snap| matches!(detect(&snap), Some(Challenge::Captcha { .. })))
     }
 
     /// Whether any browser holds a freshly typed code on its page right now.
@@ -535,16 +618,21 @@ impl HandoverHub {
     }
 
     /// Suppress visual observations of a driver holding a freshly typed code.
-    /// The latch survives the approval/run ending; only navigation clears it.
+    /// The latch survives the approval/run ending. One entry exists per (page session,
+    /// navigation); it is dropped only when a caller on the SAME page session has moved
+    /// on to a newer navigation, never because another tab or lane asked.
     pub async fn capture_latched(&self, driver: &Arc<dyn BrowserDriver>) -> bool {
-        let url = driver.capture_epoch().await.unwrap_or_default();
+        let now = driver.capture_epoch().await.unwrap_or_default();
+        let (session, nav) = epoch_parts(&now);
         let mut captures = self
             .captures
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         captures.retain(|(d, at)| {
-            d.upgrade()
-                .is_some_and(|d| !Arc::ptr_eq(&d, driver) || *at == url)
+            d.upgrade().is_some_and(|d| {
+                let (s, n) = epoch_parts(at);
+                !Arc::ptr_eq(&d, driver) || s != session || n == nav
+            })
         });
         captures
             .iter()
@@ -572,6 +660,7 @@ impl HandoverHub {
                     origin: origin.to_owned(),
                     fingerprint: self::fingerprint(fingerprint),
                     cancelled: Arc::new(AtomicBool::new(false)),
+                    unconfirmed: Arc::new(Mutex::new(None)),
                 },
             );
     }
@@ -588,13 +677,26 @@ impl HandoverHub {
         }
     }
 
-    /// Drop run state after Stop or run completion.
+    /// Drop run state after Stop or run completion. A subagent ending leaves the family's
+    /// CAPTCHA budget alone; only the root run does.
     pub fn forget(&self, run_id: &str) {
         self.disarm(run_id);
-        self.seen
+        self.browsers
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(run_id);
+        let is_child = self
+            .parents
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(run_id)
+            .is_some();
+        if !is_child {
+            self.seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(run_id);
+        }
     }
 
     fn get(&self, run_id: &str, kind: HandoverKind) -> Result<Armed, HandoverError> {
@@ -674,14 +776,20 @@ impl HandoverHub {
 
     /// Check that the CAPTCHA of `run_id` is gone (the owner pressed "Done").
     ///
+    /// The page must be on the same site, rendered, changed since the handover began and
+    /// without the challenge. When it still looks the same, the first Done is refused and
+    /// remembered; a second Done on that very same page counts as the owner's own
+    /// confirmation (the page can keep a passive widget after it was solved).
+    ///
     /// # Errors
     /// [`HandoverError::StillThere`] while the page still shows it.
-    pub async fn verify_solved(&self, run_id: &str) -> Result<(), HandoverError> {
+    pub async fn verify_solved(&self, run_id: &str) -> Result<SolvedBy, HandoverError> {
         let Armed {
             driver,
             origin,
             fingerprint: at_arm,
             cancelled,
+            unconfirmed,
             ..
         } = self.get(run_id, HandoverKind::Captcha)?;
         if driver
@@ -710,16 +818,31 @@ impl HandoverHub {
         {
             return Err(HandoverError::WrongPage);
         }
-        if !rendered_page(&snap)
-            || fingerprint(&snap) == at_arm
-            || matches!(detect(&snap), Some(Challenge::Captcha { .. }))
+        let now = fingerprint(&snap);
+        if rendered_page(&snap)
+            && now != at_arm
+            && !matches!(detect(&snap), Some(Challenge::Captcha { .. }))
         {
-            Err(HandoverError::StillThere)
-        } else {
             self.clear_captcha(run_id, &origin);
-            Ok(())
+            return Ok(SolvedBy::Page);
         }
+        let mut last = unconfirmed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *last == Some(now) && snap.lines().count() >= 2 {
+            drop(last);
+            self.clear_captcha(run_id, &origin);
+            return Ok(SolvedBy::OwnerConfirmed);
+        }
+        *last = Some(now);
+        Err(HandoverError::StillThere)
     }
+}
+
+/// `(page session, navigation)` of a capture epoch (`session:nav`; a driver that only knows
+/// URLs uses the URL, which then splits at its last colon: still consistent per page).
+fn epoch_parts(epoch: &str) -> (&str, &str) {
+    epoch.rsplit_once(':').unwrap_or((epoch, ""))
 }
 
 /// Remove every copy of `code` from `text`.

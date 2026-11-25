@@ -786,6 +786,14 @@ fn step_guard() -> browser_cdp::StepGuard {
     STEP_GUARD.try_with(Clone::clone).unwrap_or_default()
 }
 
+/// Run `fut` against the browser tab of `lane` (`None`: the shared tab).
+pub(crate) async fn in_lane<T>(
+    lane: Option<String>,
+    fut: impl std::future::Future<Output = T>,
+) -> T {
+    BROWSER_LANE.scope(lane, fut).await
+}
+
 fn current_lane() -> Option<String> {
     BROWSER_LANE.try_with(Clone::clone).ok().flatten()
 }
@@ -2673,7 +2681,6 @@ impl BrowserTool {
     /// one-time-code prompt and what it may do about it (see `handover`).
     fn append_challenge_notice(ctx: &ToolContext, origin: Option<&str>, text: &mut String) {
         let hub = crate::handover::handover_hub();
-        hub.observed(&ctx.run_id, origin, text);
         let Some(challenge) = crate::handover::detect(text) else {
             return;
         };
@@ -2870,6 +2877,7 @@ impl BrowserTool {
                 )));
             }
         }
+        crate::handover::handover_hub().remember_browser(&ctx.run_id, &shared.driver);
         if self.op == Op::Handover {
             return self.handover(ctx, &shared, &input).await;
         }

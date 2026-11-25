@@ -13,7 +13,7 @@
 
 use axum::Json;
 use axum::extract::{Extension, Path, State};
-use builtin_tools::{HandoverError, handover_hub};
+use builtin_tools::{HandoverError, SolvedBy, handover_hub};
 use protocol::ToolCallId;
 use protocol::event::HandoverKind;
 use serde::{Deserialize, Serialize};
@@ -161,15 +161,22 @@ pub(crate) async fn finish_handover_done(
             "this request asks for a code, not a CAPTCHA",
         ));
     }
-    if let Err(e) = handover_hub().verify_solved(&info.run_id.to_string()).await {
-        s.agent().restore_handover(id, info);
-        return Err(not_ready(&e));
-    }
+    let solved = match handover_hub().verify_solved(&info.run_id.to_string()).await {
+        Ok(by) => by,
+        Err(e) => {
+            s.agent().restore_handover(id, info);
+            return Err(not_ready(&e));
+        }
+    };
+    // The audit row says what was verified: the page itself, or the owner's second Done.
     audit(
         &s,
         &actor,
         "handover.captcha_done",
-        &json!({"kind": "captcha"}),
+        &json!({"kind": "captcha", "verified_by": match solved {
+            SolvedBy::Page => "page",
+            SolvedBy::OwnerConfirmed => "owner_confirmed",
+        }}),
     )?;
     let run_notified = s.agent().finish_handover(id, true, s.user_id()).is_ok();
     Ok(Json(HandoverAnswer {

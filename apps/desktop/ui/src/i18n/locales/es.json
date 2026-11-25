@@ -2855,7 +2855,7 @@
         "title": "Esa solicitud ya no está abierta"
       },
       "handover_not_ready": {
-        "hint": "Mira la página y vuelve a intentarlo. No se escribió nada que no hayas introducido tú.",
+        "hint": "Mira la página y vuelve a intentarlo. No se escribió nada que no hayas introducido tú. Si la tarjeta de CAPTCHA dice que la comprobación sigue ahí y estás seguro de que está resuelta, pulsa Hecho una segunda vez para continuar de todos modos.",
         "title": "La página no puede aceptarlo ahora"
       },
       "host_admin_forbidden": {
@@ -3596,7 +3596,7 @@
     "siteLabel": "Sitio:",
     "submit": "Enviar código",
     "takeControl": "Tomar el control",
-    "takeControlHint": "En la vista, pulsa el botón de tomar el control, resuelve la comprobación, vuelve aquí y pulsa Hecho.",
+    "takeControlHint": "En la vista, pulsa el botón de tomar el control, resuelve la comprobación, vuelve aquí y pulsa Hecho. Si la página sigue igual y estás seguro de que está resuelto, pulsa Hecho una segunda vez para continuar de todos modos.",
     "untrusted": "Esta ejecución ha leído contenido externo. Una página puede fingir que pide un código. Introduce solo un código que acabas de pedir tú mismo a este sitio.",
     "wrongFormat": "Un código tiene de 4 a 12 letras o dígitos."
   },

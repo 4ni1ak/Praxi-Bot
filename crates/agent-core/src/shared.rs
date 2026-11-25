@@ -2044,6 +2044,10 @@ impl Shared {
                 )
             }
         };
+        // A subagent shares its family's CAPTCHA attempt budget: it is no fresh start.
+        if let Some(parent) = run.parent_run_id {
+            builtin_tools::handover_hub().link_child(&run.id.to_string(), &parent.to_string());
+        }
         let computer = run
             .parent_run_id
             .and_then(|parent| {

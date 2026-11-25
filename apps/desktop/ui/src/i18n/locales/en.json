@@ -2855,7 +2855,7 @@
         "title": "That request is no longer open"
       },
       "handover_not_ready": {
-        "hint": "Look at the page, then try again. Nothing was typed that you did not enter yourself.",
+        "hint": "Look at the page, then try again. Nothing was typed that you did not enter yourself. A CAPTCHA card that says the check is still there: if you are sure it is solved, press Done a second time to continue anyway.",
         "title": "The page can't take that yet"
       },
       "host_admin_forbidden": {
@@ -3596,7 +3596,7 @@
     "siteLabel": "Site:",
     "submit": "Send code",
     "takeControl": "Take control",
-    "takeControlHint": "In the view, press the take-over button, solve the check, then come back here and press Done.",
+    "takeControlHint": "In the view, press the take-over button, solve the check, then come back here and press Done. If the page still looks the same and you are sure it is solved, press Done a second time to continue anyway.",
     "untrusted": "This run has read content from outside. A page can pretend to ask for a code. Only enter a code you just asked this site for yourself.",
     "wrongFormat": "A code has 4 to 12 letters or digits."
   },

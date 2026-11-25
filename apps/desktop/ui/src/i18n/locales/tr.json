@@ -2855,7 +2855,7 @@
         "title": "Bu istek artık açık değil"
       },
       "handover_not_ready": {
-        "hint": "Sayfaya bak, sonra yeniden dene. Senin girmediğin hiçbir şey yazılmadı.",
+        "hint": "Sayfaya bak, sonra yeniden dene. Senin girmediğin hiçbir şey yazılmadı. CAPTCHA kartı doğrulamanın hâlâ orada olduğunu söylüyorsa ve çözdüğünden eminsen, yine de devam etmek için Bitti'ye ikinci kez bas.",
         "title": "Sayfa bunu şu an alamıyor"
       },
       "host_admin_forbidden": {
@@ -3596,7 +3596,7 @@
     "siteLabel": "Site:",
     "submit": "Kodu gönder",
     "takeControl": "Kontrolü al",
-    "takeControlHint": "Görünümde devralma düğmesine bas, doğrulamayı çöz, sonra buraya dönüp Bitti'ye bas.",
+    "takeControlHint": "Görünümde devralma düğmesine bas, doğrulamayı çöz, sonra buraya dönüp Bitti'ye bas. Sayfa hâlâ aynı görünüyorsa ve çözdüğünden eminsen, yine de devam etmek için Bitti'ye ikinci kez bas.",
     "untrusted": "Bu çalışma dışarıdan içerik okudu. Bir sayfa kod istiyormuş gibi davranabilir. Yalnızca bu siteden az önce kendin istediğin bir kodu gir.",
     "wrongFormat": "Kod 4 ile 12 arasında harf veya rakamdan oluşur."
   },

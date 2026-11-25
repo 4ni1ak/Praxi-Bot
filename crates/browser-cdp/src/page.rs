@@ -499,6 +499,8 @@ impl Page {
 
     /// Evaluate JavaScript in the main frame and return the result as JSON.
     pub async fn evaluate(&self, expression: &str) -> Result<Value> {
+        // A script can read the typed value straight from the field.
+        self.refuse_secret_capture()?;
         let res = self.evaluate_readonly(expression).await;
         self.shared.dom_gen.fetch_add(1, Ordering::SeqCst);
         res
@@ -1442,28 +1444,35 @@ mod tests {
     use super::*;
     use crate::snapshot::SnapNode;
 
-    /// A code field the page named like any ordinary field (nothing OTP-like): its value is
-    /// plain in a snapshot, so the latch has to mask it by node.
+    /// A page that took the typed code and mirrors it: the field named like any ordinary
+    /// field, a sibling box ("Digit 2") holding the same value, the digits as plain text, and a
+    /// re-created input (new node) that kept the value in page state.
     fn plain_code_field(value: &str) -> FrameInput {
         let ax = json!([
-            {"nodeId":"1","role":{"value":"RootWebArea"},"childIds":["2","3"],"backendDOMNodeId":1},
+            {"nodeId":"1","role":{"value":"RootWebArea"},"childIds":["2","3","5","6","7"],"backendDOMNodeId":1},
             {"nodeId":"2","parentId":"1","role":{"value":"textbox"},"name":{"value":"Enter code"},
              "value":{"value":value},"childIds":["4"],"backendDOMNodeId":2},
             {"nodeId":"4","parentId":"2","role":{"value":"StaticText"},"name":{"value":value},"childIds":[]},
             {"nodeId":"3","parentId":"1","role":{"value":"textbox"},"name":{"value":"Nickname"},
-             "value":{"value":"visible-other"},"childIds":[],"backendDOMNodeId":3}
+             "value":{"value":"visible-other"},"childIds":[],"backendDOMNodeId":3},
+            {"nodeId":"5","parentId":"1","role":{"value":"textbox"},"name":{"value":"Digit 2"},
+             "value":{"value":value},"childIds":[],"backendDOMNodeId":5},
+            {"nodeId":"6","parentId":"1","role":{"value":"StaticText"},"name":{"value":value},"childIds":[]},
+            {"nodeId":"7","parentId":"1","role":{"value":"textbox"},"name":{"value":"Enter code"},
+             "value":{"value":value},"childIds":[],"backendDOMNodeId":9},
+            {"nodeId":"8","parentId":"1","role":{"value":"StaticText"},"name":{"value":"Verify your account"},"childIds":[]}
         ]);
         FrameInput {
             frame_id: "main".into(),
             loader_id: Some("L1".into()),
             ax_nodes: ax.as_array().unwrap().clone(),
-            extras: [2, 3]
+            extras: [2, 3, 5, 9]
                 .map(|backend_id| DomExtra {
                     backend_id,
                     tag: "input".into(),
                     input_type: Some("text".into()),
                     autocomplete: Some("off".into()),
-                    name_hints: vec!["code".into()],
+                    name_hints: vec!["field".into()],
                     ..Default::default()
                 })
                 .into(),
@@ -1472,7 +1481,7 @@ mod tests {
     }
 
     #[test]
-    fn a_latched_field_is_masked_in_snapshots_even_with_an_ordinary_name() {
+    fn a_typed_secret_hides_the_field_and_every_copy_of_it_in_snapshots() {
         let frame = plain_code_field("123456");
         let render = |refs: &mut RefMap| {
             build_snapshot(
@@ -1500,11 +1509,11 @@ mod tests {
         let text = render(&mut refs);
         assert!(
             !text.contains("123456"),
-            "value and the text child are both hidden: {text}"
+            "the field, its text child, the sibling box, the digits as text and the re-created input are all hidden: {text}"
         );
         assert!(
-            text.contains("visible-other"),
-            "other fields stay readable: {text}"
+            text.contains("Digit 2") && text.contains("Verify your account"),
+            "{text}"
         );
         // A navigation releases it.
         shared.nav_gen.fetch_add(1, Ordering::SeqCst);

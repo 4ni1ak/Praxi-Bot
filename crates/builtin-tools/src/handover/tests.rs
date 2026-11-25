@@ -10,6 +10,7 @@ use crate::browser::Wait;
 
 /// Local "pages": the snapshot text a driver shows.
 const RECAPTCHA_PAGE: &str = "# Sign up (https://shop.example/signup)\n  [e1] textbox \"Email\"\n  iframe \"reCAPTCHA\"\n    [e2] checkbox \"I'm not a robot\"\n  [e3] button \"Create account\"";
+const V3_PAGE: &str = "# Contact (https://shop.example/contact)\n  [e1] textbox \"Email\"\n  [e2] button \"Send\"\n  iframe \"reCAPTCHA\"\n  text \"This site is protected by reCAPTCHA and the Google Privacy Policy and Terms of Service apply.\"";
 const HOLD_PAGE: &str = "# Just a moment (https://shop.example/x)\n  text \"Verify you are human\"\n  [e4] button \"Press & hold\"";
 const TILES_PAGE: &str = "# Check (https://shop.example/x)\n  text \"hCaptcha\"\n  text \"Select all images with a bus\"";
 const CODE_PAGE: &str = "# Verify (https://bank.example/2fa)\n  text \"We sent a code to your phone\"\n  [e7] textbox \"Verification code\"\n  [e8] button \"Verify\"";
@@ -26,6 +27,7 @@ struct Page {
     url: StdMutex<Option<String>>,
     typed: StdMutex<Vec<(String, String)>>,
     fail_with_code: bool,
+    epoch: StdMutex<Option<String>>,
     stop_on_snapshot: StdMutex<Option<String>>,
 }
 
@@ -36,6 +38,7 @@ impl Page {
             url: StdMutex::new(Some(url.to_owned())),
             typed: StdMutex::new(Vec::new()),
             fail_with_code: false,
+            epoch: StdMutex::new(None),
             stop_on_snapshot: StdMutex::new(None),
         })
     }
@@ -111,6 +114,16 @@ impl BrowserDriver for Page {
     }
     async fn current_url(&self) -> Option<String> {
         self.url.lock().unwrap().clone()
+    }
+    async fn capture_epoch(&self) -> Option<String> {
+        self.epoch
+            .lock()
+            .unwrap()
+            .clone()
+            .or_else(|| self.url.lock().unwrap().clone())
+    }
+    fn on_desktop(&self) -> bool {
+        true
     }
 }
 
@@ -274,6 +287,7 @@ async fn a_code_is_typed_into_the_page_it_was_asked_for_and_never_elsewhere() {
 async fn a_failing_page_never_echoes_the_code_back() {
     let page = Arc::new(Page {
         fail_with_code: true,
+        epoch: StdMutex::new(None),
         ..Arc::try_unwrap(Page::new(CODE_PAGE, "https://bank.example/2fa"))
             .ok()
             .unwrap()
@@ -361,30 +375,174 @@ async fn regression_third_captcha_action_refused_and_leaving_never_gives_tries_b
 }
 
 #[tokio::test]
-async fn an_unresolved_captcha_is_visible_to_the_desktop_tools_until_seen_gone() {
-    let page = Page::new(RECAPTCHA_PAGE, "https://shop.example/signup");
-    let context = ctx("regression-desktop-gate");
-    let hub = handover_hub();
-    assert!(!hub.captcha_unresolved(&context.run_id));
-    tool(&page, "browser_snapshot")
-        .call(&context, json!({}))
+async fn a_captcha_in_an_action_result_reaches_the_desktop_gate_and_a_moved_on_page_frees_it() {
+    let page = Page::new(LOGIN_PAGE, "https://shop.example/account");
+    let context = ctx("regression-desktop-fresh");
+    // The browser tool submits; the CAPTCHA only shows up afterwards, never in a snapshot the
+    // model asked for. The desktop tool looks at the page itself.
+    tool(&page, "browser_click")
+        .call(&context, json!({"ref":"e3"}))
         .await
         .unwrap();
-    assert!(hub.captcha_unresolved(&context.run_id));
-    // Another site's page does not say the challenge is gone.
+    page.show(RECAPTCHA_PAGE, "https://shop.example/signup");
+    let err = desktop_tool("desktop_click")
+        .call(&context, json!({"x": 10, "y": 10}))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("browser_handover"), "{err}");
+    // The browser moves to another site: the remembered CAPTCHA of the first one does not
+    // lock the desktop for the rest of the run.
     page.show(LOGIN_PAGE, "https://example.com/");
-    tool(&page, "browser_snapshot")
+    let err = desktop_tool("desktop_click")
+        .call(&context, json!({"x": 10, "y": 10}))
+        .await
+        .unwrap_err();
+    assert!(!err.to_string().contains("browser_handover"), "{err}");
+    handover_hub().forget(&context.run_id);
+}
+
+#[tokio::test]
+async fn regression_a_subagent_shares_the_parents_captcha_budget() {
+    let page = Page::new(RECAPTCHA_PAGE, "https://shop.example/signup");
+    let parent = ctx("family-parent");
+    let child = ToolContext {
+        lane: Some("family-child".into()),
+        ..ctx("family-child")
+    };
+    handover_hub().link_child("family-child", "family-parent");
+    let click = tool(&page, "browser_click");
+    click.call(&parent, json!({"ref":"e2"})).await.unwrap();
+    click.call(&child, json!({"ref":"e2"})).await.unwrap();
+    // Both are spent: neither the parent nor another child gets more.
+    assert!(click.call(&parent, json!({"ref":"e2"})).await.is_err());
+    assert!(click.call(&child, json!({"ref":"e2"})).await.is_err());
+    handover_hub().link_child("family-child-2", "family-child");
+    let other = ctx("family-child-2");
+    assert!(click.call(&other, json!({"ref":"e2"})).await.is_err());
+    // A child ending gives nothing back; the root ending does.
+    handover_hub().forget("family-child");
+    assert!(click.call(&parent, json!({"ref":"e2"})).await.is_err());
+    handover_hub().forget("family-child-2");
+    handover_hub().forget("family-parent");
+    click.call(&parent, json!({"ref":"e2"})).await.unwrap();
+    handover_hub().forget("family-parent");
+}
+
+#[tokio::test]
+async fn the_same_site_under_other_spellings_shares_one_budget() {
+    let page = Page::new(RECAPTCHA_PAGE, "https://shop.example/signup");
+    let click = tool(&page, "browser_click");
+    let context = ctx("regression-variants");
+    for url in [
+        "https://shop.example/signup",
+        "https://www.shop.example/signup",
+    ] {
+        page.show(RECAPTCHA_PAGE, url);
+        click.call(&context, json!({"ref":"e2"})).await.unwrap();
+    }
+    page.show(RECAPTCHA_PAGE, "http://shop.example:8080/signup");
+    assert!(click.call(&context, json!({"ref":"e2"})).await.is_err());
+    handover_hub().forget(&context.run_id);
+}
+
+#[tokio::test]
+async fn regression_the_passive_recaptcha_badge_is_not_a_challenge() {
+    assert_eq!(detect(V3_PAGE), None);
+    let page = Page::new(V3_PAGE, "https://shop.example/contact");
+    let context = ctx("regression-v3");
+    let click = tool(&page, "browser_click");
+    for _ in 0..5 {
+        click.call(&context, json!({"ref":"e2"})).await.unwrap();
+    }
+    let out = tool(&page, "browser_snapshot")
         .call(&context, json!({}))
         .await
         .unwrap();
-    assert!(hub.captcha_unresolved(&context.run_id));
-    page.show(LOGIN_PAGE, "https://shop.example/account");
-    tool(&page, "browser_snapshot")
-        .call(&context, json!({}))
+    let ContentPart::Text { text } = &out.content[0] else {
+        panic!()
+    };
+    assert!(!text.contains("[Praxi notice]"), "{text}");
+    assert!(
+        tool(&page, "browser_handover")
+            .call(&context, json!({"kind":"captcha"}))
+            .await
+            .is_err(),
+        "a badge alone is nothing to hand over"
+    );
+    // A real v2 checkbox on the same kind of page still is a challenge.
+    assert!(matches!(
+        detect(RECAPTCHA_PAGE),
+        Some(Challenge::Captcha { hard: false })
+    ));
+    handover_hub().forget(&context.run_id);
+}
+
+#[tokio::test]
+async fn regression_a_second_done_on_an_unchanged_page_is_the_owners_confirmation() {
+    let page = Page::new(RECAPTCHA_PAGE, "https://shop.example/signup");
+    let context = ctx("regression-valve");
+    let click = tool(&page, "browser_click");
+    click.call(&context, json!({"ref":"e2"})).await.unwrap();
+    click.call(&context, json!({"ref":"e2"})).await.unwrap();
+    tool(&page, "browser_handover")
+        .call(&context, json!({"kind":"captcha"}))
         .await
         .unwrap();
-    assert!(!hub.captcha_unresolved(&context.run_id));
-    hub.forget(&context.run_id);
+    // The solved widget stays on the page (an inline iframe): the first Done cannot tell.
+    assert_eq!(
+        handover_hub().verify_solved(&context.run_id).await,
+        Err(HandoverError::StillThere)
+    );
+    // The page changes a little: that is not "the same page", Done is refused again.
+    page.show(
+        &format!("{RECAPTCHA_PAGE}\n  text \"Solved\""),
+        "https://shop.example/signup",
+    );
+    assert_eq!(
+        handover_hub().verify_solved(&context.run_id).await,
+        Err(HandoverError::StillThere)
+    );
+    // Same page as at the last Done: the owner confirms, the site's budget is given back.
+    assert_eq!(
+        handover_hub().verify_solved(&context.run_id).await,
+        Ok(SolvedBy::OwnerConfirmed)
+    );
+    click.call(&context, json!({"ref":"e2"})).await.unwrap();
+    // A blank page never passes, however often Done is pressed.
+    tool(&page, "browser_handover")
+        .call(&context, json!({"kind":"captcha"}))
+        .await
+        .unwrap();
+    page.show("", "https://shop.example/signup");
+    for _ in 0..3 {
+        assert!(handover_hub().verify_solved(&context.run_id).await.is_err());
+    }
+    handover_hub().forget(&context.run_id);
+}
+
+#[tokio::test]
+async fn regression_another_tab_cannot_purge_the_typed_code_latch() {
+    let page = Page::new(CODE_PAGE, "https://bank.example/2fa");
+    let context = ctx("regression-two-tabs");
+    tool(&page, "browser_handover")
+        .call(&context, json!({"kind":"code"}))
+        .await
+        .unwrap();
+    *page.epoch.lock().unwrap() = Some("tabA:1".into());
+    handover_hub()
+        .type_code(&context.run_id, "123456")
+        .await
+        .unwrap();
+    let driver: Arc<dyn BrowserDriver> = page.clone();
+    // Tab B asks (a screenshot, an eval): that must not release tab A's latch.
+    *page.epoch.lock().unwrap() = Some("tabB:1".into());
+    assert!(handover_hub().capture_latched(&driver).await);
+    *page.epoch.lock().unwrap() = Some("tabA:1".into());
+    assert!(handover_hub().capture_latched(&driver).await);
+    // Tab A moves on to a new document: released.
+    *page.epoch.lock().unwrap() = Some("tabA:2".into());
+    assert!(!handover_hub().capture_latched(&driver).await);
+    handover_hub().forget(&context.run_id);
 }
 
 #[tokio::test]
@@ -463,40 +621,6 @@ fn desktop_tool(name: &str) -> Arc<dyn Tool> {
     .into_iter()
     .find(|t| t.spec().name == name)
     .unwrap()
-}
-
-#[tokio::test]
-async fn regression_desktop_input_is_refused_while_a_captcha_is_unresolved() {
-    let page = Page::new(RECAPTCHA_PAGE, "https://shop.example/signup");
-    let context = ctx("regression-desktop-captcha");
-    tool(&page, "browser_snapshot")
-        .call(&context, json!({}))
-        .await
-        .unwrap();
-    for (name, input) in [
-        ("desktop_click", json!({"x": 10, "y": 10})),
-        ("desktop_type", json!({"text": "x"})),
-        ("desktop_key", json!({"keys": ["Enter"]})),
-    ] {
-        let err = desktop_tool(name).call(&context, input).await.unwrap_err();
-        assert!(
-            err.to_string().contains("browser_handover"),
-            "{name}: {err}"
-        );
-    }
-    // Once the page is seen without the challenge the desktop works again (here: it gets as
-    // far as its own "no observation" refusal, not ours).
-    page.show(LOGIN_PAGE, "https://shop.example/account");
-    tool(&page, "browser_snapshot")
-        .call(&context, json!({}))
-        .await
-        .unwrap();
-    let err = desktop_tool("desktop_click")
-        .call(&context, json!({"x": 10, "y": 10}))
-        .await
-        .unwrap_err();
-    assert!(!err.to_string().contains("browser_handover"), "{err}");
-    handover_hub().forget(&context.run_id);
 }
 
 #[tokio::test]

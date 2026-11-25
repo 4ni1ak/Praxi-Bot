@@ -13,10 +13,15 @@ Built on the same pattern as `secret_request` (see `secret-request.md`).
   control** (opens the existing live view, where the owner takes over as usual) and **Done**. Done
   hands control back, the daemon re-reads the page and only resumes the run when the check is gone;
   otherwise the card stays open and says the page still shows it.
-  The attempt budget belongs to the **site** (origin) for the whole run: leaving the page, opening
-  another site, coming back or refreshing gives no attempt back; only the owner's verified Done (or the
-  end of the run) clears it, and another site has its own budget. While a CAPTCHA is unresolved the
-  `desktop_*` input tools refuse too, so a visible browser window cannot be clicked around the cap.
+  The attempt budget belongs to the **site** (host; `www.`, scheme and port do not make a new site) and
+  to the whole run family: a subagent shares its parent's budget. Leaving the page, opening another
+  site, coming back, refreshing or asking a subagent gives no attempt back; only the owner's Done (or
+  the end of the root run) clears it. Only a real challenge counts: a passive reCAPTCHA badge or
+  "protected by reCAPTCHA" footer is not one. While a CAPTCHA is on the page of the visible managed
+  browser (read fresh from the browser when a `desktop_*` input tool is called) those tools refuse, so
+  the window cannot be clicked around the cap. If the page still looks unchanged after Done (a solved
+  inline widget can stay), the card says so and pressing Done a second time on that same page is the
+  owner's own confirmation; the audit row records `verified_by: owner_confirmed`.
 * **One-time code.** The bot calls `browser_handover` with `kind: code`. A small card names the site
   (the origin the *browser* reports), shows a countdown and a paste-friendly field (spaces and dashes
   are removed). The daemon types the code into the page's code field; the model only hears `done`.
@@ -46,9 +51,10 @@ is fixed app text.
   than the approval timeout).
 * A page can imitate a 2FA prompt to phish a code. The card therefore names the browser-reported site,
   and shows a stronger warning when the run has read untrusted content.
-* After a code is typed, the field is latched until the next main-frame navigation: screenshots, `eval`,
-  live-view frames and desktop reads are refused, and every page read (`browser_snapshot` and the page text
-  that actions return) shows that field's value as `[masked]` whatever the page named it.
+* After a code is typed, the page is latched until the next main-frame navigation: screenshots, `eval`
+  (also inside the page itself, so another tab or a subagent lane asking cannot release it), live-view
+  frames and desktop reads are refused; every page read masks the field that got the code and, because a
+  page may copy the value, every text-entry value on the page, and drops short code-like text.
 * Category `meta`, effect `read`: the card IS the decision, so there is no second approval card.
 
 ## Not done

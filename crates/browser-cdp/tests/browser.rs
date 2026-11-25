@@ -319,17 +319,25 @@ async fn iframes_including_out_of_process() {
 #[ignore = "needs Chrome/Edge"]
 async fn a_typed_secret_stays_out_of_every_page_read_until_navigation() {
     let b = Browser::launch(LaunchOptions::default()).await.unwrap();
+    // The page copies the typed value into a sibling box and a plain-text mirror, and a click
+    // re-creates the input (a new node that keeps the value), as an OTP widget or an SPA step may.
     let p = open(
         &b,
-        r#"<html><body><label>Enter code <input name=code aria-label="Enter code" autocomplete=off type=text></label>
-<button id=go>Next</button><p>plain</p></body></html>"#,
+        r#"<html><body><label>Enter code <input id=a name=code aria-label="Enter code" autocomplete=off type=text></label>
+<input id=d2 aria-label="Digit 2" autocomplete=off type=text>
+<div id=mirror></div>
+<button id=go onclick="var o=document.getElementById('a');var n=o.cloneNode();n.value=o.value;n.id='b';o.replaceWith(n)">Next</button><p>plain</p>
+<script>document.getElementById('a').addEventListener('input',function(e){
+ document.getElementById('d2').value=e.target.value;document.getElementById('mirror').textContent=e.target.value;});</script>
+</body></html>"#,
     )
     .await;
     let snap = p.snapshot(&SnapshotOptions::default()).await.unwrap();
     let field = ref_of(&snap, "textbox", "Enter code");
     let button = ref_of(&snap, "button", "Next");
     p.fill_secret(&field, "834512", |_| true).await.unwrap();
-    // A fresh snapshot, a cached one and the page text an action returns all hide the digits.
+    // A fresh snapshot, a cached one and the page text an action returns all hide the digits,
+    // wherever the page copied them.
     for _ in 0..2 {
         let text = p
             .snapshot(&SnapshotOptions::default())
@@ -341,17 +349,38 @@ async fn a_typed_secret_stays_out_of_every_page_read_until_navigation() {
     }
     let after = p.click(&button).await.unwrap();
     let rendered = after.snapshot.render();
-    assert!(!rendered.contains("834512"), "{rendered}");
+    assert!(!rendered.contains("834512"), "re-created input: {rendered}");
+    let text = p
+        .snapshot(&SnapshotOptions::default())
+        .await
+        .unwrap()
+        .render();
+    assert!(!text.contains("834512"), "{text}");
     assert!(
         p.screenshot(&ScreenshotOptions::default()).await.is_err(),
         "screenshots stay refused"
     );
-    // The digits really are in the field: only the reads are masked.
-    let typed = p
-        .evaluate("document.querySelector('input').value")
-        .await
-        .unwrap();
-    assert_eq!(typed.as_str(), Some("834512"));
+    assert!(
+        p.evaluate("document.querySelector('input').value")
+            .await
+            .is_err(),
+        "a script cannot read the value either"
+    );
+    // Another tab asking for things changes nothing for this one.
+    let other = open(&b, "<html><body><p>other tab</p></body></html>").await;
+    assert!(other.evaluate("1+1").await.is_ok());
+    assert!(
+        other
+            .screenshot(&ScreenshotOptions::default())
+            .await
+            .is_ok()
+    );
+    assert!(
+        p.evaluate("document.querySelector('input').value")
+            .await
+            .is_err(),
+        "still refused after the other tab was used"
+    );
 }
 
 #[tokio::test]

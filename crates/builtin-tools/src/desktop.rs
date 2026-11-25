@@ -1961,7 +1961,7 @@ impl Tool for DesktopTool {
         if matches!(
             self.op,
             Op::Click | Op::Type | Op::SetValue | Op::Key | Op::Scroll | Op::Drag
-        ) && hub.captcha_unresolved(&ctx.run_id)
+        ) && crate::browser::in_lane(ctx.lane.clone(), hub.captcha_on_screen(&ctx.run_id)).await
         {
             return Err(exec_err(
                 "a CAPTCHA is on the page: do not drive it through the desktop; call browser_handover with kind \"captcha\" and the owner solves it",

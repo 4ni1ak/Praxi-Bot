@@ -1707,7 +1707,10 @@ impl Page {
     async fn poll_true(&self, js: &str, timeout: Duration, what: &str) -> Result<()> {
         let deadline = Instant::now() + timeout;
         loop {
-            if let Ok(v) = self.evaluate(js).await
+            // Its own boolean probes: not a script of the model, so not refused by the latch.
+            let probe = self.evaluate_readonly(js).await;
+            self.shared.dom_gen.fetch_add(1, Ordering::SeqCst);
+            if let Ok(v) = probe
                 && v.as_bool() == Some(true)
             {
                 return Ok(());

@@ -2855,7 +2855,7 @@
         "title": "Diese Anfrage ist nicht mehr offen"
       },
       "handover_not_ready": {
-        "hint": "Sieh dir die Seite an und versuche es erneut. Es wurde nichts eingetippt, was du nicht selbst eingegeben hast.",
+        "hint": "Sieh dir die Seite an und versuche es erneut. Es wurde nichts eingetippt, was du nicht selbst eingegeben hast. Meldet die CAPTCHA-Karte, dass die Prüfung noch da ist, und du bist sicher, dass sie gelöst ist, drücke Fertig ein zweites Mal, um trotzdem fortzufahren.",
         "title": "Die Seite kann das gerade nicht annehmen"
       },
       "host_admin_forbidden": {
@@ -3596,7 +3596,7 @@
     "siteLabel": "Seite:",
     "submit": "Code senden",
     "takeControl": "Steuerung übernehmen",
-    "takeControlHint": "Drücke in der Ansicht auf die Übernehmen-Taste, löse die Prüfung, komm dann hierher zurück und drücke Fertig.",
+    "takeControlHint": "Drücke in der Ansicht auf die Übernehmen-Taste, löse die Prüfung, komm dann hierher zurück und drücke Fertig. Sieht die Seite danach noch gleich aus und du bist sicher, dass es gelöst ist, drücke Fertig ein zweites Mal, um trotzdem fortzufahren.",
     "untrusted": "Dieser Lauf hat Inhalte von außen gelesen. Eine Seite kann vortäuschen, einen Code zu verlangen. Gib nur einen Code ein, den du gerade selbst bei dieser Seite angefordert hast.",
     "wrongFormat": "Ein Code besteht aus 4 bis 12 Buchstaben oder Ziffern."
   },
