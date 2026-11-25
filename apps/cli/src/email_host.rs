@@ -981,6 +981,11 @@ impl EmailControl for EmailHost {
         if own.is_empty() {
             return Err(invalid("this account has no address to send a test to"));
         }
+        if account.identity.send_mode == SendMode::DraftOnly {
+            return Err(invalid(
+                "this address is set to draft only, so no test mail is sent from it",
+            ));
+        }
         let mail = OutgoingMail {
             to: vec![own.clone()],
             subject: TEST_SUBJECT.to_owned(),

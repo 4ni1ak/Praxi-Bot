@@ -101,6 +101,65 @@ async fn draft_only_identity_saves_a_draft_and_never_sends() {
 }
 
 #[tokio::test]
+async fn draft_only_identity_refuses_every_send_path_in_the_connector() {
+    let imap = server(Protocol::Imap).await;
+    let smtp = server(Protocol::Smtp).await;
+    let base = account(&imap, &smtp, SmtpSecurity::Implicit);
+    let mut a = named(&base, "test", Some(BOT_A));
+    a.identity.send_mode = SendMode::DraftOnly;
+    let conn = connector(vec![a]);
+    let mail = crate::smtp::OutgoingMail {
+        to: vec!["bob@example.com".into()],
+        subject: "Hi".into(),
+        body: "text".into(),
+        ..crate::smtp::OutgoingMail::default()
+    };
+    let scoped = conn.scoped(Some(BOT_A));
+    for r in [
+        scoped.send(None, &mail).await.map(|_| ()),
+        scoped.send_receipt(Some("test"), &mail).await.map(|_| ()),
+        scoped.reply(None, "1", &mail, false).await.map(|_| ()),
+    ] {
+        assert!(
+            matches!(&r, Err(crate::EmailError::Input(m)) if m == "draft only"),
+            "{r:?}"
+        );
+    }
+    assert!(smtp.messages.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn another_bot_cannot_name_an_identity_and_shared_with_on_an_unbound_account_is_inert() {
+    let imap = server(Protocol::Imap).await;
+    let smtp = server(Protocol::Smtp).await;
+    let base = account(&imap, &smtp, SmtpSecurity::Implicit);
+    let a_only = named(&base, "a-only", Some(BOT_A));
+    let mut open = named(&base, "open", None);
+    open.identity.shared_with = vec![BOT_B.into()];
+    let conn = connector(vec![a_only, open]);
+    // Bot B names bot A's account: same error as a missing one.
+    let hidden = conn
+        .scoped(Some(BOT_B))
+        .resolve_name(Some("a-only"))
+        .unwrap_err();
+    let missing = conn
+        .scoped(Some(BOT_B))
+        .resolve_name(Some("nope"))
+        .unwrap_err();
+    assert_eq!(
+        hidden.to_string().replace("a-only", "x"),
+        missing.to_string().replace("nope", "x")
+    );
+    // An unbound account is open to everybody; listing a bot in shared_with
+    // neither narrows it to that bot nor adds anything for it.
+    for bot in [BOT_B, BOT_C] {
+        let s = conn.scoped(Some(bot));
+        assert_eq!(s.resolve_name(Some("open")).unwrap(), "open");
+        assert_eq!(s.identities().len(), 1);
+    }
+}
+
+#[tokio::test]
 async fn approval_card_always_names_the_sender() {
     let imap = server(Protocol::Imap).await;
     let smtp = server(Protocol::Smtp).await;

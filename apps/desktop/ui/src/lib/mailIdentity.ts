@@ -35,6 +35,16 @@ export function senderOf(
   return mine.find((a) => isDefaultFor(a, botId)) ?? (mine.length === 1 ? mine[0] : null);
 }
 
+/**
+ * The sender the DAEMON resolved for this call: the `from: address (account: name)` line of the
+ * approval details. It is the truth (it applies the bot's bindings and defaults on the server);
+ * `senderOf` is only a guess for old events that carry no such line.
+ */
+export function daemonSender(payload: string | null | undefined): { address: string; name: string } | null {
+  const m = /^from: (.+?) \(account: ([^)]+)\)/m.exec(payload ?? "");
+  return m ? { address: m[1], name: m[2] } : null;
+}
+
 /** AgentMail's shared domain: fine for a bot's own sign-ups, not for cold mail. */
 export function isSharedDomain(account: Pick<EmailAccount, "provider" | "address">): boolean {
   return account.provider === "agentmail" && /@agentmail\.to$/i.test(account.address);

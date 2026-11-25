@@ -169,7 +169,7 @@ You can add several mailboxes (your own IMAP/SMTP mailbox, an AgentMail address 
 
 - **Who can use it**: any bot, or only the bots you pick.
 - **Default sender for**: the bots that send from it when they name no address. A bot has one default.
-- **Sending**: *Ask me each time* (default) or *Drafts only*. A drafts-only address saves what a bot wants to send as a draft and never sends it.
+- **Sending**: *Ask me each time* (default) or *Drafts only*. A drafts-only address saves what a bot wants to send as a draft and never sends it. This holds on every path: the mail channel does not queue replies from it, an approval cannot send from it, and **Send test mail** is refused for it (the test would send a real message).
 
 The bot lists its identities with `email_identities`, picks one from the task ("send from my work address") and says which one it used. The approval card always shows **From**, To, subject and text; choose another address on the card and the bot is asked to send the same message from it, so you read the new card in full before anything leaves. Passwords and API keys stay in the secret store and are never shown to the model.
 

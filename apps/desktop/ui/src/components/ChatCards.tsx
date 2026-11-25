@@ -1,6 +1,6 @@
 import type { EmailAccount } from "../api/types";
 import { useOptionalDaemonClient } from "../state/DaemonContext";
-import { identitiesFor, senderOf, switchReason } from "../lib/mailIdentity";
+import { daemonSender, identitiesFor, senderOf, switchReason } from "../lib/mailIdentity";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   AppWindow,
@@ -248,7 +248,11 @@ function MailSenderBlock({
       live = false;
     };
   }, [client]);
-  const sender = senderOf(accounts, botId, tool.input);
+  // The daemon's own `from:` line wins; the local guess is only for events without one.
+  const told = daemonSender(egressDetails(tool.details)?.payload);
+  const sender: Pick<EmailAccount, "name" | "address" | "send_mode"> | null = told
+    ? (accounts.find((a) => a.name === told.name) ?? { ...told, send_mode: undefined })
+    : senderOf(accounts, botId, tool.input);
   if (!sender) return null;
   const others = botId ? identitiesFor(accounts, botId).filter((a) => a.name !== sender.name) : [];
   const picked = others.find((a) => a.name === choice);

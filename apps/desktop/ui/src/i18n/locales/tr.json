@@ -5762,6 +5762,7 @@
       "enable": "E-posta kanalını aç",
       "folder": "İzlenecek klasör",
       "folderHint": "Genellikle INBOX. Yalnızca bunu açtıktan sonra gelen postalar iletilir.",
+      "fromLine": "Gönderen: {{from}}. Gönderim modu: her gönderim onayınızı gerektirir.",
       "full": "Bota her postanın özetini değil tüm metnini göster",
       "noAccount": "Önce yukarıdan bir posta kutusu ekleyin.",
       "note": "Postaları başkaları yazar; bu yüzden bot onları emir değil bilgi olarak ele alır. Varsayılan olarak yalnızca göndereni, konuyu ve ilk birkaç satırı görür. Ekler hiçbir zaman açılmaz. Yanıtlara izin verip her birini burada onaylamadıkça hiçbir şey gönderilmez.",

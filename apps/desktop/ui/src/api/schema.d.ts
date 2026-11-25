@@ -6079,8 +6079,12 @@ export interface components {
              * @description When it was proposed (Unix ms).
              */
             created_ms: number;
+            /** @description The identity it is sent from: `address (account: name)`. */
+            from?: string;
             /** @description Id used to approve or deny. */
             id: string;
+            /** @description That identity's send mode (`ask`: the owner approves every send). */
+            send_mode?: string;
             /** @description Subject. */
             subject: string;
             /** @description Exact recipients. */

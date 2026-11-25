@@ -19890,9 +19890,17 @@
             "description": "When it was proposed (Unix ms).",
             "minimum": 0
           },
+          "from": {
+            "type": "string",
+            "description": "The identity it is sent from: `address (account: name)`."
+          },
           "id": {
             "type": "string",
             "description": "Id used to approve or deny."
+          },
+          "send_mode": {
+            "type": "string",
+            "description": "That identity's send mode (`ask`: the owner approves every send)."
           },
           "subject": {
             "type": "string",

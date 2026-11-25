@@ -5762,6 +5762,7 @@
       "enable": "Activar el canal de correo",
       "folder": "Carpeta que se vigila",
       "folderHint": "Normalmente INBOX. Solo se pasa el correo que llega después de activarlo.",
+      "fromLine": "De: {{from}}. Modo de envío: cada envío necesita tu aprobación.",
       "full": "Mostrar al bot el texto completo de cada correo, no solo un resumen",
       "noAccount": "Primero añade un buzón arriba.",
       "note": "El correo lo escriben otras personas, así que el bot lo trata como información, nunca como órdenes. Por defecto solo ve el remitente, el asunto y las primeras líneas. Los adjuntos no se abren nunca. No se envía nada a menos que permitas las respuestas y apruebes cada una aquí.",

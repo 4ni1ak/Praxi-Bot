@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { EmailAccount } from "../api/types.ts";
-import { identitiesFor, isSharedDomain, senderOf, switchReason, usableBy } from "./mailIdentity.ts";
+import { daemonSender, identitiesFor, isSharedDomain, senderOf, switchReason, usableBy } from "./mailIdentity.ts";
 
 const base = {
   provider: "imap_smtp",
@@ -42,5 +42,16 @@ describe("mail identities", () => {
     assert.equal(isSharedDomain({ provider: "agentmail", address: "x@agentmail.to" }), true);
     assert.equal(isSharedDomain({ provider: "agentmail", address: "x@mine.com" }), false);
     assert.match(switchReason({ name: "work", address: "me@work.com" }), /account "work"/);
+  });
+});
+
+describe("daemonSender", () => {
+  it("reads the identity the daemon resolved, default or named", () => {
+    assert.deepEqual(daemonSender("from: me@work.com (account: work) (default)\nattachment: a, 1 bytes"), {
+      address: "me@work.com",
+      name: "work"
+    });
+    assert.equal(daemonSender("send mode: draft only"), null);
+    assert.equal(daemonSender(undefined), null);
   });
 });

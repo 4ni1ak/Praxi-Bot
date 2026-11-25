@@ -36,14 +36,29 @@ pub struct PendingReply {
     pub body: String,
     /// When it was proposed (Unix ms).
     pub created_ms: u64,
+    /// The identity it is sent from: `address (account: name)`. Empty when
+    /// the channel does not know it.
+    pub from: String,
+    /// Send mode of that identity as the owner set it (`ask` here: a draft
+    /// only identity never gets a reply queued).
+    pub send_mode: String,
 }
 
 impl PendingReply {
     /// The approval card as plain text: every recipient and the whole body.
     #[must_use]
     pub fn card(&self) -> String {
+        let from = if self.from.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "From: {} (send mode: {})
+",
+                self.from, self.send_mode
+            )
+        };
         format!(
-            "Send this e-mail?\nTo: {}\nSubject: {}\n---\n{}\n---\nIt is sent exactly as shown, only after you approve.",
+            "Send this e-mail?\n{from}To: {}\nSubject: {}\n---\n{}\n---\nIt is sent exactly as shown, only after you approve.",
             self.to.join(", "),
             self.subject,
             self.body
@@ -66,6 +81,7 @@ impl PendingReply {
 /// Waiting replies and the send rate limit.
 #[derive(Debug, Default)]
 pub struct ReplyGate {
+    from: String,
     pending: Vec<PendingReply>,
     sent: VecDeque<u64>,
 }
@@ -75,6 +91,15 @@ fn input(m: &str) -> EmailError {
 }
 
 impl ReplyGate {
+    /// A gate whose replies name the identity they go out from.
+    #[must_use]
+    pub fn for_sender(from: String) -> Self {
+        Self {
+            from,
+            ..Self::default()
+        }
+    }
+
     fn expire(&mut self, now_ms: u64) {
         self.pending
             .retain(|p| now_ms.saturating_sub(p.created_ms) < REPLY_TTL_MS);
@@ -132,6 +157,8 @@ impl ReplyGate {
             subject: clean_line(subject, 200),
             body: body.replace('\0', ""),
             created_ms: now_ms,
+            from: self.from.clone(),
+            send_mode: "ask".to_owned(),
         };
         self.pending.push(reply.clone());
         Ok(reply)

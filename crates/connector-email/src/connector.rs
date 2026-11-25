@@ -7,7 +7,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use secret_store::SecretStore;
 
 use crate::agentmail::{AgentMailClient, AgentMailEndpoint, AgentMailProvider, ApiKey};
-use crate::config::{AccountConfig, AccountKind};
+use crate::config::{AccountConfig, AccountKind, SendMode};
 use crate::cred::resolve_secret;
 use crate::error::EmailError;
 use crate::imap::{FolderInfo, SearchQuery};
@@ -432,6 +432,17 @@ impl Scoped<'_> {
         self.conn.provider_for(&acct).await
     }
 
+    /// The account of a call that is about to **send**. An identity the owner
+    /// limited to drafts never sends, whoever the caller is: the check lives
+    /// here so no path (tool, channel, workflow) can skip it.
+    fn sendable(&self, account: Option<&str>) -> Result<AccountConfig, EmailError> {
+        let acct = self.account(account)?;
+        if acct.identity.send_mode == SendMode::DraftOnly {
+            return Err(EmailError::Input("draft only".into()));
+        }
+        Ok(acct)
+    }
+
     /// What the mailbox of this call can do.
     ///
     /// # Errors
@@ -595,7 +606,8 @@ impl Scoped<'_> {
         account: Option<&str>,
         mail: &OutgoingMail,
     ) -> Result<Receipt, EmailError> {
-        self.provider(account).await?.send(mail).await
+        let acct = self.sendable(account)?;
+        self.conn.provider_for(&acct).await?.send(mail).await
     }
 
     /// Reply in the thread of a message. **Sends immediately**; callers must
@@ -610,7 +622,9 @@ impl Scoped<'_> {
         mail: &OutgoingMail,
         reply_all: bool,
     ) -> Result<Receipt, EmailError> {
-        self.provider(account)
+        let acct = self.sendable(account)?;
+        self.conn
+            .provider_for(&acct)
             .await?
             .reply(message_id, mail, reply_all)
             .await

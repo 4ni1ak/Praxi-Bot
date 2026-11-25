@@ -5762,6 +5762,7 @@
       "enable": "E-Mail-Kanal einschalten",
       "folder": "Ordner, der beobachtet wird",
       "folderHint": "Meist INBOX. Nur Mails, die nach dem Einschalten eintreffen, werden weitergegeben.",
+      "fromLine": "Von: {{from}}. Sendemodus: Jedes Senden braucht Ihre Freigabe.",
       "full": "Dem Bot den ganzen Text jeder Mail zeigen, nicht nur eine Zusammenfassung",
       "noAccount": "Fügen Sie zuerst oben ein Postfach hinzu.",
       "note": "Mails stammen von anderen Personen, deshalb behandelt der Bot sie als Information, nie als Anweisung. Standardmäßig sieht er nur Absender, Betreff und die ersten Zeilen. Anhänge werden nie geöffnet. Es wird nichts gesendet, außer Sie erlauben Antworten und bestätigen jede einzelne hier.",
