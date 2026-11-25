@@ -3078,6 +3078,10 @@
         "hint": "Remove the secret from its files, then add it again.",
         "title": "The skill seems to contain a password or key"
       },
+      "skill_draft_ack_required": {
+        "hint": "Cette skill vient d'une tâche qui a lu du contenu externe, ou la vérification a relevé des avertissements. Cochez la case pour confirmer, puis enregistrez.",
+        "title": "Confirmez que vous l'avez relu"
+      },
       "skill_draft_changed": {
         "hint": "Vérifiez-la à nouveau avant de l’enregistrer.",
         "title": "La skill a changé depuis la vérification"

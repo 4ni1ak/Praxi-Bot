@@ -909,9 +909,20 @@ export class ApiClient {
   skillDraftPreview(skillMd: string): Promise<import("./types").SkillDraftPreview> {
     return this.request("POST", "/skills/draft/preview", { body: { skill_md: skillMd } });
   }
-  /** Save the reviewed draft; `accept` is the fingerprint of the scan the owner confirmed. */
-  skillDraftInstall(skillMd: string, accept: string): Promise<{ name: string }> {
-    return this.request("POST", "/skills/draft/install", { body: { skill_md: skillMd, accept } });
+  /**
+   * Save the reviewed draft; `accept` is the fingerprint of the scan the owner confirmed and
+   * `acknowledged` the tick for a run that read outside content or a scan with warnings (the
+   * daemon re-checks both for `chatId`).
+   */
+  skillDraftInstall(
+    chatId: string,
+    skillMd: string,
+    accept: string,
+    acknowledged: boolean
+  ): Promise<{ name: string }> {
+    return this.request("POST", "/skills/draft/install", {
+      body: { skill_md: skillMd, accept, chat_id: chatId, acknowledged }
+    });
   }
   getBotSkills(botId: string): Promise<BotSkills> {
     return this.request("GET", `/bots/${encodeURIComponent(botId)}/skills`);

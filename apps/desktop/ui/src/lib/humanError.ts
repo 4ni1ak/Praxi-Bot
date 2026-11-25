@@ -94,6 +94,7 @@ export const DAEMON_ERROR_CODES = [
   "skill_changed",
   "skill_conflict",
   "skill_contains_secret",
+  "skill_draft_ack_required",
   "skill_draft_changed",
   "skill_draft_no_run",
   "skill_draft_no_steps",

@@ -14271,6 +14271,16 @@
               }
             }
           },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
           "409": {
             "description": "",
             "content": {
@@ -20279,12 +20289,22 @@
         "description": "Install request: the reviewed text plus the fingerprint the owner confirmed.",
         "required": [
           "skill_md",
-          "accept"
+          "accept",
+          "chat_id"
         ],
         "properties": {
           "accept": {
             "type": "string",
             "description": "`fingerprint` of the preview the owner confirmed."
+          },
+          "acknowledged": {
+            "type": "boolean",
+            "description": "The owner ticked the box saying they read the warnings. The daemon requires it when the\nsource run read untrusted or private content or the scan found anything above low risk."
+          },
+          "chat_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The chat the draft was proposed from; the daemon re-checks its exposure."
           },
           "skill_md": {
             "type": "string"

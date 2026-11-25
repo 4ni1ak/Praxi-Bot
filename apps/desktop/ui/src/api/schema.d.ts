@@ -6094,6 +6094,16 @@ export interface components {
         DraftInstallInput: {
             /** @description `fingerprint` of the preview the owner confirmed. */
             accept: string;
+            /**
+             * @description The owner ticked the box saying they read the warnings. The daemon requires it when the
+             *     source run read untrusted or private content or the scan found anything above low risk.
+             */
+            acknowledged?: boolean;
+            /**
+             * Format: uuid
+             * @description The chat the draft was proposed from; the daemon re-checks its exposure.
+             */
+            chat_id: string;
             skill_md: string;
         };
         /** @description A value the skill asks for each time it runs. */
@@ -20055,6 +20065,14 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

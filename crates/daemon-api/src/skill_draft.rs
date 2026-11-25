@@ -6,6 +6,8 @@
 //! with the hub's static scanner. `install` writes it into the shared skills folder only when the
 //! owner confirms the exact fingerprint of what they reviewed. Local owner only; nothing runs.
 
+use std::collections::BTreeMap;
+
 use axum::Json;
 use axum::extract::{Extension, Path, State, rejection::JsonRejection};
 use axum::http::{HeaderMap, StatusCode};
@@ -73,6 +75,12 @@ pub struct DraftInstallInput {
     pub skill_md: String,
     /// `fingerprint` of the preview the owner confirmed.
     pub accept: String,
+    /// The chat the draft was proposed from; the daemon re-checks its exposure.
+    pub chat_id: Uuid,
+    /// The owner ticked the box saying they read the warnings. The daemon requires it when the
+    /// source run read untrusted or private content or the scan found anything above low risk.
+    #[serde(default)]
+    pub acknowledged: bool,
 }
 
 fn scan_markdown(state: &AppState, text: &str) -> Result<(PreparedSkill, HubPreviewDto), ApiError> {
@@ -117,6 +125,26 @@ fn effect_label(effect: tool_registry::Effect) -> &'static str {
     }
 }
 
+/// String literals a tool schema declares in an `enum`, by argument name.
+fn schema_enums(schema: &serde_json::Value) -> BTreeMap<String, Vec<String>> {
+    let mut out = BTreeMap::new();
+    let Some(props) = schema["properties"].as_object() else {
+        return out;
+    };
+    for (key, prop) in props {
+        if let Some(list) = prop["enum"].as_array() {
+            let literals: Vec<String> = list
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect();
+            if literals.len() == list.len() {
+                out.insert(key.clone(), literals);
+            }
+        }
+    }
+    out
+}
+
 /// Successful calls of the run, oldest first.
 fn successful_calls(state: &AppState, run: RunId) -> Result<Vec<DraftCall>, ApiError> {
     let registry = state.agent().tool_registry();
@@ -144,6 +172,16 @@ fn successful_calls(state: &AppState, run: RunId) -> Result<Vec<DraftCall>, ApiE
             if !ok {
                 continue;
             }
+            let (effect, enums) = registry
+                .get(name)
+                .map(|t| {
+                    let spec = t.spec();
+                    (
+                        Some(effect_label(spec.effect).to_owned()),
+                        schema_enums(&spec.input_schema),
+                    )
+                })
+                .unwrap_or_default();
             out.push(DraftCall {
                 tool: name.to_owned(),
                 arguments: match &call["arguments"] {
@@ -151,21 +189,19 @@ fn successful_calls(state: &AppState, run: RunId) -> Result<Vec<DraftCall>, ApiE
                     serde_json::Value::Null => "{}".to_owned(),
                     other => other.to_string(),
                 },
-                effect: registry
-                    .get(name)
-                    .map(|t| effect_label(t.spec().effect).to_owned()),
+                effect,
+                enums,
             });
         }
     }
     Ok(out)
 }
 
-fn draft_for_chat(state: &AppState, chat_id: Uuid) -> Result<SkillDraftDto, ApiError> {
-    state.agent().refresh_external_redactor();
-    let chat = state.chat_of_user(ChatId(chat_id))?;
+/// The newest finished run of a chat and whether it read untrusted or private content.
+fn latest_run(state: &AppState, chat: ChatId) -> Result<(storage::Run, bool), ApiError> {
     let run = state
         .storage()
-        .latest_succeeded_run_for_chat(state.user_id(), chat.id)?
+        .latest_succeeded_run_for_chat(state.user_id(), chat)?
         .ok_or_else(|| {
             ApiError::new(
                 StatusCode::CONFLICT,
@@ -173,6 +209,18 @@ fn draft_for_chat(state: &AppState, chat_id: Uuid) -> Result<SkillDraftDto, ApiE
                 "this chat has no finished run to turn into a skill",
             )
         })?;
+    let tainted = state
+        .storage()
+        .list_messages(chat)?
+        .iter()
+        .any(|m| m.run_id == Some(run.id) && (m.exposure_untrusted || m.exposure_private));
+    Ok((run, tainted))
+}
+
+fn draft_for_chat(state: &AppState, chat_id: Uuid) -> Result<SkillDraftDto, ApiError> {
+    state.agent().refresh_external_redactor();
+    let chat = state.chat_of_user(ChatId(chat_id))?;
+    let (run, tainted) = latest_run(state, chat.id)?;
     let calls = successful_calls(state, run.id)?;
     if calls.is_empty() {
         return Err(ApiError::new(
@@ -181,11 +229,6 @@ fn draft_for_chat(state: &AppState, chat_id: Uuid) -> Result<SkillDraftDto, ApiE
             "the last run used no tools, so there is nothing to save as a skill",
         ));
     }
-    let tainted = state
-        .storage()
-        .list_messages(chat.id)?
-        .iter()
-        .any(|m| m.run_id == Some(run.id) && (m.exposure_untrusted || m.exposure_private));
     let redact = |t: &str| state.agent().redact_external_text(t.to_owned());
     let d = draft::build(
         &DraftInput {
@@ -272,7 +315,8 @@ pub(crate) async fn draft_preview(
 #[utoipa::path(post, path = "/v1/skills/draft/install", tag = "skills", security(("bearer" = [])),
     request_body = DraftInstallInput,
     responses((status = 201, body = ManagedSkillDto), (status = 403, body = ErrorBody),
-              (status = 409, body = ErrorBody), (status = 422, body = ErrorBody)))]
+              (status = 404, body = ErrorBody), (status = 409, body = ErrorBody),
+              (status = 422, body = ErrorBody)))]
 pub(crate) async fn draft_install(
     State(state): State<AppState>,
     peer: Option<Extension<PeerIdentity>>,
@@ -289,6 +333,17 @@ pub(crate) async fn draft_install(
                 StatusCode::CONFLICT,
                 "skill_draft_changed",
                 "the skill changed since the preview; review it again",
+            ));
+        }
+        // The dialog asks for a tick, but the daemon does not rely on the dialog.
+        let chat = state.chat_of_user(ChatId(body.chat_id))?;
+        let (_, tainted) = latest_run(&state, chat.id)?;
+        let risky = matches!(preview.risk.as_str(), "medium" | "high");
+        if (tainted || risky) && !body.acknowledged {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "skill_draft_ack_required",
+                "this skill comes from a run that read outside content or the scan found warnings; confirm you reviewed it",
             ));
         }
         create_prepared(&state, &prepared, "skill.draft_install_requested")

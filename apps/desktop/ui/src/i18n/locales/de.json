@@ -3078,6 +3078,10 @@
         "hint": "Entferne den geheimen Schlüssel aus seinen Dateien und füge den Skill dann erneut hinzu.",
         "title": "Der Skill scheint ein Passwort oder einen Schlüssel zu enthalten"
       },
+      "skill_draft_ack_required": {
+        "hint": "Dieser Skill stammt aus einer Aufgabe, die externe Inhalte gelesen hat, oder die Prüfung hat Warnungen gefunden. Setze das Häkchen zur Bestätigung und speichere dann.",
+        "title": "Bitte bestätige, dass du es geprüft hast"
+      },
       "skill_draft_changed": {
         "hint": "Prüfe ihn erneut, bevor du speicherst.",
         "title": "Der Skill hat sich seit der Prüfung geändert"

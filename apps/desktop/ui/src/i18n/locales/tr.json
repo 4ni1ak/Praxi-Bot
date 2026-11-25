@@ -3078,6 +3078,10 @@
         "hint": "Gizli bilgiyi dosyalardan çıkarıp yeniden ekle.",
         "title": "Becerinin içinde parola ya da anahtar var gibi"
       },
+      "skill_draft_ack_required": {
+        "hint": "Bu beceri dışarıdan içerik okuyan bir görevden geliyor ya da kontrol uyarı buldu. Kutuyu işaretleyip onayla, sonra kaydet.",
+        "title": "Önce incelediğini onaylamalısın"
+      },
       "skill_draft_changed": {
         "hint": "Kaydetmeden önce yeniden denetle.",
         "title": "Beceri denetimden sonra değişti"

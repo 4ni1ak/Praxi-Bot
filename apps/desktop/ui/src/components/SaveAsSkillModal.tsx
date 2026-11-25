@@ -87,7 +87,7 @@ function Dialog({ chatId, client, onClose }: { chatId: string; client: ApiClient
     setBusy(true);
     setError(null);
     try {
-      const saved = await client.skillDraftInstall(text, scan.fingerprint);
+      const saved = await client.skillDraftInstall(chatId, text, scan.fingerprint, ack);
       toast.show(t("skillFromChat.saved", { name: saved.name }), "success");
       onClose();
     } catch (e) {
