@@ -128,7 +128,8 @@ fn secret_key(key: &str) -> bool {
     let k = key.to_ascii_lowercase();
     SECRET_KEYS.iter().any(|s| {
         if s.len() <= 3 {
-            k.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| w == *s)
+            k.split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|w| w == *s)
         } else {
             k.contains(s)
         }
@@ -255,7 +256,10 @@ pub fn build(input: &DraftInput, redact: &dyn Fn(&str) -> String) -> SkillDraft 
     let description = if title.is_empty() {
         "Repeats a task saved from a chat.".to_owned()
     } else {
-        let d = format!("Repeats the task from the chat \"{}\".", title.replace('"', ""));
+        let d = format!(
+            "Repeats the task from the chat \"{}\".",
+            title.replace('"', "")
+        );
         d.chars().take(MAX_DESCRIPTION_LEN).collect()
     };
     let description: String = description.chars().filter(|c| !c.is_control()).collect();
@@ -356,7 +360,11 @@ mod tests {
         for forbidden in [CANARY, "me@home.example", "secret.txt", "hunter2-private"] {
             assert!(!d.markdown.contains(forbidden), "{forbidden} leaked");
         }
-        assert!(d.markdown.contains("https://example.com/docs"), "{}", d.markdown);
+        assert!(
+            d.markdown.contains("https://example.com/docs"),
+            "{}",
+            d.markdown
+        );
         assert!(d.withheld >= 4);
         assert!(d.markdown.contains("{{api_key}}"));
     }

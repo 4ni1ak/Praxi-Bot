@@ -102,7 +102,13 @@ async fn draft_has_no_secret_installs_only_after_confirmation_and_is_owner_only(
     assert_eq!(pre.status, StatusCode::OK);
 
     let body = json!({"skill_md": skill_md, "accept": fingerprint});
-    let r = call_token_only(&t, Method::POST, "/v1/skills/draft/install", Some(body.clone())).await;
+    let r = call_token_only(
+        &t,
+        Method::POST,
+        "/v1/skills/draft/install",
+        Some(body.clone()),
+    )
+    .await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
     let r = call(&t, Method::POST, "/v1/skills/draft/install", Some(body)).await;
     assert_eq!(r.status, StatusCode::CREATED, "{:?}", r.json());
