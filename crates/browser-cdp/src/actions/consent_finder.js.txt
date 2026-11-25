@@ -24,7 +24,9 @@
       reject: ".cn-decline, .cm-btn-decline", accept: ".cn-accept-all, .cm-btn-success, .cm-btn-accept-all" },
   ];
 
-  const COOKIE_WORDS = /cookie|çerez|cerez|consent|gdpr|kvkk|privacy|gizlilik|datenschutz|tracking|tracker|rgpd|confidentialit|privacidad|privacidade|izin|einwilligung|zustimm/;
+  // A banner that is not a known platform must talk about cookies itself: "privacy", "consent"
+  // or "tracking" alone also appear in payment and permission dialogs.
+  const COOKIE_WORDS = /cookie|çerez|cerez|gdpr|kvkk|rgpd/;
   const REJECT = [
     "reject", "decline", "deny", "refuse", "disagree", "opt out", "opt-out",
     "only necessary", "necessary only", "only essential", "essential only", "only required",
@@ -38,18 +40,23 @@
     "rejeitar", "recusar", "apenas necessários", "apenas essenciais", "somente necessários",
     "rifiuta", "solo necessari",
   ];
+  // Only "accept everything" style answers to a cookie question. A plain "yes", "ok", "allow"
+  // or "agree" says nothing about what is being agreed to.
   const ACCEPT_ALL = [
-    "accept all", "allow all", "agree to all", "accept cookies", "accept and close",
-    "tümünü kabul", "tüm çerezleri kabul", "hepsini kabul", "alle akzeptieren", "alle zulassen",
-    "tout accepter", "aceptar todas", "aceptar todo", "aceitar tudo", "aceitar todos",
-    "accetta tutti",
+    "accept all", "allow all", "agree to all", "accept cookies", "allow cookies",
+    "accept and close", "accept & close", "accept and continue", "accept & continue",
+    "tümünü kabul", "tüm çerezleri kabul", "hepsini kabul", "çerezleri kabul",
+    "alle akzeptieren", "alle zulassen", "tout accepter", "accepter tout",
+    "aceptar todas", "aceptar todo", "aceitar tudo", "aceitar todos", "accetta tutti",
   ];
-  const ACCEPT = [
-    "accept", "agree", "allow", "got it", "i understand", "kabul", "anladım",
-    "akzeptieren", "zustimmen", "einverstanden", "accepter", "j'accepte", "acepto",
-    "aceptar", "aceitar", "aceito", "accetta",
+  const ACCEPT_EXACT = [
+    "accept", "i accept", "accepter", "akzeptieren", "aceptar", "aceitar", "accetta",
+    "kabul et", "kabul ediyorum",
   ];
-  const ACCEPT_EXACT = ["ok", "okay", "tamam", "yes", "oui", "ja", "sí", "sim", "i agree"];
+  // Words that make an "accept"-looking label mean the opposite.
+  const ACCEPT_WORDS = ["accept", "agree", "allow", "kabul", "akzeptieren", "zustimmen", "accepter",
+    "aceptar", "aceitar", "accetta", "einverstanden", "erlauben", "autoriser", "permitir"];
+  const NEGATION = /\b(not|never|no|nicht|kein|keine|nie|jamais)\b|n't|n’t|\bne pas\b|değil|hayır|asla|\bno\b/;
   const NOT_A_CHOICE = [
     "selected", "selection", "seçili", "seçilen", "auswahl", "manage", "settings", "customi",
     "preferences", "ayarlar", "tercih", "einstellung", "paramètres", "configurar", "more options",
@@ -60,9 +67,11 @@
   const classify = (label) => {
     if (!label || label.length > 70) return null;
     if (NOT_A_CHOICE.some((w) => label.includes(w))) return null;
+    // "Do not accept", "don't allow": the opposite of what the accept word says.
+    if (ACCEPT_WORDS.some((w) => label.includes(w)) && NEGATION.test(label)) return "reject";
     if (ACCEPT_ALL.some((w) => label.includes(w))) return "accept";
     if (REJECT.some((w) => label.includes(w))) return "reject";
-    if (ACCEPT_EXACT.includes(label) || ACCEPT.some((w) => label.includes(w))) return "accept";
+    if (ACCEPT_EXACT.includes(label)) return "accept";
     return null;
   };
 
@@ -79,10 +88,10 @@
     if (!sel) return [];
     const found = [];
     if (scope.nodeType === 1) {
-      try { if (scope.matches(sel)) found.push(scope); } catch (_) {}
+      try { if (scope.matches(sel)) found.push(scope); } catch { /* bad selector: no match */ }
     }
     for (const s of roots(scope)) {
-      try { found.push(...s.querySelectorAll(sel)); } catch (_) {}
+      try { found.push(...s.querySelectorAll(sel)); } catch { /* bad selector: no match */ }
     }
     return found;
   };
@@ -94,22 +103,38 @@
     return cs.visibility !== "hidden" && cs.display !== "none" && Number(cs.opacity || 1) > 0.05;
   };
 
-  // A link that would leave the page is never clicked; neither is a submit button that posts
-  // to another site.
-  const safeToClick = (el) => {
-    const tag = el.tagName.toLowerCase();
-    if (tag === "a") {
-      const href = (el.getAttribute("href") || "").trim().toLowerCase();
-      const role = (el.getAttribute("role") || "").toLowerCase();
-      if (!(role === "button" || href === "" || href.startsWith("#") || href.startsWith("javascript:"))) {
-        return false;
-      }
+  // Where a click would take the page. Only "stay on this very page" is acceptable: an empty
+  // or in-page (#...) address, a no-op script address, or the page's own address.
+  const staysHere = (raw) => {
+    const href = String(raw || "").trim();
+    if (href === "" || href.startsWith("#")) return true;
+    if (/^javascript:\s*(void\(\s*0\s*\)|undefined|;)?\s*;?\s*$/i.test(href)) return true;
+    if (/^javascript:/i.test(href)) return false;
+    try {
+      const u = new URL(href, location.href);
+      return u.origin === location.origin && u.pathname === location.pathname &&
+        u.search === location.search;
+    } catch {
+      return false;
     }
-    if (el.form) {
-      try {
-        const o = new URL(el.form.action, location.href).origin;
-        if (o !== location.origin) return false;
-      } catch (_) { return false; }
+  };
+
+  // Never click something that would leave the page: a link (any role, also an ancestor link),
+  // a new-tab target, a download, a form button posting somewhere else.
+  const safeToClick = (el) => {
+    const link = el.closest("a");
+    if (link) {
+      if (link.hasAttribute("href") && !staysHere(link.getAttribute("href"))) return false;
+      const t = (link.getAttribute("target") || "").toLowerCase();
+      if (t && t !== "_self") return false;
+      if (link.hasAttribute("download")) return false;
+    }
+    const tag = el.tagName.toLowerCase();
+    if (tag === "button" || tag === "input") {
+      // The PROPERTIES resolve `formaction` / `formtarget` and fall back to the form's own.
+      if (el.formAction && !staysHere(el.formAction)) return false;
+      const t = String(el.formTarget || (el.form && el.form.target) || "").toLowerCase();
+      if (t && t !== "_self") return false;
     }
     return true;
   };
@@ -130,7 +155,7 @@
   // Scroll the element into view and return its centre when it is really what a click there
   // would hit.
   const target = (el) => {
-    try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (_) {}
+    try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch { /* detached */ }
     const r = el.getBoundingClientRect();
     const x = r.left + r.width / 2;
     const y = r.top + r.height / 2;
@@ -140,53 +165,69 @@
     return { x, y };
   };
 
+  // A dialog that holds a form, a payment, a login or a permission request is not a cookie
+  // question, whatever else it says.
+  const HOSTILE_FIELDS = "input[type='password'], [autocomplete^='cc-'], input[name*='card' i], input[name*='iban' i], input[name*='cvv' i], input[name*='cvc' i], iframe[src*='pay' i], iframe[src*='stripe' i], iframe[src*='checkout' i]";
+  const TEXT_FIELDS = "form input:not([type]), form input[type='text'], form input[type='email'], form input[type='tel'], form input[type='number'], form input[type='search'], form textarea";
+  const HOSTILE_TEXT = /wants to access|would like to access|access your|sign in with|log in with|grant access|authori[sz]e|erişim|giriş yap|payment|ödeme|pay now|checkout|card number|credit card|kart numaras|kredi kartı|bezahlen|paiement|\b\d[\d.,]*\s?(usd|eur|try|gbp|tl)\b|[$€£₺]\s?\d/;
+  const hostile = (box) =>
+    queryAll(box, HOSTILE_FIELDS).length > 0 || queryAll(box, TEXT_FIELDS).length > 0 ||
+    HOSTILE_TEXT.test(norm(box.innerText));
+
   const BUTTONS = "button, [role='button'], a, input[type='button'], input[type='submit']";
-  const usable = (el) => visible(el) && safeToClick(el);
-  // First element of `cands` whose label classifies as `kind` and that a click can reach.
-  const pick = (cands, kind) => {
-    for (const el of cands) {
-      if (!usable(el)) continue;
+  // Every usable, reachable button of a dialog with the kind of answer it gives.
+  const candidatesIn = (box, own) => {
+    const found = new Map();
+    const add = (el, kind, label) => {
+      if (found.has(el) || !visible(el) || !safeToClick(el)) return;
+      const pt = target(el);
+      if (pt) found.set(el, { el, kind, label, pt });
+    };
+    if (own) {
+      for (const el of queryAll(box, own.reject)) add(el, "reject", labelOf(el) || "reject");
+      for (const el of queryAll(box, own.accept)) add(el, "accept", labelOf(el) || "accept");
+    }
+    for (const el of queryAll(box, BUTTONS)) {
       const label = labelOf(el);
-      if (classify(label) !== kind) continue;
-      const pt = target(el);
-      if (pt) return { el, label, pt };
+      const kind = classify(label);
+      if (kind) add(el, kind, label);
     }
-    return null;
-  };
-  // First element of `cands` (found by a platform's own selector) a click can reach.
-  const pickOwn = (cands, fallback) => {
-    for (const el of cands) {
-      if (!usable(el)) continue;
-      const pt = target(el);
-      if (pt) return { el, label: labelOf(el) || fallback, pt };
-    }
-    return null;
+    return Array.from(found.values());
   };
 
-  const reply = (cmp, kind, hit) => ({
-    found: true, kind, cmp, label: hit.label.slice(0, 60), x: hit.pt.x, y: hit.pt.y,
+  const reply = (cmp, hit) => ({
+    found: true, kind: hit.kind, cmp, label: hit.label.slice(0, 60), x: hit.pt.x, y: hit.pt.y,
     origin: location.origin,
   });
+  // Reject over accept; the first one in page order.
+  const choose = (cands) => cands.find((c) => c.kind === "reject") || cands.find((c) => c.kind === "accept");
+  const unsure = (groups) => ({
+    found: false, ambiguous: true, origin: location.origin,
+    options: groups.flatMap((g) => g.cands.map((c) => c.label.slice(0, 60))).slice(0, 8),
+  });
+
+  let seenBox = false;
+  let refused = false;
 
   // 1. Known platforms: their own ids first, then the button texts inside their dialog.
-  let seenBox = false;
+  const cmpGroups = [];
   for (const cmp of CMPS) {
     const boxes = queryAll(document, cmp.box);
     if (!boxes.length) continue;
-    const inBox = (sel) => boxes.flatMap((b) => queryAll(b, sel));
-    const buttons = inBox(BUTTONS);
-    if (buttons.some(visible)) seenBox = true;
-    let hit = pickOwn(inBox(cmp.reject), "reject");
-    if (hit) return reply(cmp.name, "reject", hit);
-    hit = pick(buttons, "reject");
-    if (hit) return reply(cmp.name, "reject", hit);
-    hit = pickOwn(inBox(cmp.accept), "accept");
-    if (hit) return reply(cmp.name, "accept", hit);
-    hit = pick(buttons, "accept");
-    if (hit) return reply(cmp.name, "accept", hit);
+    const cands = [];
+    for (const box of boxes) {
+      if (hostile(box)) { refused = true; continue; }
+      for (const c of candidatesIn(box, cmp)) if (!cands.some((o) => o.el === c.el)) cands.push(c);
+    }
+    if (cands.length) cmpGroups.push({ cmp: cmp.name, cands });
+  }
+  if (cmpGroups.length > 1) return unsure(cmpGroups);
+  if (cmpGroups.length === 1) {
+    const [g] = cmpGroups;
+    return reply(g.cmp, choose(g.cands));
   }
 
-  // 2. Any banner-like element that talks about cookies / consent / privacy.
+  // 2. Any banner-like element that talks about cookies.
   const NAMED = "[role='dialog'], [aria-modal='true'], dialog, [id*='cookie' i], [class*='cookie' i], [id*='consent' i], [class*='consent' i], [id*='gdpr' i], [class*='gdpr' i], [id*='cmp' i], [class*='cmp-' i], [id*='privacy' i], [class*='privacy' i], [id*='cerez' i], [class*='cerez' i], [id*='kvkk' i], [class*='kvkk' i]";
   const floating = Array.from(document.querySelectorAll("div, section, aside, footer, header, form"))
     .filter((el) => {
@@ -194,7 +235,7 @@
       return p === "fixed" || p === "sticky";
     });
   const isDialog = (el) => el.matches("[role='dialog'], [aria-modal='true'], dialog");
-  const generic = Array.from(new Set([...queryAll(document, NAMED), ...floating]))
+  const boxes = Array.from(new Set([...queryAll(document, NAMED), ...floating]))
     .filter(visible)
     .filter((el) => {
       const text = norm(el.innerText);
@@ -202,18 +243,20 @@
       const p = getComputedStyle(el).position;
       return p === "fixed" || p === "sticky" || p === "absolute" || isDialog(el);
     });
-  if (generic.length) seenBox = true;
-  // Smallest (innermost) dialogs first, so a page-wide wrapper does not decide.
-  generic.sort((a, b) => a.getBoundingClientRect().width * a.getBoundingClientRect().height
-    - b.getBoundingClientRect().width * b.getBoundingClientRect().height);
-  const buttons = generic.flatMap((b) => queryAll(b, BUTTONS));
-  let hit = pick(buttons, "reject");
-  if (hit) return reply("generic", "reject", hit);
-  hit = pick(buttons, "accept");
-  if (hit) return reply("generic", "accept", hit);
+  let groups = [];
+  for (const box of boxes) {
+    if (hostile(box)) { refused = true; continue; }
+    const cands = candidatesIn(box, null);
+    if (cands.length) groups.push({ box, cands });
+  }
+  // The innermost dialog that holds the buttons speaks for its wrappers.
+  groups = groups.filter((g) => !groups.some((o) => o !== g && g.box.contains(o.box)));
+  if (groups.length > 1) return unsure(groups);
+  if (groups.length === 1) return reply("generic", choose(groups[0].cands));
+  if (boxes.length) seenBox = true;
 
   const frameHint = Array.from(document.querySelectorAll("iframe")).some((f) =>
     /consent|cookie|cmp|privacy|sourcepoint|sp_message|didomi|onetrust|cookiebot|trustarc|usercentrics/i
       .test((f.getAttribute("src") || "") + " " + (f.id || "") + " " + (f.title || "")));
-  return { found: false, banner: seenBox, frame_hint: frameHint, origin: location.origin };
+  return { found: false, banner: seenBox, refused, frame_hint: frameHint, origin: location.origin };
 })()

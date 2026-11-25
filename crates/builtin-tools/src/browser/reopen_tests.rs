@@ -172,6 +172,18 @@ fn same_page_key_ignores_only_what_does_not_name_another_page() {
         key("https://example.com/a?id=2")
     );
     assert_ne!(key("https://example.com/a"), key("http://example.com/a"));
+    // Hash-routed apps: the route is the page; a plain anchor is not.
+    assert_ne!(
+        key("https://app.test/#/signup"),
+        key("https://app.test/#/login")
+    );
+    assert_ne!(key("https://app.test/#!/a"), key("https://app.test/#!/b"));
+    assert_eq!(key("https://app.test/p#top"), key("https://app.test/p"));
+    // Encoded and literal separators in a value are not the same query.
+    assert_ne!(
+        key("https://example.com/a?a=%26b%3D2"),
+        key("https://example.com/a?a=&b=2")
+    );
     assert!(same_page_key("about:blank").is_none());
     assert!(same_page_key("javascript:alert(1)").is_none());
 }

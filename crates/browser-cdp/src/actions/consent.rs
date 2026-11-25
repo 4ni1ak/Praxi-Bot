@@ -62,9 +62,22 @@ enum Found {
     },
     Nothing {
         banner: bool,
+        refused: bool,
         frame_hint: bool,
+        /// Several dialogs or buttons fit: the labels offered, nothing was chosen.
+        options: Option<Vec<String>>,
         origin: String,
     },
+}
+
+/// A page-written label as one short plain line for the result text.
+fn plain(label: &str) -> String {
+    label
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(60)
+        .collect::<String>()
+        .replace('"', "'")
 }
 
 fn parse_found(v: &Value) -> Result<Found> {
@@ -74,9 +87,24 @@ fn parse_found(v: &Value) -> Result<Found> {
         .unwrap_or_default()
         .to_owned();
     if v.get("found").and_then(Value::as_bool) != Some(true) {
+        let flag = |k: &str| v.get(k).and_then(Value::as_bool) == Some(true);
+        let options = flag("ambiguous").then(|| {
+            v.get("options")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(plain)
+                        .take(8)
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
         return Ok(Found::Nothing {
-            banner: v.get("banner").and_then(Value::as_bool) == Some(true),
-            frame_hint: v.get("frame_hint").and_then(Value::as_bool) == Some(true),
+            banner: flag("banner"),
+            refused: flag("refused"),
+            frame_hint: flag("frame_hint"),
+            options,
             origin,
         });
     }
@@ -129,18 +157,34 @@ impl Page {
         }
         let (choice, cmp, label, x, y) = match found {
             Found::Nothing {
-                banner, frame_hint, ..
+                banner,
+                refused,
+                frame_hint,
+                options,
+                ..
             } => {
-                let note = if banner {
-                    "A consent dialog may be showing but none of its buttons is a clear accept or reject choice (it may only offer settings). Look with browser_snapshot and click the least permissive button yourself; do not reload the page."
+                let note = if let Some(options) = options {
+                    format!(
+                        "More than one consent dialog or choice fits, so nothing was clicked. Options seen: {}. Look with browser_snapshot and click the right one with browser_click (or ask the user); do not reload the page.",
+                        options
+                            .iter()
+                            .map(|o| format!("\"{o}\""))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else if refused {
+                    "A dialog about cookies was found, but it also holds a form, a payment, a login or a permission request, so nothing was clicked. Look with browser_snapshot and decide by hand; do not reload the page.".to_owned()
+                } else if banner {
+                    "A consent dialog may be showing but none of its buttons is a clear accept or reject choice (it may only offer settings). Look with browser_snapshot and click the least permissive button yourself; do not reload the page.".to_owned()
                 } else if frame_hint {
-                    "The consent dialog seems to live in an embedded frame, which this tool does not click into. Look with browser_snapshot: if its button has a ref, click it with browser_click; do not reload the page."
+                    "The consent dialog seems to live in an embedded frame, which this tool does not click into. Look with browser_snapshot: if its button has a ref, click it with browser_click; do not reload the page.".to_owned()
                 } else {
                     "No cookie or consent dialog was found on this page, so nothing was clicked."
+                        .to_owned()
                 };
                 return Ok(ConsentOutcome {
                     clicked: None,
-                    note: Some(note.to_owned()),
+                    note: Some(note),
                     action: None,
                 });
             }
@@ -154,7 +198,7 @@ impl Page {
             } => (choice, cmp, label, x, y),
         };
         let before = self.baseline_with(&DialogOptions::default()).await?;
-        let res = self.click_at(x, y, feel).await;
+        let res = self.click_at(x, y, choice, &label, feel).await;
         let action = self.finish(before, res).await?;
         Ok(ConsentOutcome {
             clicked: Some((choice, cmp, label)),
@@ -164,10 +208,29 @@ impl Page {
     }
 
     /// Glide to a point and press / release the left button there.
-    async fn click_at(&self, x: f64, y: f64, feel: Feel) -> Result<()> {
+    /// The finder runs again after the pointer got there: a page that moved or swapped the
+    /// button meanwhile gets no click.
+    async fn click_at(
+        &self,
+        x: f64,
+        y: f64,
+        choice: ConsentChoice,
+        label: &str,
+        feel: Feel,
+    ) -> Result<()> {
         let mut rng = Jitter::from_clock();
         self.glide((x, y), feel, &mut rng).await?;
         sleep(human::settle_pause(feel, &mut rng)).await;
+        let still = matches!(
+            parse_found(&self.evaluate_readonly(FINDER_JS).await?)?,
+            Found::Button { choice: c, label: l, x: nx, y: ny, .. }
+                if c == choice && l == label && (nx - x).abs() <= 2.0 && (ny - y).abs() <= 2.0
+        );
+        if !still {
+            return Err(Error::Element(
+                "the consent dialog changed under the pointer; nothing was clicked".into(),
+            ));
+        }
         let btn = serde_json::json!({"button": "left", "clickCount": 1});
         self.mouse("mousePressed", x, y, btn.clone()).await?;
         sleep(human::hold_pause(feel, &mut rng)).await;

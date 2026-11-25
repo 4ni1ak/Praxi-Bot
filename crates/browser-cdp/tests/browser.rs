@@ -958,3 +958,157 @@ async fn dismiss_consent_refuses_a_page_on_another_origin_than_the_approved_one(
     assert!(outcome.clicked.is_some(), "{outcome:?}");
     let _ = b.close().await;
 }
+
+const FIX: &str = "position:fixed;bottom:0;left:0;right:0;height:120px;background:#ddd";
+const CLICK: &str = "document.title='clicked';return false";
+
+/// Dialogs the consent tool must NOT click anything in: a link or form button that would leave
+/// the page, dialogs that hold a payment, a login, a form or a permission request, a question
+/// that is not about cookies, and two dialogs that both fit.
+fn hostile_consent_fixtures() -> Vec<(&'static str, String)> {
+    vec![
+        (
+            "role=button link to another site",
+            format!(
+                r#"<div role="dialog" style="{FIX}">We use cookies. <a role="button" href="https://evil.invalid/x" onclick="{CLICK}">Reject all</a></div>"#
+            ),
+        ),
+        (
+            "button with a formaction to another site",
+            format!(
+                r#"<div role="dialog" style="{FIX}">We use cookies. <form action="/plain"><button formaction="https://evil.invalid/p" onclick="{CLICK}">Reject all</button></form></div>"#
+            ),
+        ),
+        (
+            "submit input with a formaction to another site",
+            format!(
+                r#"<div role="dialog" style="{FIX}">We use cookies. <form><input type="submit" formaction="https://evil.invalid/p" value="Reject all" onclick="{CLICK}"></form></div>"#
+            ),
+        ),
+        (
+            "button nested in a link",
+            format!(
+                r#"<div role="dialog" style="{FIX}">We use cookies. <a href="https://evil.invalid/"><button onclick="{CLICK}">Reject all</button></a></div>"#
+            ),
+        ),
+        (
+            "link that opens a new tab",
+            format!(
+                r##"<div role="dialog" style="{FIX}">We use cookies. <a href="#" target="_blank" onclick="{CLICK}">Reject all</a></div>"##
+            ),
+        ),
+        (
+            "payment dialog with Agree and pay",
+            format!(
+                r#"<div role="dialog" style="{FIX}">Pay 499 USD now. By continuing you accept our privacy policy and cookies. <button onclick="{CLICK}">Agree and pay</button><button onclick="{CLICK}">Accept</button></div>"#
+            ),
+        ),
+        (
+            "permission dialog",
+            format!(
+                r#"<div role="dialog" style="{FIX}">Acme wants to access your account (cookies, privacy). <button onclick="{CLICK}">Allow</button><button onclick="{CLICK}">Deny</button></div>"#
+            ),
+        ),
+        (
+            "yes to a destructive question",
+            format!(
+                r#"<div role="dialog" style="{FIX}">Delete all cookie and tracking data? <button onclick="{CLICK}">Yes</button><button onclick="{CLICK}">Cancel</button></div>"#
+            ),
+        ),
+        (
+            "dialog with a password field",
+            format!(
+                r#"<div role="dialog" style="{FIX}">We use cookies. <input type="password"> <button onclick="{CLICK}">Accept</button></div>"#
+            ),
+        ),
+        (
+            "dialog with a form that takes text",
+            format!(
+                r#"<div role="dialog" style="{FIX}">We use cookies. <form><input type="text" name="email"><button onclick="{CLICK}">Accept</button></form></div>"#
+            ),
+        ),
+        (
+            "two separate dialogs",
+            format!(
+                r#"<div role="dialog" style="{FIX}">We use cookies. <button onclick="{CLICK}">Accept</button></div><div role="dialog" style="position:fixed;top:0;left:0;right:0;height:120px;background:#eee">Cookies for ads. <button onclick="{CLICK}">Accept</button></div>"#
+            ),
+        ),
+    ]
+}
+
+async fn plain_page(b: &Browser, port: u16, html: &str) -> Page {
+    let p = b
+        .new_page(&format!("http://127.0.0.1:{port}/plain"))
+        .await
+        .unwrap();
+    p.evaluate(&format!(
+        "document.title='start';document.body.innerHTML={}",
+        serde_json::to_string(html).unwrap()
+    ))
+    .await
+    .unwrap();
+    p
+}
+
+#[tokio::test]
+#[ignore = "needs Chrome/Edge"]
+async fn dismiss_consent_clicks_nothing_in_hostile_dialogs() {
+    use browser_cdp::Feel;
+    let b = Browser::launch(LaunchOptions::default()).await.unwrap();
+    let port = common::serve().await;
+    for (name, html) in hostile_consent_fixtures() {
+        let p = plain_page(&b, port, &html).await;
+        let outcome = p.dismiss_consent(None, Feel::Instant).await.unwrap();
+        assert!(outcome.clicked.is_none(), "{name}: {outcome:?}");
+        assert_eq!(
+            p.evaluate("document.title").await.unwrap(),
+            serde_json::json!("start"),
+            "{name}: something was clicked"
+        );
+        p.close().await.ok();
+    }
+    let _ = b.close().await;
+}
+
+#[tokio::test]
+#[ignore = "needs Chrome/Edge"]
+async fn dismiss_consent_reads_negated_accept_phrases_as_rejecting() {
+    use browser_cdp::{ConsentChoice, Feel};
+    let b = Browser::launch(LaunchOptions::default()).await.unwrap();
+    let port = common::serve().await;
+    for label in [
+        "Do not accept",
+        "Don't allow",
+        "I do not agree",
+        "Nicht akzeptieren",
+    ] {
+        let html = format!(
+            r#"<div role="dialog" style="{FIX}">We use cookies. <button onclick="document.title='rejected'">{label}</button></div>"#
+        );
+        let p = plain_page(&b, port, &html).await;
+        let outcome = p.dismiss_consent(None, Feel::Instant).await.unwrap();
+        let (choice, _, _) = outcome
+            .clicked
+            .unwrap_or_else(|| panic!("{label}: nothing clicked"));
+        assert_eq!(choice, ConsentChoice::Reject, "{label}");
+        p.close().await.ok();
+    }
+    let _ = b.close().await;
+}
+
+#[tokio::test]
+#[ignore = "needs Chrome/Edge"]
+async fn dismiss_consent_lists_the_options_when_two_dialogs_fit() {
+    use browser_cdp::Feel;
+    let b = Browser::launch(LaunchOptions::default()).await.unwrap();
+    let port = common::serve().await;
+    let (_, html) = hostile_consent_fixtures().pop().unwrap();
+    let p = plain_page(&b, port, &html).await;
+    let outcome = p.dismiss_consent(None, Feel::Instant).await.unwrap();
+    let note = outcome.note.unwrap();
+    assert!(
+        note.contains("More than one") && note.contains("\"accept\""),
+        "{note}"
+    );
+    let _ = b.close().await;
+}

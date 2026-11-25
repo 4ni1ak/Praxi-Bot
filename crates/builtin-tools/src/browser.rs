@@ -2850,7 +2850,7 @@ fn is_tracking_param(name: &str) -> bool {
 
 /// What identifies WHICH page an http(s) address is: scheme, lower-case host without a trailing
 /// dot, port (default made explicit), path without a trailing slash and the query without
-/// tracking parameters; the fragment is dropped. `None` for anything that is not http(s).
+/// tracking parameters; the fragment is dropped unless it is a route (`#/...`, `#!...`). `None` for anything that is not http(s).
 #[must_use]
 pub fn same_page_key(raw: &str) -> Option<String> {
     let url = url::Url::parse(raw.trim()).ok()?;
@@ -2864,14 +2864,23 @@ pub fn same_page_key(raw: &str) -> Option<String> {
         url.scheme(),
         url.port_or_known_default()?
     );
+    let enc = |s: &str| url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>();
     let query: Vec<String> = url
         .query_pairs()
         .filter(|(name, _)| !is_tracking_param(name))
-        .map(|(name, value)| format!("{name}={value}"))
+        .map(|(name, value)| format!("{}={}", enc(&name), enc(&value)))
         .collect();
     if !query.is_empty() {
         key.push('?');
         key.push_str(&query.join("&"));
+    }
+    // A hash-routed app (`app/#/signup`, `app/#!/login`) names its page in the fragment.
+    if let Some(route) = url
+        .fragment()
+        .filter(|f| f.starts_with('/') || f.starts_with('!'))
+    {
+        key.push('#');
+        key.push_str(route);
     }
     Some(key)
 }
