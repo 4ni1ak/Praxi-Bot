@@ -4703,6 +4703,24 @@
     "typingPreview": "Tippen",
     "youAreInControl": "Du hast die Kontrolle"
   },
+  "pageReader": {
+    "bot": "Bot",
+    "description": "Wie ein Bot Webseiten, E-Mails und andere Texte von Fremden liest.",
+    "legend": "Seitenleser",
+    "mode": {
+      "always": "Immer",
+      "auto": "Automatisch (empfohlen)",
+      "off": "Aus"
+    },
+    "modeHint": {
+      "always": "Ein separates Hilfsmodell liest jede Seite zuerst, auch wenn keine privaten Daten im Spiel sind. Langsamer und etwas mehr Verbrauch deines Kontingents.",
+      "auto": "Arbeitet der Bot mit deinen privaten Dateien, Mails oder Erinnerungen, liest zuerst ein separates Hilfsmodell jede Seite und gibt nur die Fakten weiter. Sonst liest der Bot Seiten selbst.",
+      "off": "Der Bot liest Seiten selbst. Seitentext kommt immer als Daten von außen markiert an, alles, was ein Mensch nicht sehen kann, ist vorher entfernt."
+    },
+    "noBot": "Lege zuerst einen Bot an.",
+    "note": "Das Hilfsmodell ist das günstige Hilfsmodell dieses Bots (sein Klassifikator) und kann bei einem anderen Anbieter laufen als der Bot selbst: Der Seitentext wird dorthin gesendet. Es hat keine Werkzeuge und sieht deine privaten Daten nie. Eine Seite kann es trotzdem täuschen wollen, deshalb gelten die Freigaben für Senden und Löschen weiter. Ist kein Hilfsmodell verfügbar, werden Seiten zurückgehalten, statt ungeprüft weitergegeben zu werden.",
+    "title": "Webseiten sicher lesen"
+  },
   "pairHost": {
     "failed": "Kopplung fehlgeschlagen. Prüfe, ob der Host an ist und das Ticket neu ist.",
     "hint": "Das Ticket wird einmal verwendet und nicht gespeichert.",

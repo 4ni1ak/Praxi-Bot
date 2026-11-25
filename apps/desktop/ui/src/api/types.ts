@@ -33,6 +33,7 @@ export type MemoryPreviewHit = S["MemoryPreviewHitDto"];
 export type MemoryPreview = S["MemoryPreviewDto"];
 export type BotMemorySettings = S["BotMemorySettingsDto"];
 export type BotMemorySettingsInput = S["BotMemorySettingsInput"];
+export type PageReader = S["PageReaderDto"];
 export type MemoryEmbedding = S["MemoryEmbeddingDto"];
 export type MemoryEmbeddingInput = S["MemoryEmbeddingInput"];
 

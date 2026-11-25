@@ -18,6 +18,7 @@ import { ComputerAccessCard } from "../../components/ComputerAccess";
 import { WebSearchCard } from "./WebSearchCard";
 import { AuditLogCard } from "./AuditLogCard";
 import { AllowedGrantsCard } from "./AllowedGrantsCard";
+import { PageReaderCard } from "./PageReaderCard";
 import { SafetyLevelsCard } from "./SafetyLevelsCard";
 import { SiteRulesCard } from "./SiteRulesCard";
 import type { CardDef, SettingsBridge } from "./types";
@@ -133,6 +134,19 @@ export function computerCards(b: SettingsBridge, t: TFunction): CardDef[] {
       node: (
         <SettingsCard title={t("settingsModal.safety.title")} description={t("settingsModal.safety.description")}>
           <SafetyLevelsCard />
+        </SettingsCard>
+      )
+    },
+    {
+      id: "page-reader",
+      section: "computer",
+      kind: "block",
+      title: t("pageReader.title"),
+      description: t("pageReader.description"),
+      keywords: "web page reader browser prompt injection hidden text safe quarantine helper model sayfa okuyucu gizli metin guvenli tarayici seite leser versteckt sicher browser helfer modell lector pagina oculto seguro navegador",
+      node: (
+        <SettingsCard title={t("pageReader.title")} description={t("pageReader.description")}>
+          <PageReaderCard />
         </SettingsCard>
       )
     },

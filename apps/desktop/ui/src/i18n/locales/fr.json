@@ -4703,6 +4703,24 @@
     "typingPreview": "Typing",
     "youAreInControl": "You are in control"
   },
+  "pageReader": {
+    "bot": "Bot",
+    "description": "Comment un bot lit les pages web, les e-mails et d’autres textes écrits par des inconnus.",
+    "legend": "Lecteur de pages",
+    "mode": {
+      "always": "Toujours",
+      "auto": "Automatique (recommandé)",
+      "off": "Désactivé"
+    },
+    "modeHint": {
+      "always": "Un modèle auxiliaire séparé lit d’abord chaque page, même sans données privées. C’est plus lent et cela consomme un peu plus de ton quota.",
+      "auto": "Quand le bot travaille avec tes fichiers, e-mails ou souvenirs privés, un modèle auxiliaire séparé lit d’abord chaque page et ne transmet que les faits. Sinon, le bot lit lui-même les pages.",
+      "off": "Le bot lit lui-même les pages. Le texte de la page arrive toujours marqué comme donnée externe, et tout ce qu’une personne ne peut pas voir est retiré au préalable."
+    },
+    "noBot": "Crée d’abord un bot.",
+    "note": "L'auxiliaire est le modèle auxiliaire économique de ce bot (son classificateur) et peut tourner chez un autre fournisseur que le bot lui-même : le texte de la page y est envoyé. Il n'a aucun outil et ne voit jamais tes données privées. Une page peut quand même essayer de le tromper, c'est pourquoi les validations pour envoyer et supprimer restent en vigueur. Sans modèle auxiliaire, les pages sont retenues au lieu d'être transmises sans contrôle.",
+    "title": "Lire les pages web en toute sécurité"
+  },
   "pairHost": {
     "failed": "Pairing failed. Check that the host is on and the ticket is new.",
     "hint": "The ticket is used once and is not saved.",

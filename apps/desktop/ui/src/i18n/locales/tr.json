@@ -4703,6 +4703,24 @@
     "typingPreview": "Yazılıyor",
     "youAreInControl": "Kontrol sende"
   },
+  "pageReader": {
+    "bot": "Bot",
+    "description": "Botun web sayfalarını, e-postaları ve yabancıların yazdığı diğer metinleri nasıl okuduğu.",
+    "legend": "Sayfa okuyucu",
+    "mode": {
+      "always": "Her zaman",
+      "auto": "Otomatik (önerilir)",
+      "off": "Kapalı"
+    },
+    "modeHint": {
+      "always": "Özel veri olmasa bile ayrı bir yardımcı model her sayfayı önce okur. Daha yavaştır ve kotanı biraz daha fazla kullanır.",
+      "auto": "Bot özel dosyaların, e-postaların veya hafızanla çalışırken ayrı bir yardımcı model her sayfayı önce okur ve yalnızca bilgileri aktarır. Aksi halde bot sayfaları kendisi okur.",
+      "off": "Bot sayfaları kendisi okur. Sayfa metni her zaman dışarıdan gelen veri olarak işaretlenir ve bir insanın göremediği her şey önceden ayıklanır."
+    },
+    "noBot": "Önce bir bot oluştur.",
+    "note": "Yardımcı, botun ucuz yardımcı modelidir (sınıflandırıcısı) ve botun kendisinden farklı bir sağlayıcıda çalışabilir: sayfa metni oraya gönderilir. Aracı yoktur ve özel verilerini hiç görmez. Bir sayfa onu yine de kandırmaya çalışabilir; bu yüzden gönderme ve silme onayları geçerli kalır. Yardımcı model yoksa sayfalar denetlenmeden aktarılmaz, tutulur.",
+    "title": "Web sayfalarını güvenle okuma"
+  },
   "pairHost": {
     "failed": "Eşleştirme olmadı. Sunucunun açık ve biletin yeni olduğunu kontrol et.",
     "hint": "Bilet bir kez kullanılır ve kaydedilmez.",

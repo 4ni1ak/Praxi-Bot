@@ -865,8 +865,10 @@ mod tests {
         };
         let reply = host.call("fs_read", json!({"path": "secret.txt"})).await;
         assert!(!reply.is_error, "{}", reply.text);
+        // A result read from outside arrives in the daemon's data block.
         assert!(
-            reply.text.starts_with("Permission denied"),
+            reply.text.starts_with("[UNTRUSTED DATA from fs_read")
+                && reply.text.contains("Permission denied"),
             "{}",
             reply.text
         );

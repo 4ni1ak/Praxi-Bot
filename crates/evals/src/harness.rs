@@ -209,7 +209,9 @@ fn seed(storage: &Storage) -> Result<(UserId, BotId, ChatId)> {
         id: bot,
         user_id: user,
         name: "eval".into(),
-        config: json!({}),
+        // The scripted models answer requests in order: a page reader call would take a
+        // scripted reply meant for the agent. The reader has its own tests in agent-core.
+        config: json!({"browser": {"reader": "off"}}),
         created_at_ms: now_ms(),
     })?;
     storage.insert_chat(&Chat {

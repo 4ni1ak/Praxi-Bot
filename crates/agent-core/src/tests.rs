@@ -9,6 +9,7 @@ mod c821;
 mod composio_approvals;
 mod external_agent;
 mod fill_secret;
+mod page_guard;
 mod planning_pause;
 mod secret_request;
 mod tiering;
@@ -296,7 +297,8 @@ pub(crate) fn setup() -> Env {
             id: bot,
             user_id: user,
             name: "b".into(),
-            config: json!({}),
+            // Scripted models answer in order: no page reader call unless a test asks for it.
+            config: json!({"browser": {"reader": "off"}}),
             created_at_ms: now_ms(),
         })
         .unwrap();
