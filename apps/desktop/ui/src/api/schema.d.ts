@@ -685,6 +685,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{bot}/knowledge/sources/{source}/watch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Pause or resume automatic updates of one folder. Owner only. */
+        put: operations["set_watch_paused"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/knowledge/watch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Automatic-update status of every enabled folder source of a bot. */
+        get: operations["list_watch"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots/{id}": {
         parameters: {
             query?: never;
@@ -2206,8 +2240,28 @@ export interface paths {
         /** List the fill secrets: names and allow-lists, never values. */
         get: operations["list_fill_secrets"];
         put?: never;
-        /** Create a fill secret with its allow-lists. The value is write-only. */
+        /** Create a fill secret with its allow-lists and bot scope. The value is write-only. */
         post: operations["create_fill_secret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/fill-secrets/reveal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reveal one fill secret value to the local owner after explicit confirmation.
+         *     Audited before reading; returned with `Cache-Control: no-store`.
+         */
+        post: operations["reveal_fill_secret"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2222,7 +2276,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Change a fill secret's value and/or allow-lists. */
+        /** Change a fill secret's value, Vault metadata, bot scope, or allow-lists. */
         put: operations["update_fill_secret"];
         post?: never;
         /** Delete a fill secret, its value and its standing grants. */
@@ -5976,13 +6030,24 @@ export interface components {
         };
         /** @description Body of `POST /v1/fill-secrets`. */
         CreateFillSecret: {
+            /** @description Whether the bot must ask the owner before typing this secret (default true). */
+            ask_before_use?: boolean | null;
+            /** @description Bot ids permitted to use this secret (defaults to none). */
+            bot_ids?: string[];
+            kind?: null | components["schemas"]["VaultKindDto"];
+            /** @description Non-secret login identifier (e-mail or username). */
+            login_id?: string | null;
             /** @description Name, letters/digits/`.`/`_`/`-` with `/` separators, at most 64 bytes. */
             name: string;
+            /** @description Owner-only note. */
+            note?: string | null;
             /** @description Exact origins like `https://github.com` (scheme, host, port; no wildcard). */
             origins?: string[];
             /** @description Verified desktop program identities. */
             programs?: string[];
-            /** @description The value. Write-only: no route returns it. */
+            /** @description Human-friendly site or service label. */
+            site_name?: string | null;
+            /** @description The value. Write-only: no route returns it except an explicit confirmed owner reveal. */
             value: string;
         };
         /**
@@ -6837,14 +6902,26 @@ export interface components {
         };
         /** @description One fill secret as the owner sees it. Never the value. */
         FillSecretDto: {
+            /** @description Whether the bot must ask the owner before typing this secret. */
+            ask_before_use: boolean;
+            /** @description Bot ids permitted to use this secret (empty = no bot). */
+            bot_ids: string[];
             /** @description Whether a value is stored. */
             has_value: boolean;
+            /** @description Category (`login` or `other`). */
+            kind: components["schemas"]["VaultKindDto"];
+            /** @description Non-secret login identifier (e-mail or username). */
+            login_id?: string | null;
             /** @description Name the assistant writes in `secret` (for example `login/github`). */
             name: string;
+            /** @description Owner-only note. */
+            note?: string | null;
             /** @description Exact web origins the secret may be typed on. */
             origins: string[];
             /** @description Verified desktop program identities the secret may be typed into. */
             programs: string[];
+            /** @description Human-friendly site or service label. */
+            site_name?: string | null;
             /**
              * Format: int64
              * @description Last change, milliseconds since the epoch.
@@ -7896,6 +7973,30 @@ export interface components {
          * @enum {string}
          */
         KnowledgeSourceKind: "file" | "folder" | "saved_web" | "conversation" | "email" | "note" | "shared_brain";
+        /** @description A problem in plain terms; the UI maps `code` to words and a fix. */
+        KnowledgeWatchError: {
+            /** @description `folder_missing`, `folder_unreadable`, `too_many_files`, `some_files_skipped`, `sync_failed`. */
+            code: string;
+        };
+        /** @description Pause or resume automatic updates. */
+        KnowledgeWatchPause: {
+            paused: boolean;
+        };
+        /**
+         * @description What the Knowledge view shows for a watched folder.
+         * @enum {string}
+         */
+        KnowledgeWatchState: "watching" | "waiting" | "backing_off" | "paused";
+        /** @description Automatic-update status of one folder source. */
+        KnowledgeWatchStatus: {
+            error?: null | components["schemas"]["KnowledgeWatchError"];
+            indexed_files: number;
+            /** Format: int64 */
+            last_sync_ms?: number | null;
+            /** Format: uuid */
+            source_id: string;
+            state: components["schemas"]["KnowledgeWatchState"];
+        };
         /** @description `GET /v1/events/latest`. */
         LatestCursor: {
             /**
@@ -9290,6 +9391,20 @@ export interface components {
             safety_checkpoint_ids: string[];
             warnings: string[];
         };
+        /** @description Body of `POST /v1/fill-secrets/reveal`. */
+        RevealFillSecret: {
+            /** @description Must be `true` to confirm the owner intentionally reveals the value on screen. */
+            confirm: boolean;
+            /** @description Secret name to reveal. */
+            name: string;
+        };
+        /** @description Response of `POST /v1/fill-secrets/reveal` (owner-only, `Cache-Control: no-store`). */
+        RevealFillSecretResponse: {
+            /** @description Secret name. */
+            name: string;
+            /** @description Secret value. Never logged or cached. */
+            value: string;
+        };
         /** @description `DELETE /v1/bots/{id}/grants`. */
         RevokeGrant: {
             /** @description The rule to remove. */
@@ -10502,10 +10617,21 @@ export interface components {
          *     when given, replaces the stored one.
          */
         UpdateFillSecret: {
+            /** @description Replaces whether the bot asks before typing. */
+            ask_before_use?: boolean | null;
+            /** @description Replaces the allowed bot ids. */
+            bot_ids?: string[] | null;
+            kind?: null | components["schemas"]["VaultKindDto"];
+            /** @description Replaces login identifier (empty string clears it). */
+            login_id?: string | null;
+            /** @description Replaces owner note (empty string clears it). */
+            note?: string | null;
             /** @description Replaces the allowed origins. */
             origins?: string[] | null;
             /** @description Replaces the allowed programs. */
             programs?: string[] | null;
+            /** @description Replaces site name (empty string clears it). */
+            site_name?: string | null;
             /** @description New value (write-only). */
             value?: string | null;
         };
@@ -10590,6 +10716,11 @@ export interface components {
              */
             prompt_tokens: number;
         };
+        /**
+         * @description Category of a Vault entry.
+         * @enum {string}
+         */
+        VaultKindDto: "login" | "other";
         /**
          * @description Whether bounded hashing verified the recorded after-state.
          * @enum {string}
@@ -12520,6 +12651,69 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    set_watch_paused: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeWatchPause"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeWatchStatus"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_watch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeWatchStatus"][];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16437,8 +16631,66 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description unknown bot id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description the name exists; use PUT */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    reveal_fill_secret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RevealFillSecret"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevealFillSecretResponse"];
+                };
+            };
+            /** @description confirmation required */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description not the local owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
