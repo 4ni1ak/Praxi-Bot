@@ -308,6 +308,14 @@
     },
     "noDaemon": "Der lokale Praxi-Dienst läuft nicht. Starte die App neu und versuche es erneut.",
     "noKeys": "Im Ordner .ssh wurde keine Schlüsseldatei gefunden. Gib den Pfad der heruntergeladenen Schlüsseldatei ein.",
+    "packs": {
+      "body": "Office-Dateien, Dokumente, Medien und Entwicklerwerkzeuge, {{size}}. Das kannst du später unter Werkzeuge ändern.",
+      "doneTitle": "Basiswerkzeuge installiert",
+      "running": "Werkzeuge werden installiert. Das kann ein paar Minuten dauern.",
+      "title": "Auch die Basiswerkzeuge installieren",
+      "warnBody": "{{reason}}. Du kannst die Werkzeuge später unter Deine Server → Werkzeuge hinzufügen.",
+      "warnTitle": "Server hinzugefügt, Werkzeuge nicht installiert"
+    },
     "pairChecks": {
       "models": {
         "fix": "Noch nicht erlaubt. Führe auf dem Server aus: bot host admin --all-desktops . Modelle kannst du später von der Seite des Servers senden.",
@@ -6212,6 +6220,118 @@
   "thisComputerOnly": {
     "body": "Lokale Modelle laufen auf dem Computer, auf dem der Bot läuft. {{name}} ist ein Server, richte sie daher auf Diesem Computer ein.",
     "switch": "Zu diesem Computer wechseln"
+  },
+  "toolPacks": {
+    "back": "Zurück",
+    "basicSet": "Basis-Set auswählen",
+    "button": "Werkzeuge",
+    "confirmInstall": "Installieren",
+    "confirmRemove": "Entfernen",
+    "doneInstall": "Werkzeuge installiert",
+    "doneInstallBody": "Deine Bots auf diesem Server können sie jetzt nutzen.",
+    "doneRemove": "Werkzeuge entfernt",
+    "dontClose": "Das kann ein paar Minuten dauern. Du kannst die App weiter benutzen.",
+    "found": "Gefundene Programme: {{n}}",
+    "lead": "Programme, die deine Bots auf diesem Server nutzen können.",
+    "listLabel": "Werkzeugpakete",
+    "loading": "Server wird angesehen…",
+    "noLogin": {
+      "body": "Praxi installiert Werkzeuge über deinen eigenen SSH-Zugang. Füge den Server mit „Erweitert: SSH verwenden“ erneut hinzu oder installiere die Werkzeuge selbst auf dem Server.",
+      "title": "Dieser Server wurde ohne Zugang hinzugefügt"
+    },
+    "nothingToDo": "Schon erledigt",
+    "packs": {
+      "dev": {
+        "desc": "git, GitHub, Python, Node und schnelle Suche",
+        "name": "Entwicklerwerkzeuge"
+      },
+      "docs": {
+        "desc": "Dokumente umwandeln, PDFs lesen und zusammenfügen",
+        "name": "Dokumente und PDF"
+      },
+      "media": {
+        "desc": "Medien umwandeln, schneiden und verkleinern",
+        "name": "Audio, Video und Bilder"
+      },
+      "ocr": {
+        "desc": "Text in Scans und Fotos lesen (Türkisch, Englisch)",
+        "name": "Text aus Bildern"
+      },
+      "office": {
+        "desc": "Word, Excel, PowerPoint und PDF-Export, mit türkischen Schriften",
+        "name": "Office-Dateien"
+      }
+    },
+    "planning": "Es wird geprüft, was sich ändern würde…",
+    "previewLabel": "Was sich ändern würde",
+    "progress": "Fortschritt",
+    "reason": {
+      "connection": {
+        "body": "Prüfe, ob der Server eingeschaltet und erreichbar ist, und versuche es erneut.",
+        "title": "Praxi konnte den Server nicht erreichen"
+      },
+      "dependants": {
+        "body": "Etwas anderes auf dem Server nutzt diese Werkzeuge, deshalb bleiben sie.",
+        "title": "Andere Software braucht sie"
+      },
+      "failed": {
+        "body": "Der Server hat es abgebrochen, zum Beispiel weil die Platte voll ist oder gerade ein anderes Update läuft. Dein Server ist in Ordnung; du kannst es erneut versuchen.",
+        "title": "Nicht abgeschlossen"
+      },
+      "needs_admin": {
+        "body": "Nimm einen Serverzugang mit Administratorrechten (sudo ohne Passwort) und versuche es erneut.",
+        "title": "Mit diesem Zugang lässt sich keine Software installieren"
+      },
+      "shared": {
+        "body": "Praxi entfernt diese nicht: Dein Server braucht sie.",
+        "title": "Gemeinsame Systemwerkzeuge"
+      },
+      "unavailable": {
+        "body": "In den Softwarequellen des Servers gibt es dieses Werkzeug nicht.",
+        "title": "Von diesem Server nicht angeboten"
+      },
+      "unknown_pack": {
+        "body": "Aktualisiere die App und versuche es erneut.",
+        "title": "Unbekanntes Werkzeugpaket"
+      },
+      "unsupported": {
+        "body": "Auf anderen Systemen installierst du die Werkzeuge selbst auf dem Server.",
+        "title": "Nur Debian- und Ubuntu-Server werden unterstützt"
+      }
+    },
+    "remove": "Entfernen",
+    "review": "Prüfen ({{size}})",
+    "reviewNone": "Prüfen",
+    "rowState": {
+      "install": {
+        "done": "Installiert",
+        "failed": "Nicht abgeschlossen",
+        "pending": "Wartet",
+        "running": "Wird installiert…"
+      },
+      "remove": {
+        "done": "Entfernt",
+        "failed": "Nicht abgeschlossen",
+        "pending": "Wartet",
+        "running": "Wird entfernt…"
+      }
+    },
+    "safeInstall": "Sonst ändert sich nichts",
+    "safeInstallBody": "Die Werkzeuge kommen aus den eigenen Softwarequellen deines Servers. Dafür braucht es einen Zugang mit Administratorrechten.",
+    "safeRemove": "Nur diese Werkzeuge werden entfernt",
+    "safeRemoveBody": "Deine Einstellungen und andere Software bleiben unverändert.",
+    "size": "etwa {{value}} {{unit}}",
+    "status": {
+      "installed": "Installiert",
+      "partial": "Unvollständig"
+    },
+    "stop": "Nach diesem anhalten",
+    "thisServer": "diesem Server",
+    "title": "Werkzeuge",
+    "titleFor": "Werkzeuge auf {{name}}",
+    "tryAgain": "Erneut versuchen",
+    "willInstall": "Wird installiert",
+    "willRemove": "Wird entfernt"
   },
   "tray": {
     "needs": "Braucht dich ({n})",

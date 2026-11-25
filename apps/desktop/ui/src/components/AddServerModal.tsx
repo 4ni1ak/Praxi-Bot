@@ -56,8 +56,11 @@ import dialog from "./Dialog.module.css";
 import { Callout, DialogFooter, DialogHeader, Field } from "./DialogParts";
 import form from "./Form.module.css";
 import { Modal } from "./Modal";
+import { Switch } from "./SettingsUi";
+import packStyles from "./ToolPacksModal.module.css";
 import { useToast } from "./Toast";
 import { humanLine } from "../lib/humanError";
+import { BASE_SET_MB, reasonKey, sizeParts } from "../lib/toolPacks";
 
 const POLL_MS = 800;
 
@@ -704,6 +707,17 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
               <Callout tone="info">{t("addServer.agentHint")}</Callout>
             )}
             <Callout tone="info">{t("addServer.passwordNote")}</Callout>
+            <div className={packStyles.basic} data-testid="add-server-packs">
+              <span className={packStyles.text}>
+                <b>{t("addServer.packs.title")}</b>
+                <small>{t("addServer.packs.body", { size: sizeLabel(t, BASE_SET_MB) })}</small>
+              </span>
+              <Switch
+                checked={w.basePacks}
+                onChange={(on) => dispatch({ type: "basePacks", on })}
+                label={t("addServer.packs.title")}
+              />
+            </div>
             <details className={styles.advanced}>
               <summary>{t("addServer.advanced")}</summary>
               <Field
@@ -742,6 +756,11 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
           <div className={dialog.body}>
             {view === "progress" || view === "failed" ? <Checklist job={job} /> : null}
             {view === "progress" ? <Bar job={job} /> : null}
+            {view === "progress" && job.notes.some((n) => n.startsWith("installing ")) ? (
+              <p className={styles.note} role="status" data-testid="add-server-packs-running">
+                {t("addServer.packs.running")}
+              </p>
+            ) : null}
             {job.state === "awaiting_host_key" && job.host_key ? (
               <div
                 className={styles.keyCard}
@@ -914,10 +933,24 @@ function Bar({ job }: { job: HostSetupJob }) {
   );
 }
 
+function sizeLabel(t: (k: string, o?: Record<string, unknown>) => string, mb: number): string {
+  const { value, unit } = sizeParts(mb);
+  return t("toolPacks.size", { value, unit });
+}
+
 function Success({ job, hasScreen }: { job: HostSetupJob; hasScreen: boolean }) {
   const { t } = useTranslation();
+  const packStep = job.steps.find((s) => s.id.startsWith("pack.") && s.status !== "pass");
+  const packsDone = job.steps.some((s) => s.id.startsWith("pack.") && s.status === "pass");
   return (
     <>
+      {packStep ? (
+        <Callout tone="warning" title={t("addServer.packs.warnTitle")} role="status">
+          <p>{t("addServer.packs.warnBody", { reason: t(`toolPacks.reason.${reasonKey(packStep.detail)}.title`) })}</p>
+        </Callout>
+      ) : packsDone ? (
+        <Callout tone="success" title={t("addServer.packs.doneTitle")} role="status" />
+      ) : null}
       <Callout tone="success" title={t("addServer.doneTitle", { name: job.host_name ?? job.target })}>
         {hasScreen ? t("addServer.doneScreen") : t("addServer.doneNoScreen")}
       </Callout>

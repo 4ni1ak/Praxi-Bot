@@ -1,4 +1,4 @@
-import { Plus, RefreshCw, Server, Trash2 } from "lucide-react";
+import { Plus, RefreshCw, Server, Trash2, Wrench } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
@@ -13,6 +13,7 @@ import dialog from "./Dialog.module.css";
 import { Callout, DialogFooter, DialogHeader } from "./DialogParts";
 import { Modal } from "./Modal";
 import { useToast } from "./Toast";
+import { ToolPacksModal } from "./ToolPacksModal";
 import { UpdateServerModal } from "./UpdateServerModal";
 import updateStyles from "./UpdateServerModal.module.css";
 
@@ -39,6 +40,7 @@ function Content({ onClose, onAdd }: { onClose: () => void; onAdd: () => void })
   const [busy, setBusy] = useState(false);
   const hosts = hostList?.hosts ?? [];
   const [updating, setUpdating] = useState<string | null>(null);
+  const [tooling, setTooling] = useState<string | null>(null);
   const { versions, recheck } = useServerVersions(api, hosts.map((h) => h.id), true);
   const app = { version: hostList?.local_version ?? "", releaseTag: hostList?.local_release_tag ?? null };
 
@@ -86,6 +88,10 @@ function Content({ onClose, onAdd }: { onClose: () => void; onAdd: () => void })
                     {t(stateOf(versions[h.id], app) === "older" ? "updateServer.button" : "updateServer.buttonAnyway")}
                   </Button>
                 ) : null}
+                <Button variant="ghost" onClick={() => setTooling(h.id)} data-testid={`tools-${h.id}`}>
+                  <Wrench aria-hidden="true" />
+                  {t("toolPacks.button")}
+                </Button>
                 <Button
                   variant="ghost"
                   onClick={() => {
@@ -134,6 +140,7 @@ function Content({ onClose, onAdd }: { onClose: () => void; onAdd: () => void })
           {t("servers.add")}
         </Button>
       </DialogFooter>
+      <ToolPacksModal open={tooling !== null} hostId={tooling ?? ""} onClose={() => setTooling(null)} />
       <UpdateServerModal
         open={updating !== null}
         hostId={updating ?? ""}
