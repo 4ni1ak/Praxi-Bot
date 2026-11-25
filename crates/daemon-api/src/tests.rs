@@ -4896,6 +4896,58 @@ async fn bot_spend_limits_default_owner_only_validated_and_audited() {
     );
 }
 
+#[tokio::test]
+async fn page_reader_defaults_to_auto_changes_owner_only_and_is_audited() {
+    let t = setup();
+    let r = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": PROFILE, "name": "Reader"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    let path = format!("/v1/bots/{}/page-reader", r.json()["id"].as_str().unwrap());
+
+    assert_eq!(
+        call(&t, Method::GET, &path, None).await.json()["mode"],
+        "auto"
+    );
+
+    // A token without the owner key cannot switch the protection off.
+    let off = json!({"mode": "off"});
+    let r = call_token_only(&t, Method::PUT, &path, Some(off.clone())).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(r.json()["error"]["code"], "owner_key_required");
+    assert_eq!(
+        call(&t, Method::GET, &path, None).await.json()["mode"],
+        "auto"
+    );
+
+    // Only off / auto / always.
+    assert_eq!(
+        call(&t, Method::PUT, &path, Some(json!({"mode": "sometimes"})))
+            .await
+            .status,
+        StatusCode::BAD_REQUEST
+    );
+
+    let r = call(&t, Method::PUT, &path, Some(off)).await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.json());
+    assert_eq!(r.json()["mode"], "off");
+    assert_eq!(
+        call(&t, Method::GET, &path, None).await.json()["mode"],
+        "off"
+    );
+    let audit = t.state.storage().list_audit(t.state.user_id()).unwrap();
+    assert!(
+        audit
+            .iter()
+            .any(|a| a.action == "browser.reader" && a.detail["after"] == "off"),
+        "every change is audited"
+    );
+}
+
 /// The shared readiness fixture (`tests/fixtures/health-contract.json`, also read by the desktop
 /// Rust and UI tests) must stay a faithful picture of what the daemon sends.
 #[tokio::test]
