@@ -13,6 +13,7 @@ import {
   Pencil,
   Plus,
   Search,
+  ShieldCheck,
   Trash2,
   TriangleAlert,
   X,
@@ -28,7 +29,8 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { BotAvatar, Button } from "ui";
-import type { EmailAccount, FillSecretInfo, VaultKind } from "../api/types";
+import { ApiError } from "../api/client";
+import type { EmailAccount, FillGrantInfo, FillSecretInfo, VaultKind } from "../api/types";
 import { BrandIcon } from "../components/BrandIcon";
 import { ConfirmDialog } from "../components/DialogParts";
 import formStyles from "../components/Form.module.css";
@@ -43,6 +45,9 @@ import { isValidSecretName } from "../lib/secretDetect";
 import {
   brandQueryOf,
   filterVaultItems,
+  groupGrants,
+  isLastGrant,
+  type GrantGroup,
   normalizeOrigin,
   pinnedBotIdentities,
   siteLabelOf,
@@ -51,6 +56,7 @@ import {
 } from "../lib/vault";
 import { useDaemon } from "../state/DaemonContext";
 import { VaultCsvImport } from "./VaultCsvImport";
+import { VaultGrantsPanel } from "./VaultGrantsPanel";
 import styles from "./VaultModal.module.css";
 
 const CLIPBOARD_CLEAR_SECS = 30;
@@ -61,7 +67,8 @@ type DrawerMode =
   | { kind: "view"; name: string }
   | { kind: "add"; itemKind: VaultKind }
   | { kind: "edit"; item: FillSecretInfo }
-  | { kind: "import" };
+  | { kind: "import" }
+  | { kind: "grants" };
 
 function SiteTile({ item }: { item: Pick<FillSecretInfo, "name" | "site_name" | "origins" | "kind"> }) {
   const brandKey = brandQueryOf(item);
@@ -108,6 +115,13 @@ export function VaultModal({
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<DrawerMode>({ kind: "empty" });
   const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const [grants, setGrants] = useState<FillGrantInfo[]>([]);
+  const [grantsLoading, setGrantsLoading] = useState(false);
+  const [grantsError, setGrantsError] = useState<string | null>(null);
+  const [confirmRevoke, setConfirmRevoke] = useState<{ grant: FillGrantInfo; group: GrantGroup; last: boolean } | null>(null);
+  const [revokeBusy, setRevokeBusy] = useState<string | null>(null);
+  // Mode to go back to when the standing grants view is closed.
+  const grantsReturn = useRef<DrawerMode>({ kind: "empty" });
   const newBtnRef = useRef<HTMLButtonElement | null>(null);
 
   // Ephemeral reveal / clipboard auto-clear state (never persisted, wiped on close/switch).
@@ -182,13 +196,29 @@ export function VaultModal({
     }
   }, [client]);
 
+  const loadGrants = useCallback(async () => {
+    if (!client) return;
+    setGrantsLoading(true);
+    setGrantsError(null);
+    try {
+      setGrants(await client.listFillGrants());
+    } catch (e) {
+      setGrantsError(humanLine(e));
+    } finally {
+      setGrantsLoading(false);
+    }
+  }, [client]);
+
   useEffect(() => {
     if (!open) {
       clearRevealed();
       wipeSecretInput();
       setConfirmReveal(null);
       setConfirmDelete(null);
+      setConfirmRevoke(null);
       setNewMenuOpen(false);
+      setGrants([]);
+      setGrantsError(null);
       return;
     }
     setTab("all");
@@ -327,10 +357,44 @@ export function VaultModal({
     try {
       const updated = await client.updateFillSecret(item.name, patch);
       setItems((cur) => cur.map((x) => (x.name === updated.name ? updated : x)));
+      if (patch.ask_before_use !== undefined) void loadGrants();
     } catch (e) {
       toast.show(humanLine(e), "danger");
     } finally {
       setSavingBots(false);
+    }
+  };
+
+  const openGrants = () => {
+    clearRevealed();
+    wipeSecretInput();
+    setFormError(null);
+    grantsReturn.current = mode.kind === "grants" ? grantsReturn.current : mode;
+    setNewMenuOpen(false);
+    setMode({ kind: "grants" });
+    void loadGrants();
+  };
+
+  const doRevoke = async () => {
+    if (!client || !confirmRevoke || revokeBusy !== null) return;
+    const { grant } = confirmRevoke;
+    setRevokeBusy(grant.id);
+    try {
+      await client.revokeFillGrant(grant.id);
+      setConfirmRevoke(null);
+      await Promise.all([load(), loadGrants()]);
+      toast.show(t("vault.grants.revoked"), "success");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        setConfirmRevoke(null);
+        await Promise.all([load(), loadGrants()]);
+        toast.show(t("vault.grants.revoked"), "success");
+      } else {
+        toast.show(humanLine(e), "danger");
+        void loadGrants();
+      }
+    } finally {
+      setRevokeBusy(null);
     }
   };
 
@@ -432,6 +496,10 @@ export function VaultModal({
             </div>
           </div>
           <div className={styles.headerActions}>
+            <Button variant="secondary" size="sm" data-testid="vault-grants-open" onClick={openGrants}>
+              <ShieldCheck aria-hidden="true" />
+              {t("vault.grants.open")}
+            </Button>
             <Button
               ref={newBtnRef}
               variant="primary"
@@ -658,6 +726,24 @@ export function VaultModal({
               bots={bots}
               onImported={load}
               onCancel={() => setMode(items[0] ? { kind: "view", name: items[0].name } : { kind: "empty" })}
+            />
+          ) : mode.kind === "grants" ? (
+            <VaultGrantsPanel
+              groups={groupGrants(grants, items)}
+              loading={grantsLoading}
+              error={grantsError}
+              busyId={revokeBusy}
+              onRetry={() => void loadGrants()}
+              onRevoke={(grant, group) =>
+                setConfirmRevoke({ grant, group, last: isLastGrant(grants, grant) })
+              }
+              onBack={() => {
+                const back = grantsReturn.current;
+                const first: DrawerMode = items[0] ? { kind: "view", name: items[0].name } : { kind: "empty" };
+                const keep =
+                  back.kind === "view" ? items.some((i) => i.name === back.name) : back.kind !== "empty" && back.kind !== "grants";
+                setMode(keep ? back : first);
+              }}
             />
           ) : mode.kind === "add" || mode.kind === "edit" ? (
             <form
@@ -1066,6 +1152,16 @@ export function VaultModal({
                     }
                   />
                 </div>
+                {!selectedItem.ask_before_use ? (
+                  <button
+                    type="button"
+                    className={styles.linkBtn}
+                    data-testid="vault-see-grants"
+                    onClick={openGrants}
+                  >
+                    {t("vault.grants.seeGrants")}
+                  </button>
+                ) : null}
               </div>
             </div>
           ) : (
@@ -1100,6 +1196,24 @@ export function VaultModal({
         busy={deleteBusy}
         onConfirm={() => void doDelete()}
         onCancel={() => setConfirmDelete(null)}
+      />
+
+      <ConfirmDialog
+        open={confirmRevoke !== null}
+        title={t("vault.grants.confirmTitle")}
+        body={
+          confirmRevoke
+            ? t(confirmRevoke.last ? "vault.grants.confirmLastBody" : "vault.grants.confirmBody", {
+                name: confirmRevoke.group.label,
+                origin: confirmRevoke.grant.origin,
+              })
+            : ""
+        }
+        confirmLabel={t("vault.grants.revoke")}
+        tone="danger"
+        busy={revokeBusy !== null}
+        onConfirm={() => void doRevoke()}
+        onCancel={() => setConfirmRevoke(null)}
       />
     </Modal>
   );
