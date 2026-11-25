@@ -1308,6 +1308,7 @@
     "computer": "Computer",
     "edit": "Edit bot",
     "isMain": "This is the main bot",
+    "liteFullHint": "Model ringan sedang dipilih. Untuk tugas panjang dengan banyak langkah, model yang lebih kuat bekerja lebih baik: model ini bisa berhenti untuk bertanya atau kehilangan arah. Anda bisa mengubahnya di pengaturan bot.",
     "mail": {
       "agentmail": "Own address",
       "check": "Check connection",
