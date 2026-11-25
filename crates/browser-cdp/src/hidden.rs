@@ -30,6 +30,8 @@ pub const COMPUTED_STYLES: &[&str] = &[
     "overflow-x",
     "overflow-y",
     "position",
+    "background-clip",
+    "-webkit-text-fill-color",
 ];
 
 const S_VISIBILITY: usize = 2;
@@ -41,6 +43,8 @@ const S_BG_IMAGE: usize = 7;
 const S_OVERFLOW_X: usize = 8;
 const S_OVERFLOW_Y: usize = 9;
 const S_POSITION: usize = 10;
+const S_BG_CLIP: usize = 11;
+const S_TEXT_FILL: usize = 12;
 
 /// Text smaller than this many CSS pixels cannot be read.
 const MIN_READABLE_FONT_PX: f64 = 4.0;
@@ -214,6 +218,9 @@ struct St {
     bg: Bg,
     /// Below an element whose text is never drawn in place (`script`, `select`, ...).
     nonrender: bool,
+    /// Some ancestor (or the element) paints its background only inside the glyphs
+    /// (`background-clip: text`): a transparent text colour is then the visible gradient.
+    clip_text: bool,
 }
 
 const ROOT: St = St {
@@ -222,6 +229,7 @@ const ROOT: St = St {
     clip: None,
     bg: Bg::Assumed,
     nonrender: false,
+    clip_text: false,
 };
 
 fn ints(v: Option<&Value>) -> Vec<i64> {
@@ -329,6 +337,41 @@ pub fn parse_hidden(resp: &Value) -> Vec<DocHidden> {
             continue;
         }
 
+        // Boxes that paint something the ancestors' backgrounds do not tell about: pictures,
+        // video, canvases, frames, background images and positioned solid overlays. Text that
+        // overlaps one of them is not judged by colour (white text over a hero picture).
+        let is_media = |tag: &str| {
+            matches!(
+                tag,
+                "img" | "video" | "canvas" | "picture" | "svg" | "iframe" | "object" | "embed"
+            )
+        };
+        let painted: Vec<(usize, [f64; 4])> = (0..n)
+            .filter(|&i| kind.get(i) == Some(&1) && layout_of[i].is_some())
+            .filter(|&i| {
+                let tag = s(name.get(i).copied().unwrap_or(-1)).to_ascii_lowercase();
+                let bg_image = style_of(i, S_BG_IMAGE);
+                is_media(&tag)
+                    || (!bg_image.is_empty() && bg_image != "none")
+                    || (matches!(style_of(i, S_POSITION), "absolute" | "fixed")
+                        && parse_rgba(style_of(i, S_BG_COLOR)).is_some_and(|c| c.a >= 0.5))
+            })
+            .filter_map(|i| box_of(i).map(|b| (i, b)))
+            .collect();
+        let overlaps_painted = |text_node: usize, tb: [f64; 4]| -> bool {
+            let mut ancestors = HashSet::new();
+            let mut at = usize::try_from(parent.get(text_node).copied().unwrap_or(-1)).ok();
+            while let Some(a) = at.filter(|&a| a < n && ancestors.insert(a)) {
+                at = usize::try_from(parent.get(a).copied().unwrap_or(-1)).ok();
+            }
+            painted.iter().any(|(i, b)| {
+                // An ancestor's own background is already known (`Bg::Solid` / `Bg::Unknown`).
+                let known_ancestor = ancestors.contains(i)
+                    && !is_media(&s(name.get(*i).copied().unwrap_or(-1)).to_ascii_lowercase());
+                !known_ancestor && !outside(tb, [b[0], b[1], b[0] + b[2], b[1] + b[3]])
+            })
+        };
+
         let mut state: Vec<St> = vec![ROOT; n];
         for i in 0..n {
             let ps = usize::try_from(parent.get(i).copied().unwrap_or(-1))
@@ -408,6 +451,9 @@ pub fn parse_hidden(resp: &Value) -> Vec<DocHidden> {
                         } else {
                             st.clip = outer_clip;
                         }
+                        if style_of(i, S_BG_CLIP) == "text" {
+                            st.clip_text = true;
+                        }
                         let bg_image = style_of(i, S_BG_IMAGE);
                         if !bg_image.is_empty() && bg_image != "none" {
                             st.bg = Bg::Unknown;
@@ -451,7 +497,16 @@ pub fn parse_hidden(resp: &Value) -> Vec<DocHidden> {
                                 || t[1] + t[3] <= 0.0
                                 || ps.clip.is_some_and(|c| outside(t, c))
                         });
-                        let faint = unreadable_colour(style_of(p, S_COLOR), ps.bg);
+                        // The fill colour is what is drawn; it defaults to `color`.
+                        let fill = style_of(p, S_TEXT_FILL);
+                        let colour = if parse_rgba(fill).is_some() {
+                            fill
+                        } else {
+                            style_of(p, S_COLOR)
+                        };
+                        let faint = unreadable_colour(colour, ps.bg, ps.clip_text, || {
+                            tb.is_none_or(|t| overlaps_painted(i, t))
+                        });
                         font_tiny || invisible || off || faint || ps.opacity <= MIN_VISIBLE_OPACITY
                     };
                     if hide {
@@ -470,15 +525,18 @@ fn s_parse(s: &str) -> Option<f64> {
     s.trim().parse::<f64>().ok()
 }
 
-fn unreadable_colour(color: &str, bg: Bg) -> bool {
+/// Whether text drawn in `color` cannot be read. A transparent colour is unreadable unless the
+/// glyphs are a window onto a background (`clip_text`). A low contrast counts only when nothing
+/// else is painted behind the text (`overlapped` is asked last, and only then).
+fn unreadable_colour(color: &str, bg: Bg, clip_text: bool, overlapped: impl Fn() -> bool) -> bool {
     let Some(fg) = parse_rgba(color) else {
         return false;
     };
     if fg.a <= MIN_VISIBLE_OPACITY {
-        return true;
+        return !clip_text;
     }
-    match bg {
-        Bg::Unknown => false,
+    let low = match bg {
+        Bg::Unknown => return false,
         Bg::Solid(b) => contrast(fg, b) < MIN_CONTRAST_SOLID,
         Bg::Assumed => {
             contrast(
@@ -491,7 +549,8 @@ fn unreadable_colour(color: &str, bg: Bg) -> bool {
                 },
             ) < MIN_CONTRAST_ASSUMED
         }
-    }
+    };
+    low && !overlapped()
 }
 
 #[cfg(test)]
@@ -567,6 +626,8 @@ mod tests {
             ("overflow-x", "visible"),
             ("overflow-y", "visible"),
             ("position", "static"),
+            ("background-clip", "border-box"),
+            ("-webkit-text-fill-color", ""),
         ];
         let mut parent = vec![];
         let mut kind = vec![];
@@ -839,6 +900,69 @@ mod tests {
             txt(17, "var x = 1;", 36, None),
         ]);
         assert!(h.is_empty(), "{h:?}");
+    }
+
+    #[test]
+    fn text_over_pictures_overlays_and_gradient_clips_stays() {
+        let white = ("color", "rgb(255, 255, 255)");
+        let h = hidden_of(vec![
+            // A hero: a full-bleed picture and, next to it, a block with white text.
+            el(1, "DIV", 20, Some((VIEW, vec![]))),
+            el(2, "IMG", 21, Some((VIEW, vec![]))),
+            el(2, "H1", 22, Some((BOX, vec![white]))),
+            txt(4, "Sign up today", 23, Some((BOX, vec![]))),
+            // A dark absolutely positioned overlay with white text over it.
+            el(
+                1,
+                "DIV",
+                24,
+                Some((
+                    VIEW,
+                    vec![
+                        ("position", "absolute"),
+                        ("background-color", "rgb(10, 10, 10)"),
+                    ],
+                )),
+            ),
+            el(1, "P", 25, Some((BOX, vec![white]))),
+            txt(7, "Over the overlay", 26, Some((BOX, vec![]))),
+            // A gradient heading: transparent colour, background clipped to the text.
+            el(
+                1,
+                "H2",
+                27,
+                Some((
+                    BOX,
+                    vec![
+                        ("color", "rgba(0, 0, 0, 0)"),
+                        ("background-clip", "text"),
+                        ("background-image", "linear-gradient(red, blue)"),
+                    ],
+                )),
+            ),
+            txt(9, "Gradient title", 28, Some((BOX, vec![]))),
+            // A transparent colour with an opaque fill colour is drawn.
+            el(
+                1,
+                "H3",
+                29,
+                Some((
+                    BOX,
+                    vec![
+                        ("color", "rgba(0, 0, 0, 0)"),
+                        ("-webkit-text-fill-color", "rgb(200, 0, 0)"),
+                    ],
+                )),
+            ),
+            txt(11, "Filled title", 30, Some((BOX, vec![]))),
+        ]);
+        assert!(h.is_empty(), "{h:?}");
+        // The same white text with nothing painted behind it is still found.
+        let h = hidden_of(vec![
+            el(1, "P", 40, Some((BOX, vec![white]))),
+            txt(2, "Invisible on white", 41, Some((BOX, vec![]))),
+        ]);
+        assert!(h.contains(&41), "{h:?}");
     }
 
     #[test]

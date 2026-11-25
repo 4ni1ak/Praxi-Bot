@@ -4696,7 +4696,7 @@
       "off": "Bot sayfaları kendisi okur. Sayfa metni her zaman dışarıdan gelen veri olarak işaretlenir ve bir insanın göremediği her şey önceden ayıklanır."
     },
     "noBot": "Önce bir bot oluştur.",
-    "note": "Yardımcının aracı yoktur ve özel verilerini hiç görmez. Bir sayfa onu yine de kandırmaya çalışabilir; bu yüzden gönderme ve silme onayları geçerli kalır.",
+    "note": "Yardımcı, botun ucuz yardımcı modelidir (sınıflandırıcısı) ve botun kendisinden farklı bir sağlayıcıda çalışabilir: sayfa metni oraya gönderilir. Aracı yoktur ve özel verilerini hiç görmez. Bir sayfa onu yine de kandırmaya çalışabilir; bu yüzden gönderme ve silme onayları geçerli kalır. Yardımcı model yoksa sayfalar denetlenmeden aktarılmaz, tutulur.",
     "title": "Web sayfalarını güvenle okuma"
   },
   "pairHost": {

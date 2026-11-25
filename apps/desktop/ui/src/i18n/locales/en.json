@@ -4696,7 +4696,7 @@
       "off": "The bot reads pages itself. Page text always arrives marked as data from outside, with anything a person cannot see already removed."
     },
     "noBot": "Create a bot first.",
-    "note": "The helper has no tools and never sees your private data. A page can still try to fool it, so the approvals for sending and deleting stay in force.",
+    "note": "The helper is this bot's cheap helper model (its classifier), which may run with a different provider than the bot itself: the page text is sent there. It has no tools and never sees your private data. A page can still try to fool it, so the approvals for sending and deleting stay in force. If no helper model is available, pages are held back instead of being passed on unchecked.",
     "title": "Reading web pages safely"
   },
   "pairHost": {

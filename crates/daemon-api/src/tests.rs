@@ -5019,6 +5019,86 @@ async fn page_reader_defaults_to_auto_changes_owner_only_and_is_audited() {
     );
 }
 
+#[tokio::test]
+async fn generic_profile_writes_cannot_switch_the_page_reader_off() {
+    let t = setup();
+    let r = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": PROFILE, "name": "Reader"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    let id = r.json()["id"].as_str().unwrap().to_owned();
+    let bot_path = format!("/v1/bots/{id}");
+    let reader_path = format!("/v1/bots/{id}/page-reader");
+    let mode = || async { call(&t, Method::GET, &reader_path, None).await.json()["mode"].clone() };
+    assert_eq!(mode().await, "auto");
+    let version = call(&t, Method::GET, &bot_path, None).await.json()["version"].clone();
+
+    // A JSON patch of the profile, with or without the owner key.
+    let patch = json!({
+        "expected_version": version,
+        "ops": [{"op": "set", "path": "/browser", "value": {"reader": "off"}}]
+    });
+    let r = call_token_only(&t, Method::PATCH, &bot_path, Some(patch.clone())).await;
+    assert_ne!(r.status, StatusCode::OK, "{}", r.json());
+    let r = call(&t, Method::PATCH, &bot_path, Some(patch)).await;
+    assert_ne!(r.status, StatusCode::OK, "{}", r.json());
+    let deep = json!({
+        "expected_version": version,
+        "ops": [{"op": "set", "path": "/browser/reader", "value": "off"}]
+    });
+    let r = call_token_only(&t, Method::PATCH, &bot_path, Some(deep)).await;
+    assert_ne!(r.status, StatusCode::OK, "{}", r.json());
+    assert_eq!(mode().await, "auto");
+
+    // A whole-profile replacement that carries the table.
+    let r = call(
+        &t,
+        Method::PUT,
+        &bot_path,
+        Some(json!({
+            "profile_toml": format!("{PROFILE}\n[browser]\nreader = \"off\"\n"),
+            "expected_version": version
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json());
+    assert_eq!(mode().await, "auto");
+
+    // A new bot cannot be created with it either.
+    let r = call(
+        &t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({"profile_toml": format!("{PROFILE}\n[browser]\nreader = \"off\"\n"), "name": "X"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json());
+
+    // The dedicated route works for the owner, and a later ordinary edit keeps the choice.
+    let r = call(
+        &t,
+        Method::PUT,
+        &reader_path,
+        Some(json!({"mode": "always"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let version = call(&t, Method::GET, &bot_path, None).await.json()["version"].clone();
+    let r = call(
+        &t,
+        Method::PUT,
+        &bot_path,
+        Some(json!({"profile_toml": PROFILE, "expected_version": version})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json());
+    assert_eq!(mode().await, "always");
+}
+
 /// The shared readiness fixture (`tests/fixtures/health-contract.json`, also read by the desktop
 /// Rust and UI tests) must stay a faithful picture of what the daemon sends.
 #[tokio::test]

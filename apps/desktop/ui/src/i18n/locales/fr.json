@@ -4696,7 +4696,7 @@
       "off": "Le bot lit lui-même les pages. Le texte de la page arrive toujours marqué comme donnée externe, et tout ce qu’une personne ne peut pas voir est retiré au préalable."
     },
     "noBot": "Crée d’abord un bot.",
-    "note": "L’auxiliaire n’a aucun outil et ne voit jamais tes données privées. Une page peut quand même essayer de le tromper, c’est pourquoi les validations pour envoyer et supprimer restent en vigueur.",
+    "note": "L'auxiliaire est le modèle auxiliaire économique de ce bot (son classificateur) et peut tourner chez un autre fournisseur que le bot lui-même : le texte de la page y est envoyé. Il n'a aucun outil et ne voit jamais tes données privées. Une page peut quand même essayer de le tromper, c'est pourquoi les validations pour envoyer et supprimer restent en vigueur. Sans modèle auxiliaire, les pages sont retenues au lieu d'être transmises sans contrôle.",
     "title": "Lire les pages web en toute sécurité"
   },
   "pairHost": {

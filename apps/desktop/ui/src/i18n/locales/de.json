@@ -4696,7 +4696,7 @@
       "off": "Der Bot liest Seiten selbst. Seitentext kommt immer als Daten von außen markiert an, alles, was ein Mensch nicht sehen kann, ist vorher entfernt."
     },
     "noBot": "Lege zuerst einen Bot an.",
-    "note": "Das Hilfsmodell hat keine Werkzeuge und sieht deine privaten Daten nie. Eine Seite kann es trotzdem täuschen wollen, deshalb gelten die Freigaben für Senden und Löschen weiter.",
+    "note": "Das Hilfsmodell ist das günstige Hilfsmodell dieses Bots (sein Klassifikator) und kann bei einem anderen Anbieter laufen als der Bot selbst: Der Seitentext wird dorthin gesendet. Es hat keine Werkzeuge und sieht deine privaten Daten nie. Eine Seite kann es trotzdem täuschen wollen, deshalb gelten die Freigaben für Senden und Löschen weiter. Ist kein Hilfsmodell verfügbar, werden Seiten zurückgehalten, statt ungeprüft weitergegeben zu werden.",
     "title": "Webseiten sicher lesen"
   },
   "pairHost": {

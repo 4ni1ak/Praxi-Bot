@@ -173,6 +173,10 @@ impl Stats {
 struct HiddenCss {
     classes: HashSet<String>,
     ids: HashSet<String>,
+    /// Names that an `@media` / `@supports` block mentions at all: such a rule may show the
+    /// element again on some screens, so a top-level hiding rule does not count for them.
+    mentioned_classes: HashSet<String>,
+    mentioned_ids: HashSet<String>,
 }
 
 impl HiddenCss {
@@ -218,6 +222,9 @@ impl HiddenCss {
                 '}' => {
                     depth = depth.saturating_sub(1);
                     if depth == 0 {
+                        if at_rule {
+                            self.mention(&body);
+                        }
                         if !at_rule && style_hides(&body) {
                             for part in sel_buf.split(',') {
                                 let part = part.trim();
@@ -245,10 +252,46 @@ impl HiddenCss {
         }
     }
 
+    /// Remember every `.class` and `#id` that appears in the text of an at-rule block.
+    fn mention(&mut self, text: &str) {
+        let b = text.as_bytes();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'.' || b[i] == b'#' {
+                let mut j = i + 1;
+                while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'-' || b[j] == b'_')
+                {
+                    j += 1;
+                }
+                if j > i + 1 {
+                    let name = text[i + 1..j].to_owned();
+                    if b[i] == b'.' {
+                        self.mentioned_classes.insert(name);
+                    } else {
+                        self.mentioned_ids.insert(name);
+                    }
+                }
+                i = j.max(i + 1);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     fn hides(&self, e: &Element) -> bool {
-        e.attr("id").is_some_and(|id| self.ids.contains(id))
-            || e.attr("class")
-                .is_some_and(|c| c.split_whitespace().any(|w| self.classes.contains(w)))
+        // A class with a variant prefix (`md:block`, `hover:flex`) shows the element on some
+        // screens or states: a plain `hidden` next to it is not a reason to drop it.
+        if e.attr("class")
+            .is_some_and(|c| c.split_whitespace().any(|w| w.contains(':')))
+        {
+            return false;
+        }
+        e.attr("id")
+            .is_some_and(|id| self.ids.contains(id) && !self.mentioned_ids.contains(id))
+            || e.attr("class").is_some_and(|c| {
+                c.split_whitespace()
+                    .any(|w| self.classes.contains(w) && !self.mentioned_classes.contains(w))
+            })
     }
 }
 
@@ -1251,6 +1294,23 @@ mod tests {
         }
         // Twelve hidden blocks plus the instruction-like alt text; the comment is not an item.
         assert_eq!(e.hidden_removed, 13, "{md}");
+    }
+
+    #[test]
+    fn a_class_that_a_media_rule_shows_again_is_not_dropped() {
+        let html = r#"<html><head><style>
+            .nav { display: none }
+            @media (min-width: 800px) { .nav { display: flex } }
+            .hidden { display: none }
+            </style></head><body>
+            <p>Intro paragraph that is long enough to stay in the page text.</p>
+            <ul class="nav"><li>NAV_ENTRY</li></ul>
+            <p class="hidden md:block">TAILWIND_ENTRY</p>
+            <p class="hidden">REALLY_HIDDEN</p></body></html>"#;
+        let e = conv(html);
+        assert!(e.markdown.contains("NAV_ENTRY"), "{}", e.markdown);
+        assert!(e.markdown.contains("TAILWIND_ENTRY"), "{}", e.markdown);
+        assert!(!e.markdown.contains("REALLY_HIDDEN"), "{}", e.markdown);
     }
 
     #[test]

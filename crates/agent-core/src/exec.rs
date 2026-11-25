@@ -1798,34 +1798,44 @@ impl TurnExecutor {
             // Everything the daemon classes as outside content reaches the model in ONE fixed
             // data block (and, for a run that holds private data, only as the result of the
             // quarantined reader). A knowledge result keeps its own budgeted JSON.
-            let (text, own_spill) =
-                if !is_error && fact.ran && fact.ingests_untrusted && knowledge_request.is_none() {
-                    let mode = crate::page_guard::ReaderMode::from_bot_config(
-                        &self
-                            .sh
-                            .storage
-                            .get_bot(run.bot_id)
-                            .ok()
-                            .flatten()
-                            .map(|b| b.config)
-                            .unwrap_or_default(),
-                    );
-                    let framed = crate::page_guard::frame_tool_result(
-                        &self.sh,
-                        &ctx,
-                        mode,
-                        &call.name,
-                        &fact.label,
-                        text,
-                    )
-                    .await;
-                    // The reader's result replaces the page: the tool's own spill file holds
-                    // the raw page, and its path is no longer in the text.
-                    let kept_spill = own_spill.filter(|_| framed.contains("[full output"));
-                    (framed, kept_spill)
-                } else {
-                    (text, own_spill)
-                };
+            let (text, own_spill) = if !is_error
+                && fact.ran
+                && fact.ingests_untrusted
+                && knowledge_request.is_none()
+            {
+                let mode = crate::page_guard::ReaderMode::from_bot_config(
+                    &self
+                        .sh
+                        .storage
+                        .get_bot(run.bot_id)
+                        .ok()
+                        .flatten()
+                        .map(|b| b.config)
+                        .unwrap_or_default(),
+                );
+                let framed = crate::page_guard::frame_tool_result(
+                    &self.sh,
+                    &ctx,
+                    mode,
+                    &call.name,
+                    &fact.label,
+                    text,
+                )
+                .await;
+                // The reader's result replaces the page: the tool's own spill file holds
+                // the raw page, and its path is no longer in the text.
+                let kept_spill = own_spill.filter(|_| framed.contains("[full output"));
+                (framed, kept_spill)
+            } else if is_error && fact.ran && fact.ingests_untrusted && knowledge_request.is_none()
+            {
+                // An error can quote the page too (a title, a message): same frame, no reader.
+                (
+                    crate::page_guard::wrap_data_block(&call.name, &text),
+                    own_spill,
+                )
+            } else {
+                (text, own_spill)
+            };
             // A tool that already spilled its own output is not spilled again.
             let (mut text, spill_path) = if own_spill.is_some() {
                 (text, own_spill)
