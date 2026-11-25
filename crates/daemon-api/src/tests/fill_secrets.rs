@@ -512,29 +512,22 @@ async fn vault_bot_scope_ask_toggle_and_confirmed_owner_reveal() {
     assert_eq!(unconfirmed.status, StatusCode::BAD_REQUEST);
 
     // Confirmed owner reveal returns the value, logs audit WITHOUT value, and sets no-store.
-    let (k, v) = super::auth();
-    let req = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/fill-secrets/reveal")
-        .header(k, v.as_str())
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({ "name": "login/github", "confirm": true }).to_string(),
-        ))
-        .unwrap();
-    let raw_resp = r.t.app.clone().oneshot(req).await.unwrap();
-    assert_eq!(raw_resp.status(), StatusCode::OK);
+    let revealed = call(
+        &r.t,
+        Method::POST,
+        "/v1/fill-secrets/reveal",
+        Some(json!({ "name": "login/github", "confirm": true })),
+    )
+    .await;
+    assert_eq!(revealed.status, StatusCode::OK);
     assert_eq!(
-        raw_resp
-            .headers()
+        revealed
+            .headers
             .get(axum::http::header::CACHE_CONTROL)
             .unwrap(),
         "no-store"
     );
-    let bytes = axum::body::to_bytes(raw_resp.into_body(), 16 * 1024)
-        .await
-        .unwrap();
-    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    let body = revealed.json();
     assert_eq!(body["name"], "login/github");
     assert_eq!(body["value"], VALUE);
 

@@ -128,7 +128,7 @@ async fn the_owner_submits_and_the_value_only_reaches_the_vault() {
 
     assert_eq!(
         r.secrets
-            .resolve_value_for("login/example/password", None)
+            .resolve_value_for_owner("login/example/password")
             .unwrap()
             .expose(),
         CANARY
@@ -179,7 +179,7 @@ async fn cancel_leaves_nothing_and_an_existing_name_is_not_replaced_silently() {
     assert_eq!(clash.json()["error"]["code"], "secret_request_exists");
     assert_eq!(
         r.secrets
-            .resolve_value_for("login/example/password", None)
+            .resolve_value_for_owner("login/example/password")
             .unwrap()
             .expose(),
         "older-value-123"
@@ -319,7 +319,7 @@ async fn a_failed_login_replace_keeps_the_old_username_and_password() {
     assert_ne!(failed.status, StatusCode::OK);
     let get = |n: &str| {
         r.secrets
-            .resolve_value_for(n, None)
+            .resolve_value_for_owner(n)
             .unwrap()
             .expose()
             .to_owned()
