@@ -6259,6 +6259,12 @@ export interface components {
              * @description Warn when a recipient got mail within this many days (`0` = no warning). Default 14.
              */
             same_recipient_days: number;
+            /**
+             * @description Extra domains a verification mail may link to, besides the site a sign-up
+             *     started on (for example a mail service the site uses). Owner-set; empty
+             *     by default. A bot never sees or changes this list.
+             */
+            verification_link_domains?: string[];
         };
         /** @description An IMAP server (always implicit TLS). */
         EmailImapServer: {

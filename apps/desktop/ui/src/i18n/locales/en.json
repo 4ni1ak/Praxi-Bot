@@ -5941,7 +5941,10 @@
       "saved": "Saved",
       "sentAnyway": "Sent anyway",
       "softHint": "These two are warnings, not blocks.",
-      "title": "Safe sending"
+      "title": "Safe sending",
+      "verifyDomains": "Extra sites a verification e-mail may link to",
+      "verifyDomainsHint": "A bot that signs up on a site gets back only the links of that site from its verification e-mail. If a site sends its mails through another service (for example a tracking domain), add that domain here, one per line (example.com). Leave it empty if you are unsure: the bot then asks you.",
+      "verifyDomainsPlaceholder": "mail.example.com"
     },
     "mode": {
       "moreHint": "Extra controls for fine-tuning",

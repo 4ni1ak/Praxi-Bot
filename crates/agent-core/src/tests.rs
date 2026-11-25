@@ -4416,7 +4416,7 @@ async fn fail_closed_visibility_hides_no_registered_tool_from_an_ordinary_bot() 
         cfg(Policy::full()),
     )
     .with_builtin_tools(builtin_cfg(&env, Arc::new(NoGate)));
-    let registered: std::collections::BTreeSet<String> = lp
+    let mut registered: std::collections::BTreeSet<String> = lp
         .sh
         .tools
         .list()
@@ -4424,6 +4424,10 @@ async fn fail_closed_visibility_hides_no_registered_tool_from_an_ordinary_bot() 
         .filter(|s| crate::shared::platform_ok(&s.platforms))
         .map(|s| s.name)
         .collect();
+    // Offered only to a bot that has a mail identity of its own (see `mail_tests`), like the
+    // connector's e-mail tools: an ordinary bot with no identity is not shown a tool that can
+    // only fail.
+    assert!(registered.remove(builtin_tools::mail_wait::EMAIL_WAIT_FOR));
     assert!(registered.len() > 20, "{registered:?}");
     let visible: std::collections::BTreeSet<String> = lp
         .sh

@@ -62,7 +62,15 @@ pub struct GuardSettings {
     pub opt_out_line: bool,
     /// Text of the opt-out line; `{sender}` is replaced by the sending address. Empty = default.
     pub footer: String,
+    /// Extra domains a verification mail may link to (besides the site the sign-up
+    /// started on), for sites whose mails go through another domain. A host on one
+    /// of them (or below it) counts as followable in `email_wait_for`. Normalised
+    /// domain names, owner-set only; empty by default.
+    pub verification_link_domains: Vec<String>,
 }
+
+/// Most owner-listed verification link domains.
+pub const MAX_VERIFICATION_DOMAINS: usize = 50;
 
 impl Default for GuardSettings {
     fn default() -> Self {
@@ -71,6 +79,7 @@ impl Default for GuardSettings {
             same_recipient_days: DEFAULT_SAME_RECIPIENT_DAYS,
             opt_out_line: true,
             footer: String::new(),
+            verification_link_domains: Vec::new(),
         }
     }
 }
@@ -92,7 +101,29 @@ impl GuardSettings {
         if self.daily_limit > 100_000 || self.same_recipient_days > 3650 {
             return Err("that limit is unreasonably large".into());
         }
+        if self.verification_link_domains.len() > MAX_VERIFICATION_DOMAINS {
+            return Err(format!(
+                "at most {MAX_VERIFICATION_DOMAINS} verification link domains"
+            ));
+        }
+        for d in &self.verification_link_domains {
+            crate::verify::normalize_allowed_domain(d)?;
+        }
         Ok(())
+    }
+
+    /// The verification link allow-list in its normalised form (entries that do
+    /// not normalise are dropped, so a hand-edited file cannot widen anything).
+    #[must_use]
+    pub fn verification_domains(&self) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .verification_link_domains
+            .iter()
+            .filter_map(|d| crate::verify::normalize_allowed_domain(d).ok())
+            .collect();
+        v.sort();
+        v.dedup();
+        v
     }
 
     fn footer_for(&self, sender: &str) -> String {
@@ -629,8 +660,9 @@ impl MailGuard {
     ///
     /// # Errors
     /// Invalid values or a failed save.
-    pub fn set_settings(&self, s: GuardSettings) -> Result<(), String> {
+    pub fn set_settings(&self, mut s: GuardSettings) -> Result<(), String> {
         s.validate()?;
+        s.verification_link_domains = s.verification_domains();
         let text = serde_json::to_string_pretty(&s).map_err(|e| e.to_string())?;
         self.write_json("guard-settings.json", &text)?;
         lock(&self.state).settings = s;

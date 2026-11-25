@@ -5941,7 +5941,10 @@
       "saved": "Kaydedildi",
       "sentAnyway": "Yine de gönderildi",
       "softHint": "Bu ikisi engel değil, uyarıdır.",
-      "title": "Güvenli gönderim"
+      "title": "Güvenli gönderim",
+      "verifyDomains": "Doğrulama e-postasının bağlantı verebileceği ek siteler",
+      "verifyDomainsHint": "Bir sitede kayıt olan bot, doğrulama e-postasından yalnızca o sitenin bağlantılarını alır. Bir site e-postalarını başka bir hizmet üzerinden gönderiyorsa (örneğin bir izleme alan adı), o alan adını buraya satır başına bir tane ekleyin (example.com). Emin değilseniz boş bırakın: bot o zaman size sorar.",
+      "verifyDomainsPlaceholder": "posta.ornek.com"
     },
     "mode": {
       "moreHint": "İnce ayar için ek seçenekler",
