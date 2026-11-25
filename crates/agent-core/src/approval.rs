@@ -970,6 +970,9 @@ impl Shared {
         if ctx.initiator != InitiatorKind::Human {
             return false;
         }
+        if self.own_mail_waived(ctx, name, input) {
+            return true;
+        }
         if self.user_typed_url(ctx, name, input) || self.plain_navigation_waived(ctx, name, input) {
             return true;
         }
@@ -981,6 +984,36 @@ impl Shared {
                     .contains(&(ctx.chat_id, ctx.bot_id, class, dest))
             },
         )
+    }
+
+    /// The two calls of a sign-up that the egress gate would ask about after the
+    /// run read a page or a mail, waived for an OWNER-started run of a bot on the
+    /// Full level: reading the bot's OWN inbox (`email_search`, `email_read`,
+    /// `email_list_folders`, `email_wait_for` on an identity bound to or shared
+    /// with it, never an account every bot may use), and opening exactly a link
+    /// `email_wait_for` returned as followable in this run (https, on the site the
+    /// sign-up started on or an owner-listed domain). A run started by mail, a
+    /// webhook, a schedule or a channel is never waived here: it keeps asking.
+    fn own_mail_waived(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
+        if ctx.profile.permissions.mode() != AutonomyMode::Full || !self.pc_owner_started(ctx) {
+            return false;
+        }
+        match name {
+            "email_search"
+            | "email_read"
+            | "email_list_folders"
+            | builtin_tools::mail_wait::EMAIL_WAIT_FOR => self.mail.get().is_some_and(|c| {
+                c.scoped(Some(&ctx.bot_id.to_string()))
+                    .owns(input.get("account").and_then(Value::as_str))
+            }),
+            "browser_open" => {
+                input.as_object().is_some_and(|o| o.len() == 1)
+                    && input.get("url").and_then(Value::as_str).is_some_and(|u| {
+                        u.starts_with("https://") && ctx.mail_links.lock().contains(u)
+                    })
+            }
+            _ => false,
+        }
     }
 
     /// The taint gate for this call: egress after a read, or a program start
