@@ -22,11 +22,21 @@
     0 var(--shadow-overlay-y) var(--shadow-overlay-blur) calc(var(--space-4) * -1) var(--color-shadow),
     0 var(--size-border-heavy) var(--space-2) calc(var(--space-1) / -2) var(--color-shadow);
   color: var(--color-text);
-  animation: rise var(--motion-duration-fast) ease-out;
+  animation: rise var(--motion-duration-fast) var(--motion-easing-out);
 }
 
 @keyframes rise {
   from { opacity: 0; transform: translateY(var(--space-2)) scale(0.985); }
+}
+
+/* Exit: shorter than the enter, easing in; a closing popover never takes a click. */
+.popover[data-state="closing"] {
+  pointer-events: none;
+  animation: sink var(--motion-duration-exit) var(--motion-easing-in) forwards;
+}
+
+@keyframes sink {
+  to { opacity: 0; transform: translateY(var(--space-1)) scale(0.985); }
 }
 
 :global(:root[data-style="glass"]) .popover,

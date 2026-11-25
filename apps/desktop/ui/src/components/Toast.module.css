@@ -17,13 +17,13 @@
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border: var(--size-border) solid var(--color-border);
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-md);
   background-color: var(--color-surface-elevated);
   box-shadow: var(--shadow-card);
   color: var(--color-text);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-tight);
-  animation: toast-in var(--motion-duration-normal) var(--motion-easing-standard);
+  animation: toast-in var(--motion-duration-normal) var(--motion-easing-out);
 }
 
 /* Toasts float over everything: they take the floating-surface tokens. */
@@ -44,7 +44,20 @@
 }
 
 .info {
-  border-color: var(--color-border-strong);
+  border-color: var(--color-border-hover);
+}
+
+/* Exit: a shorter fade that slides toward the edge it came from; a leaving toast takes no click. */
+.toast[data-state="closing"] {
+  pointer-events: none;
+  animation: toast-out var(--motion-duration-exit) var(--motion-easing-in) forwards;
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
 }
 
 @keyframes toast-in {
@@ -82,19 +95,19 @@
 .actionBtn {
   flex-shrink: 0;
   padding: var(--space-1) var(--space-2);
-  border: var(--size-border) solid var(--color-border-strong);
+  border: var(--size-border) solid var(--color-border-hover);
   border-radius: var(--radius-sm);
   background-color: var(--color-surface);
   color: var(--color-accent-text);
   font: inherit;
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   transition: background-color var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
 .actionBtn:hover {
-  background-color: var(--color-surface-active);
+  background-color: var(--state-hover);
 }
 
 .actionBtn:focus-visible {
@@ -121,7 +134,7 @@
 
 .closeBtn:hover {
   color: var(--color-text);
-  background-color: var(--color-surface-active);
+  background-color: var(--state-hover);
 }
 
 .closeBtn:focus-visible {

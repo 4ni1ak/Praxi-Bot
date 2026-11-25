@@ -1,4 +1,4 @@
-import { Check, ClipboardPaste, ExternalLink, Eye, EyeOff, LoaderCircle } from "lucide-react";
+import { Check, ChevronDown, ClipboardPaste, ExternalLink, Eye, EyeOff, KeyRound, LoaderCircle, Monitor } from "lucide-react";
 import { type Dispatch, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
@@ -10,11 +10,11 @@ import { ConnectionTestButton } from "../../components/ConnectionTest";
 import { LocalInstallCard } from "../../components/LocalInstallCard";
 import { LocalModelsAdvice } from "../../components/LocalModelsAdvice";
 import { ModelPicker } from "../../components/ModelPicker";
+import { Skeleton, SkeletonRegion } from "../../components/Skeleton";
 import { detectKeyProvider, keyTargets, looksLikeKey, saveProviderKey, scrubSecret } from "../../lib/apiKey";
 import { brandOf } from "../../lib/cliCards";
 import { openExternal } from "../../lib/externalLink";
 import {
-  API_GROUPS,
   type ApiGroup,
   autoModelFor,
   classifyConnectError,
@@ -75,6 +75,10 @@ export function BrainStep({
   /** The provider the last connect attempt used: what "Test connection" asks the daemon about. */
   const [lastProvider, setLastProvider] = useState("");
   const keyInput = useRef<HTMLInputElement | null>(null);
+  /** The one extra list the person opened: their own key, or "More ways to connect". */
+  const [openSection, setOpenSection] = useState<"own" | "more" | null>(null);
+  /** The list of apps found on this computer is open (only when more than one was found). */
+  const [hereChosen, setHereChosen] = useState(false);
   /** Local model servers answering on loopback (null while looking). */
   const [local, setLocal] = useState<LocalServer[] | null>(null);
   const canProbeLocal = !mock && isTauriRuntime() && canManageProviders(providerTarget);
@@ -304,249 +308,364 @@ export function BrainStep({
   const keyOpen = group !== null && group !== "ollama" && !connected;
   const keyProblem = keyOpen ? keyShapeProblem(group, key) : null;
 
+  const hereNames = ready.map((e) => e.detected.display_name);
+  const single = ready.length === 1 ? ready[0]! : null;
+  const hereOpen = hereChosen || state.choice?.kind === "cli";
+  const ownGroup = group === "anthropic" || group === "openai";
+  const ownOpen = openSection === "own" || ownGroup;
+  const moreOpen = openSection === "more" || group === "ollama";
+  const moreHasFound = ollamaFound || otherLocal.length > 0;
+
+  /** The key field with its Paste / Connect buttons, shown right under the choice that asked for the key. */
+  const keyPanel = keyOpen && group ? (
+    <section className={styles.panel} aria-label={t("firstRun.brain.keyLabel", { name: groupName })}>
+      <div className={styles.panelHead}>
+        <label className={styles.panelLabel} htmlFor="fr-key">
+          {t("firstRun.brain.keyLabel", { name: groupName })}
+        </label>
+        {group === "openai" ? (
+          <span className={styles.compat} role="group" aria-label={groupName}>
+            {COMPAT_IDS.map((id) => {
+              const active = (compat ?? providerFor(group, key)) === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={`${styles.chip} ${active ? styles.chipOn : ""}`}
+                  aria-pressed={active}
+                  onClick={() => setCompat(id)}
+                >
+                  {providerBrand(id).label}
+                </button>
+              );
+            })}
+          </span>
+        ) : null}
+        <Button
+          size="sm"
+          variant="ghost"
+          data-testid="fr-get-key"
+          onClick={() => openExternal(group === "openai" ? COMPAT_PAGES[providerFor(group, key)] ?? KEY_PAGES.openai : KEY_PAGES[group])}
+        >
+          {group === "gemini" ? t("firstRun.brain.getFreeKey") : t("firstRun.brain.getKey")}
+          <ExternalLink aria-hidden="true" />
+        </Button>
+      </div>
+      <div className={`${styles.keyRow} ${error ? styles.keyRowBad : ""}`}>
+        <input
+          id="fr-key"
+          ref={keyInput}
+          className={styles.keyInput}
+          type={shown ? "text" : "password"}
+          name="praxi-first-run-key"
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          placeholder={t("firstRun.brain.keyPlaceholder")}
+          value={key}
+          disabled={busy}
+          aria-invalid={error ? true : undefined}
+          aria-describedby="fr-key-status"
+          data-testid="fr-key"
+          onChange={(e) => setKey(e.target.value)}
+          onPaste={(e) => {
+            const text = e.clipboardData.getData("text").trim();
+            if (text) {
+              e.preventDefault();
+              setKey(text);
+              submitKey(text);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              submitKey();
+            }
+          }}
+        />
+        <button
+          type="button"
+          className={styles.iconBtn}
+          aria-label={shown ? t("firstRun.brain.hide") : t("firstRun.brain.show")} title={shown ? t("firstRun.brain.hide") : t("firstRun.brain.show")}
+          aria-pressed={shown}
+          onClick={() => setShown((v) => !v)}
+        >
+          {shown ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+        </button>
+        <Button size="sm" variant="secondary" disabled={busy} onClick={() => void paste()} data-testid="fr-paste">
+          <ClipboardPaste aria-hidden="true" />
+          {t("firstRun.brain.paste")}
+        </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={busy || !looksLikeKey(key)}
+          onClick={() => submitKey()}
+          data-testid="fr-connect"
+        >
+          {t("firstRun.brain.connect")}
+        </Button>
+      </div>
+      <p id="fr-key-status" className={error ? styles.statusBad : styles.status} role={error ? "alert" : "status"}>
+        {busy ? (
+          <>
+            <LoaderCircle className={styles.spin} aria-hidden="true" />
+            {t("firstRun.brain.checking")}
+          </>
+        ) : (
+          error ?? (keyProblem ? t(`firstRun.brain.keyProblem.${keyProblem}`) : t("firstRun.brain.keyHint"))
+        )}
+      </p>
+      {error && !busy && lastProvider ? (
+        <ConnectionTestButton
+          testId="fr-test-connection"
+          run={() => (client ? client.testConnection("provider", { id: lastProvider }) : Promise.reject(new Error("daemon not connected")))}
+        />
+      ) : null}
+    </section>
+  ) : null;
+
   return (
     <div className={styles.stack}>
       {engines === null ? (
-        <p className={styles.looking} role="status">
-          <LoaderCircle className={styles.spin} aria-hidden="true" />
-          {t("firstRun.brain.looking")}
-        </p>
-      ) : ready.length > 0 && !connected ? (
-        <section className={styles.block} aria-labelledby="fr-found">
-          <h2 id="fr-found" className={styles.eyebrow}>{t("firstRun.brain.foundTitle")}</h2>
-          <div className={styles.cards} role="group" aria-label={t("firstRun.brain.foundTitle")}>
-            {ready.map((e) => {
-              const d = e.detected;
-              const on = picked(d.id);
-              return (
+        <SkeletonRegion label={t("firstRun.brain.looking")}>
+          <div className={styles.skeletons}>
+            <Skeleton height="var(--size-choice-height)" />
+            <Skeleton height="var(--size-choice-height)" />
+          </div>
+        </SkeletonRegion>
+      ) : null}
+
+      {engines !== null && !connected ? (
+        <div className={styles.choices} role="group" aria-label={t("firstRun.brain.choices")}>
+          {ready.length > 0 ? (
+            <div className={styles.choiceBlock}>
+              {single ? (
                 <button
-                  key={d.id}
                   type="button"
-                  className={`${styles.card} ${styles.cliCard} ${on ? styles.cardOn : ""}`}
-                  aria-pressed={on}
+                  className={`${styles.card} ${styles.choice} ${picked(single.detected.id) ? styles.cardOn : ""}`}
+                  aria-pressed={picked(single.detected.id)}
                   disabled={busy}
-                  data-testid={`fr-cli-${d.id}`}
-                  onClick={() => void connectCli(e)}
+                  data-testid={`fr-cli-${single.detected.id}`}
+                  onClick={() => void connectCli(single)}
                 >
-                  <BrandIcon name={brandOf(d.id)} bare size={26} />
+                  <span className={styles.tile}>
+                    <BrandIcon name={brandOf(single.detected.id)} bare size={24} />
+                  </span>
                   <span className={styles.cardText}>
-                    <span className={styles.cardTitle}>{t("firstRun.brain.useCli", { name: d.display_name })}</span>
+                    <span className={styles.cardTitle}>{t("firstRun.brain.useCli", { name: single.detected.display_name })}</span>
                     <span className={styles.cardSub}>
-                      {d.account_label
-                        ? t("firstRun.brain.cliSubAccount", { account: d.account_label })
+                      {single.detected.account_label
+                        ? t("firstRun.brain.cliSubAccount", { account: single.detected.account_label })
                         : t("firstRun.brain.cliSub")}
                     </span>
                   </span>
-                  {on ? <Check className={styles.tick} aria-hidden="true" /> : null}
                 </button>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
-
-      {engines !== null && !connected ? (
-        <section className={styles.block} aria-labelledby="fr-easy">
-          <h2 id="fr-easy" className={styles.eyebrow}>{t("firstRun.brain.easyTitle")}</h2>
-          <button
-            type="button"
-            className={`${styles.card} ${styles.easy} ${group === "gemini" ? styles.cardOn : ""}`}
-            aria-pressed={group === "gemini"}
-            disabled={busy}
-            data-testid="fr-api-gemini"
-            onClick={() => pickApi("gemini")}
-          >
-            <BrandIcon name="gemini" bare size={26} />
-            <span className={styles.cardText}>
-              <span className={styles.cardTitle}>
-                {t("firstRun.brain.freeTitle")}
-                <span className={styles.badge}>{t("firstRun.brain.providers.gemini.badge")}</span>
-              </span>
-              <span className={styles.cardSub}>{t("firstRun.brain.freeSub")}</span>
-            </span>
-          </button>
-          {group === "gemini" && keyOpen ? (
-            <ol className={styles.steps} data-testid="fr-gemini-steps">
-              {(["one", "two", "three"] as const).map((n) => (
-                <li key={n}>{t(`firstRun.brain.freeSteps.${n}`)}</li>
-              ))}
-            </ol>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className={`${styles.card} ${styles.choice} ${hereOpen ? styles.cardOpen : ""}`}
+                    aria-expanded={hereOpen}
+                    aria-controls="fr-here-list"
+                    disabled={busy}
+                    data-testid="fr-here"
+                    onClick={() => setHereChosen((v) => !v)}
+                  >
+                    <span className={styles.tile}>
+                      <Monitor aria-hidden="true" />
+                    </span>
+                    <span className={styles.cardText}>
+                      <span className={styles.cardTitle}>{t("firstRun.brain.here.title")}</span>
+                      <span className={styles.cardSub}>
+                        {t("firstRun.brain.here.sub", {
+                          names: hereNames.length > 2 ? `${hereNames.slice(0, 2).join(", ")} +${hereNames.length - 2}` : hereNames.join(", ")
+                        })}
+                      </span>
+                    </span>
+                    <ChevronDown className={styles.chevron} aria-hidden="true" />
+                  </button>
+                  {hereOpen ? (
+                    <div id="fr-here-list" className={styles.nested} role="group" aria-label={t("firstRun.brain.foundTitle")}>
+                      {ready.map((e) => {
+                        const d = e.detected;
+                        const on = picked(d.id);
+                        return (
+                          <button
+                            key={d.id}
+                            type="button"
+                            className={`${styles.card} ${styles.cliCard} ${on ? styles.cardOn : ""}`}
+                            aria-pressed={on}
+                            disabled={busy}
+                            data-testid={`fr-cli-${d.id}`}
+                            onClick={() => void connectCli(e)}
+                          >
+                            <BrandIcon name={brandOf(d.id)} bare size={22} />
+                            <span className={styles.cardText}>
+                              <span className={styles.cardTitle}>{d.display_name}</span>
+                              {d.account_label ? <span className={styles.cardSub}>{d.account_label}</span> : null}
+                            </span>
+                            {on ? <Check className={styles.tick} aria-hidden="true" /> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </div>
           ) : null}
-        </section>
-      ) : null}
 
-      {engines !== null && !connected ? (
-        <section className={styles.block} aria-labelledby="fr-api">
-          <h2 id="fr-api" className={styles.eyebrow}>
-            {ready.length > 0 ? t("firstRun.brain.apiTitleAfter") : t("firstRun.brain.apiTitle")}
-          </h2>
-          <div className={styles.tiles} role="group" aria-label={t("firstRun.brain.apiTitle")}>
-            {API_GROUPS.filter((g) => g !== "gemini").map((g) => {
-              const on = group === g;
-              const badge = g === "ollama" && ollamaFound
-                ? t("firstRun.brain.providers.ollama.found")
-                : t(`firstRun.brain.providers.${g}.badge`);
-              return (
-                <button
-                  key={g}
-                  type="button"
-                  className={`${styles.card} ${styles.tile} ${on ? styles.cardOn : ""}`}
-                  aria-pressed={on}
-                  disabled={busy}
-                  data-testid={`fr-api-${g}`}
-                  onClick={() => pickApi(g)}
-                >
-                  <span className={styles.tileHead}>
-                    <BrandIcon name={g === "openai" ? "openai" : g} bare size={20} />
-                    {badge ? <span className={styles.badge}>{badge}</span> : null}
-                  </span>
-                  <span className={styles.cardTitle}>{t(`firstRun.brain.providers.${g}.name`)}</span>
-                  <span className={styles.cardSub}>{t(`firstRun.brain.providers.${g}.sub`)}</span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
-
-      {group === "ollama" && !connected ? (
-        <>
-          <LocalInstallCard />
-          <LocalModelsAdvice />
-        </>
-      ) : null}
-
-      {otherLocal.length > 0 && !connected ? (
-        <section className={styles.block} aria-labelledby="fr-local">
-          <h2 id="fr-local" className={styles.eyebrow}>{t("firstRun.brain.localTitle")}</h2>
-          <div className={styles.cards} role="group" aria-label={t("firstRun.brain.localTitle")}>
-            {otherLocal.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                className={`${styles.card} ${styles.cliCard}`}
-                disabled={busy}
-                data-testid={`fr-local-${s.id}`}
-                onClick={() => connectLocal(s)}
-              >
-                <span className={styles.cardText}>
-                  <span className={styles.cardTitle}>{t("firstRun.brain.useCli", { name: t(`firstRun.brain.local.${s.id}`) })}</span>
-                  <span className={styles.cardSub}>{t(s.models.length === 1 ? "firstRun.brain.localSubOne" : "firstRun.brain.localSubMany", { count: s.models.length })}</span>
-                  <span className={styles.cardSub} data-testid={`fr-local-url-${s.id}`}>{s.baseUrl}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {keyOpen && group ? (
-        <section className={styles.panel} aria-label={t("firstRun.brain.keyLabel", { name: groupName })}>
-          <div className={styles.panelHead}>
-            <label className={styles.panelLabel} htmlFor="fr-key">
-              {t("firstRun.brain.keyLabel", { name: groupName })}
-            </label>
-            {group === "openai" ? (
-              <span className={styles.compat} role="group" aria-label={groupName}>
-                {COMPAT_IDS.map((id) => {
-                  const active = (compat ?? providerFor(group, key)) === id;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      className={`${styles.chip} ${active ? styles.chipOn : ""}`}
-                      aria-pressed={active}
-                      onClick={() => setCompat(id)}
-                    >
-                      {providerBrand(id).label}
-                    </button>
-                  );
-                })}
-              </span>
-            ) : null}
-            <Button
-              size="sm"
-              variant="ghost"
-              data-testid="fr-get-key"
-              onClick={() => openExternal(group === "openai" ? COMPAT_PAGES[providerFor(group, key)] ?? KEY_PAGES.openai : KEY_PAGES[group])}
-            >
-              {group === "gemini" ? t("firstRun.brain.getFreeKey") : t("firstRun.brain.getKey")}
-              <ExternalLink aria-hidden="true" />
-            </Button>
-          </div>
-          <div className={`${styles.keyRow} ${error ? styles.keyRowBad : ""}`}>
-            <input
-              id="fr-key"
-              ref={keyInput}
-              className={styles.keyInput}
-              type={shown ? "text" : "password"}
-              name="praxi-first-run-key"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              placeholder={t("firstRun.brain.keyPlaceholder")}
-              value={key}
-              disabled={busy}
-              aria-invalid={error ? true : undefined}
-              aria-describedby="fr-key-status"
-              data-testid="fr-key"
-              onChange={(e) => setKey(e.target.value)}
-              onPaste={(e) => {
-                const text = e.clipboardData.getData("text").trim();
-                if (text) {
-                  e.preventDefault();
-                  setKey(text);
-                  submitKey(text);
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  submitKey();
-                }
-              }}
-            />
+          <div className={styles.choiceBlock}>
             <button
               type="button"
-              className={styles.iconBtn}
-              aria-label={shown ? t("firstRun.brain.hide") : t("firstRun.brain.show")} title={shown ? t("firstRun.brain.hide") : t("firstRun.brain.show")}
-              aria-pressed={shown}
-              onClick={() => setShown((v) => !v)}
+              className={`${styles.card} ${styles.choice} ${group === "gemini" ? styles.cardOn : ""}`}
+              aria-pressed={group === "gemini"}
+              disabled={busy}
+              data-testid="fr-api-gemini"
+              onClick={() => pickApi("gemini")}
             >
-              {shown ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+              <span className={styles.tile}>
+                <BrandIcon name="gemini" bare size={24} />
+              </span>
+              <span className={styles.cardText}>
+                <span className={styles.cardTitle}>
+                  {t("firstRun.brain.freeTitle")}
+                  <span className={styles.badge}>{t("firstRun.brain.providers.gemini.badge")}</span>
+                </span>
+                <span className={styles.cardSub}>{t("firstRun.brain.freeSub")}</span>
+              </span>
             </button>
-            <Button size="sm" variant="secondary" disabled={busy} onClick={() => void paste()} data-testid="fr-paste">
-              <ClipboardPaste aria-hidden="true" />
-              {t("firstRun.brain.paste")}
-            </Button>
-            <Button
-              size="sm"
-              variant="primary"
-              disabled={busy || !looksLikeKey(key)}
-              onClick={() => submitKey()}
-              data-testid="fr-connect"
-            >
-              {t("firstRun.brain.connect")}
-            </Button>
-          </div>
-          <p id="fr-key-status" className={error ? styles.statusBad : styles.status} role={error ? "alert" : "status"}>
-            {busy ? (
+            {group === "gemini" && keyOpen ? (
               <>
-                <LoaderCircle className={styles.spin} aria-hidden="true" />
-                {t("firstRun.brain.checking")}
+                <ol className={styles.steps} data-testid="fr-gemini-steps">
+                  {(["one", "two", "three"] as const).map((n) => (
+                    <li key={n}>{t(`firstRun.brain.freeSteps.${n}`)}</li>
+                  ))}
+                </ol>
+                {keyPanel}
               </>
-            ) : (
-              error ?? (keyProblem ? t(`firstRun.brain.keyProblem.${keyProblem}`) : t("firstRun.brain.keyHint"))
-            )}
-          </p>
-          {error && !busy && lastProvider ? (
-            <ConnectionTestButton
-              testId="fr-test-connection"
-              run={() => (client ? client.testConnection("provider", { id: lastProvider }) : Promise.reject(new Error("daemon not connected")))}
-            />
+            ) : null}
+          </div>
+
+          <div className={styles.choiceBlock}>
+            <button
+              type="button"
+              className={`${styles.card} ${styles.choice} ${ownOpen ? styles.cardOpen : ""}`}
+              aria-expanded={ownOpen}
+              aria-controls="fr-own-list"
+              disabled={busy}
+              data-testid="fr-own"
+              onClick={() => setOpenSection((v) => (v === "own" ? null : "own"))}
+            >
+              <span className={styles.tile}>
+                <KeyRound aria-hidden="true" />
+              </span>
+              <span className={styles.cardText}>
+                <span className={styles.cardTitle}>{t("firstRun.brain.own.title")}</span>
+                <span className={styles.cardSub}>{t("firstRun.brain.own.sub")}</span>
+              </span>
+              <ChevronDown className={styles.chevron} aria-hidden="true" />
+            </button>
+            {ownOpen ? (
+              <>
+                <div id="fr-own-list" className={styles.tiles} role="group" aria-label={t("firstRun.brain.own.title")}>
+                  {(["anthropic", "openai"] as const).map((g) => {
+                    const on = group === g;
+                    return (
+                      <button
+                        key={g}
+                        type="button"
+                        className={`${styles.card} ${styles.cliCard} ${on ? styles.cardOn : ""}`}
+                        aria-pressed={on}
+                        disabled={busy}
+                        data-testid={`fr-api-${g}`}
+                        onClick={() => pickApi(g)}
+                      >
+                        <BrandIcon name={g} bare size={22} />
+                        <span className={styles.cardText}>
+                          <span className={styles.cardTitle}>{t(`firstRun.brain.providers.${g}.name`)}</span>
+                          <span className={styles.cardSub}>{t(`firstRun.brain.providers.${g}.sub`)}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {ownGroup ? keyPanel : null}
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {engines !== null && !connected ? (
+        <div className={styles.more}>
+          <button
+            type="button"
+            className={styles.moreToggle}
+            aria-expanded={moreOpen}
+            aria-controls="fr-more-list"
+            disabled={busy}
+            data-testid="fr-more"
+            onClick={() => setOpenSection((v) => (v === "more" ? null : "more"))}
+          >
+            <ChevronDown className={styles.chevron} aria-hidden="true" />
+            {t("firstRun.brain.more.toggle")}
+            {moreHasFound && !moreOpen ? <span className={styles.dot} aria-hidden="true" /> : null}
+          </button>
+          {moreOpen ? (
+            <div id="fr-more-list" className={styles.moreList}>
+              <p className={styles.moreHint}>{t("firstRun.brain.more.hint")}</p>
+              <button
+                type="button"
+                className={`${styles.card} ${styles.cliCard} ${group === "ollama" ? styles.cardOn : ""}`}
+                aria-pressed={group === "ollama"}
+                disabled={busy}
+                data-testid="fr-api-ollama"
+                onClick={() => pickApi("ollama")}
+              >
+                <BrandIcon name="ollama" bare size={22} />
+                <span className={styles.cardText}>
+                  <span className={styles.cardTitle}>
+                    {t("firstRun.brain.providers.ollama.name")}
+                    {ollamaFound ? <span className={styles.badge}>{t("firstRun.brain.providers.ollama.found")}</span> : null}
+                  </span>
+                  <span className={styles.cardSub}>{t("firstRun.brain.providers.ollama.sub")}</span>
+                </span>
+              </button>
+              {group === "ollama" ? (
+                <>
+                  <LocalInstallCard />
+                  <LocalModelsAdvice />
+                </>
+              ) : null}
+              {otherLocal.length > 0 ? (
+                <section className={styles.block} aria-labelledby="fr-local">
+                  <h2 id="fr-local" className={styles.eyebrow}>{t("firstRun.brain.localTitle")}</h2>
+                  <div className={styles.cards} role="group" aria-label={t("firstRun.brain.localTitle")}>
+                    {otherLocal.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        className={`${styles.card} ${styles.cliCard}`}
+                        disabled={busy}
+                        data-testid={`fr-local-${s.id}`}
+                        onClick={() => connectLocal(s)}
+                      >
+                        <span className={styles.cardText}>
+                          <span className={styles.cardTitle}>{t("firstRun.brain.useCli", { name: t(`firstRun.brain.local.${s.id}`) })}</span>
+                          <span className={styles.cardSub}>{t(s.models.length === 1 ? "firstRun.brain.localSubOne" : "firstRun.brain.localSubMany", { count: s.models.length })}</span>
+                          <span className={styles.cardSub} data-testid={`fr-local-url-${s.id}`}>{s.baseUrl}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+            </div>
           ) : null}
-        </section>
+        </div>
       ) : null}
 
       {(group === "ollama" || (!group && !state.choice)) && busy ? (

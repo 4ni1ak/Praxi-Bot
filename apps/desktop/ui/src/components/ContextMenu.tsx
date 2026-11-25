@@ -59,6 +59,7 @@ import {
 } from "../lib/contextMenu";
 import { layerStack } from "../lib/modalStack";
 import { popoverEscapeAction, popoverPressAction } from "../lib/popoverLayers";
+import { usePresence } from "../lib/presence";
 import styles from "./ContextMenu.module.css";
 
 const ICONS: Record<MenuIcon, LucideIcon> = {
@@ -215,11 +216,26 @@ export function useContextMenu() {
     [openAt]
   );
 
-  const menu = request ? <ContextMenu key={`${request.x}:${request.y}:${request.spec.label}`} request={request} onClose={close} /> : null;
+  // The menu stays mounted for its short exit, inert, showing the request it had when it closed.
+  const { mounted, closing } = usePresence(request !== null);
+  const lastRequest = useRef<MenuRequest | null>(request);
+  if (request) lastRequest.current = request;
+  const shown = request ?? (mounted ? lastRequest.current : null);
+  const menu = shown ? (
+    <ContextMenu key={`${shown.x}:${shown.y}:${shown.spec.label}`} request={shown} closing={closing} onClose={close} />
+  ) : null;
   return { bind, menu, close: () => close(false) };
 }
 
-function ContextMenu({ request, onClose }: { request: MenuRequest; onClose: (restoreFocus: boolean) => void }) {
+function ContextMenu({
+  request,
+  closing,
+  onClose
+}: {
+  request: MenuRequest;
+  closing: boolean;
+  onClose: (restoreFocus: boolean) => void;
+}) {
   const root = useRef<HTMLDivElement | null>(null);
   const [place, setPlace] = useState<Placement | null>(null);
   const seqRef = useRef(0);
@@ -243,6 +259,7 @@ function ContextMenu({ request, onClose }: { request: MenuRequest; onClose: (res
   }, [request]);
 
   useEffect(() => {
+    if (closing) return undefined;
     const seq = seqRef.current;
     layerStack.add(seq);
     const el = root.current;
@@ -296,7 +313,7 @@ function ContextMenu({ request, onClose }: { request: MenuRequest; onClose: (res
       window.removeEventListener("hashchange", dismiss);
       layerStack.remove(seq);
     };
-  }, [request, items, onClose]);
+  }, [request, items, onClose, closing]);
 
   const focusIndex = (i: number) => root.current?.querySelector<HTMLElement>(`[data-idx="${i}"]`)?.focus({ preventScroll: true });
   const current = () => {
@@ -332,6 +349,9 @@ function ContextMenu({ request, onClose }: { request: MenuRequest; onClose: (res
       className={styles.menu}
       role="menu"
       aria-label={label}
+      aria-hidden={closing || undefined}
+      inert={closing}
+      data-state={closing ? "closing" : "open"}
       tabIndex={-1}
       data-testid="context-menu"
       style={{

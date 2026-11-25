@@ -1,17 +1,4 @@
-import { StreamQuality } from "../components/StreamQuality";
-import {
-  ArrowLeft,
-  CircleHelp,
-  Ellipsis,
-  Globe,
-  Info,
-  Maximize2,
-  Minimize2,
-  Monitor,
-  OctagonX,
-  PanelRight,
-  RefreshCw
-} from "lucide-react";
+import { ArrowLeft, Globe, Info, Monitor, OctagonX, RefreshCw } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -27,6 +14,7 @@ import { PeerLinkBadge } from "../components/PeerLinkBadge";
 import { Button } from "ui";
 import { PendingDecisions } from "../components/PendingDecisions";
 import { TargetPicker } from "../components/TargetPicker";
+import { LiveViewMenu } from "./LiveViewMenu";
 import type { HumanAction, TargetInfo } from "../api/types";
 import {
   computeContainedImageRect,
@@ -48,7 +36,6 @@ import {
 } from "../lib/liveViewState";
 import { viewerKeyAction } from "../lib/liveViewLayers";
 import {
-  VIEWER_SHORTCUTS,
   toggleFit,
   viewerAnnouncementKey,
   viewerShortcut,
@@ -184,8 +171,6 @@ export function LiveViewer({
   const [captureTab, setCaptureTab] = useState(false);
   const [imeBuffer, setImeBuffer] = useState("");
   const [fit, setFit] = useState<FitMode>("fit");
-  const [helpOpen, setHelpOpen] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
   // The latest "take over" ability for the key handler, which lives above the early return.
   const takeoverRef = useRef<(() => void) | null>(null);
   const [stageBox, setStageBox] = useState<{ w: number; h: number }>({
@@ -280,13 +265,6 @@ export function LiveViewer({
       return undefined;
     }
     const onGlobalKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape" && (helpOpen || moreOpen) && layerStack.isTop(layerSeqRef.current)) {
-        // A small popover is open: Esc closes it first, not the whole viewer.
-        e.preventDefault();
-        setHelpOpen(false);
-        setMoreOpen(false);
-        return;
-      }
       const shortcut = layerStack.isTop(layerSeqRef.current)
         ? viewerShortcut(
             {
@@ -333,7 +311,7 @@ export function LiveViewer({
     };
     window.addEventListener("keydown", onGlobalKey);
     return () => window.removeEventListener("keydown", onGlobalKey);
-  }, [overlayOpen, isInteractive, stageFocused, closeViewer, helpOpen, moreOpen, applyChatMode]);
+  }, [overlayOpen, isInteractive, stageFocused, closeViewer, applyChatMode]);
 
   const mapPointer = useCallback(
     (clientX: number, clientY: number, clamp: boolean) => {
@@ -582,86 +560,10 @@ export function LiveViewer({
             title={controlBusy ? t("liveView.targetLocked") : undefined}
             testId="live-viewer-target-select"
           />
-          <button
-            type="button"
-            className={styles.iconBtn}
-            title={t("liveView.refresh")}
-            aria-label={t("liveView.refresh")}
-            disabled={loadingTargets}
-            onClick={() => void refreshTargets()}
-          >
-            <RefreshCw />
-          </button>
         </div>
 
         <div className={styles.headerRight}>
-          <div
-            id="live-viewer-tools"
-            className={styles.tools}
-            data-open={moreOpen ? "true" : "false"}
-            data-testid="live-viewer-tools"
-          >
-            <StreamQuality mode={qualityMode} onChange={setQualityMode} />
-            <PeerLinkBadge enabled={source === "home" && !isLocalClient} className={styles.stateBadge} />
-          </div>
-          <button
-            type="button"
-            className={`${styles.iconBtn} ${styles.moreBtn}`}
-            aria-expanded={moreOpen}
-            aria-controls="live-viewer-tools"
-            title={t("liveView.toolbar.more")}
-            aria-label={t("liveView.toolbar.more")}
-            data-testid="live-viewer-more"
-            onClick={() => setMoreOpen((open) => !open)}
-          >
-            <Ellipsis />
-          </button>
-          <button
-            type="button"
-            className={styles.iconBtn}
-            aria-pressed={fit === "fill"}
-            title={t(fit === "fill" ? "liveView.toolbar.fitOn" : "liveView.toolbar.fitOff")}
-            aria-label={t(fit === "fill" ? "liveView.toolbar.fitOn" : "liveView.toolbar.fitOff")}
-            aria-keyshortcuts="F"
-            data-testid="live-viewer-fit"
-            onClick={() => setFit(toggleFit)}
-          >
-            {fit === "fill" ? <Minimize2 /> : <Maximize2 />}
-          </button>
-          <div className={styles.helpWrap}>
-            <button
-              type="button"
-              className={styles.iconBtn}
-              aria-expanded={helpOpen}
-              aria-controls="live-viewer-shortcuts"
-              title={t("liveView.toolbar.shortcuts")}
-              aria-label={t("liveView.toolbar.shortcuts")}
-              data-testid="live-viewer-help"
-              onClick={() => setHelpOpen((open) => !open)}
-            >
-              <CircleHelp />
-            </button>
-            {helpOpen ? (
-              <div
-                id="live-viewer-shortcuts"
-                className={styles.helpPanel}
-                role="group"
-                aria-label={t("liveView.toolbar.shortcuts")}
-                data-testid="live-viewer-shortcuts"
-              >
-                <dl>
-                  {VIEWER_SHORTCUTS.map((item) => (
-                    <div key={item.id}>
-                      <dt>
-                        <kbd>{item.keys}</kbd>
-                      </dt>
-                      <dd>{t(`liveView.toolbar.keys.${item.id}`)}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
-            ) : null}
-          </div>
+          <PeerLinkBadge enabled={source === "home" && !isLocalClient} className={styles.stateBadge} />
           <span
             className={styles.stateBadge}
             data-tone={tone}
@@ -670,19 +572,15 @@ export function LiveViewer({
             <i className={styles.stateDot} aria-hidden="true" />
             <span>{badgeLabel}</span>
           </span>
-          {infoPanel ? (
-            <button
-              type="button"
-              className={styles.iconBtn}
-              aria-pressed={infoPanel.open}
-              title={t("liveView.infoPanel")}
-              aria-label={t("liveView.infoPanel")}
-              data-testid="live-viewer-info"
-              onClick={infoPanel.onToggle}
-            >
-              <PanelRight />
-            </button>
-          ) : null}
+          <LiveViewMenu
+            quality={qualityMode}
+            onQuality={setQualityMode}
+            fit={fit}
+            onToggleFit={() => setFit(toggleFit)}
+            onRefresh={() => void refreshTargets()}
+            refreshing={loadingTargets}
+            infoPanel={infoPanel ? { open: infoPanel.open, onToggle: infoPanel.onToggle } : undefined}
+          />
           {actions.includes("stop") ? (
             <Button
               variant="danger"

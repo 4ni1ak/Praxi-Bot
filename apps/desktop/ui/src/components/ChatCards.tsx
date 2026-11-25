@@ -52,7 +52,7 @@ import {
   type ScheduleApprovalDetails
 } from "../lib/approvalDetails";
 import { approvalKeyAction } from "../lib/approvalKeys";
-import { approvalRisk, type ApprovalRisk } from "../lib/approvalRisk";
+import { approvalRisk, enterMayAllowCall, type ApprovalRisk } from "../lib/approvalRisk";
 import { brandIcon } from "../lib/brandIcons";
 import { describeTool, resolveToolCall } from "../lib/toolLabels";
 import { SiteFavicon } from "./SiteFavicon";
@@ -246,9 +246,14 @@ const RISK_ICON: Record<ApprovalRisk, LucideIcon> = {
   delete: Trash2
 };
 
-/** Enter may allow this card once: it carries nothing the owner has to read first. */
+/**
+ * Enter may allow this card once: only a call that merely looks (see `enterMayAllowCall`). Deleting,
+ * running a shell or a program, changing something, sending, mail, egress, payments and secrets all
+ * need a click on Allow.
+ */
 export function enterMayAllow(tool: ToolItem): boolean {
   return (
+    enterMayAllowCall(tool.name, tool.input, tool.details) &&
     !isOutboundSend(tool.name) &&
     (mailSendDetails(tool.details) ?? null) === null &&
     !egressDetails(tool.details)

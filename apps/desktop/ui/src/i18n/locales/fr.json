@@ -3413,7 +3413,7 @@
       "createFailed": "Your bot could not be created. Nothing was saved. Try again in a moment.",
       "defaultName": "Praxi",
       "noService": "Praxi's background service is not running yet. Wait a few seconds and try again.",
-      "recap": "Brain: {{model}} · Freedom: {{level}}",
+      "recap": "IA : {{model}} · Liberté : {{level}}",
       "subtitle": "Give it a name and a look. You can change both later.",
       "title": "Meet your bot",
       "tryTitle": "Try this first",
@@ -3422,11 +3422,10 @@
       "whereTitle": "Where your bot runs"
     },
     "brain": {
-      "another": "Pick a different brain",
-      "apiTitle": "Use your own AI account",
-      "apiTitleAfter": "Or use your own AI account",
+      "another": "En choisir une autre",
       "change": "Change",
       "checking": "Checking…",
+      "choices": "Comment voulez-vous commencer ?",
       "cliReady": "{{name}} is ready",
       "cliSub": "Your subscription · no key needed",
       "cliSubAccount": "{{account}} · no key needed",
@@ -3434,7 +3433,6 @@
       "connected": "Connected",
       "connectedModel": "Connected · {{count}} model",
       "connectedModels": "Connected · {{count}} models",
-      "easyTitle": "The easiest way",
       "foundTitle": "Already on this computer",
       "freeSteps": {
         "one": "Press “Get my key”. A Google page opens in your browser.",
@@ -3445,6 +3443,10 @@
       "freeTitle": "Use a free model",
       "getFreeKey": "Get my key",
       "getKey": "Get a key",
+      "here": {
+        "sub": "{{names}} · aucune clé nécessaire",
+        "title": "Utiliser ce qui est déjà sur cet ordinateur"
+      },
       "hide": "Hide key",
       "keyHint": "Saved in your system keychain. It is never shown again.",
       "keyLabel": "{{name}} API key",
@@ -3464,6 +3466,14 @@
       "localTitle": "Also running on this computer",
       "looking": "Looking for what is already on this computer…",
       "model": "Model",
+      "more": {
+        "hint": "Des modèles qui fonctionnent sur cet ordinateur, sans internet.",
+        "toggle": "Autres façons de se connecter"
+      },
+      "own": {
+        "sub": "Auprès d'Anthropic, OpenAI, OpenRouter ou DeepSeek.",
+        "title": "J'ai une clé d'accès"
+      },
       "paste": "Paste",
       "providers": {
         "anthropic": {
@@ -3490,8 +3500,8 @@
       },
       "recommended": "Recommended",
       "show": "Show key",
-      "subtitle": "This is the model that thinks for your bot. You can change it any time.",
-      "title": "Choose a brain",
+      "subtitle": "C'est l'IA qui réfléchit pour votre bot. Vous pourrez la changer à tout moment.",
+      "title": "Connectez une IA",
       "useCli": "Use {{name}}"
     },
     "creating": "Creating…",
@@ -3559,7 +3569,7 @@
     "start": "Start",
     "steps": {
       "bot": "Your bot",
-      "brain": "Brain",
+      "brain": "Connexion",
       "freedom": "Freedom"
     }
   },
@@ -4152,9 +4162,9 @@
         "release": "Leave the screen to use the buttons",
         "takeover": "Take control"
       },
-      "more": "More options",
       "shortcuts": "Keyboard shortcuts",
-      "takeoverHint": "Take control of this screen yourself (Ctrl+Shift+D). The bots pause until you hand it back."
+      "takeoverHint": "Take control of this screen yourself (Ctrl+Shift+D). The bots pause until you hand it back.",
+      "view": "Affichage"
     },
     "viewOnly": "View only",
     "watchAction": "Take control"
@@ -4541,9 +4551,9 @@
       "auto": "Free",
       "balanced": "Balanced"
     },
-    "brain": "Brain",
-    "brainAuto": "Auto",
-    "brainHint": "You can change this later in chat",
+    "brain": "IA",
+    "brainAuto": "Automatique",
+    "brainHint": "Vous pourrez le changer plus tard dans le chat",
     "create": "Create",
     "creating": "Creating…",
     "nameNeeded": "Give your bot a name to create it.",
@@ -4695,6 +4705,24 @@
     "humanDrivingHint": "Bot desktop actions are refused while you drive. Click Give back in the mini widget to resume.",
     "typingPreview": "Typing",
     "youAreInControl": "You are in control"
+  },
+  "pageReader": {
+    "bot": "Bot",
+    "description": "Comment un bot lit les pages web, les e-mails et d’autres textes écrits par des inconnus.",
+    "legend": "Lecteur de pages",
+    "mode": {
+      "always": "Toujours",
+      "auto": "Automatique (recommandé)",
+      "off": "Désactivé"
+    },
+    "modeHint": {
+      "always": "Un modèle auxiliaire séparé lit d’abord chaque page, même sans données privées. C’est plus lent et cela consomme un peu plus de ton quota.",
+      "auto": "Quand le bot travaille avec tes fichiers, e-mails ou souvenirs privés, un modèle auxiliaire séparé lit d’abord chaque page et ne transmet que les faits. Sinon, le bot lit lui-même les pages.",
+      "off": "Le bot lit lui-même les pages. Le texte de la page arrive toujours marqué comme donnée externe, et tout ce qu’une personne ne peut pas voir est retiré au préalable."
+    },
+    "noBot": "Crée d’abord un bot.",
+    "note": "L'auxiliaire est le modèle auxiliaire économique de ce bot (son classificateur) et peut tourner chez un autre fournisseur que le bot lui-même : le texte de la page y est envoyé. Il n'a aucun outil et ne voit jamais tes données privées. Une page peut quand même essayer de le tromper, c'est pourquoi les validations pour envoyer et supprimer restent en vigueur. Sans modèle auxiliaire, les pages sont retenues au lieu d'être transmises sans contrôle.",
+    "title": "Lire les pages web en toute sécurité"
   },
   "pairHost": {
     "failed": "Pairing failed. Check that the host is on and the ticket is new.",

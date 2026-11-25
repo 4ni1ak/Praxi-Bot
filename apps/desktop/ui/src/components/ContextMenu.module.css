@@ -24,11 +24,21 @@
     0 var(--shadow-overlay-y) var(--shadow-overlay-blur) calc(var(--space-4) * -1) var(--color-shadow),
     0 var(--size-border-heavy) var(--space-2) calc(var(--space-1) / -2) var(--color-shadow);
   color: var(--color-text);
-  animation: menuIn var(--motion-duration-fast) ease-out;
+  animation: menuIn var(--motion-duration-fast) var(--motion-easing-out);
 }
 
 @keyframes menuIn {
   from { opacity: 0; transform: scale(0.96); }
+}
+
+/* Exit: a shorter fade that shrinks toward the point it opened from; a closing menu never takes a click. */
+.menu[data-state="closing"] {
+  pointer-events: none;
+  animation: menuOut var(--motion-duration-exit) var(--motion-easing-in) forwards;
+}
+
+@keyframes menuOut {
+  to { opacity: 0; transform: scale(0.96); }
 }
 
 :global(:root[data-style="glass"]) .menu,

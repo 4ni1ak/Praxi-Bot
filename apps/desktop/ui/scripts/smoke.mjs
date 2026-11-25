@@ -151,7 +151,10 @@ function scripted(messages, tools = []) {
     return { call: { name, args, id: `call_${done + 1}` } };
   }
   const last = toolReplies.at(-1);
-  if (last) return { text: `tool said: ${String(last.content).slice(0, 200)}` };
+  // A result read from outside arrives inside the daemon's data block; the scripted model quotes
+  // only what is between the markers, as a person reading the result would.
+  const unframed = (c) => /<<DATA [0-9a-f]+>>\n([\s\S]*?)\n<<END DATA [0-9a-f]+>>/.exec(c)?.[1] ?? c;
+  if (last) return { text: `tool said: ${unframed(String(last.content)).slice(0, 200)}` };
   return { text: `echo: ${text.replace(/\s+/g, ' ').trim().slice(0, 300)}` };
 }
 function startStub(port) {

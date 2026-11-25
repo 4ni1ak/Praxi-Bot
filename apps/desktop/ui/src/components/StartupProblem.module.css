@@ -16,6 +16,11 @@
   height: var(--space-16);
   border-radius: var(--radius-card);
   background: var(--color-surface-elevated);
+  color: var(--color-text-muted);
+}
+
+/* Red only when something failed; a service that is still starting stays neutral. */
+.root[data-tone="problem"] .icon {
   color: var(--color-danger);
 }
 
@@ -28,7 +33,48 @@
   margin: var(--space-0);
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-display);
   color: var(--color-text);
+}
+
+/* The wait indicator: a thin shimmering bar (still under reduced motion). */
+.wait {
+  display: block;
+  width: calc(var(--space-16) * 2);
+  max-width: 60%;
+}
+
+.notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-self: center;
+  width: 100%;
+  max-width: calc(var(--space-16) * 7);
+  padding: var(--space-3) var(--space-4);
+  border: var(--size-border) solid var(--color-border);
+  border-radius: var(--radius-card);
+  background-color: var(--color-surface);
+  text-align: start;
+}
+
+.noticeTitle {
+  margin: var(--space-0);
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.noticeHint {
+  margin: var(--space-0);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  color: var(--color-text-muted);
+}
+
+.notice .wait {
+  margin-top: var(--space-2);
+  max-width: 100%;
 }
 
 .hint,

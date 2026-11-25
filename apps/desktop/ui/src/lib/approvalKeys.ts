@@ -36,8 +36,9 @@ function isTargetLike(t: unknown): t is KeyTargetLike {
 
 /**
  * `armed`: the card has been on screen long enough that an Enter typed before it appeared cannot
- * allow it. `canAllow`: this card may be allowed without reading it (never a payload to review,
- * an outgoing message or a mail).
+ * allow it. `canAllow`: this card may be allowed by a key (`enterMayAllowCall`: only a look-only
+ * call; never a change, delete, shell or program start, payload to review, send or mail). Escape
+ * denies whatever the card is.
  */
 export function approvalKeyAction(
   e: ApprovalKeyEvent,
