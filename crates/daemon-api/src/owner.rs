@@ -151,6 +151,9 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("DELETE", "/v1/bots/{}/knowledge/sources/{}"),
     ("POST", "/v1/bots/{}/knowledge/sources/{}/reindex"),
     ("POST", "/v1/bots/{}/knowledge/sources/{}/embed"),
+    ("PUT", "/v1/bots/{}/knowledge/sources/{}/watch"),
+    ("GET", "/v1/bots/{}/knowledge/watch"),
+    ("HEAD", "/v1/bots/{}/knowledge/watch"),
     ("PUT", "/v1/bots/{}/knowledge/settings"),
     ("POST", "/v1/bots/{}/knowledge/embedding-approvals"),
     (
@@ -232,9 +235,14 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/doctor/repair/{}"),
     // secrets and credentials
     ("POST", "/v1/secrets/*"),
+    ("GET", "/v1/fill-secrets"),
+    ("HEAD", "/v1/fill-secrets"),
     ("POST", "/v1/fill-secrets"),
+    ("POST", "/v1/fill-secrets/reveal"),
     ("PUT", "/v1/fill-secrets/*"),
     ("DELETE", "/v1/fill-secrets/*"),
+    ("GET", "/v1/fill-grants"),
+    ("HEAD", "/v1/fill-grants"),
     ("POST", "/v1/fill-grants"),
     ("DELETE", "/v1/fill-grants/{}"),
     // a bot's credential request: the value is typed by the owner, never a token holder

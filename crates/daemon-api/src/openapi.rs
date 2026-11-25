@@ -38,6 +38,7 @@ use crate::host_setup;
 use crate::incoming_webhook;
 use crate::knowledge;
 use crate::knowledge_settings;
+use crate::knowledge_watch;
 use crate::live_view;
 use crate::mcp;
 use crate::mcp_routes;
@@ -170,6 +171,7 @@ impl Modify for Security {
         fill_routes::delete_fill_secret,
         fill_routes::list_fill_grants,
         fill_routes::list_fill_secrets,
+        fill_routes::reveal_fill_secret,
         fill_routes::revoke_fill_grant,
         fill_routes::update_fill_secret,
         handover_routes::cancel_handover,
@@ -232,6 +234,8 @@ impl Modify for Security {
         knowledge_settings::get_settings,
         knowledge_settings::put_settings,
         knowledge_settings::request_embedding_approval,
+        knowledge_watch::list_watch,
+        knowledge_watch::set_watch_paused,
         knowledge_settings::reset_embedding_cooldown,
         knowledge_settings::revoke_embedding_grant,
         live_view::ack_frame,
@@ -587,7 +591,10 @@ impl Modify for Security {
         fill_routes::CreateFillSecret,
         fill_routes::FillGrantDto,
         fill_routes::FillSecretDto,
+        fill_routes::RevealFillSecret,
+        fill_routes::RevealFillSecretResponse,
         fill_routes::UpdateFillSecret,
+        fill_routes::VaultKindDto,
         handover_routes::HandoverAnswer,
         handover_routes::SubmitHandoverCode,
         secret_request_routes::SecretRequestAnswer,

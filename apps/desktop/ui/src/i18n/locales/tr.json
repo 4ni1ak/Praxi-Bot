@@ -10,7 +10,8 @@
     "settings": "Ayarlar",
     "shortcutSettings": "Ctrl ,",
     "updates": "Güncellemeler",
-    "usage": "Kullanım"
+    "usage": "Kullanım",
+    "vault": "Kasa"
   },
   "addServer": {
     "advanced": "Gelişmiş",
@@ -2013,7 +2014,8 @@
       "noMatch": "Eşleşme yok",
       "schedules": "Zamanlamaları aç",
       "settings": "Ayarları aç",
-      "stop": "Çalışan işi durdur"
+      "stop": "Çalışan işi durdur",
+      "vault": "Kasayı aç"
     },
     "starters": {
       "calendar": "Takvime bak",
@@ -4062,7 +4064,28 @@
     "skippedFiles": "{{count}} dosya atlandı",
     "skippedFiles_one": "{{count}} dosya atlandı",
     "title": "Bilgi ve dosyalar",
-    "url": "Kaydedilmiş sayfanın adresi"
+    "url": "Kaydedilmiş sayfanın adresi",
+    "watch": {
+      "errors": {
+        "folder_missing": "Bu klasör bulunamadı. Klasörü geri taşıyın ya da bu kaynağı kaldırıp yeni konumu ekleyin.",
+        "folder_unreadable": "Bu klasör okunamıyor. Erişiminizin sürdüğünden emin olun.",
+        "some_files_skipped": "Bazı dosyalar atlandı (çok büyük, okunamıyor veya gizli görünüyor). Geri kalanı güncel.",
+        "sync_failed": "Son güncelleme başarısız oldu. Otomatik olarak yeniden denenecek.",
+        "too_many_files": "Bu klasörde çok fazla dosya var. Daha küçük bir klasör seçin."
+      },
+      "files": "{{count}} dosya dizinlendi",
+      "files_one": "{{count}} dosya dizinlendi",
+      "lastSync": "son güncelleme {{time}}",
+      "neverSynced": "henüz güncellenmedi",
+      "pause": "Güncellemeyi duraklat",
+      "resume": "Güncellemeye devam et",
+      "state": {
+        "backing_off": "Güncellemeler yavaşlatıldı; otomatik yeniden denenecek",
+        "paused": "Otomatik güncelleme duraklatıldı",
+        "waiting": "Değişiklik bulundu, birazdan güncellenecek",
+        "watching": "Otomatik güncelleniyor"
+      }
+    }
   },
   "liveView": {
     "announce": {
@@ -4236,6 +4259,8 @@
         "release": "Düğmeleri kullanmak için ekrandan çık",
         "takeover": "Kontrolü devral"
       },
+      "screenFill": "Boşluksuz doldur",
+      "screenFillHint": "Ekranın kenarlarını biraz keserek görüntüyü alana doldurur. Kapatırsan ekranın tamamı, kenarlarda boşlukla görünür.",
       "shortcuts": "Klavye kısayolları",
       "takeoverHint": "Bu ekranın kontrolünü kendin al (Ctrl+Shift+D). Sen geri verene kadar botlar durur.",
       "view": "Görünüm"
@@ -5482,6 +5507,7 @@
       "en": "English",
       "es": "Español",
       "fr": "Français",
+      "id": "Bahasa Indonesia",
       "pt": "Português",
       "title": "Dil",
       "tr": "Türkçe"
@@ -6891,6 +6917,118 @@
     "unknownCostNotice_one": "{{count}} çağrının fiyatı bilinmiyor ve maliyet toplamına dahil edilmedi.",
     "unknownUsageNotice": "{{count}} çağrı token kullanım verisi bildirmedi ve ayrı sayıldı.",
     "unknownUsageNotice_one": "{{count}} çağrı token kullanım verisi bildirmedi ve ayrı sayıldı."
+  },
+  "vault": {
+    "actions": {
+      "clear": "Temizle",
+      "copy": "Kopyala",
+      "loading": "Kasa yükleniyor…",
+      "retry": "Tekrar dene",
+      "saving": "Kaydediliyor…"
+    },
+    "deleteConfirm": {
+      "body": "Bu sır bu bilgisayardaki yerel kasanızdan kaldırılır. Botlar artık bunu dolduramaz.",
+      "title": "{{name}} silinsin mi?"
+    },
+    "detail": {
+      "askHintOff": "İzin verilen botlar her seferinde sormadan bunu doldurabilir.",
+      "askHintOn": "Herhangi bir bot bunu doldurmadan önce onayınız istenir.",
+      "askTitle": "Kullanmadan önce sor",
+      "botsLabel": "Bu girişi hangi botlar kullanabilir",
+      "clearsIn": "{{seconds}} sn sonra temizlenir",
+      "copiedCleared": "{{what}} kopyalandı. Pano {{seconds}} sn içinde temizlenir.",
+      "copyFailed": "Panoya kopyalanamadı.",
+      "deleted": "Kasadan kaldırıldı.",
+      "hide": "Gizle",
+      "loginId": "Giriş / E-posta",
+      "neverSentToModel": "Bu bilgisayarda yerel olarak saklanır. Yapay zekâ modellerine gönderilmez veya günlüklere yazılmaz.",
+      "noBots": "Henüz bot yok. Erişim vermek için önce bir bot oluşturun.",
+      "noBotsGrantedWarning": "Bu öğeye henüz hiçbir botun erişimi yok. Doldurmaya izin vermek için aşağıdan en az bir bot seçin.",
+      "note": "Not",
+      "origins": "Web siteleri (kaynaklar)",
+      "password": "Parola / Sır",
+      "programs": "Masaüstü programları",
+      "reveal": "Göster",
+      "showTyped": "Parolayı göster"
+    },
+    "empty": {
+      "noMatches": "Bu filtreyle eşleşen öğe yok.",
+      "none": "Kasanız boş. Bir giriş ekleyin veya tarayıcı CSV dosyasından içe aktarın."
+    },
+    "form": {
+      "addTitle": "Yeni kasa öğesi",
+      "badKey": "Geçerli bir referans anahtarı girin (harf, rakam, _ veya -).",
+      "badOrigin": "Geçersiz web sitesi kaynağı: {{origin}}. https://example.com gibi tam bir URL kullanın.",
+      "created": "Kasaya eklendi.",
+      "editTitle": "Kasa öğesini düzenle",
+      "kindLabel": "Öğe türü",
+      "loginLabel": "E-posta veya kullanıcı adı",
+      "loginPlaceholder": "siz@ornek.com",
+      "needValue": "Bir parola veya sır değeri girin.",
+      "noteLabel": "Not (isteğe bağlı)",
+      "notePlaceholder": "Kurtarma ipucu veya hesap amacı",
+      "originHint": "Virgülle ayrılmış URL veya alan adları (örn. https://github.com).",
+      "originLabel": "Web sitesi adresi",
+      "refHint": "Doldurma isteklerini eşleştirmek için dahili olarak kullanılan kararlı ad.",
+      "refLabel": "Referans anahtarı",
+      "saved": "Değişiklikler kaydedildi.",
+      "secretKeepPlaceholder": "Mevcut parolayı korumak için boş bırakın",
+      "secretLabel": "Parola veya sır",
+      "secretPlaceholder": "Parola veya sır girin",
+      "siteLabel": "Site veya etiket",
+      "sitePlaceholder": "GitHub, Notion, İş SSH…"
+    },
+    "identity": {
+      "label": "Bot kimlikleri",
+      "manage": "Yönet",
+      "none": "Henüz bir bot e-posta kimliği ayarlanmadı"
+    },
+    "import": {
+      "andMore": "Ve {{count}} öğe daha",
+      "chooseFile": "CSV dosyası seç…",
+      "confirm": "{{count}} öğeyi içe aktar",
+      "deletePromptAck": "Tamamlandı",
+      "deletePromptBody": "Parolalarınız artık Kasa'da güvenle saklanıyor. Düz metin CSV dosyasını bilgisayarınızdan kalıcı olarak silin ve Çöp Kutusunu boşaltın.",
+      "deletePromptTitle": "CSV dosyasını kalıcı olarak silin",
+      "doneSubtitle": "Bot başına erişimi istediğiniz zaman inceleyebilir veya düzenleyebilirsiniz.",
+      "doneTitle": "{{count}} giriş içe aktarıldı",
+      "formatsHint": "Google Chrome / Edge Parolalar CSV ve Bitwarden CSV dışa aktarımlarını destekler.",
+      "importing": "İçe aktarılıyor…",
+      "previewTitle": "{{format}} dışa aktarımı · {{count}} giriş hazır",
+      "skippedCount": "{{count}} atlandı (eksik parola veya URL)",
+      "subtitle": "Hiçbir şey yüklemeden yerel olarak içe aktarır.",
+      "title": "CSV'den girişleri içe aktar",
+      "toastDone": "Kasanıza {{count}} öğe içe aktarıldı.",
+      "unrecognized": "Bu CSV dosyası, parolalı Chrome veya Bitwarden giriş sütunlarıyla eşleşmedi.",
+      "warningBody": "Parolalar doğrudan bu bilgisayara aktarılır ve aşağıdan izin verene kadar varsayılan olarak hiçbir bota açık değildir.",
+      "warningTitle": "Düz metin CSV dosyası"
+    },
+    "listLabel": "Kasa öğeleri",
+    "menu": {
+      "importCsv": "CSV'den içe aktar…",
+      "login": "Giriş ekle",
+      "other": "Diğer sır ekle"
+    },
+    "newItem": "Yeni öğe",
+    "noBotAssigned": "Hiçbir botun erişimi yok",
+    "noOrigin": "Web sitesi yok",
+    "openButton": "Kasayı aç",
+    "revealConfirm": {
+      "body": "Bu sırrı yalnızca ekranınızı başkası görmüyorken görüntüleyin veya kopyalayın. Kopyalanan parolalar 30 saniye sonra temizlenir.",
+      "copyConfirm": "Parolayı kopyala",
+      "revealConfirm": "Parolayı göster",
+      "title": "Kayıtlı sır gösterilsin mi?"
+    },
+    "searchPlaceholder": "Site, giriş veya notlarda ara…",
+    "selectHint": "Ayrıntıları görmek, sırrı görüntülemek veya hangi botların kullanabileceğini seçmek için bir öğe seçin.",
+    "subtitle": "Bot bazlı erişim denetimleriyle yerel olarak saklanan girişler, parolalar ve bot kimlikleri.",
+    "tabs": {
+      "all": "Tümü",
+      "label": "Kasa filtresi",
+      "logins": "Girişler",
+      "other": "Diğer"
+    },
+    "title": "Kasa"
   },
   "voice": {
     "auto": "Otomatik (uygulama diline göre)",

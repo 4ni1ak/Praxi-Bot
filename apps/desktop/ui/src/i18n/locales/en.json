@@ -10,7 +10,8 @@
     "settings": "Settings",
     "shortcutSettings": "Ctrl ,",
     "updates": "Updates",
-    "usage": "Usage"
+    "usage": "Usage",
+    "vault": "Vault"
   },
   "addServer": {
     "advanced": "Advanced",
@@ -2013,7 +2014,8 @@
       "noMatch": "No match",
       "schedules": "Open schedules",
       "settings": "Open settings",
-      "stop": "Stop the current run"
+      "stop": "Stop the current run",
+      "vault": "Open the vault"
     },
     "starters": {
       "calendar": "Check my calendar",
@@ -4062,7 +4064,28 @@
     "skippedFiles": "{{count}} files skipped",
     "skippedFiles_one": "{{count}} file skipped",
     "title": "Knowledge & files",
-    "url": "Saved page URL"
+    "url": "Saved page URL",
+    "watch": {
+      "errors": {
+        "folder_missing": "This folder was not found. Move it back, or remove this source and add the new location.",
+        "folder_unreadable": "This folder can't be read. Check that you still have access to it.",
+        "some_files_skipped": "Some files were skipped (too large, unreadable or private-looking). The rest is up to date.",
+        "sync_failed": "The last update failed. It will try again automatically.",
+        "too_many_files": "This folder has too many files. Choose a smaller folder."
+      },
+      "files": "{{count}} files indexed",
+      "files_one": "{{count}} file indexed",
+      "lastSync": "last update {{time}}",
+      "neverSynced": "not updated yet",
+      "pause": "Pause updates",
+      "resume": "Resume updates",
+      "state": {
+        "backing_off": "Updates slowed down; retrying automatically",
+        "paused": "Automatic updates paused",
+        "waiting": "Changes found, updating shortly",
+        "watching": "Updating automatically"
+      }
+    }
   },
   "liveView": {
     "announce": {
@@ -4236,6 +4259,8 @@
         "release": "Leave the screen to use the buttons",
         "takeover": "Take control"
       },
+      "screenFill": "Fill without bars",
+      "screenFillHint": "Crops the screen's edges a little so the picture fills the view. Turn off to see the whole screen with bars.",
       "shortcuts": "Keyboard shortcuts",
       "takeoverHint": "Take control of this screen yourself (Ctrl+Shift+D). The bots pause until you hand it back.",
       "view": "View"
@@ -5482,6 +5507,7 @@
       "en": "English",
       "es": "Español",
       "fr": "Français",
+      "id": "Bahasa Indonesia",
       "pt": "Português",
       "title": "Language",
       "tr": "Türkçe"
@@ -6891,6 +6917,118 @@
     "unknownCostNotice_one": "{{count}} call had unknown pricing and is excluded from the cost total.",
     "unknownUsageNotice": "{{count}} calls reported no token usage data and are counted separately.",
     "unknownUsageNotice_one": "{{count}} call reported no token usage data and is counted separately."
+  },
+  "vault": {
+    "actions": {
+      "clear": "Clear",
+      "copy": "Copy",
+      "loading": "Loading vault…",
+      "retry": "Try again",
+      "saving": "Saving…"
+    },
+    "deleteConfirm": {
+      "body": "The secret is removed from your local vault on this computer. Bots will no longer be able to fill it.",
+      "title": "Delete {{name}}?"
+    },
+    "detail": {
+      "askHintOff": "Allowed bots can fill this without asking each time.",
+      "askHintOn": "You will be asked to confirm before any bot fills this.",
+      "askTitle": "Ask before use",
+      "botsLabel": "Which bots may use this login",
+      "clearsIn": "Clears in {{seconds}}s",
+      "copiedCleared": "{{what}} copied. Clipboard clears in {{seconds}}s.",
+      "copyFailed": "Could not copy to clipboard.",
+      "deleted": "Removed from vault.",
+      "hide": "Hide",
+      "loginId": "Login / Email",
+      "neverSentToModel": "Stored locally on this computer. Never sent to AI models or written to logs.",
+      "noBots": "No bots yet. Create a bot first to grant it access.",
+      "noBotsGrantedWarning": "No bot has access to this item yet. Tick at least one bot below to allow filling.",
+      "note": "Note",
+      "origins": "Websites (origins)",
+      "password": "Password / Secret",
+      "programs": "Desktop programs",
+      "reveal": "Reveal",
+      "showTyped": "Show password"
+    },
+    "empty": {
+      "noMatches": "No items match this filter.",
+      "none": "Your vault is empty. Add a login or import from a browser CSV."
+    },
+    "form": {
+      "addTitle": "New vault item",
+      "badKey": "Enter a valid reference key (letters, numbers, _ or -).",
+      "badOrigin": "Invalid website origin: {{origin}}. Use a full URL such as https://example.com.",
+      "created": "Added to vault.",
+      "editTitle": "Edit vault item",
+      "kindLabel": "Item type",
+      "loginLabel": "Email or username",
+      "loginPlaceholder": "you@example.com",
+      "needValue": "Enter a password or secret value.",
+      "noteLabel": "Note (optional)",
+      "notePlaceholder": "Recovery hint or account purpose",
+      "originHint": "Comma-separated URLs or hosts (e.g. https://github.com).",
+      "originLabel": "Website address",
+      "refHint": "Stable handle used internally to match fill requests.",
+      "refLabel": "Reference key",
+      "saved": "Changes saved.",
+      "secretKeepPlaceholder": "Leave blank to keep existing password",
+      "secretLabel": "Password or secret",
+      "secretPlaceholder": "Enter password or secret",
+      "siteLabel": "Site or label",
+      "sitePlaceholder": "GitHub, Notion, Work SSH…"
+    },
+    "identity": {
+      "label": "Bot identities",
+      "manage": "Manage",
+      "none": "No bot email identity set yet"
+    },
+    "import": {
+      "andMore": "And {{count}} more items",
+      "chooseFile": "Choose CSV file…",
+      "confirm": "Import {{count}} items",
+      "deletePromptAck": "Done",
+      "deletePromptBody": "Your passwords are now stored securely in the Vault. Permanently delete the plain-text CSV file from your computer and empty the Recycle Bin / Trash.",
+      "deletePromptTitle": "Securely delete the CSV file",
+      "doneSubtitle": "You can review or edit per-bot access anytime.",
+      "doneTitle": "Imported {{count}} logins",
+      "formatsHint": "Supports Google Chrome / Edge Passwords CSV and Bitwarden CSV exports.",
+      "importing": "Importing…",
+      "previewTitle": "{{format}} export · {{count}} logins ready",
+      "skippedCount": "{{count}} skipped (missing password or URL)",
+      "subtitle": "Imports locally without uploading anything.",
+      "title": "Import logins from CSV",
+      "toastDone": "Imported {{count}} items into your vault.",
+      "unrecognized": "This CSV did not match Chrome or Bitwarden login columns with passwords.",
+      "warningBody": "Passwords are imported directly on this computer and default to no bots allowed until you grant access below.",
+      "warningTitle": "Plain-text CSV file"
+    },
+    "listLabel": "Vault items",
+    "menu": {
+      "importCsv": "Import from CSV…",
+      "login": "Add login",
+      "other": "Add other secret"
+    },
+    "newItem": "New item",
+    "noBotAssigned": "No bot has access",
+    "noOrigin": "No website",
+    "openButton": "Open vault",
+    "revealConfirm": {
+      "body": "Only reveal or copy this secret when nobody else can see your screen. Copied passwords are cleared after 30 seconds.",
+      "copyConfirm": "Copy password",
+      "revealConfirm": "Reveal password",
+      "title": "Reveal saved secret?"
+    },
+    "searchPlaceholder": "Search sites, logins, notes…",
+    "selectHint": "Select an item to view details, reveal its secret, or choose which bots may use it.",
+    "subtitle": "Logins, passwords and bot identities stored locally with per-bot access controls.",
+    "tabs": {
+      "all": "All",
+      "label": "Vault filter",
+      "logins": "Logins",
+      "other": "Other"
+    },
+    "title": "Vault"
   },
   "voice": {
     "auto": "Automatic (matches the app language)",
