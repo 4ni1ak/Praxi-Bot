@@ -1435,7 +1435,8 @@ impl TurnExecutor {
             let target = match (&resolved.tool, &resolved.spec) {
                 (tool, Some(_))
                     if crate::shared::control_kind_of(&resolved.name).is_some()
-                        && ctx.taint.lock().exposure.is_tainted() =>
+                        && (ctx.taint.lock().exposure.is_tainted()
+                            || self.sh.has_profile_rules(ctx.bot_id)) =>
                 {
                     let tctx = ToolContext {
                         run_id: ctx.run_id.to_string(),
@@ -1566,9 +1567,14 @@ impl TurnExecutor {
                     }),
                 );
                 Slot::Done {
-                    text: "Permission denied: policy does not allow this tool call. \
-                           Do not retry it; choose another approach or tell the user."
-                        .into(),
+                    text: self
+                        .sh
+                        .profile_block_text(&ctx, &resolved.name, &resolved.input, target.as_ref())
+                        .unwrap_or_else(|| {
+                            "Permission denied: policy does not allow this tool call. \
+                             Do not retry it; choose another approach or tell the user."
+                                .into()
+                        }),
                     is_error: true,
                 }
             } else if carried.is_none() && (matches!(decision, Decision::Ask { .. }) || redisclose)

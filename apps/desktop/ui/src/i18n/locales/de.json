@@ -6013,6 +6013,53 @@
       "saving": "Wird gespeichert…"
     },
     "search": "Einstellungen suchen",
+    "siteRules": {
+      "action": "Was soll passieren",
+      "actions": {
+        "allow": "Erlauben",
+        "ask": "Immer fragen",
+        "block": "Nie erlauben"
+      },
+      "addButton": "Regel hinzufügen",
+      "addTitle": "Regel hinzufügen",
+      "added": "Regel gespeichert.",
+      "allowApp": "Das in diesem Programm immer erlauben",
+      "allowHint": "Eine Erlauben-Regel gilt genau für diese Website, nicht für ihre Subdomains.",
+      "allowSite": "Das auf dieser Website immer erlauben",
+      "bot": "Bot",
+      "capabilities": {
+        "any": "alles",
+        "interact": "Klicken und Tippen",
+        "read": "Öffnen und Lesen",
+        "submit": "Formulare senden und Tasten drücken"
+      },
+      "capability": "Für",
+      "confirm": "{{what}} auf {{target}} immer ohne Nachfrage erlauben?",
+      "confirmNo": "Abbrechen",
+      "confirmYes": "Ja, immer erlauben",
+      "empty": "Noch keine Regeln.",
+      "expired": "abgelaufen",
+      "expiries": {
+        "day": "Einen Tag",
+        "month": "30 Tage",
+        "never": "Bis ich sie entferne",
+        "week": "Eine Woche"
+      },
+      "expiry": "Regel behalten",
+      "lead": "Regeln für eine Website oder ein Programm: immer fragen, nie erlauben oder ohne Nachfrage erlauben. Sie können nur mehr Vorsicht hinzufügen oder ein OK geben, das du hier wählst.",
+      "limits": "Die Sicherheit bleibt an: Dateien außerhalb des Arbeitsbereichs, Inhalte von Webseiten und als „nie erlaubt“ markierte Dinge folgen weiter ihren eigenen Regeln.",
+      "recentHint": "Websites und Programme, die du zuletzt bestätigt hast. Du kannst eines ohne erneute Nachfrage erlauben.",
+      "recentNone": "Noch nichts vorzuschlagen.",
+      "recentTitle": "Aus einem letzten OK",
+      "remove": "Entfernen",
+      "removed": "Regel entfernt.",
+      "site": "Website",
+      "siteHint": "Nur der Name, z. B. example.com (ohne https://, ohne Pfad).",
+      "subdomains": "Auch Subdomains einbeziehen (z. B. shop.example.com)",
+      "title": "Websites und Programme",
+      "until": "bis {{when}}",
+      "withSubdomains": "(und seine Subdomains)"
+    },
     "title": "Einstellungen",
     "updates": {
       "appVersion": "Desktop-App",

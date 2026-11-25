@@ -127,6 +127,7 @@ impl AgentLoop {
                 runs: Mutex::new(HashMap::new()),
                 pending: Mutex::new(HashMap::new()),
                 grants: Mutex::new(load_grants(&storage)),
+                profile_rules: Mutex::new(crate::site_profiles::load_profile_rules(&storage)),
                 active: Mutex::new(HashMap::new()),
                 queued: Mutex::new(HashMap::new()),
                 mention_chain: Mutex::new(HashMap::new()),
@@ -1808,6 +1809,103 @@ impl AgentLoop {
             )?;
         }
         Ok(removed)
+    }
+
+    /// The per-site / per-app rules of a bot (expired ones included, so the owner sees them).
+    #[must_use]
+    pub fn list_profile_rules(&self, bot_id: BotId) -> Vec<permission_engine::ProfileRule> {
+        self.sh
+            .profile_rules
+            .lock()
+            .iter()
+            .filter(|(b, _)| *b == bot_id)
+            .map(|(_, r)| r.clone())
+            .collect()
+    }
+
+    /// Add a per-site / per-app rule (audited). The route that calls this is owner-only: an
+    /// `allow` rule is an explicit owner grant.
+    ///
+    /// # Errors
+    /// Fails if the bot is unknown, the rule is not valid (see
+    /// [`permission_engine::ProfileRule::new`]), the bot holds too many rules, or the audit
+    /// entry cannot be written.
+    pub fn add_profile_rule(
+        &self,
+        bot_id: BotId,
+        new: &permission_engine::profiles::NewRule<'_>,
+    ) -> Result<permission_engine::ProfileRule> {
+        let bot = self
+            .sh
+            .storage
+            .get_bot(bot_id)?
+            .ok_or_else(|| LoopError::NotFound(format!("bot {bot_id}")))?;
+        let rule =
+            permission_engine::ProfileRule::new(Uuid::now_v7().to_string(), new, storage::now_ms())
+                .map_err(|e| LoopError::Profile(e.to_string()))?;
+        let mut all = self.sh.profile_rules.lock();
+        if all.iter().filter(|(b, _)| *b == bot_id).count()
+            >= crate::site_profiles::MAX_RULES_PER_BOT
+        {
+            return Err(LoopError::Profile("too many site and program rules".into()));
+        }
+        // Audit first: a rule that cannot be recorded must not be in force.
+        self.sh.storage.append_audit(
+            bot.user_id,
+            None,
+            "user",
+            crate::site_profiles::AUDIT_PROFILE_SET,
+            &serde_json::json!({ "bot_id": bot_id.to_string(), "rule": rule }),
+        )?;
+        all.push((bot_id, rule.clone()));
+        Ok(rule)
+    }
+
+    /// Remove one rule (audited). Returns whether it existed.
+    ///
+    /// # Errors
+    /// Fails if the bot is unknown or the audit entry cannot be written.
+    pub fn remove_profile_rule(&self, bot_id: BotId, rule_id: &str) -> Result<bool> {
+        let bot = self
+            .sh
+            .storage
+            .get_bot(bot_id)?
+            .ok_or_else(|| LoopError::NotFound(format!("bot {bot_id}")))?;
+        let mut all = self.sh.profile_rules.lock();
+        if !all.iter().any(|(b, r)| *b == bot_id && r.id == rule_id) {
+            return Ok(false);
+        }
+        self.sh.storage.append_audit(
+            bot.user_id,
+            None,
+            "user",
+            crate::site_profiles::AUDIT_PROFILE_REMOVED,
+            &serde_json::json!({ "bot_id": bot_id.to_string(), "rule_id": rule_id }),
+        )?;
+        all.retain(|(b, r)| !(*b == bot_id && r.id == rule_id));
+        Ok(true)
+    }
+
+    /// Sites and programs this bot's recent approvals were for (newest first), to offer
+    /// "always allow this on this site".
+    ///
+    /// # Errors
+    /// Fails if the bot is unknown.
+    pub fn recent_approval_subjects(
+        &self,
+        bot_id: BotId,
+    ) -> Result<Vec<crate::site_profiles::ApprovalSubject>> {
+        let bot = self
+            .sh
+            .storage
+            .get_bot(bot_id)?
+            .ok_or_else(|| LoopError::NotFound(format!("bot {bot_id}")))?;
+        Ok(crate::site_profiles::recent_subjects(
+            &self.sh.storage,
+            bot.user_id,
+            bot_id,
+            20,
+        ))
     }
 
     /// Whether a guard (step limit, token budget, repeat detector) ended the

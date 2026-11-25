@@ -6013,6 +6013,53 @@
       "saving": "Saving…"
     },
     "search": "Search settings",
+    "siteRules": {
+      "action": "What should happen",
+      "actions": {
+        "allow": "Allow",
+        "ask": "Always ask",
+        "block": "Never allow"
+      },
+      "addButton": "Add rule",
+      "addTitle": "Add a rule",
+      "added": "Rule saved.",
+      "allowApp": "Always allow this in this program",
+      "allowHint": "An allow rule covers exactly this site, not its subdomains.",
+      "allowSite": "Always allow this on this site",
+      "bot": "Bot",
+      "capabilities": {
+        "any": "everything",
+        "interact": "clicking and typing",
+        "read": "opening and reading",
+        "submit": "sending forms and key presses"
+      },
+      "capability": "For",
+      "confirm": "Always allow {{what}} on {{target}} without asking?",
+      "confirmNo": "Cancel",
+      "confirmYes": "Yes, always allow",
+      "empty": "No rules yet.",
+      "expired": "expired",
+      "expiries": {
+        "day": "For one day",
+        "month": "For 30 days",
+        "never": "Until I remove it",
+        "week": "For one week"
+      },
+      "expiry": "Keep this rule",
+      "lead": "Rules for one website or program: always ask, never allow, or allow without asking. They can only add care, or give an OK you choose here.",
+      "limits": "Safety stays on: files outside the work area, content from web pages and the things marked never allowed still follow their own rules.",
+      "recentHint": "Sites and programs you recently approved. You can allow one without asking again.",
+      "recentNone": "Nothing to suggest yet.",
+      "recentTitle": "From a recent OK",
+      "remove": "Remove",
+      "removed": "Rule removed.",
+      "site": "Website",
+      "siteHint": "Only the name, like example.com (no https://, no path).",
+      "subdomains": "Also cover its subdomains (like shop.example.com)",
+      "title": "Sites and programs",
+      "until": "until {{when}}",
+      "withSubdomains": "(and its subdomains)"
+    },
     "title": "Settings",
     "updates": {
       "appVersion": "Desktop app",

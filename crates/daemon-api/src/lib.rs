@@ -68,6 +68,7 @@ pub mod profile_share;
 mod profile_share_routes;
 mod provider_models;
 mod secret_request_routes;
+mod site_rule_routes;
 pub mod trusted_folders;
 pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod bot_limits_routes;
@@ -1397,6 +1398,18 @@ fn api_routes() -> Router<AppState> {
         .route(
             "/v1/bots/{id}/grants",
             get(r::list_grants).delete(r::revoke_grant),
+        )
+        .route(
+            "/v1/bots/{id}/site-rules",
+            get(site_rule_routes::list_site_rules).post(site_rule_routes::add_site_rule),
+        )
+        .route(
+            "/v1/bots/{id}/site-rules/recent",
+            get(site_rule_routes::recent_site_approvals),
+        )
+        .route(
+            "/v1/bots/{id}/site-rules/{rule_id}",
+            axum::routing::delete(site_rule_routes::remove_site_rule),
         )
         .route("/v1/bots/{id}/engine", put(bot_engine::put_engine))
         .route("/v1/bots/{id}/engine/kill", post(bot_engine::kill_engine))

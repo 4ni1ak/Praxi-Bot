@@ -6013,6 +6013,53 @@
       "saving": "Kaydediliyor…"
     },
     "search": "Ayarlarda ara",
+    "siteRules": {
+      "action": "Ne olsun",
+      "actions": {
+        "allow": "İzin ver",
+        "ask": "Her zaman sor",
+        "block": "Asla izin verme"
+      },
+      "addButton": "Kural ekle",
+      "addTitle": "Kural ekle",
+      "added": "Kural kaydedildi.",
+      "allowApp": "Bu programda bunu her zaman yapabilsin",
+      "allowHint": "İzin kuralı tam olarak bu siteyi kapsar, alt alan adlarını değil.",
+      "allowSite": "Bu sitede bunu her zaman yapabilsin",
+      "bot": "Bot",
+      "capabilities": {
+        "any": "her şey",
+        "interact": "tıklama ve yazma",
+        "read": "açma ve okuma",
+        "submit": "form gönderme ve tuş basma"
+      },
+      "capability": "Şunun için",
+      "confirm": "{{target}} üzerinde {{what}} her zaman sormadan izin verilsin mi?",
+      "confirmNo": "Vazgeç",
+      "confirmYes": "Evet, her zaman izin ver",
+      "empty": "Henüz kural yok.",
+      "expired": "süresi doldu",
+      "expiries": {
+        "day": "Bir gün",
+        "month": "30 gün",
+        "never": "Ben kaldırana kadar",
+        "week": "Bir hafta"
+      },
+      "expiry": "Bu kural ne kadar dursun",
+      "lead": "Tek bir web sitesi veya program için kurallar: her zaman sor, asla izin verme ya da sormadan izin ver. Yalnızca daha fazla dikkat ekleyebilir ya da burada seçtiğin onayı verebilir.",
+      "limits": "Güvenlik açık kalır: çalışma alanı dışındaki dosyalar, web sayfalarından gelen içerik ve asla izin verilmeyenler kendi kurallarına uymaya devam eder.",
+      "recentHint": "Yakınlarda onayladığın siteler ve programlar. Birine bir daha sormadan izin verebilirsin.",
+      "recentNone": "Henüz önerilecek bir şey yok.",
+      "recentTitle": "Son onaylarından",
+      "remove": "Kaldır",
+      "removed": "Kural kaldırıldı.",
+      "site": "Web sitesi",
+      "siteHint": "Sadece adı yaz, örneğin example.com (https:// ve yol olmadan).",
+      "subdomains": "Alt alan adlarını da kapsa (örneğin shop.example.com)",
+      "title": "Siteler ve programlar",
+      "until": "{{when}} tarihine kadar",
+      "withSubdomains": "(ve alt alan adları)"
+    },
     "title": "Ayarlar",
     "updates": {
       "appVersion": "Masaüstü uygulaması",

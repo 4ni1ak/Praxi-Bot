@@ -35,6 +35,7 @@ mod router;
 mod schedule_precheck;
 mod scoped_grant;
 mod shared;
+mod site_profiles;
 pub mod spend;
 mod subagent;
 mod taint;
@@ -66,6 +67,8 @@ mod router_tests;
 mod scoped_tests;
 #[cfg(test)]
 mod server_computer_tests;
+#[cfg(test)]
+mod site_profile_tests;
 #[cfg(test)]
 mod spend_tests;
 #[cfg(test)]
@@ -101,6 +104,7 @@ pub use shared::{
     MessageMode, Providers, ScheduleWork, SecretRequestInfo, SkillHintFn, SkillHints, StreamItem,
     build_providers, embedding_key_resolver, initiator_of, occurrence_kind, schedule_id_of,
 };
+pub use site_profiles::ApprovalSubject;
 pub use subagent::MAX_DEPTH as MAX_SUBAGENT_DEPTH;
 pub use usage::CallPurpose;
 
