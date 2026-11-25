@@ -1277,6 +1277,7 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
                 void openLivePopout({
             title: t("liveView.title"),
                   liveSource,
+                  targetId: opts?.targetId,
                   nearCursor: opts?.nearCursor,
                   botId: selectedBot.id,
                   computerId: liveSource === "local" ? LOCAL_COMPUTER : activeComputerId,

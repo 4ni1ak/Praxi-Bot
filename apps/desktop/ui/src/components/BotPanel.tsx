@@ -152,7 +152,7 @@ export function BotPanel({
   onClose: () => void;
   onOpenChat: (chatId: string, messageId?: string) => void;
   onPopOutChat?: (chatId: string, opts?: { nearCursor?: boolean }) => void;
-  onPopOutLive?: (opts?: { source?: "home" | "local"; nearCursor?: boolean }) => void;
+  onPopOutLive?: (opts?: { source?: "home" | "local"; nearCursor?: boolean; targetId?: string }) => void;
   onNewChat: () => void;
   onPatchChat: (chatId: string, patch: UpdateChatInput) => Promise<void>;
   onDeleteChat: (chatId: string) => Promise<void>;

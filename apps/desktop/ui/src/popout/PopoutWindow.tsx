@@ -405,6 +405,7 @@ function PopoutContent({
           key={computerId}
           scope={computerId === LOCAL_COMPUTER ? "local" : "home"}
           initialOpen={route.kind === "live"}
+          focusBotId={route.kind === "live" ? route.botId : null}
           initialTargetId={route.kind === "live" ? route.targetId : null}
         >
           {route.kind === "chat" ? (

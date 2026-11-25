@@ -177,6 +177,7 @@ export function LiveViewProvider({
   children,
   scope = "home",
   initialOpen,
+  focusBotId = null,
   initialTargetId = null
 }: {
   children: ReactNode;
@@ -184,6 +185,8 @@ export function LiveViewProvider({
   scope?: "home" | "local";
   /** Start with the viewer open (used by the dedicated live-view pop-out window). */
   initialOpen?: boolean;
+  /** A dedicated viewer follows this bot when no computer card supplies its focus. */
+  focusBotId?: string | null;
   /** Preselect a target id once loaded (used by the dedicated live-view pop-out window). */
   initialTargetId?: string | null;
 }) {
@@ -498,7 +501,7 @@ export function LiveViewProvider({
     }
   }, [client, viewerOpen, cardDemand.active, refreshTargets]);
 
-  const botFocus = cardDemand.botId ?? (bots.length > 0 ? bots[0].id : null);
+  const botFocus = cardDemand.botId ?? focusBotId ?? (bots.length > 0 ? bots[0].id : null);
   const preferDesktop = cardDemand.active && !viewerOpen && !isControlBusy(state);
   const preferredTargetId = preferDesktop ? null : selectedTargetId;
   const selectedTarget = useMemo(

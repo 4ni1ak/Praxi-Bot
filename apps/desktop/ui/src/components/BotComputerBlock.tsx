@@ -91,7 +91,7 @@ export function BotComputerBlock({
   /** The panel is open: closing it ends the view. */
   visible: boolean;
   /** Open the live computer view in a dedicated pop-out window. */
-  onPopOut?: (side: ComputerSide, opts?: { nearCursor?: boolean }) => void;
+  onPopOut?: (side: ComputerSide, opts?: { nearCursor?: boolean; targetId?: string }) => void;
 }) {
   const { t } = useTranslation();
   const { screenFit } = useScreenFit();
@@ -136,8 +136,11 @@ export function BotComputerBlock({
   const releasePending = live.state.pendingRequest?.kind === "release";
   const showRelease = isActivelyOwningTakeover(live.state) || releasePending;
   const showPause = panelActions.includes("clear_pause") && !showRelease && !live.pauseClearing;
+  const popOut = onPopOut
+    ? (opts?: { nearCursor?: boolean }) => onPopOut(side, { ...opts, targetId: live.selectedTarget?.target_id })
+    : undefined;
   const { dragProps } = useDragPopOut({
-    onPopOut: onPopOut ? (opts) => onPopOut(side, opts) : undefined,
+    onPopOut: popOut,
     ignoreSelector: "button, a, input, select"
   });
   const cardMenuBind = onPopOut
@@ -145,7 +148,7 @@ export function BotComputerBlock({
         liveComputerMenu({
           t: menuT,
           onOpenFull: view.kind === "live" ? view.bigView : view.start,
-          onPopOut: () => onPopOut(side)
+          onPopOut: () => popOut?.()
         })
       )
     : {};
@@ -344,7 +347,7 @@ export function BotComputerBlock({
               type="button"
               className={styles.lnk}
               data-testid="bot-computer-popout"
-              onClick={() => onPopOut(side)}
+              onClick={() => popOut?.()}
             >
               <ExternalLink aria-hidden="true" />
               {t("popout.openLiveShort")}
