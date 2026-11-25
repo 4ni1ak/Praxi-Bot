@@ -93,7 +93,10 @@ export async function flows(ctx) {
       // A daemon starved for a while (a loaded machine) cannot renew view-session heartbeats and expires the
       // session: the page's late renewals then get 404 and the browser logs each one. That is the daemon
       // doing its job, so a step whose only failed requests are 404s on /v1/view/sessions/ is not broken by it.
-      if (failed.length > 0 && failed.every((f) => f.startsWith('404 ') && f.includes(' /v1/view/sessions/'))) real = real.filter((p) => !p.startsWith('console: Failed to load resource'));
+      // The big screen opens a session by itself, so a page that reloads can ask for one a moment before the old
+      // page's DELETE lands: the daemon answers 429 (quota) once and the page ends the leftover and retries.
+      const quotaRace = (f) => f === '429 POST /v1/view/sessions';
+      if (failed.length > 0 && failed.every((f) => (f.startsWith('404 ') && f.includes(' /v1/view/sessions/')) || quotaRace(f))) real = real.filter((p) => !p.startsWith('console: Failed to load resource'));
       if (real.length) throw new Error(`browser problems: ${[...new Set(real)].join(' | ')} (failed requests: ${[...new Set(failed)].join(', ') || 'none'})`);
     } catch (e) {
       error = String(e.message ?? e);
