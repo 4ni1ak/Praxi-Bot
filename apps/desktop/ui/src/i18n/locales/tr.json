@@ -6020,6 +6020,14 @@
     "updates": {
       "appVersion": "Masaüstü uygulaması",
       "available": "{{version}} sürümü hazır.",
+      "buildId": "Derleme kimliği",
+      "channel": {
+        "description": "Kararlı sürüm önerilir. Önizleme, sorun içerebilecek erken sürümleri de sunar. Güncellemeler yalnızca Yükle seçeneğine bastığınızda yüklenir.",
+        "preview": "Önizleme",
+        "stable": "Kararlı",
+        "title": "Güncelleme kanalı",
+        "unavailable": "Bu derleme için önizleme güncellemeleri henüz yapılandırılmamış."
+      },
       "check": {
         "action": "Güncellemeleri denetle",
         "description": "Daha yeni bir sürüm olup olmadığına bakar ve yenilikleri gösterir. Siz seçmeden hiçbir şey kurulmaz.",
@@ -6037,6 +6045,7 @@
         "no_rollback": "Geri dönülebilecek daha eski bir sürüm yok.",
         "not_configured": "Bu sürümde güncelleme kurulu değil.",
         "nothing_to_install": "Lütfen önce güncellemeleri denetleyin.",
+        "preview_not_configured": "Önizleme güncellemeleri yapılandırılmamış. Kararlı kanalını seçin veya önizleme destekleyen bir derleme yükleyin.",
         "signature": "Güncellemenin gerçek olduğu doğrulanamadı, bu yüzden KURULMADI. Hiçbir şey değişmedi."
       },
       "install": {
@@ -6044,14 +6053,18 @@
         "hint": "Güncelleme kurulmadan önce gerçekliği denetlenir. İşlem bitince Praxi-Bot yeniden açılır.",
         "working": "Güncelleniyor…"
       },
-      "notConfigured": "Praxi-Bot'un bu sürümünde güncelleme hizmeti kurulu değil, bu yüzden kendini güncelleyemez. En yeni sürümü proje sayfasından indirin.",
+      "lastChecked": "Son kontrol: {{time}}",
+      "neverChecked": "Güncellemeler henüz kontrol edilmedi.",
+      "notConfigured": "Güncellemeler kullanılamıyor: bu derlemede güncelleme imzalama anahtarı veya güvenli güncelleme kaynağı yapılandırılmamış. Hiçbir şey indirilmeyecek veya yüklenmeyecek.",
       "rollback": {
         "action": "Önceki sürüme dön",
         "description": "{{version}} sürümü düzgün açılmadı. Çalışan son sürüme geri dönebilirsiniz.",
         "title": "Güncellemede bir sorun çıktı",
         "working": "Geri dönülüyor…"
       },
-      "title": "Güncellemeler ve sürüm",
+      "skip": "Bu sürümü atla",
+      "skipped": "{{version}} sürümü atlandı. Daha yeni sürümler sunulmaya devam edecek.",
+      "title": "Hakkında",
       "unknown": "Bilinmiyor",
       "upToDate": "En son sürümü kullanıyorsunuz."
     },

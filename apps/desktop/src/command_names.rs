@@ -47,6 +47,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "set_tray_labels",
     "set_keep_in_tray",
     "update_status",
+    "update_set_channel",
+    "update_skip",
     "update_check",
     "update_install",
     "update_rollback",

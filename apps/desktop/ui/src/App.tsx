@@ -68,7 +68,8 @@ import { DemoModal } from "./demo/DemoModal";
 import { type DemoTaskId, offerDemo } from "./demo/demoEngine";
 import { useProviders } from "./state/useProviders";
 import { WhatsNewModal } from "./components/WhatsNewModal";
-import { notesFor, whatsNewAction, type WhatsNewFile } from "./lib/whatsNew";
+import { installedReleaseNotes, notesFor, whatsNewAction, type WhatsNewFile } from "./lib/whatsNew";
+import { updateStatus, type UpdateInfo } from "./lib/appUpdate";
 import whatsNewFile from "./whats-new.json";
 import { getVersion } from "@tauri-apps/api/app";
 import { isHelpKey } from "./lib/shortcuts";
@@ -376,6 +377,8 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
     });
   });
   const [appVersion, setAppVersion] = useState("");
+  const [installedNotes, setInstalledNotes] = useState<UpdateInfo | null>(null);
+  const [updateNotesLoaded, setUpdateNotesLoaded] = useState(false);
   const [whatsNewDone, setWhatsNewDone] = useState(false);
   const [layout, setLayout] = useState<ShellLayout>(loadShellLayout);
   const [panelOpen, setPanelOpen] = useState(() => {
@@ -1054,8 +1057,18 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
     if (!isTauriRuntime()) return;
     void getVersion().then(setAppVersion).catch(() => undefined);
   }, []);
-  const whatsNewNotes = notesFor(whatsNewFile as WhatsNewFile, appVersion, i18n.language);
-  const whatsNewStep = settingsLoaded
+  useEffect(() => {
+    let cancelled = false;
+    void updateStatus(i18n.language).then((status) => {
+      if (!cancelled) setInstalledNotes(status.installedNotes);
+    }).catch(() => undefined).finally(() => {
+      if (!cancelled) setUpdateNotesLoaded(true);
+    });
+    return () => { cancelled = true; };
+  }, [i18n.language]);
+  const whatsNewNotes = installedReleaseNotes(installedNotes, appVersion, t("whatsNew.label"))
+    ?? notesFor(whatsNewFile as WhatsNewFile, appVersion, i18n.language);
+  const whatsNewStep = settingsLoaded && updateNotesLoaded
     ? whatsNewAction({
         version: appVersion,
         lastSeen: settings.lastSeenVersion,

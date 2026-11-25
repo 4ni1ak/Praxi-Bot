@@ -29,25 +29,27 @@ function VersionBlock() {
   }, []);
 
   return (
-    <SettingGroup>
-      <SettingRow
-        title={PRODUCT_CONFIG.appName}
-        description={t("settingsModal.updates.appVersion")}
-      >
-        <span data-testid="app-version">
-          {app || t("settingsModal.updates.devBuild")}
-        </span>
-      </SettingRow>
-      <SettingRow
-        title={t("settingsModal.updates.daemon")}
-        description={t("settingsModal.updates.daemonDescription")}
-      >
-        <span data-testid="daemon-version">
-          {health?.version ?? t("settingsModal.updates.unknown")}
-        </span>
-      </SettingRow>
-      <UpdatePanel />
-    </SettingGroup>
+    <SettingsCard title={t("settingsModal.updates.title")} description={t("settingsModal.updates.description")}>
+      <SettingGroup>
+        <SettingRow
+          title={PRODUCT_CONFIG.appName}
+          description={t("settingsModal.updates.appVersion")}
+        >
+          <span data-testid="app-version">
+            {app || t("settingsModal.updates.devBuild")}
+          </span>
+        </SettingRow>
+        <SettingRow
+          title={t("settingsModal.updates.daemon")}
+          description={t("settingsModal.updates.daemonDescription")}
+        >
+          <span data-testid="daemon-version">
+            {health?.version ?? t("settingsModal.updates.unknown")}
+          </span>
+        </SettingRow>
+        <UpdatePanel />
+      </SettingGroup>
+    </SettingsCard>
   );
 }
 
@@ -117,7 +119,7 @@ export function otherCards(t: TFunction): CardDef[] {
       kind: "block",
       title: t("settingsModal.updates.title"),
       description: t("settingsModal.updates.description"),
-      keywords: "version surum update upgrade rollback guncelleme guncelleme yukselt aktualisierung version",
+      keywords: "about version build stable preview surum hakkinda kararlı önizleme update upgrade rollback guncelleme yukselt aktualisierung über stabil vorschau",
       node: <VersionBlock />
     }
   ];

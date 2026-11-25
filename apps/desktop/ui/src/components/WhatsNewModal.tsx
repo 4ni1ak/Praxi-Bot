@@ -21,6 +21,7 @@ export function WhatsNewModal({
           <Sparkles size={20} className={styles.icon} aria-hidden="true" />
           <h2 className={styles.title}>{notes?.title}</h2>
         </div>
+        {notes?.text ? <pre className={styles.notes}>{notes.text}</pre> : null}
         <ul className={styles.list}>
           {notes?.items.map((item) => <li key={item}>{item}</li>)}
         </ul>

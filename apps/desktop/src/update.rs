@@ -18,7 +18,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Runtime, State, Url, Window};
@@ -29,8 +29,8 @@ use crate::window_gate::{MAIN_ONLY, require_window};
 /// Starts of a freshly installed version without a healthy run after which the
 /// app offers to go back.
 pub const ADVISE_ROLLBACK_AFTER_STARTS: u32 = 2;
-/// Starts after which the app goes back on its own (the UI may not even load).
-pub const AUTO_ROLLBACK_AFTER_STARTS: u32 = 3;
+/// Starts after which rollback advice is urgent. Still requires a user click.
+pub const URGENT_ROLLBACK_AFTER_STARTS: u32 = 3;
 /// A start counts as healthy once the app has been running this long.
 pub const HEALTHY_AFTER: Duration = Duration::from_secs(60);
 /// Release notes are shown as plain text; anything longer is cut.
@@ -49,6 +49,8 @@ pub struct UpdateSettings {
     pub endpoint: Url,
     /// Feed in the same format pointing at the last known-good release.
     pub rollback_endpoint: Option<Url>,
+    /// Separate feed, contacted only after the user chooses Preview.
+    pub preview_endpoint: Option<Url>,
 }
 
 impl UpdateSettings {
@@ -61,6 +63,7 @@ impl UpdateSettings {
             option_env!("PRAXI_UPDATER_PUBKEY"),
             option_env!("PRAXI_UPDATER_ENDPOINT"),
             option_env!("PRAXI_UPDATER_ROLLBACK_ENDPOINT"),
+            option_env!("PRAXI_UPDATER_PREVIEW_ENDPOINT"),
             |name| {
                 if cfg!(debug_assertions) {
                     std::env::var(name).ok()
@@ -80,6 +83,7 @@ impl UpdateSettings {
         build_pubkey: Option<&str>,
         build_endpoint: Option<&str>,
         build_rollback: Option<&str>,
+        build_preview: Option<&str>,
         env: impl Fn(&str) -> Option<String>,
         allow_loopback_http: bool,
     ) -> Option<Self> {
@@ -96,10 +100,13 @@ impl UpdateSettings {
         )?;
         let rollback_endpoint = pick("PRAXI_UPDATER_ROLLBACK_ENDPOINT", build_rollback)
             .and_then(|v| parse_endpoint(&v, allow_loopback_http));
+        let preview_endpoint = pick("PRAXI_UPDATER_PREVIEW_ENDPOINT", build_preview)
+            .and_then(|v| parse_endpoint(&v, allow_loopback_http));
         Some(Self {
             pubkey,
             endpoint,
             rollback_endpoint,
+            preview_endpoint,
         })
     }
 }
@@ -185,8 +192,27 @@ pub struct PendingUpdate {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct UpdateState {
     pub pending: Option<PendingUpdate>,
+    pub channel: UpdateChannel,
+    pub skipped_version: Option<String>,
+    pub last_checked: Option<u64>,
+    pub release_notes: Option<SavedReleaseNotes>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateChannel {
+    #[default]
+    Stable,
+    Preview,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedReleaseNotes {
+    pub version: String,
+    pub body: String,
 }
 
 /// What this start looks like.
@@ -198,8 +224,8 @@ pub enum StartVerdict {
     Probation,
     /// The new version failed to reach a healthy run repeatedly: offer to go back.
     RollbackAdvised,
-    /// Failed again: go back without asking (the UI may be unusable).
-    RollbackNow,
+    /// Failed again: urgently recommend going back, with the user's click.
+    RollbackUrgent,
 }
 
 impl UpdateState {
@@ -208,8 +234,8 @@ impl UpdateState {
         match &mut self.pending {
             Some(p) if p.to_version == current => {
                 p.starts += 1;
-                if p.starts >= AUTO_ROLLBACK_AFTER_STARTS {
-                    StartVerdict::RollbackNow
+                if p.starts >= URGENT_ROLLBACK_AFTER_STARTS {
+                    StartVerdict::RollbackUrgent
                 } else if p.starts >= ADVISE_ROLLBACK_AFTER_STARTS {
                     StartVerdict::RollbackAdvised
                 } else {
@@ -241,6 +267,14 @@ impl UpdateState {
             from_version: from.to_owned(),
             to_version: to.to_owned(),
             starts: 0,
+        });
+    }
+
+    fn record_verified_update(&mut self, from: &str, to: &str, body: &str) {
+        self.record_install(from, to);
+        self.release_notes = Some(SavedReleaseNotes {
+            version: to.to_owned(),
+            body: body.chars().take(MAX_NOTES_CHARS * 4).collect(),
         });
     }
 
@@ -285,6 +319,18 @@ pub struct UpdateRuntime {
 }
 
 impl UpdateRuntime {
+    // Save before publishing a change in memory so a failed write is reported honestly.
+    fn change_state(&self, change: impl FnOnce(&mut UpdateState)) -> Result<(), String> {
+        let mut state = self.state.lock().map_err(|_| "failed".to_owned())?;
+        let mut next = state.clone();
+        change(&mut next);
+        if let Some(dir) = &self.state_dir {
+            next.save(dir).map_err(|_| "failed".to_owned())?;
+        }
+        *state = next;
+        Ok(())
+    }
+
     /// Reads the state file and counts this start.
     #[must_use]
     pub fn start(settings: Option<UpdateSettings>, current_version: &str) -> Self {
@@ -343,33 +389,21 @@ impl UpdateRuntime {
         }
         self.persist();
     }
-
-    /// End of the start-up watch. A failed automatic rollback leaves the bad
-    /// version on probation (the user can still go back by hand), so the run
-    /// is not declared healthy then.
-    #[doc(hidden)]
-    pub fn settle_after_start(&self, rollback: Option<Result<(), String>>) {
-        if let Some(Err(e)) = rollback {
-            eprintln!("bot-desktop: automatic rollback failed: {e}");
-            return;
-        }
-        self.mark_healthy();
-    }
-
-    fn previous_version(&self) -> Option<String> {
-        self.state
-            .lock()
-            .ok()
-            .and_then(|s| s.previous_version(&self.current_version))
-    }
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools)] // independent updater capabilities, not mutually exclusive states
 pub struct UpdateStatus {
     /// False when this build has no update feed / signing key configured.
     pub enabled: bool,
     pub current_version: String,
+    pub build_id: String,
+    pub channel: UpdateChannel,
+    pub preview_available: bool,
+    pub last_checked: Option<u64>,
+    pub skipped_version: Option<String>,
+    pub installed_notes: Option<UpdateInfo>,
     /// The version we updated from while the new one is still on probation.
     pub previous_version: Option<String>,
     /// The new version failed to start more than once: show "go back".
@@ -405,16 +439,43 @@ fn enabled(rt: &UpdateRuntime) -> Result<&UpdateSettings, String> {
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)] // tauri hands the window and state over by value
-pub fn update_status(window: Window, rt: State<'_, UpdateRuntime>) -> Result<UpdateStatus, String> {
+pub fn update_status(
+    window: Window,
+    rt: State<'_, UpdateRuntime>,
+    lang: Option<String>,
+) -> Result<UpdateStatus, String> {
     require_window(&window, MAIN_ONLY)?;
+    status(&rt, lang.as_deref().unwrap_or("en"))
+}
+
+#[doc(hidden)]
+pub fn status(rt: &UpdateRuntime, lang: &str) -> Result<UpdateStatus, String> {
     let enabled = rt.settings.is_some();
+    let state = rt.state.lock().map_err(|_| "failed".to_owned())?;
     Ok(UpdateStatus {
         enabled,
         current_version: rt.current_version.clone(),
-        previous_version: rt.previous_version(),
+        build_id: option_env!("PRAXI_BUILD_HASH").unwrap_or("").to_owned(),
+        channel: state.channel,
+        preview_available: rt
+            .settings
+            .as_ref()
+            .is_some_and(|s| s.preview_endpoint.is_some()),
+        last_checked: state.last_checked,
+        skipped_version: state.skipped_version.clone(),
+        installed_notes: state
+            .release_notes
+            .as_ref()
+            .filter(|n| n.version == rt.current_version)
+            .map(|n| UpdateInfo {
+                version: n.version.clone(),
+                notes: pick_notes(&n.body, lang),
+                date: None,
+            }),
+        previous_version: state.previous_version(&rt.current_version),
         rollback_advised: matches!(
             rt.verdict,
-            StartVerdict::RollbackAdvised | StartVerdict::RollbackNow
+            StartVerdict::RollbackAdvised | StartVerdict::RollbackUrgent
         ),
         rollback_available: rt
             .settings
@@ -432,22 +493,95 @@ pub async fn update_check(
     lang: Option<String>,
 ) -> Result<Option<UpdateInfo>, String> {
     require_window(&window, MAIN_ONLY)?;
-    let settings = enabled(&rt)?;
-    let found = check(&app, settings, &settings.endpoint, false)
+    check_for_update(&app, &rt, lang.as_deref().unwrap_or("en")).await
+}
+
+#[doc(hidden)]
+pub async fn check_for_update<R: Runtime>(
+    app: &AppHandle<R>,
+    rt: &UpdateRuntime,
+    lang: &str,
+) -> Result<Option<UpdateInfo>, String> {
+    let _guard = rt.busy.try_lock().map_err(|_| "busy".to_owned())?;
+    *rt.found.lock().map_err(|_| "failed".to_owned())? = None;
+    let settings = enabled(rt)?;
+    let channel = rt.state.lock().map_err(|_| "failed".to_owned())?.channel;
+    let endpoint = match channel {
+        UpdateChannel::Stable => &settings.endpoint,
+        UpdateChannel::Preview => settings
+            .preview_endpoint
+            .as_ref()
+            .ok_or("preview_not_configured")?,
+    };
+    rt.change_state(|s| {
+        s.last_checked = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs())
+    })?;
+    let found = check_channel(app, settings, endpoint, false, channel)
         .await
         .map_err(|e| describe(&e))?;
+    let skipped = rt
+        .state
+        .lock()
+        .map_err(|_| "failed".to_owned())?
+        .skipped_version
+        .clone();
+    let found = found.filter(|u| skipped.as_deref() != Some(&u.version));
     let info = found.as_ref().map(|u| UpdateInfo {
         version: u.version.clone(),
-        notes: pick_notes(
-            u.body.as_deref().unwrap_or(""),
-            lang.as_deref().unwrap_or("en"),
-        ),
+        notes: pick_notes(u.body.as_deref().unwrap_or(""), lang),
         date: u.date.map(|d| d.to_string()),
     });
     if let Ok(mut slot) = rt.found.lock() {
         *slot = found;
     }
     Ok(info)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)] // Tauri supplies owned window/state handles
+pub fn update_set_channel(
+    window: Window,
+    rt: State<'_, UpdateRuntime>,
+    channel: UpdateChannel,
+) -> Result<(), String> {
+    require_window(&window, MAIN_ONLY)?;
+    set_channel(&rt, channel)
+}
+
+#[doc(hidden)]
+pub fn set_channel(rt: &UpdateRuntime, channel: UpdateChannel) -> Result<(), String> {
+    let _guard = rt.busy.try_lock().map_err(|_| "busy".to_owned())?;
+    if channel == UpdateChannel::Preview && enabled(rt)?.preview_endpoint.is_none() {
+        return Err("preview_not_configured".to_owned());
+    }
+    rt.change_state(|s| {
+        if s.channel != channel {
+            s.channel = channel;
+            s.skipped_version = None;
+        }
+    })?;
+    *rt.found.lock().map_err(|_| "failed".to_owned())? = None;
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)] // Tauri supplies owned window/state handles
+pub fn update_skip(window: Window, rt: State<'_, UpdateRuntime>) -> Result<(), String> {
+    require_window(&window, MAIN_ONLY)?;
+    skip_version(&rt)
+}
+
+#[doc(hidden)]
+pub fn skip_version(rt: &UpdateRuntime) -> Result<(), String> {
+    let _guard = rt.busy.try_lock().map_err(|_| "busy".to_owned())?;
+    let mut slot = rt.found.lock().map_err(|_| "failed".to_owned())?;
+    let version = slot.as_ref().ok_or("nothing_to_install")?.version.clone();
+    rt.change_state(|s| s.skipped_version = Some(version))?;
+    *slot = None;
+    Ok(())
 }
 
 /// Downloads the update found by `update_check`, verifies its signature and
@@ -485,6 +619,16 @@ pub async fn check<R: Runtime>(
     endpoint: &Url,
     rollback: bool,
 ) -> Result<Option<Update>, tauri_plugin_updater::Error> {
+    check_channel(app, settings, endpoint, rollback, UpdateChannel::Stable).await
+}
+
+async fn check_channel<R: Runtime>(
+    app: &AppHandle<R>,
+    settings: &UpdateSettings,
+    endpoint: &Url,
+    rollback: bool,
+    channel: UpdateChannel,
+) -> Result<Option<Update>, tauri_plugin_updater::Error> {
     let mut builder = app
         .updater_builder()
         .pubkey(settings.pubkey.clone())
@@ -493,6 +637,11 @@ pub async fn check<R: Runtime>(
     if rollback {
         // Only ever downgrade, and never to the version already running.
         builder = builder.version_comparator(|current, remote| remote.version < current);
+    } else {
+        builder = builder.version_comparator(move |current, remote| {
+            remote.version > current
+                && (channel == UpdateChannel::Preview || remote.version.pre.is_empty())
+        });
     }
     builder.build()?.check().await
 }
@@ -505,14 +654,17 @@ pub async fn install(rt: &UpdateRuntime, update: &Update) -> Result<(), String> 
         .download(|_, _| {}, || {})
         .await
         .map_err(|e| describe(&e))?;
-    if let Ok(mut state) = rt.state.lock() {
-        state.record_install(&rt.current_version, &update.version);
-    }
-    rt.persist();
+    rt.change_state(|state| {
+        state.record_verified_update(
+            &rt.current_version,
+            &update.version,
+            update.body.as_deref().unwrap_or(""),
+        );
+    })?;
     update.install(bytes).map_err(|e| describe(&e))
 }
 
-/// Shared by the command and the automatic rollback at start-up.
+/// Manual rollback, called only by the main-window command.
 pub async fn rollback<R: Runtime>(app: &AppHandle<R>, rt: &UpdateRuntime) -> Result<(), String> {
     let settings = enabled(rt)?;
     let endpoint = settings
@@ -535,21 +687,15 @@ pub async fn rollback<R: Runtime>(app: &AppHandle<R>, rt: &UpdateRuntime) -> Res
     update.install(bytes).map_err(|e| describe(&e))
 }
 
-/// Start-up hook: confirms health after [`HEALTHY_AFTER`] and rolls back on
-/// its own when the verdict says so.
+/// Confirms health after [`HEALTHY_AFTER`]. Even rollback requires a user click.
 pub fn spawn_startup_watch<R: Runtime>(app: &AppHandle<R>) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let Some(rt) = app.try_state::<UpdateRuntime>() else {
             return;
         };
-        let attempt = if rt.verdict == StartVerdict::RollbackNow {
-            Some(rollback(&app, &rt).await)
-        } else {
-            None
-        };
         tokio::time::sleep(HEALTHY_AFTER).await;
-        rt.settle_after_start(attempt);
+        rt.mark_healthy();
     });
 }
 
@@ -586,27 +732,27 @@ mod tests {
     fn without_a_public_key_updates_are_off() {
         let url = Some("https://example.com/latest.json");
         assert_eq!(
-            UpdateSettings::resolve(None, url, None, no_env, false),
+            UpdateSettings::resolve(None, url, None, None, no_env, false),
             None
         );
         assert_eq!(
-            UpdateSettings::resolve(Some("  "), url, None, no_env, false),
+            UpdateSettings::resolve(Some("  "), url, None, None, no_env, false),
             None
         );
-        assert!(UpdateSettings::resolve(Some("KEY"), url, None, no_env, false).is_some());
+        assert!(UpdateSettings::resolve(Some("KEY"), url, None, None, no_env, false).is_some());
     }
 
     #[test]
     fn plain_http_and_foreign_env_are_refused_in_release() {
         let http = Some("http://127.0.0.1:9/latest.json");
         assert_eq!(
-            UpdateSettings::resolve(Some("K"), http, None, no_env, false),
+            UpdateSettings::resolve(Some("K"), http, None, None, no_env, false),
             None
         );
-        assert!(UpdateSettings::resolve(Some("K"), http, None, no_env, true).is_some());
+        assert!(UpdateSettings::resolve(Some("K"), http, None, None, no_env, true).is_some());
         let remote_http = Some("http://example.com/latest.json");
         assert_eq!(
-            UpdateSettings::resolve(Some("K"), remote_http, None, no_env, true),
+            UpdateSettings::resolve(Some("K"), remote_http, None, None, no_env, true),
             None
         );
         // A bad rollback feed disables only the rollback, not updates.
@@ -614,11 +760,13 @@ mod tests {
             Some("K"),
             Some("https://a.example/l.json"),
             Some("ftp://x"),
+            Some("http://updates.example/preview.json"),
             no_env,
             false,
         )
         .expect("settings");
         assert!(s.rollback_endpoint.is_none());
+        assert!(s.preview_endpoint.is_none());
     }
 
     const BODY: &str = "Default text\n<!-- lang: en -->\nFixed the thing.\n<!-- lang: tr -->\nSorun düzeltildi.\n<!-- lang: de -->\nProblem behoben.\n";
@@ -643,7 +791,7 @@ mod tests {
     }
 
     #[test]
-    fn a_version_that_keeps_failing_to_start_gets_rolled_back() {
+    fn a_version_that_keeps_failing_to_start_gets_rollback_advice() {
         let mut s = UpdateState::default();
         assert_eq!(s.begin_start("0.1.0"), StartVerdict::Normal);
         s.record_install("0.1.0", "0.2.0");
@@ -651,26 +799,35 @@ mod tests {
         assert_eq!(s.begin_start("0.2.0"), StartVerdict::Probation);
         assert_eq!(s.begin_start("0.2.0"), StartVerdict::RollbackAdvised);
         assert_eq!(s.previous_version("0.2.0").as_deref(), Some("0.1.0"));
-        assert_eq!(s.begin_start("0.2.0"), StartVerdict::RollbackNow);
+        assert_eq!(s.begin_start("0.2.0"), StartVerdict::RollbackUrgent);
         // After the rollback the old version starts: the bookkeeping is cleared.
         assert_eq!(s.begin_start("0.1.0"), StartVerdict::Normal);
         assert_eq!(s.pending, None);
     }
 
     #[test]
-    fn a_failed_automatic_rollback_keeps_the_probation() {
+    fn installed_notes_survive_health_confirmation_and_old_state_defaults_to_stable() {
+        let legacy: UpdateState = serde_json::from_str(r#"{"pending":null}"#).unwrap();
+        assert_eq!(legacy.channel, UpdateChannel::Stable);
         let rt = UpdateRuntime::detached(None, "0.2.0");
-        rt.state
-            .lock()
-            .expect("lock")
-            .record_install("0.1.0", "0.2.0");
-        rt.settle_after_start(Some(Err("network".to_owned())));
-        assert!(
-            rt.pending().is_some(),
-            "probation must survive a failed rollback"
-        );
-        rt.settle_after_start(None);
-        assert!(rt.pending().is_none(), "a normal healthy run ends it");
+        rt.change_state(|s| s.record_verified_update("0.1.0", "0.2.0", BODY))
+            .unwrap();
+        rt.mark_healthy();
+        for (lang, expected) in [
+            ("en", "Fixed the thing."),
+            ("tr", "Sorun düzeltildi."),
+            ("de", "Problem behoben."),
+        ] {
+            assert_eq!(
+                status(&rt, lang).unwrap().installed_notes.unwrap().notes,
+                expected
+            );
+        }
+        let state = rt.state.lock().unwrap().clone();
+        let restored: UpdateState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(restored, state);
+        assert!(state.pending.is_none());
     }
 
     #[test]
@@ -692,7 +849,10 @@ mod tests {
                 .map_or(0, |d| d.as_nanos())
         ));
         let mut s = UpdateState::default();
-        s.record_install("0.1.0", "0.2.0");
+        s.record_verified_update("0.1.0", "0.2.0", BODY);
+        s.channel = UpdateChannel::Preview;
+        s.skipped_version = Some("0.3.0-beta.1".into());
+        s.last_checked = Some(123);
         s.save(&dir).expect("save");
         assert_eq!(UpdateState::load(&dir), s);
         std::fs::write(dir.join(STATE_FILE), b"{not json").expect("write");

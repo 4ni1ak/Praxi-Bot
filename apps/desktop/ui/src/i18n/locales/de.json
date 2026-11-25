@@ -6020,6 +6020,14 @@
     "updates": {
       "appVersion": "Desktop-App",
       "available": "Version {{version}} ist verfügbar.",
+      "buildId": "Build-Kennung",
+      "channel": {
+        "description": "Stabil wird empfohlen. Vorschau enthält frühe Versionen, die noch Probleme haben können. Updates werden erst installiert, wenn Sie Installieren wählen.",
+        "preview": "Vorschau",
+        "stable": "Stabil",
+        "title": "Update-Kanal",
+        "unavailable": "Vorschau-Updates sind für diesen Build noch nicht eingerichtet."
+      },
       "check": {
         "action": "Nach Updates suchen",
         "description": "Sucht nach einer neueren Version und zeigt, was neu ist. Es wird nichts installiert, bevor Sie es wollen.",
@@ -6037,6 +6045,7 @@
         "no_rollback": "Es gibt keine frühere Version, zu der Sie zurückkehren können.",
         "not_configured": "Updates sind in dieser Version nicht eingerichtet.",
         "nothing_to_install": "Bitte suchen Sie zuerst nach Updates.",
+        "preview_not_configured": "Vorschau-Updates sind nicht eingerichtet. Wählen Sie Stabil oder installieren Sie einen Build mit Vorschau-Unterstützung.",
         "signature": "Das Update konnte nicht als echt bestätigt werden und wurde deshalb NICHT installiert. Es wurde nichts verändert."
       },
       "install": {
@@ -6044,14 +6053,18 @@
         "hint": "Das Update wird vor der Installation auf Echtheit geprüft. Praxi-Bot startet danach neu.",
         "working": "Wird aktualisiert…"
       },
-      "notConfigured": "Diese Version von Praxi-Bot hat keinen Update-Dienst und kann sich nicht selbst aktualisieren. Laden Sie die neueste Version von der Projektseite herunter.",
+      "lastChecked": "Zuletzt geprüft: {{time}}",
+      "neverChecked": "Es wurde noch nicht nach Updates gesucht.",
+      "notConfigured": "Updates sind nicht verfügbar: Für diesen Build ist kein Signaturschlüssel oder keine sichere Update-Quelle eingerichtet. Es wird nichts heruntergeladen oder installiert.",
       "rollback": {
         "action": "Zur vorherigen Version zurückkehren",
         "description": "Version {{version}} ist nicht richtig gestartet. Sie können zur letzten funktionierenden Version zurückkehren.",
         "title": "Beim Update ist etwas schiefgelaufen",
         "working": "Kehrt zurück…"
       },
-      "title": "Updates & Version",
+      "skip": "Diese Version überspringen",
+      "skipped": "Version {{version}} wird übersprungen. Neuere Versionen werden weiterhin angeboten.",
+      "title": "Über die App",
       "unknown": "Unbekannt",
       "upToDate": "Sie haben die neueste Version."
     },
