@@ -98,7 +98,8 @@ pub struct CleanupSuggestionDto {
     pub file_count: u64,
 }
 
-/// Actionable disk/limit warning (`GET /v1/workspaces` and SSE `workspace_warning`).
+/// Actionable disk/limit warning inside the owner-gated `GET /v1/workspaces`
+/// (the SSE `workspace_warning` event is the name-free [`WorkspaceWarningEventDto`]).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct WorkspaceWarningDto {
     pub severity: String,
@@ -997,109 +998,81 @@ fn build_overview_inner(state: &AppState) -> Result<WorkspacesOverviewDto, ApiEr
     })
 }
 
-/// Build an enriched [`WorkspaceWarningDto`] when the runtime emits a write-time warning event.
-pub(crate) fn warning_dto_from_event(
+/// Payload of the SSE `workspace_warning` event.
+///
+/// `GET /v1/events` is not owner-gated: any local bearer token (a CLI engine, an MCP
+/// client, a script) can read it. The event therefore carries numbers and bot ids
+/// only. It never names a bot, a folder or a file; the owner fetches those from the
+/// owner-gated `GET /v1/workspaces` when this event arrives.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceWarningEventDto {
+    pub severity: String,
+    pub threshold_percent: Option<u8>,
+    pub below_min_free: bool,
+    pub disk_used_percent: Option<u8>,
+    pub available_bytes: Option<u64>,
+    pub min_free_bytes: u64,
+    pub soft_limit_bots: Vec<Uuid>,
+}
+
+/// Build the name-free [`WorkspaceWarningEventDto`] for a write-time warning event.
+pub(crate) fn warning_event_dto(
     state: &AppState,
     event: &agent_core::WorkspaceWarningEvent,
-) -> WorkspaceWarningDto {
+) -> WorkspaceWarningEventDto {
     use builtin_tools::workspace::WriteWarningKind;
-    let (
-        threshold_percent,
-        below_min_free,
-        disk_used_percent,
-        available_bytes,
-        min_free_bytes,
-        bot_soft,
-    ) = match event.kind {
-        WriteWarningKind::DiskPercent {
-            threshold_percent,
-            used_percent,
-            free_after_bytes,
-        } => (
-            Some(threshold_percent),
-            false,
-            Some(used_percent),
-            Some(free_after_bytes),
-            builtin_tools::workspace::DEFAULT_MIN_FREE_BYTES,
-            false,
-        ),
-        WriteWarningKind::LowFreeSpace {
-            free_after_bytes,
-            min_free_bytes,
-            used_percent,
-        } => (
-            None,
-            true,
-            Some(used_percent),
-            Some(free_after_bytes),
-            min_free_bytes,
-            false,
-        ),
-        WriteWarningKind::BotSoftLimit { .. } => (
-            None,
-            false,
-            None,
-            None,
-            builtin_tools::workspace::DEFAULT_MIN_FREE_BYTES,
-            true,
-        ),
-    };
-    if let Ok(overview) = build_overview_inner(state) {
-        let mut soft_bots = overview
-            .active_warning
-            .as_ref()
-            .map(|w| w.soft_limit_bots.clone())
-            .unwrap_or_default();
-        if bot_soft
-            && let Some(id) = event.bot_id
-            && !soft_bots.contains(&id.0)
-        {
-            soft_bots.push(id.0);
-        }
-        let critical = threshold_percent.is_some_and(|t| t >= overview.settings.warn_percent_3)
-            || below_min_free;
-        return WorkspaceWarningDto {
-            severity: if critical { "critical" } else { "warning" }.to_owned(),
-            threshold_percent: threshold_percent.or_else(|| {
-                overview
-                    .active_warning
-                    .as_ref()
-                    .and_then(|w| w.threshold_percent)
-            }),
-            below_min_free: below_min_free
-                || overview
-                    .active_warning
-                    .as_ref()
-                    .is_some_and(|w| w.below_min_free),
-            disk_used_percent: disk_used_percent
-                .or_else(|| overview.disk.as_ref().map(|d| d.used_percent)),
-            available_bytes: available_bytes
-                .or_else(|| overview.disk.as_ref().map(|d| d.available_bytes)),
-            min_free_bytes: overview.settings.min_free_bytes,
-            soft_limit_bots: soft_bots,
-            largest_items: overview.largest_items,
-            suggestions: overview.suggestions,
+    let settings = state.storage().get_workspace_settings(state.user_id()).ok();
+    let (threshold_percent, below_min_free, disk_used_percent, available_bytes, min_free_bytes) =
+        match event.kind {
+            WriteWarningKind::DiskPercent {
+                threshold_percent,
+                used_percent,
+                free_after_bytes,
+            } => (
+                Some(threshold_percent),
+                false,
+                Some(used_percent),
+                Some(free_after_bytes),
+                settings.as_ref().map(|s| s.min_free_bytes),
+            ),
+            WriteWarningKind::LowFreeSpace {
+                free_after_bytes,
+                min_free_bytes,
+                used_percent,
+            } => (
+                None,
+                true,
+                Some(used_percent),
+                Some(free_after_bytes),
+                Some(min_free_bytes),
+            ),
+            WriteWarningKind::BotSoftLimit { .. } => (
+                None,
+                false,
+                None,
+                None,
+                settings.as_ref().map(|s| s.min_free_bytes),
+            ),
         };
-    }
-    WorkspaceWarningDto {
-        severity: if below_min_free {
-            "critical"
-        } else {
-            "warning"
-        }
-        .to_owned(),
+    let critical_percent = settings
+        .as_ref()
+        .map_or(builtin_tools::workspace::DEFAULT_WARN_PERCENT_3, |s| {
+            s.warn_percent_3
+        });
+    let critical = below_min_free || threshold_percent.is_some_and(|t| t >= critical_percent);
+    let soft_limit_bots = if matches!(event.kind, WriteWarningKind::BotSoftLimit { .. }) {
+        event.bot_id.map(|b| b.0).into_iter().collect()
+    } else {
+        Vec::new()
+    };
+    WorkspaceWarningEventDto {
+        severity: if critical { "critical" } else { "warning" }.to_owned(),
         threshold_percent,
         below_min_free,
         disk_used_percent,
         available_bytes,
-        min_free_bytes,
-        soft_limit_bots: if bot_soft {
-            event.bot_id.map(|b| b.0).into_iter().collect()
-        } else {
-            Vec::new()
-        },
-        largest_items: Vec::new(),
-        suggestions: Vec::new(),
+        min_free_bytes: min_free_bytes.unwrap_or(builtin_tools::workspace::DEFAULT_MIN_FREE_BYTES),
+        soft_limit_bots,
     }
 }
 

@@ -33637,7 +33637,7 @@
       },
       "WorkspaceWarningDto": {
         "type": "object",
-        "description": "Actionable disk/limit warning (`GET /v1/workspaces` and SSE `workspace_warning`).",
+        "description": "Actionable disk/limit warning inside the owner-gated `GET /v1/workspaces`\n(the SSE `workspace_warning` event is the name-free [`WorkspaceWarningEventDto`]).",
         "required": [
           "severity",
           "below_min_free",

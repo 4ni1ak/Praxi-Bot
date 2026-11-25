@@ -437,7 +437,7 @@ export type DaemonEvent =
       summary: string;
       call_id?: string;
     }
-  | { type: "workspace_warning"; warning: WorkspaceWarningDto };
+  | { type: "workspace_warning"; warning: WorkspaceWarningEventDto };
 
 /** The two bots of an `ask_bot` hand-off (daemon-supplied). */
 export interface SubagentHelper {
@@ -617,6 +617,21 @@ export interface CleanupSuggestionDto {
   target: CleanupTarget;
   reclaimable_bytes: number;
   file_count: number;
+}
+
+/**
+ * Payload of the SSE `workspace_warning` event. The stream is readable with any
+ * local token, so it carries numbers and bot ids only: names of bots, folders and
+ * files come from the owner-gated `GET /v1/workspaces` (`WorkspaceWarningDto`).
+ */
+export interface WorkspaceWarningEventDto {
+  severity: "warning" | "critical" | string;
+  threshold_percent: number | null;
+  below_min_free: boolean;
+  disk_used_percent: number | null;
+  available_bytes: number | null;
+  min_free_bytes: number;
+  soft_limit_bots: string[];
 }
 
 export interface WorkspaceWarningDto {

@@ -1552,13 +1552,7 @@ fn under_native_cli_authority(path: &Path) -> bool {
 /// test the file tools do not need for single files.
 #[must_use]
 pub fn is_protected_root(root: &Path, data_dir: &Path) -> bool {
-    if hard_denied(root) || is_protected(root, data_dir) {
-        return true;
-    }
-    let r = norm_parts(&widen_for_compare(root));
-    let d = norm_parts(&widen_path(data_dir).unwrap_or_else(|_| data_dir.to_path_buf()));
-    let n = r.len().min(d.len());
-    r[..n] == d[..n]
+    is_protected_root_with(root, data_dir, registered_workspaces_root().as_deref())
 }
 
 /// Resolve an existing local folder using the file tools' reparse-safe walk.
@@ -2049,10 +2043,17 @@ fn sensitive_roots() -> &'static Vec<Vec<String>> {
 
 /// The daemon account's own home (environment, fixed at startup) and the
 /// directories whose other children are OTHER users' profiles.
-#[allow(clippy::type_complexity)]
-fn user_dirs() -> &'static (Option<Vec<String>>, Vec<Vec<String>>) {
-    static DIRS: std::sync::OnceLock<(Option<Vec<String>>, Vec<Vec<String>>)> =
-        std::sync::OnceLock::new();
+struct UserDirs {
+    home: Option<Vec<String>>,
+    /// Profile roots: the well-known user directories first (`fixed` of them),
+    /// then, when it is none of those, the parent of the daemon's own home
+    /// (`/var/lib` for the host service account).
+    roots: Vec<Vec<String>>,
+    fixed: usize,
+}
+
+fn user_dirs() -> &'static UserDirs {
+    static DIRS: std::sync::OnceLock<UserDirs> = std::sync::OnceLock::new();
     DIRS.get_or_init(|| {
         let home = crate::user_home();
         let mut roots: Vec<PathBuf> = Vec::new();
@@ -2062,18 +2063,56 @@ fn user_dirs() -> &'static (Option<Vec<String>>, Vec<Vec<String>>) {
         } else {
             roots.extend(["/home", "/Users"].map(PathBuf::from));
         }
+        let mut roots: Vec<Vec<String>> = roots
+            .iter()
+            .map(|r| norm_parts(&widen_for_compare(r)))
+            .collect();
+        let fixed = roots.len();
         if let Some(parent) = home.as_deref().and_then(Path::parent)
             && parent.components().count() > 1
         {
-            roots.push(parent.to_path_buf());
+            let parts = norm_parts(&widen_for_compare(parent));
+            if !roots.contains(&parts) {
+                roots.push(parts);
+            }
         }
-        (
-            home.map(|h| norm_parts(&widen_for_compare(&h))),
-            roots
-                .iter()
-                .map(|r| norm_parts(&widen_for_compare(r)))
-                .collect(),
-        )
+        UserDirs {
+            home: home.map(|h| norm_parts(&widen_for_compare(&h))),
+            roots,
+            fixed,
+        }
+    })
+}
+
+/// The workspaces root the daemon validated (`validate_workspaces_root`), in
+/// the comparison form of `norm_parts`.
+static WORKSPACES_ROOT: std::sync::RwLock<Option<Vec<String>>> = std::sync::RwLock::new(None);
+
+fn registered_workspaces_root() -> Option<Vec<String>> {
+    WORKSPACES_ROOT.read().ok().and_then(|g| g.clone())
+}
+
+/// Whether `parts` lie inside the profile root `roots[index]` of ANOTHER user
+/// (not the daemon account's own home). The one exception: the dedicated
+/// workspaces root, when it sits below the parent of the daemon's own home
+/// (the always-on host keeps `/var/lib/praxi-work` next to its `/var/lib/praxi`
+/// home). It never applies to `/home`, `/Users` or `C:\Users`, so another
+/// person's profile still cannot be configured as a workspaces root.
+fn other_profile_denied(
+    parts: &[String],
+    home: Option<&[String]>,
+    roots: &[Vec<String>],
+    fixed: usize,
+    workspaces_root: Option<&[String]>,
+) -> bool {
+    roots.iter().enumerate().any(|(i, root)| {
+        parts.len() > root.len()
+            && parts.starts_with(root)
+            && !home.is_some_and(|h| parts.starts_with(h))
+            && !(i >= fixed
+                && workspaces_root.is_some_and(|w| {
+                    w.len() > root.len() && w.starts_with(root) && parts.starts_with(w)
+                }))
     })
 }
 
@@ -2081,6 +2120,13 @@ fn user_dirs() -> &'static (Option<Vec<String>>, Vec<Vec<String>>) {
 /// location, or inside another user's profile. Pure text on the canonical
 /// form, so it holds for every descendant a walk meets.
 fn hard_denied(path: &Path) -> bool {
+    hard_denied_allowing(path, registered_workspaces_root().as_deref())
+}
+
+/// [`hard_denied`] with `workspaces_root` (normalised parts) exempt from the
+/// "another user's profile" rule only. Credential, browser, OS and data-folder
+/// rules still apply to it and to everything below it.
+fn hard_denied_allowing(path: &Path, workspaces_root: Option<&[String]>) -> bool {
     let parts = norm_parts(&widen_for_compare(path));
     if SENSITIVE_SEQUENCES
         .iter()
@@ -2112,12 +2158,50 @@ fn hard_denied(path: &Path) -> bool {
     {
         return true;
     }
-    let (home, roots) = user_dirs();
-    roots.iter().any(|root| {
-        parts.len() > root.len()
-            && parts.starts_with(root)
-            && !home.as_ref().is_some_and(|h| parts.starts_with(h))
-    })
+    let dirs = user_dirs();
+    other_profile_denied(
+        &parts,
+        dirs.home.as_deref(),
+        &dirs.roots,
+        dirs.fixed,
+        workspaces_root,
+    )
+}
+
+/// Whether `root` is refused as a workspaces root when it is treated as the one
+/// place under the parent of the daemon's own home that is not "another user's
+/// profile": the dedicated workspaces folder of the always-on host
+/// (`/var/lib/praxi-work` next to the `/var/lib/praxi` home). Credential, OS,
+/// browser, data-folder and CLI-configuration rules still apply in full, and
+/// the exemption never reaches another user's profile under `/home`,
+/// `/Users` or `C:\Users`.
+pub(crate) fn workspaces_root_protected(root: &Path, data_dir: &Path) -> bool {
+    let parts = norm_parts(&widen_for_compare(root));
+    is_protected_root_with(root, data_dir, Some(parts.as_slice()))
+}
+
+/// Remember a validated workspaces root so the file tools apply the same
+/// exemption to the bots' own files below it.
+pub(crate) fn register_workspaces_root(root: &Path) {
+    let parts = norm_parts(&widen_for_compare(root));
+    if let Ok(mut guard) = WORKSPACES_ROOT.write() {
+        *guard = Some(parts);
+    }
+}
+
+/// [`is_protected_root`] when `workspaces_root` is exempt from the profile rule.
+fn is_protected_root_with(
+    root: &Path,
+    data_dir: &Path,
+    workspaces_root: Option<&[String]>,
+) -> bool {
+    if hard_denied_allowing(root, workspaces_root) || is_protected(root, data_dir) {
+        return true;
+    }
+    let r = norm_parts(&widen_for_compare(root));
+    let d = norm_parts(&widen_path(data_dir).unwrap_or_else(|_| data_dir.to_path_buf()));
+    let n = r.len().min(d.len());
+    r[..n] == d[..n]
 }
 
 fn protected_ungranted(path: &Path, data_dir: &Path, grants: &[PathBuf]) -> bool {
@@ -6566,6 +6650,86 @@ mod tests {
         }
         assert!(!hard_denied(&sep(&["u", "Documents", "report.txt"])));
         assert!(!hard_denied(&sep(&["u", "src", "config", "settings.toml"])));
+    }
+
+    /// The always-on host runs as a service account whose home is
+    /// `/var/lib/praxi`; its sibling `/var/lib/praxi-work` is the workspaces
+    /// root the installer ships. Only that folder is exempt from the
+    /// "another user's profile" rule, and never a real user's profile.
+    #[test]
+    fn host_workspaces_root_is_exempt_from_the_other_profile_rule_only() {
+        let p = |s: &str| -> Vec<String> {
+            s.split('/')
+                .filter(|x| !x.is_empty())
+                .map(str::to_owned)
+                .collect()
+        };
+        let home = p("/var/lib/praxi");
+        // fixed profile roots first, then the parent of the service home
+        let roots = vec![p("/home"), p("/Users"), p("/var/lib")];
+        let ws = p("/var/lib/praxi-work");
+        let denied = |path: &str, allowed: Option<&[String]>| {
+            other_profile_denied(&p(path), Some(&home), &roots, 2, allowed)
+        };
+        // refused without the explicit allowance (the bug: no host workspace)
+        assert!(denied("/var/lib/praxi-work", None));
+        assert!(denied("/var/lib/praxi-work/Bot/notes/a.txt", None));
+        // allowed with it, for the root and everything below it
+        assert!(!denied("/var/lib/praxi-work/Bot/notes/a.txt", Some(&ws)));
+        // other siblings of the service home stay another user's profile
+        assert!(denied("/var/lib/postgresql/data", Some(&ws)));
+        assert!(denied("/var/lib/praxi-work-evil/x", Some(&ws)));
+        // a real user's profile is never exempt, even when configured as the root
+        let users_ws = p("/home/alice/work");
+        assert!(denied("/home/alice/work/x", Some(&users_ws)));
+        assert!(denied(
+            "/Users/bob/Documents",
+            Some(&p("/Users/bob/Documents"))
+        ));
+        // the service home itself is still the daemon's own
+        assert!(!denied("/var/lib/praxi/data", None));
+        // the workspace exemption does not touch credential tables
+        assert!(hard_denied(&sep(&["u", ".ssh", "id_ed25519"])));
+    }
+
+    #[test]
+    fn workspaces_root_below_the_data_folder_or_a_credential_folder_stays_protected() {
+        let base = tempfile::tempdir().unwrap();
+        let data = base.path().join("praxi");
+        let ws = base.path().join("praxi-work");
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(&ws).unwrap();
+        assert!(!workspaces_root_protected(&ws, &data));
+        assert!(workspaces_root_protected(&data, &data));
+        assert!(workspaces_root_protected(&data.join("work"), &data));
+        assert!(workspaces_root_protected(&base.path().join(".ssh"), &data));
+        assert!(workspaces_root_protected(
+            &base.path().join(".config").join("gh"),
+            &data
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn short_name_alias_of_a_bot_folder_does_not_resolve_to_the_other_bot() {
+        let base = tempfile::tempdir().unwrap();
+        let data = base.path().join("praxi-data");
+        fs::create_dir_all(&data).unwrap();
+        let root = base.path().join("Documents").join("Praxi");
+        let long =
+            crate::workspace::ensure_bot_workspace_dir(&root, "Research Bot", &data).unwrap();
+        let short = win_fs::short_path(&long).unwrap();
+        let alias = short.file_name().unwrap().to_string_lossy().into_owned();
+        if alias.eq_ignore_ascii_case("Research Bot") {
+            eprintln!("skipped: this volume does not generate 8.3 names");
+            return;
+        }
+        assert!(!crate::workspace::is_valid_folder_name(&alias), "{alias}");
+        assert!(crate::workspace::ensure_bot_workspace_dir(&root, &alias, &data).is_err());
+        // Even past the name check, the resolved directory is not the alias.
+        let root_real = crate::workspace::validate_workspaces_root(&root, &data).unwrap();
+        let err = crate::workspace::ensure_bot_dir_in_root(&root_real, &alias, &data).unwrap_err();
+        assert!(err.contains("another spelling"), "{err}");
     }
 
     #[tokio::test]

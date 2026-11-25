@@ -129,7 +129,7 @@ export function parseSseEnvelope(
           ts_ms: nowMs,
           event: {
             type: "workspace_warning",
-            warning: raw as unknown as import("./types").WorkspaceWarningDto
+            warning: raw as unknown as import("./types").WorkspaceWarningEventDto
           }
         },
         nextCursor: currentCursor

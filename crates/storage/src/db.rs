@@ -2536,6 +2536,18 @@ fn bot_workspace_row(r: &Row<'_>) -> rusqlite::Result<BotWorkspaceRecord> {
     })
 }
 
+/// Comparison key for workspace folder names: file systems answer to other
+/// spellings of the same folder (case, Unicode normalisation, the Turkish dotted
+/// and dotless i), so two names with the same key must never both be handed out.
+/// NFKC, then upper and lower case (this also folds `ß`/`SS` and final sigma),
+/// then NFC. Deliberately coarser than any one file system.
+fn folder_fold_key(name: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let nfkc: String = name.nfkc().collect();
+    let folded = nfkc.to_uppercase().to_lowercase();
+    folded.nfkc().collect()
+}
+
 fn ensure_bot_workspace_tx(
     tx: &rusqlite::Transaction<'_>,
     user_id: UserId,
@@ -2558,7 +2570,7 @@ fn ensure_bot_workspace_tx(
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
     for s in &mut existing_folders {
-        *s = s.to_ascii_lowercase();
+        *s = folder_fold_key(s);
     }
     let base = if preferred_folder_name.is_empty() {
         "bot"
@@ -2568,11 +2580,11 @@ fn ensure_bot_workspace_tx(
     let short_id = bot_id.0.simple().to_string();
     let short8 = &short_id[..8];
     let mut candidate = base.to_owned();
-    if existing_folders.contains(&candidate.to_ascii_lowercase()) {
+    if existing_folders.contains(&folder_fold_key(&candidate)) {
         candidate = format!("{base}-{short8}");
     }
     let mut suffix = 2u32;
-    while existing_folders.contains(&candidate.to_ascii_lowercase()) {
+    while existing_folders.contains(&folder_fold_key(&candidate)) {
         candidate = format!("{base}-{short8}-{suffix}");
         suffix += 1;
     }
@@ -3923,5 +3935,42 @@ mod tests {
         let running = st.get_run(run_id).unwrap().unwrap();
         assert_eq!(running.pause_reason, None);
         assert_eq!(running.paused_at_ms, None);
+    }
+
+    #[test]
+    fn workspace_folder_names_are_unique_across_case_and_unicode_spellings() {
+        let f = fx();
+        let mut folders = Vec::new();
+        // Each pair is one folder on a case-insensitive or normalising file system.
+        for name in [
+            "Research Bot",
+            "RESEARCH BOT",
+            "\u{e7}a\u{11f}r\u{131}",
+            "\u{c7}A\u{11e}RI",
+            "caf\u{e9}",
+            "cafe\u{301}",
+            "Stra\u{df}e",
+            "STRASSE",
+        ] {
+            let bot = Bot {
+                id: BotId::new(),
+                user_id: f.user.id,
+                name: name.into(),
+                config: json!({}),
+                created_at_ms: 9,
+            };
+            f.st.insert_bot(&bot).unwrap();
+            let rec = f.st.ensure_bot_workspace(f.user.id, bot.id, name).unwrap();
+            folders.push(rec.folder_name);
+        }
+        let keys: std::collections::HashSet<_> =
+            folders.iter().map(|n| folder_fold_key(n)).collect();
+        assert_eq!(
+            keys.len(),
+            folders.len(),
+            "folders share a key: {folders:?}"
+        );
+        assert_eq!(folders[0], "Research Bot");
+        assert_ne!(folders[1], "RESEARCH BOT", "case twin kept its own name");
     }
 }

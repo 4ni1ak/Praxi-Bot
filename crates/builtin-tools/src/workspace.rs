@@ -67,7 +67,11 @@ pub fn desktop_documents_dir() -> Option<PathBuf> {
 }
 
 /// Check whether `name` is a single safe directory name (no separators, traversal,
-/// reserved Windows device names, trailing dots/spaces, or control characters).
+/// reserved Windows device names, trailing dots/spaces, alternate data streams,
+/// 8.3 short-name aliases such as `RESEAR~1`, or control characters).
+///
+/// A name that passes is still only trusted when the directory it resolves to
+/// carries exactly this name (see [`ensure_bot_workspace_dir`]).
 #[must_use]
 pub fn is_valid_folder_name(name: &str) -> bool {
     if name.is_empty() || name.len() > 80 {
@@ -81,11 +85,37 @@ pub fn is_valid_folder_name(name: &str) -> bool {
     }) {
         return false;
     }
-    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
-    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
-            && stem.len() == 4
-            && stem.as_bytes()[3].is_ascii_digit());
+    // `~1` .. `~9`: NTFS answers to the 8.3 alias of another folder, which
+    // would make two bots share one directory.
+    if name
+        .as_bytes()
+        .windows(2)
+        .any(|w| w[0] == b'~' && w[1].is_ascii_digit())
+    {
+        return false;
+    }
+    // Device names are reserved with any extension and with spaces before it
+    // (`CON .txt`).
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    let numbered = |prefix: &str| {
+        stem.strip_prefix(prefix).is_some_and(|rest| {
+            let mut chars = rest.chars();
+            matches!(
+                (chars.next(), chars.next()),
+                (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+            )
+        })
+    };
+    let reserved = matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || numbered("COM")
+        || numbered("LPT");
     !reserved
 }
 
@@ -143,18 +173,22 @@ pub fn validate_workspaces_root(root: &Path, data_dir: &Path) -> Result<PathBuf,
     if !root.components().any(|c| matches!(c, Component::Normal(_))) {
         return Err("a drive or filesystem root cannot be the workspaces root".into());
     }
-    if crate::files::is_protected_root(root, data_dir) {
+    // The workspaces root itself is the one folder that may sit next to the
+    // service account's home (the host's `/var/lib/praxi-work`); credentials,
+    // browsers, OS trees, the data folder and other users' profiles stay refused.
+    if crate::files::workspaces_root_protected(root, data_dir) {
         return Err(
             "workspaces root cannot be inside Praxi's data folder or a credential folder".into(),
         );
     }
     ensure_plain_dir_chain(root)?;
     let resolved = crate::files::resolve_local_folder(root).map_err(|e| e.to_string())?;
-    if crate::files::is_protected_root(&resolved, data_dir) {
+    if crate::files::workspaces_root_protected(&resolved, data_dir) {
         return Err(
             "workspaces root resolves inside Praxi's data folder or a credential folder".into(),
         );
     }
+    crate::files::register_workspaces_root(&resolved);
     Ok(storage::without_verbatim_prefix(resolved))
 }
 
@@ -174,11 +208,32 @@ pub fn ensure_bot_workspace_dir(
         ));
     }
     let root_real = validate_workspaces_root(root, data_dir)?;
+    ensure_bot_dir_in_root(&root_real, folder_name, data_dir)
+}
+
+/// Create or open `<root_real>/<folder_name>`, requiring the directory that is
+/// found to carry exactly that name. NTFS and macOS answer to other spellings of
+/// an existing folder (an 8.3 alias, a case or Unicode-normalisation twin);
+/// without this check a second bot could be handed the first bot's directory.
+pub(crate) fn ensure_bot_dir_in_root(
+    root_real: &Path,
+    folder_name: &str,
+    data_dir: &Path,
+) -> Result<PathBuf, String> {
     let bot_dir = root_real.join(folder_name);
-    ensure_plain_child_dir(&root_real, &bot_dir)?;
+    ensure_plain_child_dir(root_real, &bot_dir)?;
     let bot_real = crate::files::resolve_local_folder(&bot_dir).map_err(|e| e.to_string())?;
-    if !bot_real.starts_with(&root_real) || bot_real == root_real {
+    let bot_real = storage::without_verbatim_prefix(bot_real);
+    if !bot_real.starts_with(root_real) || bot_real == root_real {
         return Err("bot workspace escaped workspaces root".into());
+    }
+    if bot_real.parent() != Some(root_real)
+        || bot_real.file_name() != Some(std::ffi::OsStr::new(folder_name))
+    {
+        return Err(format!(
+            "bot workspace folder {folder_name:?} resolves to {}: another spelling of an existing folder",
+            bot_real.display()
+        ));
     }
     if crate::files::is_protected_root(&bot_real, data_dir) {
         return Err("bot workspace cannot overlap Praxi's data folder or credentials".into());
@@ -192,7 +247,7 @@ pub fn ensure_bot_workspace_dir(
                 .map_err(|e| format!("create workspace subfolder {sub}: {e}"))?;
         }
     }
-    Ok(storage::without_verbatim_prefix(bot_real))
+    Ok(bot_real)
 }
 
 fn ensure_plain_dir_chain(dir: &Path) -> Result<(), String> {
@@ -420,6 +475,105 @@ mod tests {
         assert!(!is_valid_folder_name(".."));
         assert!(!is_valid_folder_name("a/b"));
         assert!(!is_valid_folder_name("NUL"));
+    }
+
+    #[test]
+    fn folder_names_refuse_short_aliases_streams_and_device_names() {
+        for bad in [
+            "RESEAR~1",
+            "a~2b",
+            "Research Bot~1",
+            "notes:stream",
+            "NUL.txt",
+            "con .txt",
+            "COM1",
+            "lpt\u{b9}",
+            "CONIN$",
+            "trailing.",
+            "trailing ",
+        ] {
+            assert!(!is_valid_folder_name(bad), "{bad:?} must be refused");
+        }
+        for good in [
+            "Research Bot",
+            "\u{c7}A\u{11e}RI",
+            "COM10",
+            "a~b",
+            "bot-1234abcd",
+        ] {
+            assert!(is_valid_folder_name(good), "{good:?} must be accepted");
+        }
+        // A bot called like an alias is stored under a neutral name instead.
+        assert_eq!(
+            sanitize_bot_folder_name("RESEAR~1", "abcdef01-2345"),
+            "bot-abcdef01"
+        );
+    }
+
+    /// A second spelling of an existing folder (8.3 alias, Unicode case twin)
+    /// must never resolve to the first bot's directory. On a case-sensitive
+    /// volume the twin is simply a different directory, which is fine.
+    #[test]
+    fn another_spelling_of_a_folder_is_never_handed_to_a_second_bot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().join("praxi-data");
+        fs::create_dir_all(&data).unwrap();
+        let root = tmp.path().join("Documents").join("Praxi");
+        let victim_name = "\u{e7}a\u{11f}ri";
+        let victim = ensure_bot_workspace_dir(&root, victim_name, &data).unwrap();
+        fs::write(victim.join("notes").join("secret.txt"), "victim only").unwrap();
+        let root_real = validate_workspaces_root(&root, &data).unwrap();
+
+        // Unicode case twin: only a case-insensitive volume maps it onto the victim.
+        let twin = "\u{c7}A\u{11e}RI";
+        match ensure_bot_dir_in_root(&root_real, twin, &data) {
+            Err(e) => assert!(e.contains("another spelling"), "{e}"),
+            Ok(dir) => {
+                assert_ne!(dir, victim, "case twin shares the victim's directory");
+                assert!(!dir.join("notes").join("secret.txt").exists());
+            }
+        }
+    }
+
+    /// Directory symlink (Unix) or junction/symlink (Windows); false when the
+    /// machine does not allow creating one.
+    #[cfg(unix)]
+    fn make_dir_link(target: &Path, link: &Path) -> bool {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    fn make_dir_link(target: &Path, link: &Path) -> bool {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .creation_flags(0x0800_0000)
+            .output()
+            .is_ok_and(|o| o.status.success())
+            || std::os::windows::fs::symlink_dir(target, link).is_ok()
+    }
+
+    /// A folder that is a symlink or (Windows) junction to another bot's
+    /// directory is never accepted as a bot workspace.
+    #[test]
+    fn linked_bot_folder_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().join("praxi-data");
+        fs::create_dir_all(&data).unwrap();
+        let root = tmp.path().join("Documents").join("Praxi");
+        let victim = ensure_bot_workspace_dir(&root, "Victim", &data).unwrap();
+        let root_real = validate_workspaces_root(&root, &data).unwrap();
+        let link = root_real.join("Linked");
+
+        let made = make_dir_link(&victim, &link);
+        if !made {
+            eprintln!("skipped: cannot create a link on this machine");
+            return;
+        }
+        let err = ensure_bot_workspace_dir(&root, "Linked", &data).unwrap_err();
+        assert!(err.contains("not a plain directory"), "{err}");
     }
 
     #[test]

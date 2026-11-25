@@ -134,9 +134,10 @@ struct Feed {
     control_rx: Option<broadcast::Receiver<crate::dto::ControlStateChanged>>,
     /// `view_targets_changed` notifications (global stream only).
     targets_rx: Option<broadcast::Receiver<()>>,
-    /// `workspace_warning` notifications (local global stream only).
+    /// `workspace_warning` notifications (local global stream only). The payload
+    /// carries numbers and bot ids, never bot, folder or file names.
     workspace_rx: Option<broadcast::Receiver<agent_core::WorkspaceWarningEvent>>,
-    /// Weak state handle to enrich workspace warning notifications with big items & cleanup suggestions.
+    /// Weak state handle to read the severity thresholds for workspace warnings (never names).
     app_state: Option<crate::WeakAppState>,
     // ---- both ----
     storage: Arc<Storage>,
@@ -543,7 +544,7 @@ impl Feed {
                             .app_state
                             .as_ref()
                             .and_then(crate::WeakAppState::upgrade)
-                            .map(|st| crate::workspace_routes::warning_dto_from_event(&st, &ev));
+                            .map(|st| crate::workspace_routes::warning_event_dto(&st, &ev));
                         if let Some(dto) = dto {
                             return Some(Out::WorkspaceWarning(dto));
                         }
@@ -588,7 +589,7 @@ pub(crate) enum Out {
     Mcp(McpServerChanged),
     Control(crate::dto::ControlStateChanged),
     TargetsChanged,
-    WorkspaceWarning(crate::workspace_routes::WorkspaceWarningDto),
+    WorkspaceWarning(crate::workspace_routes::WorkspaceWarningEventDto),
     Gap(Gap),
     Unavailable(u64),
 }

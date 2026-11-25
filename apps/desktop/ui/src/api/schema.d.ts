@@ -11094,7 +11094,10 @@ export interface components {
             size_bytes: number;
             undo_id: string;
         };
-        /** @description Actionable disk/limit warning (`GET /v1/workspaces` and SSE `workspace_warning`). */
+        /**
+         * @description Actionable disk/limit warning inside the owner-gated `GET /v1/workspaces`
+         *     (the SSE `workspace_warning` event is the name-free [`WorkspaceWarningEventDto`]).
+         */
         WorkspaceWarningDto: {
             /** Format: int64 */
             available_bytes?: number | null;

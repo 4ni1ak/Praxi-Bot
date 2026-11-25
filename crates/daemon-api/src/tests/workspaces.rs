@@ -49,7 +49,8 @@ async fn workspace_links_are_never_browsed_or_cleaned() {
         .unwrap()
         .set_modified(SystemTime::now() - Duration::from_secs(40 * 86_400))
         .unwrap();
-    let link = ws.join("downloads/linked");
+    // Separate components: a `/` inside the path makes `mklink` read it as a switch.
+    let link = ws.join("downloads").join("linked");
     #[cfg(unix)]
     std::os::unix::fs::symlink(outside.path(), &link).unwrap();
     #[cfg(windows)]
@@ -62,7 +63,12 @@ async fn workspace_links_are_never_browsed_or_cleaned() {
             .creation_flags(0x0800_0000)
             .output()
             .unwrap();
-        assert!(output.status.success(), "junction creation failed");
+        assert!(
+            output.status.success(),
+            "junction creation failed: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     std::fs::create_dir(outside.path().join("nested")).unwrap();
     assert!(
@@ -194,6 +200,30 @@ async fn workspace_routes_are_owner_only_and_denied_to_peers() {
         "expected owner guard: {:?}",
         r.json()
     );
+
+    // axum serves HEAD for the GET handlers: a bearer token alone must not get an
+    // existence / Content-Length oracle for the files of any bot's workspace.
+    let ws = t.state.agent().bot_workspace_dir(BotId(bot_id)).unwrap();
+    std::fs::write(ws.join("notes").join("client-list.txt"), "private").unwrap();
+    for path in [
+        "/v1/workspaces".to_owned(),
+        format!("/v1/bots/{bot_id}/workspace"),
+        format!("/v1/bots/{bot_id}/workspace/file?path=notes/client-list.txt"),
+        format!("/v1/bots/{bot_id}/workspace/file?path=notes/missing.txt"),
+    ] {
+        let r = call_token_only(&t, Method::HEAD, &path, None).await;
+        assert_eq!(
+            r.status,
+            StatusCode::FORBIDDEN,
+            "HEAD {path} with a token only"
+        );
+        let owner = call(&t, Method::HEAD, &path, None).await;
+        assert_ne!(
+            owner.status,
+            StatusCode::FORBIDDEN,
+            "HEAD {path} with the owner key"
+        );
+    }
 
     // A paired peer cannot access workspace overview or bot workspace files via peer_router.
     let peer = crate::peer_router(t.state.clone()).layer(axum::Extension(crate::PeerIdentity {
@@ -453,4 +483,76 @@ async fn workspace_browse_search_preview_rename_delete_restore_and_limits() {
     // Unrelated bot notes remain intact.
     assert!(ws_a.join("notes/summary.md").exists());
     assert!(ws_b.join("notes/secret.txt").exists());
+}
+
+#[tokio::test]
+async fn workspace_warning_event_carries_no_bot_folder_or_file_names() {
+    let (_root, t) = setup_workspace_app();
+    let bot = create_test_bot(&t, "Acme Merger Bot").await;
+    let ws = t.state.agent().bot_workspace_dir(BotId(bot)).unwrap();
+    let secret_file = "acme-takeover-draft.pdf";
+    std::fs::write(ws.join("notes").join(secret_file), vec![0u8; 4096]).unwrap();
+    let folder = ws.file_name().unwrap().to_string_lossy().into_owned();
+    let overview = call(&t, Method::GET, "/v1/workspaces", None).await.json();
+    assert!(
+        overview.to_string().contains(secret_file),
+        "the owner-gated overview is where names belong"
+    );
+
+    for kind in [
+        builtin_tools::workspace::WriteWarningKind::DiskPercent {
+            threshold_percent: 90,
+            used_percent: 91,
+            free_after_bytes: 1_000,
+        },
+        builtin_tools::workspace::WriteWarningKind::LowFreeSpace {
+            free_after_bytes: 10,
+            min_free_bytes: 5_000,
+            used_percent: 99,
+        },
+        builtin_tools::workspace::WriteWarningKind::BotSoftLimit {
+            used_after_bytes: 9,
+            soft_limit_bytes: 1,
+        },
+    ] {
+        let event = agent_core::WorkspaceWarningEvent {
+            bot_id: Some(BotId(bot)),
+            kind,
+            workspace_path: ws.clone(),
+        };
+        let dto = crate::workspace_routes::warning_event_dto(&t.state, &event);
+        let json = serde_json::to_value(&dto).unwrap();
+        let mut keys: Vec<_> = json.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                "available_bytes",
+                "below_min_free",
+                "disk_used_percent",
+                "min_free_bytes",
+                "severity",
+                "soft_limit_bots",
+                "threshold_percent"
+            ],
+            "{json}"
+        );
+        let text = json.to_string();
+        for leak in [secret_file, "Acme", "acme", folder.as_str(), "notes"] {
+            assert!(!text.contains(leak), "event leaks {leak:?}: {text}");
+        }
+    }
+    // The soft-limit event names the bot by id only.
+    let soft = crate::workspace_routes::warning_event_dto(
+        &t.state,
+        &agent_core::WorkspaceWarningEvent {
+            bot_id: Some(BotId(bot)),
+            kind: builtin_tools::workspace::WriteWarningKind::BotSoftLimit {
+                used_after_bytes: 9,
+                soft_limit_bytes: 1,
+            },
+            workspace_path: ws,
+        },
+    );
+    assert_eq!(soft.soft_limit_bots, vec![bot]);
 }

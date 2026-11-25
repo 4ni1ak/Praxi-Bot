@@ -816,7 +816,7 @@ if [[ "${MODE}" == "system" ]]; then
 
   mkdir -p /var/lib/praxi-work
   chown "${SVC_USER}:${SVC_USER}" /var/lib/praxi-work
-  chmod 0755 /var/lib/praxi-work
+  chmod 0750 /var/lib/praxi-work
 
   HARDENING="NoNewPrivileges=true
 ProtectSystem=strict

@@ -1141,7 +1141,7 @@ chown root:"${SVC_USER}" "${ENV_FILE}" "${NODE_ENV_FILE}"
 chmod 0640 "${ENV_FILE}" "${NODE_ENV_FILE}"
 mkdir -p /var/lib/praxi-work
 chown "${SVC_USER}:${SVC_USER}" /var/lib/praxi-work
-chmod 0755 /var/lib/praxi-work
+chmod 0750 /var/lib/praxi-work
 
 # ------------------------------------------------------------------ units
 HARDENING="NoNewPrivileges=true

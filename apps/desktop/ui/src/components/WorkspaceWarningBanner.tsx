@@ -51,11 +51,14 @@ export function WorkspaceWarningBanner({
   useEffect(() => {
     return onDaemonEvent((env) => {
       if (env.event.type === "workspace_warning") {
-        setWarning(env.event.warning);
+        // The event is name-free (any local token can read the stream): show the
+        // numbers at once, then let the owner-gated overview add file names.
+        setWarning({ ...env.event.warning, largest_items: [], suggestions: [] });
         setDismissed(false);
+        void refresh();
       }
     });
-  }, [onDaemonEvent]);
+  }, [onDaemonEvent, refresh]);
 
   if (!warning || dismissed) {
     return null;
