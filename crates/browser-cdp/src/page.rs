@@ -1461,7 +1461,7 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     use super::*;
-    use crate::snapshot::SnapNode;
+    use crate::snapshot::{SnapNode, build_snapshot};
 
     /// A page that took the typed code and mirrors it: the field named like any ordinary
     /// field, a sibling box ("Digit 2") holding the same value, the digits as plain text, and a
