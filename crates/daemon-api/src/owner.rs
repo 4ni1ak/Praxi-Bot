@@ -271,6 +271,7 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/hosts/setup/update"),
     // installing software on a server is the owner's own action, never a token's
     ("GET", "/v1/hosts/setup/packs/{}"),
+    ("HEAD", "/v1/hosts/setup/packs/{}"),
     ("POST", "/v1/hosts/setup/packs/plan"),
     ("POST", "/v1/hosts/setup/packs/apply"),
     ("POST", "/v1/hosts/setup/{}/host-key"),

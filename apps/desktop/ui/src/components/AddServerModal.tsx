@@ -57,10 +57,11 @@ import { Callout, DialogFooter, DialogHeader, Field } from "./DialogParts";
 import form from "./Form.module.css";
 import { Modal } from "./Modal";
 import { Switch } from "./SettingsUi";
+import { ToolPacksModal } from "./ToolPacksModal";
 import packStyles from "./ToolPacksModal.module.css";
 import { useToast } from "./Toast";
 import { humanLine } from "../lib/humanError";
-import { BASE_SET_MB, reasonKey, sizeParts } from "../lib/toolPacks";
+import { BASE_PACKS, BASE_SET_MB, PLAN_REQUIRED_STEP, sizeParts } from "../lib/toolPacks";
 
 const POLL_MS = 800;
 
@@ -254,6 +255,17 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
   useEffect(() => {
     if (succeeded) void refreshHosts();
   }, [succeeded, refreshHosts]);
+
+  // The basic set was asked for: nothing was installed. Open the Tools plan (dry run first) once.
+  const wantsTools = succeeded && Boolean(job?.host_id) && Boolean(job?.steps.some((s) => s.id === PLAN_REQUIRED_STEP));
+  const [toolsFor, setToolsFor] = useState<string | null>(null);
+  const toolsOffered = useRef<string | null>(null);
+  useEffect(() => {
+    if (wantsTools && job?.host_id && toolsOffered.current !== job.id) {
+      toolsOffered.current = job.id;
+      setToolsFor(job.host_id);
+    }
+  }, [wantsTools, job?.id, job?.host_id]);
 
   const start = useCallback(
     async (body: StartHostSetupInput) => {
@@ -710,7 +722,12 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
             <div className={packStyles.basic} data-testid="add-server-packs">
               <span className={packStyles.text}>
                 <b>{t("addServer.packs.title")}</b>
-                <small>{t("addServer.packs.body", { size: sizeLabel(t, BASE_SET_MB) })}</small>
+                <small>
+                  {t("addServer.packs.body", {
+                    list: BASE_PACKS.map((p) => `${t(`toolPacks.packs.${p.id}.name`)} (${sizeLabel(t, p.mb)})`).join(", "),
+                    size: sizeLabel(t, BASE_SET_MB)
+                  })}
+                </small>
               </span>
               <Switch
                 checked={w.basePacks}
@@ -756,11 +773,6 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
           <div className={dialog.body}>
             {view === "progress" || view === "failed" ? <Checklist job={job} /> : null}
             {view === "progress" ? <Bar job={job} /> : null}
-            {view === "progress" && job.notes.some((n) => n.startsWith("installing ")) ? (
-              <p className={styles.note} role="status" data-testid="add-server-packs-running">
-                {t("addServer.packs.running")}
-              </p>
-            ) : null}
             {job.state === "awaiting_host_key" && job.host_key ? (
               <div
                 className={styles.keyCard}
@@ -792,7 +804,7 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
             ) : null}
             {view === "failed" ? <Failure job={job} typed={w} /> : null}
             {view === "done" ? (
-              <Success job={job} hasScreen={hasScreen} />
+              <Success job={job} hasScreen={hasScreen} onTools={() => job.host_id && setToolsFor(job.host_id)} />
             ) : (
               <details className={styles.advanced} data-testid="add-server-log">
                 <summary>{t("addServer.showLog")}</summary>
@@ -862,6 +874,7 @@ function Content({ onClose, onManual }: { onClose: () => void; onManual: () => v
           </DialogFooter>
         </>
       ) : null}
+      <ToolPacksModal open={toolsFor !== null} hostId={toolsFor ?? ""} planBase onClose={() => setToolsFor(null)} />
     </div>
   );
 }
@@ -938,18 +951,18 @@ function sizeLabel(t: (k: string, o?: Record<string, unknown>) => string, mb: nu
   return t("toolPacks.size", { value, unit });
 }
 
-function Success({ job, hasScreen }: { job: HostSetupJob; hasScreen: boolean }) {
+function Success({ job, hasScreen, onTools }: { job: HostSetupJob; hasScreen: boolean; onTools: () => void }) {
   const { t } = useTranslation();
-  const packStep = job.steps.find((s) => s.id.startsWith("pack.") && s.status !== "pass");
-  const packsDone = job.steps.some((s) => s.id.startsWith("pack.") && s.status === "pass");
+  const planNeeded = job.steps.some((s) => s.id === PLAN_REQUIRED_STEP);
   return (
     <>
-      {packStep ? (
-        <Callout tone="warning" title={t("addServer.packs.warnTitle")} role="status">
-          <p>{t("addServer.packs.warnBody", { reason: t(`toolPacks.reason.${reasonKey(packStep.detail)}.title`) })}</p>
+      {planNeeded ? (
+        <Callout tone="info" title={t("addServer.packs.planTitle")} role="status">
+          <p>{t("addServer.packs.planBody")}</p>
+          <Button variant="ghost" onClick={onTools} data-testid="add-server-open-tools">
+            {t("addServer.packs.planOpen")}
+          </Button>
         </Callout>
-      ) : packsDone ? (
-        <Callout tone="success" title={t("addServer.packs.doneTitle")} role="status" />
       ) : null}
       <Callout tone="success" title={t("addServer.doneTitle", { name: job.host_name ?? job.target })}>
         {hasScreen ? t("addServer.doneScreen") : t("addServer.doneNoScreen")}

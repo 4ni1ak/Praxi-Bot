@@ -93,8 +93,9 @@ struct StoredPlan {
     id: String,
     host_id: String,
     action: Action,
-    /// Only the items that can run.
-    packs: Vec<String>,
+    /// Only the items that can run: catalog id and the hash of the exact package list the
+    /// owner saw in the plan (the server refuses a different list).
+    packs: Vec<(String, String)>,
     made: Instant,
 }
 
@@ -376,15 +377,15 @@ impl HostSetup for CliHostSetup {
                 }
             })
             .collect();
-        let runnable: Vec<String> = items
+        let runnable: Vec<(String, String)> = items
             .iter()
             .filter(|i| !i.noop && i.blocked.is_none())
-            .map(|i| i.pack.clone())
+            .filter_map(|i| Some((i.pack.clone(), packs::list_sha(&i.pack, action)?)))
             .collect();
         let size_mb = if action == Action::Install {
             items
                 .iter()
-                .filter(|i| runnable.contains(&i.pack))
+                .filter(|i| runnable.iter().any(|(id, _)| *id == i.pack))
                 .map(|i| i.size_mb)
                 .sum()
         } else {
@@ -460,7 +461,6 @@ impl HostSetup for CliHostSetup {
                         },
                         &plan.packs,
                         plan.action,
-                        HostSetupStepStatus::Fail,
                         &cancel,
                     ),
                     Err(e) => {
@@ -488,7 +488,7 @@ impl HostSetup for CliHostSetup {
             });
         if let Err(e) = spawned {
             update(&self.jobs, &job.id, |s| {
-                s.job.state = HostSetupState::Failed
+                s.job.state = HostSetupState::Failed;
             });
             return Err(HostSetupError::Conflict(format!(
                 "could not start the install: {e}"
@@ -629,15 +629,14 @@ fn blocked_code(b: Blocked) -> &'static str {
 
 /// Install or remove packs one after the other, one finished step each (`pack.<id>`: `detail` is
 /// the result code the app turns into a sentence, `hint` the technical detail). Stops at the first
-/// failure: apt problems (lock, offline, disk) would repeat for every following pack. `on_fail` is
-/// `Fail` for an explicit install and `Warn` in the wizard, where the server is added regardless.
+/// failure: apt problems (lock, offline, disk) would repeat for every following pack. Only
+/// [`CliHostSetup::packs_apply`] calls this, with the packs and list hashes of an approved plan.
 fn run_packs(
     jobs: &Jobs,
     job_id: &str,
     ssh: &dyn Transport,
-    ids: &[String],
+    approved: &[(String, String)],
     action: Action,
-    on_fail: HostSetupStepStatus,
     cancel: &AtomicBool,
 ) -> bool {
     let runner = Packs { transport: ssh };
@@ -645,7 +644,7 @@ fn run_packs(
         Action::Install => ("installing", "Install"),
         Action::Remove => ("removing", "Remove"),
     };
-    for pack in ids {
+    for (pack, list_sha) in approved {
         if cancel.load(Ordering::SeqCst) {
             return false;
         }
@@ -654,7 +653,7 @@ fn run_packs(
                 s.job.notes.push(format!("{verb} {pack}"));
             }
         });
-        let result = runner.apply(pack, action);
+        let result = runner.apply(pack, action, list_sha);
         let ok = result.is_ok();
         let step = HostSetupStep {
             id: format!("pack.{pack}"),
@@ -662,7 +661,7 @@ fn run_packs(
             status: if ok {
                 HostSetupStepStatus::Pass
             } else {
-                on_fail
+                HostSetupStepStatus::Fail
             },
             detail: match &result {
                 Ok(()) => "done".into(),
@@ -696,7 +695,8 @@ struct Worker {
     record: HostRecord,
     transport: TransportFactory,
     mode: Mode,
-    /// Install the basic tool set after the server was added.
+    /// The owner ticked the basic tool set. Only an intent: the app opens the tools plan after the
+    /// server is added; nothing is installed from here.
     base_packs: bool,
 }
 
@@ -778,21 +778,26 @@ impl Worker {
         let report = engine.run();
         let ok = report.ok();
         drop(engine);
-        if ok && self.base_packs && !self.cancel.load(Ordering::SeqCst) {
-            // The server is added and paired either way: a problem here is a warning the app
-            // explains, and "Computers" offers the same install again.
-            run_packs(
-                &self.jobs,
-                &self.id,
-                &guarded,
-                &packs::base_ids(),
-                Action::Install,
-                HostSetupStepStatus::Warn,
-                &self.cancel,
-            );
+        if ok && self.base_packs {
+            record_base_set_intent(&self.jobs, &self.id);
         }
         ok
     }
+}
+
+/// The wizard never installs anything: a basic-set request only leaves this finished step
+/// (`packs.plan`, detail `plan_required`) and the app then opens the tools plan, where the owner
+/// sees the dry run and approves it (`packs_plan` and `packs_apply`). A scripted
+/// `POST /v1/hosts/setup` with `base_packs: true` therefore installs nothing either.
+fn record_base_set_intent(jobs: &Jobs, job_id: &str) {
+    let step = HostSetupStep {
+        id: "packs.plan".into(),
+        title: "Tools".into(),
+        status: HostSetupStepStatus::Warn,
+        detail: "plan_required".into(),
+        hint: Some(packs::base_ids().join(",")),
+    };
+    update(jobs, job_id, |s| s.job.steps.push(step));
 }
 
 /// Stops sending new commands once the user cancelled.
@@ -1343,6 +1348,11 @@ port_busy=0
             .collect();
         assert_eq!(installs.len(), 1, "{installs:?}");
         assert!(installs[0].contains("sudo -n") && installs[0].contains("pack=office"));
+        let sha = packs::list_sha("office", Action::Install).unwrap();
+        assert!(
+            installs[0].contains(&format!("plan={sha}")),
+            "the install carries the hash of the previewed list: {installs:?}"
+        );
         // a plan is single use
         let again = setup.packs_apply(PackApplyInput {
             plan_id: plan.plan_id,
@@ -1370,7 +1380,7 @@ port_busy=0
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_failed_pack_install_is_a_failed_job_with_a_plain_code_and_the_wizard_only_warns() {
+    async fn a_failed_pack_install_is_a_failed_job_with_a_plain_code() {
         let dir = tempfile::tempdir().unwrap();
         let (setup, _log) = packs_setup(dir.path(), true, 100);
         let plan = setup
@@ -1385,7 +1395,7 @@ port_busy=0
         assert_eq!(done.steps[0].status, HostSetupStepStatus::Fail);
         assert_eq!(done.steps[0].detail, "failed");
         assert!(done.steps[0].hint.as_deref().unwrap().contains("dpkg/lock"));
-        // the wizard's basic-set install: same failure, but only a warning, and it stops there
+        // a multi-pack run stops at the first failure
         let jobs: Jobs = Arc::new(Mutex::new(VecDeque::new()));
         let (tx, _rx) = mpsc::channel();
         let mut fresh = done.clone();
@@ -1395,6 +1405,15 @@ port_busy=0
             cancel: Arc::new(AtomicBool::new(false)),
             answer: tx,
         });
+        let approved: Vec<(String, String)> = ["office", "media"]
+            .iter()
+            .map(|id| {
+                (
+                    (*id).to_owned(),
+                    packs::list_sha(id, Action::Install).unwrap(),
+                )
+            })
+            .collect();
         let ok = run_packs(
             &jobs,
             &done.id,
@@ -1403,14 +1422,63 @@ port_busy=0
                 install_exit: 100,
                 log: Arc::default(),
             },
-            &["office".to_owned(), "media".to_owned()],
+            &approved,
             Action::Install,
-            HostSetupStepStatus::Warn,
             &AtomicBool::new(false),
         );
         assert!(!ok);
         let steps = jobs.lock()[0].job.steps.clone();
         assert_eq!(steps.len(), 1, "stops at the first failure");
+        assert_eq!(steps[0].status, HostSetupStepStatus::Fail);
+    }
+
+    #[test]
+    fn the_wizard_never_installs_the_basic_set_it_only_asks_for_a_plan() {
+        let jobs: Jobs = Arc::new(Mutex::new(VecDeque::new()));
+        let (tx, _rx) = mpsc::channel();
+        let job = HostSetupJob {
+            id: "j1".into(),
+            kind: HostJobKind::Setup,
+            state: HostSetupState::Running,
+            target: "u@h:22".into(),
+            steps: Vec::new(),
+            notes: Vec::new(),
+            host_key: None,
+            host_id: None,
+            host_name: None,
+            view_targets: None,
+            install_available: false,
+        };
+        jobs.lock().push_back(Slot {
+            job,
+            cancel: Arc::new(AtomicBool::new(false)),
+            answer: tx,
+        });
+        // `record_base_set_intent` takes no transport: it cannot reach a server at all.
+        record_base_set_intent(&jobs, "j1");
+        let steps = jobs.lock()[0].job.steps.clone();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].id, "packs.plan");
+        assert_eq!(steps[0].detail, "plan_required");
         assert_eq!(steps[0].status, HostSetupStepStatus::Warn);
+        assert_eq!(steps[0].hint.as_deref(), Some("office,docs,media,dev"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_plan_is_mandatory_and_the_server_gets_its_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let (setup, log) = packs_setup(dir.path(), true, 0);
+        // no plan, no install: an unknown plan id starts nothing
+        let err = setup
+            .packs_apply(PackApplyInput {
+                plan_id: "not-a-plan".into(),
+            })
+            .unwrap_err();
+        assert!(matches!(err, HostSetupError::Invalid(_)), "{err:?}");
+        assert!(
+            log.lock().iter().all(|l| !l.contains("pack-install")),
+            "{:?}",
+            log.lock()
+        );
     }
 }

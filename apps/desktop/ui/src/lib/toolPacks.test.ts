@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HostPackInfo, HostSetupJob } from "../api/types";
-import { jobFailure, missingBase, reasonKey, reasonOf, rowStates, sizeParts, sortedPacks, totalMb } from "./toolPacks.ts";
+import { BASE_PACKS, BASE_SET_MB, jobFailure, missingBase, reasonKey, reasonOf, rowStates, sizeParts, sortedPacks, totalMb } from "./toolPacks.ts";
 
 const pack = (id: string, status: string, base = true, size_mb = 100): HostPackInfo => ({
   id,
@@ -66,4 +66,12 @@ test("reasons: unknown codes read as a generic problem and plan and run names ag
   assert.equal(reasonKey("dependants"), "dependants");
   assert.equal(jobFailure(job("failed", [["pack.office", "fail", "needs_admin"]])), "needs_admin");
   assert.equal(jobFailure(job("succeeded", [["pack.office", "pass", "done"]])), null);
+});
+
+test("the wizard switch names every base pack and its sizes add up to the shown total", () => {
+  assert.deepEqual(
+    BASE_PACKS.map((p) => p.id),
+    ["office", "docs", "media", "dev"]
+  );
+  assert.equal(BASE_SET_MB, 1350);
 });

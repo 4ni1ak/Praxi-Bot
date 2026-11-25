@@ -629,6 +629,7 @@ async fn no_paired_peer_can_start_a_server_update_or_probe_a_server() {
         for (method, path) in [
             (Method::POST, "/v1/hosts/setup/update"),
             (Method::GET, "/v1/hosts/setup/packs/abcd"),
+            (Method::HEAD, "/v1/hosts/setup/packs/abcd"),
             (Method::POST, "/v1/hosts/setup/packs/plan"),
             (Method::POST, "/v1/hosts/setup/packs/apply"),
             (Method::GET, "/v1/hosts/abcd/version"),

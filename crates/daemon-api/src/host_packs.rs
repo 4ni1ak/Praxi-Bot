@@ -1,4 +1,4 @@
-//! `/v1/hosts/setup/packs…`: capability packs for a server (LibreOffice, pandoc, ffmpeg, git ...).
+//! `/v1/hosts/setup/packs…`: capability packs for a server (`LibreOffice`, pandoc, ffmpeg, git ...).
 //!
 //! Three steps, all for the owner of this computer only (local, never a peer, and the owner key):
 //! read what a server has (`GET .../packs/{host_id}`), preview what an install or removal would

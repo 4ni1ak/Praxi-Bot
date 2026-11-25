@@ -309,12 +309,11 @@
     "noDaemon": "Der lokale Praxi-Dienst läuft nicht. Starte die App neu und versuche es erneut.",
     "noKeys": "Im Ordner .ssh wurde keine Schlüsseldatei gefunden. Gib den Pfad der heruntergeladenen Schlüsseldatei ein.",
     "packs": {
-      "body": "Office-Dateien, Dokumente, Medien und Entwicklerwerkzeuge, {{size}}. Das kannst du später unter Werkzeuge ändern.",
-      "doneTitle": "Basiswerkzeuge installiert",
-      "running": "Werkzeuge werden installiert. Das kann ein paar Minuten dauern.",
-      "title": "Auch die Basiswerkzeuge installieren",
-      "warnBody": "{{reason}}. Du kannst die Werkzeuge später unter Deine Server → Werkzeuge hinzufügen.",
-      "warnTitle": "Server hinzugefügt, Werkzeuge nicht installiert"
+      "body": "Aktivieren, um nach dem Hinzufügen des Servers den Plan zu sehen: {{list}}; insgesamt {{size}}. Es wird nichts installiert, bevor du genau gesehen hast, was sich ändern würde, und bestätigt hast.",
+      "planBody": "Der Server ist hinzugefügt. Sieh dir genau an, was installiert würde, und bestätige, um zu starten.",
+      "planOpen": "Plan ansehen",
+      "planTitle": "Werkzeuge sind noch nicht installiert",
+      "title": "Basiswerkzeuge nach dem Hinzufügen vorbereiten"
     },
     "pairChecks": {
       "models": {
@@ -6300,6 +6299,7 @@
       }
     },
     "remove": "Entfernen",
+    "removeWarning": "Diese Programme werden womöglich auch von anderer Software oder von dir selbst eingerichteten Dingen auf diesem Server genutzt. Das Entfernen nimmt sie für alles weg, nicht nur für Praxi.",
     "review": "Prüfen ({{size}})",
     "reviewNone": "Prüfen",
     "rowState": {

@@ -309,12 +309,11 @@
     "noDaemon": "The local Praxi service is not running. Restart the app and try again.",
     "noKeys": "No key file found in your .ssh folder. Type the path of the key file you downloaded.",
     "packs": {
-      "body": "Office files, documents, media and developer tools, {{size}}. You can change this later under Tools.",
-      "doneTitle": "Basic tools installed",
-      "running": "Installing tools. This can take a few minutes.",
-      "title": "Install the basic tools too",
-      "warnBody": "{{reason}}. You can add the tools later under Your servers → Tools.",
-      "warnTitle": "Server added, tools not installed"
+      "body": "Pick it to be shown the plan after the server is added: {{list}}; {{size}} in total. Nothing is installed until you have seen exactly what would change and confirmed.",
+      "planBody": "The server is added. Review exactly what would be installed and confirm it to start.",
+      "planOpen": "Review the plan",
+      "planTitle": "Tools are not installed yet",
+      "title": "Prepare the basic tools after adding"
     },
     "pairChecks": {
       "models": {
@@ -6300,6 +6299,7 @@
       }
     },
     "remove": "Remove",
+    "removeWarning": "These programs may also be used by other software or things you set up yourself on this server. Removing them takes them away for everything, not only for Praxi.",
     "review": "Review ({{size}})",
     "reviewNone": "Review",
     "rowState": {

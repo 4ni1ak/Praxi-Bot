@@ -248,15 +248,35 @@ pack_status() {
   else printf partial; fi
 }
 
-# What the pack's own packages would drag out with them on `apt-get remove`.
+# What the pack's own packages would drag out with them on `apt-get remove`. Fails CLOSED: when the
+# simulation itself fails the answer is unknown, so nothing is removed.
 remove_outsiders() {
-  local line
+  local line sim
+  sim="$(apt-get -s remove "$@" 2>&1)" || die "could not check what removing this pack would affect"
   while IFS= read -r line; do
     [[ "${line}" == Remv\ * ]] || continue
     line="${line#Remv }"; line="${line%% *}"
     case " ${PACK_PKGS} " in *" ${line} "*) ;; *) printf '%s' "${line}"; return 0 ;; esac
-  done < <(apt-get -s remove "$@" 2>/dev/null || true)
+  done <<<"${sim}"
   return 0
+}
+
+# Hash of exactly what a pack operation touches: pack id, action and the package list. The app
+# computes the same value for the dry-run plan the owner approves and sends it back with the
+# install/remove; a different list never runs.
+pack_list_sha() {
+  local joined="" p
+  for p in ${PACK_PKGS}; do joined="${joined:+${joined} }${p}"; done
+  printf '%s
+%s
+%s
+' "${PACK_ID}" "$1" "${joined}" | sha256sum | awk '{print $1}'
+}
+
+plan_check() {
+  local want="${P[plan]:-}"
+  [[ "${want}" =~ ^[0-9a-f]{64}$ ]] || die "plan-required: this change needs the approved plan"
+  [[ "$(pack_list_sha "$1")" == "${want}" ]] || die "plan-mismatch: the package list differs from the plan that was approved"
 }
 
 cmd_packs_facts() {
@@ -313,7 +333,7 @@ cmd_packs_plan() {
 
 cmd_pack_install() {
   need_root; read_params
-  catalog_check; need_apt; pack_load "${P[pack]:-}"
+  catalog_check; need_apt; pack_load "${P[pack]:-}"; plan_check install
   local p
   apt_without_restarts update -qq || log "apt update reported a problem; trying with the known package lists"
   for p in ${PACK_PKGS}; do
@@ -328,6 +348,7 @@ cmd_pack_remove() {
   need_root; read_params
   catalog_check; need_apt; pack_load "${P[pack]:-}"
   [[ "${PACK_REMOVABLE}" == "1" ]] || die "blocked: this pack holds shared system tools and is not removed"
+  plan_check remove
   local p have="" outsider
   for p in ${PACK_PKGS}; do
     if pkg_installed "${p}"; then have="${have:+${have} }${p}"; fi

@@ -9603,9 +9603,10 @@ export interface components {
         /** @description `POST /v1/hosts/setup`. */
         StartHostSetupInput: {
             /**
-             * @description Also install the basic tool set (office, documents, media, developer tools) once the server
-             *     is added. Needs a login that may run administrator commands; a failure there never undoes
-             *     the added server.
+             * @description The owner wants the basic tool set (office, documents, media, developer tools). This only
+             *     records the intent: nothing is installed by the setup. The job ends with a `packs.plan`
+             *     step (`plan_required`) and the app opens the tools plan, where the owner sees the dry run
+             *     and approves it (`/v1/hosts/setup/packs/plan` and `/apply`).
              */
             base_packs?: boolean;
             /** @description Host name or IP address of the server. */

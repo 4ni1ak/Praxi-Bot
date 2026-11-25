@@ -56,11 +56,22 @@ type Phase = "loading" | "list" | "planning" | "preview" | "running" | "done" | 
  * at exactly what would change (a dry run), then confirm. Everything goes through the owner's own
  * SSH login: a bot on the server can never install software itself.
  */
-export function ToolPacksModal({ open, hostId, onClose }: { open: boolean; hostId: string; onClose: () => void }) {
+export function ToolPacksModal({
+  open,
+  hostId,
+  planBase = false,
+  onClose
+}: {
+  open: boolean;
+  hostId: string;
+  /** Opened by the Add server wizard: go straight to the dry-run plan of the basic set. */
+  planBase?: boolean;
+  onClose: () => void;
+}) {
   const { t } = useTranslation();
   return (
     <Modal open={open} onClose={onClose} size="md" label={t("toolPacks.title")}>
-      {open ? <Content hostId={hostId} onClose={onClose} /> : null}
+      {open ? <Content hostId={hostId} planBase={planBase} onClose={onClose} /> : null}
     </Modal>
   );
 }
@@ -71,7 +82,7 @@ function Size({ mb }: { mb: number }) {
   return <>{t("toolPacks.size", { value, unit })}</>;
 }
 
-function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
+function Content({ hostId, planBase, onClose }: { hostId: string; planBase: boolean; onClose: () => void }) {
   const { t } = useTranslation();
   const { client, localApi, hostList } = useDaemon();
   const api = isMockMode() ? client : localApi;
@@ -84,6 +95,7 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
   const [job, setJob] = useState<HostSetupJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
+  const planned1 = useRef(false);
 
   const stopPolling = useCallback(() => {
     if (timer.current !== null) window.clearInterval(timer.current);
@@ -127,6 +139,15 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
       setPhase("list");
     }
   };
+
+  // From the wizard: the basic set is preselected and its dry-run plan shown, never installed
+  // without the owner's confirmation on that plan.
+  useEffect(() => {
+    if (!planBase || planned1.current || phase !== "list" || !facts || facts.error || !facts.can_admin) return;
+    const ids = missingBase(facts.packs);
+    planned1.current = true;
+    if (ids.length > 0) void review("install", ids);
+  });
 
   const poll = (id: string) => {
     stopPolling();
@@ -322,6 +343,11 @@ function Content({ hostId, onClose }: { hostId: string; onClose: () => void }) {
             {plan.items.some((i) => i.blocked) ? (
               <Callout tone="warning" role="status">
                 <p>{t(`toolPacks.reason.${reasonKey(plan.items.find((i) => i.blocked)?.blocked)}.body`)}</p>
+              </Callout>
+            ) : null}
+            {plan.runnable && action === "remove" ? (
+              <Callout tone="warning" role="status" data-testid="pack-remove-warning">
+                <p>{t("toolPacks.removeWarning")}</p>
               </Callout>
             ) : null}
             {plan.runnable ? (

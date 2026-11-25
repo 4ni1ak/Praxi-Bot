@@ -29190,7 +29190,7 @@
         "properties": {
           "base_packs": {
             "type": "boolean",
-            "description": "Also install the basic tool set (office, documents, media, developer tools) once the server\nis added. Needs a login that may run administrator commands; a failure there never undoes\nthe added server."
+            "description": "The owner wants the basic tool set (office, documents, media, developer tools). This only\nrecords the intent: nothing is installed by the setup. The job ends with a `packs.plan`\nstep (`plan_required`) and the app opens the tools plan, where the owner sees the dry run\nand approves it (`/v1/hosts/setup/packs/plan` and `/apply`)."
           },
           "host": {
             "type": "string",

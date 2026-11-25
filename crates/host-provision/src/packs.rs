@@ -77,11 +77,32 @@ pub fn catalog() -> Vec<Pack> {
 
 /// SHA-256 of the shipped catalog (lowercase hex): what the server verifies.
 pub fn catalog_sha() -> String {
-    let digest = Sha256::digest(remote::packs_txt().as_bytes());
-    digest.iter().fold(String::new(), |mut hex, b| {
-        let _ = write!(hex, "{b:02x}");
-        hex
-    })
+    sha_hex(remote::packs_txt().as_bytes())
+}
+
+fn sha_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .fold(String::new(), |mut hex, b| {
+            let _ = write!(hex, "{b:02x}");
+            hex
+        })
+}
+
+/// Hash of exactly what one pack operation touches (pack id, action, package list). The dry-run
+/// plan carries it and the install/remove sends it back, where the server script recomputes it
+/// from its checksum-verified catalog: what runs is provably what the owner saw.
+pub fn list_sha(id: &str, action: Action) -> Option<String> {
+    let pack = catalog().into_iter().find(|p| p.id == id)?;
+    let text = format!(
+        "{id}
+{}
+{}
+",
+        action.word(),
+        pack.packages.join(" ")
+    );
+    Some(sha_hex(text.as_bytes()))
 }
 
 /// Ids of the packs the wizard's "basic set" switch installs.
@@ -174,6 +195,8 @@ pub struct Plan {
     /// How many packages in total apt would unpack (dependencies included); 0 when unknown.
     pub total_packages: u32,
     pub size_mb: u32,
+    /// [`list_sha`] of this pack and action: sent back with the install or remove.
+    pub list_sha: String,
     /// Why this cannot run (`shared`, `dependants`, `unavailable`).
     pub blocked: Option<Blocked>,
 }
@@ -299,6 +322,7 @@ impl Packs<'_> {
         &self,
         sub: Sub,
         pack: Option<(&str, Action)>,
+        approved: Option<&str>,
         timeout: Duration,
     ) -> Result<Output, PackError> {
         let mut stdin = format!("catalog={}\n", catalog_sha());
@@ -307,6 +331,9 @@ impl Packs<'_> {
                 return Err(PackError::UnknownPack);
             }
             stdin.push_str(&format!("pack={id}\naction={}\n", action.word()));
+        }
+        if let Some(sha) = approved {
+            stdin.push_str(&format!("plan={sha}\n"));
         }
         self.stage()?;
         let out = self
@@ -323,7 +350,7 @@ impl Packs<'_> {
 
     /// The fact sheet: which packs and tools this server has. Read-only, no root.
     pub fn facts(&self) -> Result<HostTools, PackError> {
-        let out = self.call(Sub::PacksFacts, None, SHORT)?;
+        let out = self.call(Sub::PacksFacts, None, None, SHORT)?;
         let kv = parse_kv(&out.stdout);
         let supported = get(&kv, "apt") == "1";
         let cat = catalog();
@@ -363,7 +390,7 @@ impl Packs<'_> {
             .find(|p| p.id == id)
             .map(|p| p.size_mb)
             .ok_or(PackError::UnknownPack)?;
-        let out = self.call(Sub::PacksPlan, Some((id, action)), SHORT * 3)?;
+        let out = self.call(Sub::PacksPlan, Some((id, action)), None, SHORT * 3)?;
         let kv = parse_kv(&out.stdout);
         let blocked = match (get(&kv, "blocked"), get(&kv, "unavailable")) {
             ("shared", _) => Some(Blocked::Shared),
@@ -377,17 +404,21 @@ impl Packs<'_> {
             packages: names(get(&kv, "missing")),
             total_packages: get(&kv, "new_packages").parse().unwrap_or(0),
             size_mb,
+            list_sha: list_sha(id, action).ok_or(PackError::UnknownPack)?,
             blocked,
         })
     }
 
-    /// Install or remove one pack (root, through the owner's SSH login). Idempotent.
-    pub fn apply(&self, id: &str, action: Action) -> Result<(), PackError> {
+    /// Install or remove one pack (root, through the owner's SSH login). Idempotent. `approved` is
+    /// the [`Plan::list_sha`] the owner saw; the server refuses anything else, and there is no way
+    /// to run without one.
+    pub fn apply(&self, id: &str, action: Action, approved: &str) -> Result<(), PackError> {
         let sub = match action {
             Action::Install => Sub::PackInstall,
             Action::Remove => Sub::PackRemove,
         };
-        self.call(sub, Some((id, action)), LONG).map(|_| ())
+        self.call(sub, Some((id, action)), Some(approved), LONG)
+            .map(|_| ())
     }
 }
 
@@ -568,7 +599,12 @@ mod tests {
                 .iter()
                 .all(|(c, _)| !matches!(c, RemoteCmd::Provision(Sub::PackInstall)))
         );
-        p.apply("docs", Action::Install).unwrap();
+        assert_eq!(
+            plan.list_sha,
+            list_sha("docs", Action::Install).unwrap(),
+            "the plan carries the hash of the exact package list"
+        );
+        p.apply("docs", Action::Install, &plan.list_sha).unwrap();
         let ran = t.ran.borrow();
         let (cmd, stdin) = ran
             .iter()
@@ -580,7 +616,11 @@ mod tests {
         );
         assert_eq!(
             *stdin,
-            format!("catalog={}\npack=docs\naction=install\n", catalog_sha())
+            format!(
+                "catalog={}\npack=docs\naction=install\nplan={}\n",
+                catalog_sha(),
+                list_sha("docs", Action::Install).unwrap()
+            )
         );
     }
 
@@ -589,7 +629,10 @@ mod tests {
         let t = Fake::new(|_| ok(""));
         let p = Packs { transport: &t };
         for bad in ["docs; rm -rf /", "pandoc", "../docs", ""] {
-            assert_eq!(p.apply(bad, Action::Install), Err(PackError::UnknownPack));
+            assert_eq!(
+                p.apply(bad, Action::Install, "0"),
+                Err(PackError::UnknownPack)
+            );
             assert!(p.plan(bad, Action::Install).is_err());
         }
         assert!(t.ran.borrow().is_empty() && t.uploaded.borrow().is_empty());
@@ -605,7 +648,7 @@ mod tests {
                 ..Output::default()
             })
         };
-        let run = |t: &Fake| Packs { transport: t }.apply("media", Action::Install);
+        let run = |t: &Fake| Packs { transport: t }.apply("media", Action::Install, "0");
         assert_eq!(
             run(&fail("sudo: a password is required")),
             Err(PackError::NeedsAdmin)
@@ -664,5 +707,50 @@ token=ghp_abcdefghijklmnopqrstuvwxyz0123456789",
         ] {
             assert!(!packs_part.contains(banned), "{banned}");
         }
+    }
+
+    #[test]
+    fn the_list_hash_covers_pack_action_and_every_package() {
+        let a = list_sha("docs", Action::Install).unwrap();
+        assert_eq!(a.len(), 64);
+        assert_ne!(a, list_sha("docs", Action::Remove).unwrap());
+        assert_ne!(a, list_sha("media", Action::Install).unwrap());
+        assert_eq!(list_sha("nope", Action::Install), None);
+        // the server script hashes the same text: id, action and the single-spaced list
+        let pkgs = catalog()
+            .into_iter()
+            .find(|p| p.id == "docs")
+            .unwrap()
+            .packages
+            .join(" ");
+        let text = format!(
+            "docs
+install
+{pkgs}
+"
+        );
+        assert_eq!(a, sha_hex(text.as_bytes()));
+    }
+
+    #[test]
+    fn a_failed_removal_simulation_is_a_failure_not_an_all_clear() {
+        // the script dies when `apt-get -s remove` itself errors (it used to treat that as "no
+        // dependants"); the app reports it as a failed dry run and nothing is removed
+        let t = Fake::new(|_| Output {
+            code: 1,
+            stderr: "[praxi-provision] error: could not check what removing this pack would affect"
+                .into(),
+            ..Output::default()
+        });
+        let p = Packs { transport: &t };
+        assert!(matches!(
+            p.plan("media", Action::Remove),
+            Err(PackError::Failed(_))
+        ));
+        let sha = list_sha("media", Action::Remove).unwrap();
+        assert!(matches!(
+            p.apply("media", Action::Remove, &sha),
+            Err(PackError::Failed(_))
+        ));
     }
 }

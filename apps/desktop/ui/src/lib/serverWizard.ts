@@ -28,7 +28,10 @@ export interface WizardState {
   port: string;
   auth: AuthMode;
   keyPath: string;
-  /** Also install the basic tool set (office, documents, media, developer tools) after adding. */
+  /**
+   * Only an intent: the basic tool set is never installed by the wizard. When on, the app opens the
+   * Tools plan (dry run, then confirm) once the server is added. Off until the owner switches it on.
+   */
   basePacks: boolean;
   /** Guide checklist ticks (ids from GUIDE_STEPS), for the guide that is open. */
   oracleDone: string[];
@@ -42,7 +45,7 @@ export const initialWizard: WizardState = {
   port: "22",
   auth: "key",
   keyPath: "",
-  basePacks: true,
+  basePacks: false,
   oracleDone: []
 };
 

@@ -309,12 +309,11 @@
     "noDaemon": "Yerel Praxi servisi çalışmıyor. Uygulamayı yeniden başlatıp yeniden dene.",
     "noKeys": ".ssh klasöründe anahtar dosyası bulunamadı. İndirdiğin anahtar dosyasının yolunu yaz.",
     "packs": {
-      "body": "Ofis dosyaları, belgeler, medya ve geliştirici araçları, {{size}}. Bunu sonra Araçlar bölümünden değiştirebilirsin.",
-      "doneTitle": "Temel araçlar kuruldu",
-      "running": "Araçlar kuruluyor. Birkaç dakika sürebilir.",
-      "title": "Temel araçları da kur",
-      "warnBody": "{{reason}}. Araçları sonra Sunucuların → Araçlar bölümünden ekleyebilirsin.",
-      "warnTitle": "Sunucu eklendi, araçlar kurulmadı"
+      "body": "Sunucu eklendikten sonra planı görmek için aç: {{list}}; toplam {{size}}. Neyin değişeceğini görüp onaylamadan hiçbir şey kurulmaz.",
+      "planBody": "Sunucu eklendi. Tam olarak nelerin kurulacağını incele ve başlatmak için onayla.",
+      "planOpen": "Planı incele",
+      "planTitle": "Araçlar henüz kurulmadı",
+      "title": "Eklemeden sonra temel araçları hazırla"
     },
     "pairChecks": {
       "models": {
@@ -6300,6 +6299,7 @@
       }
     },
     "remove": "Kaldır",
+    "removeWarning": "Bu programlar bu sunucuda başka yazılımlar veya senin kurduğun şeyler tarafından da kullanılıyor olabilir. Kaldırmak onları yalnızca Praxi için değil, her şey için kaldırır.",
     "review": "Gözden geçir ({{size}})",
     "reviewNone": "Gözden geçir",
     "rowState": {

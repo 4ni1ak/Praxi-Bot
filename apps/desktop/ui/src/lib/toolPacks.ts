@@ -9,7 +9,16 @@ import type { HostPackInfo, HostSetupJob, PackPlanItem } from "../api/types";
  * Rough download of the wizard's basic set (office + docs + media + dev), shown next to its switch
  * before any server is known. Mirrors the catalog's base packs; a daemon test keeps them in step.
  */
-export const BASE_SET_MB = 1350;
+export const BASE_PACKS = [
+  { id: "office", mb: 700 },
+  { id: "docs", mb: 150 },
+  { id: "media", mb: 250 },
+  { id: "dev", mb: 250 }
+] as const;
+export const BASE_SET_MB: number = BASE_PACKS.reduce((sum, p) => sum + p.mb, 0);
+
+/** The wizard's job step that says "the basic set was asked for, show the plan first". */
+export const PLAN_REQUIRED_STEP = "packs.plan";
 
 /** Catalog ids in the order they are shown (the daemon owns the catalog; the app owns the words). */
 export const PACK_ORDER = ["office", "docs", "ocr", "media", "dev"] as const;
