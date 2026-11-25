@@ -56,8 +56,8 @@ pub struct AgentLoop {
 
 /// File access scope of a bot, read from its profile (`[files]`). A caller
 /// that is not a known bot gets no file access.
-struct LoopFsAccess {
-    sh: Weak<Shared>,
+pub(crate) struct LoopFsAccess {
+    pub(crate) sh: Weak<Shared>,
 }
 
 impl builtin_tools::FsAccessProvider for LoopFsAccess {
@@ -74,6 +74,116 @@ impl builtin_tools::FsAccessProvider for LoopFsAccess {
         };
         profile.files.scope(&sh.unset_file_scope())
     }
+
+    fn workspaces_root(&self) -> Option<std::path::PathBuf> {
+        self.sh.upgrade()?.workspaces_root.read().clone()
+    }
+
+    fn bot_workspace(&self, bot_id: Option<&str>) -> Option<std::path::PathBuf> {
+        let sh = self.sh.upgrade()?;
+        let bot = bot_id.and_then(|b| b.parse::<Uuid>().ok()).map(BotId)?;
+        sh.bot_workspace_dir(bot)
+    }
+
+    fn check_write(
+        &self,
+        bot_id: Option<&str>,
+        target_path: &std::path::Path,
+        added_bytes: u64,
+    ) -> std::result::Result<(), String> {
+        use builtin_tools::workspace::{
+            WriteBudgetOutcome, WriteWarningKind, dir_size_bytes, evaluate_write_budget,
+            host_disk_stats,
+        };
+        let Some(sh) = self.sh.upgrade() else {
+            return Ok(());
+        };
+        let bot = bot_id.and_then(|b| b.parse::<Uuid>().ok()).map(BotId);
+        let (user_id, bot_ws, soft, hard) = if let Some(bot_id) = bot {
+            let Ok(Some(bot_row)) = sh.storage.get_bot(bot_id) else {
+                return Ok(());
+            };
+            let ws = sh.bot_workspace_dir(bot_id);
+            let rec = sh.storage.get_bot_workspace(bot_id).ok().flatten();
+            (
+                Some(bot_row.user_id),
+                ws,
+                rec.as_ref().and_then(|r| r.soft_limit_bytes),
+                rec.as_ref().and_then(|r| r.hard_limit_bytes),
+            )
+        } else {
+            (None, None, None, None)
+        };
+        let settings = user_id
+            .and_then(|u| sh.storage.get_workspace_settings(u).ok())
+            .unwrap_or_default();
+        let in_ws = bot_ws
+            .as_ref()
+            .is_some_and(|ws| target_path.starts_with(ws));
+        let bot_used = if in_ws && (soft.is_some() || hard.is_some()) {
+            bot_ws.as_deref().map_or(0, dir_size_bytes)
+        } else {
+            0
+        };
+        let (eff_soft, eff_hard) = if in_ws { (soft, hard) } else { (None, None) };
+        let disk = host_disk_stats(target_path);
+        match evaluate_write_budget(
+            bot_used,
+            added_bytes,
+            eff_soft,
+            eff_hard,
+            disk,
+            [
+                settings.warn_percent_1,
+                settings.warn_percent_2,
+                settings.warn_percent_3,
+            ],
+            settings.min_free_bytes,
+        ) {
+            WriteBudgetOutcome::Ok => Ok(()),
+            WriteBudgetOutcome::Blocked {
+                used_bytes,
+                hard_limit_bytes,
+                ..
+            } => Err(format!(
+                "workspace_limit_reached: bot workspace limit ({hard_limit_bytes} bytes) would be exceeded (currently {used_bytes} bytes)"
+            )),
+            WriteBudgetOutcome::Warn(kind) => {
+                let (tag, level) = match kind {
+                    WriteWarningKind::DiskPercent {
+                        threshold_percent, ..
+                    } => ("disk_percent", threshold_percent),
+                    WriteWarningKind::LowFreeSpace { .. } => ("low_free_space", 0),
+                    WriteWarningKind::BotSoftLimit { .. } => ("bot_soft_limit", 1),
+                };
+                let key = (bot, tag, level);
+                let now = std::time::Instant::now();
+                let should_emit = {
+                    let mut warned = sh.workspace_warned.lock();
+                    let stale = warned
+                        .get(&key)
+                        .is_none_or(|t| now.duration_since(*t) > Duration::from_secs(300));
+                    if stale {
+                        warned.insert(key, now);
+                    }
+                    stale
+                };
+                if should_emit {
+                    let workspace_path = bot_ws
+                        .or_else(|| sh.workspaces_root.read().clone())
+                        .unwrap_or_else(|| target_path.to_path_buf());
+                    let _ = sh
+                        .workspace_warnings
+                        .send(crate::shared::WorkspaceWarningEvent {
+                            bot_id: bot,
+                            kind,
+                            workspace_path,
+                        });
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 impl AgentLoop {
@@ -88,7 +198,9 @@ impl AgentLoop {
     ) -> Self {
         let providers = providers.with_redactor(cfg.redactor.clone());
         let (events, _) = broadcast::channel(4096);
+        let (workspace_warnings, _) = broadcast::channel(64);
         let first_gseq = storage.last_gseq().unwrap_or(0);
+        let initial_workspaces_root = cfg.workspaces_root.clone();
         // The discovery meta-tools only reveal what the calling bot may see.
         let sh = Arc::new_cyclic(|weak: &Weak<Shared>| {
             let weak = weak.clone();
@@ -158,6 +270,9 @@ impl AgentLoop {
                 exec_gate: Mutex::new(()),
                 native_runs: Mutex::new(HashMap::new()),
                 approved_hosts: Mutex::new(std::collections::VecDeque::new()),
+                workspaces_root: RwLock::new(initial_workspaces_root),
+                workspace_warnings,
+                workspace_warned: Mutex::new(HashMap::new()),
                 #[cfg(test)]
                 task_reap_gate: Mutex::new(None),
                 #[cfg(test)]
@@ -293,6 +408,25 @@ impl AgentLoop {
         *self.sh.fs_unset_denied.write() = Some(Arc::new(denied));
     }
 
+    /// Configure the shared root directory for per-bot persistent workspaces.
+    pub fn set_workspaces_root(&self, root: Option<std::path::PathBuf>) {
+        *self.sh.workspaces_root.write() = root;
+    }
+
+    /// Subscribe to workspace disk threshold and soft-limit warnings emitted on writes.
+    #[must_use]
+    pub fn subscribe_workspace_warnings(
+        &self,
+    ) -> broadcast::Receiver<crate::shared::WorkspaceWarningEvent> {
+        self.sh.workspace_warnings.subscribe()
+    }
+
+    /// Ensure and return `bot`'s persistent workspace folder when workspaces are enabled.
+    #[must_use]
+    pub fn bot_workspace_dir(&self, bot: BotId) -> Option<std::path::PathBuf> {
+        self.sh.bot_workspace_dir(bot)
+    }
+
     /// Like [`Self::checkpoint_access`] for a run of `bot`: its CURRENT file
     /// access setting decides (folder-only roots; an empty or unusable folder
     /// list denies every path), so narrowing a bot also narrows review/restore.
@@ -302,15 +436,27 @@ impl AgentLoop {
         bot: BotId,
     ) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
         let (mut roots, grants) = self.checkpoint_access();
+        let ws = self.sh.bot_workspace_dir(bot);
         match self
             .sh
             .profile_for(bot)
             .map(|p| p.files.scope(&self.sh.unset_file_scope()))
         {
-            Ok(builtin_tools::FsScope::Folders(f)) if !f.is_empty() => roots = f,
-            // Folder mode without a folder (or an unset mode on a host): nothing resolves.
+            Ok(builtin_tools::FsScope::Folders(f)) if !f.is_empty() => {
+                roots = f;
+                if let Some(ws) = ws
+                    && !roots.contains(&ws)
+                {
+                    roots.push(ws);
+                }
+            }
+            // Folder mode without a folder (or an unset mode on a host): workspace only if enabled, else nothing resolves.
             Ok(builtin_tools::FsScope::Folders(_)) => {
-                roots = vec![self.sh.storage.data_dir().join("__no-folder__")];
+                if let Some(ws) = ws {
+                    roots = vec![ws];
+                } else {
+                    roots = vec![self.sh.storage.data_dir().join("__no-folder__")];
+                }
             }
             // This computer, or a profile that cannot be read: the static access.
             Ok(builtin_tools::FsScope::Computer) | Err(_) => {}

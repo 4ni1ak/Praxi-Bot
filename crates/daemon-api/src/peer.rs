@@ -371,6 +371,9 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
     if check_path == "/v1/data-usage" || check_path.starts_with("/v1/data-usage/") {
         return Some("data folder sizes and Clear cache are a host-local owner action");
     }
+    if is_workspace_owner_path(check_path) {
+        return Some("workspace files, settings and cleanup are a host-local owner action");
+    }
     if under(check_path, "/v1/embeddings") || under(check_path, "/v1/decision-helper") {
         return Some("embedding providers and their keys are a host-local owner setting");
     }
@@ -439,6 +442,16 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
         return Some(why);
     }
     is_doctor_path(check_path).then_some("host-local diagnostics are not allowed for peers")
+}
+
+fn is_workspace_owner_path(path: &str) -> bool {
+    under(path, "/v1/workspaces")
+        || path
+            .strip_prefix("/v1/bots/")
+            .and_then(|rest| rest.split_once('/'))
+            .is_some_and(|(bot, rest)| {
+                !bot.is_empty() && (rest == "workspace" || rest.starts_with("workspace/"))
+            })
 }
 
 /// A write to one of a bot's own safety settings (memory, engine, spending limits, page reader):

@@ -134,6 +134,11 @@ struct Feed {
     control_rx: Option<broadcast::Receiver<crate::dto::ControlStateChanged>>,
     /// `view_targets_changed` notifications (global stream only).
     targets_rx: Option<broadcast::Receiver<()>>,
+    /// `workspace_warning` notifications (local global stream only). The payload
+    /// carries numbers and bot ids, never bot, folder or file names.
+    workspace_rx: Option<broadcast::Receiver<agent_core::WorkspaceWarningEvent>>,
+    /// Weak state handle to read the severity thresholds for workspace warnings (never names).
+    app_state: Option<crate::WeakAppState>,
     // ---- both ----
     storage: Arc<Storage>,
     data_dir: PathBuf,
@@ -528,6 +533,29 @@ impl Feed {
                         continue;
                     }
                 },
+                w = async {
+                    match &mut self.workspace_rx {
+                        Some(r) => r.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => match w {
+                    Ok(ev) => {
+                        let dto = self
+                            .app_state
+                            .as_ref()
+                            .and_then(crate::WeakAppState::upgrade)
+                            .map(|st| crate::workspace_routes::warning_event_dto(&st, &ev));
+                        if let Some(dto) = dto {
+                            return Some(Out::WorkspaceWarning(dto));
+                        }
+                        continue;
+                    }
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => {
+                        self.workspace_rx = None;
+                        continue;
+                    }
+                },
             };
             match received {
                 Ok(item) => {
@@ -561,6 +589,7 @@ pub(crate) enum Out {
     Mcp(McpServerChanged),
     Control(crate::dto::ControlStateChanged),
     TargetsChanged,
+    WorkspaceWarning(crate::workspace_routes::WorkspaceWarningEventDto),
     Gap(Gap),
     Unavailable(u64),
 }
@@ -1055,6 +1084,10 @@ fn event_stream(
                 .event("view_targets_changed")
                 .json_data(serde_json::json!({"type": "view_targets_changed"}))
                 .unwrap_or_else(|_| SseEvent::default().comment("unserialisable event")),
+            Out::WorkspaceWarning(warning) => SseEvent::default()
+                .event("workspace_warning")
+                .json_data(&warning)
+                .unwrap_or_else(|_| SseEvent::default().comment("unserialisable event")),
         };
         Some((Ok(ev), (feed, audience)))
     })
@@ -1120,6 +1153,9 @@ pub(crate) async fn events(
         targets_rx: scoped_run
             .is_none()
             .then(|| state.live_view().registry.subscribe_changes()),
+        workspace_rx: (scoped_run.is_none() && actor.local)
+            .then(|| state.subscribe_workspace_warnings()),
+        app_state: (scoped_run.is_none() && actor.local).then(|| state.downgrade()),
         storage: state.storage_arc(),
         data_dir: state.data_dir(),
         logs: Arc::default(),
@@ -1599,6 +1635,8 @@ mod tests {
             mcp_rx: None,
             control_rx: None,
             targets_rx: None,
+            workspace_rx: None,
+            app_state: None,
             storage: Arc::clone(&storage),
             data_dir: dir.path().to_owned(),
             logs: Arc::default(),

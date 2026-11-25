@@ -37,6 +37,7 @@ import styles from "./BotPanel.module.css";
 import { BotPanelMail } from "./BotPanelMail";
 import { BotPanelWebhooks } from "./BotPanelWebhooks";
 import { BotPanelSkills } from "./BotPanelSkills";
+import { BotPanelWorkspace } from "./BotPanelWorkspace";
 import { BrandMark } from "./BrandMark";
 import { ChatList } from "./ChatList";
 import { QuotaBlock } from "./QuotaRings";
@@ -383,6 +384,13 @@ export function BotPanel({
                 <BotPanelSkills skills={skills} onManage={onManageSkills} onAdd={onAddSkill} />
                 <BotPanelMail botId={bot.id} botName={bot.name} onOpenMail={onOpenMail} />
               </Fragment>
+            ) : id === "workspace" ? (
+              <section key={id} className={styles.section} aria-labelledby="bot-panel-workspace">
+                <h3 className={styles.label} id="bot-panel-workspace">
+                  {t("workspace.sectionTitle")}
+                </h3>
+                <BotPanelWorkspace botId={bot.id} active={visible && tab === "library"} />
+              </section>
             ) : (
               <div key={id}>
         <section className={styles.section} aria-labelledby="bot-panel-chats">

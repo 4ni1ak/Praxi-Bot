@@ -263,3 +263,55 @@ pub struct BotSkillAssignment {
     /// Monotonic version of this row (`0` when no row exists).
     pub version: u64,
 }
+
+/// Persisted per-bot workspace folder mapping and optional limits (`bot_workspaces`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BotWorkspaceRecord {
+    /// Bot this workspace belongs to.
+    pub bot_id: BotId,
+    /// Owner.
+    pub user_id: UserId,
+    /// Safe single-component directory name under the workspaces root.
+    pub folder_name: String,
+    /// Optional per-bot soft limit in bytes (`None` = off).
+    pub soft_limit_bytes: Option<u64>,
+    /// Optional per-bot hard limit in bytes (`None` = off).
+    pub hard_limit_bytes: Option<u64>,
+    /// Creation time.
+    pub created_at_ms: i64,
+    /// Last update time.
+    pub updated_at_ms: i64,
+}
+
+/// Host disk warning thresholds and workspace cleanup policy (`workspace_settings`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSettingsRecord {
+    /// First host disk usage percentage warning threshold (default 80).
+    pub warn_percent_1: u8,
+    /// Second host disk usage percentage warning threshold (default 90).
+    pub warn_percent_2: u8,
+    /// Third host disk usage percentage warning threshold (default 95).
+    pub warn_percent_3: u8,
+    /// Warn before a write would leave less than this many bytes free (default 5 GiB).
+    pub min_free_bytes: u64,
+    /// Days after which files in `downloads/` are suggested for cleanup (`None` = off).
+    pub downloads_max_age_days: Option<u32>,
+    /// Days after which files in `logs/` are suggested for cleanup (`None` = off).
+    pub logs_max_age_days: Option<u32>,
+    /// Last update time.
+    pub updated_at_ms: i64,
+}
+
+impl Default for WorkspaceSettingsRecord {
+    fn default() -> Self {
+        Self {
+            warn_percent_1: 80,
+            warn_percent_2: 90,
+            warn_percent_3: 95,
+            min_free_bytes: 5 * 1024 * 1024 * 1024,
+            downloads_max_age_days: Some(30),
+            logs_max_age_days: Some(30),
+            updated_at_ms: 0,
+        }
+    }
+}

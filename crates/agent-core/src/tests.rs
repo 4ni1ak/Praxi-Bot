@@ -7796,6 +7796,7 @@ async fn pre_058_paused_run_with_unknown_origin_fails_closed_after_migration() {
             DROP TABLE bot_spend_limits;
             DROP TABLE incoming_webhook_seen;
             DROP TABLE incoming_webhooks;
+            DROP TABLE bot_workspaces; DROP TABLE workspace_settings;
             DROP TRIGGER chat_search_insert;
             DROP TRIGGER chat_search_delete;
             DROP TRIGGER chat_search_update;
@@ -9304,4 +9305,107 @@ async fn with_memory_tools_registers_only_when_enabled_and_survives_indexing_fai
     let runs = env.storage.list_runs(env.user).unwrap();
     assert_eq!(runs.len(), 2);
     assert!(runs.iter().all(|r| r.state == RunState::Succeeded.as_str()));
+}
+
+#[tokio::test]
+async fn bot_workspace_is_isolated_enforces_hard_limit_and_emits_warning() {
+    let env = setup();
+    let ws_tmp = tempfile::tempdir().unwrap();
+    let root = ws_tmp.path().join("workspaces");
+    let bot_b = second_bot(&env, "Beta");
+    let fake = Fake::new(vec![]);
+    let mut c = cfg(Policy::full());
+    // Putting workspaces inside data_dir is refused.
+    c.workspaces_root = Some(env.dir.path().join("workspaces"));
+    let lp = make_loop(&env.storage, env.bot, &fake, &[], profile(""), c);
+    assert!(lp.bot_workspace_dir(env.bot).is_none());
+
+    lp.set_workspaces_root(Some(root.clone()));
+    lp.add_profile(bot_b, profile(""));
+
+    let ws_a = lp.bot_workspace_dir(env.bot).expect("workspace A created");
+    let ws_b = lp.bot_workspace_dir(bot_b).expect("workspace B created");
+    assert_ne!(ws_a, ws_b);
+    for sub in builtin_tools::workspace::WORKSPACE_SUBDIRS {
+        assert!(ws_a.join(sub).is_dir(), "missing subfolder {sub}");
+        assert!(ws_b.join(sub).is_dir(), "missing subfolder {sub}");
+    }
+
+    // Hard limit enforcement blocks a write that would exceed it and emits soft-limit warning.
+    let ws_a_rec = env
+        .storage
+        .get_bot_workspace(env.bot)
+        .unwrap()
+        .expect("bot workspace row");
+    env.storage
+        .set_bot_workspace_limits(
+            env.user,
+            env.bot,
+            &ws_a_rec.folder_name,
+            Some(5),
+            Some(10),
+            &json!({}),
+        )
+        .unwrap();
+
+    let mut rx = lp.subscribe_workspace_warnings();
+    let fs_access = crate::agent::LoopFsAccess {
+        sh: Arc::downgrade(&lp.sh),
+    };
+    let bot_key = env.bot.0.to_string();
+    let denied = builtin_tools::FsAccessProvider::check_write(
+        &fs_access,
+        Some(&bot_key),
+        &ws_a.join("notes/too-big.txt"),
+        20,
+    );
+    assert!(denied.is_err(), "hard limit should block write");
+
+    // Suppress host-disk threshold interference on full local/CI drives so BotSoftLimit fires deterministically.
+    env.storage
+        .set_workspace_settings(
+            env.user,
+            &storage::WorkspaceSettingsRecord {
+                warn_percent_1: 99,
+                warn_percent_2: 99,
+                warn_percent_3: 99,
+                min_free_bytes: 0,
+                downloads_max_age_days: Some(30),
+                logs_max_age_days: Some(30),
+                updated_at_ms: 0,
+            },
+            &json!({}),
+        )
+        .unwrap();
+
+    // Soft-limit crossing without hard-limit violation succeeds and emits warning event.
+    let allowed = builtin_tools::FsAccessProvider::check_write(
+        &fs_access,
+        Some(&bot_key),
+        &ws_a.join("notes/ok.txt"),
+        8,
+    );
+    assert!(allowed.is_ok(), "under hard limit should succeed");
+    let warning = rx.try_recv().expect("soft limit warning emitted");
+    assert_eq!(warning.bot_id, Some(env.bot));
+    assert!(
+        matches!(
+            warning.kind,
+            builtin_tools::workspace::WriteWarningKind::BotSoftLimit { .. }
+                | builtin_tools::workspace::WriteWarningKind::DiskPercent {
+                    threshold_percent: 99,
+                    ..
+                }
+        ),
+        "unexpected warning kind: {:?}",
+        warning.kind
+    );
+
+    // checkpoint_access_for narrows folder-mode bots to their folders + own workspace (never bot B).
+    let (roots_a, _) = lp.checkpoint_access_for(env.bot);
+    assert!(roots_a.is_empty(), "computer-mode keeps empty static roots");
+    lp.set_unset_file_access_denied(|| true);
+    let (host_roots_a, _) = lp.checkpoint_access_for(env.bot);
+    assert_eq!(host_roots_a, vec![ws_a.clone()]);
+    assert!(!host_roots_a.contains(&ws_b));
 }

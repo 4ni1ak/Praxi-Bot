@@ -1173,6 +1173,10 @@ pub fn serve(
         cfg.allowed_origins.extend(parse_origins(&extra));
     }
     let state = AppState::with_view_registry(agent.clone(), storage, cfg, views)?;
+    state.set_workspaces_root(builtin_tools::workspace::resolve_workspaces_root(
+        host_is_host,
+        None,
+    ));
     step("app state built");
     // The owner key: handed over by the desktop app on stdin (memory only), else
     // the `owner-key` file of this data dir (0600) for a terminal `bot serve`,

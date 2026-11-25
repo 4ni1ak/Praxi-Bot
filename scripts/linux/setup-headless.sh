@@ -814,9 +814,13 @@ if [[ "${MODE}" == "system" ]]; then
     fi
   fi
 
+  mkdir -p /var/lib/praxi-work
+  chown "${SVC_USER}:${SVC_USER}" /var/lib/praxi-work
+  chmod 0750 /var/lib/praxi-work
+
   HARDENING="NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=${DATA_DIR}
+ReadWritePaths=${DATA_DIR} /var/lib/praxi-work
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true

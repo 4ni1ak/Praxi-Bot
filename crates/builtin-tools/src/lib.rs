@@ -42,6 +42,7 @@ pub mod secret_request;
 pub mod shell;
 mod util;
 pub mod wait;
+pub mod workspace;
 
 pub use util::classify;
 
@@ -56,7 +57,7 @@ pub(crate) mod test_serial {
         tokio::sync::Mutex::const_new(());
 }
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use desktop_api::DesktopBackend;
@@ -183,11 +184,35 @@ pub enum FsScope {
     Folders(Vec<PathBuf>),
 }
 
-/// Looks up the file access scope of the bot making a call.
+/// Looks up the file access scope and workspace of the bot making a call.
 pub trait FsAccessProvider: Send + Sync {
     /// Scope for `bot_id` (`None` = not a bot: the narrowest sensible default
     /// is the provider's choice).
     fn scope(&self, bot_id: Option<&str>) -> FsScope;
+
+    /// The shared root holding per-bot workspaces, when workspaces are enabled.
+    fn workspaces_root(&self) -> Option<PathBuf> {
+        None
+    }
+
+    /// The calling bot's persistent workspace directory (ensured on disk).
+    fn bot_workspace(&self, _bot_id: Option<&str>) -> Option<PathBuf> {
+        None
+    }
+
+    /// Pre-write quota & host disk warning check. Returns `Err(reason)` if a
+    /// per-bot hard limit forbids the write.
+    ///
+    /// # Errors
+    /// Fails when the bot's optional hard workspace limit would be exceeded.
+    fn check_write(
+        &self,
+        _bot_id: Option<&str>,
+        _target_path: &Path,
+        _added_bytes: u64,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// The user's home directory from the environment.
@@ -310,9 +335,10 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
         fs_home,
         cfg.provenance.clone(),
     ));
-    all.push(shell::tool_with_provenance(
+    all.push(shell::tool_with_provenance_and_access(
         &cfg.data_dir,
         cfg.provenance.clone(),
+        cfg.fs_access.clone(),
     ));
     all.push(script::tool_with_control(
         registry.clone(),

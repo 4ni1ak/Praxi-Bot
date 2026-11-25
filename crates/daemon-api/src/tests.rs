@@ -55,6 +55,7 @@ mod secret_requests;
 mod skills;
 mod voice;
 mod web;
+mod workspaces;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 /// The owner key of the test daemon; `call()` presents it like the desktop app does.

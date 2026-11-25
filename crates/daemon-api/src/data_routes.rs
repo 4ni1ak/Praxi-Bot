@@ -107,13 +107,13 @@ fn real_subdir(root: &Path, name: &str) -> Option<PathBuf> {
 }
 
 #[cfg(windows)]
-fn is_reparse_point(meta: &std::fs::Metadata) -> bool {
+pub(crate) fn is_reparse_point(meta: &std::fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
     meta.file_attributes() & 0x400 != 0
 }
 
 #[cfg(not(windows))]
-fn is_reparse_point(_meta: &std::fs::Metadata) -> bool {
+pub(crate) fn is_reparse_point(_meta: &std::fs::Metadata) -> bool {
     false
 }
 
@@ -172,7 +172,7 @@ fn usage(data_dir: &Path) -> DataUsageDto {
     }
 }
 
-fn clear_cache(data_dir: &Path) -> u64 {
+pub(crate) fn clear_cache(data_dir: &Path) -> u64 {
     let mut freed = 0;
     for p in clearable(data_dir) {
         let size = tree_size(&p);

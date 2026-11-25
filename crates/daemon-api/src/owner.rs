@@ -131,6 +131,21 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     // (CLI engine, MCP client, script) must not use it to leak data in host names
     ("GET", "/v1/favicons/{}"),
     ("HEAD", "/v1/favicons/{}"),
+    // bot persistent workspaces, file browser, disk thresholds and cleanup: owner-only
+    ("GET", "/v1/workspaces"),
+    ("PUT", "/v1/workspaces/settings"),
+    ("POST", "/v1/workspaces/cleanup"),
+    ("GET", "/v1/bots/{}/workspace"),
+    ("GET", "/v1/bots/{}/workspace/file"),
+    // axum also serves HEAD for a GET handler: without these a bearer token alone
+    // could probe which files exist (and their sizes) in any bot's workspace
+    ("HEAD", "/v1/workspaces"),
+    ("HEAD", "/v1/bots/{}/workspace"),
+    ("HEAD", "/v1/bots/{}/workspace/file"),
+    ("POST", "/v1/bots/{}/workspace/rename"),
+    ("POST", "/v1/bots/{}/workspace/delete"),
+    ("POST", "/v1/bots/{}/workspace/restore"),
+    ("PUT", "/v1/bots/{}/workspace/limits"),
     // bulk usage CSV export: bot names, models and spend history belong to the owner
     ("GET", "/v1/usage/export"),
     ("POST", "/v1/trusted-folders"),

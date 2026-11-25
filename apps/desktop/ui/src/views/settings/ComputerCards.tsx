@@ -16,6 +16,7 @@ import styles from "../SettingsModal.module.css";
 import { PermissionsSection } from "../SettingsSections";
 import { ComputerAccessCard } from "../../components/ComputerAccess";
 import { WebSearchCard } from "./WebSearchCard";
+import { WorkspaceStorageCard } from "./WorkspaceStorageCard";
 import { AuditLogCard } from "./AuditLogCard";
 import { AllowedGrantsCard } from "./AllowedGrantsCard";
 import { PageReaderCard } from "./PageReaderCard";
@@ -248,6 +249,22 @@ export function computerCards(b: SettingsBridge, t: TFunction): CardDef[] {
       node: (
         <SettingsCard title={t("settingsModal.webSearch.title")} description={t("settingsModal.webSearch.description")}>
           <WebSearchCard />
+        </SettingsCard>
+      )
+    },
+    {
+      id: "bot-workspaces",
+      section: "computer",
+      kind: "block",
+      title: t("workspace.cardTitle"),
+      description: t("workspace.cardDescription"),
+      keywords: "workspace folder disk storage quota limit cleanup downloads logs klasor alan depolama",
+      node: (
+        <SettingsCard
+          title={t("workspace.cardTitle")}
+          description={t("workspace.cardDescription")}
+        >
+          <WorkspaceStorageCard />
         </SettingsCard>
       )
     }
