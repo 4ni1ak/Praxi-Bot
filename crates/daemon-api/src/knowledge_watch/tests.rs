@@ -126,19 +126,21 @@ async fn changes_are_debounced_then_indexed_and_deletes_are_dropped() {
     tick(&host.state, P, 5_000).await;
     assert_eq!(host.indexed(), ["renamed.md"]);
     let store = KnowledgeStore::open(host.state.data_dir(), host.owner).unwrap();
-    assert!(
-        !store
+    assert_eq!(
+        store
             .search(&memory_store::knowledge::SearchRequest::new("spectrometer"))
             .unwrap()
             .hits
-            .is_empty()
+            .len(),
+        1
     );
-    assert!(
+    assert_eq!(
         store
             .search(&memory_store::knowledge::SearchRequest::new("beta"))
             .unwrap()
             .hits
-            .is_empty()
+            .len(),
+        0
     );
 }
 
@@ -289,7 +291,7 @@ async fn only_consented_enabled_folders_are_watched_and_attempts_share_a_budget(
     tick(&host.state, slow, 1_000).await;
     assert_eq!(host.indexed(), ["a.md"]);
     assert_eq!(host.status().error.unwrap().code, "some_files_skipped");
-    assert!(store.list_documents(disabled.id).unwrap().is_empty());
+    assert_eq!(store.list_documents(disabled.id).unwrap(), []);
     assert_eq!(host.state.0.knowledge_watch.budget.lock().used, 2);
     host.state
         .0

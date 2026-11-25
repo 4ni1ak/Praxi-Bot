@@ -157,7 +157,9 @@ fn hash_file_state(source: &Source, files: &[String]) -> Result<u64, &'static st
             Ok(meta) => {
                 meta.len().hash(&mut hasher);
                 meta.file_type().is_symlink().hash(&mut hasher);
-                meta.modified().ok().map(|t| t.into_std()).hash(&mut hasher);
+                if let Ok(modified) = meta.modified() {
+                    modified.into_std().hash(&mut hasher);
+                }
             }
             Err(_) => 0u8.hash(&mut hasher),
         }
