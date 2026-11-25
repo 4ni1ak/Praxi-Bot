@@ -2486,7 +2486,8 @@ impl Shared {
             self.cfg.handover_timeout.min(self.cfg.approval_timeout)
         };
         let summary = format!("handover: {}", truncate_utf8(&card.site, 80));
-        let (approval_id, mut guard, rx) = self.park(ctx, call_id, &summary, true, false);
+        let (approval_id, mut guard, rx) =
+            self.park(ctx, call_id, &summary, true, false, PendingKind::Handover);
         self.handovers.lock().insert(
             call_id,
             crate::shared::HandoverInfo {

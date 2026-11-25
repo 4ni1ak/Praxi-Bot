@@ -728,6 +728,8 @@ pub(crate) enum PendingKind {
     Question,
     /// A credential request.
     Secret,
+    /// A CAPTCHA or one-time-code handover (`browser_handover`).
+    Handover,
 }
 
 /// Browser actions that act on the page open right now: their allowance is bound to its origin.
