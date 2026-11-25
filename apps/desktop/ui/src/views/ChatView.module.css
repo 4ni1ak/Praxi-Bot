@@ -34,6 +34,13 @@
   background: transparent;
 }
 
+.headerActions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .title {
   flex: 1;
   min-width: var(--space-0);

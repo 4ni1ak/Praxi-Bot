@@ -117,6 +117,8 @@ export function BotPanel({
   visible = true,
   onClose,
   onOpenChat,
+  onPopOutChat,
+  onPopOutLive,
   onNewChat,
   onPatchChat,
   onDeleteChat,
@@ -149,6 +151,8 @@ export function BotPanel({
   visible?: boolean;
   onClose: () => void;
   onOpenChat: (chatId: string, messageId?: string) => void;
+  onPopOutChat?: (chatId: string, opts?: { nearCursor?: boolean }) => void;
+  onPopOutLive?: (opts?: { source?: "home" | "local"; nearCursor?: boolean }) => void;
   onNewChat: () => void;
   onPatchChat: (chatId: string, patch: UpdateChatInput) => Promise<void>;
   onDeleteChat: (chatId: string) => Promise<void>;
@@ -361,6 +365,7 @@ export function BotPanel({
                       mainBotName={mainBotName}
                       activity={now ? (now.approval ? t("botPanel.now.waiting") : now.step ? toolSentence(t, now.step) : t("botPanel.now.thinking")) : null}
                       visible={visible}
+                      onPopOut={onPopOutLive ? (side, opts) => onPopOutLive({ source: side === "mine" ? "local" : "home", ...opts }) : undefined}
                     />;
                 default:
                   return <QuotaBlock key={id} />;
@@ -403,6 +408,7 @@ export function BotPanel({
             variant="panel"
             searchActive={chatQuery.trim().length > 0}
             onOpenChat={onOpenChat}
+            onPopOutChat={onPopOutChat}
             onPatchChat={onPatchChat}
             onDeleteChat={onDeleteChat}
           />

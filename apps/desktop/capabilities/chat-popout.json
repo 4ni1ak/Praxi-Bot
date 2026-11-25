@@ -1,0 +1,25 @@
+{
+  "identifier": "chat-popout",
+  "description": "Minimal permissions for pop-out chat windows: window chrome, daemon connection, owner key for approvals/questions, pin-on-top and run controls",
+  "windows": ["chat-*"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-is-maximized",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-set-content-protected",
+    "allow-popout-connect",
+    "allow-popout-owner-key",
+    "allow-popout-set-always-on-top",
+    "allow-popout-focus-main",
+    "allow-get-control-state",
+    "allow-pause-bot-run",
+    "allow-resume-bot-run",
+    "allow-take-the-wheel",
+    "allow-give-back-control",
+    "allow-stop-bot-run"
+  ]
+}

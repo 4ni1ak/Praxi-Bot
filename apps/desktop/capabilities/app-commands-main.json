@@ -42,6 +42,7 @@
     "allow-update-check",
     "allow-update-install",
     "allow-update-rollback",
-    "allow-quick-ask-configure"
+    "allow-quick-ask-configure",
+    "allow-open-popout-window"
   ]
 }

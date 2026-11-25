@@ -356,7 +356,7 @@ fn validate_bot_url(url: &str) -> Result<String, String> {
 }
 
 /// `BOT_DATA_DIR`, else the OS data directory (same resolver as the CLI).
-fn data_dir() -> Result<PathBuf, String> {
+pub(crate) fn data_dir() -> Result<PathBuf, String> {
     storage::data_dir().ok_or_else(|| "cannot determine the data directory".to_owned())
 }
 
@@ -538,7 +538,7 @@ pub fn bot_command() -> Command {
 }
 
 /// The per-launch owner key: random, held only in memory here and in the
-/// daemon it is handed to (on its stdin), shown to the main window only.
+/// daemon it is handed to (on its stdin), shown only to the main window and app-owned pop-outs.
 ///
 /// # Errors
 /// The OS offers no randomness; nothing is cached, so a later call retries.
@@ -752,6 +752,20 @@ fn connection(handle: &DaemonHandle, url: String, data: &Path) -> Result<Connect
 pub async fn connect(handle: &DaemonHandle) -> Result<Connection, String> {
     let _one_at_a_time = handle.connecting.lock().await;
     connect_locked(handle).await
+}
+
+/// Connect an auxiliary window to the existing daemon without starting or stopping a process.
+///
+/// # Errors
+/// The daemon is unavailable, its listener cannot be verified or its token cannot be read.
+pub async fn connect_existing(handle: &DaemonHandle) -> Result<Connection, String> {
+    let _one_at_a_time = handle.connecting.lock().await;
+    let url = base_url()?;
+    if !healthy(&url).await {
+        return Err("the service is unavailable; open the main window to reconnect".to_owned());
+    }
+    check_listener(handle, &url, false).await?;
+    connection(handle, url, &data_dir()?)
 }
 
 /// Stop a daemon this app started and connect again.  The `connecting` lock is

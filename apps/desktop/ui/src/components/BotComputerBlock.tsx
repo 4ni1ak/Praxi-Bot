@@ -1,7 +1,8 @@
-import { Eye, Globe, Loader2, Maximize2, Monitor, Server, Star, Terminal } from "lucide-react";
+import { ExternalLink, Eye, Globe, Loader2, Maximize2, Monitor, Server, Star, Terminal } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { Button } from "ui";
 import { isActivelyOwningTakeover, visibleActions } from "../lib/liveViewState";
+import { liveComputerMenu } from "../lib/contextMenu";
 import { useLiveView, useLocalLiveView } from "../state/LiveViewContext";
 import { useTranslation } from "react-i18next";
 import { type ComputerSide, hasBothComputers } from "../lib/botComputer";
@@ -14,7 +15,9 @@ import { useComputerView } from "../state/useComputerView";
 import { streamHealth } from "../lib/liveViewAdaptive";
 import { cardAspect } from "../lib/liveViewSizing";
 import { useScreenFit } from "../state/useScreenFit";
+import { useContextMenu, useMenuTranslate } from "./ContextMenu";
 import { StreamQuality } from "./StreamQuality";
+import { useDragPopOut } from "./useDragPopOut";
 import styles from "./BotComputerBlock.module.css";
 
 /** This computer's system, for the status line ("Windows · bot burada çalışıyor"). */
@@ -76,7 +79,8 @@ export function BotComputerBlock({
   botId,
   mainBotName,
   activity = null,
-  visible
+  visible,
+  onPopOut
 }: {
   botName?: string;
   botId?: string | null;
@@ -86,9 +90,13 @@ export function BotComputerBlock({
   activity?: string | null;
   /** The panel is open: closing it ends the view. */
   visible: boolean;
+  /** Open the live computer view in a dedicated pop-out window. */
+  onPopOut?: (side: ComputerSide, opts?: { nearCursor?: boolean }) => void;
 }) {
   const { t } = useTranslation();
   const { screenFit } = useScreenFit();
+  const menuT = useMenuTranslate();
+  const cardMenu = useContextMenu();
   const serverTerminal = useServerTerminal();
   const { home, workLocalNow, hostList, activeHostName } = useDaemon();
   const both = hasBothComputers(home, workLocalNow);
@@ -128,6 +136,19 @@ export function BotComputerBlock({
   const releasePending = live.state.pendingRequest?.kind === "release";
   const showRelease = isActivelyOwningTakeover(live.state) || releasePending;
   const showPause = panelActions.includes("clear_pause") && !showRelease && !live.pauseClearing;
+  const { dragProps } = useDragPopOut({
+    onPopOut: onPopOut ? (opts) => onPopOut(side, opts) : undefined,
+    ignoreSelector: "button, a, input, select"
+  });
+  const cardMenuBind = onPopOut
+    ? cardMenu.bind(() =>
+        liveComputerMenu({
+          t: menuT,
+          onOpenFull: view.kind === "live" ? view.bigView : view.start,
+          onPopOut: () => onPopOut(side)
+        })
+      )
+    : {};
 
   const hint =
     view.kind === "idle"
@@ -178,7 +199,13 @@ export function BotComputerBlock({
       <h3 className={styles.label} id="bot-panel-computer">
         {t("computerCard.title")}
       </h3>
-      <div className={styles.pc} data-computer={server ? "host" : showingMine ? "mine" : "local"}>
+      {cardMenu.menu}
+      <div
+        className={styles.pc}
+        data-computer={server ? "host" : showingMine ? "mine" : "local"}
+        {...dragProps}
+        {...cardMenuBind}
+      >
         <div className={styles.head}>
           {server ? <Server aria-hidden="true" className={styles.headIcon} /> : <Monitor aria-hidden="true" className={styles.headIcon} />}
           <div className={styles.title}>
@@ -312,6 +339,17 @@ export function BotComputerBlock({
             <Globe aria-hidden="true" />
             {t("computerCard.browser")}
           </button>
+          {onPopOut ? (
+            <button
+              type="button"
+              className={styles.lnk}
+              data-testid="bot-computer-popout"
+              onClick={() => onPopOut(side)}
+            >
+              <ExternalLink aria-hidden="true" />
+              {t("popout.openLiveShort")}
+            </button>
+          ) : null}
           <ViewNote view={view} />
         </div>
       </div>

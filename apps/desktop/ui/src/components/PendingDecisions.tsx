@@ -2,6 +2,7 @@ import { useCallback, useMemo, type ReactNode } from "react";
 import { useDaemon } from "../state/DaemonContext";
 import { isLocalBaseUrl } from "../lib/liveViewState";
 import { ownerKey } from "../lib/ownerKey";
+import { isAlreadyDecidedError } from "../lib/popout";
 import { useTranslation } from "react-i18next";
 import type { NeedsYouEntry } from "../state/timeline";
 import { ApprovalCard, QuestionCard, type ApprovalCardProps } from "./ChatCards";
@@ -18,7 +19,7 @@ type Decide = ApprovalCardProps["onDecide"];
  * inline cards, the pinned cards above the composer and the live view banner decide the same way.
  */
 export function useDecisionActions() {
-  const { client, recordAnswer, recordSecretOutcome, recordHandoverOutcome, home } = useDaemon();
+  const { client, recordAnswer, recordSecretOutcome, recordHandoverOutcome, refreshRuns, home } = useDaemon();
   const liveView = useOptionalLiveView();
   const { t } = useTranslation();
   const decide = useCallback(
@@ -35,9 +36,16 @@ export function useDecisionActions() {
           scope !== "once" &&
           scope !== "run_control";
         const key = standing ? await ownerKey(client.baseUrl) : undefined;
-        await client.decideApproval(callId, decision, scope, reason, key);
+        try {
+          await client.decideApproval(callId, decision, scope, reason, key);
+        } catch (err) {
+          if (isAlreadyDecidedError(err)) {
+            void refreshRuns();
+          }
+          throw err;
+        }
       },
-    [client]
+    [client, refreshRuns]
   );
   const trustFolder = useMemo(
     () =>
@@ -55,27 +63,48 @@ export function useDecisionActions() {
       if (!client) {
         return;
       }
-      await client.answerQuestion(callId, text);
-      recordAnswer(runId, callId, text);
+      try {
+        await client.answerQuestion(callId, text);
+        recordAnswer(runId, callId, text);
+      } catch (err) {
+        if (isAlreadyDecidedError(err)) {
+          void refreshRuns();
+        }
+        throw err;
+      }
     },
-    [client, recordAnswer]
+    [client, recordAnswer, refreshRuns]
   );
   // The value goes from the card to the daemon and nowhere else: only the outcome is recorded.
   const submitSecret = useCallback(
     (runId: string, callId: string) => async (body: SubmitBody) => {
       if (!client) throw new NoClientError();
-      await client.submitSecretRequest(callId, body);
-      recordSecretOutcome(runId, callId, "stored");
+      try {
+        await client.submitSecretRequest(callId, body);
+        recordSecretOutcome(runId, callId, "stored");
+      } catch (err) {
+        if (isAlreadyDecidedError(err)) {
+          void refreshRuns();
+        }
+        throw err;
+      }
     },
-    [client, recordSecretOutcome]
+    [client, recordSecretOutcome, refreshRuns]
   );
   const cancelSecret = useCallback(
     (runId: string, callId: string) => async () => {
       if (!client) throw new NoClientError();
-      await client.cancelSecretRequest(callId);
-      recordSecretOutcome(runId, callId, "cancelled");
+      try {
+        await client.cancelSecretRequest(callId);
+        recordSecretOutcome(runId, callId, "cancelled");
+      } catch (err) {
+        if (isAlreadyDecidedError(err)) {
+          void refreshRuns();
+        }
+        throw err;
+      }
     },
-    [client, recordSecretOutcome]
+    [client, recordSecretOutcome, refreshRuns]
   );
   // A code goes from the card to the daemon and nowhere else: only the outcome is recorded.
   const submitCode = useCallback(

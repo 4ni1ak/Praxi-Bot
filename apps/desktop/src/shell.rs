@@ -500,6 +500,11 @@ fn show_native(
                 let _ = handle.emit(EVENT_NOTIFICATION_ACTION, ());
                 return Ok(());
             }
+            if let Some(ref id) = chat_id
+                && crate::popout::focus_existing_chat(&handle, id)
+            {
+                return Ok(());
+            }
             focus_main(&handle);
             let _ = handle.emit(
                 EVENT_NOTIFICATION_ACTIVATED,

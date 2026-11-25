@@ -1570,6 +1570,7 @@
         "stillAsks": "It asks again for other programs, launching, commands, scripts, dragging, file dialogs, password fields and any other key. Terminals, browsers, launchers and remote-desktop viewers are recognised by file name only, which is a heuristic: a renamed copy is not recognised. The permission ends with the task and is withdrawn after any stopped or failed send."
       },
       "countdown": "Auto-deny in {{seconds}} s",
+      "decidedElsewhere": "Cette demande a déjà été traitée dans une autre fenêtre.",
       "deny": "Deny",
       "egress": {
         "hidden": "{{hidden}} invisible characters are shown as <U+XXXX>",
@@ -1958,6 +1959,7 @@
       "answer": "Answer",
       "answered": "You answered: {{answer}}",
       "closed": "This question is no longer open.",
+      "decidedElsewhere": "Une réponse a déjà été donnée dans une autre fenêtre.",
       "placeholder": "Type another answer…",
       "title": "The bot asks"
     },
@@ -4878,6 +4880,20 @@
     "directHint": "Direct: this app talks straight to the computer, which is the fastest way. The number is the delay.",
     "relay": "Relay · {{rtt}} ms",
     "relayHint": "Relayed: the connection goes through a helper server, so it can be a little slower. The number is the delay."
+  },
+  "popout": {
+    "chatFallbackTitle": "Fenêtre de discussion",
+    "connecting": "Connexion en cours…",
+    "focusFailed": "Impossible d’afficher la fenêtre principale. Ouvre-la depuis la zone de notification.",
+    "focusMain": "Afficher la fenêtre principale",
+    "openChat": "Ouvrir dans une nouvelle fenêtre",
+    "openChatTooltip": "Ouvrir cette discussion dans une nouvelle fenêtre",
+    "openFailed": "Impossible d’ouvrir la nouvelle fenêtre. Réessaie.",
+    "openLive": "Ouvrir la vue en direct dans une nouvelle fenêtre",
+    "openLiveShort": "Détacher",
+    "pinFailed": "Impossible de modifier le maintien au premier plan. Réessaie.",
+    "pinOnTop": "Garder cette fenêtre au premier plan",
+    "unpinOnTop": "Ne plus garder au premier plan"
   },
   "profileShare": {
     "back": "Back",

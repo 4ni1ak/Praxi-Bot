@@ -22,6 +22,7 @@ import {
   isLightColor,
   resolveTheme,
 } from "ui";
+import { openChatPopout, openLivePopout } from "./lib/popout";
 import styles from "./App.module.css";
 import { TITLEBAR_LEAD_ID } from "./lib/titleBar";
 import { AppsPill } from "./components/AppsPill";
@@ -256,6 +257,7 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
     leave.attempt(() => setRoute(next));
   };
   const toast = useToast();
+  const popoutFailed = () => toast.show(t("popout.openFailed"), "danger");
   // Chats, bots and runs belong to one computer: switching computers starts at home.
   const lastComputer = useRef(activeComputerId);
   useEffect(() => {
@@ -1261,6 +1263,26 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
               newChatBusy={newChatBusy}
               visible={panelVisible}
               onOpenChat={openChat}
+              onPopOutChat={(chatId, opts) => {
+                const target = chats.find((c) => c.id === chatId);
+                void openChatPopout(chatId, {
+                  ...opts,
+                  computerId: activeComputerId,
+                  title: chatTitleLabel(target?.title, t("bots.newChat")),
+                  windowFrame: settings.windowFrame
+                }).catch(popoutFailed);
+              }}
+              onPopOutLive={(opts) => {
+                const liveSource = opts?.source ?? "home";
+                void openLivePopout({
+            title: t("liveView.title"),
+                  liveSource,
+                  nearCursor: opts?.nearCursor,
+                  botId: selectedBot.id,
+                  computerId: liveSource === "local" ? LOCAL_COMPUTER : activeComputerId,
+                  windowFrame: settings.windowFrame
+                }).catch(popoutFailed);
+              }}
               onNewChat={() => void startChat(selectedBot.id)}
               onPatchChat={handlePatchChat}
               onDeleteChat={handleDeleteChat}
@@ -1580,6 +1602,15 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
             sendWith={settings.sendWith}
             messageTimes={settings.messageTimes}
             liveChatSlots={localChatSlots ?? homeChatSlots}
+            onPopOut={(opts) => {
+              const currentChat = chats.find((c) => c.id === route.chatId);
+              void openChatPopout(route.chatId, {
+                ...opts,
+                computerId: activeComputerId,
+                title: chatTitleLabel(currentChat?.title, t("bots.newChat")),
+                windowFrame: settings.windowFrame
+              }).catch(popoutFailed);
+            }}
           />
         ) : null}
         {route.kind === "needs" ? <NeedsYouView onOpenChat={openChat} /> : null}
@@ -1754,6 +1785,17 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
         botId={selectedBot?.id ?? null}
         infoPanel={liveInfoPanel}
         onChatSlots={route.kind === "chat" && !hostEmpty ? setHomeChatSlots : undefined}
+        onPopOut={(opts) =>
+          void openLivePopout({
+            title: t("liveView.title"),
+            liveSource: "home",
+            botId: selectedBot?.id,
+            targetId: opts.targetId,
+            nearCursor: opts.nearCursor,
+            computerId: activeComputerId,
+            windowFrame: settings.windowFrame
+          }).catch(popoutFailed)
+        }
       />
       {activeComputerId !== LOCAL_COMPUTER ? (
         <LiveViewer
@@ -1761,6 +1803,17 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
           botId={selectedBot?.id ?? null}
           infoPanel={liveInfoPanel}
           onChatSlots={route.kind === "chat" && !hostEmpty ? setLocalChatSlots : undefined}
+          onPopOut={(opts) =>
+            void openLivePopout({
+            title: t("liveView.title"),
+              liveSource: "local",
+              botId: selectedBot?.id,
+              targetId: opts.targetId,
+              nearCursor: opts.nearCursor,
+              computerId: LOCAL_COMPUTER,
+              windowFrame: settings.windowFrame
+            }).catch(popoutFailed)
+          }
         />
       ) : null}
       {customChrome ? <WindowControls /> : null}

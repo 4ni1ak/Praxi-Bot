@@ -58,10 +58,15 @@ for (const [action, perform] of actions) {
   });
 }
 
-test("window chrome grants stay local to the main window", () => {
+test("window chrome grants stay local to the main window and pop-out windows", () => {
   const grants = new Set(actions.map(([action]) => `core:window:allow-${action}`));
+  const chromeWindows = new Set(["main", "chat-*", "live-*"]);
   for (const capability of capabilities.filter((c) => identifiers(c).some((p) => grants.has(p)))) {
-    assert.deepEqual(capability.windows, ["main"]);
+    const windows = capability.windows ?? [];
+    assert.ok(windows.length > 0 && windows.every((w) => chromeWindows.has(w)), `${capability.identifier} grants chrome to unexpected window`);
+    if (identifiers(capability).includes("core:window:allow-set-decorations")) {
+      assert.deepEqual(windows, ["main"]);
+    }
     assert.equal(capability.webviews, undefined);
     assert.equal(capability.remote, undefined);
     assert.notEqual(capability.local, false);
@@ -99,6 +104,27 @@ const UNGRANTED = [
 ];
 /** The only commands the Quick ask window may call (and only it). */
 const quickAskCommands = ["quick_ask_connect", "quick_ask_hide", "quick_ask_open_in_app"];
+/** Commands exclusive to pop-out windows (`chat-*` and `live-*`). */
+const popoutOnlyCommands = [
+  "popout_connect",
+  "popout_focus_main",
+  "popout_owner_key",
+  "popout_set_always_on_top"
+];
+const chatPopoutCommands = [
+  "get_control_state",
+  "give_back_control",
+  "pause_bot_run",
+  ...popoutOnlyCommands,
+  "resume_bot_run",
+  "stop_bot_run",
+  "take_the_wheel"
+].sort();
+const livePopoutCommands = [
+  "get_control_state",
+  ...popoutOnlyCommands,
+  "stop_bot_run"
+].sort();
 
 const widgetCommands = [
   "dismiss_stop_widget",
@@ -120,8 +146,15 @@ test("the app manifest lists the commands the shell registers", () => {
 test("per-window custom command table", () => {
   // Commands with no UI caller are in the manifest but granted to no window,
   // except finish_bot_run / ack_stop which are reserved to be called from main later.
-  assert.deepEqual(commandsFor("main"), manifestCommands.filter((c) => !UNGRANTED.includes(c)).sort());
+  assert.deepEqual(
+    commandsFor("main"),
+    manifestCommands.filter((c) => !UNGRANTED.includes(c) && !popoutOnlyCommands.includes(c)).sort()
+  );
   assert.ok(commandsFor("main").includes("finish_bot_run") && commandsFor("main").includes("ack_stop"));
+  assert.ok(commandsFor("main").includes("open_popout_window"));
+  assert.deepEqual(commandsFor("chat-123"), chatPopoutCommands);
+  assert.deepEqual(commandsFor("live-home"), livePopoutCommands);
+  assert.deepEqual(commandsFor("live-local"), livePopoutCommands);
   assert.deepEqual(commandsFor("widget"), widgetCommands);
   assert.deepEqual(commandsFor("quick-ask"), quickAskCommands);
   assert.deepEqual(commandsFor("overlay-0"), ["get_control_state"]);
@@ -133,7 +166,7 @@ test("widget and overlays cannot call the run, daemon, provider or OS commands",
   for (const label of ["widget", "overlay-0", "quick-ask"]) {
     const allowed = commandsFor(label);
     for (const command of [
-      "quick_ask_configure", "owner_key", "providers_cli",
+      "quick_ask_configure", "owner_key", "popout_owner_key", "popout_connect", "open_popout_window", "providers_cli",
       "start_bot_run", "finish_bot_run", "ack_stop", "begin_action", "providers_cli", "get_autostart", "set_autostart",
       "daemon_connect", "daemon_restart", "simulate_bot_run", "set_stop_hotkey", "notify_show", "notify_take_actions",
       "set_needs_count", "set_tray_labels", "set_keep_in_tray"
@@ -225,6 +258,12 @@ test("every command any UI file invokes is granted to the main window (the widge
       // Granted to the Quick ask window only, and only invoked from its own bridge file.
       assert.ok(files.every((f) => f.endsWith("/quickask/bridge.ts")), `${command} must be invoked from quickask/bridge.ts only`);
       assert.ok(commandsFor("quick-ask").includes(command) && !commandsFor("main").includes(command), command);
+      continue;
+    }
+    if (popoutOnlyCommands.includes(command)) {
+      // Granted to chat-* / live-* pop-out windows only, and invoked exclusively through lib/popout.ts.
+      assert.ok(files.every((f) => f.endsWith("/lib/popout.ts")), `${command} must be invoked from lib/popout.ts only`);
+      assert.ok(commandsFor("chat-test").includes(command) && commandsFor("live-home").includes(command) && !commandsFor("main").includes(command), command);
       continue;
     }
     if (UNGRANTED.includes(command)) {

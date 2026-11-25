@@ -1,0 +1,140 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  min-height: var(--space-0);
+  background-color: var(--color-background);
+  color: var(--color-text);
+  overflow: hidden;
+}
+
+.shell[data-custom-chrome="true"] {
+  padding-top: var(--titlebar-h);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--size-control-lg);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--size-border) solid var(--color-border);
+  background-color: var(--color-surface);
+  flex-shrink: 0;
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: var(--space-0);
+  flex: 1;
+}
+
+.title {
+  margin: var(--space-0);
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subtitle {
+  flex: none;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.iconBtn {
+  display: inline-grid;
+  place-items: center;
+  width: var(--space-8);
+  height: var(--space-8);
+  padding: var(--space-0);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.iconBtn:hover {
+  background-color: var(--color-surface-active);
+  color: var(--color-text);
+}
+
+.iconBtn[aria-pressed="true"] {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent-text);
+}
+
+.iconBtn > svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
+.body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: var(--space-0);
+  min-width: var(--space-0);
+}
+
+.statusState {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.statusTitle {
+  margin: var(--space-0);
+  color: var(--color-text);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+.spin {
+  width: var(--size-icon-lg);
+  height: var(--size-icon-lg);
+  color: var(--color-text-muted);
+  animation: popoutSpin 1s linear infinite;
+}
+
+@keyframes popoutSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* For the live-view pop-out window, keep the fullscreen viewer framed inside our shell body. */
+.liveStage {
+  position: relative;
+  flex: 1;
+  min-height: var(--space-0);
+  min-width: var(--space-0);
+}
+
+.liveStage :global([data-testid="live-viewer"]) {
+  position: absolute;
+}

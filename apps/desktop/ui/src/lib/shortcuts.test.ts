@@ -36,6 +36,7 @@ const LOCAL_ONLY: Record<string, string> = {
   "components/SecretRequestCard.tsx": "Escape cancels the credential form it is typed in",
   "components/ServerSignInModal.tsx": "Enter inside a single field",
   "components/SettingsUi.tsx": "arrow keys on a segmented radio group",
+  "components/useDragPopOut.ts": "Escape cancels only the active pointer drag, not a global app shortcut",
   "components/useBotReorder.ts": "keyboard reordering of the bot list",
   "lib/liveViewInput.ts": "forwards keys to the remote screen, not app shortcuts",
   "views/LiveViewer.tsx": "toolbar keys F and Ctrl+Shift+D, listed in the viewer's own ? popover",
