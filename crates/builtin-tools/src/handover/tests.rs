@@ -22,6 +22,28 @@ const PROSE_ABOUT_CAPTCHA: &str = "# Blog (https://blog.example/p)\n  heading \"
 const COUPON_PAGE: &str = "# Cart (https://shop.example/cart)\n  [e1] textbox \"Discount code\"\n  [e2] textbox \"Postal code\"\n  [e3] button \"Apply\"";
 const LOGIN_PAGE: &str = "# Sign in (https://bank.example/login)\n  [e1] textbox \"Email\"\n  [e2] textbox \"Password\"\n  [e3] button \"Sign in\"";
 
+/// The typed-code latch list is process-wide (a desktop tool looks at every browser), so the
+/// tests that type a code or call a desktop tool take turns.
+static LATCH_STATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Holds the turn and, when the test ends, drops every typed-code latch it left behind so a
+/// desktop-tool test running next never meets it.
+struct LatchTurn(#[allow(dead_code)] tokio::sync::MutexGuard<'static, ()>);
+
+impl Drop for LatchTurn {
+    fn drop(&mut self) {
+        handover_hub()
+            .captures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+    }
+}
+
+async fn serial() -> LatchTurn {
+    LatchTurn(LATCH_STATE.lock().await)
+}
+
 struct Page {
     snapshot: StdMutex<String>,
     url: StdMutex<Option<String>>,
@@ -245,6 +267,7 @@ async fn the_tool_checks_the_page_itself_and_names_the_site_the_browser_reports(
 
 #[tokio::test]
 async fn a_code_is_typed_into_the_page_it_was_asked_for_and_never_elsewhere() {
+    let _serial = serial().await;
     let page = Page::new(CODE_PAGE, "https://bank.example/2fa");
     let t = tool(&page, "browser_handover");
     t.call(&ctx("run-h2"), json!({"kind":"code"}))
@@ -285,6 +308,7 @@ async fn a_code_is_typed_into_the_page_it_was_asked_for_and_never_elsewhere() {
 
 #[tokio::test]
 async fn a_failing_page_never_echoes_the_code_back() {
+    let _serial = serial().await;
     let page = Arc::new(Page {
         fail_with_code: true,
         epoch: StdMutex::new(None),
@@ -376,6 +400,7 @@ async fn regression_third_captcha_action_refused_and_leaving_never_gives_tries_b
 
 #[tokio::test]
 async fn a_captcha_in_an_action_result_reaches_the_desktop_gate_and_a_moved_on_page_frees_it() {
+    let _serial = serial().await;
     let page = Page::new(LOGIN_PAGE, "https://shop.example/account");
     let context = ctx("regression-desktop-fresh");
     // The browser tool submits; the CAPTCHA only shows up afterwards, never in a snapshot the
@@ -522,6 +547,7 @@ async fn regression_a_second_done_on_an_unchanged_page_is_the_owners_confirmatio
 
 #[tokio::test]
 async fn regression_another_tab_cannot_purge_the_typed_code_latch() {
+    let _serial = serial().await;
     let page = Page::new(CODE_PAGE, "https://bank.example/2fa");
     let context = ctx("regression-two-tabs");
     tool(&page, "browser_handover")
@@ -547,6 +573,7 @@ async fn regression_another_tab_cannot_purge_the_typed_code_latch() {
 
 #[tokio::test]
 async fn regression_stop_during_code_preparation_types_nothing() {
+    let _serial = serial().await;
     let page = Page::new(CODE_PAGE, "https://bank.example/2fa");
     tool(&page, "browser_handover")
         .call(&ctx("regression-stop"), json!({"kind":"code"}))
@@ -589,6 +616,7 @@ async fn regression_done_rejects_blank_foreign_and_unrendered_pages() {
 
 #[tokio::test]
 async fn regression_screenshot_refused_after_code_is_typed() {
+    let _serial = serial().await;
     let page = Page::new(CODE_PAGE, "https://bank.example/2fa");
     let context = ctx("regression-capture");
     tool(&page, "browser_handover")
@@ -625,6 +653,7 @@ fn desktop_tool(name: &str) -> Arc<dyn Tool> {
 
 #[tokio::test]
 async fn regression_desktop_is_not_read_while_a_typed_code_is_on_screen() {
+    let _serial = serial().await;
     let page = Page::new(CODE_PAGE, "https://bank.example/2fa");
     let context = ctx("regression-desktop-code");
     tool(&page, "browser_handover")
