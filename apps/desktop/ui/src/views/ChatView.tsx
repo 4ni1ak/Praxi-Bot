@@ -405,9 +405,17 @@ export function ChatView({
   const stickToBottom = useRef(true);
   const [remember, setRemember] = useState<Record<string, RememberState>>({});
   const [timelineRunId, setTimelineRunId] = useState<string | null>(null);
+  // The chat moved into (or out of) the live view's card: the DOM is new, so land on the newest message;
+  // inside the card the cursor goes to the composer too.
+  const liveRoot = liveChatSlots?.root ?? null;
   useLayoutEffect(() => {
-    if (liveChatSlots?.composer) inputRef.current?.focus({ preventScroll: true });
-  }, [liveChatSlots?.composer]);
+    const scroller = scrollerRef.current;
+    if (scroller) {
+      stickToBottom.current = true;
+      scroller.scrollTop = scroller.scrollHeight;
+    }
+    if (liveRoot) inputRef.current?.focus({ preventScroll: true });
+  }, [liveRoot]);
 
   // Type anywhere in the chat: the first character goes to the composer (nothing else owns the keys).
   useEffect(() => {
@@ -716,7 +724,7 @@ export function ChatView({
       ro.observe(scrollerRef.current);
     }
     return () => ro.disconnect();
-  }, [chat?.id]);
+  }, [chat?.id, liveRoot]);
   useLayoutEffect(() => {
     if (stickToBottom.current) {
       const el = scrollerRef.current;
@@ -1494,13 +1502,12 @@ export function ChatView({
         ? t("liveView.chat.replying")
         : barDetail ?? t("liveView.chat.working")
       : null;
-  const placeComposer = (composer: ReactNode) =>
-    liveChatSlots?.composer ? createPortal(composer, liveChatSlots.composer) : composer;
-
-  return (
-    <div className={styles.root}>
+  // In the full-screen live view the whole chat (history, run status, composer) moves into the viewer's
+  // chat card or column; the composer is one piece of it, so a dock above it works in every state.
+  const chatRoot = (
+    <div className={styles.root} data-live-dock={liveChatSlots?.root ? "true" : undefined}>
       {/* v6: no title row (the chat is named in the sidebar); a back button only while a page to go back to exists. */}
-      {onBack ? (
+      {onBack && !liveChatSlots?.root ? (
         <header className={styles.header}>
           <Button size="sm" variant="ghost" title={t("common.back")} aria-label={t("common.back")} onClick={onBack}>
             <ArrowLeft />
@@ -1769,10 +1776,8 @@ export function ChatView({
         <p className={styles.liveReplyStatus} role="status">{liveStatus}</p>,
         liveChatSlots.status
       ) : null}
-      {placeComposer(
       <footer
         className={styles.composer}
-        data-live-view={liveChatSlots?.composer ? "true" : undefined}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes("Files")) {
             e.preventDefault();
@@ -1885,7 +1890,7 @@ export function ChatView({
                 })
           }
         />
-        {!liveChatSlots?.composer ? <div className={styles.dockWrap}>
+        <div className={styles.dockWrap}>
           <RunStatusLine
             model={barModel}
             botName={barBotName}
@@ -1910,7 +1915,7 @@ export function ChatView({
               void next.then(onControl).catch(() => {});
             }}
           />
-        </div> : null}
+        </div>
         <div className={styles.boxWrap}>
           {menuOpen ? (
             <div
@@ -2175,7 +2180,6 @@ export function ChatView({
           </div>
         </div>
       </footer>
-      )}
       <VoiceCallPanel call={voiceCall} bot={view ?? { id: chat?.bot_id ?? "unknown", name: "Bot" }} />
       <RunTimelineModal
         run={chatRuns.find((r) => r.id === timelineRunId) ?? null}
@@ -2184,4 +2188,5 @@ export function ChatView({
       />
     </div>
   );
+  return liveChatSlots?.root ? createPortal(chatRoot, liveChatSlots.root) : chatRoot;
 }

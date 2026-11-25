@@ -852,8 +852,13 @@
   box-shadow: var(--shadow-card), 0 0 0 var(--size-border-thick) color-mix(in srgb, var(--color-accent) 35%, transparent);
 }
 
-.composer[data-live-view="true"] {
-  padding: var(--space-0);
+/* In the live view's chat card or column the chat is narrower than the page: tighter gutters. */
+.root[data-live-dock="true"] .scroller {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.root[data-live-dock="true"] .composer {
+  padding: var(--space-2) var(--space-3) var(--space-3);
 }
 
 .liveReplyStatus {

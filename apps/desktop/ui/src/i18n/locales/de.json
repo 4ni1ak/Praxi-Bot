@@ -3959,7 +3959,10 @@
     "captureTab": "Tab erfassen",
     "chat": {
       "approve": "Genehmigen",
+      "button": "Chat",
+      "close": "Chat schließen",
       "collapse": "Chat einklappen",
+      "expand": "Chat vergrößern",
       "reject": "Ablehnen",
       "replying": "Bot antwortet …",
       "title": "Mit dem Bot chatten",
@@ -3990,11 +3993,11 @@
       "view_quota": "Auf dem Server sind zu viele Bildschirmsitzungen offen. Schließe eine unbenutzte Ansicht oder versuche es gleich erneut."
     },
     "expand": "Große Ansicht öffnen",
-    "expandScreen": "Vergrößern",
     "focusTrapHint": "Eingabe geht an den Bildschirm. Umschalt+Esc zum Verlassen.",
     "globalPauseNotice": "Das Übernehmen der Kontrolle oder das Pausieren gilt global für alle Bots.",
     "handBackAction": "Zurückgeben",
     "hostLabel": "Server: {{host}}",
+    "infoPanel": "Bot-Info",
     "interactive": "Interaktiv",
     "kind": {
       "browser": "Browser",
