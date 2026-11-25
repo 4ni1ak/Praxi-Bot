@@ -4215,6 +4215,8 @@
         "release": "Leave the screen to use the buttons",
         "takeover": "Take control"
       },
+      "screenFill": "Remplir sans bandes",
+      "screenFillHint": "Rogne légèrement les bords de l'écran pour que l'image remplisse la zone. Désactivé : tout l'écran avec des bandes.",
       "shortcuts": "Keyboard shortcuts",
       "takeoverHint": "Take control of this screen yourself (Ctrl+Shift+D). The bots pause until you hand it back.",
       "view": "Affichage"

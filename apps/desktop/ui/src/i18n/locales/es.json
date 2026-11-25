@@ -4215,6 +4215,8 @@
         "release": "Leave the screen to use the buttons",
         "takeover": "Take control"
       },
+      "screenFill": "Rellenar sin bordes",
+      "screenFillHint": "Recorta un poco los bordes de la pantalla para que la imagen llene el área. Desactivado: se ve toda la pantalla con bandas.",
       "shortcuts": "Keyboard shortcuts",
       "takeoverHint": "Take control of this screen yourself (Ctrl+Shift+D). The bots pause until you hand it back.",
       "view": "Vista"
