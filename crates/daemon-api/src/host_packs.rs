@@ -31,6 +31,7 @@ pub enum PackAction {
 
 /// One pack on one server.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[allow(clippy::struct_excessive_bools)] // independent catalog facts, serialised one by one
 pub struct HostPackInfo {
     /// Catalog id (`office`, `docs`, `ocr`, `media`, `dev`). The app shows its own localised name.
     pub id: String,

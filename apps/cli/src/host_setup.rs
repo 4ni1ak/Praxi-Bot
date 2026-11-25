@@ -361,7 +361,7 @@ impl HostSetup for CliHostSetup {
                     noop: false,
                     blocked: Some(code.to_owned()),
                 };
-                let acked = input.acknowledged.iter().any(|a| *a == pack.id);
+                let acked = input.acknowledged.contains(&pack.id);
                 match &server {
                     _ if action == Action::Install && pack.installable(acked).is_err() => {
                         blocked(PackError::NeedsAcknowledgement.code())

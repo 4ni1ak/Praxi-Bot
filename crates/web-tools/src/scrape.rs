@@ -202,7 +202,10 @@ impl ScrapeTool {
     /// Client-side pacing: a runaway loop cannot hammer the add-on.
     fn allow_call(&self) -> Result<(), ToolError> {
         let now = Instant::now();
-        let mut q = self.recent.lock().unwrap_or_else(|e| e.into_inner());
+        let mut q = self
+            .recent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         while q
             .front()
             .is_some_and(|t| now.duration_since(*t) >= Duration::from_secs(60))
