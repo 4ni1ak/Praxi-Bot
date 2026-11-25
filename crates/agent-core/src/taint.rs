@@ -76,6 +76,14 @@ impl ExecFact {
         ContentClass::declared(self.ingests_untrusted, self.reads_private, false)
     }
 
+    /// Like [`Self::apply`] for a result whose text is at hand (see
+    /// [`ContentTaint::note_with_text`]).
+    pub(crate) fn apply_with_text(&self, taint: &mut ContentTaint, text: &str) {
+        if self.ran {
+            taint.note_with_text(self.class(), &self.label, text);
+        }
+    }
+
     pub(crate) fn apply(&self, taint: &mut ContentTaint) {
         if self.ran {
             taint.note(self.class(), &self.label);
@@ -102,6 +110,12 @@ pub(crate) struct ContentTaint {
     trust_folders: std::collections::BTreeSet<String>,
     /// Distinct labels dropped because [`MAX_SOURCES`] kept a newer one.
     earlier: usize,
+    /// Private data of the owner (files, mail, memory, screens, an MCP result, an earlier turn)
+    /// is in front of the model. The managed browser's own pages do not count: they are
+    /// untrusted, and the owner asked for them. Starts false and is only ever set.
+    pub(crate) private_source: bool,
+    /// Salted hashes of the words of the private results of this run (see `full_autonomy`).
+    pub(crate) seen: crate::full_autonomy::SeenText,
 }
 
 impl ContentTaint {
@@ -110,11 +124,30 @@ impl ContentTaint {
     /// A class that neither ingests untrusted content nor reads private data
     /// changes nothing. The same label is stored once.
     pub(crate) fn note(&mut self, class: ContentClass, label: &str) {
+        self.note_inner(class, label, None);
+    }
+
+    /// [`Self::note`] for a result whose text is at hand: the words of a PRIVATE result are
+    /// kept as hashes only, so a later call that copies them can be recognised.
+    pub(crate) fn note_with_text(&mut self, class: ContentClass, label: &str, text: &str) {
+        self.note_inner(class, label, Some(text));
+    }
+
+    fn note_inner(&mut self, class: ContentClass, label: &str, text: Option<&str>) {
         if !class.ingests_untrusted && !class.reads_private {
             return;
         }
         self.exposure
             .observe(class.ingests_untrusted, class.reads_private);
+        // A page (the browser, a search, a fetch) is public web; everything else that reads
+        // private data is the owner's.
+        if class.reads_private && !label.starts_with("page ") {
+            self.private_source = true;
+            match text {
+                Some(text) => self.seen.observe(text),
+                None => self.seen.unhashed = true,
+            }
+        }
         self.push_label(label);
     }
 
@@ -131,6 +164,8 @@ impl ContentTaint {
     /// Union with taint inherited from a parent run or from stored history.
     pub(crate) fn inherit(&mut self, other: &Self) {
         self.exposure.inherit(other.exposure);
+        self.private_source |= other.private_source;
+        self.seen.merge(&other.seen);
         self.trust_folders
             .extend(other.trust_folders.iter().cloned());
         self.earlier += other.earlier;

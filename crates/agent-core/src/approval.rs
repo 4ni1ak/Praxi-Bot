@@ -1,7 +1,7 @@
 //! Permission decisions, interactive approvals, user questions and the
 //! [`ToolGate`] handed to `script_run`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock, Weak};
 
 use async_trait::async_trait;
@@ -948,64 +948,90 @@ impl Shared {
             })
     }
 
-    /// The site of `url` is one this run may treat as known: the page the browser is on, a site
-    /// the owner approved for this chat, or one the owner named in a message they typed.
-    fn known_site(&self, ctx: &RunCtx, url: &str) -> bool {
-        let Some(origin) = Self::origin_of(url) else {
-            return false;
-        };
-        if ctx
-            .page_origin
-            .lock()
-            .as_deref()
-            .and_then(Self::origin_of)
-            .is_some_and(|o| o == origin)
-        {
-            return true;
-        }
-        if self
-            .grants
-            .lock()
-            .nav_origin
-            .contains(&(ctx.chat_id, ctx.bot_id, origin.clone()))
-        {
-            return true;
-        }
-        let Some(host) = url::Url::parse(url).ok().and_then(|u| {
-            u.host_str()
-                .map(|h| h.trim_end_matches('.').to_ascii_lowercase())
-        }) else {
-            return false;
-        };
+    /// Hosts the owner named in a message they typed in this chat (a full http(s) address or a
+    /// bare domain under a real TLD). Only `owner`-tagged messages count, so neither a page nor
+    /// a mail nor the model can add to this list.
+    fn owner_named_hosts(&self, ctx: &RunCtx) -> Vec<String> {
         let Ok(texts) = self.storage.owner_message_texts(ctx.chat_id) else {
-            return false;
+            return Vec::new();
         };
-        texts.iter().flat_map(|m| m.split_whitespace()).any(|w| {
-            let w = w.trim_matches([
-                '.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '<', '>', '"', '\'',
-            ]);
-            let rest = w.split_once("://").map_or(w, |(_, r)| r);
-            rest.split(['/', '?', '#'])
-                .next()
-                .is_some_and(|a| a.trim_end_matches('.').eq_ignore_ascii_case(&host))
-        })
+        texts
+            .iter()
+            .flat_map(|m| m.split_whitespace())
+            .filter_map(|w| {
+                let w = w.trim_matches([
+                    '.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '<', '>', '"', '\'',
+                ]);
+                let (scheme, rest) = match w.split_once("://") {
+                    Some((s, r)) if matches!(s, "http" | "https") => (Some(s), r),
+                    Some(_) => return None,
+                    None => (None, w),
+                };
+                let authority = rest.split(['/', '?', '#']).next()?;
+                if authority.contains('@') {
+                    return None;
+                }
+                let host = authority.split(':').next()?.trim_end_matches('.');
+                (scheme.is_some() || Self::bare_site_name(host))
+                    .then(|| host.to_ascii_lowercase())
+                    .filter(|h| h.contains('.'))
+            })
+            .collect()
+    }
+
+    /// Every word the owner typed in this chat (not copied content when it shows up in a URL).
+    fn owner_words(&self, ctx: &RunCtx) -> HashSet<String> {
+        self.storage
+            .owner_message_texts(ctx.chat_id)
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|m| crate::full_autonomy::words(m))
+            .collect()
+    }
+
+    /// `host` belongs to a site the OWNER named, or approved on a card or with a standing rule.
+    /// The set never grows because the model navigated somewhere.
+    fn trusted_host(&self, ctx: &RunCtx, host: &str, named: &[String]) -> bool {
+        let host = host.trim_end_matches('.').to_ascii_lowercase();
+        named
+            .iter()
+            .any(|n| host == *n || host.ends_with(&format!(".{n}")))
+            || self.site_allowed(&host)
+            || self
+                .grants
+                .lock()
+                .nav_origin
+                .iter()
+                .any(|(chat, bot, origin)| {
+                    *chat == ctx.chat_id
+                        && *bot == ctx.bot_id
+                        && host_of_origin(origin).is_some_and(|h| h == host)
+                })
     }
 
     /// The owner's Full level: an OWNER-STARTED run (typed in the desktop app, or sent from the
-    /// owner's admin desktop) keeps browsing after it read a page, without a card.
+    /// owner's admin desktop) keeps working on the web after it read a page, without a card.
     ///
     /// Without this a page read taints the run (every browser call counts as reading the page
-    /// AND as private) and every later open, type or key press asked: a deep page, a query
-    /// string, a new site. In Full that is the whole point of "do it for me" lost, so here the
-    /// browser's own page traffic passes, with ONE protection that does not annoy: a call whose
-    /// arguments look like data carried out (see `full_autonomy`) still asks.
+    /// AND as private) and every later open, type or key press asked, even a deep page of the
+    /// very site the owner named, or the fifth sign-up site of a research task.
     ///
-    /// What this never covers, whatever the level: an owner-stored secret typed with
-    /// `browser_fill` (always-ask, decided before this), money and the never-list (floors),
-    /// `browser_eval`, a program start (`executes`), a named browser profile, the user's own
-    /// computer, a non-public address, hidden characters and anything the redactor would change.
-    /// A run that is not owner-started (schedule, webhook, mail, a peer, a subagent) is
-    /// unchanged. Only the preset "full" gets it: Balanced, Ask and custom levels keep the gate.
+    /// * No private data of the owner in the run (files, mail, memory, screens, other bots):
+    ///   every public site, new ones included, and every form passes. The details the owner
+    ///   typed for the task are not private; secrets are typed by the daemon, never seen here.
+    /// * Private data AND untrusted content in the run: a site the owner named or approved
+    ///   (deep pages, subdomains, its own forms) still passes; anywhere else a call passes
+    ///   only when no word of the private results (`SeenText`) is in it, it has no data shape,
+    ///   it is small (a form field under 40 characters) and the run's running total sent to
+    ///   such places is under a budget. Otherwise it asks, as before.
+    ///
+    /// Never covered, whatever the level: an owner-stored secret typed with `browser_fill`
+    /// (always-ask, decided before this), money and the never-list (floors), mail and message
+    /// sends (always-ask tools), `browser_eval`, a program start (`executes`), a named browser
+    /// profile, the user's own computer, a non-public address, a card-like number or a key in
+    /// typed text, hidden characters and anything the redactor would change. A run that is not
+    /// owner-started (schedule, webhook, mail, channel, a peer, a subagent, an external agent)
+    /// is unchanged, and so are the Normal, Ask and custom levels.
     fn full_mode_waives(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
         if !FULL_BROWSER_CALLS.contains(&name)
             || ctx.profile.permissions.mode() != AutonomyMode::Full
@@ -1034,14 +1060,75 @@ impl Shared {
                 return false;
             }
         }
-        let reach_of = |url: &str| {
-            if self.known_site(ctx, url) {
-                crate::full_autonomy::Reach::KnownSite
-            } else {
-                crate::full_autonomy::Reach::NewSite
-            }
+        let (urls, texts) = crate::full_autonomy::split_input(input);
+        // A key, a card number or an encoded blob is never typed or sent silently.
+        if texts
+            .iter()
+            .any(|t| crate::full_autonomy::text_carries_data(t))
+        {
+            return false;
+        }
+        // Owner-initiated browsing of the public web (new sites, sign-ups, forms with the
+        // details the owner typed) never asks, until the run holds the owner's PRIVATE data
+        // AND read untrusted content: then a page could talk the model into carrying it out.
+        let restricted = {
+            let taint = ctx.taint.lock();
+            taint.exposure.untrusted && taint.private_source
         };
-        !crate::full_autonomy::input_carries_data(input, &reach_of)
+        if !restricted {
+            return true;
+        }
+        let named = self.owner_named_hosts(ctx);
+        // What this call would send to places the owner did not name.
+        let mut checked: Vec<String> = Vec::new();
+        let mut sent = 0usize;
+        for url in &urls {
+            let Some(host) = url::Url::parse(url.trim())
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+            else {
+                return false;
+            };
+            if self.trusted_host(ctx, &host, &named) {
+                continue;
+            }
+            if crate::full_autonomy::url_carries_data(url) {
+                return false;
+            }
+            sent += crate::full_autonomy::url_sent_chars(url);
+            checked.push(crate::full_autonomy::decoded(url));
+        }
+        let page_is_owners = ctx
+            .page_origin
+            .lock()
+            .as_deref()
+            .and_then(host_of_origin)
+            .is_some_and(|h| self.trusted_host(ctx, &h, &named));
+        if !texts.is_empty() && !page_is_owners {
+            for text in &texts {
+                let len = text.chars().count();
+                if len >= crate::full_autonomy::FOREIGN_TEXT_LIMIT {
+                    return false;
+                }
+                sent += len;
+                checked.push(text.clone());
+            }
+        }
+        if checked.is_empty() {
+            return true;
+        }
+        let owner_words = self.owner_words(ctx);
+        let mut taint = ctx.taint.lock();
+        // Private data that could not be hashed (memory without text, an earlier turn), copied
+        // private words, and the run's running total all ask.
+        if taint.seen.unhashed
+            || taint.seen.sent + sent > crate::full_autonomy::SEND_BUDGET
+            || checked.iter().any(|c| taint.seen.copied(c, &owner_words))
+        {
+            return false;
+        }
+        taint.seen.sent += sent;
+        true
     }
 
     /// A call that only the taint gate (not the policy, not an always-ask tool, not a floor)

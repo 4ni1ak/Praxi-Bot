@@ -537,9 +537,10 @@ impl TurnExecutor {
                     let untrusted = mems
                         .iter()
                         .any(|mem| mem.trust == memory_store::Trust::Untrusted);
-                    ctx.taint.lock().note(
+                    ctx.taint.lock().note_with_text(
                         tool_registry::ContentClass::declared(untrusted, true, false),
                         "memory",
+                        &memory_store::render_recall_block(&mems),
                     );
                 }
                 memory_store::prepend_to_user_message(
@@ -1745,7 +1746,13 @@ impl TurnExecutor {
                             class.label,
                         ),
                     };
-                    fact_note(ctx_ref, &fact);
+                    // The words of a private result are kept as hashes (never the text) so a
+                    // later call that copies them can be recognised.
+                    if fact.ran && exposure.is_none() {
+                        fact.apply_with_text(&mut ctx_ref.taint.lock(), &text);
+                    } else {
+                        fact_note(ctx_ref, &fact);
+                    }
                     (text, is_error, duration_ms, own_spill, fact)
                 }
             }

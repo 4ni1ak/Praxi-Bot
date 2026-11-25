@@ -1230,7 +1230,7 @@
         "name": "Custom"
       },
       "full": {
-        "hint": "Funciona sin preguntar (incluidos borrados y envíos), salvo Dinero, la activación de tareas programadas y los comandos catastróficos de la lista prohibida. Si inicias tú la ejecución, también navega, hace clic y escribe en la web sin preguntar, incluso después de leer una página. Sigue preguntando ante un enlace o un texto de formulario que parezca datos copiados (una clave, un código de acceso, una cadena larga codificada), al teclear un secreto guardado y, tras leer contenido no fiable, antes de ejecutar un programa o enviar datos por otra vía (búsqueda, descarga, correo). Las acciones en un navegador que conectaste como navegador preguntan cuando la tarea también leyó algo privado.",
+        "hint": "Funciona sin preguntar (incluidos borrados), salvo Dinero, el envío de correo, la activación de tareas programadas y los comandos catastróficos de la lista prohibida. Si inicias tú la ejecución, también visita cualquier sitio público, se registra y rellena formularios sin preguntar, incluso después de leer una página. Solo vuelve a preguntar si la ejecución también contiene tus datos privados (archivos, correo, memoria) y un sitio nuevo o un formulario incluye un fragmento de ellos, ante un secreto guardado, un script de página y, tras leer contenido no fiable, antes de ejecutar un programa.",
         "name": "Full"
       },
       "read-and-draft": {

@@ -1230,7 +1230,7 @@
         "name": "Özel"
       },
       "full": {
-        "hint": "Sormadan çalışır (silme ve gönderim dahil); yalnızca Para, zamanlanmış görev etkinleştirme ve yasaklı listedeki yıkıcı komutlarda sorar. Çalışmayı sen başlattıysan, bir sayfa okuduktan sonra bile sormadan web'de gezer, tıklar ve yazar. Yine sorar: kopyalanmış veriye benzeyen bir bağlantı ya da form metni (anahtar, erişim kodu, uzun kodlanmış dizi), kayıtlı bir sırrı yazmak ve güvenilmeyen içerik okuduktan sonra program çalıştırmak ya da veriyi başka yoldan (arama, getirme, e-posta) dışarı göndermek. Tarayıcı olarak bağladığın bir tarayıcıdaki işlemler, görev özel bir şey de okuduysa sorar.",
+        "hint": "Sormadan çalışır (silme dahil); yalnızca Para, e-posta gönderme, zamanlanmış görev etkinleştirme ve yasaklı listedeki yıkıcı komutlarda sorar. Çalışmayı sen başlattıysan, bir sayfa okuduktan sonra bile her genel siteyi gezer, kayıt olur ve formları sormadan doldurur. Yalnızca çalışma özel verini (dosya, posta, hafıza) de tutuyorsa ve yeni bir site ya da form bunlardan bir parça içeriyorsa, kayıtlı bir sır için, sayfa betiği için ve güvenilmeyen içerik okuduktan sonra program çalıştırmak için yine sorar.",
         "name": "Tam"
       },
       "read-and-draft": {

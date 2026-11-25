@@ -1,46 +1,43 @@
-//! The one protection that stays in a "Full" (Tam) owner run after a page was read: a browser
-//! action whose arguments look like they carry DATA out (a long encoded blob in a URL, a token
-//! typed into a form) still asks. Ordinary browsing (a public site, a deep page, a normal query
-//! string, normal form text) does not.
+//! What an owner-started Full ("Tam") run may do WITHOUT a card after it read a page, and the
+//! checks that keep a run holding private data from leaking it.
 //!
-//! The daemon does not keep the text a page showed, only the fact that something untrusted was
-//! read. So this cannot ask "was this copied from the page?"; it asks the question it can answer
-//! from the call alone: "does this argument have the SHAPE of copied data?" (see
-//! [`blob_like`]) and "is it bigger than a navigation or a form field needs?". Both limits are
-//! deliberately small: a short sentence can still leave this way, a key, a token, an encoded
-//! file or a card number cannot.
+//! See `Shared::full_mode_waives`:
+//!
+//! 1. A run with no private data of the owner in it (files, mail, memory, screens, other bots)
+//!    browses any public site and fills any form without asking. Reading web pages alone never
+//!    makes a run private.
+//! 2. A run that holds private data AND read untrusted content trusts only the sites the OWNER
+//!    named or approved (never a site the model navigated to). Anywhere else a call passes only
+//!    when none of the private results' words ([`SeenText`]: salted hashes, in memory for the
+//!    run, never the text) are in it, it has no data SHAPE ([`blob_like`]: keys, hashes,
+//!    encoded strings, card numbers), it is small, and the run's running total sent to such
+//!    places stays under a budget.
+//!
+//! Honest limit: an injected model that PARAPHRASES or re-encodes private data into a fresh,
+//! differently shaped string, or private data that never passed through a tool result the run
+//! saw (the model "knows" it), cannot be recognised here.
+
+use std::collections::HashSet;
+use std::hash::{BuildHasher, RandomState};
+use std::sync::OnceLock;
 
 use serde_json::Value;
 
-/// How much a URL of this run may carry, by how well the site is known.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Reach {
-    /// The site the browser is on, one the owner named or one they approved: normal URLs.
-    KnownSite,
-    /// Any other public site: path and query stay short, no fragment.
-    NewSite,
-}
+/// Longest decoded path + query + fragment text of a URL to an untrusted site.
+const URL_TOTAL_LIMIT: usize = 120;
+/// Longest single path segment, query key or value (decoded) of such a URL.
+const URL_PART_LIMIT: usize = 40;
+/// What one run may send to places the owner did not name, in decoded characters of URLs
+/// (host included) and form text together. Above it every further call asks, so a secret
+/// cannot leave in many small pieces.
+pub(crate) const SEND_BUDGET: usize = 600;
+/// Text typed into a page that is not the owner's must be shorter than this.
+pub(crate) const FOREIGN_TEXT_LIMIT: usize = 40;
+/// Most distinct hashes kept for a run; more means "cannot compare", which asks.
+const MAX_SEEN: usize = 400_000;
+/// Most characters of one result read into the set.
+const MAX_OBSERVED_CHARS: usize = 1_000_000;
 
-impl Reach {
-    /// Longest decoded path + query + fragment text.
-    const fn total_limit(self) -> usize {
-        match self {
-            Self::KnownSite => 300,
-            Self::NewSite => 120,
-        }
-    }
-
-    /// Longest single path segment, query key or query value (decoded).
-    const fn part_limit(self) -> usize {
-        match self {
-            Self::KnownSite => 64,
-            Self::NewSite => 40,
-        }
-    }
-}
-
-/// Longest text one form field, key press or dialog answer may carry silently.
-const TEXT_LIMIT: usize = 400;
 /// More query pairs than this is a data channel, not a page address.
 const MAX_QUERY_PAIRS: usize = 12;
 /// More percent escapes than this in one URL is an encoded payload.
@@ -105,24 +102,34 @@ fn long_number(text: &str) -> bool {
     false
 }
 
-/// Free text (a form field, a typed key, a dialog answer) that looks like copied data.
+/// Typed or sent text that looks like a key, a token, an encoded blob or a card number.
 pub(crate) fn text_carries_data(text: &str) -> bool {
-    text.chars().count() > TEXT_LIMIT
-        || long_number(text)
+    long_number(text)
         || text
-            .split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '|' | '"' | '\''))
+            .split(|c: char| {
+                c.is_whitespace()
+                    || matches!(
+                        c,
+                        ',' | ';' | ':' | '|' | '"' | '\'' | '/' | '?' | '&' | '='
+                    )
+            })
             .any(|w| blob_like(w) || secret_prefixed(w))
 }
 
 /// One decoded URL part (path segment, query key or value, fragment).
-fn part_carries_data(part: &str, reach: Reach) -> bool {
-    part.chars().count() > reach.part_limit()
+fn part_carries_data(part: &str) -> bool {
+    part.chars().count() > URL_PART_LIMIT
         || part
             .split(|c: char| c.is_whitespace() || matches!(c, '/' | ',' | ';' | ':' | '|' | '+'))
             .any(|w| blob_like(w) || secret_prefixed(w))
 }
 
 /// `%XX` escapes and `+` decoded, so the judged text is what the site would read.
+pub(crate) fn decoded(raw: &str) -> String {
+    decode(raw)
+}
+
+/// `%XX` escapes and `+` decoded.
 fn decode(raw: &str) -> String {
     let bytes = raw.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -151,10 +158,19 @@ fn decode(raw: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// A public `http(s)` address whose host, path, query or fragment look like they carry data.
-///
-/// Fails closed: anything that does not parse as a plain web address carries.
-pub(crate) fn url_carries_data(raw: &str, reach: Reach) -> bool {
+/// Decoded characters of a URL that go to a server: host, path, query and fragment.
+pub(crate) fn url_sent_chars(raw: &str) -> usize {
+    url::Url::parse(raw.trim()).map_or(raw.chars().count(), |u| {
+        u.host_str().map_or(0, |h| h.chars().count())
+            + decode(u.path()).chars().count()
+            + u.query().map_or(0, |q| decode(q).chars().count())
+            + u.fragment().map_or(0, |f| decode(f).chars().count())
+    })
+}
+
+/// A public `http(s)` address to a site the owner did not name whose host, path, query or
+/// fragment look like they carry data. Fails closed: anything that does not parse carries.
+pub(crate) fn url_carries_data(raw: &str) -> bool {
     let Ok(url) = url::Url::parse(raw.trim()) else {
         return true;
     };
@@ -167,9 +183,9 @@ pub(crate) fn url_carries_data(raw: &str, reach: Reach) -> bool {
     let Some(host) = url.host_str() else {
         return true;
     };
-    // A name made of data (`<encoded-text>.example.com`) is a channel too.
+    // A name made of data (`<text>.example.com`) is a channel too.
     let labels: Vec<&str> = host.split('.').collect();
-    if labels.len() > 8 || labels.iter().any(|l| l.len() > 40 || blob_like(l)) {
+    if labels.len() > 6 || labels.iter().any(|l| l.len() > 30 || blob_like(l)) {
         return true;
     }
     if raw.matches('%').count() > MAX_PERCENT_ESCAPES {
@@ -180,7 +196,7 @@ pub(crate) fn url_carries_data(raw: &str, reach: Reach) -> bool {
         for segment in segments {
             let part = decode(segment);
             total += part.chars().count();
-            if part_carries_data(&part, reach) {
+            if part_carries_data(&part) {
                 return true;
             }
         }
@@ -188,44 +204,130 @@ pub(crate) fn url_carries_data(raw: &str, reach: Reach) -> bool {
     let mut pairs = 0usize;
     for (k, v) in url.query_pairs() {
         pairs += 1;
-        // `query_pairs` already decodes, so only the shape is judged here.
         total += k.chars().count() + v.chars().count();
-        if pairs > MAX_QUERY_PAIRS || part_carries_data(&k, reach) || part_carries_data(&v, reach) {
+        if pairs > MAX_QUERY_PAIRS || part_carries_data(&k) || part_carries_data(&v) {
             return true;
         }
     }
-    if let Some(fragment) = url.fragment().filter(|f| !f.is_empty()) {
-        let part = decode(fragment);
-        total += part.chars().count();
-        if reach == Reach::NewSite || part_carries_data(&part, reach) {
-            return true;
-        }
+    // A fragment never reaches the server but a page script reads it: not on an unknown site.
+    if url.fragment().is_some_and(|f| !f.is_empty()) {
+        return true;
     }
-    total > reach.total_limit()
+    total > URL_TOTAL_LIMIT
 }
 
-/// Whether any argument of a browser action carries data: a URL field is judged as an address
-/// (`reach_of` says how well the site is known), every other string as free text. Keys of the
-/// call are the tool's own schema and are not judged.
-pub(crate) fn input_carries_data(input: &Value, reach_of: &dyn Fn(&str) -> Reach) -> bool {
-    fn walk(value: &Value, key: Option<&str>, reach_of: &dyn Fn(&str) -> Reach) -> bool {
+/// The URL-like strings (keys `url`, `uri`, `href`) and the free text of a browser call. Keys
+/// of the call are the tool's own schema and are not judged.
+pub(crate) fn split_input(input: &Value) -> (Vec<String>, Vec<String>) {
+    fn walk(value: &Value, key: Option<&str>, urls: &mut Vec<String>, texts: &mut Vec<String>) {
         match value {
             Value::String(s) => {
-                let is_url = key.is_some_and(|k| {
+                if key.is_some_and(|k| {
                     matches!(k.to_ascii_lowercase().as_str(), "url" | "uri" | "href")
-                });
-                if is_url {
-                    url_carries_data(s, reach_of(s))
+                }) {
+                    urls.push(s.clone());
                 } else {
-                    text_carries_data(s)
+                    texts.push(s.clone());
                 }
             }
-            Value::Array(items) => items.iter().any(|v| walk(v, key, reach_of)),
-            Value::Object(map) => map.iter().any(|(k, v)| walk(v, Some(k), reach_of)),
-            _ => false,
+            Value::Array(items) => items.iter().for_each(|v| walk(v, key, urls, texts)),
+            Value::Object(map) => map
+                .iter()
+                .filter(|(k, _)| !matches!(k.as_str(), "ref" | "dialog" | "action" | "op"))
+                .for_each(|(k, v)| walk(v, Some(k), urls, texts)),
+            _ => {}
         }
     }
-    walk(input, None, reach_of)
+    let (mut urls, mut texts) = (Vec::new(), Vec::new());
+    walk(input, None, &mut urls, &mut texts);
+    (urls, texts)
+}
+
+/// Lower-case alphanumeric words of `text`.
+pub(crate) fn words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+fn salt() -> &'static RandomState {
+    static SALT: OnceLock<RandomState> = OnceLock::new();
+    SALT.get_or_init(RandomState::new)
+}
+
+/// The three-word key of a window.
+fn triple(w: &[String], i: usize) -> Option<String> {
+    (i + 3 <= w.len()).then(|| format!("{} {} {}", w[i], w[i + 1], w[i + 2]))
+}
+
+/// What a run read, as salted hashes only (never the text), so a later call can be checked for
+/// copied content. Lives in the run's [`crate::taint::ContentTaint`] and goes away with it.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SeenText {
+    hashes: HashSet<u64>,
+    /// Too much was read to compare: every comparison then says "copied".
+    overflow: bool,
+    /// Private data is in the run that was NOT hashed (memory without text, an earlier turn, a
+    /// script's read): nothing can be compared, so the run asks.
+    pub(crate) unhashed: bool,
+    /// Decoded characters this run already sent to places the owner did not name.
+    pub(crate) sent: usize,
+}
+
+impl SeenText {
+    /// Every word of 6 or more characters and every run of three consecutive words.
+    pub(crate) fn observe(&mut self, text: &str) {
+        let text: String = text.chars().take(MAX_OBSERVED_CHARS).collect();
+        let w = words(&text);
+        for (i, word) in w.iter().enumerate() {
+            if word.chars().count() >= 6 {
+                self.insert(word);
+            }
+            if let Some(t) = triple(&w, i) {
+                self.insert(&t);
+            }
+        }
+    }
+
+    fn insert(&mut self, token: &str) {
+        if self.hashes.len() >= MAX_SEEN {
+            self.overflow = true;
+        } else {
+            self.hashes.insert(salt().hash_one(token));
+        }
+    }
+
+    pub(crate) fn merge(&mut self, other: &Self) {
+        self.hashes.extend(other.hashes.iter().copied());
+        self.overflow |= other.overflow || self.hashes.len() > MAX_SEEN;
+        self.unhashed |= other.unhashed;
+        self.sent = self.sent.max(other.sent);
+    }
+
+    /// `text` holds a word (6+ characters) or a run of three words the run read. Words the owner
+    /// typed themselves (`owner_words`) are not copied content.
+    pub(crate) fn copied(&self, text: &str, owner_words: &HashSet<String>) -> bool {
+        if self.overflow {
+            return true;
+        }
+        let w = words(text);
+        for (i, word) in w.iter().enumerate() {
+            if word.chars().count() >= 6
+                && !owner_words.contains(word)
+                && self.hashes.contains(&salt().hash_one(word.as_str()))
+            {
+                return true;
+            }
+            if let Some(t) = triple(&w, i)
+                && !w[i..i + 3].iter().all(|x| owner_words.contains(x))
+                && self.hashes.contains(&salt().hash_one(t.as_str()))
+            {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[cfg(test)]
@@ -234,59 +336,52 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn ordinary_addresses_do_not_carry_data() {
+    fn ordinary_addresses_to_a_new_site_do_not_carry_data_shape() {
         for url in [
-            "https://webioo.com.tr/",
-            "https://webioo.com.tr/referanslarimiz",
-            "https://webioo.com.tr/iletisim?page=2&sort=new",
-            "https://webioo.com.tr/blog/2024-yilin-en-iyi-10-urunu",
-            "https://webioo.com.tr/ara?q=web+tasarim+fiyatlari",
-            "https://webioo.com.tr/hizmetler#fiyat",
-            "https://www.google.com/search?q=webioo+referanslar",
-            "https://cdn.example.com/a.js?v=1700000000000",
-            "https://webioo.com.tr/%C3%BCr%C3%BCnler/%C5%9Fapka",
-        ] {
-            assert!(!url_carries_data(url, Reach::KnownSite), "{url}");
-        }
-        assert!(!url_carries_data(
+            "https://other.example/products/shoes",
             "https://other.example/products?page=3",
-            Reach::NewSite
-        ));
+            "https://www.google.com/search?q=web+design+prices",
+            "https://cdn.example.com/a.js?v=1700000000000",
+            "https://other.example/%C3%BCr%C3%BCnler/%C5%9Fapka",
+        ] {
+            assert!(!url_carries_data(url), "{url}");
+        }
     }
 
     #[test]
     fn data_shaped_addresses_carry() {
         for url in [
-            "https://webioo.com.tr/c2VjcmV0LXRva2VuLWZyb20tdGhlLXBhZ2UtYWJjZGVmZ2hpams",
-            "https://webioo.com.tr/?d=0123456789abcdef0123456789abcdef",
-            "https://webioo.com.tr/?q=sk-live-AbCdEfGhIjKlMnOp",
-            "https://webioo.com.tr/x?token=ghp_abcdefghijklmnop1234",
-            "https://webioo.com.tr/?a=1&b=2&c=3&d=4&e=5&f=6&g=7&h=8&i=9&j=10&k=11&l=12&m=13",
-            "https://c2VjcmV0LXRva2VuLWZyb20tdGhlLXBhZ2U.evil.example/",
-            "https://u:p@webioo.com.tr/",
-            "ftp://webioo.com.tr/",
+            "https://other.example/c2VjcmV0LXRva2VuLWZyb20tdGhlLXBhZ2UtYWJjZGVmZ2hpams",
+            "https://other.example/?d=0123456789abcdef0123456789abcdef",
+            "https://other.example/?q=sk-live-AbCdEfGhIjKlMnOp",
+            "https://other.example/?a=1&b=2&c=3&d=4&e=5&f=6&g=7&h=8&i=9&j=10&k=11&l=12&m=13",
+            "https://c2VjcmV0LXRva2VuLWZyb20tdGhlLXBhZ2U.other.example/",
+            "https://a.b.c.d.e.f.g.other.example/",
+            "https://other.example/#anything",
+            "https://u:p@other.example/",
+            "ftp://other.example/",
             "not a url",
         ] {
-            assert!(url_carries_data(url, Reach::KnownSite), "{url}");
+            assert!(url_carries_data(url), "{url}");
         }
-        // an unknown site gets no fragment and a smaller budget
-        assert!(url_carries_data(
-            "https://other.example/#anything",
-            Reach::NewSite
-        ));
         let long = format!("https://other.example/?q={}", "kelime+".repeat(7));
-        assert!(url_carries_data(&long, Reach::NewSite));
-        assert!(!url_carries_data(&long, Reach::KnownSite));
+        assert!(url_carries_data(&long));
     }
 
     #[test]
-    fn form_text_is_judged_by_shape_not_by_topic() {
+    fn the_host_counts_in_what_is_sent() {
+        assert_eq!(
+            url_sent_chars("https://ab.example/xy?q=z"),
+            "ab.example".len() + 3 + 3
+        );
+    }
+
+    #[test]
+    fn form_text_is_judged_by_shape() {
         for text in [
             "Merhaba, fiyat teklifi almak istiyorum.",
             "ali@example.com",
             "Enter",
-            "Control+A",
-            "+90 555 123 45 67",
         ] {
             assert!(!text_carries_data(text), "{text}");
         }
@@ -299,27 +394,41 @@ mod tests {
         ] {
             assert!(text_carries_data(text), "{text}");
         }
-        assert!(text_carries_data(&"a ".repeat(300)));
+        // a long description with an address in it is ordinary text
+        assert!(!text_carries_data(&format!(
+            "{} https://www.company.com/about-us",
+            "word ".repeat(300)
+        )));
     }
 
     #[test]
-    fn a_call_is_judged_per_field() {
-        let known = |_: &str| Reach::KnownSite;
-        assert!(!input_carries_data(
-            &json!({"ref": "e12", "text": "merhaba"}),
-            &known
-        ));
-        assert!(input_carries_data(
-            &json!({"ref": "e12", "text": "sk-live-AbCdEfGhIjKlMnOp"}),
-            &known
-        ));
-        assert!(!input_carries_data(
-            &json!({"steps": [{"op": "click", "ref": "e1"}, {"op": "fill", "ref": "e2", "text": "ali"}]}),
-            &known
-        ));
-        assert!(input_carries_data(
-            &json!({"url": "https://a.example/?d=0123456789abcdef0123456789abcdef"}),
-            &known
-        ));
+    fn copied_words_and_word_triples_are_found_without_keeping_the_text() {
+        let mut seen = SeenText::default();
+        seen.observe("The account holder is Hannelore Wuthering and the code is 482913 today.");
+        let none = HashSet::new();
+        // a long word from the page
+        assert!(seen.copied("https://evil.example/?q=hannelore", &none));
+        // three words in a row, however short
+        assert!(seen.copied("the-code-is.evil.example", &none));
+        // words that were not read pass
+        assert!(!seen.copied("https://other.example/products/shoes", &none));
+        // words the owner typed are not copied content
+        let owner: HashSet<String> = ["hannelore".to_owned()].into();
+        assert!(!seen.copied("https://evil.example/?q=hannelore", &owner));
+        // too much to compare: everything counts as copied
+        let big = SeenText {
+            overflow: true,
+            ..SeenText::default()
+        };
+        assert!(big.copied("anything", &none));
+    }
+
+    #[test]
+    fn a_call_is_split_into_addresses_and_text() {
+        let (urls, texts) = split_input(
+            &json!({"url": "https://a.example/", "steps": [{"ref": "e1", "text": "ali"}]}),
+        );
+        assert_eq!(urls, ["https://a.example/"]);
+        assert!(texts.contains(&"ali".to_owned()));
     }
 }

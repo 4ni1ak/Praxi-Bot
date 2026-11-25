@@ -1230,7 +1230,7 @@
         "name": "Benutzerdefiniert"
       },
       "full": {
-        "hint": "Läuft ohne Nachfrage (auch Löschen und Senden), außer bei Geld, Aktivierung von Zeitplänen und katastrophalen Befehlen auf der Verbotsliste. Wenn du den Lauf selbst startest, surft, klickt und tippt der Bot im Web auch nach dem Lesen einer Seite ohne Nachfrage. Es fragt weiterhin bei einem Link oder Formulartext, der wie kopierte Daten aussieht (Schlüssel, Zugangscode, lange kodierte Zeichenkette), beim Eintippen eines gespeicherten Geheimnisses und, nach dem Lesen nicht vertrauenswürdiger Inhalte, vor dem Start eines Programms oder dem Senden von Daten auf anderem Weg (Suche, Abruf, E-Mail). Aktionen in einem als Browser verbundenen Browser fragen, sobald die Aufgabe auch etwas Privates gelesen hat.",
+        "hint": "Läuft ohne Nachfrage (auch Löschen), außer bei Geld, E-Mail-Versand, Aktivierung von Zeitplänen und katastrophalen Befehlen auf der Verbotsliste. Wenn du den Lauf selbst startest, besucht der Bot auch nach dem Lesen einer Seite jede öffentliche Webseite, registriert sich und füllt Formulare ohne Nachfrage aus. Er fragt nur dann wieder, wenn der Lauf auch deine privaten Daten (Dateien, E-Mails, Gedächtnis) hält und eine neue Seite oder ein Formular ein Stück davon enthält, bei einem gespeicherten Geheimnis, bei einem Seitenskript und, nach dem Lesen nicht vertrauenswürdiger Inhalte, vor dem Start eines Programms.",
         "name": "Voll"
       },
       "read-and-draft": {

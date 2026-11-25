@@ -1230,7 +1230,7 @@
         "name": "Custom"
       },
       "full": {
-        "hint": "Runs without asking (including deletes and sends), except Money, schedule activation and catastrophic never-list commands. When you start the run yourself, it also browses, clicks and types on the web without asking, even after reading a page. Still asks: a link or form text that looks like copied data (a key, an access code, a long encoded string), typing a stored secret, and, after reading untrusted content, running a program or sending data out another way (search, fetch, mail). Actions in a browser you connected as a browser ask once the task also read something private.",
+        "hint": "Runs without asking (including deletes), except Money, sending mail, schedule activation and catastrophic never-list commands. When you start the run yourself it also browses any public site, signs up and fills forms without asking, even after reading a page. It asks again only if the run also holds your private data (files, mail, memory) and a new site or a form contains a piece of it, for a stored secret, a page script, and, after reading untrusted content, for running a program.",
         "name": "Full"
       },
       "read-and-draft": {
