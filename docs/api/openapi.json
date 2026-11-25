@@ -8579,7 +8579,7 @@
         "tags": [
           "fill-secrets"
         ],
-        "summary": "Create a fill secret with its allow-lists. The value is write-only.",
+        "summary": "Create a fill secret with its allow-lists and bot scope. The value is write-only.",
         "operationId": "create_fill_secret",
         "requestBody": {
           "content": {
@@ -8622,8 +8622,84 @@
               }
             }
           },
+          "404": {
+            "description": "unknown bot id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
           "409": {
             "description": "the name exists; use PUT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/fill-secrets/reveal": {
+      "post": {
+        "tags": [
+          "fill-secrets"
+        ],
+        "summary": "Reveal one fill secret value to the local owner after explicit confirmation.\nAudited before reading; returned with `Cache-Control: no-store`.",
+        "operationId": "reveal_fill_secret",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevealFillSecret"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevealFillSecretResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "confirmation required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the local owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8645,7 +8721,7 @@
         "tags": [
           "fill-secrets"
         ],
-        "summary": "Change a fill secret's value and/or allow-lists.",
+        "summary": "Change a fill secret's value, Vault metadata, bot scope, or allow-lists.",
         "operationId": "update_fill_secret",
         "parameters": [
           {
@@ -20131,9 +20207,48 @@
           "value"
         ],
         "properties": {
+          "ask_before_use": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the bot must ask the owner before typing this secret (default true)."
+          },
+          "bot_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Bot ids permitted to use this secret (defaults to none)."
+          },
+          "kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VaultKindDto",
+                "description": "Category (`login` or `other`)."
+              }
+            ]
+          },
+          "login_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Non-secret login identifier (e-mail or username)."
+          },
           "name": {
             "type": "string",
             "description": "Name, letters/digits/`.`/`_`/`-` with `/` separators, at most 64 bytes."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Owner-only note."
           },
           "origins": {
             "type": "array",
@@ -20149,9 +20264,16 @@
             },
             "description": "Verified desktop program identities."
           },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Human-friendly site or service label."
+          },
           "value": {
             "type": "string",
-            "description": "The value. Write-only: no route returns it."
+            "description": "The value. Write-only: no route returns it except an explicit confirmed owner reveal."
           }
         }
       },
@@ -22323,19 +22445,51 @@
         "description": "One fill secret as the owner sees it. Never the value.",
         "required": [
           "name",
+          "kind",
           "origins",
           "programs",
+          "bot_ids",
+          "ask_before_use",
           "has_value",
           "updated_at_ms"
         ],
         "properties": {
+          "ask_before_use": {
+            "type": "boolean",
+            "description": "Whether the bot must ask the owner before typing this secret."
+          },
+          "bot_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Bot ids permitted to use this secret (empty = no bot)."
+          },
           "has_value": {
             "type": "boolean",
             "description": "Whether a value is stored."
           },
+          "kind": {
+            "$ref": "#/components/schemas/VaultKindDto",
+            "description": "Category (`login` or `other`)."
+          },
+          "login_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Non-secret login identifier (e-mail or username)."
+          },
           "name": {
             "type": "string",
             "description": "Name the assistant writes in `secret` (for example `login/github`)."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Owner-only note."
           },
           "origins": {
             "type": "array",
@@ -22350,6 +22504,13 @@
               "type": "string"
             },
             "description": "Verified desktop program identities the secret may be typed into."
+          },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Human-friendly site or service label."
           },
           "updated_at_ms": {
             "type": "integer",
@@ -29025,6 +29186,42 @@
           }
         }
       },
+      "RevealFillSecret": {
+        "type": "object",
+        "description": "Body of `POST /v1/fill-secrets/reveal`.",
+        "required": [
+          "name",
+          "confirm"
+        ],
+        "properties": {
+          "confirm": {
+            "type": "boolean",
+            "description": "Must be `true` to confirm the owner intentionally reveals the value on screen."
+          },
+          "name": {
+            "type": "string",
+            "description": "Secret name to reveal."
+          }
+        }
+      },
+      "RevealFillSecretResponse": {
+        "type": "object",
+        "description": "Response of `POST /v1/fill-secrets/reveal` (owner-only, `Cache-Control: no-store`).",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Secret name."
+          },
+          "value": {
+            "type": "string",
+            "description": "Secret value. Never logged or cached."
+          }
+        }
+      },
       "RevokeGrant": {
         "type": "object",
         "description": "`DELETE /v1/bots/{id}/grants`.",
@@ -31761,6 +31958,48 @@
         "type": "object",
         "description": "Body of `PUT /v1/fill-secrets/{name}`. Every field is optional; a value,\nwhen given, replaces the stored one.",
         "properties": {
+          "ask_before_use": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Replaces whether the bot asks before typing."
+          },
+          "bot_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replaces the allowed bot ids."
+          },
+          "kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VaultKindDto",
+                "description": "Replaces category."
+              }
+            ]
+          },
+          "login_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Replaces login identifier (empty string clears it)."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Replaces owner note (empty string clears it)."
+          },
           "origins": {
             "type": [
               "array",
@@ -31780,6 +32019,13 @@
               "type": "string"
             },
             "description": "Replaces the allowed programs."
+          },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Replaces site name (empty string clears it)."
           },
           "value": {
             "type": [
@@ -31951,6 +32197,14 @@
             "minimum": 0
           }
         }
+      },
+      "VaultKindDto": {
+        "type": "string",
+        "description": "Category of a Vault entry.",
+        "enum": [
+          "login",
+          "other"
+        ]
       },
       "VerificationDto": {
         "type": "string",
