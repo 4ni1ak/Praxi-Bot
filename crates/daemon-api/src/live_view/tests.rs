@@ -718,7 +718,8 @@ async fn releasing_a_takeover_of_a_bots_browser_marks_its_profile_as_the_owners(
     let bot = Uuid::now_v7();
     t.target.info.lock().bot_id = Some(bot);
     let (_id, owned, _body) = t.active(None).await;
-    assert!(!agent_core::browser_profile::is_private(
+    // marked as soon as the takeover is active, before any way it can end
+    assert!(agent_core::browser_profile::is_private(
         t.dir.path(),
         &bot.to_string()
     ));
@@ -729,6 +730,28 @@ async fn releasing_a_takeover_of_a_bots_browser_marks_its_profile_as_the_owners(
     assert!(agent_core::browser_profile::is_private(
         t.dir.path(),
         &bot.to_string()
+    ));
+}
+
+#[tokio::test]
+async fn an_interrupted_takeover_of_a_bots_browser_still_marks_its_profile() {
+    let t = Test::new();
+    let bot = Uuid::now_v7();
+    t.target.info.lock().bot_id = Some(bot);
+    let other = Uuid::now_v7();
+    let (_id, _owned, _body) = t.active(Some("alice")).await;
+    // a local Stop ends it with no release at all
+    let (status, _) = t
+        .call(None, Method::POST, "/v1/control/override", None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(agent_core::browser_profile::is_private(
+        t.dir.path(),
+        &bot.to_string()
+    ));
+    assert!(!agent_core::browser_profile::is_private(
+        t.dir.path(),
+        &other.to_string()
     ));
 }
 #[tokio::test]

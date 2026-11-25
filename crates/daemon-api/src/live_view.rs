@@ -1231,6 +1231,16 @@ pub(crate) async fn takeover(
                 let sink = target.input_sink().ok_or_else(|| ApiError::unavailable("input unavailable"))?;
                 bounded(sink.release_pressed_inputs()).await?;
                 bounded(sink.set_takeover_active(true)).await?;
+                // From here the owner may log in by hand: the bot's browser profile may hold
+                // his accounts however the takeover ends (release, Stop, revoke, restart).
+                if target.info().kind == TargetKind::Browser
+                    && let Some(bot) = target.info().bot_id
+                {
+                    let _ = agent_core::browser_profile::mark_private(
+                        &state.data_dir(),
+                        &bot.to_string(),
+                    );
+                }
                 // Re-verified after the backend call: no `takeover.active` row
                 // for a takeover a Stop ended meanwhile (the caller resets the pin).
                 if !state.hub().takeover().is_some_and(|now| now.info.id == owned.info.id && now.info.control_epoch == owned.info.control_epoch && now.info.state == ViewState::Acquiring) {
