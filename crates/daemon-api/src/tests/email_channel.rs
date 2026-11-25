@@ -27,6 +27,8 @@ impl EmailChannelControl for Fake {
             settings: self.settings.lock().clone(),
             running: false,
             pending_replies: self.replies.lock().len(),
+            skipped_mails: 0,
+            ignored_mails: 0,
         }
     }
     async fn put(&self, s: EmailChannelSettingsDto) -> Result<EmailChannelDto, EmailControlError> {

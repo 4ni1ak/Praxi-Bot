@@ -16,7 +16,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use channel_api::IncomingKind;
-use connector_email::channel::{ChannelMode, EmailChannel, EmailChannelSettings};
+use connector_email::channel::{
+    ChannelMode, DeliveryOutcome, EmailChannel, EmailChannelSettings, MAX_DELIVERY_ATTEMPTS,
+};
 use connector_email::{AccountKind, ImapSmtpProvider};
 use daemon_api::ChannelControl;
 use daemon_api::dto::{ChannelDto, PairCodeDto};
@@ -131,6 +133,26 @@ impl EmailChannelHost {
         Ok(channel)
     }
 
+    /// The channel starts runs only for named senders: refuse to switch it on
+    /// while the account's allowed-senders list is empty.
+    fn require_senders(&self, s: &EmailChannelSettings) -> Result<(), EmailControlError> {
+        let named = self
+            .email
+            .connector()
+            .accounts()
+            .into_iter()
+            .find(|a| a.name == s.account)
+            .is_some_and(|a| !a.allowed_senders.is_empty());
+        if named {
+            Ok(())
+        } else {
+            Err(EmailControlError::Invalid(
+                "add the senders whose mail may reach the bot (for example your own address) to the mailbox first"
+                    .into(),
+            ))
+        }
+    }
+
     fn halt(&self) {
         if let Some(r) = self.run.lock().take() {
             r.task.abort();
@@ -156,20 +178,37 @@ impl EmailChannelHost {
         let poller = channel.clone();
         let every = std::time::Duration::from_secs(s.poll_secs);
         let task = tokio::spawn(async move {
+            let mut ignored_seen = 0;
             loop {
                 if let Ok(batch) = poller.poll_pending().await {
+                    let ignored = poller.ignored_count();
+                    if ignored > ignored_seen {
+                        // Count only: never the sender's text.
+                        support_logs::tracing::warn!(target: "praxi_support", reason = "component_warning", "warning: e-mail channel ignored {} mail(s) from senders that are not allowed", ignored - ignored_seen);
+                        ignored_seen = ignored;
+                    }
                     for msg in batch {
                         let (Some(bot), IncomingKind::Text(text)) = (bot, msg.kind) else {
                             break;
                         };
+                        let uid = msg.message_id.as_deref().and_then(|u| u.parse().ok());
                         // Everything about the sender is part of `text`: data.
                         if state.deliver_email(bot, INSTRUCTION, &text).is_err() {
+                            // A pause (safe mode) is not the mail's fault: it does not count.
+                            let outcome = match uid {
+                                Some(uid) if !state.safe_mode() => poller.delivery_failed(uid),
+                                _ => DeliveryOutcome::RetryLater,
+                            };
+                            if outcome == DeliveryOutcome::Skipped {
+                                support_logs::tracing::warn!(target: "praxi_support", reason = "component_warning", "warning: skipped a mail after {MAX_DELIVERY_ATTEMPTS} failed hand-overs to the bot");
+                                continue;
+                            }
                             support_logs::tracing::warn!(target: "praxi_support", reason = "component_warning", "warning: could not hand a mail to the bot");
                             // Keep the order: this mail and the rest are
                             // offered again at the next check.
                             break;
                         }
-                        if let Some(uid) = msg.message_id.as_deref().and_then(|u| u.parse().ok()) {
+                        if let Some(uid) = uid {
                             poller.commit(uid);
                         }
                     }
@@ -217,10 +256,13 @@ impl ChannelControl for EmailChannelHost {
 impl EmailChannelControl for EmailChannelHost {
     fn get(&self) -> EmailChannelDto {
         let settings = dto_of(&self.settings.lock());
+        let channel = self.channel();
         EmailChannelDto {
             settings,
-            running: self.run.lock().is_some(),
-            pending_replies: self.channel().map_or(0, |c| c.pending_replies().len()),
+            running: channel.is_some(),
+            pending_replies: channel.as_ref().map_or(0, |c| c.pending_replies().len()),
+            skipped_mails: channel.as_ref().map_or(0, EmailChannel::skipped_count),
+            ignored_mails: channel.as_ref().map_or(0, EmailChannel::ignored_count),
         }
     }
 
@@ -251,6 +293,7 @@ impl EmailChannelControl for EmailChannelHost {
                 ));
             }
             self.build(&next)?;
+            self.require_senders(&next)?;
         }
         save(&self.data_dir.join(SETTINGS_FILE), &next)
             .map_err(|_| EmailControlError::Internal("cannot save the settings".into()))?;

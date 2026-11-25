@@ -74,6 +74,12 @@ pub struct EmailChannelDto {
     pub running: bool,
     /// Replies waiting for approval.
     pub pending_replies: usize,
+    /// Mails given up since the channel started because handing them to the bot
+    /// kept failing (for example the bot was deleted).
+    pub skipped_mails: usize,
+    /// Mails ignored since the channel started because the sender is not on
+    /// the mailbox's allowed-senders list.
+    pub ignored_mails: usize,
 }
 
 /// Implemented by the embedder.

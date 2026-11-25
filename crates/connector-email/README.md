@@ -84,8 +84,11 @@ through the owner-only `/v1/email/channel*` routes).
   body is an opt-in. Attachments are listed (name, size) and never opened. Mail is
   fetched with `BODY.PEEK`, nothing is marked read. Control and direction-override
   characters are stripped and every message starts with a fixed untrusted banner.
-- `allowed_senders` of the account are enforced; the account's own address is skipped.
-  At most `max_per_poll` mails per check (the rest become one notice).
+- `allowed_senders` of the account are enforced and an empty list delivers nothing
+  (ignored mails are counted, logged without text); the account's own address is
+  skipped. At most `max_per_poll` mails per check: the rest stay unread for the next
+  check and are announced in one notice. A mail whose hand-over fails 3 times is
+  skipped (counted) so it cannot block the ones behind it.
 - Replies are a separate opt-in. `Channel::send` never sends: it files a pending
   reply (To only, at most 5 recipients, only addresses that wrote to the mailbox,
   at most 20 waiting, 24 h expiry). The owner approves the exact text through
