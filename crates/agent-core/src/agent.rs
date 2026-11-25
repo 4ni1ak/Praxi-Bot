@@ -306,6 +306,10 @@ impl AgentLoop {
     #[must_use]
     pub fn with_subagents(self) -> Self {
         let _ = self.sh.tools.register(crate::subagent::tool());
+        let _ = self
+            .sh
+            .tools
+            .register(crate::delegation::tool(Arc::clone(&self.sh.storage)));
         self
     }
 

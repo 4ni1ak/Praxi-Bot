@@ -2340,7 +2340,10 @@
     "stopped": "Se detuvo el turno en curso.",
     "subagent": {
       "cancel": "Cancelar",
+      "cancelHelper": "Detener al bot ayudante",
       "cancelLabel": "Cancelar subagente: {{task}}",
+      "helperLimit": "El bot ayudante no puede hacer en esta tarea más de lo que puede hacer {{caller}}. Su respuesta cuenta como texto no fiable.",
+      "helperTitle": "{{caller}} pidió ayuda a {{helper}}",
       "status": {
         "cancelled": "Cancelado",
         "failed": "Falló",

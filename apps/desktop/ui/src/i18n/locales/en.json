@@ -2340,7 +2340,10 @@
     "stopped": "Stopped the running turn.",
     "subagent": {
       "cancel": "Cancel",
+      "cancelHelper": "Stop helper",
       "cancelLabel": "Cancel subagent: {{task}}",
+      "helperLimit": "The helper cannot do more than {{caller}} can in this task. Its answer counts as untrusted text.",
+      "helperTitle": "{{caller}} asked {{helper}} for help",
       "status": {
         "cancelled": "Cancelled",
         "failed": "Failed",

@@ -1,4 +1,9 @@
-import type { DaemonEvent, GlobalEnvelope, TodoItem } from "../api/types";
+import type {
+  DaemonEvent,
+  GlobalEnvelope,
+  SubagentHelper,
+  TodoItem
+} from "../api/types";
 import { parseRoute, type RouteState } from "../lib/route.ts";
 
 export type ToolStatus =
@@ -147,6 +152,8 @@ export interface RunState {
   task?: string;
   /** The parent's `spawn_subagent` tool call id. */
   callId?: string;
+  /** Set when this child is another bot asked through `ask_bot`. */
+  helper?: SubagentHelper;
   subagentState?: SubagentState;
   /** Final summary of a finished subagent. */
   summary?: string;
@@ -186,7 +193,7 @@ const POLICY_DENIAL_REASON = "denied by policy";
 
 /** Tool names that spawn another agent (rendered as a subagent card). */
 export function isSubagentTool(name: string): boolean {
-  return /^(subagent|spawn_agent|spawn_subagent|delegate)/.test(name);
+  return /^(subagent|spawn_agent|spawn_subagent|delegate|ask_bot)/.test(name);
 }
 
 function withRun(
@@ -341,6 +348,7 @@ function reduce(
           parentRunId: e.parent_run_id,
           task: e.task,
           callId: e.call_id ?? r.callId,
+          helper: e.helper ?? r.helper,
           // A restart re-announces an adopted child: it runs again.
           subagentState: "running" as const,
           finishedMs: undefined,

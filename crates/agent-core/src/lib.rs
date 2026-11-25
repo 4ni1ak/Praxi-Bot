@@ -22,6 +22,7 @@ mod config;
 mod control;
 pub mod control_note;
 pub mod decider;
+mod delegation;
 mod discovery;
 mod discovery_prompt;
 mod embedding;
@@ -59,6 +60,8 @@ mod browser_mcp_tests;
 mod cancel_supervisor;
 #[cfg(test)]
 mod control_grant_tests;
+#[cfg(test)]
+mod delegation_tests;
 #[cfg(test)]
 mod egress_tests;
 #[cfg(test)]

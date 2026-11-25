@@ -111,7 +111,7 @@ fn under(path: &str, prefix: &str) -> bool {
 /// Profile parts that decide what a bot may do without asking: the permission
 /// preset, per-category levels and unattended rules (`permissions`) and the
 /// tool allow/exclude lists (`tools`).
-const EXECUTION_KEYS: [&str; 2] = ["permissions", "tools"];
+const EXECUTION_KEYS: [&str; 3] = ["permissions", "tools", "delegation"];
 
 /// On a host a paired peer may edit a bot (name, persona, language, model
 /// choice among configured providers) but never its execution authority:
