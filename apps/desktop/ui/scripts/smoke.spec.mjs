@@ -145,8 +145,9 @@ export async function flows(ctx) {
       }, theme);
       await page.reload();
       await page.locator('[class*="railItem"]').filter({ hasText: 'Workspace' }).first().click();
-      await page.getByRole('button', { name: 'Workspace files', exact: true }).click();
-      await page.getByTestId('bot-chip').click();
+      // Selecting the bot opens its latest chat, including an empty chat.
+      await page.getByTestId('bot-chip').waitFor(T);
+      if (!(await page.getByTestId('bot-panel').isVisible())) await page.getByTestId('bot-chip').click();
       await page.getByTestId('bot-panel').getByRole('tab', { name: 'Library' }).click();
       await page.getByTestId('ws-entry-notes').locator('button').first().click();
       await page.getByTestId('ws-entry-report.md').waitFor(T);

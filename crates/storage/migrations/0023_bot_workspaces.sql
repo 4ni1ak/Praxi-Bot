@@ -1,7 +1,9 @@
 -- Per-bot persistent workspace mapping & optional quota, plus host disk warning settings.
 
 CREATE TABLE bot_workspaces (
-    bot_id            TEXT PRIMARY KEY REFERENCES bots(id),
+    -- Keep folder reservations after bot deletion, so a replacement bot cannot
+    -- inherit another bot's persistent files by taking its display name.
+    bot_id            TEXT PRIMARY KEY,
     user_id           TEXT NOT NULL REFERENCES users(id),
     folder_name       TEXT NOT NULL,
     soft_limit_bytes  INTEGER,

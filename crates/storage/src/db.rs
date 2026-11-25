@@ -512,7 +512,8 @@ impl Storage {
         let bid = id.to_string();
         tx.execute("DELETE FROM bot_skill_assignment WHERE bot_id = ?1", [&bid])?;
         tx.execute("DELETE FROM bot_spend_limits WHERE bot_id = ?1", [&bid])?;
-        tx.execute("DELETE FROM bot_workspaces WHERE bot_id = ?1", [&bid])?;
+        // Workspace mappings also reserve folder names after deletion. The
+        // files stay on disk until the owner chooses to remove them.
         let n = tx.execute("DELETE FROM bots WHERE id = ?1", [&bid])?;
         if n > 0 {
             cleanup()?;

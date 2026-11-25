@@ -88,7 +88,7 @@ async fn workspace_links_are_never_browsed_or_cleaned() {
         None,
     )
     .await;
-    assert_eq!(r.json()["entries"].as_array().unwrap().as_slice(), []);
+    assert_eq!(r.json()["entries"], json!([]));
     let r = call(
         &t,
         Method::POST,
@@ -150,6 +150,21 @@ async fn workspace_restore_honors_expiry_and_hard_limit() {
     let r = call(&t, Method::POST, &restore, Some(json!({ "undo_id": undo }))).await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
     assert!(!ws.join("notes/undo.txt").exists());
+}
+
+#[tokio::test]
+async fn workspace_name_stays_reserved_after_bot_deletion() {
+    let (_root, t) = setup_workspace_app();
+    let first = create_test_bot(&t, "Reserved").await;
+    let first_dir = t.state.agent().bot_workspace_dir(BotId(first)).unwrap();
+    std::fs::write(first_dir.join("notes/previous.txt"), "previous bot's files").unwrap();
+    let deleted = call(&t, Method::DELETE, &format!("/v1/bots/{first}"), None).await;
+    assert!(deleted.status.is_success(), "delete: {:?}", deleted.status);
+    let next = create_test_bot(&t, "Reserved").await;
+    let next_dir = t.state.agent().bot_workspace_dir(BotId(next)).unwrap();
+    assert_ne!(first_dir, next_dir);
+    assert!(!next_dir.join("notes/previous.txt").exists());
+    assert!(first_dir.join("notes/previous.txt").exists());
 }
 
 #[tokio::test]
@@ -273,7 +288,7 @@ async fn workspace_browse_search_preview_rename_delete_restore_and_limits() {
     )
     .await;
     assert_eq!(r.status, StatusCode::OK);
-    assert_eq!(r.json()["entries"].as_array().unwrap().as_slice(), []);
+    assert_eq!(r.json()["entries"], json!([]));
 
     // Safe inline preview serves .svg as text/plain + nosniff + CSP sandbox (no SVG XSS).
     let resp = call(
