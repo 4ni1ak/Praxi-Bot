@@ -221,9 +221,9 @@ catalog_check() {
 
 # pack_load id: fill PACK_* from the catalog (only a catalog id is ever accepted).
 pack_load() {
-  local want="$1" id base rem size pkgs tools p
+  local want="$1" id rem pkgs p
   [[ "${want}" =~ ^[a-z]{2,16}$ ]] || die "bad pack id"
-  while IFS='|' read -r id base rem size pkgs tools; do
+  while IFS='|' read -r id _ rem _ pkgs _; do
     [[ "${id}" == "${want}" ]] || continue
     for p in ${pkgs}; do [[ "${p}" =~ ^[a-z0-9][a-z0-9+.-]{1,60}$ ]] || die "bad package name in catalog"; done
     PACK_ID="${id}"; PACK_PKGS="${pkgs}"; PACK_REMOVABLE="${rem}"
@@ -261,11 +261,12 @@ remove_outsiders() {
 
 cmd_packs_facts() {
   [[ -f "${CATALOG}" ]] || die "not-available: the pack catalog was not uploaded"
-  local id base rem size pkgs tools t alt found
+  local id pkgs tools t alt found
   if have_apt; then kv apt 1; else kv apt 0; fi
   if [[ "${EUID:-$(id -u)}" -eq 0 ]] || sudo -n true >/dev/null 2>&1; then kv admin 1; else kv admin 0; fi
+  # shellcheck disable=SC1091
   kv os_id "$( (. /etc/os-release 2>/dev/null && printf '%s' "${ID:-}") || true)"
-  while IFS='|' read -r id base rem size pkgs tools; do
+  while IFS='|' read -r id _ _ _ pkgs tools; do
     [[ "${id}" =~ ^[a-z]{2,16}$ ]] || continue
     if have_apt; then PACK_PKGS="${pkgs}"; kv "pack_${id}" "$(pack_status)"; else kv "pack_${id}" missing; fi
     for t in ${tools}; do
@@ -291,6 +292,7 @@ cmd_packs_plan() {
       done
       kv missing "${missing}"; kv unavailable "${unavailable}"
       if [[ -n "${missing}" && -z "${unavailable}" ]]; then
+        # shellcheck disable=SC2086
         n="$(apt-get -s install --no-install-recommends ${missing//,/ } 2>/dev/null | grep -c '^Inst ' || true)"
         kv new_packages "${n}"
       fi ;;
