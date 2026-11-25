@@ -292,7 +292,7 @@ run keeps going without a card when it:
 | goes back, switches tabs, clicks, scrolls, hovers, selects text | No |
 | types ordinary text into a field, picks an option, presses a key | No |
 | saves files and works in its workspace | No (as before) |
-| opens or sends a link, or types text, that **looks like copied data**: a long encoded string, a hex digest, a key or token, a card-like number, a fragment on a site it has not been on, a very long URL or text | **Yes** |
+| opens or sends a link, or types text, that **looks like copied data**: a long encoded string, a hex digest, a key or access code, a card-like number, a fragment on a site it has not been on, a very long URL or text | **Yes** |
 | types an owner-stored secret into a page (`browser_fill` with `secret`) | **Yes**, every time |
 | spends money, deletes something on the never-list, sends mail or a message, publishes | **Yes** (floors and always-ask tools are decided before this rule) |
 | runs a page script (`browser_eval`), starts a program or shell command after it read an untrusted page, uses a named browser profile, opens a local or private-network address | **Yes** |
