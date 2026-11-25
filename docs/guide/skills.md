@@ -35,7 +35,8 @@ The **starter pack** covers everyday jobs: `document-to-action-items`,
 approval, and treat web pages, mail and documents as data, not instructions.
 
 Five bundled **playbooks** walk through multi-step workflows using Praxi's
-current tools and approval gates: `signup-to-site` (Vault/`secret` fills plus
+current tools and approval gates: `signup-to-site` (the bot's own mail identity,
+a daemon-made password, waiting for the verification mail with `email_wait_for`,
 owner handover for CAPTCHA/2FA), `lead-research` (saving verified prospects in
 a workspace `leads/<campaign>.csv`), `outreach-drafts` (draft-only per-lead
 emails for owner batch review; never sends), `office-doc-prep` (`docx`, `xlsx`
