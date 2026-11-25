@@ -225,7 +225,7 @@ impl StepExecutor for TurnExecutor {
         if history.is_empty()
             && let Some(spec) = self.first_step(run).await?
         {
-            return Ok(Some(spec));
+            return Ok(Some(self.with_turn_note(run, spec)));
         }
         self.plan_next(run, history)
     }
@@ -250,6 +250,29 @@ impl StepExecutor for TurnExecutor {
 
 impl TurnExecutor {
     // ---- planning ----
+
+    /// The first turn after the owner skipped a pending approval by writing: the step carries
+    /// what did not run, and the model is told so (see `history::build_messages`). One note,
+    /// used once, for the owner's own turn of that chat only, and only while it is fresh.
+    fn with_turn_note(&self, run: &Run, mut spec: StepSpec) -> StepSpec {
+        const NOTE_TTL_MS: i64 = 5 * 60 * 1000;
+        if spec.name != STEP_USER
+            || run.parent_run_id.is_some()
+            || crate::shared::initiator_of(&run.kind) != protocol::InitiatorKind::Human
+        {
+            return spec;
+        }
+        let Some(chat_id) = run.chat_id else {
+            return spec;
+        };
+        let Some(note) = self.sh.turn_notes.lock().remove(&chat_id) else {
+            return spec;
+        };
+        if storage::now_ms().saturating_sub(note.at_ms) <= NOTE_TTL_MS {
+            spec.input["approval_skipped"] = json!(note.skipped);
+        }
+        spec
+    }
 
     /// The first step of a top-level turn: the user message, after the
     /// decision ladder (K0-K3) had its say.  `None` for subagents (their first

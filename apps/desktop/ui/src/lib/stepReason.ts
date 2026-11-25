@@ -1,4 +1,5 @@
 import type { ToolItem } from "../state/timeline.ts";
+import { isRedirectDenial } from "./approvalSkip.ts";
 
 /**
  * Why a step did not finish, in one short phrase the row can show ("Timed out after 30 s",
@@ -8,6 +9,7 @@ import type { ToolItem } from "../state/timeline.ts";
 export type StepReason =
   | { kind: "timeout"; seconds?: number }
   | { kind: "blocked" }
+  | { kind: "skipped" }
   | { kind: "noAnswer" }
   | { kind: "stopped" }
   | { kind: "other" };
@@ -15,10 +17,12 @@ export type StepReason =
 const TIMEOUT = /timed? ?out|etimedout|deadline/i;
 
 export function stepReason(
-  tool: Pick<ToolItem, "status" | "error" | "durationMs">,
+  tool: Pick<ToolItem, "status" | "error" | "durationMs"> & Partial<Pick<ToolItem, "denyReason">>,
   orphan: boolean
 ): StepReason | null {
   if (orphan) return { kind: "stopped" };
+  // The owner wrote a new message instead of answering the approval: skipped, not refused.
+  if (tool.status === "denied" && isRedirectDenial(tool.denyReason)) return { kind: "skipped" };
   if (tool.status === "denied") return { kind: "blocked" };
   if (tool.status === "expired") return { kind: "noAnswer" };
   if (tool.status !== "error") return null;

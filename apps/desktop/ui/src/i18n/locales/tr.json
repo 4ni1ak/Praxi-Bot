@@ -625,6 +625,14 @@
       "warm": "Sıcak"
     }
   },
+  "approvalDock": {
+    "counter": "Onay {{current}} / {{total}}",
+    "keyAllow": "Bir kez izin ver",
+    "keyDeny": "Reddet",
+    "label": "Onayını bekliyor",
+    "next": "Sonraki onay",
+    "previous": "Önceki onay"
+  },
   "apps": {
     "access": {
       "all": "Tüm botlar",
@@ -1728,6 +1736,7 @@
         "policy": "Bu bot, bu tür bir işlemden önce sormaya ayarlı."
       }
     },
+    "approvalSkipped": "Bekleyen onay atlandı. Önce mesajına bakılıyor.",
     "attach": {
       "add": "Dosya veya görsel ekle",
       "command": "Dosyaları normal bir mesajla gönderin. Eğik çizgi komutu kullanmadan önce dosyaları kaldırın.",
@@ -1761,6 +1770,7 @@
       "uploading": "Sohbetin çalıştığı bilgisayara kopyalanıyor…"
     },
     "chain": {
+      "allowed": "İzin verdin",
       "details": "Ayrıntılar",
       "groupApp": "{{app}} ×{{count}}",
       "groupSame": "{{what}} ×{{count}}",
@@ -1771,6 +1781,7 @@
         "blocked": "Senin tarafından engellendi",
         "noAnswer": "Zamanında yanıt gelmedi",
         "other": "Çalışmadı",
+        "skipped": "Atlandı: yeni bir mesaj yazdın",
         "stopped": "Bitmeden durduruldu",
         "timeout": "Zaman aşımı",
         "timeoutAfter": "{{seconds}} sn sonra zaman aşımı"
@@ -1929,7 +1940,7 @@
     "pendingPinned": "Kararın bekleniyor. Kart mesaj kutusunun üstünde.",
     "placeholder": "Mesaj yaz…  / komutlar · @ botlar",
     "placeholderBusy": "Bot çalışıyor. Yazarsan mesaj sıraya girer",
-    "placeholderWaiting": "Onayını bekliyor. Yazdığın mesaj sıraya girer…",
+    "placeholderWaiting": "Yukarıdan yanıtla ya da planı değiştirmek için yaz",
     "question": {
       "answer": "Yanıtla",
       "answered": "Yanıtın: {{answer}}",

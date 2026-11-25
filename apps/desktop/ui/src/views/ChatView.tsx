@@ -46,6 +46,7 @@ import { ApiError } from "../api/client";
 import type { Bot, Message } from "../api/types";
 import {
   ApprovalCard,
+  enterMayAllow,
   NoticeLine,
   QuestionCard,
   SubagentCard,
@@ -53,6 +54,8 @@ import {
   ToolCard
 } from "../components/ChatCards";
 import { ApprovalBatchCard } from "../components/ApprovalBatchCard";
+import { ApprovalDock, type DockPage } from "../components/ApprovalDock";
+import { runWasRedirected } from "../lib/approvalSkip";
 import { PendingDecisions, useDecisionActions } from "../components/PendingDecisions";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { PastedSecretWarning } from "../components/PastedSecretWarning";
@@ -113,7 +116,7 @@ import { ATTACHMENT_ACCEPT, filesOf } from "../lib/attachments";
 import { AttachmentDraft } from "../lib/attachmentDraft";
 import { ComposerFiles } from "../components/Attachments";
 import { enqueue, putBack, removeQueued, takeForNow, takeForRunEnd } from "../lib/messageQueue";
-import { groupPending, isBatchable, shouldBatch } from "../lib/approvalBatch";
+import { groupPending, shouldBatch } from "../lib/approvalBatch";
 import { approvalHeadline, type T as PlainT } from "../lib/approvalPlain";
 import { useChatQueue } from "../state/useChatQueue";
 import {
@@ -639,7 +642,7 @@ export function ChatView({
           });
         }
       });
-      if (run.finishedMs !== undefined && run.stopped) {
+      if (run.finishedMs !== undefined && run.stopped && !runWasRedirected(run.items)) {
         out.push({ kind: "runStopped", key: `${run.id}-stopped`, ts: run.finishedMs });
       }
       if (run.finishedMs !== undefined && run.error) {
@@ -899,7 +902,10 @@ export function ChatView({
     }
     // A message typed while the bot works joins the queue as a "Sirada." bubble (slash commands such
     // as /stop still go straight to the daemon). It is delivered when the run ends or by "Simdi gonder".
-    if (active && !body.startsWith("/") && !hasFiles) {
+    // While the run waits on an approval the message is not queued behind it: it goes to the daemon,
+    // which skips the approval (a denial) and starts the next turn with this message.
+    const approvalWaits = pending.own.some((e) => e.kind === "approval");
+    if (active && !approvalWaits && !body.startsWith("/") && !hasFiles) {
       const id = crypto.randomUUID();
       queuedHere.current.add(id);
       updateQueue((q) => enqueue(q, body, id, Date.now()));
@@ -955,13 +961,21 @@ export function ChatView({
         // has no run of its own; Stop then ends the turn it waits behind (and drops the queue).
         stopWhileSending.current = false;
         setStopPending(false);
-        const victim = res.delivery === "stopped" ? null : (res.run_id ?? activeRunIdRef.current);
+        const victim =
+          res.delivery === "stopped" || res.delivery === "redirected"
+            ? null
+            : (res.run_id ?? activeRunIdRef.current);
         if (victim) {
           cancelRun(victim);
         }
       }
       if (res.delivery === "stopped") {
         toast.show(t("chat.stopped"), "info");
+      }
+      if (res.delivery === "redirected") {
+        toast.show(t("chat.approvalSkipped"), "info");
+        // The next turn stores the message a moment after the stopped run ends.
+        for (const ms of [400, 1500, 4000]) window.setTimeout(() => void loadMessages(), ms);
       }
       setText("");
       attachments.clear();
@@ -1277,6 +1291,70 @@ export function ChatView({
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     el?.scrollIntoView({ block: "center", behavior: instant ? "instant" : "smooth" });
   };
+  // ---- the approval dock: every open tool approval of this chat (and of the bot's other chats), asked
+  // in ONE place above the composer. Several plain approvals of one run share one batch page.
+  const dockEntries = [
+    ...new Map([...pending.own, ...pending.pinned].map((e) => [e.callId, e] as const)).values()
+  ]
+    .filter((e) => e.kind === "approval" && e.tool !== undefined)
+    .sort((a, b) => a.sinceMs - b.sinceMs);
+  const dockPages: DockPage[] = [];
+  {
+    const batched = new Set<string>();
+    for (const runId of new Set(dockEntries.map((e) => e.runId))) {
+      const run = events.runs[runId];
+      if (!run || run.parentRunId !== undefined) continue;
+      const rows = groupPending(
+        run.items.filter((i): i is Extract<TimelineItem, { kind: "tool" }> => i.kind === "tool")
+      );
+      if (!shouldBatch(rows)) continue;
+      rows.forEach((r) => r.items.forEach((i) => batched.add(i.callId)));
+      dockPages.push({
+        key: `batch-${runId}`,
+        keys: "none",
+        render: () => (
+          <ApprovalBatchCard
+            variant="dock"
+            rows={rows}
+            onDecide={async (callIds, decision) => {
+              for (const callId of callIds) {
+                await decisions.decide(callId)(decision, decision === "approve" ? "once" : undefined);
+              }
+            }}
+          />
+        )
+      });
+    }
+    for (const entry of dockEntries) {
+      const tool = entry.tool;
+      if (!tool || batched.has(entry.callId)) continue;
+      dockPages.push({
+        key: entry.callId,
+        keys: enterMayAllow(tool) ? "both" : "deny",
+        caption:
+          entry.chatId === chatId
+            ? null
+            : t("chat.pendingElsewhere", {
+                chat: chatTitleLabel(
+                  chats.find((c) => c.id === entry.chatId)?.title ?? "",
+                  t("botPanel.untitled")
+                )
+              }),
+        render: (active) => (
+          <ApprovalCard
+            variant="dock"
+            keyboard={active}
+            tool={tool}
+            serverName={decisions.serverName}
+            onTrustFolder={decisions.trustFolder}
+            botId={entry.botId}
+            onDecide={decisions.decide(entry.callId)}
+          />
+        )
+      });
+    }
+  }
+  const approvalDocked = dockPages.length > 0;
   const barBotName =
     control.bot && control.bot.botId !== chat?.bot_id
       ? control.bot.botName
@@ -1417,40 +1495,12 @@ export function ChatView({
           // A subagent's card is pinned above the composer (never inside a folded card).
           return <p className={ccStyles.nestedText}>{t("chat.pendingPinned")}</p>;
         }
-        // Several plain approvals of one top-level run share one card; the other pending calls of
-        // the batch render nothing, so each pending call is drawn exactly once. Cards the user
-        // must read (payloads, secrets) stay separate.
-        if (run && isBatchable(item)) {
-          const rows = groupPending(
-            run.items.filter((i): i is Extract<TimelineItem, { kind: "tool" }> => i.kind === "tool")
-          );
-          if (shouldBatch(rows)) {
-            if (rows[0]?.items[0]?.callId !== item.callId) {
-              return null;
-            }
-            return (
-              <ApprovalBatchCard
-                rows={rows}
-                onDecide={async (callIds, decision) => {
-                  for (const callId of callIds) {
-                    await decisions.decide(callId)(decision, decision === "approve" ? "once" : undefined);
-                  }
-                }}
-              />
-            );
-          }
+        // A pending approval is asked in the dock above the composer, never in the stream; once it is
+        // answered the step line of the run is its trace.
+        if (item.status === "awaiting_approval") {
+          return null;
         }
-        return item.status === "awaiting_approval" ? (
-          <ApprovalCard
-            tool={item}
-            serverName={decisions.serverName}
-            onTrustFolder={decisions.trustFolder}
-            botId={chat?.bot_id}
-            onDecide={decisions.decide(item.callId)}
-          />
-        ) : (
-          <ToolCard tool={item} />
-        );
+        return <ToolCard tool={item} />;
       }
       case "question":
         if (nested && item.answer === undefined && !item.closed) {
@@ -1727,6 +1777,13 @@ export function ChatView({
                     state={runGuest(e.runId) ? undefined : avatarState} />
                 );
               case "item":
+                if (
+                  e.item.kind === "tool" &&
+                  e.item.status === "awaiting_approval" &&
+                  events.runs[e.runId]?.parentRunId === undefined
+                ) {
+                  return null;
+                }
                 return (
                   <div
                     key={e.key}
@@ -1878,7 +1935,7 @@ export function ChatView({
           />
         ) : null}
         <PendingDecisions
-          entries={pending.pinned}
+          entries={pending.pinned.filter((e) => e.kind !== "approval")}
           caption={(entry) =>
             entry.chatId === chatId
               ? null
@@ -1892,7 +1949,12 @@ export function ChatView({
         />
         <div className={styles.dockWrap}>
           <RunStatusLine
-            model={barModel}
+            model={
+              // The approval is asked in the dock: no second strip saying the same thing.
+              approvalDocked && barModel?.kind === "waiting" && !barModel.native && !stopUi
+                ? null
+                : barModel
+            }
             botName={barBotName}
             sentence={barDetail}
             approvalText={approvalText}
@@ -1916,7 +1978,8 @@ export function ChatView({
             }}
           />
         </div>
-        <div className={styles.boxWrap}>
+        <div className={styles.boxWrap} data-docked={approvalDocked ? "true" : undefined}>
+          {approvalDocked ? <ApprovalDock pages={dockPages} /> : null}
           {menuOpen ? (
             <div
               className={styles.menu}
@@ -2022,6 +2085,7 @@ export function ChatView({
           ) : null}
           <textarea
             ref={inputRef}
+            data-composer-input=""
             className={paintsMentions ? `${styles.input} ${styles.inputPainted}` : styles.input}
             onScroll={(e) => setInputScroll(e.currentTarget.scrollTop)}
             value={text}
