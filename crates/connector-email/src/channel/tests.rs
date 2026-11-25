@@ -481,3 +481,44 @@ async fn changed_uidvalidity_resets_the_position_without_replaying_mail() {
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].sender.id, "z@example.com");
 }
+
+#[tokio::test]
+async fn an_approved_reply_goes_through_the_guard_and_the_send_log() {
+    let f = Fake::new(vec![]);
+    let ch = channel(&f, true, &[]);
+    let guard = Arc::new(MailGuard::in_memory());
+    ch.attach_guard(guard.clone(), "work");
+    ch.poll_once().await.unwrap();
+    for (uid, who) in [(8, "Ann <ann@example.com>"), (9, "Bob <bob@example.com>")] {
+        f.arrive(summary(uid, who, "Question"));
+    }
+    ch.poll_once().await.unwrap();
+    let propose = |to: &str| {
+        let ch = ch.clone();
+        let to = to.to_owned();
+        async move {
+            ch.send(ChatRef(to), OutgoingMessage::text("Subject: Re: Q\nYes."))
+                .await
+                .unwrap()
+        }
+    };
+    // Ann asked not to be written to (spelled differently): the approval is refused, nothing goes
+    // out and the reply keeps waiting.
+    guard.add_opt_out("ANN+x@example.com", "").unwrap();
+    let ann = propose("ann@example.com").await;
+    let e = ch.approve_reply(&ann).await.unwrap_err();
+    assert!(
+        matches!(e, EmailError::Input(ref m) if m.contains("Not sent")),
+        "{e:?}"
+    );
+    assert!(f.sent.lock().unwrap().is_empty());
+    assert_eq!(ch.pending_replies().len(), 1);
+    // Bob is fine: it is sent and logged.
+    let bob = propose("bob@example.com").await;
+    ch.approve_reply(&bob).await.unwrap();
+    assert_eq!(f.sent.lock().unwrap().len(), 1);
+    let log = guard.log(10);
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].recipients, ["bob@example.com"]);
+    assert_eq!(log[0].run, "email-channel-reply");
+}

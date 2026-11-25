@@ -182,6 +182,17 @@ The shared `agentmail.to` domain is not suitable for cold mail; use an address o
 - **Safe credentials**: Passwords are never echoed or written to logs; credentials resolve lazily from the secret store when establishing connections.
 - **Drafts**: `email_draft` saves directly to your IMAP drafts folder and never contacts SMTP.
 
+## Safe sending (send log, opt-out list, limits)
+
+These guards live in code, not in the model. Settings > Mail > **Safe sending** shows and edits them; the routes (`/v1/email/guard/*`) need the owner key.
+
+- **Send log**: every e-mail that was really sent is recorded (time, bot, run, account, recipients, subject start, message id, whether the opt-out line was added, whether you chose "Send anyway"). You can open it in the app and export it as CSV. It is stored in `<data dir>/email-guard/send-log.jsonl`.
+- **Opt-out list**: addresses or whole domains you will not write to (`email-guard/opt-out.json`).
+- **Opt-out line**: the app appends it to the body of every `email_send` (default text in Turkish and English, editable, `{sender}` = the sending address). The bot does not write it and cannot remove it. A bot may ask to leave it out (`opt_out_line: false`); that only makes the approval card show a warning.
+- **Limits**: a warning above 20 e-mails per 24 hours per account, and when someone got mail from the account in the last 14 days. Both numbers are settings (0 turns a warning off).
+- **Warnings are not blocks.** When a send hits the opt-out list, a limit or the missing opt-out line, the approval card lists the warnings (and once, the note that ignoring an opt-out on commercial mail can be unlawful, in Turkey under Law 6563, ETK) and its button reads **Send anyway**. Only you can click it; it is logged. A model cannot override a warning: the tool accepts a send past a warning only when it matches, exactly, a card that was shown to you, once.
+- `email_send` always asks, whatever the permission preset or grants.
+
 ## Give a bot its own address (AgentMail)
 
 Besides your own mailbox, a bot can have an address such as `name@agentmail.to`,

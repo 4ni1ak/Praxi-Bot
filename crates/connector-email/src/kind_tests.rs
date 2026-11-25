@@ -401,7 +401,8 @@ async fn the_value_the_user_approves_is_the_value_sent_through_email_send() {
         serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
     assert_eq!(sent["to"], input["to"]);
     assert_eq!(sent["cc"], input["cc"]);
-    let bad = json!({"to":["Bob <bob@example.com>"],"subject":"s","body":"b"});
+    // A different recipient: the repeat-recipient warning would come first for bob.
+    let bad = json!({"to":["Bob <bob2@example.com>"],"subject":"s","body":"b"});
     let e = call(&conn, Some(BOT_A), "email_send", bad)
         .await
         .unwrap_err();

@@ -1573,10 +1573,28 @@
       },
       "mail": {
         "another": "Von anderer Adresse senden…",
+        "bcc": "Bcc",
+        "cc": "Cc",
         "draftOnly": "Nur Entwürfe",
         "from": "Von",
+        "legal": "Jemanden anzuschreiben, der sich abgemeldet hat, oder Werbe-E-Mails ohne Abmeldezeile zu senden, kann rechtswidrig sein (in der Türkei: Gesetz Nr. 6563, ETK) und zu Bußgeldern führen. Das ist keine Rechtsberatung.",
+        "optOutOff": "Dieser E-Mail wird keine Abmeldezeile hinzugefügt.",
+        "optOutOn": "Das System fügt am Ende eine Abmeldezeile hinzu (oben zu sehen).",
+        "ownerOnly": "Das können nur Sie entscheiden. Der Bot kann diese Warnungen nicht selbst übergehen.",
+        "sendAnyway": "Trotzdem senden",
+        "subject": "Betreff",
         "switchLabel": "Von anderer Adresse senden",
-        "useThis": "Diese Adresse verwenden"
+        "title": "Diese E-Mail senden?",
+        "to": "An",
+        "useThis": "Diese Adresse verwenden",
+        "warning": {
+          "daily_limit": "Damit wären es {{count}} E-Mails von diesem Konto in 24 Stunden. Ihr Limit liegt bei {{limit}}.",
+          "guard_unreadable": "Der E-Mail-Schutz konnte seine gespeicherte Datei ({{list}}) nicht lesen. Die beschädigte Datei wurde beiseitegelegt, nicht gelöscht; Abmeldungen können daher fehlen und niemand wird dagegen geprüft.",
+          "no_opt_out_line": "Diese E-Mail würde ohne die Zeile zum Abmelden verschickt.",
+          "opt_out_listed": "Diese Personen möchten nicht angeschrieben werden: {{list}}.",
+          "same_recipient": "Sie haben {{list}} in den letzten {{days}} Tagen bereits geschrieben."
+        },
+        "warningsTitle": "Bitte vor dem Senden prüfen"
       },
       "memory": {
         "always": "{{target}} für diesen Bot immer erlauben",
@@ -2344,17 +2362,6 @@
     "save": "Datei speichern…",
     "steps": "Schritte des Bots",
     "title": "Chat exportieren"
-  },
-  "chatHistory": {
-    "count": "{{count}} passende Nachrichten",
-    "count_one": "{{count}} passende Nachricht",
-    "count_other": "{{count}} passende Nachrichten",
-    "more": "Weitere Ergebnisse",
-    "noneYet": "Auf dieser Seite noch keine sichtbaren Treffer",
-    "results": "Ergebnisse der Nachrichtensuche",
-    "search": "Alle Chatnachrichten durchsuchen …",
-    "searching": "Nachrichten werden durchsucht …",
-    "submit": "Nachrichten durchsuchen"
   },
   "chatManage": {
     "allArchived": "Alle Chats sind archiviert.",
@@ -3592,6 +3599,8 @@
     "menuDismiss": "Menü schließen",
     "menuMove": "Durch das Slash-/Erwähnungsmenü navigieren",
     "menuNav": "Durch Popup-Menüs navigieren",
+    "messageSearch": "Alle Nachrichten durchsuchen",
+    "messageSearchMove": "Nachrichtensuche: bewegen und öffnen",
     "newline": "Neue Zeile",
     "openHelp": "Diese Liste anzeigen (wenn kein Textfeld fokussiert ist)",
     "palette": "Befehlspalette",
@@ -4339,6 +4348,31 @@
       "m": "Min.",
       "s": "s"
     }
+  },
+  "messageSearch": {
+    "allBots": "Alle Bots",
+    "bot": "Bot",
+    "clear": "Leeren",
+    "clearRecent": "Leeren",
+    "filters": "Filter",
+    "hasFile": "Datei",
+    "hasLink": "Link",
+    "hint": "Tippen, um alle Chats zu durchsuchen",
+    "keywords": "nachrichten suchen verlauf chats finden",
+    "more": "Weitere Treffer",
+    "none": "Keine Nachrichten gefunden",
+    "open": "Nachrichten durchsuchen",
+    "placeholder": "Alle Nachrichten durchsuchen",
+    "recent": "Zuletzt gesucht",
+    "reset": "Zurücksetzen",
+    "results": "Nachrichtentreffer",
+    "searching": "Suche läuft…",
+    "title": "Nachrichten durchsuchen",
+    "when": "Datum",
+    "when_any": "Jederzeit",
+    "when_day": "Letzte 24 Stunden",
+    "when_month": "Letzte 30 Tage",
+    "when_week": "Letzte 7 Tage"
   },
   "modelPicker": {
     "addEngines": "Coding-CLI hinzufügen",
@@ -5660,7 +5694,7 @@
       "delete": "Löschen",
       "deleteConfirm": "Dieses Postfach löschen?",
       "deletedBot": "gelöschter Bot",
-      "description": "E-Mail-Adressen, mit denen deine Bots lesen und schreiben können. Jede Adresse kann von einem Bot, mehreren oder allen genutzt werden.",
+      "description": "Postfächer, mit denen deine Bots lesen und schreiben können. Ein Postfach kann zu einem Bot gehören.",
       "draftOnlyTag": "Nur Entwürfe",
       "edit": "Bearbeiten",
       "empty": "Noch keine Postfächer.",
@@ -5679,8 +5713,8 @@
           "all": "Jeder Bot mit aktivierter E-Mail",
           "allWarning": "Jeder Bot mit den E-Mail-Werkzeugen kann dieses Postfach dann ohne Nachfrage lesen.",
           "label": "Wer dieses Postfach nutzen darf",
-          "nobody": "Wähle mindestens einen Bot oder einen beliebigen Bot.",
-          "some": "Nur diese Bots"
+          "nobody": "Wähle den Bot oder wähle einen beliebigen Bot.",
+          "some": "Nur ein Bot"
         },
         "address": "E-Mail-Adresse",
         "create": "Postfach hinzufügen",
@@ -5834,6 +5868,39 @@
           "title": "Sicherer Modus"
         }
       }
+    },
+    "mailGuard": {
+      "colBot": "Bot",
+      "colNote": "Hinweis",
+      "colSubject": "Betreff",
+      "colTime": "Wann",
+      "colTo": "An",
+      "daily": "Warnen ab dieser Zahl E-Mails pro Tag und Postfach (0 = nie)",
+      "days": "Warnen, wenn ich jemandem innerhalb dieser Tage schon geschrieben habe (0 = nie)",
+      "description": "Grenzen, eine Sperrliste und ein Protokoll jeder E-Mail, die Ihre Bots senden.",
+      "export": "Als CSV exportieren",
+      "footer": "Text der Abmeldezeile",
+      "footerHint": "{sender} wird durch die Absenderadresse ersetzt. Die Zeile fügt die App hinzu, nicht der Bot, und der Bot kann sie nicht entfernen. Eine einzelne E-Mail ohne Zeile können Sie auf der Karte freigeben; dort erscheint eine Warnung. Das Programm liest keine Antworten: Wenn jemand „STOP“ antwortet, tragen Sie die Adresse hier selbst in die Sperrliste ein.",
+      "footerPlaceholder": "Leer lassen für den eingebauten Text (Türkisch und Englisch)",
+      "intro": "Jede E-Mail eines Bots wird Ihnen weiterhin zuerst vorgelegt. Diese Einstellungen bestimmen nur, wann die Rückfrage eine Warnung enthält. Eine Warnung blockiert Sie nie: Sie können immer \"Trotzdem senden\" wählen, und diese Wahl wird im Protokoll festgehalten.",
+      "kindAddress": "Adresse",
+      "kindDomain": "ganze Domain",
+      "loading": "Wird geladen…",
+      "logEmpty": "Es wurde noch keine E-Mail gesendet.",
+      "logHint": "Wer wann eine E-Mail bekam und von welchem Bot. Nur wirklich gesendete E-Mails stehen hier.",
+      "logTitle": "Protokoll gesendeter E-Mails",
+      "optOutAdd": "Hinzufügen",
+      "optOutEmpty": "Die Liste ist noch leer.",
+      "optOutHint": "Fügen Sie eine Adresse (anna@beispiel.de) oder eine ganze Domain (beispiel.de) hinzu. Versucht ein Bot, sie anzuschreiben, erscheint eine Warnung auf Ihrer Freigabekarte.",
+      "optOutLine": "E-Mails standardmäßig eine Abmeldezeile hinzufügen",
+      "optOutPlaceholder": "anna@beispiel.de oder beispiel.de",
+      "optOutRemove": "{{value}} entfernen",
+      "optOutTitle": "Personen, die ich nicht anschreibe",
+      "save": "Speichern",
+      "saved": "Gespeichert",
+      "sentAnyway": "Trotzdem gesendet",
+      "softHint": "Diese beiden sind Warnungen, keine Sperren.",
+      "title": "Sicher senden"
     },
     "mode": {
       "moreHint": "Zusätzliche Feineinstellungen",
@@ -6047,7 +6114,6 @@
     "reorderHint": "Zeile ziehen oder diesen Griff fokussieren und die Pfeiltaste nach oben/unten drücken",
     "reorderMoved": "{{name}} wurde auf Position {{pos}} verschoben",
     "schedules": "Geplante Aufgaben",
-    "searchBots": "Bots suchen",
     "settings": "Einstellungen",
     "unread": "Ungelesene Nachricht",
     "unreadBot": "Neue Nachrichten von diesem Bot",

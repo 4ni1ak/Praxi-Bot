@@ -24,6 +24,7 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ["global", "composer", 
 
 export const SHORTCUTS: readonly Shortcut[] = [
   { id: "palette", group: "global", labelKey: "help.palette", keys: "Ctrl/Cmd+K", source: "state/PaletteHost.tsx" },
+  { id: "messageSearch", group: "global", labelKey: "help.messageSearch", keys: "Ctrl/Cmd+Shift+F", source: "App.tsx" },
   { id: "openHelp", group: "global", labelKey: "help.openHelp", keys: "?", source: "lib/shortcuts.ts" },
   { id: "settings", group: "global", labelKey: "help.settings", keys: "Ctrl/Cmd+,", source: "App.tsx" },
   { id: "stop", group: "global", labelKey: "help.stop", keys: "@stop", source: "App.tsx" },
@@ -43,6 +44,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: "voiceCallTalk", group: "dialogs", labelKey: "help.voiceCallTalk", keys: "Space / Enter (hold)", source: "components/voiceCall/VoiceCallPanel.tsx" },
   { id: "dialogClose", group: "dialogs", labelKey: "help.dialogClose", keys: "Esc", source: "components/Modal.tsx" },
   { id: "dialogFocus", group: "dialogs", labelKey: "help.dialogFocus", keys: "Tab / Shift+Tab", source: "components/Modal.tsx" },
+  { id: "messageSearchMove", group: "dialogs", labelKey: "help.messageSearchMove", keys: "Up / Down, Enter", source: "components/MessageSearch.tsx" },
   { id: "paletteMove", group: "dialogs", labelKey: "help.paletteMove", keys: "Up / Down, Enter", source: "components/CommandPalette.tsx" },
   { id: "menuNav", group: "dialogs", labelKey: "help.menuNav", keys: "Up / Down, Home / End", source: "components/Popover.tsx" },
   { id: "popoverClose", group: "dialogs", labelKey: "help.popoverClose", keys: "Esc", source: "components/Popover.tsx" }

@@ -56,6 +56,15 @@ fn mailbox(s: &str) -> Result<(String, String), EmailError> {
     ))
 }
 
+/// The address that goes into the SMTP envelope for `s` (`a@b` or `Name <a@b>`): the very parse
+/// [`compose`] uses, so the outgoing-mail guard reads the same recipient that is delivered.
+///
+/// # Errors
+/// [`EmailError::Input`] when `s` is not one valid mailbox.
+pub fn envelope_address(s: &str) -> Result<String, EmailError> {
+    mailbox(s).map(|(_, email)| email)
+}
+
 /// Composed message and separate delivery envelope. Blind recipients never
 /// appear in transmitted headers.
 pub struct ComposedMail {

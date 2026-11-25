@@ -1690,6 +1690,20 @@ fn api_routes() -> Router<AppState> {
             post(email_channel::deny_reply),
         )
         .route(
+            "/v1/email/guard/settings",
+            get(e::get_guard_settings).put(e::put_guard_settings),
+        )
+        .route(
+            "/v1/email/guard/opt-out",
+            get(e::list_opt_outs).post(e::add_opt_out),
+        )
+        .route(
+            "/v1/email/guard/opt-out/{value}",
+            axum::routing::delete(e::remove_opt_out),
+        )
+        .route("/v1/email/guard/send-log", get(e::get_send_log))
+        .route("/v1/email/guard/send-log.csv", get(e::export_send_log))
+        .route(
             "/v1/web/search",
             get(w::get_web_search).put(w::update_web_search),
         )

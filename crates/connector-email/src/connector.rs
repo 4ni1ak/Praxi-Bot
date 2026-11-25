@@ -10,6 +10,7 @@ use crate::agentmail::{AgentMailClient, AgentMailEndpoint, AgentMailProvider, Ap
 use crate::config::{AccountConfig, AccountKind, SendMode};
 use crate::cred::resolve_secret;
 use crate::error::EmailError;
+use crate::guard::MailGuard;
 use crate::imap::{FolderInfo, SearchQuery};
 use crate::imap_provider::ImapSmtpProvider;
 use crate::message::{MessageDetail, MessageSummary};
@@ -45,6 +46,8 @@ pub struct EmailConnector {
     client: RwLock<Option<AgentMailClient>>,
     /// Where downloaded attachments are saved (`None` = downloads refused).
     attachments_dir: RwLock<Option<PathBuf>>,
+    /// Outgoing-mail guardrails (send log, opt-out list, limits).
+    guard: RwLock<Arc<MailGuard>>,
 }
 
 fn is_bot(id: &str, bot: Option<&str>) -> bool {
@@ -112,7 +115,20 @@ impl EmailConnector {
             endpoint,
             client: RwLock::new(None),
             attachments_dir: RwLock::new(None),
+            guard: RwLock::new(Arc::new(MailGuard::in_memory())),
         }
+    }
+
+    /// The outgoing-mail guard (shared; the host reads and edits the log and the lists here).
+    #[must_use]
+    pub fn guard(&self) -> Arc<MailGuard> {
+        Arc::clone(&self.guard.read().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Keep the send log, opt-out list and settings in `dir` (loads what is there).
+    pub fn set_guard_dir(&self, dir: PathBuf) {
+        *self.guard.write().unwrap_or_else(PoisonError::into_inner) =
+            Arc::new(MailGuard::open(dir));
     }
 
     /// Set the directory attachments are saved in (created on first use).
@@ -422,6 +438,14 @@ impl Scoped<'_> {
     /// [`EmailError::Input`] as for any call.
     pub fn resolve_name(&self, account: Option<&str>) -> Result<String, EmailError> {
         self.account(account).map(|a| a.name)
+    }
+
+    /// Name and sending address of the account a call would use.
+    ///
+    /// # Errors
+    /// [`EmailError::Input`] as for any call.
+    pub fn resolve_sender(&self, account: Option<&str>) -> Result<(String, String), EmailError> {
+        self.account(account).map(|a| (a.name, a.address))
     }
 
     async fn provider(

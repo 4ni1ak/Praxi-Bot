@@ -14,13 +14,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use connector_email::{
     AccountConfig, AccountKind, AgentMailEndpoint, CreateInbox, EmailConnector, EmailError,
-    IdentitySettings, ImapSettings, OutgoingMail, ProbeReport, ProbeStatus, ProviderError,
-    SearchQuery, SendMode, SmtpSecurity, SmtpSettings, normalize_sender, validate_account_name,
+    GuardSettings, IdentitySettings, ImapSettings, OutgoingMail, ProbeReport, ProbeStatus,
+    ProviderError, SearchQuery, SendMode, SmtpSecurity, SmtpSettings, normalize_sender,
+    validate_account_name,
 };
 use daemon_api::email::{
-    EmailAccountDto, EmailAccountInput, EmailAccountPatch, EmailImapServer, EmailMessageDto,
-    EmailProbeStatus, EmailProviderKind, EmailSecurity, EmailSendMode, EmailSmtpServer,
-    EmailTestReport,
+    EmailAccountDto, EmailAccountInput, EmailAccountPatch, EmailGuardSettingsDto, EmailImapServer,
+    EmailMessageDto, EmailOptOutDto, EmailOptOutInput, EmailProbeStatus, EmailProviderKind,
+    EmailSecurity, EmailSendLogDto, EmailSendMode, EmailSmtpServer, EmailTestReport,
 };
 use daemon_api::{EmailControl, EmailControlError};
 use secret_store::{SecretRef, SecretStore};
@@ -28,6 +29,9 @@ use serde::Serialize;
 use tool_registry::ToolRegistry;
 
 use crate::serve::{EMAIL_FILE, EmailConfigFile};
+
+/// Folder (under the data dir) with the send log, opt-out list and guard settings.
+const GUARD_DIR: &str = "email-guard";
 
 /// Names of managed passwords whose deletion failed (JSON array), retried on start.
 const CLEANUP_FILE: &str = "email-secret-cleanup.json";
@@ -235,6 +239,24 @@ fn unique_defaults(list: &mut [AccountConfig], keep: &str) {
     }
 }
 
+fn settings_dto(s: GuardSettings) -> EmailGuardSettingsDto {
+    EmailGuardSettingsDto {
+        daily_limit: s.daily_limit,
+        same_recipient_days: s.same_recipient_days,
+        opt_out_line: s.opt_out_line,
+        footer: s.footer,
+    }
+}
+
+fn opt_out_dto(o: connector_email::OptOut) -> EmailOptOutDto {
+    EmailOptOutDto {
+        value: o.value,
+        kind: o.kind,
+        added_at: o.added_at,
+        note: o.note,
+    }
+}
+
 fn security_in(s: EmailSecurity) -> SmtpSecurity {
     match s {
         EmailSecurity::Implicit => SmtpSecurity::Implicit,
@@ -324,6 +346,7 @@ impl EmailHost {
             endpoint,
         ));
         connector.set_attachments_dir(data_dir.join(ATTACHMENTS_DIR));
+        connector.set_guard_dir(data_dir.join(GUARD_DIR));
         let mut broken = None;
         match load(data_dir) {
             Ok(accounts) => {
@@ -970,6 +993,79 @@ impl EmailControl for EmailHost {
             .collect())
     }
 
+    fn guard_settings(&self) -> Result<EmailGuardSettingsDto, EmailControlError> {
+        Ok(settings_dto(self.connector.guard().settings()))
+    }
+
+    fn set_guard_settings(
+        &self,
+        s: EmailGuardSettingsDto,
+    ) -> Result<EmailGuardSettingsDto, EmailControlError> {
+        let new = GuardSettings {
+            daily_limit: s.daily_limit,
+            same_recipient_days: s.same_recipient_days,
+            opt_out_line: s.opt_out_line,
+            footer: s.footer,
+        };
+        self.connector
+            .guard()
+            .set_settings(new)
+            .map_err(EmailControlError::Invalid)?;
+        self.guard_settings()
+    }
+
+    fn opt_outs(&self) -> Result<Vec<EmailOptOutDto>, EmailControlError> {
+        Ok(self
+            .connector
+            .guard()
+            .opt_outs()
+            .into_iter()
+            .map(opt_out_dto)
+            .collect())
+    }
+
+    fn add_opt_out(&self, i: EmailOptOutInput) -> Result<EmailOptOutDto, EmailControlError> {
+        self.connector
+            .guard()
+            .add_opt_out(&i.value, &i.note)
+            .map(opt_out_dto)
+            .map_err(EmailControlError::Invalid)
+    }
+
+    fn remove_opt_out(&self, value: &str) -> Result<(), EmailControlError> {
+        match self.connector.guard().remove_opt_out(value) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(EmailControlError::NotFound("opt-out entry".into())),
+            Err(e) => Err(EmailControlError::Internal(e)),
+        }
+    }
+
+    fn send_log(&self, limit: usize) -> Result<Vec<EmailSendLogDto>, EmailControlError> {
+        Ok(self
+            .connector
+            .guard()
+            .log(limit)
+            .into_iter()
+            .map(|e| EmailSendLogDto {
+                at: e.at,
+                at_utc: e.at_utc,
+                bot: e.bot,
+                run: e.run,
+                account: e.account,
+                from: e.from,
+                recipients: e.recipients,
+                subject: e.subject,
+                message_id: e.message_id,
+                opt_out_line: e.opt_out_line,
+                send_anyway: e.overridden,
+            })
+            .collect())
+    }
+
+    fn send_log_csv(&self) -> Result<String, EmailControlError> {
+        Ok(self.connector.guard().export_csv())
+    }
+
     async fn send_test(&self, name: &str) -> Result<String, EmailControlError> {
         let account = self
             .connector
@@ -992,11 +1088,22 @@ impl EmailControl for EmailHost {
             body: TEST_BODY.to_owned(),
             ..OutgoingMail::default()
         };
-        self.connector
+        let receipt = self
+            .connector
             .scoped(account.bot.as_deref())
-            .send(Some(name), &mail)
+            .send_receipt(Some(name), &mail)
             .await
             .map_err(|e| mailbox_error(&e, name))?;
+        // A test mail is a send like any other: it goes in the send log. It is addressed to the
+        // account's own address with fixed text, so it needs no opt-out line or card.
+        self.connector.guard().record_system_mail(
+            "send-test",
+            &account.name,
+            &own,
+            &own,
+            TEST_SUBJECT,
+            &receipt.id,
+        );
         Ok(own)
     }
 

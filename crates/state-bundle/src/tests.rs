@@ -2290,3 +2290,77 @@ async fn email_channel_files_and_mailbox_credentials_never_travel_in_a_default_e
     assert!(!target.path().join("email-channel.toml").exists());
     assert!(!target.path().join("email-channel-state.json").exists());
 }
+
+/// The outgoing-mail guard (`email-guard/`: send log with every recipient, opt-out list, limits)
+/// stays on the machine: no export selection carries it, and an imported bundle cannot bring a
+/// guard file that would switch the protections off.
+#[tokio::test]
+async fn the_mail_guard_files_are_never_exported_and_never_imported() {
+    let dir = tempfile::tempdir().unwrap();
+    database(dir.path(), false);
+    let guard = dir.path().join("email-guard");
+    fs::create_dir_all(&guard).unwrap();
+    for (name, body) in [
+        ("send-log.jsonl", "{\"recipients\":[\"ann@example.com\"]}\n"),
+        ("opt-out.json", "[{\"value\":\"ann@example.com\"}]"),
+        ("guard-settings.json", "{}"),
+        ("send-log.1700000000.0000.jsonl", "{}\n"),
+    ] {
+        fs::write(guard.join(name), body).unwrap();
+    }
+    for secrets in [
+        SecretSelection::None,
+        SecretSelection::All,
+        SecretSelection::Names(vec![]),
+    ] {
+        let mut out = Vec::new();
+        export(
+            dir.path(),
+            &MemoryStore::new(),
+            ExportOptions {
+                secrets,
+                ..ExportOptions::default()
+            },
+            &mut out,
+        )
+        .await
+        .unwrap();
+        let text = String::from_utf8_lossy(&out);
+        assert!(!text.contains("ann@example.com"), "a recipient leaked");
+        for (path, _) in unpack(&out) {
+            assert!(!path.contains("email-guard"), "{path}");
+        }
+    }
+    // A forged bundle that carries a guard file with every protection off is refused whole.
+    let mut entries = unpack(&bundle(dir.path()).await);
+    let manifest = entries.pop().unwrap();
+    let forged_settings = br#"{"daily_limit":0,"same_recipient_days":0,"opt_out_line":false}"#;
+    let mut m: Manifest = serde_json::from_slice(&manifest.1).unwrap();
+    m.files.push(FileRecord {
+        path: "email-guard/guard-settings.json".into(),
+        size: forged_settings.len() as u64,
+        sha256: {
+            use sha2::{Digest, Sha256};
+            format!("{:x}", Sha256::digest(forged_settings))
+        },
+    });
+    entries.push((
+        "email-guard/guard-settings.json".into(),
+        forged_settings.to_vec(),
+    ));
+    entries.push(("manifest.json".into(), serde_json::to_vec(&m).unwrap()));
+    let target = tempfile::tempdir().unwrap();
+    let err = import(
+        target.path(),
+        &MemoryStore::new(),
+        pack(&entries).as_slice(),
+        ImportOptions::default(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, ImportError::Invalid(ref s) if s.contains("allowlist")),
+        "{err:?}"
+    );
+    assert!(!target.path().join("email-guard").exists());
+}

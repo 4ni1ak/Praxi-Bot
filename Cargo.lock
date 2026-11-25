@@ -1608,6 +1608,7 @@ dependencies = [
  "email_address",
  "futures-core",
  "futures-util",
+ "idna",
  "log",
  "mail-builder",
  "mail-parser",

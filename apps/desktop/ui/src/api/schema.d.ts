@@ -1803,6 +1803,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/email/guard/opt-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The opt-out list (owner only). */
+        get: operations["list_opt_outs"];
+        put?: never;
+        /** Add an address or domain to the opt-out list (owner only). */
+        post: operations["add_opt_out"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/email/guard/opt-out/{value}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove an entry from the opt-out list (owner only). */
+        delete: operations["remove_opt_out"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/email/guard/send-log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The send log, newest first (owner only: it lists recipients). */
+        get: operations["get_send_log"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/email/guard/send-log.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The whole send log as a CSV file (owner only). */
+        get: operations["export_send_log"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/email/guard/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The values the outgoing-mail guard uses (owner only). */
+        get: operations["get_guard_settings"];
+        /** Change the guard values (owner only). */
+        put: operations["put_guard_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/email/test": {
         parameters: {
             query?: never;
@@ -6043,6 +6130,23 @@ export interface components {
             /** @description The bot may propose replies (each needs the owner's approval). */
             replies_enabled: boolean;
         };
+        /** @description Outgoing-mail guard values the owner can change (`GET`/`PUT /v1/email/guard/settings`). */
+        EmailGuardSettingsDto: {
+            /**
+             * Format: int32
+             * @description Warn above this many sends per account in 24 hours (`0` = no warning). Default 20.
+             */
+            daily_limit: number;
+            /** @description Text of the opt-out line (`{sender}` = the sending address); empty = built-in text. */
+            footer: string;
+            /** @description Add the opt-out line to outgoing mail by default. */
+            opt_out_line: boolean;
+            /**
+             * Format: int32
+             * @description Warn when a recipient got mail within this many days (`0` = no warning). Default 14.
+             */
+            same_recipient_days: number;
+        };
         /** @description An IMAP server (always implicit TLS). */
         EmailImapServer: {
             /** @description Host name. */
@@ -6069,6 +6173,27 @@ export interface components {
             subject: string;
             /** @description Not read yet. */
             unread: boolean;
+        };
+        /** @description One address or domain the owner will not write to. */
+        EmailOptOutDto: {
+            /**
+             * Format: int64
+             * @description Unix seconds when it was added.
+             */
+            added_at: number;
+            /** @description `address` or `domain`. */
+            kind: string;
+            /** @description The owner's note. */
+            note: string;
+            /** @description `ann@example.com` or `example.com`. */
+            value: string;
+        };
+        /** @description Body of `POST /v1/email/guard/opt-out`. */
+        EmailOptOutInput: {
+            /** @description Optional note (at most 200 characters are kept). */
+            note?: string;
+            /** @description An address (`ann@example.com`) or a domain (`example.com`). */
+            value: string;
         };
         /** @description A reply waiting for the owner's approval. */
         EmailPendingReplyDto: {
@@ -6105,6 +6230,34 @@ export interface components {
          * @enum {string}
          */
         EmailSecurity: "implicit" | "start_tls";
+        /** @description One sent mail in the send log. */
+        EmailSendLogDto: {
+            /** @description Account name. */
+            account: string;
+            /**
+             * Format: int64
+             * @description Unix seconds.
+             */
+            at: number;
+            /** @description The same moment in UTC. */
+            at_utc: string;
+            /** @description Bot that sent it. */
+            bot?: string | null;
+            /** @description Sending address. */
+            from: string;
+            /** @description Provider message id. */
+            message_id: string;
+            /** @description The opt-out line was added. */
+            opt_out_line: boolean;
+            /** @description All recipients. */
+            recipients: string[];
+            /** @description Run that sent it. */
+            run: string;
+            /** @description Warnings the owner sent past with "Send anyway" (empty = none). */
+            send_anyway: string[];
+            /** @description First characters of the subject. */
+            subject: string;
+        };
         /**
          * @description What bots may do with a mail identity. Sending always needs the owner's
          *     approval; this can only make it stricter.
@@ -12687,6 +12840,14 @@ export interface operations {
                 q: string;
                 bot_id: string | null;
                 chat_id: string | null;
+                /** @description Only messages at or after this time (ms since epoch). */
+                from_ms: number | null;
+                /** @description Only messages before this time (ms since epoch). */
+                to_ms: number | null;
+                /** @description Only messages that carry an attachment. */
+                has_file: boolean | null;
+                /** @description Only messages that contain a web link. */
+                has_link: boolean | null;
                 /** @description Ranked offset, at most 10,000. */
                 offset: number | null;
                 /** @description Page size, 1–100 (default 30). */
@@ -14812,6 +14973,231 @@ export interface operations {
                 };
             };
             /** @description not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_opt_outs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailOptOutDto"][];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    add_opt_out: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailOptOutInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailOptOutDto"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    remove_opt_out: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The address or domain */
+                value: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_send_log: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description How many lines, newest first (default 200, at most 5000). */
+                limit: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailSendLogDto"][];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    export_send_log: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_guard_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailGuardSettingsDto"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_guard_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailGuardSettingsDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailGuardSettingsDto"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             503: {
                 headers: {
                     [name: string]: unknown;

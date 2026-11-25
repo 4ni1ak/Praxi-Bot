@@ -1573,10 +1573,28 @@
       },
       "mail": {
         "another": "Başka adresten gönder…",
+        "bcc": "Gizli bilgi",
+        "cc": "Bilgi",
         "draftOnly": "Yalnızca taslak",
         "from": "Kimden",
+        "legal": "Listeden çıkmak isteyen birine yazmak ya da çıkış satırı olmadan ticari e-posta göndermek hukuka aykırı olabilir (Türkiye'de 6563 sayılı ETK) ve para cezasına yol açabilir. Bu hukuki tavsiye değildir.",
+        "optOutOff": "Bu e-postaya çıkış satırı eklenmeyecek.",
+        "optOutOn": "Sistem sonuna bir çıkış satırı ekler (yukarıda görünüyor).",
+        "ownerOnly": "Buna yalnızca siz karar verebilirsiniz. Bot bu uyarıları kendi başına aşıp e-posta gönderemez.",
+        "sendAnyway": "Yine de gönder",
+        "subject": "Konu",
         "switchLabel": "Başka adresten gönder",
-        "useThis": "Bu adresi kullan"
+        "title": "Bu e-posta gönderilsin mi?",
+        "to": "Kime",
+        "useThis": "Bu adresi kullan",
+        "warning": {
+          "daily_limit": "Bu işlemle bu hesaptan 24 saatte {{count}} e-posta gitmiş olacak. Sınırınız {{limit}}.",
+          "guard_unreadable": "E-posta koruması kayıtlı {{list}} dosyasını okuyamadı. Bozuk dosya silinmedi, kenara alındı; bu yüzden çıkma kayıtları eksik olabilir ve kimse bu listeye karşı denetlenmiyor.",
+          "no_opt_out_line": "Bu e-posta, kişilerin listeden çıkmasını sağlayan satır olmadan gidecek.",
+          "opt_out_listed": "Bu kişiler kendilerine yazılmamasını istedi: {{list}}.",
+          "same_recipient": "{{list}} adresine son {{days}} gün içinde zaten yazdınız."
+        },
+        "warningsTitle": "Göndermeden önce kontrol edin"
       },
       "memory": {
         "always": "{{target}} için bu botta her zaman izin ver",
@@ -2344,17 +2362,6 @@
     "save": "Dosyayı kaydet…",
     "steps": "Botun attığı adımlar",
     "title": "Sohbeti dışa aktar"
-  },
-  "chatHistory": {
-    "count": "{{count}} eşleşen mesaj",
-    "count_one": "{{count}} eşleşen mesaj",
-    "count_other": "{{count}} eşleşen mesaj",
-    "more": "Daha fazla sonuç",
-    "noneYet": "Bu sayfada henüz görünen eşleşme yok",
-    "results": "Mesaj arama sonuçları",
-    "search": "Tüm sohbet mesajlarında ara…",
-    "searching": "Mesajlar aranıyor…",
-    "submit": "Mesajlarda ara"
   },
   "chatManage": {
     "allArchived": "Tüm sohbetler arşivlendi.",
@@ -3592,6 +3599,8 @@
     "menuDismiss": "Menüyü kapat",
     "menuMove": "Eğik çizgi / anma menüsünde gezin",
     "menuNav": "Açılır menülerde gezin",
+    "messageSearch": "Tüm mesajlarda ara",
+    "messageSearchMove": "Mesaj araması: gez ve aç",
     "newline": "Yeni satır",
     "openHelp": "Bu listeyi göster (metin alanı seçili değilken)",
     "palette": "Komut paleti",
@@ -4339,6 +4348,31 @@
       "m": "dk",
       "s": "sn"
     }
+  },
+  "messageSearch": {
+    "allBots": "Tüm botlar",
+    "bot": "Bot",
+    "clear": "Temizle",
+    "clearRecent": "Temizle",
+    "filters": "Filtreler",
+    "hasFile": "Dosya",
+    "hasLink": "Bağlantı",
+    "hint": "Tüm sohbetlerde aramak için yazın",
+    "keywords": "mesaj ara geçmiş sohbet bul",
+    "more": "Daha fazla sonuç",
+    "none": "Mesaj bulunamadı",
+    "open": "Mesajlarda ara",
+    "placeholder": "Tüm mesajlarda ara",
+    "recent": "Son aramalar",
+    "reset": "Sıfırla",
+    "results": "Mesaj sonuçları",
+    "searching": "Aranıyor…",
+    "title": "Mesajlarda ara",
+    "when": "Tarih",
+    "when_any": "Her zaman",
+    "when_day": "Son 24 saat",
+    "when_month": "Son 30 gün",
+    "when_week": "Son 7 gün"
   },
   "modelPicker": {
     "addEngines": "Kodlama CLI'ı ekle",
@@ -5660,7 +5694,7 @@
       "delete": "Sil",
       "deleteConfirm": "Bu posta kutusu silinsin mi?",
       "deletedBot": "silinmiş bot",
-      "description": "Botlarının okuyup yazabildiği e-posta adresleri. Her adres bir bot, birkaç bot ya da tüm botlar tarafından kullanılabilir.",
+      "description": "Botlarının okuyup yazabileceği posta kutuları. Bir posta kutusu tek bir bota ait olabilir.",
       "draftOnlyTag": "Yalnızca taslak",
       "edit": "Düzenle",
       "empty": "Henüz posta kutusu yok.",
@@ -5679,8 +5713,8 @@
           "all": "E-postası açık her bot",
           "allWarning": "E-posta araçları olan her bot bu posta kutusunu sormadan okuyabilir.",
           "label": "Bu posta kutusunu kimler kullanabilir",
-          "nobody": "En az bir bot seç ya da herhangi bir botu seç.",
-          "some": "Yalnızca bu botlar"
+          "nobody": "Botu seç ya da her bot seçeneğini seç.",
+          "some": "Yalnızca bir bot"
         },
         "address": "E-posta adresi",
         "create": "Posta kutusu ekle",
@@ -5834,6 +5868,39 @@
           "title": "Güvenli mod"
         }
       }
+    },
+    "mailGuard": {
+      "colBot": "Bot",
+      "colNote": "Not",
+      "colSubject": "Konu",
+      "colTime": "Zaman",
+      "colTo": "Kime",
+      "daily": "Posta kutusu başına günde şu sayının üstünde uyar (0 = hiç uyarma)",
+      "days": "Birine bu kadar gün içinde zaten yazdıysam uyar (0 = hiç uyarma)",
+      "description": "Sınırlar, bir çıkış listesi ve botlarınızın gönderdiği her e-postanın günlüğü.",
+      "export": "CSV olarak dışa aktar",
+      "footer": "Çıkış satırının metni",
+      "footerHint": "{sender} gönderen adresle değiştirilir. Satırı bot değil uygulama ekler ve bot onu silemez. Bir e-postayı satırsız göndermek için kartta onaylayabilirsiniz; kartta bir uyarı görünür. Program yanıtları okumaz: biri “DURDUR” diye yanıtlarsa adresini bu listeye kendiniz ekleyin.",
+      "footerPlaceholder": "Boş bırakırsanız yerleşik metin kullanılır (Türkçe ve İngilizce)",
+      "intro": "Bir botun göndereceği her e-posta yine önce size sorulur. Bu ayarlar yalnızca sorunun ne zaman uyarıyla geldiğini belirler. Uyarı sizi hiçbir zaman engellemez: her zaman \"Yine de gönder\" diyebilirsiniz ve bu seçim günlüğe yazılır.",
+      "kindAddress": "adres",
+      "kindDomain": "tüm alan adı",
+      "loading": "Yükleniyor…",
+      "logEmpty": "Henüz e-posta gönderilmedi.",
+      "logHint": "Kime, ne zaman ve hangi bottan e-posta gitti. Yalnızca gerçekten gönderilenler listelenir.",
+      "logTitle": "Gönderilen e-posta günlüğü",
+      "optOutAdd": "Ekle",
+      "optOutEmpty": "Listede henüz kimse yok.",
+      "optOutHint": "Bir adres (ayse@ornek.com) ya da tüm bir alan adı (ornek.com) ekleyin. Onlara yazmaya çalışan bot, onay kartınızda bir uyarı alır.",
+      "optOutLine": "E-postalara varsayılan olarak çıkış satırı ekle",
+      "optOutPlaceholder": "ayse@ornek.com ya da ornek.com",
+      "optOutRemove": "{{value}} kaydını kaldır",
+      "optOutTitle": "Yazmayacağım kişiler",
+      "save": "Kaydet",
+      "saved": "Kaydedildi",
+      "sentAnyway": "Yine de gönderildi",
+      "softHint": "Bu ikisi engel değil, uyarıdır.",
+      "title": "Güvenli gönderim"
     },
     "mode": {
       "moreHint": "İnce ayar için ek seçenekler",
@@ -6047,7 +6114,6 @@
     "reorderHint": "Satırı sürükle ya da bu tutamaca odaklanıp yukarı/aşağı ok tuşuna bas",
     "reorderMoved": "{{name}} {{pos}}. sıraya taşındı",
     "schedules": "Zamanlanmış görevler",
-    "searchBots": "Botlarda ara",
     "settings": "Ayarlar",
     "unread": "Okunmamış mesaj",
     "unreadBot": "Bu bottan yeni mesajlar var",

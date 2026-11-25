@@ -1573,10 +1573,28 @@
       },
       "mail": {
         "another": "Send from another address…",
+        "bcc": "Bcc",
+        "cc": "Cc",
         "draftOnly": "Drafts only",
         "from": "From",
+        "legal": "Writing to someone who opted out, or sending commercial e-mail without an opt-out line, can be unlawful (in Turkey: Law 6563, ETK) and can lead to fines. This is not legal advice.",
+        "optOutOff": "No opt-out line will be added to this e-mail.",
+        "optOutOn": "The system adds an opt-out line at the end (shown above).",
+        "ownerOnly": "Only you can decide this. The bot cannot send past these warnings on its own.",
+        "sendAnyway": "Send anyway",
+        "subject": "Subject",
         "switchLabel": "Send from another address",
-        "useThis": "Use this address"
+        "title": "Send this e-mail?",
+        "to": "To",
+        "useThis": "Use this address",
+        "warning": {
+          "daily_limit": "This would be {{count}} e-mails from this account in 24 hours. Your limit is {{limit}}.",
+          "guard_unreadable": "The mail guard could not read its saved {{list}}. The damaged file was set aside, not deleted, so opt-outs may be missing and nobody is checked against them.",
+          "no_opt_out_line": "This e-mail would go out without the line that lets people opt out.",
+          "opt_out_listed": "These people asked not to be written to: {{list}}.",
+          "same_recipient": "You already wrote to {{list}} in the last {{days}} days."
+        },
+        "warningsTitle": "Check before sending"
       },
       "memory": {
         "always": "Always allow {{target}} for this bot",
@@ -2344,17 +2362,6 @@
     "save": "Save file…",
     "steps": "Steps the bot took",
     "title": "Export chat"
-  },
-  "chatHistory": {
-    "count": "{{count}} matching messages",
-    "count_one": "{{count}} matching message",
-    "count_other": "{{count}} matching messages",
-    "more": "More results",
-    "noneYet": "No visible matches on this page yet",
-    "results": "Message search results",
-    "search": "Search all chat messages…",
-    "searching": "Searching messages…",
-    "submit": "Search messages"
   },
   "chatManage": {
     "allArchived": "All chats are archived.",
@@ -3592,6 +3599,8 @@
     "menuDismiss": "Close the menu",
     "menuMove": "Move through the slash / mention menu",
     "menuNav": "Move through popup menus",
+    "messageSearch": "Search all messages",
+    "messageSearchMove": "Message search: move and open",
     "newline": "New line",
     "openHelp": "Show this list (when no text field has focus)",
     "palette": "Command palette",
@@ -4339,6 +4348,31 @@
       "m": "min",
       "s": "s"
     }
+  },
+  "messageSearch": {
+    "allBots": "All bots",
+    "bot": "Bot",
+    "clear": "Clear",
+    "clearRecent": "Clear",
+    "filters": "Filters",
+    "hasFile": "File",
+    "hasLink": "Link",
+    "hint": "Type to search every chat",
+    "keywords": "find messages history chats",
+    "more": "More results",
+    "none": "No messages found",
+    "open": "Search messages",
+    "placeholder": "Search all messages",
+    "recent": "Recent",
+    "reset": "Reset",
+    "results": "Message results",
+    "searching": "Searching…",
+    "title": "Search messages",
+    "when": "Date",
+    "when_any": "Any time",
+    "when_day": "Past day",
+    "when_month": "Past month",
+    "when_week": "Past week"
   },
   "modelPicker": {
     "addEngines": "Add a coding CLI",
@@ -5660,7 +5694,7 @@
       "delete": "Delete",
       "deleteConfirm": "Delete this mailbox?",
       "deletedBot": "deleted bot",
-      "description": "Mail addresses your bots can read and write with. Each address can be used by one bot, several, or all.",
+      "description": "Mailboxes your bots can read and write with. A mailbox can belong to one bot.",
       "draftOnlyTag": "Drafts only",
       "edit": "Edit",
       "empty": "No mailboxes yet.",
@@ -5679,8 +5713,8 @@
           "all": "Any bot with e-mail enabled",
           "allWarning": "Every bot that has the e-mail tools can then read this mailbox without asking.",
           "label": "Who can use this mailbox",
-          "nobody": "Pick at least one bot, or choose any bot.",
-          "some": "Only these bots"
+          "nobody": "Pick the bot, or choose any bot.",
+          "some": "Only one bot"
         },
         "address": "E-mail address",
         "create": "Add mailbox",
@@ -5834,6 +5868,39 @@
           "title": "Safe mode"
         }
       }
+    },
+    "mailGuard": {
+      "colBot": "Bot",
+      "colNote": "Note",
+      "colSubject": "Subject",
+      "colTime": "When",
+      "colTo": "To",
+      "daily": "Warn above this many e-mails per day, per mailbox (0 = never)",
+      "days": "Warn when I already wrote to someone within this many days (0 = never)",
+      "description": "Limits, an opt-out list and a log of every e-mail your bots send.",
+      "export": "Export as CSV",
+      "footer": "Text of the opt-out line",
+      "footerHint": "{sender} is replaced by the sending address. The line is added by the app, not by the bot, and the bot cannot remove it. You can send one e-mail without it by approving it on the card, which shows a warning. The program does not read replies: when someone answers “STOP”, add their address to the opt-out list here yourself.",
+      "footerPlaceholder": "Leave empty to use the built-in text (Turkish and English)",
+      "intro": "Every e-mail a bot sends still asks you first. These settings only decide when the question carries a warning. A warning never blocks you: you can always choose \"Send anyway\", and that choice is written to the log.",
+      "kindAddress": "address",
+      "kindDomain": "whole domain",
+      "loading": "Loading…",
+      "logEmpty": "No e-mail has been sent yet.",
+      "logHint": "Who got an e-mail, when, and from which bot. Only e-mails that were really sent are listed.",
+      "logTitle": "Sent e-mail log",
+      "optOutAdd": "Add",
+      "optOutEmpty": "Nobody is on the list yet.",
+      "optOutHint": "Add an address (ann@example.com) or a whole domain (example.com). A bot that tries to write to them gets a warning on your approval card.",
+      "optOutLine": "Add an opt-out line to e-mails by default",
+      "optOutPlaceholder": "ann@example.com or example.com",
+      "optOutRemove": "Remove {{value}}",
+      "optOutTitle": "People I will not write to",
+      "save": "Save",
+      "saved": "Saved",
+      "sentAnyway": "Sent anyway",
+      "softHint": "These two are warnings, not blocks.",
+      "title": "Safe sending"
     },
     "mode": {
       "moreHint": "Extra controls for fine-tuning",
@@ -6047,7 +6114,6 @@
     "reorderHint": "Drag the row, or focus this handle and press the up/down arrow",
     "reorderMoved": "{{name}} moved to position {{pos}}",
     "schedules": "Scheduled tasks",
-    "searchBots": "Search bots",
     "settings": "Settings",
     "unread": "Unread message",
     "unreadBot": "New messages from this bot",
