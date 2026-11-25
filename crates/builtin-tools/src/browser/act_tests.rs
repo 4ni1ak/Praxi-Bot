@@ -105,7 +105,16 @@ async fn navigation_stops_the_batch_after_the_step_that_caused_it() {
         .await
         .unwrap();
     let t = text(&out);
-    assert_eq!(calls(&fake).len(), 4, "{t}");
+    assert_eq!(
+        calls(&fake),
+        [
+            "snapshot:false",
+            "fill:e1:typed-private-text",
+            "snapshot:false",
+            "select:e2:blue"
+        ],
+        "{t}"
+    );
     assert!(
         t.contains("stopped, done 2/3") && t.contains("navigated"),
         "{t}"

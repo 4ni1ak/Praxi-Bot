@@ -2409,6 +2409,16 @@ impl BrowserTool {
             }
             Op::Press => {
                 let i: PressIn = parse(input)?;
+                let guard = step_guard();
+                if guard.batch
+                    && guard.focus_ref.is_none()
+                    && browser_cdp::parse_key(&i.key)
+                        .is_ok_and(|key| matches!(key.key.as_str(), "Enter" | " "))
+                {
+                    return Err(exec_err(
+                        "no earlier batch step named an element for this key; the key was NOT pressed",
+                    ));
+                }
                 let permit = self.gate(run_id, "key", i.key.clone()).await?;
                 if permit.needs_observation()
                     || self
@@ -2435,7 +2445,6 @@ impl BrowserTool {
                         "Human intervention completed; previous action discarded. Fresh observation:\n{fresh}"
                     ));
                 }
-                let guard = step_guard();
                 permit
                     .protect(STEP_GUARD.scope(guard, async move { d.press(&i.key).await }))
                     .await
@@ -3477,6 +3486,9 @@ mod tests {
             .unwrap();
         let calls = fake.calls.lock().clone();
         assert_eq!(calls.len(), 6, "{calls:?}");
+        for index in [0, 2, 4] {
+            assert_eq!(calls[index], "snapshot:false");
+        }
         assert!(calls[1].contains("pages: Some(1.0)"), "{calls:?}");
         assert!(
             calls[3].contains("to: Some(\"bottom\")") && calls[3].contains("slow"),
