@@ -1359,6 +1359,8 @@ function ScheduleForm({
       <form
         className={styles.formBody}
         aria-label={heading}
+        // The app words the problem (in the UI language); the browser's own bubble would use the browser's.
+        noValidate
         onSubmit={(e) => {
           e.preventDefault();
           void submit();
@@ -1405,7 +1407,7 @@ function ScheduleForm({
           <input
             className={formStyles.input}
             value={draft.name}
-            required
+            aria-required="true"
             onChange={(e) => patch({ name: e.target.value })}
           />
         </label>
