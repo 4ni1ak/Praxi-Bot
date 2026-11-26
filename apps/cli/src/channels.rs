@@ -33,15 +33,43 @@ fn channels_path(data_dir: &Path) -> PathBuf {
     data_dir.join(CHANNELS_FILE)
 }
 
-/// Whether the Telegram channel is switched on (default: on, so that a token
-/// stored by other means is picked up).
+/// Whether channel `name` is switched on (default: on, so that a token stored by
+/// other means is picked up).
 #[must_use]
-pub fn telegram_enabled(data_dir: &Path) -> bool {
+pub fn channels_enabled(data_dir: &Path, name: &str) -> bool {
     std::fs::read_to_string(channels_path(data_dir))
         .ok()
         .and_then(|s| s.parse::<toml::Table>().ok())
-        .and_then(|t| t.get("telegram")?.get("enabled")?.as_bool())
+        .and_then(|t| t.get(name)?.get("enabled")?.as_bool())
         .unwrap_or(true)
+}
+
+/// Switch channel `name` on or off, keeping the settings of the other channels.
+///
+/// # Errors
+/// The file cannot be written.
+pub fn set_channel_enabled(data_dir: &Path, name: &str, enabled: bool) -> Result<()> {
+    let mut root = match std::fs::read_to_string(channels_path(data_dir)) {
+        Ok(text) => text.parse::<toml::Table>()?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => toml::Table::new(),
+        Err(e) => return Err(e.into()),
+    };
+    let mut table = root
+        .get(name)
+        .and_then(toml::Value::as_table)
+        .cloned()
+        .unwrap_or_default();
+    table.insert("enabled".into(), toml::Value::Boolean(enabled));
+    root.insert(name.into(), toml::Value::Table(table));
+    std::fs::create_dir_all(data_dir)?;
+    std::fs::write(channels_path(data_dir), toml::to_string(&root)?)?;
+    Ok(())
+}
+
+/// Whether the Telegram channel is switched on.
+#[must_use]
+pub fn telegram_enabled(data_dir: &Path) -> bool {
+    channels_enabled(data_dir, "telegram")
 }
 
 /// Switch the Telegram channel on or off.
@@ -49,13 +77,7 @@ pub fn telegram_enabled(data_dir: &Path) -> bool {
 /// # Errors
 /// The file cannot be written.
 pub fn set_telegram_enabled(data_dir: &Path, enabled: bool) -> Result<()> {
-    let mut telegram = toml::Table::new();
-    telegram.insert("enabled".into(), toml::Value::Boolean(enabled));
-    let mut root = toml::Table::new();
-    root.insert("telegram".into(), toml::Value::Table(telegram));
-    std::fs::create_dir_all(data_dir)?;
-    std::fs::write(channels_path(data_dir), toml::to_string(&root)?)?;
-    Ok(())
+    set_channel_enabled(data_dir, "telegram", enabled)
 }
 
 /// Whether a (non-empty) bot token is stored.
@@ -413,15 +435,25 @@ pub fn registered_channels(
     owner_key: Option<&str>,
     leader: daemon_api::host::LeaderControl,
 ) -> Vec<Arc<dyn ChannelControl>> {
-    vec![telegram_runtime(
-        data_dir,
-        store,
-        daemon_url,
-        daemon_token,
-        owner_key,
-        None,
-        Some(leader),
-    )]
+    vec![
+        telegram_runtime(
+            data_dir,
+            Arc::clone(&store),
+            daemon_url,
+            daemon_token,
+            owner_key,
+            None,
+            Some(leader),
+        ),
+        crate::channels_discord::discord_runtime(
+            data_dir,
+            store,
+            daemon_url,
+            daemon_token,
+            owner_key,
+            None,
+        ),
+    ]
 }
 
 #[cfg(test)]

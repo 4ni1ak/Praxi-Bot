@@ -78,6 +78,10 @@ impl AppState {
 /// by the peer router (`peer.rs`), which this table does not change.
 pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("GET", "/v1/connectivity"),
+    ("GET", "/v1/bots/{}/browser-profile"),
+    ("HEAD", "/v1/bots/{}/browser-profile"),
+    ("DELETE", "/v1/bots/{}/browser-profile"),
+    ("POST", "/v1/bots/{}/browser-profile/*"),
     ("GET", "/v1/logs/recent"),
     // the audit trail names bots, folders and decisions: the owner's to read and export
     ("GET", "/v1/audit"),
@@ -220,6 +224,7 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/schedules/{}/occurrences/{}/retry"),
     ("POST", "/v1/schedules/{}/reclaim"),
     ("POST", "/v1/channels/telegram/pair-code"),
+    ("POST", "/v1/channels/discord/pair-code"),
     // providers, tool servers, installs
     ("POST", "/v1/providers/cli/install"),
     ("POST", "/v1/providers/cli/install/{}/decision"),

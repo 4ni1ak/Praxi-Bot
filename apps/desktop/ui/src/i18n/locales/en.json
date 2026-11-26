@@ -1402,7 +1402,8 @@
       "activity": "Activity",
       "automation": "Automation",
       "label": "Panel sections",
-      "library": "Library"
+      "library": "Library",
+      "tools": "Tools"
     },
     "thisBot": "This bot",
     "toggle": "Bot panel",
@@ -1491,6 +1492,28 @@
       "tooMany": "Only {{max}} skills can be assigned. Pick fewer skills, or use \"All shared skills\"."
     },
     "writeConflict": "This bot was changed somewhere else while you were saving. Reload it and try again."
+  },
+  "browserProfile": {
+    "confirmAll": "Close this bot’s browser and delete all its saved browser data, including named profiles. You will need to sign in again. Other bots are unaffected.",
+    "confirmSite": "Close this bot’s browser and clear cookies and saved site data for {{domain}} and its saved subdomains in the default profile. You may need to sign in again.",
+    "done": "Done signing in",
+    "empty": "No sites with saved cookies yet.",
+    "encrypted": "The profile directory is encrypted by Windows. The browser also uses the system’s cookie protection when available.",
+    "forgetAll": "Forget everything",
+    "forgetNamed": "Forget {{domain}}",
+    "forgetSite": "Forget this site",
+    "intro": "Sign in yourself in this bot’s managed browser. Praxi does not ask for or save your password. The browser keeps cookies and site data so sessions can survive future runs.",
+    "isolation": "This browser profile belongs only to this bot. Other bots do not share its saved sessions.",
+    "manualHint": "Use the browser window on the computer running this bot. Browser tools are paused for this bot. Choose Done signing in when you finish.",
+    "protection": "The browser uses the system’s cookie protection when available. Directory encryption could not be confirmed; some site data may be stored without encryption.",
+    "refresh": "Refresh",
+    "signIn": "Sign in manually",
+    "siteHint": "A saved cookie does not prove you are still signed in. Sites that use only other storage may not appear here. Forgetting a site also clears its other saved browser data.",
+    "sites": "Sites with saved cookies",
+    "sitesUnavailable": "Saved site names cannot be read right now. Finish signing in, close the browser, then refresh. You can still forget everything.",
+    "size": "Profile size: {{bytes}} bytes",
+    "title": "Browser profile",
+    "warning": "On signed-in sites, this bot can act as you. Your existing approval rules still apply. Only sign in to accounts you want this bot to use."
   },
   "chat": {
     "addCommand": "Add a command or bot",
@@ -2835,6 +2858,10 @@
       "bot_limit_warning": {
         "hint": "It has used 80% of a spending limit. Check the limits in the bot settings.",
         "title": "This bot is close to its limit"
+      },
+      "browser_profile_error": {
+        "hint": "Finish manual sign-in first, then refresh and try again. Manual sign-in needs a desktop display on the computer running the bot. If it still fails, check the details.",
+        "title": "Browser profile could not be updated"
       },
       "busy": {
         "hint": "Wait a moment and try again.",
@@ -4510,6 +4537,7 @@
     "sources": {
       "api": "local API",
       "app": "this app",
+      "discord": "via Discord",
       "imported": "imported file",
       "peer": "another computer",
       "telegram": "Telegram",

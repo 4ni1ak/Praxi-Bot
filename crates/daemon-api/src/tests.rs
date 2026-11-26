@@ -26,6 +26,7 @@ mod attachments;
 mod audit;
 mod bot_patch;
 mod bot_tools;
+mod browser_profiles;
 mod chat_history;
 mod cli_engines;
 mod composio;

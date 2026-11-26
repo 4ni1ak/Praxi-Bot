@@ -53,3 +53,7 @@ test("the owner's paired Telegram chat shows as Telegram like any other Telegram
   assert.equal(messageSourceKind("telegram_owner"), "telegram");
   assert.equal(messageSourceKind("telegram"), "telegram");
 });
+
+test("Discord messages show their channel source", () => {
+  assert.equal(userInfoRows(at(1, 2, 3), "discord", "en", (k) => k).find((r) => r.key === "source")?.value, "discord");
+});
