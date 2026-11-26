@@ -743,6 +743,7 @@ impl Tool for EmailTool {
                     &source_label(kind, "search results"),
                     json!({
                         "folder": i.folder,
+                        "own_addresses": c.identities().into_iter().map(|(a,_)|a.address).collect::<Vec<_>>(),
                         "total_matches": r.total,
                         "returned": r.messages.len(),
                         "messages": r.messages,

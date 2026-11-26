@@ -57,6 +57,7 @@ mod schedules;
 mod schedules_catchup;
 mod secret_requests;
 mod skills;
+mod triggers;
 mod voice;
 mod web;
 mod workspaces;

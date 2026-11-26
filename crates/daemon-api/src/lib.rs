@@ -94,6 +94,7 @@ mod spend_routes;
 mod sse;
 mod stop;
 pub mod terminal;
+mod triggers;
 pub mod usage;
 pub mod voice;
 mod voice_routes;
@@ -1524,6 +1525,15 @@ fn api_routes() -> Router<AppState> {
         .route(
             "/v1/bots/{id}/page-reader",
             get(page_reader_routes::get_page_reader).put(page_reader_routes::put_page_reader),
+        )
+        .route(
+            "/v1/bots/{id}/triggers",
+            get(triggers::list).post(triggers::create),
+        )
+        .route("/v1/bots/{id}/triggers/preview", post(triggers::preview))
+        .route(
+            "/v1/bots/{id}/triggers/{trigger}",
+            axum::routing::put(triggers::update).delete(triggers::delete),
         )
         .route(
             "/v1/bots/{id}/incoming-webhooks",

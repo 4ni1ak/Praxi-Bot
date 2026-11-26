@@ -525,3 +525,26 @@ async fn c225_imap_trigger_search_fetches_headers_without_message_bodies() {
     assert!(!commands.iter().any(|c| c.contains("BODY.PEEK[]")));
     assert!(smtp.commands.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn trigger_headers_are_available_from_fake_imap_without_fetching_the_body() {
+    let imap = server(Protocol::Imap).await;
+    let smtp = server(Protocol::Smtp).await;
+    let conn = connector(account(&imap, &smtp, SmtpSecurity::Implicit));
+    let result = call(&conn, "email_search", json!({"limit":2})).await;
+    assert_eq!(result["messages"][0]["from_addr"], "ann@example.com");
+    assert_eq!(result["messages"][0]["has_attachment"], true);
+    assert!(result["messages"][0]["automation_headers"].is_object());
+    let commands = imap.commands.lock().unwrap();
+    assert!(
+        commands
+            .iter()
+            .any(|c| c.contains("BODY.PEEK[HEADER] BODYSTRUCTURE"))
+    );
+    assert!(commands.iter().all(|c| !c.contains("BODY.PEEK[]")));
+    let headers=crate::message::parse_summary(1,b"From: Ann <ann@example.com>\r\nSubject: Bill\r\nAuto-Submitted: auto-replied\r\nPrecedence: bulk\r\nList-Unsubscribe: <mailto:list@example.com>\r\n\r\n",true,None);
+    let headers = headers.automation_headers.unwrap();
+    assert_eq!(headers.auto_submitted, "auto");
+    assert_eq!(headers.precedence, "bulk");
+    assert_ne!(headers.list_unsubscribe, "");
+}

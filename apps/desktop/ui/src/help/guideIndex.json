@@ -784,6 +784,12 @@
     "summary": "Talk to your bots from your phone. The daemon runs a Telegram channel: you"
   },
   {
+    "doc": "triggers.md",
+    "title": "When something happens",
+    "headings": [],
+    "summary": "Open a bot's panel, choose Automation, then When something happens."
+  },
+  {
     "doc": "troubleshooting.md",
     "title": "Troubleshooting",
     "headings": [

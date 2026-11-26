@@ -1239,6 +1239,21 @@ export class ApiClient {
     return this.request("POST", "/fill-secrets/reveal", { body: { name, confirm: true } });
   }
 
+  listTriggers(bot: string): Promise<import("../lib/triggers").BotTrigger[]> {
+    return this.request("GET", `/bots/${bot}/triggers`);
+  }
+  createTrigger(bot: string, input: import("../lib/triggers").TriggerInput): Promise<import("../lib/triggers").BotTrigger> {
+    return this.request("POST", `/bots/${bot}/triggers`, { body: input });
+  }
+  updateTrigger(bot: string, id: string, input: import("../lib/triggers").TriggerInput): Promise<import("../lib/triggers").BotTrigger> {
+    return this.request("PUT", `/bots/${bot}/triggers/${id}`, { body: input });
+  }
+  deleteTrigger(bot: string, id: string): Promise<void> {
+    return this.request("DELETE", `/bots/${bot}/triggers/${id}`);
+  }
+  previewTrigger(bot: string, input: { instruction: string; config: import("../lib/triggers").TriggerConfig; sample: unknown }): Promise<import("../lib/triggers").TriggerPreview> {
+    return this.request("POST", `/bots/${bot}/triggers/preview`, { body: input });
+  }
   listSchedules(): Promise<Schedule[]> {
     return this.request("GET", "/schedules");
   }
