@@ -6613,6 +6613,14 @@ export interface components {
             /** @description IMAP server (`imap_smtp`). */
             imap?: components["schemas"]["EmailImapServer"];
             /**
+             * @description Connect an inbox that already exists instead of creating one
+             *     (`agentmail`): its address or id at the provider. For an inbox-scoped
+             *     key (`am_us_inbox_...`), which cannot create inboxes, and for anyone who
+             *     already made the address in the provider's console. The key is checked
+             *     with a read of that inbox; nothing is created.
+             */
+            inbox?: string | null;
+            /**
              * @description Account name: 1 to 64 characters of `[A-Za-z0-9._-]`. Required on
              *     create; for `POST /v1/email/test` it selects the stored password to
              *     reuse when `password` is left out.
@@ -6627,8 +6635,9 @@ export interface components {
             password?: string | null;
             /**
              * @description Kind of mailbox; default `imap_smtp`. For `agentmail` the inbox is
-             *     created at the provider (its address is returned); `address`, `imap`
-             *     and `smtp` are not used and `api_key` is required.
+             *     created at the provider (its address is returned), or, with `inbox`, an
+             *     existing one is connected; `address`, `imap` and `smtp` are not used and
+             *     `api_key` is required.
              */
             provider?: components["schemas"]["EmailProviderKind"];
             /** @description Draft only, or ask the owner each time (default). */

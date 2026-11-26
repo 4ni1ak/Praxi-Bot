@@ -23,9 +23,9 @@ import { BotAvatar, Button } from "ui";
 import { SettingsCard } from "../../components/SettingsUi";
 import { BrandIcon } from "../../components/BrandIcon";
 import { botView } from "../../lib/botProfile";
-import { MAIL_CHANGED_EVENT, nextStep } from "../../lib/botMail";
+import { MAIL_CHANGED_EVENT, mailToolsOn, mailToolsPatch, nextStep } from "../../lib/botMail";
 import { isSharedDomain } from "../../lib/mailIdentity";
-import type { EmailAccount, EmailTestReport } from "../../api/types";
+import type { Bot, EmailAccount, EmailTestReport } from "../../api/types";
 import { openExternal } from "../../lib/externalLink";
 import { BotAccessPicker } from "../../components/BotAccessPicker";
 import { ConnectionTestButton } from "../../components/ConnectionTest";
@@ -46,7 +46,9 @@ import {
   emptyAgentmailForm,
   emptyForm,
   formFromAccount,
+  isInboxScopedKey,
   probeTone,
+  suggestsConnectExisting,
   toAgentmailInput,
   toInput,
   toPatch,
@@ -506,7 +508,15 @@ function AgentmailNotes() {
 }
 
 /** The created address, with a copy button. */
-function CreatedAddress({ account, onDone }: { account: EmailAccount; onDone: () => void }) {
+function CreatedAddress({
+  account,
+  connected,
+  onDone
+}: {
+  account: EmailAccount;
+  connected: boolean;
+  onDone: () => void;
+}) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const copy = () => {
@@ -520,7 +530,9 @@ function CreatedAddress({ account, onDone }: { account: EmailAccount; onDone: ()
   };
   return (
     <div className={styles.form} data-testid="agentmail-created">
-      <h3 className={styles.subheading}>{t("settingsModal.email.agentmail.created")}</h3>
+      <h3 className={styles.subheading}>
+        {connected ? t("settingsModal.email.agentmail.connected") : t("settingsModal.email.agentmail.created")}
+      </h3>
       <div className={styles.address_box}>
         <AtSign aria-hidden="true" />
         <code className={styles.address_code} data-testid="agentmail-address">
@@ -556,15 +568,20 @@ function AgentmailFlow({
   const [errors, setErrors] = useState<AgentmailFormError[]>([]);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<EmailAccount | null>(null);
+  // The provider refused the create call as "not allowed": the key belongs to one inbox.
+  const [refused, setRefused] = useState(false);
+  const connect = form.mode === "connect";
   const set = (patch: Partial<AgentmailForm>) => {
     setForm((f) => ({ ...f, ...patch }));
     setErrors([]);
+    setRefused(false);
   };
+  const scopedKey = !connect && (refused || isInboxScopedKey(form.apiKey));
   const err = (k: AgentmailFormError) =>
     errors.includes(k) ? t(`settingsModal.email.agentmail.errors.${k}`) : null;
 
   if (created) {
-    return <CreatedAddress account={created} onDone={() => void onDone()} />;
+    return <CreatedAddress account={created} connected={connect} onDone={() => void onDone()} />;
   }
 
   const submit = async () => {
@@ -577,6 +594,9 @@ function AgentmailFlow({
     try {
       setCreated(await client.createEmailAccount(toAgentmailInput(form, existing)));
     } catch (e) {
+      if (!connect && suggestsConnectExisting(e)) {
+        setRefused(true);
+      }
       // The provider says the inbox name is taken: say so, and fill in a free-looking alternative.
       if (isTakenInboxError(e)) {
         const name = suggestInboxName(form.nameHint);
@@ -601,6 +621,23 @@ function AgentmailFlow({
     >
       <h3 className={styles.subheading}>{t("settingsModal.email.agentmail.title")}</h3>
       <AgentmailNotes />
+      <Segmented
+        label={t("settingsModal.email.agentmail.modeLabel")}
+        value={form.mode ?? "create"}
+        options={[
+          {
+            value: "create",
+            label: t("settingsModal.email.agentmail.modeCreate"),
+            testId: "agentmail-mode-create"
+          },
+          {
+            value: "connect",
+            label: t("settingsModal.email.agentmail.modeConnect"),
+            testId: "agentmail-mode-connect"
+          }
+        ]}
+        onChange={(mode) => set({ mode })}
+      />
       <Field
         id="agentmail-key"
         label={t("settingsModal.email.agentmail.apiKey")}
@@ -616,6 +653,37 @@ function AgentmailFlow({
           onChange={(e) => set({ apiKey: e.target.value })}
         />
       </Field>
+      {scopedKey ? (
+        <p className={formStyles.hint} role="status" data-testid="agentmail-scoped-hint">
+          {t("settingsModal.email.agentmail.scopedKeyHint")}{" "}
+          <button
+            type="button"
+            className={styles.link}
+            data-testid="agentmail-use-existing"
+            onClick={() => set({ mode: "connect" })}
+          >
+            {t("settingsModal.email.agentmail.useExisting")}
+          </button>
+        </p>
+      ) : null}
+      {connect ? (
+        <Field
+          id="agentmail-inbox"
+          label={t("settingsModal.email.agentmail.inbox")}
+          hint={t("settingsModal.email.agentmail.inboxHint")}
+          error={err("inbox")}
+        >
+          <input
+            id="agentmail-inbox"
+            className={formStyles.input}
+            type="email"
+            value={form.inbox ?? ""}
+            autoComplete="off"
+            placeholder={t("settingsModal.email.agentmail.inboxPlaceholder")}
+            onChange={(e) => set({ inbox: e.target.value })}
+          />
+        </Field>
+      ) : null}
       <div className={formStyles.field}>
         <span className={formStyles.label}>{t("settingsModal.email.agentmail.bot")}</span>
         <BotAccessPicker
@@ -633,25 +701,33 @@ function AgentmailFlow({
         />
         {err("bot") ? <p className={formStyles.error} role="alert">{err("bot")}</p> : null}
       </div>
-      <Field
-        id="agentmail-hint"
-        label={t("settingsModal.email.agentmail.nameHint")}
-        hint={t("settingsModal.email.agentmail.nameHintHelp")}
-        error={err("nameHint")}
-      >
-        <input
+      {connect ? null : (
+        <Field
           id="agentmail-hint"
-          className={formStyles.input}
-          value={form.nameHint}
-          maxLength={32}
-          autoComplete="off"
-          placeholder="atlas"
-          onChange={(e) => set({ nameHint: e.target.value })}
-        />
-      </Field>
+          label={t("settingsModal.email.agentmail.nameHint")}
+          hint={t("settingsModal.email.agentmail.nameHintHelp")}
+          error={err("nameHint")}
+        >
+          <input
+            id="agentmail-hint"
+            className={formStyles.input}
+            value={form.nameHint}
+            maxLength={32}
+            autoComplete="off"
+            placeholder="atlas"
+            onChange={(e) => set({ nameHint: e.target.value })}
+          />
+        </Field>
+      )}
       <div className={styles.actions}>
         <Button type="submit" size="sm" variant="primary" disabled={busy}>
-          {busy ? t("settingsModal.email.agentmail.creating") : t("settingsModal.email.agentmail.create")}
+          {connect
+            ? busy
+              ? t("settingsModal.email.agentmail.connecting")
+              : t("settingsModal.email.agentmail.connect")
+            : busy
+              ? t("settingsModal.email.agentmail.creating")
+              : t("settingsModal.email.agentmail.create")}
         </Button>
         <Button size="sm" variant="ghost" onClick={() => void onDone()}>
           {t("common.cancel")}
@@ -695,6 +771,57 @@ function AddChoice({
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * What the bound bot can do with this mailbox, in one plain line: connecting a mailbox gives the
+ * bot the e-mail tools by itself, and the owner can take them away (or give them back) here.
+ */
+function MailToolsLine({ account, bot }: { account: EmailAccount; bot: Bot }) {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const { client, refreshBots } = useDaemon();
+  const [saving, setSaving] = useState(false);
+  const on = mailToolsOn(bot.config);
+  const toggle = async () => {
+    const patch = mailToolsPatch(bot, !on);
+    if (!client || patch.ops.length === 0) {
+      return;
+    }
+    setSaving(true);
+    try {
+      await client.patchBot(bot.id, patch);
+      await refreshBots();
+      mailChanged();
+    } catch (e) {
+      toast.show(t("settingsModal.email.botTools.error", { message: errorText(e) }), "danger");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <p
+      className={`${styles.meta} ${styles.toolsLine}`}
+      data-testid={`email-bot-tools-${account.name}`}
+      data-on={on ? "true" : "false"}
+    >
+      {on ? <CircleCheck aria-hidden="true" /> : <Info aria-hidden="true" />}
+      <span>
+        {on
+          ? t("settingsModal.email.botTools.on", { name: bot.name })
+          : t("settingsModal.email.botTools.off", { name: bot.name })}
+      </span>
+      <button
+        type="button"
+        className={styles.link}
+        disabled={saving}
+        data-testid={`email-bot-tools-toggle-${account.name}`}
+        onClick={() => void toggle()}
+      >
+        {on ? t("settingsModal.email.botTools.turnOff") : t("settingsModal.email.botTools.turnOn")}
+      </button>
+    </p>
   );
 }
 
@@ -780,6 +907,7 @@ function AccountRow({
             <span>{t("settingsModal.email.sharedDomain")}</span>
           </p>
         ) : null}
+        {boundBot ? <MailToolsLine account={account} bot={boundBot} /> : null}
         {report ? <TestResult report={report} /> : null}
         {isAgentmail ? (
           <ConnectionTestButton

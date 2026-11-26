@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { ApiError } from "../api/client.ts";
 import { MockApiClient } from "../api/mock.ts";
 import type { EmailAccount } from "../api/types.ts";
 import {
@@ -10,10 +11,12 @@ import {
   emptyForm,
   EMAIL_PRESETS,
   formFromAccount,
+  isInboxScopedKey,
   needsPassword,
   presetOf,
   probeTone,
   scopeFromBot,
+  suggestsConnectExisting,
   toAgentmailInput,
   toInput,
   toPatch,
@@ -318,4 +321,58 @@ test("several bots, a default sender and draft-only travel as separate fields", 
   const back = formFromAccount(account({ bot: ATLAS, shared_with: ["bot-2"], default_for: ["bot-2"], send_mode: "draft_only" }));
   assert.deepEqual(back.bot, { mode: "some", ids: [ATLAS, "bot-2"] });
   assert.equal(back.sendMode, "draft_only");
+});
+
+test("connecting an existing inbox needs its address, names the account after it and creates nothing", () => {
+  const base = {
+    ...emptyAgentmailForm(),
+    mode: "connect" as const,
+    apiKey: "am_us_inbox_abcdefgh",
+    bot: { mode: "some" as const, ids: [ATLAS] }
+  };
+  assert.deepEqual(validateAgentmailForm(base), ["inbox"]);
+  assert.deepEqual(validateAgentmailForm({ ...base, inbox: "praxi agentmail.to" }), ["inbox"]);
+  const ok = { ...base, inbox: " praxi@agentmail.to " };
+  assert.deepEqual(validateAgentmailForm(ok), []);
+  // The name hint is a create-only field: a leftover hint never blocks a connect.
+  assert.deepEqual(validateAgentmailForm({ ...ok, nameHint: "-bad" }), []);
+  const input = toAgentmailInput(ok, []);
+  assert.equal(input.provider, "agentmail");
+  assert.equal(input.inbox, "praxi@agentmail.to");
+  assert.equal(input.name, "agentmail-praxi");
+  assert.equal(input.api_key, "am_us_inbox_abcdefgh");
+  assert.equal("name_hint" in input, false);
+  // A create request carries no inbox.
+  assert.equal("inbox" in toAgentmailInput({ ...ok, mode: "create", nameHint: "atlas" }, []), false);
+});
+
+test("an inbox-scoped key, or a provider refusal, points to the existing-inbox mode", () => {
+  assert.equal(isInboxScopedKey(" am_us_inbox_abcdefgh "), true);
+  assert.equal(isInboxScopedKey("am_us_abcdefgh"), false);
+  const refused = new ApiError(502, "email_provider_error", "the API key is not allowed to do this");
+  assert.equal(suggestsConnectExisting(refused), true);
+  assert.equal(
+    suggestsConnectExisting(new ApiError(502, "email_provider_error", "the provider rejected the API key")),
+    false
+  );
+  assert.equal(suggestsConnectExisting(new Error("not allowed")), false);
+});
+
+test("connecting an existing inbox on the mock keeps its address and never returns the key", async () => {
+  const api = new MockApiClient();
+  const created = await api.createEmailAccount(
+    toAgentmailInput(
+      {
+        apiKey: "am_us_inbox_abcdefgh",
+        nameHint: "",
+        mode: "connect",
+        inbox: "praxi@agentmail.to",
+        bot: { mode: "some", ids: [ATLAS] }
+      },
+      []
+    )
+  );
+  assert.equal(created.address, "praxi@agentmail.to");
+  assert.equal(created.inbox_id, "praxi@agentmail.to");
+  assert.equal(JSON.stringify(created).includes("am_us_inbox_abcdefgh"), false);
 });

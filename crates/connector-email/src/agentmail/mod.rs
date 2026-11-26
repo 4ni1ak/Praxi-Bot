@@ -214,6 +214,34 @@ impl AgentMailProvider {
         Ok(Self { client, key, inbox })
     }
 
+    /// Look up the inbox this provider is bound to (`GET /v0/inboxes/{id}`):
+    /// an authenticated read that creates nothing, so it works with an
+    /// inbox-scoped key as well as an organization key. Used to connect an
+    /// inbox that already exists; the answer's address is the one to use.
+    ///
+    /// # Errors
+    /// [`EmailError::NotFound`] when the key sees no such inbox;
+    /// [`ProviderError::Forbidden`] / [`ProviderError::Auth`] for a key that may
+    /// not read it; [`ProviderError::BadResponse`] for an answer that is not an
+    /// inbox.
+    pub async fn get_inbox(&self) -> Result<InboxInfo, EmailError> {
+        let inbox = self.inbox_id()?;
+        let value = self
+            .call(Method::GET, &["v0", "inboxes", inbox], &[], None, &[])
+            .await?;
+        let wire: InboxWire = parse(value)?;
+        let well_formed = check_id(&wire.inbox_id, "inbox id").is_ok()
+            && wire.email.len() <= crate::config::MAX_LOGIN_LEN
+            && wire.email.parse::<email_address::EmailAddress>().is_ok();
+        if !well_formed {
+            return Err(ProviderError::BadResponse.into());
+        }
+        Ok(InboxInfo {
+            inbox_id: wire.inbox_id,
+            address: wire.email,
+        })
+    }
+
     fn inbox_id(&self) -> Result<&str, EmailError> {
         self.inbox
             .as_ref()

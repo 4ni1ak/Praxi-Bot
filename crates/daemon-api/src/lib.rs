@@ -33,6 +33,7 @@ pub mod doctor;
 mod doctor_routes;
 pub mod dto;
 pub mod email;
+mod email_bot_tools;
 pub mod email_channel;
 mod email_routes;
 pub mod error;

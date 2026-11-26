@@ -144,8 +144,9 @@ pub struct EmailAccountInput {
     /// reuse when `password` is left out.
     pub name: String,
     /// Kind of mailbox; default `imap_smtp`. For `agentmail` the inbox is
-    /// created at the provider (its address is returned); `address`, `imap`
-    /// and `smtp` are not used and `api_key` is required.
+    /// created at the provider (its address is returned), or, with `inbox`, an
+    /// existing one is connected; `address`, `imap` and `smtp` are not used and
+    /// `api_key` is required.
     #[serde(default)]
     pub provider: EmailProviderKind,
     /// Address mail is sent from (`imap_smtp`).
@@ -164,6 +165,13 @@ pub struct EmailAccountInput {
     /// to the secret store and is never returned or logged.
     #[serde(default)]
     pub api_key: Option<String>,
+    /// Connect an inbox that already exists instead of creating one
+    /// (`agentmail`): its address or id at the provider. For an inbox-scoped
+    /// key (`am_us_inbox_...`), which cannot create inboxes, and for anyone who
+    /// already made the address in the provider's console. The key is checked
+    /// with a read of that inbox; nothing is created.
+    #[serde(default)]
+    pub inbox: Option<String>,
     /// Hint for the local part of a new `agentmail` address.
     #[serde(default)]
     pub name_hint: Option<String>,

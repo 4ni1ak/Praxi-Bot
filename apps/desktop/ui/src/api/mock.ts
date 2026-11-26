@@ -3000,7 +3000,8 @@ export class MockApiClient extends ApiClient {
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, "-")
           .replace(/^-+|-+$/g, "");
-        const address = `${local || "bot"}@agentmail.to`;
+        // An existing inbox is connected as it is; nothing is made up for it.
+        const address = input.inbox?.trim() || `${local || "bot"}@agentmail.to`;
         const made: EmailAccount = {
           name: input.name,
           provider: "agentmail",

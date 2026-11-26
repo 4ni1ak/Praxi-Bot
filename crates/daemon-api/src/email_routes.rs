@@ -13,6 +13,7 @@ use crate::email::{
     EmailMessageDto, EmailOptOutDto, EmailOptOutInput, EmailProviderKind, EmailSendLogDto,
     EmailSendTestResponse, EmailTestReport,
 };
+use crate::email_bot_tools;
 use crate::error::{ApiError, ErrorBody};
 use crate::mcp_routes::MAX_BOT_ID_LEN;
 use crate::routes::ApiJson;
@@ -20,6 +21,8 @@ use protocol::BotId;
 
 /// Longest accepted password (bytes).
 const MAX_PASSWORD_BYTES: usize = 1024;
+/// Longest accepted existing-inbox address or id (bytes), as the provider's own limit.
+const MAX_INBOX_BYTES: usize = 320;
 
 impl From<EmailControlError> for ApiError {
     fn from(e: EmailControlError) -> Self {
@@ -79,6 +82,18 @@ fn check_input(s: &AppState, input: &mut EmailAccountInput) -> Result<(), ApiErr
     if let Some(k) = &input.api_key {
         check_api_key(k)?;
     }
+    if let Some(inbox) = &mut input.inbox {
+        let trimmed = inbox.trim();
+        if trimmed.is_empty() {
+            input.inbox = None;
+        } else if trimmed.len() > MAX_INBOX_BYTES || trimmed.chars().any(char::is_control) {
+            return Err(ApiError::bad_request(
+                "the inbox must be an address or id of at most 320 characters",
+            ));
+        } else {
+            *inbox = trimmed.to_owned();
+        }
+    }
     if let Some(bot) = input.bot.take() {
         input.bot = Some(canonical_bot(s, &bot)?);
     }
@@ -133,6 +148,8 @@ pub(crate) async fn create_email_account(
         let _ = control.remove(&created.name).await;
         return Err(e);
     }
+    // The owner just gave a bot this mailbox: it gets the mail tools with it.
+    email_bot_tools::sync(&s, &control.list(), &email_bot_tools::bots_of(&created));
     Ok((StatusCode::CREATED, Json(created)))
 }
 
@@ -173,11 +190,8 @@ pub(crate) async fn update_email_account(
             Some(_) => return Err(ApiError::bad_request("`bot` must be a string or null")),
         }
     }
-    let previous = control
-        .list()
-        .into_iter()
-        .find(|a| a.name == name)
-        .map(|a| a.bot);
+    let before = control.list().into_iter().find(|a| a.name == name);
+    let previous = before.as_ref().map(|a| a.bot.clone());
     let bound = patch
         .get("bot")
         .and_then(serde_json::Value::as_str)
@@ -214,6 +228,11 @@ pub(crate) async fn update_email_account(
                 return Err(error);
             }
         }
+        let mut affected = email_bot_tools::bots_of(&updated);
+        if let Some(before) = &before {
+            affected.extend(email_bot_tools::bots_of(before));
+        }
+        email_bot_tools::sync(&s, &control.list(), &affected);
         Ok(Json(updated))
     })
     .await
@@ -246,14 +265,21 @@ pub(crate) async fn delete_email_account(
     Query(q): Query<DeleteAccountQuery>,
 ) -> Result<StatusCode, ApiError> {
     let control = email(&s)?;
+    let before = control.list().into_iter().find(|a| a.name == name);
     let permit = crate::knowledge::worker_permit(s.data_dir())?;
     tokio::spawn(async move {
         let _knowledge_authority = crate::knowledge::email_authorities(&s, &name).await?;
         control.remove_account(&name, q.delete_inbox).await?;
+        let s2 = s.clone();
         crate::knowledge::blocking_with_permit(permit, move || {
-            crate::knowledge::revoke_email_sources(&s, &name)
+            crate::knowledge::revoke_email_sources(&s2, &name)
         })
         .await?;
+        // The bots that owned this mailbox lose the tools it gave them (and
+        // only those), unless another account still binds them.
+        if let Some(before) = &before {
+            email_bot_tools::sync(&s, &control.list(), &email_bot_tools::bots_of(before));
+        }
         Ok(StatusCode::NO_CONTENT)
     })
     .await
