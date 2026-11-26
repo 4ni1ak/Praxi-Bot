@@ -72,7 +72,7 @@ const FULL_BROWSE_REASON: &str = "mode.full.owner_browse";
 /// open, go back, click, type, select, press, select text, tabs and the batch. NOT
 /// `browser_eval` (a page script can send anything anywhere) and not the user's own computer
 /// (`pc_*`).
-const FULL_BROWSER_CALLS: [&str; 10] = [
+pub(crate) const FULL_BROWSER_CALLS: [&str; 10] = [
     "browser_open",
     "browser_back",
     "browser_click",
@@ -91,13 +91,19 @@ const FULL_BROWSER_CALLS: [&str; 10] = [
 /// or address carries a private word, a data shape or exceeds the budget. They fetch over HTTP
 /// with the tool's own address guard (private networks refused); they start no program and
 /// type nothing into a page.
-const FULL_WEB_READ_CALLS: [&str; 5] = [
+pub(crate) const FULL_WEB_READ_CALLS: [&str; 5] = [
     "web_search",
     "web_extract",
     "web_feed",
     "web_sitemap",
     "web_metadata",
 ];
+
+/// A shell command of this many characters or more is a payload, not a command: it asks after
+/// a page read.
+pub(crate) const SHELL_COMMAND_LIMIT: usize = 400;
+/// Most shell commands one run may start without a card after it read untrusted content.
+pub(crate) const SHELL_WAIVER_BUDGET: usize = 60;
 
 /// Longest `web_search` query a run that holds private data may send without a card, in
 /// characters (the tool accepts 400). Longer is a paragraph, not a query.
@@ -359,6 +365,9 @@ impl Shared {
         // Taint is kept on the top-level run so subagents spawned after a
         // tainted replay inherit it and no per-child entry has to be cleaned up.
         let root = self.root_run_id(ctx);
+        // A file the run writes after it read untrusted content may later be run by a
+        // waived shell command: remember it before anything else decides.
+        ctx.taint.lock().note_write(name, effect, category, input);
         // A browser call that names a profile other than the throw-away one may be signed in to
         // the owner's accounts: what the run reads from then on is private and cannot be compared.
         // The same for an address on this computer or its network (file:, localhost, LAN): a
@@ -658,6 +667,16 @@ impl Shared {
             return false;
         }
         owner_started_run(&self.storage, ctx.run_id, ctx.parent_run_id)
+    }
+
+    /// [`Self::pc_owner_started`] plus the owner's own paired Telegram chat: who may use the
+    /// Full level's waivers. A webhook, a mail, a schedule, an unpaired or key-less channel
+    /// message, a subagent or a helper is never the owner here.
+    pub(crate) fn full_owner_started(&self, ctx: &RunCtx) -> bool {
+        if ctx.initiator != InitiatorKind::Human || ctx.delegation().is_some() {
+            return false;
+        }
+        owner_started_run_from(&self.storage, ctx.run_id, ctx.parent_run_id, true)
     }
 
     /// Record that the autonomy mode, not an approval, let this call run: the
@@ -1132,6 +1151,9 @@ impl Shared {
     /// owner-started (schedule, webhook, mail, channel, a peer, a subagent, an external agent)
     /// is unchanged, and so are the Normal, Ask and custom levels.
     fn full_mode_waives(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
+        if name == "shell_run" {
+            return self.full_shell_waives(ctx, input);
+        }
         // A subagent (and a helper bot another bot called) keeps the old rule: it never inherits
         // the owner's Full autonomy from the run that started it.
         let web_read = FULL_WEB_READ_CALLS.contains(&name);
@@ -1139,7 +1161,7 @@ impl Shared {
             || ctx.delegation().is_some()
             || !(web_read || FULL_BROWSER_CALLS.contains(&name))
             || ctx.profile.permissions.mode() != AutonomyMode::Full
-            || !self.pc_owner_started(ctx)
+            || !self.full_owner_started(ctx)
         {
             return false;
         }
@@ -1241,6 +1263,103 @@ impl Shared {
         true
     }
 
+    /// The owner's Full level for `shell_run` (the bot's OWN host shell) after the run read
+    /// untrusted content. A program start after a page read always asked, because the page
+    /// might have chosen the command. In Full it runs without a card only when ALL hold:
+    ///
+    /// * an owner-started run ([`Self::full_owner_started`]: the desktop, the admin desktop or
+    ///   the owner's paired Telegram chat), not a subagent, not a helper, not a mail, webhook,
+    ///   schedule or external-agent run, on the bot's own host;
+    /// * the bot's level is Full, the policy already allowed the call, and the input is plain
+    ///   (`command`, `shell`, `cwd`, `timeout` only) with no hidden character and nothing the
+    ///   redactor would change;
+    /// * the WHOLE command line is on the strict allow-list of [`crate::shell_allow`]: it
+    ///   parses without any expansion, and every simple command in it is a read-only or
+    ///   local-build program from a fixed table whose flags and paths are checked (paths stay
+    ///   inside the bot's workspace). Anything else, including every network client, every
+    ///   interpreter wrapper, persistence and system change, asks. Fails closed on any doubt;
+    /// * an interpreter running a script, a build or test tool, `make` or `git` (they start code
+    ///   that lives in the project) is waived only while the run has NOT written or changed
+    ///   anything that could hold code AFTER it read untrusted content
+    ///   ([`taint::ContentTaint::code_written_after_untrusted`], recorded for file tools when
+    ///   they are decided and for redirects of waived commands): a script a page could have
+    ///   shaped never becomes a waived run;
+    /// * the run holds no private data of the owner, OR only private data whose text could be
+    ///   hashed and the command copies none of its words (private data that cannot be
+    ///   compared, or too much of it, asks);
+    /// * the run has not used up [`SHELL_WAIVER_BUDGET`] such commands.
+    ///
+    /// Residual (documented): a command the owner approved on a card runs as approved; the
+    /// files it writes are not tracked.
+    fn full_shell_waives(&self, ctx: &RunCtx, input: &Value) -> bool {
+        if ctx.parent_run_id.is_some()
+            || ctx.delegation().is_some()
+            || ctx.profile.permissions.mode() != AutonomyMode::Full
+            || !self.full_owner_started(ctx)
+            || !self.is_host_homed()
+            || !matches!(
+                ctx.resolved_computer.label,
+                ComputerLabel::Host | ComputerLabel::Browser
+            )
+        {
+            return false;
+        }
+        let Some(obj) = input.as_object() else {
+            return false;
+        };
+        if !obj
+            .keys()
+            .all(|k| matches!(k.as_str(), "command" | "shell" | "cwd" | "timeout"))
+        {
+            return false;
+        }
+        if obj
+            .get("shell")
+            .is_some_and(|s| !matches!(s.as_str(), Some("powershell" | "cmd" | "bash" | "sh")))
+        {
+            return false;
+        }
+        let Some(command) = obj.get("command").and_then(Value::as_str) else {
+            return false;
+        };
+        let cwd = obj.get("cwd").and_then(Value::as_str).unwrap_or_default();
+        if command.chars().count() >= SHELL_COMMAND_LIMIT
+            || crate::full_autonomy::text_carries_data(command)
+            || taint::input_forbids_egress(input)
+            || taint::input_needs_a_card_to_show(input)
+        {
+            return false;
+        }
+        let Some(workspace) = self.bot_workspace_dir(ctx.bot_id) else {
+            return false;
+        };
+        let Some(plan) = crate::shell_allow::plan(command, cwd, &workspace) else {
+            return false;
+        };
+        if let Some(r) = &self.cfg.redactor {
+            let mut shown = input.clone();
+            if crate::shared::redact_value(r, &mut shown) {
+                return false;
+            }
+        }
+        let owner_words = self.owner_words(ctx);
+        let mut taint = ctx.taint.lock();
+        // What the command writes is remembered even when this call still asks.
+        taint.note_redirect_writes(&plan.writes);
+        if plan.runs_project_code && taint.code_written_after_untrusted {
+            return false;
+        }
+        if taint.private_source && (taint.seen.unhashed || taint.seen.copied(command, &owner_words))
+        {
+            return false;
+        }
+        if taint.seen.shell_waived >= SHELL_WAIVER_BUDGET {
+            return false;
+        }
+        taint.seen.shell_waived += 1;
+        true
+    }
+
     /// A call that only the taint gate (not the policy, not an always-ask tool, not a floor)
     /// makes ask, on a bot whose level allows it: the card may offer "always for this chat".
     pub(crate) fn gate_grantable(
@@ -1315,7 +1434,7 @@ impl Shared {
     fn own_mail_waived(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
         if ctx.delegation().is_some()
             || ctx.profile.permissions.mode() != AutonomyMode::Full
-            || !self.pc_owner_started(ctx)
+            || !self.full_owner_started(ctx)
         {
             return false;
         }
@@ -3563,8 +3682,21 @@ fn note_gate(ctx: &RunCtx, req: &GateRequest) {
 /// Walks the parent chain; fails closed on storage errors and deep chains.
 pub(crate) fn owner_started_run(
     storage: &storage::Storage,
+    run_id: RunId,
+    parent: Option<RunId>,
+) -> bool {
+    owner_started_run_from(storage, run_id, parent, false)
+}
+
+/// [`owner_started_run`], optionally also accepting `telegram_owner`: the owner writing to
+/// their own bot from their paired Telegram chat (paired user id AND owner key, see the
+/// daemon's message route). Only the Full-level waivers accept it; reaching the user's own
+/// computer (`pc_*`) stays desktop / admin-desktop only.
+pub(crate) fn owner_started_run_from(
+    storage: &storage::Storage,
     mut run_id: RunId,
     mut parent: Option<RunId>,
+    owner_channel: bool,
 ) -> bool {
     for _ in 0..8 {
         let Some(p) = parent else { break };
@@ -3580,9 +3712,10 @@ pub(crate) fn owner_started_run(
     match storage.run_user_message_sources(run_id) {
         Ok(sources) => {
             !sources.is_empty()
-                && sources
-                    .iter()
-                    .all(|s| matches!(s.as_str(), "owner" | "peer_admin"))
+                && sources.iter().all(|s| {
+                    matches!(s.as_str(), "owner" | "peer_admin")
+                        || (owner_channel && s == "telegram_owner")
+                })
         }
         Err(_) => false,
     }

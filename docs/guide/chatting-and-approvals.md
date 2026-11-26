@@ -282,7 +282,7 @@ read anything behaves as before.
 
 The **Full** preset ("Tam") is for people who want the bot to do the work, not to
 ask about every page. In a run that **you started yourself** (typed in the
-desktop app, or sent from your own admin desktop), reading web pages does not
+desktop app, sent from your own admin desktop, or written from **your own paired Telegram chat** to your bot), reading web pages does not
 make the bot ask again for each further step in the managed browser **or in the
 public-web read tools** (`web_search`, `web_extract`, `web_feed`, `web_sitemap`,
 `web_metadata`): a search, a page, a feed or a sitemap on a new site follows the
@@ -301,7 +301,10 @@ so the bot can type them into forms.
 | Private data in the run and it read a web page, but nothing in the address or text comes from the private data | No |
 | Types a card-like number or something shaped like a key into a page, in any run | **Yes** |
 | Types an owner-stored secret (`browser_fill` with `secret`) | **Yes**, every time |
-| Spends money, deletes something on the never-list, sends mail or a message through the mail tools, publishes, runs a page script (`browser_eval`), starts a program or shell command after it read an untrusted page, uses a named browser profile, opens a local or private-network address | **Yes** |
+| A shell command on the bot's own host computer after it read a page that is **entirely on the allow-list** (read-only tools such as `ls`, `cat`, `grep`, `git status`, and the local build and test tools `cargo build`, `npm test`, `make`, `python build.py`, with every path inside the bot's workspace), when the run holds no private data, or only private data whose words the command does not copy; at most 60 such commands per run | No |
+| Any other shell command after a page read: a network client or a tool that opens an address (`curl`, `start`, `ssh`, `git push`, `pip install`), anything that changes the system (`schtasks`, `reg add`, `taskkill`), a wrapper or interpreter (`cmd /c`, `powershell`, `python -c`, `sh`), quotes inside a word, `$`, `%`, `^`, backticks, a path outside the workspace, a command line of 400 characters or more, or a private word; or the run holds private data that cannot be compared | **Yes** |
+| A script, build or test (`bash x.sh`, `python build.py`, `npm test`, `cargo build`, `make`) after the bot **wrote or changed a file that could hold code after it had read a page** (a plain `.md` or `.txt` note does not count) | **Yes** |
+| Spends money, deletes something on the never-list, sends mail or a message through the mail tools, publishes, runs a page script (`browser_eval`), starts a program on your own computer (`pc_*`) or in a run that is not yours, uses a named browser profile, opens a local or private-network address | **Yes** |
 
 Why this is safe enough: a site is never added to "yours" because the bot went there,
 only because you named it or approved it. A run without private data has nothing a
@@ -310,7 +313,7 @@ in-memory record (salted hashes, never the text, dropped with the run) of the pr
 words it read, and a call that repeats one asks. Floors, always-ask tools (mail
 sending among them: it keeps asking until the written mail policy exists) and the
 block rules are decided before this rule and are untouched. A run that is **not**
-started by you (a schedule, a webhook, an incoming mail, a channel, a paired device
+started by you (a schedule, a webhook, an incoming mail, a channel message that is not from your own paired Telegram chat with your owner key, a paired device
 that is not your admin desktop, a subagent or a helper bot, an external agent) keeps the old rule
 and its one-time cards, and the Normal level and custom levels are unchanged.
 
@@ -336,8 +339,10 @@ long multi-step instructions less reliably. The bot panel shows a hint when a
 bot on the Full level runs on such a model.
 
 **What still asks in the Full level.** Starting a program or shell command after
-the run read a web page (a page must not choose a command) always asks, and so do
-the hard stops above. A run that came in through **Telegram** (or any channel, the
+the run read a web page (a page must not choose a command) asks unless the whole
+command line is on the strict allow-list described above, and so do the hard
+stops above. The full list, with the reason for each row, is in
+[Security](security.md#what-is-still-asked-in-the-full-level). A run that came in through **Telegram** (or any channel, the
 local API or a paired device that is not your admin desktop) is not owner-started
 by this rule: its web and browser steps keep the one-time cards. That is the
 current state, not a promise about the future.

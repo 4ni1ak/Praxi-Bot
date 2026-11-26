@@ -311,6 +311,8 @@ pub(crate) struct SeenText {
     pub(crate) unhashed: bool,
     /// Decoded characters this run already sent to places the owner did not name.
     pub(crate) sent: usize,
+    /// Shell commands this run started without a card after reading untrusted content.
+    pub(crate) shell_waived: usize,
 }
 
 impl SeenText {
@@ -341,6 +343,7 @@ impl SeenText {
         self.overflow |= other.overflow || self.hashes.len() > MAX_SEEN;
         self.unhashed |= other.unhashed;
         self.sent = self.sent.max(other.sent);
+        self.shell_waived = self.shell_waived.max(other.shell_waived);
     }
 
     /// `text` holds a word (6+ characters) or a run of three words the run read. Words the owner
