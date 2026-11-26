@@ -15,6 +15,7 @@ import {
   RUN_INTERRUPTED,
   restorePending,
   runText,
+  splitTextAtMessages,
   type ToolItem
 } from "./timeline.ts";
 
@@ -599,4 +600,28 @@ test("reconcile closes a run the daemon no longer lists as live, so its step sto
   assert.equal((gone.items[0] as ToolItem).status, "expired");
   // a run younger than the poll is never judged
   assert.equal(reconcile(s, new Set(), new Set(), 500).runs[RUN].finishedMs, undefined);
+});
+
+test("text that grows after the owner wrote a message starts a new bubble", () => {
+  let s = started();
+  s = feed(s, { type: "message_delta", run_id: RUN, text: "The essay. " }, 1000);
+  s = feed(s, { type: "message_delta", run_id: RUN, text: "More essay. " }, 1500);
+  s = feed(s, { type: "message_delta", run_id: RUN, text: "Workspace contents: a.txt" }, 3000);
+  const run = s.runs[RUN];
+  assert.equal(run.items.length, 1);
+  const split = splitTextAtMessages(run, [2000]);
+  const texts = split.items.map((i) => (i.kind === "text" ? i.text : ""));
+  assert.deepEqual(texts, ["The essay. More essay. ", "Workspace contents: a.txt"]);
+  assert.notEqual(split.items[0].key, split.items[1].key);
+  // A message before the text started, or none at all, changes nothing.
+  assert.equal(splitTextAtMessages(run, [500]), run);
+  assert.equal(splitTextAtMessages(run, []), run);
+});
+
+test("late text of a stopped run is dropped", () => {
+  let s = started();
+  s = feed(s, { type: "message_delta", run_id: RUN, text: "Essay" });
+  s = feed(s, { type: "run_finished", run_id: RUN, error: "cancelled" } as DaemonEvent);
+  s = feed(s, { type: "message_delta", run_id: RUN, text: " late" });
+  assert.equal(runText(s.runs[RUN]), "Essay");
 });

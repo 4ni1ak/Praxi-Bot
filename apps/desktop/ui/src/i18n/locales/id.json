@@ -2022,6 +2022,7 @@
       "schedules": "Open schedules",
       "settings": "Open settings",
       "stop": "Stop the current run",
+      "unknown": "Perintah tidak ditemukan: /{{name}}. Ketik / untuk melihat daftar perintah.",
       "vault": "Open the vault"
     },
     "starters": {

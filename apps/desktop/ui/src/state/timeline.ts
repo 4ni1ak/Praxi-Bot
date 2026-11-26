@@ -20,7 +20,16 @@ export interface TextItem {
   key: string;
   ts: number;
   text: string;
+  /**
+   * Where the text grew over time: `offset` characters were already there when a delta arrived at
+   * `at` (coarse, one mark per `TEXT_MARK_GAP_MS`).  Lets the transcript start a new bubble where the
+   * owner wrote a message in the middle of a run (see `splitTextAtMessages`).
+   */
+  marks?: Array<{ at: number; offset: number }>;
 }
+
+/** Minimum time between two recorded growth marks of one text item. */
+export const TEXT_MARK_GAP_MS = 250;
 
 export interface ToolItem {
   kind: "tool";
@@ -373,13 +382,23 @@ function reduce(
       });
     case "message_delta":
       return withRun(state, e.run_id, ts, (r) => {
+        // Late text of a run the owner already stopped never lands in its bubble (or anywhere).
+        if (r.stopped && r.finishedMs !== undefined) {
+          return r;
+        }
         const last = r.items[r.items.length - 1];
         if (last?.kind === "text") {
+          const marks = last.marks ?? [];
+          const tail = marks[marks.length - 1]?.at ?? last.ts;
           return {
             ...r,
             items: [
               ...r.items.slice(0, -1),
-              { ...last, text: last.text + e.text }
+              {
+                ...last,
+                text: last.text + e.text,
+                marks: ts - tail >= TEXT_MARK_GAP_MS ? [...marks, { at: ts, offset: last.text.length }] : marks
+              }
             ]
           };
         }
@@ -1073,4 +1092,42 @@ export function runText(run: RunState): string {
     .filter((i): i is TextItem => i.kind === "text")
     .map((i) => i.text)
     .join("\n");
+}
+
+/**
+ * Start a new text bubble where the owner wrote a message while a run was still answering: text
+ * that grew after `messageTimes[i]` is the reply to that message, never part of the earlier
+ * bubble.  Returns the same run when nothing needs splitting (keeps cached rows valid).
+ */
+export function splitTextAtMessages(run: RunState, messageTimes: readonly number[]): RunState {
+  if (messageTimes.length === 0) return run;
+  let changed = false;
+  const items = run.items.flatMap((item): TimelineItem[] => {
+    if (item.kind !== "text" || !item.marks?.length) return [item];
+    const cuts = messageTimes
+      .filter((u) => u > item.ts)
+      .map((u) => item.marks?.find((m) => m.at > u))
+      .filter((m): m is { at: number; offset: number } => !!m && m.offset > 0 && m.offset < item.text.length);
+    const offsets = [...new Map(cuts.map((m) => [m.offset, m])).values()].sort((a, b) => a.offset - b.offset);
+    if (offsets.length === 0) return [item];
+    changed = true;
+    const out: TextItem[] = [];
+    let from = 0;
+    let first = true;
+    let start: { at: number; offset: number } | undefined;
+    for (const cut of [...offsets, undefined]) {
+      const to = cut?.offset ?? item.text.length;
+      out.push({
+        kind: "text",
+        key: first ? item.key : `${item.key}-after-${start?.offset ?? from}`,
+        ts: first ? item.ts : (start?.at ?? item.ts),
+        text: item.text.slice(from, to)
+      });
+      first = false;
+      from = to;
+      start = cut;
+    }
+    return out;
+  });
+  return changed ? { ...run, items } : run;
 }
