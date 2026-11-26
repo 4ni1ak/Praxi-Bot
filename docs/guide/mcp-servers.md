@@ -58,6 +58,18 @@ out keeps its previous value. `bots: null` means every bot.
   task also read something private; code outside the page and file transfers
   always ask. Only you can set it (config or the owner-only API). See
   [Security model, item 12a](security.md).
+- **A server that asks you something (elicitation).** While one of its tool
+  calls runs, a server may ask for input, for example an account name or a
+  choice. Praxi shows a form card in the chat and in Pending decisions, named
+  after the server; its text is the server's own and is shown as plain text.
+  Only simple forms are supported (text, e-mail, link, date, number, yes/no,
+  one choice from a list); anything else is declined. Nothing is filled in for
+  you. Praxi hands what you type to that server only, never to the bot, the
+  run's history or the logs (the bot still sees the server's tool result, as
+  always). Decline tells the server you will not answer, Cancel
+  dismisses the form; a form nobody answers expires with the approval timeout.
+  Only a chat you started at the desktop can show a form: a scheduled,
+  channel or background run declines at once.
 - **Who may use it:** `bots` is a list of bot ids (the bot's storage UUID, not
   its profile id), or omitted / `null` for every bot. An empty list `[]` means
   no bot at all, never every bot. A bot that is not listed does not see the
