@@ -13,7 +13,7 @@
 }
 
 .backdrop[data-panel="open"] {
-  right: min(calc(var(--live-panel-w, var(--space-0)) + var(--space-6)), 70%);
+  right: min(var(--live-panel-w, var(--space-0)), 70%);
 }
 
 /* Everything below the toolbar. The chat layer floats over it; in the large chat the picture's column
@@ -410,12 +410,18 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: safe center; /* a long explanation scrolls instead of being cut at the top */
   gap: var(--space-3);
   padding: var(--space-8);
   text-align: center;
   max-width: calc(var(--space-10) * 9);
+  max-height: 100%;
+  overflow-y: auto;
   color: var(--color-text-secondary);
+}
+
+.emptyStage > * {
+  flex-shrink: 0;
 }
 
 .emptyIcon {

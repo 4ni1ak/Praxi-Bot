@@ -52,7 +52,7 @@ import {
 } from "../lib/liveChatDock";
 import { layerStack } from "../lib/modalStack";
 import { noScreenCode } from "../lib/computerLabel";
-import { explainScreen } from "../lib/screenReason";
+import { explainScreen, screenPlace } from "../lib/screenReason";
 import { CopyBlock } from "./settings/HomeCards";
 import { useDaemon } from "../state/DaemonContext";
 import { LiveViewerChat, type LiveChatSlots } from "./LiveViewerChat";
@@ -507,10 +507,19 @@ export function LiveViewer({
     state.reason ?? targetSummary?.reason ?? (selectedTarget ? null : "unavailable");
 
   // "Unavailable" on its own says nothing: name the real cause (no desktop session, ...) and the fix.
-  const screenWhy = explainScreen(
-    selectedTarget ? unavailableReason : null,
-    noScreenCode(availability)
+  // A start that timed out is the same "no screen" cause as the host's own timed_out note: one wording.
+  const startTimedOut = !frameUrl && viewFailure === "timeout";
+  // A target that can be watched but has no picture yet is simply starting: nothing is wrong.
+  const startingScreen =
+    Boolean(selectedTarget) && Boolean(targetSummary?.available) && !frameUrl && !viewFailure && !state.disconnected;
+  const screenWhy = startingScreen ? null : explainScreen(
+    selectedTarget ? (startTimedOut ? "timeout" : unavailableReason) : null,
+    noScreenCode(availability),
+    screenPlace(isLocalClient)
   );
+  const stageExplains = !frameUrl && screenWhy !== null;
+  // There is a picture to look at and steer; without one "Take control" would control nothing.
+  const hasStream = Boolean(frameUrl && state.latestFrame) && Boolean(targetSummary?.available);
 
   const canTakeover =
     Boolean(selectedTarget) &&
@@ -521,7 +530,7 @@ export function LiveViewer({
     state.viewState === "watch" &&
     state.pendingRequest === null;
 
-  takeoverRef.current = canTakeover ? () => void requestTakeover() : null;
+  takeoverRef.current = canTakeover && hasStream ? () => void requestTakeover() : null;
 
   const announceKey = viewerAnnouncementKey({
     hasTarget: Boolean(selectedTarget) && Boolean(targetSummary?.available),
@@ -641,12 +650,12 @@ export function LiveViewer({
       <div className={styles.body} data-chat={hasChat ? chatMode : "none"}>
         <div className={styles.mainCol}>
           <div className={styles.statusSlot}>
-            {otherOwner || state.lastError || viewFailure || state.disconnected || state.needsResync || state.streamStale ? (
+            {otherOwner || state.lastError || (viewFailure && !(stageExplains && startTimedOut)) || state.disconnected || state.needsResync || state.streamStale ? (
               <div className={styles.statusLine} role="status">
                 {otherOwner ? (
                   <strong>{t("liveView.otherOwner", { owner: otherOwner })}</strong>
                 ) : null}
-                {state.lastError || viewFailure ? (
+                {state.lastError || (viewFailure && !(stageExplains && startTimedOut)) ? (
                   <span className={styles.errorInline} role="alert">
                     {liveViewErrorText(state.lastError ?? viewFailure)}
                     {viewFailure && !frameUrl ? (
@@ -767,8 +776,10 @@ export function LiveViewer({
                       ? `${t(`liveView.kind.${selectedTarget.kind}`)} · ${selectedTarget.host_id}`
                       : t("botPanel.computer")}
                   </p>
-                  <p className={styles.emptyBody}>
-                    {screenWhy
+                  <p className={styles.emptyBody} role={startingScreen ? "status" : undefined}>
+                    {startingScreen
+                      ? t("computerCard.hint.starting")
+                      : screenWhy
                       ? t("liveView.panelSummary.noScreenReason", { detail: t(screenWhy.detailKey) })
                       : unavailableReason
                         ? t(`liveView.reasons.${unavailableReason}`, {
@@ -780,16 +791,22 @@ export function LiveViewer({
                     <div className={styles.emptyBody} data-testid="live-viewer-fix">
                       <p>{t(screenWhy.fixKey)}</p>
                       {screenWhy.command ? <CopyBlock text={screenWhy.command} /> : null}
+                      {screenWhy.extraKey ? <p>{t(screenWhy.extraKey)}</p> : null}
                     </div>
                   ) : null}
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => void refreshTargets()}
-                  >
-                    <RefreshCw />
-                    <span>{t("liveView.refresh")}</span>
-                  </Button>
+                  {startingScreen ? null : (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        retryStream();
+                        void refreshTargets();
+                      }}
+                    >
+                      <RefreshCw />
+                      <span>{t("liveView.refresh")}</span>
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
@@ -967,21 +984,25 @@ export function LiveViewer({
                     ? t("liveView.connectionLost")
                     : otherOwner
                       ? t("liveView.otherOwner", { owner: otherOwner })
-                      : selectedTarget && targetSummary?.available
-                        ? t("liveView.states.watch")
-                        : t("liveView.states.unavailable")}
+                      : startingScreen
+                        ? t("computerCard.hint.starting")
+                        : selectedTarget && targetSummary?.available
+                          ? t("liveView.states.watch")
+                          : t("liveView.states.unavailable")}
                 </span>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  disabled={!canTakeover}
-                  data-testid="live-view-takeover"
-                  title={t("liveView.toolbar.takeoverHint")}
-                  aria-keyshortcuts="Control+Shift+D"
-                  onClick={() => void requestTakeover()}
-                >
-                  {t("liveView.watchAction")}
-                </Button>
+                {hasStream ? (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={!canTakeover}
+                    data-testid="live-view-takeover"
+                    title={t("liveView.toolbar.takeoverHint")}
+                    aria-keyshortcuts="Control+Shift+D"
+                    onClick={() => void requestTakeover()}
+                  >
+                    {t("liveView.watchAction")}
+                  </Button>
+                ) : null}
                 {actions.includes("clear_foreign_pause") && foreignPaused ? (
                   <Button
                     variant="secondary"
