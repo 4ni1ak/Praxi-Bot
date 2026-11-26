@@ -657,6 +657,14 @@ fn try_link_dir(link: &std::path::Path, target: &std::path::Path) -> bool {
     }
 }
 
+/// Remove a link made by `try_link_dir` (a symlink is a file on Unix, a junction a directory).
+fn remove_dir_link(link: &std::path::Path) {
+    #[cfg(unix)]
+    std::fs::remove_file(link).unwrap();
+    #[cfg(windows)]
+    std::fs::remove_dir(link).unwrap();
+}
+
 fn force_mtime(path: &std::path::Path, to: std::time::SystemTime) {
     std::fs::OpenOptions::new()
         .write(true)
@@ -689,13 +697,13 @@ fn workspace_file_read_refuses_outside_file_opened_then_path_restored_with_forge
         eprintln!("SKIPPED: this machine does not allow creating directory links/junctions");
         return;
     }
-    std::fs::remove_dir(&probe).unwrap();
+    remove_dir_link(&probe);
     let before = || {
         std::fs::rename(ws.path().join("notes"), ws.path().join("notes-real")).unwrap();
         assert!(try_link_dir(&ws.path().join("notes"), outside.path()));
     };
     let after = || {
-        std::fs::remove_dir(ws.path().join("notes")).unwrap();
+        remove_dir_link(&ws.path().join("notes"));
         std::fs::rename(ws.path().join("notes-real"), ws.path().join("notes")).unwrap();
     };
     let err = crate::workspace_routes::read_workspace_file_checked_with_hooks(
