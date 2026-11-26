@@ -2320,7 +2320,11 @@ fn compute_next_runs(sc: &Schedule, next_run_at: Option<i64>, is_moved: bool) ->
 /// The schedule `id`, when its bot belongs to the local user.
 fn schedule_of_user(s: &AppState, raw: &str) -> Result<Schedule, ApiError> {
     let sid = TaskId(id(raw)?);
-    s.schedule_store()?
+    let store = s.schedule_store()?;
+    if store.registry(sid)?.is_some() {
+        return Err(ApiError::not_found("schedule"));
+    }
+    store
         .get(sid)?
         .filter(|sc| s.bot_of_user(sc.bot_id).is_ok())
         .ok_or_else(|| ApiError::not_found(format!("schedule {sid}")))
@@ -2517,7 +2521,7 @@ pub(crate) async fn list_schedules(
 ) -> Result<Json<Vec<ScheduleDto>>, ApiError> {
     let mut out = Vec::new();
     for sc in s.schedule_store()?.list()? {
-        if s.bot_of_user(sc.bot_id).is_ok() {
+        if s.bot_of_user(sc.bot_id).is_ok() && s.schedule_store()?.registry(sc.id)?.is_none() {
             out.push(dto_of(&s, &sc)?);
         }
     }

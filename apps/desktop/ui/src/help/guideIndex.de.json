@@ -300,6 +300,12 @@
     "summary": "Sprich von deinem Handy aus mit deinen Bots. Der Daemon betreibt einen Telegram-Kanal: Du schreibst deinem Bot,"
   },
   {
+    "doc": "de/triggers.md",
+    "title": "Wenn etwas passiert",
+    "headings": [],
+    "summary": "Öffnen Sie im Bot-Panel Automatisierung → Wenn etwas passiert. Fügen Sie"
+  },
+  {
     "doc": "de/troubleshooting.md",
     "title": "Fehlerbehebung (technisch)",
     "headings": [
