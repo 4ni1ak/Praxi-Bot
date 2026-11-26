@@ -65,6 +65,11 @@ export interface IncomingWebhookCreated {
   secret: string;
 }
 
+export interface IncomingWebhookRotated {
+  webhook: IncomingWebhook;
+  secret: string;
+}
+
 export interface IncomingWebhookInput {
   name: string;
   instruction?: string;
