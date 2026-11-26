@@ -80,4 +80,4 @@ Her çağrı `X-Webhook-Timestamp` başlığında zamanı ve `X-Signature-256: s
 
 **Test gönder**, uygulamadan bir çalışma başlatır. Dışarıdaki hız sınırını kullanmaz.
 
-Daha fazlası: [Gelen webhook'lar](../incoming-webhooks.md).
+Daha fazlası: [Gelen webhook'lar](incoming-webhooks.md).

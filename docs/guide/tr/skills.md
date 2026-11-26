@@ -82,7 +82,7 @@ Kurallar:
 Geçersiz beceri dosyaları, bir not düşülerek atlanır. Bu bir kesinti yaratmaz.
 
 Beceriler yönlendiriciyi de besler: karar merdiveninin (K2) anahtar sözcük ve embedding araması,
-bir istek için bir beceri önerebilir (bkz. [İş akışları](../workflows.md)).
+bir istek için bir beceri önerebilir (bkz. [İş akışları](workflows.md)).
 
 ## Beceri yükle
 
@@ -154,7 +154,7 @@ her beceri için aynı inceleme geçerlidir.
 
 Yerel sahip (eşleştirilmiş bir cihaz değil), daemonun API'si üzerinden ortak becerileri
 oluşturabilir, içe aktarabilir, güncelleyebilir ve silebilir. Bkz.
-[Ortak becerileri yerel uygulamadan yönetmek](../skill-management-api.md).
+[Ortak becerileri yerel uygulamadan yönetmek](skill-management-api.md).
 
 ## Bir bota hangi becerilerin verileceğini seçmek
 

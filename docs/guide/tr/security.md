@@ -599,7 +599,7 @@ bellek, çökme dökümlerinden ya da takas alanından hariç tutulmaz.
   ve özel ağ URL'lerini (yönlendirmeler ve alt kaynaklar dahil) engeller, `browser_eval` ile
   parola alanı girdisini reddeder, döndürülen metni maskeler ve sunucu denetim kaydı yazılamazsa
   yürütmeyi engeller. Yerel onaylar ve izinler `server:<key>` kapsamına alınır. Bkz.
-  [Eşleşmiş bir sunucuyu botun tarayıcı bilgisayarı olarak kullanmak](../remote-host.md).
+  [Eşleşmiş bir sunucuyu botun tarayıcı bilgisayarı olarak kullanmak](remote-host.md).
 
 ### Asistanın bir kimlik bilgisi istemesine izin vermek (deneysel, varsayılan olarak kapalı)
 

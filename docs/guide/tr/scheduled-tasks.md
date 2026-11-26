@@ -46,7 +46,7 @@ Takvim ifadeleri, `--tz` ile verdiğin saat dilimini kullanır. Vermezsen UTC ku
 CLI, bota bir **istem** gönderen zamanlamalar oluşturur. API üzerinden (dolayısıyla masaüstü
 uygulamasında da) bir zamanlamanın yükü şunlar da olabilir:
 
-- bir **iş akışı** (modelsiz yeniden oynatılır, bkz. [İş akışları](../workflows.md)) ya da
+- bir **iş akışı** (modelsiz yeniden oynatılır, bkz. [İş akışları](workflows.md)) ya da
 - doğrudan bir **araç** çağrısı.
 
 Bunların hepsi normal izin kapısından geçer.

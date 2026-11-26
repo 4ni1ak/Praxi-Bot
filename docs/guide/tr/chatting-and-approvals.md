@@ -36,7 +36,7 @@ Eller serbest konuşmak için masaüstü yazı alanındaki telefon düğmesine (
 
 ### Eğik çizgi komutları
 
-Yönlendirici açıkken `/stop` (geçerli çalışmayı durdur), `/new` (yeni sohbet başlat) ve `/workflow <name> key=value ...` (kayıtlı bir iş akışını doğrudan çalıştır, bkz. [İş akışları](../workflows.md)) modele ulaşmadan doğrudan işlenir.
+Yönlendirici açıkken `/stop` (geçerli çalışmayı durdur), `/new` (yeni sohbet başlat) ve `/workflow <name> key=value ...` (kayıtlı bir iş akışını doğrudan çalıştır, bkz. [İş akışları](workflows.md)) modele ulaşmadan doğrudan işlenir.
 
 Masaüstü yazı alanında bir mesajın başına `/` yazmak, uygulamanın kendi işlediği (bota hiç gönderilmeyen) yerel komutları da içeren bir komut menüsü açar: `/export` (açık sohbeti Markdown olarak indir) ve uygulama kısayolları `/help`, `/settings`, `/models`, `/apps` ile `/schedules`. Telegram'da ek komutlar var, bkz. [Telegram](telegram.md).
 

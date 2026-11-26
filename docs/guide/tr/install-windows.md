@@ -6,7 +6,7 @@ Bu sayfa Windows yükleyicisini ayrıntılı anlatır: neyi kurduğunu, verileri
 
 - Windows 10 ya da 11, 64 bit. Yönetici hakkı gerekmez, çünkü yükleyici yalnızca senin hesabın için kurar.
 - **WebView2.** Uygulama penceresini Microsoft Edge WebView2 çizer. Güncel Windows 10/11'de zaten vardır. Yoksa yükleyici küçük WebView2 kurulum aracını indirir (bir kez internet bağlantısı gerekir). Uygulama penceresi boş kalırsa Microsoft'tan "Evergreen Runtime"ı kur ve Praxi'yi yeniden başlat.
-- **SmartScreen.** Sürümler henüz kod imzalı değil, bu yüzden Windows "Windows bilgisayarınızı korudu" uyarısı gösterebilir. **Daha fazla bilgi**'yi, sonra **Yine de çalıştır**'ı seç. Güvende olmak için indirdiğin dosyayı çalıştırmadan önce denetle: SHA-256 değerini sürüm sayfasındaki `SHA256SUMS.txt` ile karşılaştır ve dosyayı kimin ürettiğini GitHub'a doğrulat. Tek bir betik ikisini de yapar, [İndirdiğini denetle](../verify-download.md) sayfasına bak.
+- **SmartScreen.** Sürümler henüz kod imzalı değil, bu yüzden Windows "Windows bilgisayarınızı korudu" uyarısı gösterebilir. **Daha fazla bilgi**'yi, sonra **Yine de çalıştır**'ı seç. Güvende olmak için indirdiğin dosyayı çalıştırmadan önce denetle: SHA-256 değerini sürüm sayfasındaki `SHA256SUMS.txt` ile karşılaştır ve dosyayı kimin ürettiğini GitHub'a doğrulat. Tek bir betik ikisini de yapar, [İndirdiğini denetle](verify-download.md) sayfasına bak.
 
 ## Neler kurulur
 

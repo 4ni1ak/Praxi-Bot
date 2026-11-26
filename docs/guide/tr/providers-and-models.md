@@ -65,7 +65,7 @@ Bir botun profili modelleri **rollerine** göre adlandırır (bkz.
 [Botlar ve profiller](bots-and-profiles.md)):
 
 - `executor`: ajan döngüsünü çalıştırır (zorunlu).
-- `light`: basit ilk turlar için isteğe bağlı model. Bkz. [model katmanlama](../model-tiering.md).
+- `light`: basit ilk turlar için isteğe bağlı model. Bkz. [model katmanlama](model-tiering.md).
 - `classifier`: karar merdiveninin kullandığı, isteğe bağlı küçük ve hızlı bir model.
 - `fallback`: yeniden denenebilir hatalardan ya da eksik yeteneklerden sonra devreye giren
   yedek modeller.
@@ -76,7 +76,7 @@ Bir botun profili modelleri **rollerine** göre adlandırır (bkz.
 modeldir.
 
 Model seçicinin görünen adları, öneri sırasını ve `model_details` bilgisini nereden aldığını
-görmek için [Model seçici bilgileri](../model-catalog.md) sayfasını oku.
+görmek için [Model seçici bilgileri](model-catalog.md) sayfasını oku.
 
 ## Gemini ücretsiz katmanı
 

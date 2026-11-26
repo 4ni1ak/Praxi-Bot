@@ -4,7 +4,7 @@ Praxi masaüstü uygulaması, fareye uzanmadan sohbetler arasında gezinmen, bot
 
 Bu listeyi uygulamada istediğin zaman da görebilirsin: hiçbir metin alanı odakta değilken **`?`** tuşuna bas, hesap menüsünden **Yardım**'ı seç ya da yazı alanına `/help` yaz. Bkz. [Klavye kısayolları ve “Yenilikler”](chatting-and-approvals.md).
 
-> **Komut satırı kullananlar:** Klavye kısayolları masaüstü uygulaması içindir. Praxi ile bir terminalden konuşuyorsan komut satırı karşılıkları (`bot chat`, `bot approve`, `bot status` vb.) için [CLI başvurusu](../cli-reference.md) sayfasına bak.
+> **Komut satırı kullananlar:** Klavye kısayolları masaüstü uygulaması içindir. Praxi ile bir terminalden konuşuyorsan komut satırı karşılıkları (`bot chat`, `bot approve`, `bot status` vb.) için [CLI başvurusu](cli-reference.md) sayfasına bak.
 
 ---
 
@@ -58,7 +58,7 @@ Tuş kombinasyonlarının yanında yazı alanında hazır eğik çizgi komutlar�
 - **Daemon komutları**:
   - `/stop`: Şu an etkin olan çalışmayı durdurur.
   - `/new`: Mevcut botla yepyeni bir sohbet başlatır.
-  - `/workflow <name> [key=value ...]`: Kayıtlı bir iş akışını dil modelini çağırmadan yeniden oynatır (bkz. [İş akışları](../workflows.md)).
+  - `/workflow <name> [key=value ...]`: Kayıtlı bir iş akışını dil modelini çağırmadan yeniden oynatır (bkz. [İş akışları](workflows.md)).
 - **Uygulama içi komutlar**:
   - `/export`: Açık sohbeti Markdown (`.md`) dosyası olarak indirir (bkz. [Mesajları kopyalama ve Markdown dışa aktarma](chatting-and-approvals.md)).
   - `/help`: Klavye kısayolları penceresini açar.
@@ -91,5 +91,5 @@ Bu kısayollar, açılır pencereler, açılır menüler ya da komut paleti aç�
 
 - [Erişilebilirlik](accessibility.md): klavyeyle gezinme sırası, atlama bağlantıları, ekran okuyucu bölgeleri ve canlı alanlar, odak halkaları, yüksek kontrastlı temalar ve azaltılmış hareket.
 - [Sohbet ve onaylar](chatting-and-approvals.md): turları, yönlendirmeyi, araç çağrılarını onaylamayı ve sohbetleri yönetmeyi öğren.
-- [CLI başvurusu](../cli-reference.md): Praxi'yi komut satırından kullanmak için komut başvurusu.
-- [İş akışları](../workflows.md): `/workflow` ile otomatik diziler oluştur ve çalıştır.
+- [CLI başvurusu](cli-reference.md): Praxi'yi komut satırından kullanmak için komut başvurusu.
+- [İş akışları](workflows.md): `/workflow` ile otomatik diziler oluştur ve çalıştır.

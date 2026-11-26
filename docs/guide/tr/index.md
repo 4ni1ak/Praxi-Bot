@@ -46,3 +46,22 @@ kılavuzda arama yapar ve sayfa çevrilmişse Türkçesini açar.
 | [MCP sunucuları](mcp-servers.md) | `mcp.toml` ayarları, güven ve izin kuralları, bot başına erişim ve OAuth. |
 | [Sesli arama modu](voice-call.md) | Eller serbest sesli sohbet, yazıya çevirme sağlayıcıları ve gizlilik. |
 | [Web araçları](web.md) | Web araması, sayfa okuma, ağ güvenliği, onaylar ve tarayıcı kullanımı. |
+| [CLI başvurusu](cli-reference.md) | `bot` komutunun seçenekleri, çıkış kodları ve alt komutları. |
+| [İş akışları: kaydet, yeniden oynat, hatırla](workflows.md) | Başarılı bir görevi iş akışı olarak kaydetme, model çağırmadan yeniden oynatma ve “hatırla”. |
+| [Windows indirmenin gerçek olduğunu denetle](verify-download.md) | İndirdiğin Windows yükleyicisinin projenin kendi derlemesi olduğunu denetleme. |
+| [Ana makine liderliğinin sınırları](host-leadership.md) | Ana makine liderliği devri, liderlikten düşürme ve zorlanan etkinleştirmenin sınırları. |
+| [Bot araçları](agent-tools.md) | Botun not, hafıza, saat ve hesap makinesi araçları ve güvenlik kuralları. |
+| [Linux sunucu paketlerini yayımlama](release-linux.md) | Linux sunucu paketlerinin ön sürüm ve son sürüm olarak yayımlanması. |
+| [Praxi'yi uzak sunucuda çalıştırma (VPS / VM)](remote-host.md) | Praxi'yi uzak bir Linux sunucuya kurma, eşleştirme, güvenlik duvarı ve sorun giderme. |
+| [Praxi'yi Docker'da çalıştırma (7/24 açık sunucu)](docker-host.md) | Praxi sunucusunu Docker konteynerinde çalıştırma, yükseltme, yedekleme ve güvenlik. |
+| [Praxi sunucusunu işletme](host-operations.md) | Kurulu sunucunun günlük işletimi: günlükler, yükseltme, geri alma, yedek ve eşleştirme. |
+| [Sunucu ekleme](servers.md) | Uygulamadan sunucu ekleme, tek komutla bağlama, güncelleme ve kaldırma. |
+| [Praxi'yi MCP sunucusu olarak kullanma](mcp-server.md) | Praxi botunu Claude Code, Cursor, VS Code gibi MCP istemcilerine açma. |
+| [E-posta entegrasyonu](email.md) | Botlara e-posta okutma, aratma, taslak yazdırma ve onayla gönderme. |
+| [Model seçici bilgileri](model-catalog.md) | Model seçicideki adların ve önerilerin nereden geldiği ve katalog güncelleme. |
+| [Bilgi gömme kurulumu](knowledge-embeddings.md) | Bilgi aramasında uzak ve yerel gömme kurulumu, sahip onayı ve sınırlar. |
+| [İsteğe bağlı model katmanlama](model-tiering.md) | Basit ilk turlar için hafif model ve yürütücü modele ne zaman geçildiği. |
+| [Ortak becerileri yerel uygulamadan yönetme](skill-management-api.md) | Ortak becerileri yerel API ile oluşturma, içe aktarma, güncelleme ve silme. |
+| [İsteğe bağlı karar havuzu](decision-pool.md) | Mesajlar hakkında küçük sorular soran isteğe bağlı karar havuzu. |
+| [LLM çağrı defteri](llm-call-ledger.md) | Her model çağrısının amacını kaydeden defter, kullanım özetleri ve API. |
+| [Kodlama CLI motorları](cli-engines.md) | Algılanan kodlama CLI motorları, kurulum, onay, güvenlik sınırları ve izin düzeyleri. |

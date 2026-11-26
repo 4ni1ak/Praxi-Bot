@@ -45,7 +45,7 @@ Masaüstü uygulamasının Ayarlar bölümünde bir **Tanılama** sayfası var. 
 
 ## 7/24 çalışan sunucu
 
-Günlükler, yeniden başlatma, yükseltme, yedek ve sunucu çevrimdışı / yavaş başlangıç / eş tablosu [Sunucu işletimi](../host-operations.md) sayfasında.
+Günlükler, yeniden başlatma, yükseltme, yedek ve sunucu çevrimdışı / yavaş başlangıç / eş tablosu [Sunucu işletimi](host-operations.md) sayfasında.
 
 ## `daemon not reachable at http://127.0.0.1:47821` (çıkış kodu 3)
 

@@ -87,5 +87,5 @@ Yeni yedekleri `bot backup create` ile oluştur.
 
 ## Ayrıca bak
 
-- [CLI başvurusu](../cli-reference.md)
-- [Ana makine işlemleri](../host-operations.md)
+- [CLI başvurusu](cli-reference.md)
+- [Ana makine işlemleri](host-operations.md)

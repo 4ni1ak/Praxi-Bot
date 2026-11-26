@@ -52,16 +52,16 @@ Kapta ayarlı bir parola yoktur. Kabuğunda `BACKUP_PASSPHRASE` değişkenini ta
 `docker exec -e BACKUP_PASSPHRASE praxi-host bot backup create
 /tmp/praxi.bak --passphrase-env BACKUP_PASSPHRASE`, ardından dosyayı `docker cp` ile dışarı al. Geri
 yüklemek için daemon'un durmuş olması gerekir (aynı birimde tek seferlik bir kap); bkz.
-[Docker ana makinesi](../docker-host.md).
+[Docker ana makinesi](docker-host.md).
 
 ### Bir botu nasıl daha hızlı ve ucuz yaparım?
-Küçük bir `classifier` modeli kullan, tekrarlayan işler için [iş akışları](../workflows.md) kaydet,
+Küçük bir `classifier` modeli kullan, tekrarlayan işler için [iş akışları](workflows.md) kaydet,
 iyi giden bir çalışmadan sonra **Bunu hatırla**'ya bas ve botun zorlandığı siteler ve uygulamalar için
 [beceriler](skills.md) yaz.
 
 ### Bir iş akışını göstererek kaydedebilir miyim?
 Henüz değil (**Planlandı**). Bugün iş akışları senin yazdığın TOML dosyalarıdır ve "Hatırla", başarılı bir
-çalışmanın yolunu önbelleğe alır. Bkz. [İş akışları](../workflows.md).
+çalışmanın yolunu önbelleğe alır. Bkz. [İş akışları](workflows.md).
 
 ### Uzun süreli hafızası var mı?
 Evet, ve varsayılan olarak açıktır (güvenli mod hariç). Bir turdan sonra bot, söylediklerin hakkında kısa notlar

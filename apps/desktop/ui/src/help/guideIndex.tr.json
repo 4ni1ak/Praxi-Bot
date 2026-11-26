@@ -16,6 +16,15 @@
     "summary": "Praxi yalnızca klavyeyle, ekran okuyucular gibi yardımcı teknolojilerle, açık, koyu ve yüksek kontrastlı temalarda, ayrıca azaltılmış hareket ya da azaltılmış saydamlık açıkken kullanılabilecek biçim…"
   },
   {
+    "doc": "tr/agent-tools.md",
+    "title": "Notlar",
+    "headings": [
+      "Hafıza araçları",
+      "Saat ve hesap makinesi"
+    ],
+    "summary": "Her botun, çalışmalar arasında kullandığı küçük bir yerleşik not defteri vardır: uzun bir görevin planı, bir kontrol listesi, yarın lazım olacak bilgiler. Araçlar: notes_read (notları listeler, birin…"
+  },
+  {
     "doc": "tr/apps.md",
     "title": "Uygulamaları bağlama (Uygulamalar penceresi)",
     "headings": [
@@ -153,6 +162,59 @@
     "summary": "Her konuşma, tek bir botla yapılan bir sohbettir. Sohbetler saklanır, yani sonra geri dönebilirsin. Bir mesaj bir çalışma başlatır (buna tur da denir): bot düşünür, araçları çağırır ve yanıtını akıta…"
   },
   {
+    "doc": "tr/cli-engines.md",
+    "title": "Kodlama CLI motorları",
+    "headings": [
+      "Güvenlik sınırı",
+      "Yerel kanıtlar ve kaynak belirtme",
+      "Bir CLI'yı kendi araçlarıyla çalıştırma (motor kipi)"
+    ],
+    "summary": "Ayarlar bölümündeki sağlayıcılar sayfası, daemon'ın çalıştığı bilgisayardaki CLI motorlarını listeler. Yeniden tara düğmesi, sınırlı sürüm ve kimlik doğrulama yoklamalarını yeniden çalıştırır. Algıla…"
+  },
+  {
+    "doc": "tr/cli-reference.md",
+    "title": "CLI başvurusu",
+    "headings": [
+      "Genel seçenekler",
+      "Çıkış kodları",
+      "Komutlar",
+      "bot setup",
+      "bot serve",
+      "bot logs",
+      "bot doctor",
+      "bot backup create | verify | restore",
+      "bot restore",
+      "bot status",
+      "bot proxy",
+      "bot chat",
+      "bot chats",
+      "bot bots",
+      "bot profile",
+      "bot import",
+      "bot approve",
+      "bot answer",
+      "bot grants",
+      "bot schedules",
+      "bot email",
+      "bot providers",
+      "bot catalog",
+      "bot secrets",
+      "bot channels telegram",
+      "bot channels discord",
+      "bot completions",
+      "bot man-pages",
+      "bot skills",
+      "bot token",
+      "bot mcp",
+      "bot host",
+      "bot workflow",
+      "bot self-update",
+      "Diğer ikili dosyalar",
+      "HTTP API"
+    ],
+    "summary": "Komutun adı bot. Bu sayfa apps/cli/src/main.rs içindeki komut tanımlarını izler. Elindeki"
+  },
+  {
     "doc": "tr/computer-use.md",
     "title": "Kendi bilgisayarında bilgisayar kullanımı",
     "headings": [
@@ -190,6 +252,16 @@
     "summary": "Praxi-Bot'taki her anahtarın ve uygulama bağlantısının bir Bağlantıyı dene düğmesi var: yapay zekâ"
   },
   {
+    "doc": "tr/decision-pool.md",
+    "title": "İsteğe bağlı karar havuzu",
+    "headings": [
+      "Gemini için hızlı anahtar",
+      "Havuzu yapılandır",
+      "Girdi, yanıtlar ve hesaplama"
+    ],
+    "summary": "Karar havuzu, bir kullanıcı mesajı hakkında küçük, yapılandırılmış sorular sormak için isteğe bağlı bir"
+  },
+  {
     "doc": "tr/discord.md",
     "title": "Discord",
     "headings": [
@@ -201,6 +273,43 @@
       "Bilmekte fayda var"
     ],
     "summary": "Botlarınızla Discord'dan konuşun: kendi bot hesabınızla özel mesajda ya da izin"
+  },
+  {
+    "doc": "tr/docker-host.md",
+    "title": "Praxi'yi Docker'da çalıştırma (7/24 açık sunucu)",
+    "headings": [
+      "İmaj çeşitleri",
+      "İlk çalıştırma",
+      "Masaüstü uygulamasını konteyner sunucusuyla eşleştirme",
+      "Yükseltmeler",
+      "Birimin yedekleri",
+      "Birimin tam anlık yedeği (yükseltmeden önce önerilir)",
+      "Taşınabilir durum yedeği (bot backup / bot restore)",
+      "Güvenlik notları",
+      "Daemon portunu asla herkese açma",
+      "Sahip anahtarına ve parolaya kim ulaşabilir",
+      "WITH_DESKTOP=1 için Chrome korumalı alanı (sandbox) ve --security-opt"
+    ],
+    "summary": "Bu rehber, packaging/docker/Dockerfile ve"
+  },
+  {
+    "doc": "tr/email.md",
+    "title": "E-posta entegrasyonu",
+    "headings": [
+      "E-postayı nasıl açarsın",
+      "1. Parolanı kaydet",
+      "2. Hesapları ayarla",
+      "3. Daemonu başlat",
+      "Dosya düzenlemeden hesapları yönetme",
+      "Bot başına bir posta kutusu",
+      "Kullanılabilir araçlar",
+      "Birden fazla posta kimliği",
+      "Kayıtlar: kendi adresi olan bir bot",
+      "Onaylar ve güvenlik",
+      "Güvenli gönderim (gönderim günlüğü, çıkış listesi, sınırlar)",
+      "Bota kendi adresini ver (AgentMail)"
+    ],
+    "summary": "Praxi, botlarının e-postaları okumasını, aramasını, taslak hazırlamasını ve göndermesini"
   },
   {
     "doc": "tr/embeddings.md",
@@ -294,6 +403,27 @@
     "summary": "Botlar Home Assistant varlıklarını okuyabilir ve servisleri çağırabilir (ışığı açmak, termostatı ayarlamak gibi)."
   },
   {
+    "doc": "tr/host-leadership.md",
+    "title": "Ana makine liderliğinin sınırları",
+    "headings": [],
+    "summary": "Liderlikten düşürme, otomatik kabulü kapatır ve zamanlayıcıyla kanalları durdurur. Daha önce kabul edilmiş çalışmalar (zamanlanmış, webhook, Telegram ya da sohbet kaynaklı) devam eder ve onaylı araçl…"
+  },
+  {
+    "doc": "tr/host-operations.md",
+    "title": "Praxi sunucusunu işletme",
+    "headings": [
+      "Günlükler",
+      "Başlatma, durdurma ve yeniden başlatma",
+      "Yükseltme ve onarım",
+      "Geri alma",
+      "Yedekleme ve geri yükleme",
+      "Masaüstü uygulamasını eşleştirme",
+      "Güvenlik duvarı ve portlar",
+      "Sorun giderme"
+    ],
+    "summary": "Her an açık duran Linux sunucunun (systemd, yetkisiz praxi kullanıcısı) günlük işletimi."
+  },
+  {
     "doc": "tr/incoming-webhooks.md",
     "title": "Gelen webhook'lar",
     "headings": [
@@ -367,6 +497,16 @@
     "summary": "Praxi masaüstü uygulaması, fareye uzanmadan sohbetler arasında gezinmen, bot çalışmalarını yönetmen, pencereleri açman ve mesaj yazman için klavye kısayolları sunar."
   },
   {
+    "doc": "tr/knowledge-embeddings.md",
+    "title": "Bilgi gömme kurulumu",
+    "headings": [
+      "Uzak sağlayıcılar ve sahip onayı",
+      "Yerel doğal profil kaydı",
+      "Veri kümesi sınırları ve doğrulama"
+    ],
+    "summary": "Bilgi araması, bir gömme sağlayıcısı olmadan da yerelde çalışır. Uzak gömmeler ve yerel doğal"
+  },
+  {
     "doc": "tr/linux-host.md",
     "title": "Linux sunucuda 7/24 çalışma (sanal ekran, güncelleme, kaldırma)",
     "headings": [
@@ -380,6 +520,16 @@
     "summary": "Bu sayfa, Praxi'yi gece gündüz açık duran bir Linux sunucuda (örneğin ücretsiz ARM Ubuntu VM) çalıştırmak için kopyala-yapıştır komutlarını verir. Sunucu ekle sihirbazı aynı kurulum betiğini çalıştır…"
   },
   {
+    "doc": "tr/llm-call-ledger.md",
+    "title": "LLM çağrı defteri",
+    "headings": [
+      "Denetim kayıtları",
+      "API",
+      "Değerlendirmeler"
+    ],
+    "summary": "Artık her model çağrısı bir amaç kaydeder. Buna yürütücü istekleri, koruma kapanış istekleri, K3"
+  },
+  {
     "doc": "tr/local-or-server.md",
     "title": "Bu bilgisayarda mı, sunucuda mı çalışsın",
     "headings": [
@@ -390,6 +540,28 @@
       "Sunucu yanıt vermiyorsa"
     ],
     "summary": "Botların, Praxi'yi kurduğun bilgisayarda çalışır. Praxi açıkken ve bilgisayarın uyanıkken çalışırlar."
+  },
+  {
+    "doc": "tr/mcp-server.md",
+    "title": "Praxi'yi MCP sunucusu olarak kullanma",
+    "headings": [
+      "Kimlik bilgisi oluştur ve bağlan",
+      "MCP istemcini bağla",
+      "Claude Code",
+      "Claude Desktop",
+      "Cursor",
+      "VS Code (GitHub Copilot, agent kipi)",
+      "Zed",
+      "Genel stdio istemcisi",
+      "Doğrulama durumu",
+      "Görev araçları",
+      "Bilgisayar araçları",
+      "Onaylar ve yetki",
+      "Sınırlar, iptal ve depolama",
+      "Sorun giderme",
+      "İstemcide sık görülen hatalar"
+    ],
+    "summary": "bot mcp serve, seçtiğin tek bir Praxi botunu dışarıdaki bir MCP istemcisine stdin/stdout"
   },
   {
     "doc": "tr/mcp-servers.md",
@@ -414,6 +586,32 @@
     "summary": "Başka dilde: English · Deutsch."
   },
   {
+    "doc": "tr/model-catalog.md",
+    "title": "Model seçici bilgileri",
+    "headings": [
+      "API",
+      "Derlenmiş veri ve bakım",
+      "Tazelik araçları ve eskime hatırlatmaları",
+      "Otomatik katalog güncellemeleri (uygulama güncellemesi gerekmez)",
+      "Bakımcılar: katalog yayımlama",
+      "Yerel modeller: donanım ve öneriler",
+      "Bir model listesinin sınırları",
+      "Sahibin doğrulaması"
+    ],
+    "summary": "Daemon, ayarlanmış her sağlayıcının döndürdüğü model kimliklerini açıklamalarla zenginleştirir."
+  },
+  {
+    "doc": "tr/model-tiering.md",
+    "title": "İsteğe bağlı model katmanlama",
+    "headings": [
+      "İlk model nasıl seçilir",
+      "Yürütücü ne zaman devralır",
+      "Temkinli bağlam sınırları",
+      "Doğrulama ve maliyet yorumu"
+    ],
+    "summary": "Model katmanlama, bir botun basit ilk turların küçük bir bölümü için ayarlanmış hafif bir model"
+  },
+  {
     "doc": "tr/providers-and-models.md",
     "title": "Sağlayıcılar ve modeller",
     "headings": [
@@ -431,6 +629,41 @@
     "title": "Hızlı yanıtlar",
     "headings": [],
     "summary": "İnsanların ilk sorduğu sorulara kısa yanıtlar. Daha uzun teknik sorular için SSS sayfasına bak."
+  },
+  {
+    "doc": "tr/release-linux.md",
+    "title": "Linux sunucu paketlerini yayımlama",
+    "headings": [
+      "Ön sürüm etiketleri (v0.1.0-alpha.1, -beta.N, -rc.N: herhangi bir sonek)",
+      "Son etiketler (v1.0.0, sonek yok)",
+      "Sürüm notları ve dosyalar",
+      "Sunucu hangi etiketi kurar"
+    ],
+    "summary": "Bir v etiketi göndermek Linux Server Packages iş akışını çalıştırır: yerel x86_64 ve aarch64 derlemeleri, derleme kökeni (attestation) ve bağımsız bir doğrulama. Sonrasında olanlar etikete bağlıdır."
+  },
+  {
+    "doc": "tr/remote-host.md",
+    "title": "Praxi'yi uzak sunucuda çalıştırma (VPS / VM)",
+    "headings": [
+      "Ne gerekir",
+      "1. Sürüm paketini al ve doğrula",
+      "2. Kurulum, çevrimdışı sunucular dahil",
+      "Çevrimdışı güven hazırlığı",
+      "Sürüm yöneticisi kurulumu ve deneme çalıştırması",
+      "3. Ayarla ve eşleştir",
+      "Sunucuyu masaüstü uygulamasından kullanma",
+      "Başka bir çekirdeğin bu makineyi denetlemesine izin verme (deneysel)",
+      "4. Güvenlik duvarı notları (Oracle Cloud)",
+      "5. Güvenlik",
+      "Tarayıcı kaynağı ve servis tanılama",
+      "Masaüstü oturumu, uygulama menüsü ve tarayıcı yaşam döngüsü",
+      "Küçük sunucu kaynak denetimi",
+      "Masaüstü, Xauthority, D-Bus ve ad alanları sorun giderme",
+      "Güncelleme, günlükler, geri alma ve kaldırma",
+      "Var olan bir sunucunun ekran boyutunu değiştirme",
+      "Sunucuyu işletme"
+    ],
+    "summary": "Bu rehber Praxi'yi ucuz bir Linux sunucuda her an açık bir sunucu olarak kurar. Örneğin Oracle Cloud"
   },
   {
     "doc": "tr/scheduled-tasks.md",
@@ -481,6 +714,24 @@
     "summary": "Bilgisayarını kullanabilen bir ajan güçlü bir şeydir, bu yüzden de cazip bir hedeftir:"
   },
   {
+    "doc": "tr/servers.md",
+    "title": "Sunucu ekleme",
+    "headings": [
+      "Üç seçenek",
+      "Bir sunucum var: tek komut",
+      "Sunucuda (yöneticiler için)",
+      "Sunucuya ihtiyacım var",
+      "Oracle Cloud ücretsiz katmanı, kısaca",
+      "Kiralanan sunucu",
+      "Evdeki boş bir bilgisayar",
+      "Gelişmiş: SSH ile bağlan",
+      "Sunucuların",
+      "Sunucuyu güncelleme",
+      "Bugünkü sınırlar"
+    ],
+    "summary": "Üstteki bilgisayar menüsünü aç ve Sunucu ekle seçeneğini seç. İlk ekran bunu iki cümleyle anlatır ve üç büyük seçenek sunar. Her adımda geri dönebilir ya da pencereyi kapatabilirsin. Yeniden açtığınd…"
+  },
+  {
     "doc": "tr/settings.md",
     "title": "Ayarlar",
     "headings": [
@@ -492,6 +743,16 @@
       "Küçük ekranlar"
     ],
     "summary": "Değişiklikler kendiliğinden kaydedilir: her değişiklikten sonra sağ üstteki etikette Kaydedildi yazar."
+  },
+  {
+    "doc": "tr/skill-management-api.md",
+    "title": "Ortak becerileri yerel uygulamadan yönetme",
+    "headings": [
+      "Yollar",
+      "İçe aktarma sınırları ve davranışı",
+      "Bir git deposundan kurma (önce önizle, sonra kur)"
+    ],
+    "summary": "Yerel sahip, daemon API'siyle ortak becerileri oluşturabilir, içe aktarabilir, güncelleyebilir ve"
   },
   {
     "doc": "tr/skills.md",
@@ -550,6 +811,23 @@
     "summary": "Önce bot status komutunu çalıştır. Arka plan servisinin (daemon) çalıştığını, anahtarının kabul edildiğini ve kaç onayın seni beklediğini gösterir. Terminal kullanmıyorsan önce sade dille yazılmış Sı…"
   },
   {
+    "doc": "tr/verify-download.md",
+    "title": "Windows indirmenin gerçek olduğunu denetle",
+    "headings": [
+      "Her sürümde neler var",
+      "Kolay yol: tek betik",
+      "Elle yol",
+      "1. Sağlama toplamı",
+      "2. Köken",
+      "Bilgisayarımdaki program kanıtlanmış olan mı?",
+      "Parça listesi (SBOM)",
+      "Bu denetimlerin sana söylemedikleri",
+      "Kendim yeniden derleyebilir miyim?",
+      "Bir denetim başarısız olursa"
+    ],
+    "summary": "İndirdiğin bir yükleyiciyi çalıştırmadan önce iki şeyi denetleyebilirsin:"
+  },
+  {
     "doc": "tr/voice-call.md",
     "title": "Sesli arama modu (eller serbest sohbet)",
     "headings": [
@@ -586,5 +864,19 @@
       "Tarayıcı kullanımı: ne beklemeli"
     ],
     "summary": "Her bot, tarayıcı açmadan web'de bir şeye bakabilir. Web araçları varsayılan olarak açıktır ve"
+  },
+  {
+    "doc": "tr/workflows.md",
+    "title": "İş akışları: kaydet, yeniden oynat, hatırla",
+    "headings": [
+      "İş akışları",
+      "Bir çalışmayı kaydet ve gözden geçir",
+      "Adım türleri",
+      "Bir iş akışını çalıştırma",
+      "Hatırlama",
+      "Karar merdiveni, kısaca",
+      "Planlanan"
+    ],
+    "summary": "Her tıklama için bir dil modelini çağırmak yavaştır ve para harcatır. Praxi'nin cevabı, bir kez işe yarayan bir görevi model çağrısı olmadan yeniden yapabileceği bir şeye çevirmektir. Birbiriyle iliş…"
   }
 ]

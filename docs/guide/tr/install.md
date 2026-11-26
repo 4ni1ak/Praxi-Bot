@@ -113,7 +113,7 @@ Veri klasörünün içinde:
 | `providers.toml` | Hangi sağlayıcıların açık olduğu, varsayılan model, her anahtarın nerede saklandığı |
 | `api-token` | Yerel API belirteci (parola gibi davran) |
 | `skills/` | Becerilerin, bkz. [Beceriler](skills.md) |
-| `workflows/` | Kayıtlı iş akışları, bkz. [İş akışları](../workflows.md) |
+| `workflows/` | Kayıtlı iş akışları, bkz. [İş akışları](workflows.md) |
 | `channels.toml`, `telegram_state.json` | Telegram açma/kapama anahtarı ve eşleşmiş kullanıcılar |
 | SQLite veritabanı ve çalışma başına olay günlükleri | Botlar, sohbetler, mesajlar, çalışmalar, onaylar, denetim günlüğü |
 

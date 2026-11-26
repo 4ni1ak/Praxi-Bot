@@ -92,7 +92,7 @@ kimliğidir (bkz. [Sağlayıcılar ve modeller](providers-and-models.md)), örne
 `planner` alanı bilgi amaçlıdır. `classifier`, `[router]` izin verdiğinde karar basamağı
 tarafından kullanılır. Döngü `executor` ile başlar ve yeniden denenebilir hatalardan ya da eksik
 yeteneklerden sonra `fallback` modellerini dener. İsteğe bağlı bir `light` model, basit ilk
-turlar için [model katmanlamayı](../model-tiering.md) açar; tüm kurulum hazır ayarları onu
+turlar için [model katmanlamayı](model-tiering.md) açar; tüm kurulum hazır ayarları onu
 boş bırakır.
 
 ### Profilde izinler
@@ -303,7 +303,7 @@ görünen adlar ve harf büyüklüğü farklı anahtarlar arama için asla kulla
   tarayıcısına ya da başka bir sunucuya geri dönmez. Masaüstündeki Botu düzenle ekranı
   `"Eşleşmiş sunucu (yalnızca tarayıcı)"` ifadesini salt okunur gösterir; `server:<key>` değerini
   TOML profilinde ya da API ile ayarla. Bkz.
-  [Eşleşmiş bir sunucuyu botun tarayıcı bilgisayarı olarak kullanmak](../remote-host.md).
+  [Eşleşmiş bir sunucuyu botun tarayıcı bilgisayarı olarak kullanmak](remote-host.md).
 
 `pc`, `desktop` rolüne sahip bağlı bir eşi, ya da tek başına bir bilgisayarda yerel masaüstünü
 seçer. Sunucu düğümlerine yalnızca açık anahtarla ulaşılır. `auto` önce bir PC'yi, sonra ana
