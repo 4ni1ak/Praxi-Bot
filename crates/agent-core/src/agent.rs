@@ -2184,6 +2184,12 @@ impl AgentLoop {
             &serde_json::json!({ "bot_id": bot_id.to_string(), "rule": rule }),
         )?;
         all.push((bot_id, rule.clone()));
+        drop(all);
+        // A rule is part of the policy: bump the revision and fail closed every approval card
+        // that is already open and that this rule now blocks (same lock order as a policy
+        // change: the exec gate first, never while holding the rule list).
+        let _gate = self.sh.exec_gate.lock();
+        crate::approval::on_global_policy_replaced(&self.sh);
         Ok(rule)
     }
 

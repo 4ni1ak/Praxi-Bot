@@ -278,6 +278,12 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// The origin the browser page is on right now, read from the browser itself, after a call
+    /// ran (a redirect or a click may have moved it). `None`: not a browser tool or unknown.
+    async fn landed_origin(&self, _ctx: &ToolContext) -> Option<String> {
+        None
+    }
+
     /// Host the call actually contacts when the input does not name one.
     ///
     /// `OpenAPI` tools use this so the card footer shows the API host, not the

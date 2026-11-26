@@ -1520,7 +1520,9 @@ impl TurnExecutor {
                 _ => None,
             };
             // Page actions are judged against the origin the browser reports right now.
-            if crate::shared::is_page_action(&resolved.name) {
+            if crate::shared::is_page_action(&resolved.name)
+                || crate::shared::is_page_read(&resolved.name)
+            {
                 let tctx = ToolContext {
                     run_id: ctx.run_id.to_string(),
                     bot_id: Some(ctx.bot_id.to_string()),
@@ -2117,6 +2119,13 @@ impl TurnExecutor {
             Ok(Ok(out)) => out.exposure.clone(),
             _ => None,
         };
+        // The page the browser ended on may be one the owner blocked (a redirect from an
+        // allowed site, a click, a back step): its content is withheld from the model.
+        if matches!(outcome, Ok(Ok(_)))
+            && let Some(text) = self.blocked_landing_of(run, ctx, tool).await
+        {
+            return (text, true, Some(duration_ms), None, None);
+        }
         let (text, is_error) = match outcome {
             Err(()) => (
                 format!("Error: tool timed out after {:?}", g.tool_timeout),
@@ -2130,6 +2139,25 @@ impl TurnExecutor {
             }
         };
         (text, is_error, Some(duration_ms), own_spill, exposure)
+    }
+
+    /// [`Shared::blocked_landing`] for a finished browser call.
+    async fn blocked_landing_of(
+        &self,
+        run: &Run,
+        ctx: &RunCtx,
+        tool: &Arc<dyn Tool>,
+    ) -> Option<String> {
+        if !tool.spec().name.starts_with("browser_") {
+            return None;
+        }
+        let landed_ctx = ToolContext {
+            run_id: run.id.to_string(),
+            bot_id: Some(run.bot_id.to_string()),
+            lane: ctx.lane(),
+            ..ToolContext::default()
+        };
+        self.sh.blocked_landing(ctx, tool, &landed_ctx).await
     }
 
     /// Turn the structured output of a `Meta` tool into events: a todo list

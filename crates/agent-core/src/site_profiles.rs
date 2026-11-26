@@ -8,7 +8,14 @@
 //!   text); the program is the verified image of a desktop input call.
 //! * A browser action whose origin cannot be read, when the bot has a narrowing site
 //!   rule that would cover its class, asks (it cannot be shown to be somewhere safe).
-//!   A program that cannot be identified simply matches no rule (the default applies).
+//!   A program that cannot be identified fails CLOSED: the strictest `block` / `ask` rule
+//!   of the bot that covers the class applies (an `allow` rule never matches it).
+//! * Reading a page (`browser_snapshot`, `browser_screenshot`) and `browser_back` are judged
+//!   by the origin of the page that is open; after any browser call the page the browser
+//!   LANDED on is checked against the `block` rules (a redirect or a click may have moved it),
+//!   and a blocked page's content is withheld from the model.
+//! * Rules apply on every computer the bot uses (the owner's computer and the host): a block
+//!   is never weaker on another machine, and the owner sees that scope on the rules card.
 //! * `block` and `ask` rules sit above grants, read shortcuts and autonomy modes; an
 //!   `allow` rule counts as one more remembered grant and sits below every floor.
 //! * Rules are kept as audit-log events (`profile_rule.set` / `.removed`), like the
@@ -25,7 +32,7 @@ use storage::Storage;
 use tool_registry::ControlTarget;
 use uuid::Uuid;
 
-use crate::shared::{RunCtx, Shared, is_page_action};
+use crate::shared::{RunCtx, Shared, is_page_action, is_page_read};
 
 /// Audit action: a rule was created.
 pub(crate) const AUDIT_PROFILE_SET: &str = "profile_rule.set";
@@ -41,7 +48,9 @@ pub(crate) const MAX_RULES_PER_BOT: usize = 200;
 #[must_use]
 pub(crate) fn classify(tool: &str) -> Option<Capability> {
     match tool {
-        "browser_open" => Some(Capability::Read),
+        "browser_open" | "browser_snapshot" | "browser_screenshot" | "browser_back" => {
+            Some(Capability::Read)
+        }
         "browser_click" | "browser_fill" | "browser_select" | "desktop_type"
         | "desktop_set_value" => Some(Capability::Interact),
         "browser_press" | "browser_act" | "browser_eval" | "desktop_key" => {
@@ -64,7 +73,7 @@ fn subject_of(
             let host = site_of_url(input.get("url")?.as_str()?)?;
             Some((Subject::Site(host), true))
         }
-        t if is_page_action(t) => {
+        t if is_page_action(t) || is_page_read(t) => {
             let host = site_of_url(page_origin?)?;
             Some((Subject::Site(host), true))
         }
@@ -107,7 +116,81 @@ impl Shared {
         input: &Value,
         target: Option<&ControlTarget>,
     ) -> Option<Verdict> {
+        let origin = ctx.page_origin.lock().clone();
+        self.profile_verdict_at(ctx.bot_id, name, input, origin.as_deref(), target)
+    }
+
+    /// [`Self::profile_verdict`] for an explicit page origin (a parked approval is judged by
+    /// the origin it was shown for, not by whatever page is open now).
+    pub(crate) fn profile_verdict_at(
+        &self,
+        bot_id: BotId,
+        name: &str,
+        input: &Value,
+        origin: Option<&str>,
+        target: Option<&ControlTarget>,
+    ) -> Option<Verdict> {
         let class = classify(name)?;
+        let now = storage::now_ms();
+        let rules: Vec<ProfileRule> = {
+            let all = self.profile_rules.lock();
+            all.iter()
+                .filter(|(b, r)| *b == bot_id && r.active(now))
+                .map(|(_, r)| r.clone())
+                .collect()
+        };
+        if rules.is_empty() {
+            return None;
+        }
+        let known = subject_of(name, input, origin, target);
+        if let Some((subject, trusted)) = &known {
+            return evaluate(&rules, subject, class, now, *trusted);
+        }
+        let covers = |r: &ProfileRule, kind: SubjectKind| {
+            r.kind == kind
+                && r.action != ProfileAction::Allow
+                && (r.capability == Capability::Any || r.capability == class)
+        };
+        // A browser action that cannot be placed: ask when a narrowing site rule would
+        // cover it somewhere (a navigation to an unreadable address keeps the default).
+        if name.starts_with("browser_") && (class != Capability::Read || is_page_read(name)) {
+            return rules
+                .iter()
+                .find(|r| covers(r, SubjectKind::Site))
+                .map(|r| Verdict {
+                    action: ProfileAction::Ask,
+                    rule_id: r.id.clone(),
+                });
+        }
+        // A desktop input call whose program could not be identified fails closed: the
+        // strictest block / ask rule on a program that covers its class speaks for it.
+        if matches!(name, "desktop_type" | "desktop_set_value" | "desktop_key") {
+            return rules
+                .iter()
+                .filter(|r| covers(r, SubjectKind::App))
+                .max_by_key(|r| u8::from(r.action == ProfileAction::Block))
+                .map(|r| Verdict {
+                    action: r.action,
+                    rule_id: r.id.clone(),
+                });
+        }
+        None
+    }
+
+    /// After a browser call: the page the browser LANDED on (a redirect from an allowed
+    /// site, a click or a back step) is checked against the block rules. `Some(text)` means
+    /// the page is blocked and what the call returned must not reach the model.
+    pub(crate) async fn blocked_landing(
+        &self,
+        ctx: &RunCtx,
+        tool: &std::sync::Arc<dyn tool_registry::Tool>,
+        tctx: &tool_registry::ToolContext,
+    ) -> Option<String> {
+        if !self.has_profile_rules(ctx.bot_id) {
+            return None;
+        }
+        let landed = tool.landed_origin(tctx).await?;
+        let host = site_of_url(&landed)?;
         let now = storage::now_ms();
         let rules: Vec<ProfileRule> = {
             let all = self.profile_rules.lock();
@@ -116,31 +199,12 @@ impl Shared {
                 .map(|(_, r)| r.clone())
                 .collect()
         };
-        if rules.is_empty() {
-            return None;
-        }
-        let origin = ctx.page_origin.lock().clone();
-        let known = subject_of(name, input, origin.as_deref(), target);
-        if let Some((subject, trusted)) = &known {
-            return evaluate(&rules, subject, class, now, *trusted);
-        }
-        // A browser action that cannot be placed: ask when a narrowing site rule would
-        // cover it somewhere (a read of an unknown page and a program the OS could not
-        // name keep the default, as the issue asks).
-        if name.starts_with("browser_") && class != Capability::Read {
-            return rules
-                .iter()
-                .find(|r| {
-                    r.kind == SubjectKind::Site
-                        && r.action != ProfileAction::Allow
-                        && (r.capability == Capability::Any || r.capability == class)
-                })
-                .map(|r| Verdict {
-                    action: ProfileAction::Ask,
-                    rule_id: r.id.clone(),
-                });
-        }
-        None
+        let v = evaluate(&rules, &Subject::Site(host), Capability::Read, now, true)?;
+        (v.action == ProfileAction::Block).then(|| {
+            self.audit_profile_applied(ctx, "landing", &v);
+            "Permission denied: the page this ended up on is blocked by an owner rule for              that site, so its content is withheld. Do not go back to it; choose another              approach or tell the user."
+                .to_owned()
+        })
     }
 
     /// Why a call was blocked by a rule, for the model and the owner's activity feed.

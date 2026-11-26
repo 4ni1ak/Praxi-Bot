@@ -12,7 +12,8 @@ use tool_registry::{ContentClass, Effect};
 
 use crate::AgentLoop;
 use crate::tests::{
-    Env, Fake, TestTool, calls, cfg, make_loop, profile, setup, t, text, until, with_class,
+    Env, Fake, TestTool, calls, cfg, make_loop, profile, setup, t, text, tool_messages, until,
+    with_class,
 };
 
 const ASK: &str = "[permissions]\npreset = \"read-and-draft\"\n";
@@ -277,4 +278,170 @@ async fn a_rule_is_validated_when_added_and_stops_applying_when_it_expires() {
         1,
         "the expired block no longer applies"
     );
+}
+
+fn app_rule(path: &str, capability: Capability, action: ProfileAction) -> NewRule<'_> {
+    NewRule {
+        kind: SubjectKind::App,
+        raw_key: path,
+        include_subdomains: false,
+        capability,
+        action,
+        expires_at_ms: None,
+    }
+}
+
+#[tokio::test]
+async fn a_site_block_also_covers_reading_the_page_and_going_back() {
+    let env = setup();
+    for name in ["browser_snapshot", "browser_screenshot", "browser_back"] {
+        let tool = browser(name, ContentClass::none());
+        *tool.page_origin.lock() = Some("https://bank.example:443".into());
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &Fake::new(one_call("c1", name, &json!({}))),
+            &[t(&tool)],
+            profile(""),
+            cfg(Policy::full()),
+        );
+        lp.add_profile_rule(
+            env.bot,
+            &rule("bank.example", false, Capability::Any, ProfileAction::Block),
+        )
+        .unwrap();
+        assert!(!asks(&env, &lp).await);
+        assert_eq!(
+            tool.count.load(Ordering::SeqCst),
+            0,
+            "{name} on a blocked page must not run"
+        );
+        // Another page is not affected.
+        *tool.page_origin.lock() = Some("https://news.example:443".into());
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &Fake::new(one_call("c1", name, &json!({}))),
+            &[t(&tool)],
+            profile(""),
+            cfg(Policy::full()),
+        );
+        assert!(!asks(&env, &lp).await);
+        assert_eq!(
+            tool.count.load(Ordering::SeqCst),
+            1,
+            "{name} elsewhere runs"
+        );
+        for r in lp.list_profile_rules(env.bot) {
+            lp.remove_profile_rule(env.bot, &r.id).unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_redirect_onto_a_blocked_site_withholds_the_page_from_the_model() {
+    let env = setup();
+    let open = Arc::new(with_class(
+        "browser_open",
+        Effect::Write,
+        PermissionCategory::Browser,
+        ContentClass::none(),
+        "SECRET BANK PAGE",
+    ));
+    // The address is allowed, but the browser ends up on the blocked site.
+    *open.page_origin.lock() = Some("https://bank.example:443".into());
+    let fake = Fake::new(one_call(
+        "c1",
+        "browser_open",
+        &json!({"url": "https://short.example/go"}),
+    ));
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&open)],
+        profile(""),
+        cfg(Policy::full()),
+    );
+    lp.add_profile_rule(
+        env.bot,
+        &rule("bank.example", false, Capability::Any, ProfileAction::Block),
+    )
+    .unwrap();
+    assert!(!asks(&env, &lp).await);
+    let seen = tool_messages(&fake.request(1)).join(
+        "
+",
+    );
+    assert!(!seen.contains("SECRET BANK PAGE"), "leaked: {seen}");
+    assert!(seen.contains("blocked"), "the model is told why: {seen}");
+}
+
+#[tokio::test]
+async fn a_pending_approval_is_denied_when_a_block_for_it_is_added() {
+    let env = setup();
+    let click = browser("browser_click", ContentClass::none());
+    *click.page_origin.lock() = Some("https://example.com:443".into());
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &Fake::new(one_call("c1", "browser_click", &json!({"ref": "e1"}))),
+        &[t(&click)],
+        profile(ASK),
+        cfg(Policy::approve_destructive()),
+    );
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))).await;
+    // The page moves on, then the owner blocks the site the card was shown for.
+    *click.page_origin.lock() = Some("https://other.test:443".into());
+    lp.add_profile_rule(
+        env.bot,
+        &rule("example.com", false, Capability::Any, ProfileAction::Block),
+    )
+    .unwrap();
+    let state = tokio::time::timeout(std::time::Duration::from_secs(10), lp.wait(run))
+        .await
+        .expect("the open card was withdrawn without a click")
+        .unwrap();
+    assert_eq!(state, RunState::Succeeded);
+    assert_eq!(click.count.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn an_app_block_or_ask_fails_closed_when_the_program_is_not_identified() {
+    use crate::control_grant_tests::ControlTool;
+    let env = setup();
+    let path = r"C:\Windows\System32\notepad.exe";
+    for (action, expect_ask) in [(ProfileAction::Block, false), (ProfileAction::Ask, true)] {
+        let typed = ControlTool::new("desktop_type", vec![None]);
+        let lp = make_loop(
+            &env.storage,
+            env.bot,
+            &Fake::new(one_call("c1", "desktop_type", &json!({"text": "hi"}))),
+            &[],
+            profile("[runtime]\ncomputer = \"host\"\n"),
+            cfg(Policy::full()),
+        );
+        lp.sh
+            .tools
+            .register(typed.clone() as Arc<dyn tool_registry::Tool>);
+        lp.set_computer_provider(crate::tests::machine_provider(
+            crate::tests::MACHINE_A,
+            Some("host"),
+            None,
+            false,
+        ));
+        lp.add_profile_rule(env.bot, &app_rule(path, Capability::Any, action))
+            .unwrap();
+        assert_eq!(asks(&env, &lp).await, expect_ask, "{action:?}");
+        assert_eq!(
+            typed.count.load(Ordering::SeqCst),
+            0,
+            "{action:?}: the call must not run"
+        );
+        for r in lp.list_profile_rules(env.bot) {
+            lp.remove_profile_rule(env.bot, &r.id).unwrap();
+        }
+    }
 }

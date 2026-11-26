@@ -3004,7 +3004,16 @@ impl BrowserTool {
     }
 
     async fn current_origin_in_lane(&self, ctx: &ToolContext, input: &Value) -> Option<String> {
-        // Only the actions that act on the page that is open now (not open/eval/tabs/back).
+        // The actions that act on, or read, the page that is open now (not open/eval/tabs).
+        // `Back` reads the page it leaves; where it lands is checked after the call.
+        if matches!(self.op, Op::Snapshot | Op::Screenshot | Op::Back) {
+            let shared = self.select_shared(ctx).ok()?;
+            return shared
+                .driver
+                .current_url()
+                .await
+                .and_then(|u| origin_of(&u));
+        }
         if !matches!(
             self.op,
             Op::Click
@@ -3213,6 +3222,19 @@ impl Tool for BrowserTool {
     async fn current_origin(&self, ctx: &ToolContext, input: &Value) -> Option<String> {
         BROWSER_LANE
             .scope(ctx.lane.clone(), self.current_origin_in_lane(ctx, input))
+            .await
+    }
+
+    async fn landed_origin(&self, ctx: &ToolContext) -> Option<String> {
+        BROWSER_LANE
+            .scope(ctx.lane.clone(), async {
+                let shared = self.select_shared(ctx).ok()?;
+                shared
+                    .driver
+                    .current_url()
+                    .await
+                    .and_then(|u| origin_of(&u))
+            })
             .await
     }
 

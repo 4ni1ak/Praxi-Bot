@@ -2359,7 +2359,16 @@ impl Shared {
             p.always_refused = always_refused;
         }
         let parked_at = policy_revision(self);
-        self.remember_parked(call_id, ctx, name, effect, category, input);
+        self.remember_parked(
+            call_id,
+            ctx,
+            name,
+            effect,
+            category,
+            input,
+            page_origin.as_deref(),
+            target.as_ref(),
+        );
         self.emit(
             ctx,
             Event::ApprovalNeeded(ApprovalNeeded {
@@ -2465,6 +2474,7 @@ impl Shared {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // the card's facts, as the recheck needs them
     fn remember_parked(
         &self,
         call_id: ToolCallId,
@@ -2473,6 +2483,8 @@ impl Shared {
         effect: Effect,
         category: PermissionCategory,
         input: &Value,
+        page_origin: Option<&str>,
+        target: Option<&ControlTarget>,
     ) {
         note_parked(
             self,
@@ -2483,6 +2495,8 @@ impl Shared {
                 category,
                 input: input.clone(),
                 run_id: ctx.run_id,
+                page_origin: page_origin.map(str::to_owned),
+                target: target.cloned(),
             },
         );
     }
@@ -3154,6 +3168,10 @@ struct ParkedCall {
     category: PermissionCategory,
     input: Value,
     run_id: RunId,
+    /// The page origin the card was shown for (site rules judge the card by it).
+    page_origin: Option<String>,
+    /// The program the card was shown for.
+    target: Option<ControlTarget>,
 }
 
 /// Policy generation for one agent loop, plus the approvals parked against it.
@@ -3227,10 +3245,22 @@ pub(crate) fn on_global_policy_replaced(sh: &Shared) {
             drop_ids.push(id);
             continue;
         };
-        if !matches!(
-            sh.decide(&ctx, &call.name, call.effect, call.category, &call.input),
-            Decision::Deny
-        ) {
+        // The owner's block rules are judged for what the card was shown for.
+        let blocked_by_rule = sh
+            .profile_verdict_at(
+                ctx.bot_id,
+                &call.name,
+                &call.input,
+                call.page_origin.as_deref(),
+                call.target.as_ref(),
+            )
+            .is_some_and(|v| v.action == permission_engine::ProfileAction::Block);
+        if !blocked_by_rule
+            && !matches!(
+                sh.decide(&ctx, &call.name, call.effect, call.category, &call.input),
+                Decision::Deny
+            )
+        {
             continue;
         }
         drop_ids.push(id);
