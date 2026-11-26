@@ -458,6 +458,8 @@ mod tests {
             date: None,
             unread: true,
             size: None,
+            automation_headers: None,
+            has_attachment: None,
         };
         assert!(f.summary_matches(&m));
         m.from_addr = "no-reply@badexample.com".into();

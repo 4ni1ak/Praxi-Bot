@@ -18,6 +18,9 @@ use crate::model::{
     ScheduleSpec, Trigger,
 };
 
+#[path = "registry_store.rs"]
+mod registry_store;
+
 /// Embedded forward-only migrations; schema version = index + 1.
 const MIGRATIONS: &[(&str, &str)] = &[
     (
@@ -56,10 +59,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0016_occurrence_note",
         include_str!("../migrations/0016_occurrence_note.sql"),
     ),
+    (
+        "0017_trigger_registry",
+        include_str!("../migrations/0017_trigger_registry.sql"),
+    ),
 ];
 
 /// Schema version produced by the newest embedded migration.
-pub const SCHEMA_VERSION: u32 = 9;
+pub const SCHEMA_VERSION: u32 = 10;
 
 /// Manual retries allowed per occurrence.
 pub const MAX_OCCURRENCE_RETRIES: u32 = 5;
@@ -117,6 +124,8 @@ impl ScheduleStore {
         conn.prepare(SCHEDULE_SELECT)?;
         conn.prepare("SELECT schedule_id, trigger_json, created_at_ms FROM schedule_triggers")?;
         conn.prepare("SELECT schedule_id, due_ms, revision, run_id, state FROM occurrences")?;
+        conn.prepare("SELECT schedule_id,config_json,webhook_id,state_json FROM trigger_registry")?;
+        conn.prepare("SELECT bot_id,fired_json FROM trigger_bot_rate")?;
         Ok(conn.query_row("PRAGMA user_version", [], |row| row.get(0))?)
     }
 
@@ -191,6 +200,23 @@ impl ScheduleStore {
     /// # Errors
     /// Invalid definition/trigger or storage failure.
     pub fn insert_config(&self, schedule: &Schedule, trigger: Option<&Trigger>) -> Result<()> {
+        self.insert_registry_config(schedule, trigger, None)
+    }
+
+    /// Atomically insert a schedule and its optional owner rule.
+    ///
+    /// # Errors
+    /// Invalid rule or database failure.
+    pub fn insert_registry_config(
+        &self,
+        schedule: &Schedule,
+        trigger: Option<&Trigger>,
+        rule: Option<&crate::registry::Rule>,
+    ) -> Result<()> {
+        if let Some(rule) = rule {
+            rule.validate()
+                .map_err(|e| SchedulerError::InvalidSpec(e.into()))?;
+        }
         if let Some(t) = trigger {
             t.validate()?;
         }
@@ -225,6 +251,9 @@ impl ScheduleStore {
         )?;
         if let Some(t) = trigger {
             write_trigger_in(&tx, schedule.id, Some(t))?;
+        }
+        if let Some(rule) = rule {
+            registry_store::write_rule(&tx, schedule.id, rule)?;
         }
         tx.commit()?;
         drop(conn);
@@ -333,7 +362,7 @@ impl ScheduleStore {
     pub fn list_due(&self, now_ms: i64) -> Result<Vec<Schedule>> {
         let conn = self.conn();
         let mut st = conn.prepare(&format!(
-            "{SCHEDULE_SELECT} WHERE enabled = 1 AND next_run_at_ms IS NOT NULL AND NOT EXISTS (SELECT 1 FROM schedule_triggers t WHERE t.schedule_id = schedules.id AND json_extract(t.trigger_json, '$.kind') IN ('file_watch','email')) \
+            "{SCHEDULE_SELECT} WHERE enabled = 1 AND next_run_at_ms IS NOT NULL AND NOT EXISTS (SELECT 1 FROM schedule_triggers t WHERE t.schedule_id = schedules.id AND json_extract(t.trigger_json, '$.kind') IN ('file_watch','email')) AND NOT EXISTS (SELECT 1 FROM trigger_registry r WHERE r.schedule_id=schedules.id AND json_extract(r.config_json, '$.source.kind')='webhook') \
              AND next_run_at_ms <= ?1 ORDER BY next_run_at_ms ASC, id ASC"
         ))?;
         let rows = st.query_map([now_ms], schedule_row)?;
@@ -347,7 +376,7 @@ impl ScheduleStore {
     pub fn nearest_next_run_at(&self) -> Result<Option<i64>> {
         let min_ts: Option<i64> = self.conn().query_row(
             "SELECT MIN(next_run_at_ms) FROM schedules \
-             WHERE enabled = 1 AND next_run_at_ms IS NOT NULL AND NOT EXISTS (SELECT 1 FROM schedule_triggers t WHERE t.schedule_id = schedules.id AND json_extract(t.trigger_json, '$.kind') IN ('file_watch','email'))",
+             WHERE enabled = 1 AND next_run_at_ms IS NOT NULL AND NOT EXISTS (SELECT 1 FROM schedule_triggers t WHERE t.schedule_id = schedules.id AND json_extract(t.trigger_json, '$.kind') IN ('file_watch','email')) AND NOT EXISTS (SELECT 1 FROM trigger_registry r WHERE r.schedule_id=schedules.id AND json_extract(r.config_json, '$.source.kind')='webhook')",
             [],
             |r| r.get(0),
         )?;
@@ -465,7 +494,11 @@ impl ScheduleStore {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current = get_schedule(&tx, definition.id)?;
-        let has_source:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM schedule_triggers WHERE schedule_id=?1 AND json_extract(trigger_json,'$.kind') IN ('file_watch','email'))",[definition.id.to_string()],|row|row.get(0))?;
+        let has_source: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schedule_triggers WHERE schedule_id=?1 AND json_extract(trigger_json,'$.kind') IN ('file_watch','email')) OR EXISTS(SELECT 1 FROM trigger_registry WHERE schedule_id=?1)",
+            [definition.id.to_string()],
+            |row| row.get(0),
+        )?;
         // Preserve legacy plain-timer concurrent-toggle semantics. Anything
         // with an external source/validated precheck uses the strict revision.
         let strict = trigger.is_some()
@@ -1122,10 +1155,18 @@ impl ScheduleStore {
     /// # Errors
     /// Fails on SQLite errors.
     pub fn delete_by_bot(&self, bot_id: BotId) -> Result<usize> {
-        let changed = self.conn().execute(
-            "DELETE FROM schedules WHERE bot_id = ?1",
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = tx.execute(
+            "DELETE FROM schedules WHERE bot_id=?1",
             [bot_id.to_string()],
         )?;
+        tx.execute(
+            "DELETE FROM trigger_bot_rate WHERE bot_id=?1",
+            [bot_id.to_string()],
+        )?;
+        tx.commit()?;
+        drop(conn);
         if changed > 0 {
             self.notify();
         }

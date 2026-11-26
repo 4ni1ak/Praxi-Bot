@@ -226,6 +226,9 @@ async fn imap<S: AsyncRead + AsyncWrite + Unpin>(
                 for uid in fetch_uids(command) {
                     data.extend_from_slice(format!("* 1 FETCH (UID {uid} FLAGS () RFC822.SIZE {} BODY[{section}] {{{}}}\r\n", RAW.len(), bytes.len()).as_bytes());
                     data.extend_from_slice(bytes);
+                    if command.contains("BODYSTRUCTURE") {
+                        data.extend_from_slice(b" BODYSTRUCTURE ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 18 1 NIL NIL NIL NIL)(\"APPLICATION\" \"PDF\" NIL NIL NIL \"BASE64\" 8 NIL (\"ATTACHMENT\" (\"FILENAME\" \"a.pdf\")) NIL NIL) \"MIXED\" (\"BOUNDARY\" \"B\") NIL NIL NIL)");
+                    }
                     data.extend_from_slice(b")\r\n");
                 }
                 reader.get_mut().write_all(&data).await.unwrap();
