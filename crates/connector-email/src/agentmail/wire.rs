@@ -172,6 +172,17 @@ impl MessageWire {
                     size: usize::try_from(a.size.unwrap_or(0)).unwrap_or(usize::MAX),
                 })
                 .collect(),
+            reply_to: None,
+            references: Vec::new(),
+            recipients: self
+                .to
+                .iter()
+                .chain(&self.cc)
+                .map(|a| crate::message::bare_address(a))
+                .filter(|a| !a.is_empty())
+                .collect(),
+            found_in: None,
+            from_junk: None,
         })
     }
 }

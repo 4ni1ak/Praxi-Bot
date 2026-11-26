@@ -32,6 +32,13 @@ pub struct OutgoingMail {
     /// Plain-text body.
     #[serde(default)]
     pub body: String,
+    /// `Message-ID` of the mail this one answers. Set by the daemon for a reply
+    /// (read from the original), never taken from the model.
+    #[serde(skip)]
+    pub in_reply_to: Option<String>,
+    /// `References` chain of a reply: the original's chain plus its own id.
+    #[serde(skip)]
+    pub references: Vec<String>,
 }
 
 /// Models sometimes write a line break as the two characters backslash and `n` instead of a
@@ -130,6 +137,34 @@ pub fn envelope_address(s: &str) -> Result<String, EmailError> {
     mailbox(s).map(|(_, email)| email)
 }
 
+/// A `Message-ID` for a threading header, without the angle brackets; `None` for
+/// an empty one or one that cannot be written into a header as it is: more than
+/// 998 characters, or anything but printable ASCII without `<`, `>`, `"` and `\`
+/// (whitespace, control and non-ASCII characters can split or smuggle a header).
+pub(crate) fn valid_threading_id(id: &str) -> Option<String> {
+    let id = id.trim().trim_start_matches('<').trim_end_matches('>');
+    (!id.is_empty()
+        && id.len() <= 998
+        && id
+            .chars()
+            .all(|c| c.is_ascii_graphic() && !matches!(c, '<' | '>' | '"' | '\\')))
+    .then(|| id.to_owned())
+}
+
+/// [`valid_threading_id`] for an id the caller of [`compose`] supplied: `None` for an absent
+/// one, an error for one that is not safe to write.
+fn threading_id(id: Option<&str>) -> Result<Option<String>, EmailError> {
+    let Some(raw) = id
+        .map(str::trim)
+        .filter(|i| !i.trim_matches(['<', '>']).is_empty())
+    else {
+        return Ok(None);
+    };
+    valid_threading_id(raw)
+        .map(Some)
+        .ok_or_else(|| EmailError::Input("invalid Message-ID".into()))
+}
+
 /// Composed message and separate delivery envelope. Blind recipients never
 /// appear in transmitted headers.
 pub struct ComposedMail {
@@ -216,6 +251,20 @@ fn compose_message(
     if draft && !bcc.is_empty() {
         builder = builder.bcc(bcc);
     }
+    if let Some(id) = threading_id(mail.in_reply_to.as_deref())? {
+        builder = builder.in_reply_to(id);
+    }
+    let references = mail
+        .references
+        .iter()
+        .map(|r| threading_id(Some(r)))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    if !references.is_empty() {
+        builder = builder.references(references);
+    }
     let raw = builder
         .write_to_vec()
         .map_err(|e| EmailError::Input(format!("cannot build message: {e}")))?;
@@ -224,6 +273,16 @@ fn compose_message(
         from: from.1,
         recipients,
     })
+}
+
+/// `text` with every copy of `password` blanked. An empty password is skipped: replacing
+/// "nothing" would put the marker between every two characters.
+fn redact_password(text: &str, password: &str) -> String {
+    if password.is_empty() {
+        text.to_owned()
+    } else {
+        text.replace(password, "[REDACTED]")
+    }
 }
 
 /// Submit a composed message. TLS is always required; there is no plaintext path.
@@ -243,7 +302,7 @@ pub async fn send(
         ) {
             EmailError::Smtp("authentication failed".into())
         } else {
-            EmailError::Smtp(e.to_string().replace(password, "[REDACTED]"))
+            EmailError::Smtp(redact_password(&e.to_string(), password))
         }
     };
     let mut builder = SmtpClientBuilder::new(acct.smtp.host.clone(), acct.smtp.port)
@@ -270,6 +329,18 @@ mod tests {
             body: "Hi".into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn an_empty_password_redacts_nothing_and_a_real_one_is_blanked() {
+        assert_eq!(
+            redact_password("550 mailbox unavailable", ""),
+            "550 mailbox unavailable"
+        );
+        assert_eq!(
+            redact_password("bad login hunter2 for hunter2", "hunter2"),
+            "bad login [REDACTED] for [REDACTED]"
+        );
     }
 
     #[test]

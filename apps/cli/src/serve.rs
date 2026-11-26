@@ -2125,7 +2125,7 @@ host = "smtp.example.com"
 "#,
         )
         .unwrap();
-        assert_eq!(register_email(dir.path(), &registry, Some(&secrets)), 7);
+        assert_eq!(register_email(dir.path(), &registry, Some(&secrets)), 8);
         let audited = agent.audit_egress_card_schemas().unwrap();
         for name in [
             "workflow_run",
@@ -2273,7 +2273,7 @@ host = "smtp.example.com"
 "#;
         std::fs::write(dir.path().join(EMAIL_FILE), email_toml).unwrap();
         let added = register_email(dir.path(), &reg, Some(&store));
-        assert_eq!(added, 7);
+        assert_eq!(added, connector_email::TOOL_NAMES.len());
 
         let send = reg.get("email_send").expect("email_send registered");
         assert_eq!(send.spec().effect, Effect::Destructive);

@@ -42,7 +42,9 @@ pub use config::{
     AccountConfig, AccountKind, IdentitySettings, ImapSettings, SendMode, SmtpSecurity,
     SmtpSettings, normalize_sender, validate_account_name, validate_host,
 };
-pub use connector::{EmailConnector, MAX_ATTACHMENT_BYTES, Scoped, SearchResult};
+pub use connector::{
+    ATTACHMENTS_DIR_NAME, EmailConnector, MAX_ATTACHMENT_BYTES, Scoped, SearchResult,
+};
 pub use error::{EmailError, ProviderError};
 pub use guard::{GuardReport, GuardSettings, MailGuard, OptOut, SendLogEntry, Warning};
 pub use imap::{FolderInfo, SearchQuery};
@@ -56,8 +58,9 @@ pub use provider::{
 pub use smtp::OutgoingMail;
 pub use tools::TOOL_NAMES;
 pub use wait::{
-    LinkBasis, MailHandle, PageOrigin, PageOriginSlot, WaitEnd, WaitFilter, WaitPlan, found_json,
-    link_basis, timed_out_json, wait_for_mail,
+    LinkBasis, MailHandle, PageOrigin, PageOriginSlot, TrackingResolver, WaitEnd, WaitFilter,
+    WaitOwner, WaitPlan, WaitProgress, Waiters, WebResolver, expand_tracking_links, found_json,
+    junk_folders, link_basis, timed_out_json, wait_for_mail,
 };
 
 /// Build the e-mail tools without registering them.
@@ -78,11 +81,15 @@ pub fn register(registry: &ToolRegistry, connector: &Arc<EmailConnector>) -> usi
 #[cfg(test)]
 mod bot_tests;
 #[cfg(test)]
+mod fake_imap;
+#[cfg(test)]
 mod guard_tests;
 #[cfg(test)]
 mod identity_tests;
 #[cfg(test)]
 mod kind_tests;
+#[cfg(test)]
+mod mailbox_tests;
 #[cfg(test)]
 mod probe_tests;
 #[cfg(test)]

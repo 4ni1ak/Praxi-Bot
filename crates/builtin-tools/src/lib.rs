@@ -40,6 +40,7 @@ pub mod pure_tools;
 pub mod schedule;
 pub mod script;
 pub mod secret_request;
+pub mod selfcheck;
 pub mod shell;
 mod util;
 pub mod wait;
@@ -356,7 +357,7 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
     ));
     all.push(script::tool_with_control(
         registry.clone(),
-        cfg.gate,
+        Arc::clone(&cfg.gate),
         cfg.script_limits,
         cfg.control,
     ));
@@ -364,17 +365,34 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
     all.extend(notes::tools(&cfg.data_dir));
     all.extend(pure_tools::tools());
     all.extend(wait::tools());
+    all.push(selfcheck::tool(
+        registry.clone(),
+        cfg.gate,
+        cfg.data_dir.clone(),
+    ));
     if let Some(backend) = cfg.knowledge {
         all.push(knowledge::tool(backend));
     }
     if let Some(email) = &cfg.email {
         all.extend(connector_email::tools(email));
+        // What `email_download_attachment` saves came from a stranger: the whole folder is
+        // untrusted-origin in the ledger too, so a later read is judged by the file, never by
+        // a folder the owner happens to trust or by a path rule that could miss it.
+        if let Some(ledger) = &cfg.provenance {
+            provenance::mark_path(
+                ledger.as_ref(),
+                &cfg.data_dir.join(connector_email::ATTACHMENTS_DIR_NAME),
+                true,
+                "email attachment",
+            );
+        }
     }
     // Offered only to a bot that has a mail identity of its own; the connector may
     // be bound later (the host starts mail after the tools exist).
     all.push(mail_wait::email_wait_for_tool(
         Arc::clone(&mail),
         page_origin,
+        cfg.web.as_ref().map(|w| Arc::clone(&w.policy)),
     ));
     if let Some(web) = cfg.web.clone() {
         match web_tools::tools(web) {
@@ -655,6 +673,7 @@ mod tests {
             ("wait", R, Me),
             ("calculate", R, Me),
             ("email_wait_for", R, Ms),
+            ("tool_self_check", R, Me),
         ]
     }
 
@@ -1208,6 +1227,42 @@ mod tests {
         assert!(text.contains("from script"), "{text}");
     }
 
+    /// What `email_download_attachment` saves came from a stranger: with mail configured, the
+    /// whole attachment folder (and nothing else of the data folder) is untrusted in the ledger.
+    #[test]
+    fn the_attachment_folder_is_untrusted_in_the_ledger_when_mail_is_configured() {
+        use provenance::Provenance as _;
+
+        #[derive(Default)]
+        struct Ledger(parking_lot::Mutex<Vec<(String, bool)>>);
+        impl provenance::Provenance for Ledger {
+            fn is_marked(&self, n: &str) -> bool {
+                self.0
+                    .lock()
+                    .iter()
+                    .any(|(p, tree)| p == n || (*tree && n.starts_with(&format!("{p}/"))))
+            }
+            fn mark(&self, n: &str, tree: bool, _: &str) {
+                self.0.lock().push((n.to_owned(), tree));
+            }
+        }
+        let d = tempfile::tempdir().unwrap();
+        let ledger = Arc::new(Ledger::default());
+        let mut cfg = BuiltinConfig::new(d.path().to_path_buf(), Arc::new(AllowAll));
+        cfg.email = Some(Arc::new(connector_email::EmailConnector::reloadable(
+            Arc::new(secret_store::MemoryStore::new()),
+        )));
+        cfg.provenance = Some(ledger.clone());
+        let _ = build_builtin_tools(cfg, &ToolRegistry::new());
+        let key = |rel: &str| provenance::identity(&d.path().join(rel)).unwrap();
+        assert!(ledger.is_marked(&key("email-attachments/work/0190.bin")));
+        assert!(!ledger.is_marked(&key("notes/a.txt")));
+        // Without a ledger (rules only) nothing is written anywhere.
+        let mut cfg = BuiltinConfig::new(d.path().to_path_buf(), Arc::new(AllowAll));
+        cfg.email = None;
+        let _ = build_builtin_tools(cfg, &ToolRegistry::new());
+    }
+
     #[test]
     fn email_tools_can_be_configured_and_send_is_destructive() {
         use secret_store::SecretStore;
@@ -1246,7 +1301,7 @@ mod tests {
         cfg.browser = Some(Arc::new(browser::fake::FakeBrowser::default()));
         cfg.email = Some(connector.clone());
         let added = register_builtin_tools(&reg, cfg);
-        assert_eq!(added, 44 + 7 + 2 + 2 + 1 + 1);
+        assert_eq!(added, 44 + 8 + 2 + 2 + 1 + 1 + 1);
 
         // Verification of email tools and their effects
         let send_tool = reg
@@ -1270,7 +1325,7 @@ mod tests {
         // Also test direct helper register_email_tools
         let reg2 = ToolRegistry::new();
         let registered = register_email_tools(&reg2, &connector);
-        assert_eq!(registered, 7);
+        assert_eq!(registered, 8);
         assert!(reg2.get(connector_email::tools::SEND).is_some());
     }
 
