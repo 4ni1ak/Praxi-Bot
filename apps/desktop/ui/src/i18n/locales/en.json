@@ -6311,6 +6311,7 @@
       "recentTitle": "From a recent OK",
       "remove": "Remove",
       "removed": "Rule removed.",
+      "scope": "A rule applies on every computer this bot uses: your computer and the host. Programs are matched by their full path.",
       "site": "Website",
       "siteHint": "Only the name, like example.com (no https://, no path).",
       "subdomains": "Also cover its subdomains (like shop.example.com)",

@@ -6311,6 +6311,7 @@
       "recentTitle": "Son onaylarından",
       "remove": "Kaldır",
       "removed": "Kural kaldırıldı.",
+      "scope": "Bir kural, bu botun kullandığı her bilgisayarda geçerlidir: senin bilgisayarında ve host üzerinde. Programlar tam yoluyla eşleştirilir.",
       "site": "Web sitesi",
       "siteHint": "Sadece adı yaz, örneğin example.com (https:// ve yol olmadan).",
       "subdomains": "Alt alan adlarını da kapsa (örneğin shop.example.com)",

@@ -6310,6 +6310,7 @@
       "recentTitle": "From a recent OK",
       "remove": "Remove",
       "removed": "Rule removed.",
+      "scope": "Une règle s'applique sur chaque ordinateur utilisé par ce bot : le tien et l'hôte. Les programmes sont reconnus par leur chemin complet.",
       "site": "Website",
       "siteHint": "Only the name, like example.com (no https://, no path).",
       "subdomains": "Also cover its subdomains (like shop.example.com)",
