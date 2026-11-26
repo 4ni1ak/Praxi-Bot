@@ -268,6 +268,7 @@ impl Scheduler {
             self.inner.executor.as_ref(),
             &fired,
             None,
+            now_ms,
         )
         .await
         .map(|_| ())
@@ -723,8 +724,14 @@ fn spawn_direct_execution(inner: &Arc<Inner>, schedule: Schedule, guard: InFligh
     let inner = Arc::clone(inner);
     tokio::spawn(async move {
         let _guard = guard;
-        if let Err(_e) =
-            execute_checked(&inner.store, inner.executor.as_ref(), &schedule, None).await
+        if let Err(_e) = execute_checked(
+            &inner.store,
+            inner.executor.as_ref(),
+            &schedule,
+            None,
+            inner.clock.wall_ms(),
+        )
+        .await
         {
             tracing::error!(
                 schedule_id = %schedule.id,
@@ -750,6 +757,7 @@ fn spawn_retry_execution(
             inner.executor.as_ref(),
             &schedule,
             Some((due_ms, attempt)),
+            inner.clock.wall_ms(),
         )
         .await;
         if let Err(error) = &outcome {
@@ -819,6 +827,7 @@ fn spawn_timer_executions(
                 inner.executor.as_ref(),
                 &schedule,
                 Some((due_ms, 0)),
+                inner.clock.wall_ms(),
             )
             .await;
             if let Err(error) = &outcome {
@@ -848,6 +857,7 @@ pub(crate) async fn execute_checked(
     executor: &dyn ScheduleExecutor,
     schedule: &Schedule,
     occurrence: Option<(i64, u32)>,
+    now: i64,
 ) -> Result<Dispatch> {
     // A schedule that moved to a server never fires here, whichever ingress asked.
     if store.frozen_for(schedule.id)?.is_some() {
@@ -892,18 +902,59 @@ pub(crate) async fn execute_checked(
     if current.revision != schedule.revision {
         return Ok(Dispatch::Skipped);
     }
+    if store.registry(schedule.id)?.is_some() {
+        let event = fired.external_input.as_ref().map_or_else(
+            || serde_json::json!({"received_at": now, "kind":"schedule"}),
+            |s| serde_json::from_str(s).unwrap_or_else(|_| serde_json::Value::String(s.clone())),
+        );
+        let Some(input) = store.registry_dispatch(schedule, Some(event), now)? else {
+            return Ok(Dispatch::Skipped);
+        };
+        fired.external_input = Some(input);
+    }
     // The tenth failed check still fails open; the next firing is paused.
-    match occurrence {
+    let outcome = match occurrence {
         Some((due, attempt)) => executor.execute_attempt(&fired, due, attempt).await,
         None => executor.execute(&fired).await,
     }
-    .map(|()| Dispatch::Ran)
+    .map(|()| Dispatch::Ran);
+    if outcome.is_err() {
+        store.registry_failed(schedule)?;
+    }
+    outcome
 }
 
 fn poll_triggers(inner: &Arc<Inner>, now: i64) -> Result<()> {
     for schedule in inner.store.list()? {
         if !schedule.enabled || inner.in_flight.lock().contains(&schedule.id) {
             continue;
+        }
+        if let Some((_, state)) = inner.store.registry(schedule.id)?
+            && !state.pending.is_empty()
+        {
+            let Some(guard) = try_acquire_in_flight(inner, &schedule) else {
+                continue;
+            };
+            if let Some(input) = inner.store.registry_dispatch(&schedule, None, now)? {
+                let mut fired = schedule.clone();
+                fired.external_input = Some(input);
+                let inner = Arc::clone(inner);
+                tokio::spawn(async move {
+                    let _guard = guard;
+                    if inner
+                        .store
+                        .get(fired.id)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|s| s.revision == fired.revision)
+                        && inner.executor.execute(&fired).await.is_err()
+                    {
+                        let _ = inner.store.registry_failed(&fired);
+                    }
+                });
+                continue;
+            }
+            drop(guard);
         }
         let Some(trigger) = inner.store.get_trigger(schedule.id)? else {
             continue;
@@ -930,7 +981,7 @@ fn poll_triggers(inner: &Arc<Inner>, now: i64) -> Result<()> {
             drop(slot);
             let result = match result {
                 Ok(Some(fired)) => {
-                    execute_checked(&inner.store, inner.executor.as_ref(), &fired, None)
+                    execute_checked(&inner.store, inner.executor.as_ref(), &fired, None, now)
                         .await
                         .map(|_| ())
                 }
@@ -969,6 +1020,15 @@ async fn poll_one(
                 _ => crate::watch::FILE_POLL_MS,
             });
         }
+        if let Some((rule, _)) = inner.store.registry(schedule.id)?
+            && let crate::registry::TriggerSource::Mail { poll_seconds, .. } = rule.source
+        {
+            watch.next_poll_ms = now.saturating_add(
+                i64::try_from(poll_seconds)
+                    .unwrap_or(86400)
+                    .saturating_mul(1000),
+            );
+        }
     }
     let ready = if state.trigger_errors < 10 {
         watch.take_ready(trigger, now)
@@ -982,7 +1042,9 @@ async fn poll_one(
     if let Some(input) = ready {
         let mut fired = schedule.clone();
         fired.external_input = Some(input);
-        inner.store.touch_last_run(fired.id, now)?;
+        if inner.store.registry(fired.id)?.is_none() {
+            inner.store.touch_last_run(fired.id, now)?;
+        }
         return Ok(Some(fired));
     }
     Ok(None)
