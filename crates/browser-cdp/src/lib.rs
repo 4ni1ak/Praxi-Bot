@@ -35,6 +35,7 @@ pub mod live_view;
 pub mod page;
 pub mod profile;
 pub mod proxy;
+pub mod saved_sites;
 pub mod snapshot;
 pub mod web_url;
 

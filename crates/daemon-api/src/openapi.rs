@@ -97,6 +97,11 @@ impl Modify for Security {
             except GET /v1/health need `Authorization: Bearer <token>`."
     ),
     paths(
+        crate::browser_profiles::get,
+        crate::browser_profiles::sign_in,
+        crate::browser_profiles::finish,
+        crate::browser_profiles::forget_site,
+        crate::browser_profiles::forget_all,
         crate::logs::recent,
         crate::audit_routes::list,
         crate::audit_routes::export,
@@ -353,6 +358,7 @@ impl Modify for Security {
         routes::send_message,
         routes::resend_last_turn,
         routes::telegram_pair_code,
+        routes::discord_pair_code,
         routes::update_bot,
         routes::update_chat,
         routes::update_schedule,
@@ -434,6 +440,8 @@ impl Modify for Security {
         workspace_routes::run_workspace_cleanup,
     ),
     components(schemas(
+        crate::browser_profiles::BrowserProfileStatus,
+        crate::browser_profiles::ForgetBrowserSite,
         ::live_view::FrameMetadata,
         ::live_view::RecordHeader,
         ::live_view::ScreenStatus,

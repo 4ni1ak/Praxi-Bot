@@ -314,6 +314,16 @@ default; `--live` and `update` are the only network calls (`--live` is opt-in; `
 | `status` | Show whether the channel is configured, running, and how many users are paired |
 | `disable` | Turn the channel off (the token stays stored); `--json` prints `{channel, enabled, restart_required}` |
 
+### `bot channels discord`
+
+| Subcommand | Meaning |
+| --- | --- |
+| `setup [--token-env <VAR>] [--lang en\|tr\|de]` | Explain the steps, store the Discord bot token (hidden prompt), enable the channel and test the token; `--json` prints `{channel, configured, enabled, restart_required}` and the test result |
+| `test` | Check the stored token with Discord and say in plain words what is wrong |
+| `pair` | Print a one-time 6-digit pairing code (valid 10 minutes); send `!pair <code>` to the bot in a private message |
+| `status` | Show whether the channel is configured, running, and whether an owner is paired |
+| `disable` | Turn the channel off (the token stays stored) |
+
 ### `bot completions <SHELL>`
 
 Print a completion script to standard output for `bash`, `zsh`, `fish`,

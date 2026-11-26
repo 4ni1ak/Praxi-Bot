@@ -1164,6 +1164,7 @@ pub(crate) struct Shared {
     /// it when mail starts. Read for the per-run "your mail identity" block and
     /// to tell a bot's OWN inbox from one every bot may use.
     pub mail: Arc<builtin_tools::connector_email::MailHandle>,
+    pub browser_profiles: OnceLock<Arc<builtin_tools::browser::BrowserProfiles>>,
     /// Foreground browser / app source for skill suggestions.
     pub skill_hints: RwLock<Option<SkillHintFn>>,
     /// The K0-K3 decision ladders (one per bot) and the workflow wiring.

@@ -1,0 +1,58 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.root h3,
+.root h4,
+.root p {
+  margin: var(--space-0);
+}
+
+.root h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text);
+}
+
+.root svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  flex: none;
+}
+
+.warning {
+  padding: var(--space-3);
+  border: var(--size-border) solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-elevated);
+  color: var(--color-text);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.sites {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-0);
+  margin: var(--space-0);
+  list-style: none;
+}
+
+.sites li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
+}

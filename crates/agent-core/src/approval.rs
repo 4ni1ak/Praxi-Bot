@@ -364,10 +364,7 @@ impl Shared {
         // The same for an address on this computer or its network (file:, localhost, LAN): a
         // page there is private machine data, whatever the owner's card said.
         if name.starts_with("browser_")
-            && (input
-                .get("profile")
-                .and_then(Value::as_str)
-                .is_some_and(|p| !p.is_empty() && p != "isolated")
+            && (self.browser_may_hold_logins(ctx, input)
                 || crate::browser_url::opens_non_public(name, input))
         {
             ctx.taint.lock().mark_private_unhashed();
@@ -815,11 +812,24 @@ impl Shared {
                     ctx.resolved_computer.label,
                     ComputerLabel::Host | ComputerLabel::Browser
                 ),
-            named_browser_profile: input
-                .get("profile")
-                .and_then(Value::as_str)
-                .is_some_and(|p| !p.is_empty() && p != "isolated"),
+            named_browser_profile: self.browser_may_hold_logins(ctx, input),
         })
+    }
+
+    /// The one rule for "this browser call may run where the owner is signed in": it names a
+    /// profile other than the throw-away one, or the bot's default profile holds a sign-in the
+    /// owner did it for (a model that leaves `profile` out must not turn a saved account into
+    /// anonymous browsing). The Balanced lane, the Full-level waiver and the private-data taint
+    /// all ask this one question so they cannot drift apart.
+    fn browser_may_hold_logins(&self, ctx: &RunCtx, input: &Value) -> bool {
+        input
+            .get("profile")
+            .and_then(Value::as_str)
+            .is_some_and(|p| !p.is_empty() && p != "isolated")
+            || self
+                .browser_profiles
+                .get()
+                .is_some_and(|profiles| profiles.may_be_signed_in(&ctx.bot_id.to_string()))
     }
 
     /// The site of a URL as a grant boundary: `scheme://host:port`, lower case, no trailing dot,
@@ -1133,12 +1143,10 @@ impl Shared {
         {
             return false;
         }
-        // A named profile may be signed in: keep asking, like the Balanced lane does.
-        if input
-            .get("profile")
-            .and_then(Value::as_str)
-            .is_some_and(|p| !p.is_empty() && p != "isolated")
-        {
+        // A profile that may be signed in (a named one, or the default one after the owner
+        // signed in there) keeps asking, like the Balanced lane does: signing in once is not a
+        // per-call waiver. The public-web read tools never touch a browser profile.
+        if !web_read && self.browser_may_hold_logins(ctx, input) {
             return false;
         }
         if self.content_class(ctx, name, input).executes
