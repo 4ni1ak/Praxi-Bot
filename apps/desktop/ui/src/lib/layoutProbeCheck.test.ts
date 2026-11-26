@@ -81,3 +81,13 @@ test("an overlay panel may cover the right edge of main without failing overlap,
   p.panel = box(200, 1388);
   assert.ok(validateProbe(p, open).some((v) => /overlay panel overlaps rail/.test(v)));
 });
+
+test("a shell that scrolled sideways (the parked panel pulled it) fails", () => {
+  const p = good();
+  p.layoutScroll = { scrollLeft: 126, scrollTop: 0, scrollWidth: 1616, clientWidth: 1280 };
+  assert.ok(validateProbe(p, open).some((v) => /layout container scrolled/.test(v)));
+  p.layoutScroll = { scrollLeft: 0, scrollTop: 0, scrollWidth: 1400, clientWidth: 1400 };
+  assert.deepEqual(validateProbe(p, open), []);
+  p.layoutScroll = null;
+  assert.ok(validateProbe(p, open).some((v) => /not found/.test(v)));
+});
