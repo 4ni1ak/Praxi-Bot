@@ -1222,6 +1222,12 @@ pub(crate) async fn send_schedules(
             existing += 1;
             continue;
         }
+        // Registry policy/queue is local to schedules.db. Never transfer just
+        // its underlying timer and silently lose limits or source binding.
+        if !matches!(store.registry(sc.id), Ok(None)) {
+            skipped += 1;
+            continue;
+        }
         let trigger = store.get_trigger(sc.id).ok().flatten();
         if matches!(trigger, Some(scheduler::Trigger::Webhook { .. })) {
             // The shared secret is not copied; the owner sets a new one on the server.

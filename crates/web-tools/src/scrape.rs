@@ -231,6 +231,14 @@ impl ScrapeTool {
         self.public
             .check_url(&wanted)
             .map_err(|e| ToolError::InvalidInput(e.to_string()))?;
+        // The owner's site rules hold here too: the page itself is loaded by the add-on, so
+        // the requested address is judged before it is sent and the address it ended on
+        // (see `render`) before any text is shown.
+        if tool_registry::url_blocked(wanted.as_str(), false) {
+            return Err(ToolError::Execution(
+                "blocked by URL policy: this site is blocked by an owner rule".into(),
+            ));
+        }
         let mode = i.mode.as_deref().unwrap_or("article");
         if !matches!(mode, "article" | "markdown" | "links") {
             return Err(ToolError::InvalidInput(
@@ -290,7 +298,12 @@ impl ScrapeTool {
     fn render(&self, ctx: &ToolContext, r: &Reply, mode: &str, max_chars: usize) -> ToolOutput {
         // Never show text from an address the daemon itself would have refused.
         let shown = match Url::parse(&r.final_url) {
-            Ok(u) if self.public.check_url(&u).is_ok() => u.to_string(),
+            Ok(u)
+                if self.public.check_url(&u).is_ok()
+                    && !tool_registry::url_blocked(u.as_str(), true) =>
+            {
+                u.to_string()
+            }
             _ => {
                 return ToolOutput::text(format!(
                     "{}\nThe add-on reported a page address that is not allowed; its text was dropped.",

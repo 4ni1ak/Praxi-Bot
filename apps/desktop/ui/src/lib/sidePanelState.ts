@@ -11,8 +11,12 @@ export type SidePanelReason =
   | "owner-overlay-narrow"
   | "attention-needed";
 
-/** Below this window width the side panel always overlays instead of squeezing the main pane. */
-export const PANEL_DOCK_MIN_WIDTH = 1120;
+/**
+ * Below this window width the side panel overlays instead of squeezing the main pane.  Down to here the
+ * rail is icons only (see `RAIL_NARROW_BELOW`), so a docked panel still leaves the chat `MAIN_MIN`
+ * and the composer is never covered.
+ */
+export const PANEL_DOCK_MIN_WIDTH = 720;
 
 export interface SidePanelInput {
   /** Whether a bot route (`chat` or `bot`) is active. */

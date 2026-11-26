@@ -300,6 +300,12 @@
     "summary": "Botlarınla telefonundan konuş. Daemon bir Telegram kanalı çalıştırır: botuna mesaj yazarsın, yanıtın akışını"
   },
   {
+    "doc": "tr/triggers.md",
+    "title": "Bir şey olduğunda",
+    "headings": [],
+    "summary": "Bot panelinde Otomasyon → Bir şey olduğunda bölümünü açın. Yeni e-posta,"
+  },
+  {
     "doc": "tr/troubleshooting.md",
     "title": "Sorun giderme (teknik)",
     "headings": [

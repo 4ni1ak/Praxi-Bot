@@ -14,6 +14,7 @@ import {
   railWidthFromPointer,
   RAIL_MIN,
   RAIL_MINI,
+  RAIL_NARROW_BELOW,
   stepPanel,
   stepRail
 } from "./shellLayout.ts";
@@ -98,9 +99,15 @@ test("a rail that would squeeze the chat is narrowed, then snaps to icons", () =
   assert.ok(fitRail(900, 440, 260, true, true) >= RAIL_MIN);
   assert.equal(fitRail(760, 264, 260, true, true), RAIL_MINI);
   assert.equal(fitRail(760, 264, 260, false, true), RAIL_MINI);
-  // Closed panel: only the rail and the chat share the row.
-  assert.equal(fitRail(760, 264, 260, true, false), 264);
-  assert.equal(fitRail(760, 440, 260, true, false), 760 - 36 - MAIN_MIN);
+  // Closed panel at a normal width: only the rail and the chat share the row.
+  assert.equal(fitRail(900, 264, 260, true, false), 264);
+  assert.equal(fitRail(900, 440, 260, true, false), 440);
+});
+
+test("below RAIL_NARROW_BELOW the rail is icons only, panel open or not", () => {
+  assert.equal(fitRail(RAIL_NARROW_BELOW - 1, 264, 260, true, false), RAIL_MINI);
+  assert.equal(fitRail(760, 440, 260, false, false), RAIL_MINI);
+  assert.equal(fitRail(RAIL_NARROW_BELOW, 264, 260, true, false), 264);
 });
 
 test("keyboard steps start from the displayed (fitted) rail, not the stored one", () => {

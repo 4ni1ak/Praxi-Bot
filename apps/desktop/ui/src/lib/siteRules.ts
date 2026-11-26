@@ -13,3 +13,12 @@ export function siteRuleExpiryHours(e: SiteRuleExpiry): number | undefined {
       return undefined;
   }
 }
+
+/**
+ * What a rule or suggestion names. A site is its host. A program is shown by file name in
+ * lists, but a confirmation must show the FULL path: two programs can share a file name.
+ */
+export function siteRuleTarget(kind: string, key: string, full = false): string {
+  if (kind !== "app" || full) return key;
+  return key.split(/[\\/]/).pop() || key;
+}

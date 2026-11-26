@@ -1286,6 +1286,37 @@ impl AgentLoop {
         )
     }
 
+    /// Start an owner-authored registry prompt with its already wrapped event.
+    /// The daemon supplies the complete instruction/data boundary. Keep the
+    /// external-schedule approval floor and isolation, but bypass the legacy
+    /// router's second JSON envelope so previews match model input exactly.
+    /// The durable suffix preserves this boundary on restart and resume.
+    ///
+    /// # Errors
+    /// Existing chat history or normal run-start errors.
+    pub fn run_trigger_prompt(
+        &self,
+        chat_id: ChatId,
+        schedule_id: TaskId,
+        occurrence: Option<(i64, u32)>,
+        prompt: &str,
+    ) -> Result<RunId> {
+        let base = occurrence.map_or_else(
+            || format!("turn:external_schedule:{schedule_id}"),
+            |(due, attempt)| occurrence_kind(true, schedule_id, due, attempt),
+        );
+        let kind = format!("{base}:registry");
+        if let Some(run) = self.existing_occurrence_run(chat_id, &kind)? {
+            return Ok(run);
+        }
+        self.run_scheduled_external_kind(
+            chat_id,
+            ScheduleWork::Prompt(prompt.to_owned()),
+            None,
+            &kind,
+        )
+    }
+
     fn run_scheduled_external_kind(
         &self,
         chat_id: ChatId,
@@ -2178,6 +2209,20 @@ impl AgentLoop {
             .storage
             .get_bot(bot_id)?
             .ok_or_else(|| LoopError::NotFound(format!("bot {bot_id}")))?;
+        // A program key is brought to the form a running program is matched by (`.exe`
+        // added, short 8.3 and junction paths resolved on this computer); a key that cannot
+        // be is refused, never stored as a block that could not match.
+        let resolved_app;
+        let new = if new.kind == permission_engine::SubjectKind::App {
+            resolved_app = crate::site_profiles::resolve_app_key(new.raw_key)
+                .map_err(|e| LoopError::Profile(e.to_string()))?;
+            &permission_engine::profiles::NewRule {
+                raw_key: &resolved_app,
+                ..new.clone()
+            }
+        } else {
+            new
+        };
         let rule =
             permission_engine::ProfileRule::new(Uuid::now_v7().to_string(), new, storage::now_ms())
                 .map_err(|e| LoopError::Profile(e.to_string()))?;
@@ -2196,6 +2241,12 @@ impl AgentLoop {
             &serde_json::json!({ "bot_id": bot_id.to_string(), "rule": rule }),
         )?;
         all.push((bot_id, rule.clone()));
+        drop(all);
+        // A rule is part of the policy: bump the revision and fail closed every approval card
+        // that is already open and that this rule now blocks (same lock order as a policy
+        // change: the exec gate first, never while holding the rule list).
+        let _gate = self.sh.exec_gate.lock();
+        crate::approval::on_global_policy_replaced(&self.sh);
         Ok(rule)
     }
 

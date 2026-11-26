@@ -107,7 +107,7 @@ try {
   const vite = resolve(root, 'node_modules/vite/bin/vite.js');
   const dist = join(tmp, 'dist');
   const build = spawnSync(process.execPath, [vite, 'build', '--outDir', dist, '--emptyOutDir'],
-    { cwd: root, env: { ...process.env, VITE_MOCK: '1' }, encoding: 'utf8', windowsHide: true, timeout: 120000 });
+    { cwd: root, env: { ...process.env, VITE_MOCK: '1' }, encoding: 'utf8', windowsHide: true, timeout: 400000 });
   if (build.status !== 0) throw new Error(`vite build failed:\n${build.stdout}\n${build.stderr}`);
   const port = await freePort();
   preview = spawn(process.execPath, [vite, 'preview', '--outDir', dist, '--port', String(port), '--strictPort', '--host', '127.0.0.1'],

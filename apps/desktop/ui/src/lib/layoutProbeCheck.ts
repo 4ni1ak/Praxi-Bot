@@ -33,6 +33,8 @@ export interface ProbeData {
   panelDescendants: number;
   panelRightMostDescendant: { tag: string; cls: string; right: number } | null;
   document: { scrollWidth: number; clientWidth: number };
+  /** The shell container after focusing everything and scrolling it on purpose (must stay at 0,0). */
+  layoutScroll?: { scrollLeft: number; scrollTop: number; scrollWidth: number; clientWidth: number } | null;
 }
 
 export interface ProbeExpect {
@@ -88,6 +90,11 @@ export function validateProbe(p: ProbeData | null | undefined, expect: ProbeExpe
     if (b && (b.left < -EPS || b.right > vw + EPS)) out.push(`${k} outside viewport (${b.left}..${b.right} of ${vw})`);
   }
   if (doc.scrollWidth > doc.clientWidth + EPS) out.push(`document scrolls horizontally (${doc.scrollWidth} > ${doc.clientWidth})`);
+  const ls = p.layoutScroll;
+  if (ls === null) out.push("layout container not found for the scroll check");
+  if (ls && (Math.abs(ls.scrollLeft) > EPS || Math.abs(ls.scrollTop) > EPS)) {
+    out.push(`layout container scrolled (left ${ls.scrollLeft}, top ${ls.scrollTop}; scrollWidth ${ls.scrollWidth} vs ${ls.clientWidth})`);
+  }
   if (rail.right > main.left + EPS) out.push("rail overlaps main");
   const isOverlay = p.panelMode === "overlay";
   if (open && panel && !isOverlay && main.right > panel.left + EPS) out.push("main overlaps panel");

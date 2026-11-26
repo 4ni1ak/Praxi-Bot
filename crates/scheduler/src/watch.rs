@@ -87,7 +87,13 @@ impl WatchState {
                     Trigger::Webhook { .. } => false,
                 };
                 if selected {
-                    pending.insert(entry.key.clone(), entry.input);
+                    let mut input = entry.input;
+                    if matches!(trigger, Trigger::Email { .. })
+                        && let Value::Object(fields) = &mut input
+                    {
+                        fields.insert("received_at".into(), Value::from(now));
+                    }
+                    pending.insert(entry.key.clone(), input);
                 }
             }
             if uid.is_none() {
@@ -178,7 +184,7 @@ mod tests {
         let mut state = WatchState::default();
         let trigger = Trigger::Email {
             account: "fake".into(),
-            from_filter: "safe".into(),
+            from_filter: "safe@example.test".into(),
             subject_filter: None,
         };
         state.observe(&trigger, 0, vec![]).unwrap();

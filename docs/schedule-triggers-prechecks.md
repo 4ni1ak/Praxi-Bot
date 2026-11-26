@@ -47,7 +47,7 @@ An e-mail trigger is:
 }
 ```
 
-The account is an existing connector account, scoped to the schedule's bot; no passwords or API keys belong in this definition. An empty sender filter is refused. Every two minutes the registered `email_search` connector reads INBOX headers. The daemon also checks sender and optional subject locally, using case-insensitive substring matching. Only message identity, sender, and subject are retained in a firing's input. Message bodies and attachments are never fetched for this purpose.
+The account is an existing connector account, scoped to the schedule's bot; no passwords or API keys belong in this definition. The sender filter must be an exact address (`ann@example.com`) or a domain (`example.com` or `@example.com`, which also covers subdomains such as `mail.example.com` but never `example.com.evil.test`); anything else (an empty text, a word, several addresses) is refused. Mail is untrusted, so only the bare address in the From header counts: a display name such as `"ann@example.com" <evil@evil.io>` never matches. Every two minutes the registered `email_search` connector reads INBOX headers. The daemon also checks the sender locally (exact address or domain, case-insensitive, using the connector's `from_addr`, which is empty when the From header names several addresses) and the optional subject (case-insensitive substring). A trigger saved earlier with a looser filter stops firing until it is edited to an address or domain. Only message identity, sender, and subject are retained in a firing's input. Message bodies and attachments are never fetched for this purpose.
 
 The first mailbox poll establishes a baseline of the newest 100 matches. Subsequent polls coalesce newly observed identities and persist an IMAP UID high-water mark. API mailboxes with opaque identities retain a bounded seen set; after 10,000 such identities, narrow/recreate the trigger to establish a fresh baseline. More than 100 arrivals between polls can exceed this connector search window. This initial implementation is a bounded notification poller, not an exactly-once mailbox delivery queue. UID validity/account replacement and complete mailbox catch-up need a cursor-based IMAP interface; the existing IMAP connector has no `list_new` cursor support.
 
@@ -88,3 +88,43 @@ Migration `0012_triggers_prechecks.sql` is the fifth migration of the independen
 Definitions and non-webhook triggers are committed atomically, and asynchronous check/poll results are discarded if the definition revision changed. Trigger state is bounded; the existing scheduler occurrence recovery contract still marks unresolved starts missed/interrupted rather than claiming exactly-once delivery after a process crash. Watcher dispatch follows that same best-effort crash boundary.
 
 The existing CLI startup wires the live registry (including e-mail) before starting the scheduler. Up to four source polls run concurrently; a slow mailbox cannot hold the timer loop or all other source polls. Shutdown cancels polls and uses the existing in-flight drain. No shell, real account, real browser or desktop is needed by the deterministic test suites.
+
+## Owner trigger registry (P7)
+
+The bot panel's Automation tab now exposes owner rules over these schedules.
+See [When something happens](guide/triggers.md) for the supported mailbox,
+quiet-hour, rate, queue and approval behavior. This does not add another runner.
+The scheduler's independent migration `0017_trigger_registry.sql` (user_version 10)
+adds `trigger_registry` (schedule foreign key, source/policy JSON, bounded runtime
+queue and counters, unique incoming-webhook reference) and `trigger_bot_rate`.
+No application-storage migration number is claimed.
+
+`/v1/bots/{bot}/triggers` (GET/POST), `/{trigger}` (PUT/DELETE), and `/preview`
+(POST) are local-owner-only, including reads and previews. New definitions are
+saved off. Existing always-confirmed schedule tools remain the bot proposal
+surface; they cannot edit owner-created registry schedules. The schedule editor
+refuses registry edits to keep the source and policy atomic. Mail uses the existing
+`email_search` read gate, baseline, UID high-water tracking and WatchState batching.
+The mail interval is configurable, 60–86,400 seconds (default 120). The connector
+now supplies canonical sender and loop-guard headers; IMAP BODYSTRUCTURE supplies
+attachment metadata without fetching content. Unknown metadata fails closed.
+
+Both #737 and c642 (#796/#810) were already merged at implementation time.
+Linked #737 calls keep their existing HMAC, durable replay and 30/minute ingress
+limits, but enqueue into their referenced schedule. Calls to an off linked rule
+are refused; they do not fall back to the webhook's earlier instruction. Queued
+responses have status `queued` and null run/chat ids. The c642 conversation channel
+is not reused as a runner or cursor: mailbox rules use the existing search poller.
+
+The daemon and sample preview share `wrapped_instruction`, using
+`untrusted_data_block_capped` with `trigger.mail`, `trigger.webhook`, or
+`trigger.schedule`. AgentPrompt input substitution is disabled at the payload
+model too: only typed tool/workflow parameters retain explicit input binding.
+Owner prompt text is never replaced by raw incoming text. Registry prompts use
+a durable `:registry` suffix on the existing external-schedule run kind; this
+skips the legacy router's second JSON envelope and recall, so preview text is
+exactly the user message delivered to the model, including after resume.
+Every external run keeps the existing isolated external_schedule initiator and once-only tool
+approval floor, including egress, resume and child runs. The old note above
+about pre-native taint describes that implementation's origin; current main also
+has native taint/egress protection, which remains in force.

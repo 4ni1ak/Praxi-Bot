@@ -3053,7 +3053,8 @@ export class MockApiClient extends ApiClient {
         running: this.emailChannel.enabled,
         pending_replies: this.emailReplies.length,
         skipped_mails: 0,
-        ignored_mails: 0
+        ignored_mails: 0,
+        needs_senders: false
       };
     }
     if (sub !== "accounts") {
