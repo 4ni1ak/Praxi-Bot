@@ -284,7 +284,9 @@ mod inference {
     type SharedModel = Arc<Mutex<Model>>;
     type ModelCache = HashMap<String, Weak<Mutex<Model>>>;
     static MODELS: OnceLock<Mutex<ModelCache>> = OnceLock::new();
-    static RUNTIME: OnceLock<Mutex<Option<(String, VerifiedRuntime)>>> = OnceLock::new();
+    static RUNTIME: OnceLock<
+        Mutex<Option<(String, VerifiedRuntime, ort::environment::Environment)>>,
+    > = OnceLock::new();
     static INFERENCE: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
     /// CPU-only, one inference at a time across bots, batches of two inputs.
@@ -340,19 +342,24 @@ mod inference {
                     .get_or_init(|| Mutex::new(None))
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if let Some((hash, _copy)) = runtime.as_ref() {
+                if let Some((hash, _copy, _env)) = runtime.as_ref() {
                     if hash != &artifacts.runtime.sha256 {
                         return Err(invalid("another ONNX runtime generation is already loaded"));
                     }
                 } else {
                     let options = ort::init_from(&runtime_copy.path)
                         .map_err(|_| invalid("cannot load the pinned ONNX runtime library"))?;
-                    if !options.with_telemetry(false).commit() {
+                    // ort 2.0.0-rc.15 hands back the environment and only keeps a weak handle to
+                    // it: hold it for the life of the process so telemetry stays disabled and
+                    // later sessions reuse this environment instead of creating a default one.
+                    // `build` fails when an environment already exists (the old `commit()` ==
+                    // false case), so the "initialized outside the loader" stop stays.
+                    let Ok(environment) = options.with_telemetry(false).build() else {
                         return Err(invalid(
                             "ONNX runtime was initialized outside the pinned local model loader",
                         ));
-                    }
-                    *runtime = Some((artifacts.runtime.sha256.clone(), runtime_copy));
+                    };
+                    *runtime = Some((artifacts.runtime.sha256.clone(), runtime_copy, environment));
                 }
             }
             let mut embedding = TextEmbedding::try_new_from_user_defined(
