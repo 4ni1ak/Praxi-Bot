@@ -5,7 +5,7 @@ import type { SiteRule, SiteRuleSuggestion } from "../../api/types";
 import form from "../../components/Form.module.css";
 import { humanLine } from "../../lib/humanError";
 import { formatDateTime } from "../../lib/messageTime";
-import { siteRuleExpiryHours, type SiteRuleExpiry } from "../../lib/siteRules";
+import { siteRuleExpiryHours, siteRuleTarget, type SiteRuleExpiry } from "../../lib/siteRules";
 import { useDaemon } from "../../state/DaemonContext";
 import styles from "./SiteRulesCard.module.css";
 
@@ -63,7 +63,7 @@ export function SiteRulesCard() {
   // An allow rule covers one host and one kind of action; a broad rule only ever tightens.
   const allowing = action === "allow";
   const effectiveCapability = allowing && capability === "any" ? "interact" : capability;
-  const target = (kind: string, key: string) => (kind === "app" ? key.split("/").pop() ?? key : key);
+  const target = (kind: string, key: string) => siteRuleTarget(kind, key);
   const what = (c: string) => t(`settingsModal.siteRules.capabilities.${c}`);
 
   const add = () =>
@@ -96,6 +96,7 @@ export function SiteRulesCard() {
     <Card padding="md" className={styles.root} data-testid="site-rules">
       <h3 className={styles.heading}>{t("settingsModal.siteRules.title")}</h3>
       <p className={form.hint}>{t("settingsModal.siteRules.lead")}</p>
+      <p className={form.hint}>{t("settingsModal.siteRules.scope")}</p>
       <label className={form.field}>
         {t("settingsModal.siteRules.bot")}
         <select className={form.select} value={activeBot} disabled={busy} onChange={(e) => setBot(e.target.value)}>
@@ -220,8 +221,8 @@ export function SiteRulesCard() {
                 {formatDateTime(s.approved_at_ms, i18n.language)}
               </span>
               {confirming?.key === s.key && confirming.capability === s.capability && confirming.kind === s.kind ? (
-                <span className={styles.confirm} role="group" aria-label={t("settingsModal.siteRules.confirm", { target: target(s.kind, s.key), what: what(s.capability) })}>
-                  <span>{t("settingsModal.siteRules.confirm", { target: target(s.kind, s.key), what: what(s.capability) })}</span>
+                <span className={styles.confirm} role="group" aria-label={t("settingsModal.siteRules.confirm", { target: siteRuleTarget(s.kind, s.key, true), what: what(s.capability) })}>
+                  <span>{t("settingsModal.siteRules.confirm", { target: siteRuleTarget(s.kind, s.key, true), what: what(s.capability) })}</span>
                   <Button disabled={busy} onClick={() => void allowSuggestion(s)}>
                     {t("settingsModal.siteRules.confirmYes")}
                   </Button>

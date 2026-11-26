@@ -2045,6 +2045,7 @@
       "schedules": "Open schedules",
       "settings": "Open settings",
       "stop": "Stop the current run",
+      "unknown": "Esse comando não existe: /{{name}}. Digite / para ver os comandos.",
       "vault": "Abrir o cofre"
     },
     "starters": {
@@ -6093,6 +6094,7 @@
       "fromLine": "From: {{from}}. Send mode: every send needs your approval.",
       "full": "Show the bot the whole text of each mail, not just a summary",
       "ignored": "Mails from senders who are not allowed were ignored: {{n}}",
+      "needsSenders": "This channel was running without a list of allowed senders, so it now passes NO mail to the bot. Add the addresses that may write to the bot (for example your own) under \"Allowed senders\" in the mailbox settings above. Until then every incoming mail stays unread in the mailbox.",
       "noAccount": "Add a mailbox above first.",
       "noSenders": "The selected mailbox has no allowed senders, so no mail will reach the bot. Add your own address under \"Allowed senders\" in the mailbox settings above.",
       "note": "Mail is written by other people, so the bot treats it as information, never as orders. By default it only sees the sender, the subject and the first few lines. Attachments are never opened. Nothing is sent unless you allow replies and then approve each one here.",
@@ -6347,6 +6349,7 @@
       "recentTitle": "From a recent OK",
       "remove": "Remove",
       "removed": "Rule removed.",
+      "scope": "Uma regra vale em todos os computadores que este bot usa: o seu e o host. Os programas são reconhecidos pelo caminho completo.",
       "site": "Website",
       "siteHint": "Only the name, like example.com (no https://, no path).",
       "subdomains": "Also cover its subdomains (like shop.example.com)",

@@ -53,6 +53,27 @@ export function appCommandFor(text: string): AppCommand | null {
   return APP_COMMANDS.find((c) => c.name === parsed.name) ?? null;
 }
 
+/** Every command a message may start with: the daemon's (`/workflow` included), the app's and the composer's. */
+const KNOWN_COMMAND_NAMES: ReadonlySet<string> = new Set([
+  ...SLASH_COMMANDS.map((c) => c.name),
+  ...APP_COMMANDS.map((c) => c.name),
+  ...LOCAL_COMMANDS.map((c) => c.name),
+  "workflow"
+]);
+
+/**
+ * The name when the message is a lone `/word` that no command answers (`/foobar`), else `null`.
+ * Such a message would otherwise go to the model as a paid call.  Anything with arguments, paths
+ * (`/usr/bin/ls`) or text around it is an ordinary message.
+ */
+export function unknownSlashCommand(text: string): string | null {
+  const parsed = parseSlashInput(text);
+  if (!parsed || parsed.args !== "" || KNOWN_COMMAND_NAMES.has(parsed.name)) {
+    return null;
+  }
+  return parsed.name;
+}
+
 export type Trigger =
   | { kind: "slash"; query: string; start: number; end: number }
   | { kind: "mention"; query: string; start: number; end: number };

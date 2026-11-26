@@ -193,37 +193,66 @@ fn registry_hour_day_and_bot_caps_persist_and_edits_cannot_reset_them() {
 fn sender_filters_match_the_address_never_the_display_name() {
     let mail = |from: &str, addr: Value| json!({"from":from,"from_addr":addr,"subject":"invoice 1","automation_headers":{}});
     let mut rule = mail_rule();
-    // Contains: the display name carries the wanted text, the address does not.
-    rule.filters.sender_match = SenderMatch::Contains;
-    rule.filters.sender = "boss@corp.com".into();
     let spoof = mail("\"boss@corp.com\" <x@evil.test>", json!("x@evil.test"));
-    assert!(!rule.accepts_mail(&spoof));
-    // Positive control: a substring of the real address, any case or padding.
     let real = mail("Boss <Boss@Corp.com>", json!(" Boss@Corp.com "));
-    assert!(rule.accepts_mail(&real));
-    rule.filters.sender = " CORP.com ".into();
-    assert!(rule.accepts_mail(&real));
-    assert!(!rule.accepts_mail(&spoof));
-    // A missing or empty parsed address never matches.
-    assert!(!rule.accepts_mail(&mail("boss@corp.com", Value::Null)));
-    assert!(!rule.accepts_mail(&mail("boss@corp.com", json!(""))));
-    // Equals.
+    // Equals: exact address, any case; the display name never counts.
     rule.filters.sender_match = SenderMatch::Equals;
     rule.filters.sender = "boss@corp.com".into();
     assert!(!rule.accepts_mail(&spoof));
     assert!(rule.accepts_mail(&real));
-    // Domain.
+    // A missing or empty parsed address never matches.
+    assert!(!rule.accepts_mail(&mail("boss@corp.com", Value::Null)));
+    assert!(!rule.accepts_mail(&mail("boss@corp.com", json!(""))));
+    // Domain: the domain or a subdomain, on a label boundary.
     rule.filters.sender_match = SenderMatch::Domain;
     rule.filters.sender = "corp.com".into();
-    let domain_spoof = mail("corp.com <x@evil.test>", json!("x@evil.test"));
-    assert!(!rule.accepts_mail(&domain_spoof));
-    assert!(!rule.accepts_mail(&spoof));
+    assert!(!rule.accepts_mail(&mail("corp.com <x@evil.test>", json!("x@evil.test"))));
     assert!(rule.accepts_mail(&real));
-    // Lookalike domains and a blank filter stay rejected.
-    let lookalike = mail("x <x@notcorp.com>", json!("x@notcorp.com"));
-    assert!(!rule.accepts_mail(&lookalike));
-    rule.filters.sender = "  ".into();
-    assert!(!rule.accepts_mail(&real));
+    assert!(rule.accepts_mail(&mail("x", json!("x@mail.corp.com"))));
+    for lookalike in ["x@corp.com.evil.test", "x@evilcorp.com", "x@notcorp.com"] {
+        assert!(
+            !rule.accepts_mail(&mail("x", json!(lookalike))),
+            "{lookalike}"
+        );
+    }
+    // Blank and free-text filters match nothing and do not validate.
+    for bad in ["  ", "boss", "@", ".", "corp"] {
+        rule.filters.sender = bad.into();
+        assert!(!rule.accepts_mail(&real), "{bad:?}");
+        assert!(rule.validate().is_err(), "{bad:?}");
+    }
+}
+
+#[test]
+fn a_legacy_contains_filter_migrates_to_the_shared_rule_or_is_refused() {
+    let mail = |addr: &str| json!({"from":addr,"from_addr":addr,"subject":"invoice 1","automation_headers":{}});
+    let mut rule = mail_rule();
+    rule.filters.sender_match = SenderMatch::Contains;
+    rule.filters.sender = "corp.com".into();
+    // Contains never validates as is, and the old substring hole is closed.
+    assert!(rule.validate().is_err());
+    assert!(!rule.accepts_mail(&mail("x@corp.com.evil.test")));
+    assert!(!rule.accepts_mail(&mail("x@evilcorp.com")));
+    // A domain-looking value moves to Domain; an address to Equals.
+    assert!(rule.filters.migrate_legacy());
+    assert_eq!(rule.filters.sender_match, SenderMatch::Domain);
+    assert!(rule.validate().is_ok());
+    assert!(rule.accepts_mail(&mail("x@mail.corp.com")));
+    assert!(!rule.accepts_mail(&mail("x@corp.com.evil.test")));
+    rule.filters.sender_match = SenderMatch::Contains;
+    rule.filters.sender = "Boss@Corp.com".into();
+    assert!(rule.filters.migrate_legacy());
+    assert_eq!(rule.filters.sender_match, SenderMatch::Equals);
+    assert_eq!(rule.filters.sender, "boss@corp.com");
+    // Free text cannot migrate: the caller disables the trigger and says so.
+    for text in ["ann", "invoice", "@", ".", ""] {
+        let mut f = Filters {
+            sender: text.into(),
+            ..Filters::default()
+        };
+        assert_eq!(f.sender_match, SenderMatch::Contains);
+        assert!(!f.migrate_legacy(), "{text:?}");
+    }
 }
 
 #[test]

@@ -77,7 +77,7 @@ export function BotPanelTriggers({ botId }: { botId: string }) {
         {row.origin === "rule" ? <><p className={styles.note}>{t("botPanel.triggers.count", { count: row.count_today ?? 0 })} · {t("botPanel.triggers.queued", { count: row.queued ?? 0 })}</p>
         <p className={styles.note}>{t("botPanel.triggers.limitSummary", { hour: row.config.limits.per_hour, day: row.config.limits.per_day })}</p></> : <p className={styles.note}>{tr("existingHint")}</p>}
         {row.last_fired_at_ms && <p className={styles.note}>{tr("lastFired")} {new Date(row.last_fired_at_ms).toLocaleString(i18n.language)}</p>}
-        {row.last_error && <p className={styles.error}>{tr(row.last_error === "source" ? "sourceError" : row.last_error === "queue" ? "queueError" : "runError")}</p>}
+        {row.last_error && <p className={styles.error}>{tr(row.last_error === "source" ? "sourceError" : row.last_error === "sender" ? "senderError" : row.last_error === "queue" ? "queueError" : "runError")}</p>}
       </li>; })}
     </ul>
     {!rows.length && !draft && <p className={styles.empty}>{tr("empty")}</p>}
@@ -90,7 +90,7 @@ export function BotPanelTriggers({ botId }: { botId: string }) {
         {mailError && <p role="alert" className={styles.error}>{mailError}</p>}
         <label className={styles.field}>{tr("account")}<select required value={source.account} onChange={e => { const a = accounts.find(a => a.name === e.target.value); setSource({ ...source, account: e.target.value, own_address: a?.address ?? "" }); }}><option value="">{tr("chooseAccount")}</option>{accounts.filter(a => a.provider === "imap_smtp").map(a => <option key={a.name} value={a.name}>{a.address}</option>)}</select></label>
         <p className={styles.note}>{tr("mailHint")}</p>
-        <div className={styles.pair}><label className={styles.field}>{tr("senderMatch")}<select value={draft.config.filters.sender_match} onChange={e => change({ ...draft, config: { ...draft.config, filters: { ...draft.config.filters, sender_match: e.target.value as "equals" | "contains" | "domain" } } })}>{["equals", "contains", "domain"].map(k => <option key={k} value={k}>{tr(k)}</option>)}</select></label>
+        <div className={styles.pair}><label className={styles.field}>{tr("senderMatch")}<select value={draft.config.filters.sender_match} onChange={e => change({ ...draft, config: { ...draft.config, filters: { ...draft.config.filters, sender_match: e.target.value as "equals" | "domain" } } })}>{["equals", "domain"].map(k => <option key={k} value={k}>{tr(k)}</option>)}</select></label>
           <label className={styles.field}>{tr("sender")}<input required maxLength={256} value={draft.config.filters.sender} onChange={e => change({ ...draft, config: { ...draft.config, filters: { ...draft.config.filters, sender: e.target.value } } })} /></label></div>
         <label className={styles.field}>{tr("subject")}<input maxLength={256} value={draft.config.filters.subject} onChange={e => change({ ...draft, config: { ...draft.config, filters: { ...draft.config.filters, subject: e.target.value } } })} /></label>
         <div className={styles.pair}><label className={styles.field}>{tr("folder")}<input required value={source.folder} onChange={e => setSource({ ...source, folder: e.target.value })} /></label>

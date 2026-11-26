@@ -56,6 +56,7 @@ mod safe_mode;
 mod schedules;
 mod schedules_catchup;
 mod secret_requests;
+mod site_rules;
 mod skills;
 mod triggers;
 mod voice;

@@ -2209,6 +2209,20 @@ impl AgentLoop {
             .storage
             .get_bot(bot_id)?
             .ok_or_else(|| LoopError::NotFound(format!("bot {bot_id}")))?;
+        // A program key is brought to the form a running program is matched by (`.exe`
+        // added, short 8.3 and junction paths resolved on this computer); a key that cannot
+        // be is refused, never stored as a block that could not match.
+        let resolved_app;
+        let new = if new.kind == permission_engine::SubjectKind::App {
+            resolved_app = crate::site_profiles::resolve_app_key(new.raw_key)
+                .map_err(|e| LoopError::Profile(e.to_string()))?;
+            &permission_engine::profiles::NewRule {
+                raw_key: &resolved_app,
+                ..new.clone()
+            }
+        } else {
+            new
+        };
         let rule =
             permission_engine::ProfileRule::new(Uuid::now_v7().to_string(), new, storage::now_ms())
                 .map_err(|e| LoopError::Profile(e.to_string()))?;
@@ -2227,6 +2241,12 @@ impl AgentLoop {
             &serde_json::json!({ "bot_id": bot_id.to_string(), "rule": rule }),
         )?;
         all.push((bot_id, rule.clone()));
+        drop(all);
+        // A rule is part of the policy: bump the revision and fail closed every approval card
+        // that is already open and that this rule now blocks (same lock order as a policy
+        // change: the exec gate first, never while holding the rule list).
+        let _gate = self.sh.exec_gate.lock();
+        crate::approval::on_global_policy_replaced(&self.sh);
         Ok(rule)
     }
 

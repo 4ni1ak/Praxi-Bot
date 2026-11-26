@@ -1468,6 +1468,7 @@
       "schedule": "Horario",
       "scheduleHint": "Ejemplo: 0 9 * * * Europe/Madrid (cada día a las 09:00). Intervalo mínimo de cinco minutos.",
       "sender": "Remitente",
+      "senderError": "El filtro de remitente no es una dirección ni un dominio, así que esta regla está apagada y no coincide con nada. Escribe una dirección exacta (ann@example.com) o un dominio (example.com) y vuelve a activarla.",
       "senderMatch": "Regla del remitente",
       "should": "El bot debe",
       "sourceError": "Las consultas del buzón han fallado varias veces. Revisa la conexión y los permisos antes de reactivar la regla.",
@@ -2122,6 +2123,7 @@
       "schedules": "Abrir tareas programadas",
       "settings": "Abrir ajustes",
       "stop": "Detener la ejecución actual",
+      "unknown": "No existe ese comando: /{{name}}. Escribe / para ver los comandos.",
       "vault": "Abrir la bóveda"
     },
     "starters": {
@@ -6179,6 +6181,7 @@
       "fromLine": "De: {{from}}. Modo de envío: cada envío necesita tu aprobación.",
       "full": "Mostrar al bot el texto completo de cada correo, no solo un resumen",
       "ignored": "Correos de remitentes no permitidos que se ignoraron: {{n}}",
+      "needsSenders": "Este canal funcionaba sin una lista de remitentes permitidos, así que ahora NO pasa ningún correo al bot. Añade en «Remitentes permitidos», en los ajustes del buzón de arriba, las direcciones que pueden escribir al bot (por ejemplo la tuya). Hasta entonces, todo correo entrante queda sin leer en el buzón.",
       "noAccount": "Primero añade un buzón arriba.",
       "noSenders": "El buzón elegido no tiene remitentes permitidos, así que ningún correo llegará al bot. Añade tu propia dirección en «Remitentes permitidos» en los ajustes del buzón de arriba.",
       "note": "El correo lo escriben otras personas, así que el bot lo trata como información, nunca como órdenes. Por defecto solo ve el remitente, el asunto y las primeras líneas. Los adjuntos no se abren nunca. No se envía nada a menos que permitas las respuestas y apruebes cada una aquí.",
@@ -6433,6 +6436,7 @@
       "recentTitle": "De un visto bueno reciente",
       "remove": "Quitar",
       "removed": "Regla quitada.",
+      "scope": "Una regla se aplica en todos los ordenadores que usa este bot: el tuyo y el host. Los programas se reconocen por su ruta completa.",
       "site": "Sitio web",
       "siteHint": "Solo el nombre, como example.com (sin https:// ni ruta).",
       "subdomains": "Incluir también sus subdominios (como shop.example.com)",

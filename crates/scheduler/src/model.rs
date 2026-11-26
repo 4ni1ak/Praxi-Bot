@@ -344,8 +344,8 @@ impl ParsedCron {
             }
         };
 
-        let cron = Cron::new(&expr_str)
-            .parse()
+        let cron = expr_str
+            .parse::<Cron>()
             .map_err(|e| SchedulerError::InvalidSpec(format!("cron '{expr_str}': {e}")))?;
 
         Ok(Self { cron, tz })
@@ -480,7 +480,8 @@ pub enum Trigger {
     Email {
         /// Configured account name (credentials remain in the secret store).
         account: String,
-        /// Required nonempty sender substring.
+        /// Required sender: an exact address (`ann@example.com`) or a whole
+        /// domain (`@example.com`). Never a substring of the header text.
         from_filter: String,
         /// Optional subject substring.
         #[serde(default)]
@@ -500,6 +501,12 @@ pub enum FileEvent {
     Created,
     /// Metadata changed for an existing file.
     Modified,
+}
+
+/// An address, `@domain` or domain: the shared sender rule
+/// ([`protocol::sender`]). Free text is refused.
+fn sender_filter_ok(f: &str) -> bool {
+    protocol::sender::sender_rule_ok(f)
 }
 
 impl Trigger {
@@ -532,8 +539,7 @@ impl Trigger {
             } => {
                 !account.trim().is_empty()
                     && account.len() <= 256
-                    && !from_filter.trim().is_empty()
-                    && from_filter.len() <= 256
+                    && sender_filter_ok(from_filter)
                     && subject_filter.as_ref().is_none_or(|s| s.len() <= 256)
             }
         };

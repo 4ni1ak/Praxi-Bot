@@ -1468,6 +1468,7 @@
       "schedule": "Zamanlama",
       "scheduleHint": "Örnek: 0 9 * * * Europe/Istanbul (her gün 09.00). En az beş dakika arayla.",
       "sender": "Gönderen",
+      "senderError": "Gönderen filtresi bir adres ya da alan adı değil; bu yüzden kural kapalı ve hiçbir postayla eşleşmiyor. Tam bir adres (ann@example.com) ya da alan adı (example.com) girip yeniden açın.",
       "senderMatch": "Gönderen kuralı",
       "should": "Bot şunu yapsın",
       "sourceError": "Posta kutusu kontrolleri art arda başarısız oldu. Bağlantıyı ve izinleri kontrol edip yeniden açın.",
@@ -2122,6 +2123,7 @@
       "schedules": "Zamanlamaları aç",
       "settings": "Ayarları aç",
       "stop": "Çalışan işi durdur",
+      "unknown": "Böyle bir komut yok: /{{name}}. Komutları görmek için / yazın.",
       "vault": "Kasayı aç"
     },
     "starters": {
@@ -6179,6 +6181,7 @@
       "fromLine": "Gönderen: {{from}}. Gönderim modu: her gönderim onayınızı gerektirir.",
       "full": "Bota her postanın özetini değil tüm metnini göster",
       "ignored": "İzin verilmeyen göndericilerden gelen ve yok sayılan e-postalar: {{n}}",
+      "needsSenders": "Bu kanal izinli gönderici listesi olmadan çalışıyordu, bu yüzden artık bota HİÇ e-posta iletmiyor. Yukarıdaki posta kutusu ayarlarında \"İzinli göndericiler\" bölümüne bota yazabilecek adresleri (örneğin kendi adresini) ekle. O zamana kadar gelen tüm e-postalar posta kutusunda okunmamış kalır.",
       "noAccount": "Önce yukarıdan bir posta kutusu ekleyin.",
       "noSenders": "Seçilen posta kutusunda izinli gönderici yok, bu yüzden bota hiç e-posta ulaşmaz. Yukarıdaki posta kutusu ayarlarında \"İzinli göndericiler\" bölümüne kendi adresini ekle.",
       "note": "Postaları başkaları yazar; bu yüzden bot onları emir değil bilgi olarak ele alır. Varsayılan olarak yalnızca göndereni, konuyu ve ilk birkaç satırı görür. Ekler hiçbir zaman açılmaz. Yanıtlara izin verip her birini burada onaylamadıkça hiçbir şey gönderilmez.",
@@ -6433,6 +6436,7 @@
       "recentTitle": "Son onaylarından",
       "remove": "Kaldır",
       "removed": "Kural kaldırıldı.",
+      "scope": "Bir kural, bu botun kullandığı her bilgisayarda geçerlidir: senin bilgisayarında ve host üzerinde. Programlar tam yoluyla eşleştirilir.",
       "site": "Web sitesi",
       "siteHint": "Sadece adı yaz, örneğin example.com (https:// ve yol olmadan).",
       "subdomains": "Alt alan adlarını da kapsa (örneğin shop.example.com)",

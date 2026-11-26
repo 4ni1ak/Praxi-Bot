@@ -173,10 +173,9 @@ impl Core {
             return false;
         }
         let allowed = self.allowed.lock().unwrap_or_else(PoisonError::into_inner);
-        allowed.iter().any(|a| match a.strip_prefix('@') {
-            Some(domain) => addr.rsplit_once('@').is_some_and(|(_, d)| d == domain),
-            None => a == addr,
-        })
+        allowed
+            .iter()
+            .any(|a| protocol::sender::sender_matches(addr, a))
     }
 
     /// Replace the allowed senders (the account's list may change while the

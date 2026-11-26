@@ -20,10 +20,9 @@ pub(crate) fn config(data: &Path, host: bool) -> Result<(PeerConfig, Option<bool
         machine.unwrap_or_else(|| if host { "My server" } else { "My computer" }.to_owned());
     let path = data.join("config.toml");
     let config = match std::fs::read_to_string(path) {
-        Ok(text) => text.parse::<toml::Value>()?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            toml::Value::Table(toml::map::Map::default())
-        }
+        // toml 1.x: `parse::<Value>()` reads a single value, not a document; use `Table`.
+        Ok(text) => text.parse::<toml::Table>()?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => toml::Table::default(),
         Err(e) => return Err(e.into()),
     };
     let peer = config.get("peer");
