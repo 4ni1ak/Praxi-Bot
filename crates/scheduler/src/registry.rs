@@ -221,15 +221,24 @@ impl Rule {
         else {
             return false;
         };
-        let from = message["from"].as_str().unwrap_or("").to_lowercase();
-        let address = message["from_addr"].as_str().unwrap_or("");
+        // Security: sender filters match the parsed ADDRESS only. The `From`
+        // display name is attacker-controlled (`"boss@corp.com" <x@evil.test>`)
+        // and is never used for matching.
+        let address = message["from_addr"]
+            .as_str()
+            .unwrap_or("")
+            .trim()
+            .to_lowercase();
         if address.is_empty() || !message["automation_headers"].is_object() {
             return false;
         }
         let wanted = self.filters.sender.trim().to_lowercase();
+        if wanted.is_empty() {
+            return false;
+        }
         let sender_matches = match self.filters.sender_match {
             SenderMatch::Equals => address == wanted,
-            SenderMatch::Contains => from.contains(&wanted),
+            SenderMatch::Contains => address.contains(&wanted),
             SenderMatch::Domain => address
                 .rsplit_once('@')
                 .is_some_and(|(_, domain)| domain == wanted.trim_start_matches('@')),
@@ -247,7 +256,7 @@ impl Rule {
             .iter()
             .any(|s| address.contains(s));
         sender_matches
-            && address != own_address.to_lowercase()
+            && address != own_address.trim().to_lowercase()
             && (header("auto_submitted").is_empty() || header("auto_submitted") == "no")
             && !matches!(header("precedence").as_str(), "bulk" | "list")
             && header("list_unsubscribe").is_empty()
