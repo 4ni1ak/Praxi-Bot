@@ -29,6 +29,11 @@ pub struct ProfileStatus {
 impl BrowserProfiles {
     /// Conservative policy signal, also after a restart. A model's omitted
     /// `profile` argument must never turn a saved account into anonymous browsing.
+    ///
+    /// True once the owner used the manual sign-in window for this bot (a marker the daemon
+    /// writes before launching it; it goes away with "forget all"). Cookies alone do not count:
+    /// the persistent profile has a cookie file after the very first browse, and ordinary site
+    /// cookies would switch the browsing lanes off for every bot. An invalid bot id is true.
     #[must_use]
     pub fn may_be_signed_in(&self, bot: &str) -> bool {
         let Some(root) = self.root.get().and_then(|r| r.managed.as_ref()) else {
@@ -41,17 +46,11 @@ impl BrowserProfiles {
         {
             return true;
         }
-        let path = root.settings.profiles_root.join(bot);
-        [
-            ".owner-sign-in",
-            "Default/Network/Cookies",
-            "Default/Cookies",
-            "headed/Default/Network/Cookies",
-            "headed/Default/Cookies",
-            "profiles",
-        ]
-        .iter()
-        .any(|p| path.join(p).exists())
+        root.settings
+            .profiles_root
+            .join(bot)
+            .join(".owner-sign-in")
+            .exists()
     }
     fn driver(&self, bot: &str) -> Result<Arc<CdpDriver>, String> {
         let root = self.root.get().ok_or("managed browser is unavailable")?;
@@ -248,6 +247,9 @@ mod tests {
             profile::prepare(&path).unwrap();
             std::fs::write(path.join("Default/Cookies"), b"not a valid database").unwrap();
         }
+        // ordinary cookies of a browse are not a sign-in; the owner's sign-in marker is
+        assert!(!profiles.may_be_signed_in("bot-a"));
+        std::fs::write(dir.path().join("browsers/bot-a/.owner-sign-in"), b"").unwrap();
         assert!(profiles.may_be_signed_in("bot-a"));
         profiles.forget("bot-a", None).await.unwrap();
         assert!(!profiles.may_be_signed_in("bot-a"));
