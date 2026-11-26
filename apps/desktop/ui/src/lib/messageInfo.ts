@@ -97,6 +97,7 @@ export function messageSourceKind(source: string | null | undefined): MessageSou
     case "owner":
       return "app";
     case "telegram":
+    case "telegram_owner":
       return "telegram";
     case "peer":
     case "peer_admin":
