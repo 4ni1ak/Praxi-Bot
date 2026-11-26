@@ -958,10 +958,7 @@ async fn a_default_profile_the_owner_signed_in_keeps_asking_in_full_and_is_priva
         "browser_open",
         json!({"url": "https://news.example/catalog/winter-coats"}),
     )];
-    assert_eq!(
-        card(signed(), &open).await.as_deref(),
-        Some("browser_open")
-    );
+    assert_eq!(card(signed(), &open).await.as_deref(), Some("browser_open"));
     // ... and what the browser showed is the owner's private data (the taint is set): a public
     // read of a new site by the web tools now asks too, while it passes in a clean profile.
     let read = [(
