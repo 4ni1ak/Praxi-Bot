@@ -8,6 +8,28 @@ use crate::host_links::{
 
 const PEER: &str = "peerkey1";
 
+#[tokio::test]
+async fn paired_desktop_cannot_read_or_change_local_browser_profiles() {
+    let t = host_daemon();
+    let (bot, _) = make_chat(&t).await;
+    let path = format!("/v1/bots/{bot}/browser-profile");
+    for (method, suffix) in [
+        (Method::GET, ""),
+        (Method::POST, "/sign-in"),
+        (Method::DELETE, ""),
+    ] {
+        let r = peer_call(
+            &t,
+            crate::PeerRole::Desktop,
+            method,
+            &format!("{path}{suffix}"),
+            None,
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{suffix}");
+    }
+}
+
 fn host_daemon() -> T {
     setup_with(|data| {
         HostConfig {
