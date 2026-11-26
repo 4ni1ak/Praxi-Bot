@@ -14,7 +14,9 @@ workspace = true
 default = []
 # Real local embedder (fastembed-rs / ONNX Runtime). Off by default: ort downloads
 # native binaries at build time and the model files are fetched on first use.
-fastembed = ["dep:fastembed", "fastembed/hf-hub-native-tls", "fastembed/ort-download-binaries-native-tls"]
+# fastembed 7 no longer enables a tokenizers regex backend itself, so this feature pulls in our
+# tokenizers dependency (onig) to keep it compiling.
+fastembed = ["dep:fastembed", "dep:tokenizers", "fastembed/hf-hub-native-tls", "fastembed/ort-download-binaries-native-tls"]
 # Explicit local artifacts only; no model or runtime download features.
 local-embeddings = ["dep:fastembed", "fastembed?/ort-load-dynamic", "dep:ort", "dep:tokenizers"]
 
@@ -41,9 +43,9 @@ unicode-normalization = "0.1"
 tokio.workspace = true
 tokio-util.workspace = true
 tempfile.workspace = true
-fastembed = { version = "5", optional = true, default-features = false }
-ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, features = ["std", "load-dynamic"] }
-tokenizers = { version = "0.22.2", optional = true, default-features = false, features = ["onig"] }
+fastembed = { version = "7.8.0", optional = true, default-features = false }
+ort = { version = "=2.0.0-rc.15", optional = true, default-features = false, features = ["std", "load-dynamic"] }
+tokenizers = { version = "0.23.2", optional = true, default-features = false, features = ["onig"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "1", default-features = false, features = ["fs", "std"] }
