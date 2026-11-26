@@ -75,6 +75,7 @@ dependencies = [
  "globset",
  "live-view",
  "memory-store",
+ "missions",
  "openapi-tools",
  "parking_lot",
  "permission-engine",
@@ -1437,6 +1438,7 @@ dependencies = [
  "live-view",
  "mcp-bridge",
  "memory-store",
+ "missions",
  "ogg",
  "openapi-tools",
  "opus-decoder",
@@ -2057,6 +2059,7 @@ dependencies = [
  "iana-time-zone",
  "live-view",
  "memory-store",
+ "missions",
  "parking_lot",
  "peer-network",
  "percent-encoding",
@@ -5156,6 +5159,25 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "missions"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "parking_lot",
+ "protocol",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tool-registry",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

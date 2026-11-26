@@ -129,6 +129,20 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/v1/decision-helper"),
     // monthly spending limit: a token holder must not lift its own cap
     ("PUT", "/v1/spend-limit"),
+    // missions: the goal, the ledger (what the bot found, the owner's answers) and the digest are
+    // the owner's to read, and starting, steering and answering unattended work is the owner's
+    // own action. The chat of a mission and the runs of its sessions are owner-only too
+    // (`mission_routes::mission_gate`), whichever route reaches them.
+    // axum also serves HEAD for a GET handler
+    ("GET", "/v1/missions"),
+    ("GET", "/v1/missions/{}"),
+    ("HEAD", "/v1/missions"),
+    ("HEAD", "/v1/missions/{}"),
+    ("POST", "/v1/missions"),
+    ("POST", "/v1/missions/{}/pause"),
+    ("POST", "/v1/missions/{}/resume"),
+    ("POST", "/v1/missions/{}/cancel"),
+    ("POST", "/v1/missions/{}/answers"),
     // per-bot spending limits: a bot or token holder must not lift its own cap
     ("PUT", "/v1/bots/{}/spend-limits"),
     // how outside text reaches a bot (the quarantined page reader): a bot must not switch off

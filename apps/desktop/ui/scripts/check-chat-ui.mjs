@@ -73,7 +73,7 @@ try {
     }
   }
   await page.goto(base + query, { waitUntil: 'domcontentloaded', timeout: 120000 });
-  const input = page.getByRole('combobox');
+  const input = page.locator('[data-composer-input]');
   await input.fill('@');
   const menu = page.getByTestId('composer-menu');
   await menu.waitFor();
@@ -113,7 +113,7 @@ try {
   await input.press('ArrowDown');
   await screenshot(page, 'commands-empty');
   await input.press('Escape');
-  assert.equal(await input.getAttribute('aria-expanded'), 'false');
+  assert.equal(await page.getByRole('combobox').getAttribute('aria-expanded'), 'false');
   assert.deepEqual(errors, []);
   process.stdout.write('PASS avatars, grouped/recent commands, fuzzy highlights, keyboard, empty state and menu axe audit\n');
 } finally {
