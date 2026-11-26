@@ -150,3 +150,9 @@ test("the open panel does not change shape when a computer preview starts stream
   assert.equal(viewer.mode, "overlay");
   assert.equal(viewer.flowWidth, 0);
 });
+
+test("a 760 px window docks the panel: it pushes the chat instead of covering the composer", () => {
+  const s = deriveSidePanelState({ ...BASE, ownerOpen: true, viewportWidth: 760, railWidth: 68 });
+  assert.equal(s.mode, "docked");
+  assert.equal(s.flowWidth, s.width);
+});

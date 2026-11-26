@@ -344,8 +344,8 @@ impl ParsedCron {
             }
         };
 
-        let cron = Cron::new(&expr_str)
-            .parse()
+        let cron = expr_str
+            .parse::<Cron>()
             .map_err(|e| SchedulerError::InvalidSpec(format!("cron '{expr_str}': {e}")))?;
 
         Ok(Self { cron, tz })
@@ -416,14 +416,12 @@ pub enum Payload {
 }
 
 impl Payload {
-    /// Return a copy of this payload with `{input}` replaced by `body` (used by
-    /// webhook triggers).
+    /// Bind external input only in typed workflow/tool parameters. Agent prompts
+    /// keep the owner text; executors must wrap `Schedule.external_input` separately.
     #[must_use]
     pub fn with_webhook_input(&self, body: &str) -> Self {
         match self {
-            Self::AgentPrompt { text } => Self::AgentPrompt {
-                text: text.replace("{input}", body),
-            },
+            Self::AgentPrompt { text } => Self::AgentPrompt { text: text.clone() },
             // `input` is only injected through an explicit `{input}` placeholder:
             // most workflows do not declare an `input` parameter and
             // `bind_params` rejects undeclared ones. Null params stay null.
@@ -482,7 +480,8 @@ pub enum Trigger {
     Email {
         /// Configured account name (credentials remain in the secret store).
         account: String,
-        /// Required nonempty sender substring.
+        /// Required sender: an exact address (`ann@example.com`) or a whole
+        /// domain (`@example.com`). Never a substring of the header text.
         from_filter: String,
         /// Optional subject substring.
         #[serde(default)]
@@ -502,6 +501,12 @@ pub enum FileEvent {
     Created,
     /// Metadata changed for an existing file.
     Modified,
+}
+
+/// An address, `@domain` or domain: the shared sender rule
+/// ([`protocol::sender`]). Free text is refused.
+fn sender_filter_ok(f: &str) -> bool {
+    protocol::sender::sender_rule_ok(f)
 }
 
 impl Trigger {
@@ -534,8 +539,7 @@ impl Trigger {
             } => {
                 !account.trim().is_empty()
                     && account.len() <= 256
-                    && !from_filter.trim().is_empty()
-                    && from_filter.len() <= 256
+                    && sender_filter_ok(from_filter)
                     && subject_filter.as_ref().is_none_or(|s| s.len() <= 256)
             }
         };

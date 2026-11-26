@@ -226,6 +226,9 @@ impl Tool for TestTool {
     async fn current_origin(&self, _: &ToolContext, _: &Value) -> Option<String> {
         self.page_origin.lock().clone()
     }
+    async fn landed_origin(&self, _: &ToolContext) -> Option<String> {
+        self.page_origin.lock().clone()
+    }
     async fn call(&self, ctx: &ToolContext, _: Value) -> Result<ToolOutput, ToolError> {
         self.count.fetch_add(1, Ordering::SeqCst);
         self.seen_expected.lock().push(ctx.expected_origin.clone());

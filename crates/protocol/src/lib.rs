@@ -11,6 +11,7 @@ pub mod ids;
 pub mod initiator;
 pub mod permission;
 mod schema_snapshot;
+pub mod sender;
 
 pub use envelope::Envelope;
 pub use event::Event;

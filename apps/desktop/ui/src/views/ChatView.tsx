@@ -61,7 +61,7 @@ import { useDragPopOut } from "../components/useDragPopOut";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { PastedSecretWarning } from "../components/PastedSecretWarning";
 import { detectSecrets, kindsToWarn, planStore, removeSecrets } from "../lib/secretDetect";
-import { chatTitleLabel } from "../lib/chatTitle";
+import { autoChatTitle, chatTitleLabel } from "../lib/chatTitle";
 import { pendingForChat } from "../lib/pendingDecisions";
 import { ChatFindBar } from "../components/ChatFindBar";
 import { useChatContextMenu } from "../components/useChatContextMenu";
@@ -141,7 +141,8 @@ import {
   APP_COMMAND_EVENT,
   isExportCommand,
   appCommandFor,
-  parseSlashInput
+  parseSlashInput,
+  unknownSlashCommand
 } from "../lib/slash";
 import { appendDictation } from "../lib/dictation";
 import { FRESH, type HistoryNav, afterEdit, historyKey, userMessageTexts } from "../lib/composerHistory";
@@ -161,6 +162,7 @@ import {
   itemTs,
   type RunState,
   runText,
+  splitTextAtMessages,
   type TimelineItem,
   topLevelRuns
 } from "../state/timeline";
@@ -522,6 +524,20 @@ export function ChatView({
     }
   }, [chatRuns, external, onSwitchChat, refreshChats, toast, t]);
 
+  // A chat that still carries the default name gets one from the owner's first message once the bot
+  // has answered (local text, no model call, and never over a name a person or a bot chose).
+  const autoTitled = useRef(new Set<string>());
+  useEffect(() => {
+    if (!client || external || !chat || autoTitled.current.has(chatId)) return;
+    if (chatTitleLabel(chat.title, "") !== "") return;
+    const firstUser = messages.find((m) => m.role === "user" && !m.superseded);
+    const answered = messages.some((m) => m.role === "assistant" && !m.superseded) || chatRuns.some((r) => r.finishedMs !== undefined);
+    const title = answered ? autoChatTitle(firstUser?.content) : null;
+    if (!title) return;
+    autoTitled.current.add(chatId);
+    void client.updateChat(chatId, { title }).then(() => refreshChats()).catch(() => undefined);
+  }, [client, external, chat, chatId, messages, chatRuns, refreshChats]);
+
   const loadMessages = useCallback(async () => {
     if (!client) {
       return;
@@ -627,10 +643,13 @@ export function ChatView({
     const lastFinished = [...chatRuns]
       .reverse()
       .find((r) => r.finishedMs !== undefined);
-    for (const run of chatRuns) {
-      if (replacedRuns.has(run.id)) {
+    const userTimes = messages.filter((m) => m.role === "user" && !m.superseded).map((m) => m.created_at_ms);
+    for (const sourceRun of chatRuns) {
+      if (replacedRuns.has(sourceRun.id)) {
         continue;
       }
+      // A message written while this run was answering starts a new bubble; it never grows the old one.
+      const run = splitTextAtMessages(sourceRun, userTimes);
       const chip = run.route ? routeChip(run.route, showAgentRoute) : null;
       if (run.route && chip && showRouteChip(chip.cheap, showAgentRoute)) {
         out.push({
@@ -677,7 +696,7 @@ export function ChatView({
           message: run.error
         });
       }
-      if (shouldProbeChanges(run, run === lastFinished)) {
+      if (shouldProbeChanges(run, sourceRun === lastFinished)) {
         out.push({
           kind: "changes",
           key: `${run.id}-changes`,
@@ -685,7 +704,7 @@ export function ChatView({
           run
         });
       }
-      if (run === lastFinished && run.finishedMs !== undefined) {
+      if (sourceRun === lastFinished && run.finishedMs !== undefined) {
         out.push({
           kind: "timeline",
           key: `${run.id}-timeline`,
@@ -909,6 +928,12 @@ export function ChatView({
     if (appCommand) {
       setText("");
       window.dispatchEvent(new CustomEvent(APP_COMMAND_EVENT, { detail: appCommand.target }));
+      return;
+    }
+    // "/foobar": no such command. Say so here instead of paying for a model call that guesses.
+    const unknownCommand = !hasFiles ? unknownSlashCommand(body) : null;
+    if (unknownCommand) {
+      toast.show(t("chat.slash.unknown", { name: unknownCommand }), "info");
       return;
     }
     if (noModelYet && !body.startsWith("/")) {

@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { type ComputerSide, hasBothComputers } from "../lib/botComputer";
 import { formatLive, type ComputerView, type UnavailableReason } from "../lib/computerView";
 import { noScreenDetailKey } from "../lib/computerLabel";
+import { explainScreen, screenPlace } from "../lib/screenReason";
 import { useDaemon } from "../state/DaemonContext";
 import { useServerTerminal } from "../state/ServerTerminalContext";
 import { computerPresence, mainBotLabel } from "../lib/computerStage";
@@ -153,8 +154,31 @@ export function BotComputerBlock({
       )
     : {};
 
+  // One vocabulary for "the screen did not start / is not available": the same words as the full view,
+  // and the fix that fits THIS computer (a server gets the install command in the full view only).
+  const un = view.unavailable;
+  const place = screenPlace(!server);
+  const screenWhy =
+    view.kind === "timeout" && un === "timeout"
+      ? explainScreen("timeout", null, place)
+      : un && typeof un === "object" && "noScreen" in un
+        ? explainScreen(null, un.noScreen, place)
+        : un && typeof un === "object" && "targetReason" in un
+          ? explainScreen(un.targetReason, null, place)
+          : null;
+  const whyText = screenWhy
+    ? [
+        t("computerCard.reason.noScreen", { detail: t(screenWhy.detailKey) }),
+        screenWhy.command ? "" : t(screenWhy.fixKey)
+      ]
+        .filter(Boolean)
+        .join(". ")
+    : null;
+
   const hint =
-    view.kind === "idle"
+    whyText && (view.kind === "timeout" || view.kind === "unavailable")
+      ? whyText
+      : view.kind === "idle"
       ? (activity ?? t("computerCard.hint.idle"))
       : view.kind === "starting"
         ? t("computerCard.hint.starting")

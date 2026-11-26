@@ -363,6 +363,16 @@ export class MockLiveViewService {
         state: "paused",
         target_id: this.targets[0].target_id
       };
+    } else if (forced === "nostream") {
+      // Review state `?lv=open&lvState=nostream`: this computer's desktop is listed but cannot start
+      // (no browser target yet: the bot's browser is registered when the bot first opens a page).
+      this.targets = [
+        {
+          ...this.targets[1],
+          capabilities: { ...this.targets[1].capabilities, view: false, input: false, reason: "unavailable" },
+          unavailable_reason: "unavailable"
+        }
+      ];
     } else if (forced === "unavailable") {
       this.targets = [
         {
@@ -647,6 +657,7 @@ export class MockLiveViewService {
           })
         );
 
+        // Review state `?lvState=starting`: the screen was asked for and no picture has arrived yet.
         void this.pushFrameTo(s, push, "refresh");
 
         const beat = setInterval(() => {
@@ -726,6 +737,7 @@ export class MockLiveViewService {
     s: MockSession,
     cause: "idle" | "action" | "refresh"
   ): Promise<void> {
+    if (mockLvStateParam() === "starting") return;
     const frameRec = await this.encodeFrame(s, cause);
     for (const sub of s.subscribers) {
       sub(frameRec);
@@ -737,6 +749,7 @@ export class MockLiveViewService {
     push: (bytes: Uint8Array) => void,
     cause: "idle" | "action" | "refresh"
   ): Promise<void> {
+    if (mockLvStateParam() === "starting") return;
     const frameRec = await this.encodeFrame(s, cause);
     push(frameRec);
   }

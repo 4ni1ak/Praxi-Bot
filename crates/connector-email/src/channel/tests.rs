@@ -30,6 +30,8 @@ fn summary(uid: u32, from: &str, subject: &str) -> MessageSummary {
         date: Some("2026-11-08T12:00:00Z".into()),
         unread: true,
         size: Some(500),
+        automation_headers: None,
+        has_attachment: None,
     }
 }
 
@@ -721,4 +723,19 @@ async fn changing_the_allowed_senders_applies_to_a_running_channel() {
     ch.set_allowed_senders(&["not an address".to_string()]);
     f.arrive(summary(4, "ann@example.com", "four"));
     assert_eq!(ch.poll_pending().await.unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn a_domain_rule_covers_subdomains_but_not_lookalikes() {
+    let f = Fake::new(vec![]);
+    // A bare domain is accepted and means the same as `@corp.com`.
+    let ch = channel(&f, false, &["corp.com".to_string()]);
+    ch.poll_pending().await.unwrap();
+    f.arrive(summary(1, "A <a@corp.com>", "one"));
+    f.arrive(summary(2, "B <b@mail.corp.com>", "two"));
+    f.arrive(summary(3, "C <c@corp.com.evil.test>", "three"));
+    f.arrive(summary(4, "D <d@evilcorp.com>", "four"));
+    let got = ch.poll_pending().await.unwrap();
+    assert_eq!(got.len(), 2);
+    assert_eq!(ch.ignored_count(), 2);
 }

@@ -152,6 +152,21 @@ impl Resolve for GuardedResolver {
     }
 }
 
+/// The owner's site rules (installed by the loop for the call, see
+/// [`tool_registry::with_url_guard`]) apply to the requested address and to every redirect
+/// hop, before any connection is made.
+fn refuse_blocked_site(url: &Url, redirect_hop: bool) -> Result<(), WebError> {
+    if tool_registry::url_blocked(url.as_str(), redirect_hop) {
+        return Err(PolicyViolation::new(if redirect_hop {
+            "a redirect leads to a site the owner has blocked or wants to approve first"
+        } else {
+            "this site is blocked by an owner rule"
+        })
+        .into());
+    }
+    Ok(())
+}
+
 /// HTTP GET client that enforces a [`UrlPolicy`] and the configured limits.
 #[derive(Clone)]
 pub struct HttpFetcher {
@@ -224,6 +239,7 @@ impl HttpFetcher {
     /// content type, or too many redirects.
     pub async fn get(&self, url: &str, opts: &GetOptions) -> Result<Fetched, WebError> {
         let mut current = self.check(url)?;
+        refuse_blocked_site(&current, false)?;
         let headers = build_headers(&opts.headers)?;
         let cap = opts.max_bytes.unwrap_or(self.cfg.max_bytes);
         let mut hops = 0usize;
@@ -251,6 +267,7 @@ impl HttpFetcher {
                     .join(loc)
                     .map_err(|e| WebError::InvalidUrl(format!("redirect `{loc}`: {e}")))?;
                 self.policy.check_url(&next)?;
+                refuse_blocked_site(&next, true)?;
                 current = next;
                 hops += 1;
                 continue;

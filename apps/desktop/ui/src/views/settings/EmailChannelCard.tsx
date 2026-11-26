@@ -205,6 +205,11 @@ export function EmailChannelCard() {
           </div>
         </>
       ) : null}
+      {channel?.needs_senders ? (
+        <p className={formStyles.error} role="alert" data-testid="email-channel-needs-senders">
+          {t("settingsModal.emailChannel.needsSenders")}
+        </p>
+      ) : null}
       {channel && channel.ignored_mails > 0 ? (
         <p className={formStyles.hint} data-testid="email-channel-ignored">
           {t("settingsModal.emailChannel.ignored", { n: channel.ignored_mails })}

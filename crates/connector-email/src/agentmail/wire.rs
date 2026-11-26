@@ -124,6 +124,8 @@ impl MessageWire {
             date: self.timestamp.as_deref().map(cap_untrusted),
             unread: has_label(self, "unread"),
             size: self.size.and_then(|s| u32::try_from(s).ok()),
+            automation_headers: None,
+            has_attachment: Some(!self.attachments.is_empty()),
         }
     }
 

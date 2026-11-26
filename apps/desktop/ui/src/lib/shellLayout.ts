@@ -14,6 +14,9 @@ export const RAIL_DEFAULT = 264;
 /** A rail narrower than this shows only the characters. */
 export const RAIL_MINI_BELOW = 100;
 
+/** Below this window width the rail always shows icons only, so the chat keeps its room. */
+export const RAIL_NARROW_BELOW = 800;
+
 export const PANEL_MIN = 260;
 export const PANEL_DEFAULT = 320;
 export const PANEL_MAX_FRACTION = 0.6;
@@ -132,6 +135,7 @@ export function fitRail(
   float: boolean,
   panelOpen: boolean
 ): number {
+  if (viewportWidth < RAIL_NARROW_BELOW) return RAIL_MINI;
   const room = railRoom(viewportWidth, panelWidth, float, panelOpen);
   if (rail <= room) return rail;
   return room >= RAIL_MIN ? room : RAIL_MINI;

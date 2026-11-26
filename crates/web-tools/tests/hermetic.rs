@@ -242,6 +242,67 @@ async fn redirects_are_followed_and_limited() {
     assert!(matches!(err, WebError::TooManyRedirects(5)), "{err:?}");
 }
 
+struct DenyPath(&'static str);
+impl tool_registry::UrlGuard for DenyPath {
+    fn blocked(&self, url: &str, _redirect_hop: bool) -> bool {
+        url.contains(self.0)
+    }
+}
+
+#[tokio::test]
+async fn an_owner_site_block_holds_for_the_request_and_for_every_redirect_hop() {
+    let server = MockServer::start().await;
+    let secret = Mock::given(method("GET"))
+        .and(path("/secret"))
+        .respond_with(html("<p>bank balance</p>"));
+    secret.mount(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/a"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "/secret"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/fine"))
+        .respond_with(html("<p>fine</p>"))
+        .mount(&server)
+        .await;
+    let reg = ToolRegistry::new();
+    web_tools::register(&reg, cfg(loopback_ok())).unwrap();
+    let guard: Arc<dyn tool_registry::UrlGuard> = Arc::new(DenyPath("/secret"));
+    let run = |url: String| {
+        let reg = &reg;
+        let guard = Arc::clone(&guard);
+        async move {
+            tool_registry::with_url_guard(
+                guard,
+                call_ctx(
+                    reg,
+                    "web_extract",
+                    json!({ "url": url }),
+                    &ToolContext::default(),
+                ),
+            )
+            .await
+        }
+    };
+    // The requested address itself.
+    let err = run(format!("{}/secret", server.uri())).await.unwrap_err();
+    assert!(err.contains("blocked"), "{err}");
+    // An allowed address that redirects onto the blocked one: refused BEFORE it is contacted.
+    let err = run(format!("{}/a", server.uri())).await.unwrap_err();
+    assert!(err.contains("blocked") || err.contains("redirect"), "{err}");
+    let hit_secret = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .any(|r| r.url.path() == "/secret");
+    assert!(!hit_secret, "the blocked hop must never be requested");
+    // An unrelated address still works.
+    let ok = run(format!("{}/fine", server.uri())).await.unwrap();
+    assert!(text(&ok.content).contains("fine"));
+}
+
 /// Passes `check_url` for hostnames but applies the default address checks to
 /// DNS results: models a hostname that resolves to a loopback address.
 struct DnsOnly(DefaultUrlPolicy);
