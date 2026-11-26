@@ -1061,6 +1061,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/channels/discord/pair-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a one-time pairing code for the Discord channel (valid 10 minutes;
+         *     the user sends `!pair <code>` to the bot in a private message).
+         */
+        post: operations["discord_pair_code"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/channels/telegram/pair-code": {
         parameters: {
             query?: never;
@@ -14488,6 +14508,51 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChannelDto"][];
+                };
+            };
+        };
+    };
+    discord_pair_code: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PairCodeDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the channel is not running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description the daemon is still starting */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };

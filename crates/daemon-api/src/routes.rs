@@ -1259,6 +1259,8 @@ pub(crate) async fn send_message(
         if actor.admin { "peer_admin" } else { "peer" }
     } else if hint == Some("telegram") {
         "telegram"
+    } else if hint == Some("discord") {
+        "discord"
     } else if hint == Some("local_ui") && s.owner_ok(&headers) {
         "owner"
     } else {
@@ -3102,15 +3104,32 @@ pub(crate) async fn list_channels(State(s): State<AppState>) -> Json<Vec<crate::
 pub(crate) async fn telegram_pair_code(
     State(s): State<AppState>,
 ) -> Result<Json<crate::dto::PairCodeDto>, ApiError> {
+    channel_pair_code(&s, "telegram")
+}
+
+/// Create a one-time pairing code for the Discord channel (valid 10 minutes;
+/// the user sends `!pair <code>` to the bot in a private message).
+#[utoipa::path(post, path = "/v1/channels/discord/pair-code", tag = "channels",
+    security(("bearer" = [])),
+    responses((status = 200, body = crate::dto::PairCodeDto), (status = 404, body = ErrorBody),
+              (status = 409, body = ErrorBody, description = "the channel is not running"),
+              (status = 503, body = ErrorBody, description = "the daemon is still starting")))]
+pub(crate) async fn discord_pair_code(
+    State(s): State<AppState>,
+) -> Result<Json<crate::dto::PairCodeDto>, ApiError> {
+    channel_pair_code(&s, "discord")
+}
+
+fn channel_pair_code(s: &AppState, id: &str) -> Result<Json<crate::dto::PairCodeDto>, ApiError> {
     let channel = s
         .channels()
         .into_iter()
-        .find(|c| c.info().id == "telegram")
+        .find(|c| c.info().id == id)
         .ok_or_else(|| {
             if s.leader().is_starting() {
                 ApiError::starting()
             } else {
-                ApiError::not_found("channel telegram")
+                ApiError::not_found(format!("channel {id}"))
             }
         })?;
     if s.leader().is_starting() {
