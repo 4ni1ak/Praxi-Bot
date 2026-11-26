@@ -5,7 +5,7 @@ import type { WorkflowProposal } from "../api/types.ts";
 
 const proposal: WorkflowProposal = {
   run_id: "run-1",
-  workflow: { name: "reviewed", description: "<script>untrusted page text</script>", source: null, params: [
+  workflow: { name: "reviewed", description: "<script>untrusted page text</script>", source: null, revision: 1, params: [
     { name: "password", type: "string", default: null, description: "Required" }
   ], steps: [{ kind: "shell", command: "echo 'full command including trailing arguments'" }, { kind: "tool", input: { text: "untrusted data" } }] },
   step_provenance: [],

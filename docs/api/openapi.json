@@ -17918,6 +17918,61 @@
         ]
       }
     },
+    "/v1/workflows/import": {
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "operationId": "import_workflow",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportWorkflow"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/workflows/{name}": {
       "get": {
         "tags": [
@@ -17971,6 +18026,79 @@
           }
         ]
       },
+      "put": {
+        "tags": [
+          "workflows"
+        ],
+        "operationId": "edit_workflow",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditWorkflow"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
       "delete": {
         "tags": [
           "workflows"
@@ -17998,6 +18126,192 @@
         "responses": {
           "204": {
             "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/workflows/{name}/duplicate": {
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "operationId": "duplicate_workflow",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DuplicateWorkflow"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/workflows/{name}/export": {
+      "get": {
+        "tags": [
+          "workflows"
+        ],
+        "operationId": "export_workflow",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "bot_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowExport"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/workflows/{name}/history": {
+      "get": {
+        "tags": [
+          "workflows"
+        ],
+        "operationId": "workflow_history",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "bot_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WorkflowRunRecord"
+                  }
+                }
+              }
+            }
           },
           "404": {
             "description": "",
@@ -22183,6 +22497,174 @@
           }
         }
       },
+      "DuplicateWorkflow": {
+        "type": "object",
+        "required": [
+          "bot_id",
+          "new_name"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "new_name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EditCheck": {
+        "type": "object",
+        "description": "Final check after the last step (\"assert\").",
+        "required": [
+          "kind",
+          "text"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`window_title`, `browser_text` or `desktop_text`."
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EditParam": {
+        "type": "object",
+        "required": [
+          "name",
+          "description"
+        ],
+        "properties": {
+          "default": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent means \"ask every time\". A parameter that had no default cannot\ngain one here (it may be sensitive)."
+          },
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EditStep": {
+        "type": "object",
+        "description": "One step of the edited list: an existing step by its current index, or a\nnew wait step.",
+        "properties": {
+          "keep": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "wait": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EditWait"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "EditWait": {
+        "type": "object",
+        "description": "Wait step from the palette. Exactly one condition.",
+        "properties": {
+          "idle": {
+            "type": "boolean",
+            "description": "Page network is idle."
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Page contains this text."
+          },
+          "timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "window_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A window title matches."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EditWorkflow": {
+        "type": "object",
+        "required": [
+          "bot_id",
+          "revision",
+          "name",
+          "description",
+          "params",
+          "steps"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "New name (a rename keeps the old file's content under the new name)."
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EditParam"
+            }
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Revision the editor started from; a stale edit is refused.",
+            "minimum": 0
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EditStep"
+            }
+          },
+          "success_check": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EditCheck"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "EffectivePolicyDto": {
         "type": "object",
         "description": "A bot's permission picture (`GET /v1/bots/{id}`).",
@@ -22419,6 +22901,13 @@
             "$ref": "#/components/schemas/EmailImapServer",
             "description": "IMAP server (`imap_smtp`)."
           },
+          "inbox": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Connect an inbox that already exists instead of creating one\n(`agentmail`): its address or id at the provider. For an inbox-scoped\nkey (`am_us_inbox_...`), which cannot create inboxes, and for anyone who\nalready made the address in the provider's console. The key is checked\nwith a read of that inbox; nothing is created."
+          },
           "name": {
             "type": "string",
             "description": "Account name: 1 to 64 characters of `[A-Za-z0-9._-]`. Required on\ncreate; for `POST /v1/email/test` it selects the stored password to\nreuse when `password` is left out."
@@ -22439,7 +22928,7 @@
           },
           "provider": {
             "$ref": "#/components/schemas/EmailProviderKind",
-            "description": "Kind of mailbox; default `imap_smtp`. For `agentmail` the inbox is\ncreated at the provider (its address is returned); `address`, `imap`\nand `smtp` are not used and `api_key` is required."
+            "description": "Kind of mailbox; default `imap_smtp`. For `agentmail` the inbox is\ncreated at the provider (its address is returned), or, with `inbox`, an\nexisting one is connected; `address`, `imap` and `smtp` are not used and\n`api_key` is required."
           },
           "send_mode": {
             "$ref": "#/components/schemas/EmailSendMode",
@@ -24324,6 +24813,34 @@
         },
         "additionalProperties": false
       },
+      "HistoryStep": {
+        "type": "object",
+        "required": [
+          "step_index",
+          "kind",
+          "status"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "`ok`, `failed` or `interrupted`."
+          },
+          "step_index": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "HomeDto": {
         "type": "object",
         "description": "`GET /v1/hosts/home`: the host adopted as the bots' home, if any.",
@@ -25870,6 +26387,31 @@
             }
           }
         }
+      },
+      "ImportWorkflow": {
+        "type": "object",
+        "required": [
+          "bot_id",
+          "content"
+        ],
+        "properties": {
+          "bot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "content": {
+            "type": "string",
+            "description": "Contents of a workflow file (JSON), at most 256 KiB."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Save under this name instead of the file's own."
+          }
+        },
+        "additionalProperties": false
       },
       "IncomingWebhookAccepted": {
         "type": "object",
@@ -34214,7 +34756,8 @@
           "name",
           "description",
           "params",
-          "steps"
+          "steps",
+          "revision"
         ],
         "properties": {
           "description": {
@@ -34229,10 +34772,34 @@
               "$ref": "#/components/schemas/WorkflowParam"
             }
           },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Store revision; an edit must name the revision it started from.",
+            "minimum": 0
+          },
           "source": {},
           "steps": {
             "type": "array",
             "items": {}
+          },
+          "success_check": {
+            "description": "Final check after the last step, if any."
+          }
+        }
+      },
+      "WorkflowExport": {
+        "type": "object",
+        "required": [
+          "file_name",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
           }
         }
       },
@@ -34315,6 +34882,34 @@
           "run_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "WorkflowRunRecord": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "state",
+          "started_at_ms",
+          "steps"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "started_at_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "state": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryStep"
+            }
           }
         }
       },

@@ -609,6 +609,9 @@ impl EmailHost {
         &self,
         input: EmailAccountInput,
     ) -> Result<EmailAccountDto, EmailControlError> {
+        if let Some(inbox) = input.inbox.clone().filter(|i| !i.trim().is_empty()) {
+            return self.connect_agentmail(input, inbox.trim().to_owned()).await;
+        }
         validate_account_name(&input.name).map_err(invalid)?;
         let key = input
             .api_key
@@ -682,6 +685,80 @@ impl EmailHost {
             if let Ok(p) = self.connector.agentmail_for(&key, Some(&account)) {
                 let _ = connector_email::MailboxProvider::delete_inbox(&p).await;
             }
+            return Err(e);
+        }
+        Ok(self.dto(&account))
+    }
+
+    /// Connect an inbox that already exists at `AgentMail`: the key (an
+    /// inbox-scoped one is enough) is checked with a read of that inbox, then
+    /// stored write-only and the account saved. **Nothing is created** at the
+    /// provider, so nothing is taken back when saving fails.
+    async fn connect_agentmail(
+        &self,
+        input: EmailAccountInput,
+        inbox_ref: String,
+    ) -> Result<EmailAccountDto, EmailControlError> {
+        validate_account_name(&input.name).map_err(invalid)?;
+        let key = input
+            .api_key
+            .clone()
+            .filter(|k| !k.is_empty())
+            .ok_or_else(|| invalid("an API key is required"))?;
+        let secret = SecretRef::new(managed_api_key(&input.name))
+            .map_err(|_| invalid("invalid account name for a secret"))?;
+        let allowed_senders = senders(&input.allowed_senders)?;
+        let _guard = self.ops.lock().await;
+        let mut list = self.connector.accounts();
+        if list.iter().any(|a| a.name == input.name) {
+            return Err(EmailControlError::Conflict(format!(
+                "account {} already exists",
+                input.name
+            )));
+        }
+        let provider = self
+            .connector
+            .agentmail_for_inbox(&key, &inbox_ref)
+            .map_err(|e| upstream(&e))?;
+        let inbox = provider.get_inbox().await.map_err(|e| match e {
+            EmailError::NotFound(_) => {
+                invalid("no inbox with that address was found for this API key")
+            }
+            other => upstream(&other),
+        })?;
+        if list
+            .iter()
+            .any(|a| a.inbox_id.as_deref() == Some(inbox.inbox_id.as_str()))
+        {
+            return Err(EmailControlError::Conflict(
+                "that inbox is already connected".into(),
+            ));
+        }
+        let account = AccountConfig {
+            name: input.name.clone(),
+            address: inbox.address.clone(),
+            username: String::new(),
+            password: secret,
+            imap: ImapSettings::default(),
+            smtp: SmtpSettings::default(),
+            drafts_folder: "Drafts".to_owned(),
+            extra_root_pem: None,
+            timeout_secs: 30,
+            bot: input.bot.clone(),
+            allowed_senders,
+            identity: identity_in(&input),
+            kind: AccountKind::AgentMail,
+            inbox_id: Some(inbox.inbox_id.clone()),
+        };
+        account.validate().map_err(invalid)?;
+        let name = account.password.name().to_owned();
+        self.store_secret(name.clone(), key).await?;
+        self.unpend(&name);
+        list.push(account.clone());
+        unique_defaults(&mut list, &account.name);
+        if let Err(e) = self.commit(list) {
+            self.drop_managed_secrets(std::slice::from_ref(&account))
+                .await;
             return Err(e);
         }
         Ok(self.dto(&account))

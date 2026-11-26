@@ -421,15 +421,45 @@ export interface AgentmailForm {
   nameHint: string;
   /** Which bot gets the address; "only this bot" needs a bot picked. */
   bot: BotScope;
+  /** Make a new address (needs an organization key), or connect one that already exists. */
+  mode?: AgentmailMode;
+  /** `connect` only: the address (or id) of the inbox that already exists. */
+  inbox?: string;
 }
+
+/** Create a new address, or connect an existing inbox (what an inbox-scoped key can do). */
+export type AgentmailMode = "create" | "connect";
 
 export function emptyAgentmailForm(): AgentmailForm {
-  return { apiKey: "", nameHint: "", bot: { mode: "some", ids: [] } };
+  return { apiKey: "", nameHint: "", bot: { mode: "some", ids: [] }, mode: "create", inbox: "" };
 }
 
-export type AgentmailFormError = "apiKey" | "nameHint" | "bot";
+export type AgentmailFormError = "apiKey" | "nameHint" | "bot" | "inbox";
 
 const HINT_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,31}$/;
+/** An address or an inbox id as the provider names it: no spaces or path characters. */
+const INBOX_RE = /^[A-Za-z0-9._+=~:@<>-]{3,320}$/;
+
+/** AgentMail keys that belong to one inbox start like this; they cannot create inboxes. */
+export const INBOX_KEY_PREFIX = "am_us_inbox_";
+
+/** Whether `key` looks like an inbox-scoped key (it can only work on the inbox it belongs to). */
+export function isInboxScopedKey(key: string): boolean {
+  return key.trim().startsWith(INBOX_KEY_PREFIX);
+}
+
+/**
+ * Whether a failed "create a new address" tells the user that the key may not create inboxes: the
+ * provider answered "not allowed" (a scoped key), so the existing-inbox mode is what they need.
+ */
+export function suggestsConnectExisting(e: unknown): boolean {
+  const err = e as { status?: unknown; code?: unknown; message?: unknown } | null;
+  return (
+    err?.code === "email_provider_error" &&
+    typeof err.message === "string" &&
+    /not allowed/i.test(err.message)
+  );
+}
 
 export function validateAgentmailForm(form: AgentmailForm): AgentmailFormError[] {
   const errors: AgentmailFormError[] = [];
@@ -437,9 +467,15 @@ export function validateAgentmailForm(form: AgentmailForm): AgentmailFormError[]
   if (key.length < 8 || key.length > 512 || /\s/.test(key)) {
     errors.push("apiKey");
   }
-  const hint = form.nameHint.trim();
-  if (hint !== "" && !HINT_RE.test(hint)) {
-    errors.push("nameHint");
+  if (form.mode === "connect") {
+    if (!INBOX_RE.test((form.inbox ?? "").trim())) {
+      errors.push("inbox");
+    }
+  } else {
+    const hint = form.nameHint.trim();
+    if (hint !== "" && !HINT_RE.test(hint)) {
+      errors.push("nameHint");
+    }
   }
   if (botFromScope(form.bot) === undefined) {
     errors.push("bot");
@@ -463,19 +499,24 @@ export function agentmailAccountName(hint: string, existing: string[]): string {
   return name;
 }
 
-/** Body of `POST /v1/email/accounts` for an AgentMail inbox. */
+/** Body of `POST /v1/email/accounts` for an AgentMail inbox (new, or an existing one). */
 export function toAgentmailInput(
   form: AgentmailForm,
   existing: string[]
 ): EmailAccountInput {
-  const hint = form.nameHint.trim();
+  const connect = form.mode === "connect";
+  const inbox = (form.inbox ?? "").trim();
+  // The local part of the address names a connected inbox; the hint names a new one.
+  const hint = connect ? inbox.split("@")[0] ?? "" : form.nameHint.trim();
   const input: EmailAccountInput = {
     name: agentmailAccountName(hint, existing),
     provider: "agentmail",
     api_key: form.apiKey.trim(),
     bot: botFromScope(form.bot) ?? null
   };
-  if (hint !== "") {
+  if (connect) {
+    input.inbox = inbox;
+  } else if (hint !== "") {
     input.name_hint = hint;
   }
   return input;

@@ -8,7 +8,7 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 
-use super::{T, TOKEN, call, make_chat, send, setup};
+use super::{T, TOKEN, call, call_token_only, make_chat, send, setup};
 use crate::email::{
     EmailAccountDto, EmailAccountInput, EmailControl, EmailControlError, EmailMessageDto,
     EmailProbeStatus, EmailTestReport,
@@ -787,4 +787,142 @@ fn input_and_patch_debug_never_print_the_api_key() {
 fn old_clients_that_send_no_provider_still_mean_imap_smtp() {
     let input: EmailAccountInput = serde_json::from_value(body("x")).unwrap();
     assert_eq!(input.provider, crate::email::EmailProviderKind::ImapSmtp);
+}
+
+const LIMITED_PROFILE: &str = r#"
+[bot]
+id = "limited"
+name = "Limited"
+
+[models]
+executor = "fake/echo"
+
+[tools]
+allow = ["fs_read", "web_*"]
+"#;
+
+const MAIL_PROFILE: &str = r#"
+[bot]
+id = "mailer"
+name = "Mailer"
+
+[models]
+executor = "fake/echo"
+
+[tools]
+allow = ["fs_read", "email_*"]
+"#;
+
+async fn make_bot(t: &T, profile: &str) -> String {
+    let r = call(
+        t,
+        Method::POST,
+        "/v1/bots",
+        Some(json!({ "profile_toml": profile })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{:?}", r.json());
+    r.json()["id"].as_str().unwrap().to_owned()
+}
+
+async fn allow_of(t: &T, bot: &str) -> Vec<String> {
+    let r = call(t, Method::GET, &format!("/v1/bots/{bot}"), None).await;
+    r.json()["config"]["tools"]["allow"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect()
+}
+
+fn audit_actions(t: &T) -> Vec<String> {
+    let rows = t
+        .state
+        .storage()
+        .list_audit(t.state.user_id())
+        .unwrap_or_default();
+    rows.iter()
+        .map(|r| r.action.clone())
+        .filter(|a| a.starts_with("email.bot_tools"))
+        .collect()
+}
+
+#[tokio::test]
+async fn binding_a_mailbox_gives_the_bot_the_mail_tools_once_and_unbinding_takes_back_only_those() {
+    let (t, _) = with_email();
+    let bot = make_bot(&t, LIMITED_PROFILE).await;
+    assert_eq!(allow_of(&t, &bot).await, ["fs_read", "web_*"]);
+
+    let mut b = body("inbox");
+    b["bot"] = json!(bot);
+    let r = call(&t, Method::POST, "/v1/email/accounts", Some(b)).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{:?}", r.json());
+    assert_eq!(allow_of(&t, &bot).await, ["fs_read", "web_*", "email_*"]);
+    assert_eq!(audit_actions(&t), ["email.bot_tools.enable"]);
+
+    // A second mailbox for the same bot adds nothing again.
+    let mut b = body("second");
+    b["bot"] = json!(bot);
+    let r = call(&t, Method::POST, "/v1/email/accounts", Some(b)).await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    assert_eq!(allow_of(&t, &bot).await, ["fs_read", "web_*", "email_*"]);
+
+    // One mailbox left: the tools stay. None left: only what was added goes.
+    let r = call(&t, Method::DELETE, "/v1/email/accounts/second", None).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert_eq!(allow_of(&t, &bot).await, ["fs_read", "web_*", "email_*"]);
+    let r = call(
+        &t,
+        Method::PUT,
+        "/v1/email/accounts/inbox",
+        Some(json!({"bot": null})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(allow_of(&t, &bot).await, ["fs_read", "web_*"]);
+    assert_eq!(
+        audit_actions(&t),
+        ["email.bot_tools.enable", "email.bot_tools.disable"]
+    );
+    let r = call(&t, Method::GET, &format!("/v1/bots/{bot}"), None).await;
+    assert!(r.json()["config"]["tools"].get("mail_auto").is_none());
+}
+
+#[tokio::test]
+async fn tools_the_owner_added_himself_stay_when_the_mailbox_goes() {
+    let (t, _) = with_email();
+    let bot = make_bot(&t, MAIL_PROFILE).await;
+    let mut b = body("inbox");
+    b["bot"] = json!(bot);
+    let r = call(&t, Method::POST, "/v1/email/accounts", Some(b)).await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    assert_eq!(allow_of(&t, &bot).await, ["fs_read", "email_*"]);
+    assert!(audit_actions(&t).is_empty(), "nothing was changed");
+    let r = call(&t, Method::DELETE, "/v1/email/accounts/inbox", None).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert_eq!(allow_of(&t, &bot).await, ["fs_read", "email_*"]);
+}
+
+#[tokio::test]
+async fn a_holder_of_only_the_token_cannot_bind_a_mailbox_or_grant_mail_tools() {
+    let (t, fake) = with_email();
+    let bot = make_bot(&t, LIMITED_PROFILE).await;
+    let mut b = body("inbox");
+    b["bot"] = json!(bot);
+    let r = call_token_only(&t, Method::POST, "/v1/email/accounts", Some(b)).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(r.json()["error"]["code"], "owner_key_required");
+    assert!(fake.accounts.lock().is_empty());
+    assert_eq!(allow_of(&t, &bot).await, ["fs_read", "web_*"]);
+    // Nor can it widen the tool list through the profile route.
+    let r = call_token_only(
+        &t,
+        Method::PATCH,
+        &format!("/v1/bots/{bot}"),
+        Some(json!({"expected_version": 1, "ops": [
+            {"op": "set", "path": "/tools/allow", "value": ["email_*"]}
+        ]})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
 }
