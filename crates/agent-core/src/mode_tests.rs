@@ -19,6 +19,54 @@ const BALANCED: &str = "[permissions]\npreset = \"approve-destructive\"\n";
 const ASK: &str = "[permissions]\npreset = \"read-and-draft\"\n";
 const FULL: &str = "[permissions]\npreset = \"full\"\n";
 
+#[tokio::test]
+async fn balanced_saved_browser_accounts_ask_even_without_a_profile_argument() {
+    let env = setup();
+    let click = tool("browser_click", Effect::Write, PermissionCategory::Browser);
+    let fake = Fake::new(vec![
+        calls(&[("c1", "browser_click", json!({"ref":"e1"}))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&click)],
+        profile(BALANCED),
+        cfg(Policy::approve_destructive()),
+    );
+    let profiles = Arc::new(builtin_tools::browser::BrowserProfiles::default());
+    let _tools = builtin_tools::browser::managed_tools_with_profiles(
+        builtin_tools::BrowserSettings::isolated(env.storage.data_dir()),
+        env.storage.data_dir(),
+        None,
+        None,
+        None,
+        None,
+        Some(profiles.clone()),
+    );
+    assert!(lp.sh.browser_profiles.set(profiles).is_ok());
+    let path = env
+        .storage
+        .data_dir()
+        .join("browsers")
+        .join(env.bot.to_string());
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join(".owner-sign-in"), b"").unwrap();
+    let mut rx = lp.subscribe();
+    let run = lp.run_turn(env.chat, "go").unwrap();
+    let asked = tokio::select! {
+        _ = until(&mut rx, |e| matches!(e, Event::ApprovalNeeded(_))) => true,
+        _ = lp.wait(run) => false,
+    };
+    assert!(
+        asked,
+        "a saved account must not enter the anonymous browsing lane"
+    );
+    assert_eq!(click.count.load(Ordering::SeqCst), 0);
+    lp.cancel(run).unwrap();
+}
+
 fn tool(name: &str, effect: Effect, category: PermissionCategory) -> Arc<TestTool> {
     Arc::new(with_class(
         name,
