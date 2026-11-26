@@ -247,7 +247,7 @@ async fn registry_signed_hook_queue_has_no_timer_and_run_errors_pause_with_fixed
     rule.source = TriggerSource::Webhook { id: hook };
     let s = definition(BotId::new());
     store.insert_registry_config(&s, None, Some(&rule)).unwrap();
-    assert!(store.list_due(i64::MAX).unwrap().is_empty());
+    assert_eq!(store.list_due(i64::MAX).unwrap().len(), 0);
     host.fail.store(true, Ordering::SeqCst);
     store
         .enqueue_webhook(s.bot_id, hook, json!({"body":"untrusted"}), 1000)
@@ -282,7 +282,7 @@ fn registry_drop_and_dst_quiet_windows_are_evaluated_in_the_named_zone() {
             .unwrap()
             .is_none()
     );
-    assert!(store.registry(s.id).unwrap().unwrap().1.pending.is_empty());
+    assert_eq!(store.registry(s.id).unwrap().unwrap().1.pending.len(), 0);
     // Both repeated 02:30 instants on the autumn DST change stay quiet.
     let q = QuietHours {
         start: 120,

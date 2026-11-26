@@ -301,22 +301,29 @@ fn wire_mailbox_name(name: &str) -> Result<Cow<'_, str>, EmailError> {
 }
 
 fn display_mailbox_name(name: &str) -> Option<String> {
+    // A mailbox name is also a SELECT identifier. Keep permitted characters
+    // (including tabs) so displaying a folder cannot select a different one.
+    // Sender/subject display text still uses the stricter header cleaner.
+    let cap_name = |value: &str| {
+        value
+            .chars()
+            .take(crate::message::MAX_UNTRUSTED_FIELD_CHARS)
+            .collect()
+    };
     if name.is_ascii() {
         // Like outgoing selectors, keep permitted legacy ASCII names with
         // no shifts byte-for-byte (subject to the display cap).
         if !name.contains('&') {
             check_folder(name).ok()?;
-            return Some(cap_untrusted(name));
+            return Some(cap_name(name));
         }
         // Omit a malformed name rather than returning text that a caller
         // could pass back and inadvertently select a different mailbox.
-        decode_mailbox_name(name)
-            .ok()
-            .map(|name| cap_untrusted(&name))
+        decode_mailbox_name(name).ok().map(|name| cap_name(&name))
     } else {
         // RFC 3501 §5.1 recommends interpreting 8-bit names as UTF-8.
         // This is already a string; preserve any literal ampersands.
-        Some(cap_untrusted(name))
+        Some(cap_name(name))
     }
 }
 
