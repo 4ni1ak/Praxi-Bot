@@ -55,6 +55,8 @@ struct Case {
     approve: usize,
     /// The bot's browser profile holds the owner's own state (a takeover happened).
     signed_in: bool,
+    /// The owner used the manual sign-in window of the bot's default browser profile.
+    saved_sign_in: bool,
 }
 
 /// What an earlier turn of the chat did.
@@ -84,6 +86,7 @@ impl Case {
             prior: Prior::None,
             approve: 0,
             signed_in: false,
+            saved_sign_in: false,
         }
     }
 }
@@ -293,6 +296,26 @@ async fn run(
     for tool in extra {
         lp.tool_registry()
             .register(Arc::clone(tool) as Arc<dyn tool_registry::Tool>);
+    }
+    if case.saved_sign_in {
+        let profiles = Arc::new(builtin_tools::browser::BrowserProfiles::default());
+        let _tools = builtin_tools::browser::managed_tools_with_profiles(
+            builtin_tools::BrowserSettings::isolated(env.storage.data_dir()),
+            env.storage.data_dir(),
+            None,
+            None,
+            None,
+            None,
+            Some(profiles.clone()),
+        );
+        assert!(lp.sh.browser_profiles.set(profiles).is_ok());
+        let dir = env
+            .storage
+            .data_dir()
+            .join("browsers")
+            .join(env.bot.to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".owner-sign-in"), b"").unwrap();
     }
     if case.prior != Prior::None {
         let crate::Delivery::NewTurn(first) = lp
@@ -919,6 +942,49 @@ async fn a_browser_profile_with_owner_state_makes_its_pages_private_and_hashed()
         )
         .await,
         None
+    );
+}
+
+#[tokio::test]
+async fn a_default_profile_the_owner_signed_in_keeps_asking_in_full_and_is_private() {
+    // The owner signed the bot into his accounts with the sign-in button; the model leaves
+    // `profile` out. After a page was read, Full must not keep browsing there silently ...
+    let signed = || {
+        let mut c = Case::full();
+        c.saved_sign_in = true;
+        c
+    };
+    let open = [(
+        "browser_open",
+        json!({"url": "https://news.example/catalog/winter-coats"}),
+    )];
+    assert_eq!(card(signed(), &open).await.as_deref(), Some("browser_open"));
+    // ... and what the browser showed is the owner's private data (the taint is set): a public
+    // read of a new site by the web tools now asks too, while it passes in a clean profile.
+    let read = [(
+        "web_extract",
+        json!({"url": "https://news.example/catalog/winter-coats"}),
+    )];
+    assert_eq!(card(signed(), &read).await.as_deref(), Some("web_extract"));
+    assert_eq!(card(Case::full(), &read).await, None);
+}
+
+#[tokio::test]
+async fn a_clean_default_profile_and_an_explicit_profile_in_full() {
+    // no sign-in anywhere: harmless public browsing never asks (the owner's wish) ...
+    let later = [(
+        "browser_open",
+        json!({"url": "https://news.example/catalog/winter-coats"}),
+    )];
+    assert_eq!(card(Case::full(), &later).await, None);
+    // ... and a named profile asks
+    let named = [(
+        "browser_open",
+        json!({"url": "https://webioo.com.tr/x", "profile": "work"}),
+    )];
+    assert_eq!(
+        card(Case::full(), &named).await.as_deref(),
+        Some("browser_open")
     );
 }
 
