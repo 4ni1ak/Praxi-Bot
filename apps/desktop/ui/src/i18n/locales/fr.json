@@ -1236,19 +1236,21 @@
     "preset": {
       "approve-destructive": {
         "hint": "Reads, browsing, workspace edits and the bot's own computer run freely; deleting, sending, money and your own PC ask first.",
-        "name": "Approve destructive"
+        "name": "Approve destructive (Équilibré)"
       },
       "custom": {
         "hint": "Choose a level for each category.",
         "name": "Custom"
       },
       "full": {
-        "hint": "Runs without asking (including deletes and sends), except Money, schedule activation and catastrophic never-list commands. After reading untrusted content it still asks before sending data out or running a program. Exception: actions inside a browser you connected as a browser (Playwright: open, look, click, type, run a page script) do not ask after a web page alone; they ask once the task also read something private (files, mail, memory, your screen). Running code outside the page and moving files always ask.",
+        "exceptions": "Runs without asking (including deletes and sends), except Money, schedule activation and catastrophic never-list commands. After reading untrusted content it still asks before sending data out or running a program. Exception: actions inside a browser you connected as a browser (Playwright: open, look, click, type, run a page script) do not ask after a web page alone; they ask once the task also read something private (files, mail, memory, your screen). Running code outside the page and moving files always ask.",
+        "exceptionsTitle": "Voir les exceptions",
+        "hint": "Agit sans demander, même pour supprimer. Quelques arrêts stricts demandent toujours d'abord.",
         "name": "Full"
       },
       "read-and-draft": {
         "hint": "Reads are free; every change, send, page fetch, click and command asks first.",
-        "name": "Read & draft"
+        "name": "Read & draft (Prudent)"
       },
       "read-only": {
         "hint": "The bot can look but never change anything.",
@@ -2033,6 +2035,7 @@
     "runFailed": "The run failed: {{message}}",
     "runStopped": "Stopped by you",
     "send": "Send",
+    "skipToComposer": "Aller à la zone de message",
     "slash": {
       "apps": "Open apps",
       "export": "Save this chat as a Markdown file",
@@ -2243,9 +2246,9 @@
         "running": "Writing a file"
       },
       "generic": {
-        "done": "Ran {{name}}",
-        "failed": "Didn't complete {{name}}",
-        "running": "Running {{name}}"
+        "done": "A utilisé un outil",
+        "failed": "N'a pas pu utiliser un outil",
+        "running": "Utilise un outil"
       },
       "knowledge_search": {
         "done": "Searched knowledge sources",
@@ -3495,12 +3498,20 @@
       "title": "You did not allow that step"
     },
     "toolFailed": {
-      "hint": "Ask again, or describe the task differently.",
-      "title": "The bot could not finish this step"
+      "hint": "Ouvre les Détails pour voir ce que l'outil a répondu, ou redemande.",
+      "title": "Cette étape n'a pas fonctionné"
     },
     "toolMissingProgram": {
       "hint": "Install {{name}}, then try again.",
       "title": "{{name}} is not installed"
+    },
+    "toolNoPermission": {
+      "hint": "Le bot ne peut pas toucher ce fichier ou ce dossier. Choisis un dossier autorisé ou corrige l'accès.",
+      "title": "L'ordinateur a refusé : pas d'autorisation"
+    },
+    "toolNoSuchTool": {
+      "hint": "Pour les fichiers et les commandes, choisis un moteur de code dans les Autorisations du bot, ou demande autre chose.",
+      "title": "Ce bot n'a pas d'outil pour cela"
     },
     "toolNotFound": {
       "hint": "Ask again and say its name or location.",
@@ -3509,6 +3520,10 @@
     "toolScreenControl": {
       "hint": "You are controlling it right now. Hand control back, then ask again.",
       "title": "The bot could not look at the screen"
+    },
+    "toolSearchDown": {
+      "hint": "Ajoute une clé de recherche gratuite dans les Réglages, puis réessaie. Lire une page que tu indiques fonctionne toujours.",
+      "title": "La recherche web n'est pas configurée ou est bloquée"
     },
     "toolTargetOffline": {
       "hint": "It is off or not connected. Turn it on and try again.",
@@ -5788,7 +5803,6 @@
       }
     },
     "computer": {
-      "soon": "Soon",
       "target": {
         "description": "Only the connected computer is currently supported. Manage computer and browser access in Permissions below.",
         "title": "Where the bot runs"
@@ -6268,19 +6282,19 @@
       "levels": {
         "balanced": {
           "ask": "Delete things, send messages or email, spend money, use your own computer.",
-          "name": "Balanced",
+          "name": "Équilibré",
           "own": "Read, browse, edit files in the work area.",
           "summary": "Everyday work flows. Risky things need your OK."
         },
         "careful": {
           "ask": "Edit or save a file, send a message or email, open a web page, run a command.",
-          "name": "Careful",
+          "name": "Prudent",
           "own": "Read files, look things up, draft text.",
           "summary": "Bots look, but you approve every change."
         },
         "handsOff": {
           "ask": "Spending money, dangerous commands, and anything after reading an untrusted page.",
-          "name": "Hands-off",
+          "name": "Complet",
           "own": "Almost everything, including deleting files and sending messages.",
           "summary": "Bots get on with it. Only the biggest risks stop to ask."
         }
@@ -6288,6 +6302,7 @@
       "offline": "Not connected to the helper yet, so the level cannot be shown or changed.",
       "onItsOwn": "On its own",
       "recommended": "Recommended",
+      "samePresets": "Ces trois niveaux sont les mêmes préréglages que tu peux choisir pour un seul bot dans Autorisations : Prudent correspond à Read & draft, Équilibré à Approve destructive, Complet à Full.",
       "saved": "Saved. It applies from the bot’s next step.",
       "title": "What bots can do on their own",
       "willAsk": "Will ask you first"
@@ -7091,8 +7106,8 @@
       "notePlaceholder": "Recovery hint or account purpose",
       "originHint": "Comma-separated URLs or hosts (e.g. https://github.com).",
       "originLabel": "Website address",
-      "refHint": "Stable handle used internally to match fill requests.",
-      "refLabel": "Reference key",
+      "refHint": "Comment cet identifiant apparaît dans la liste. Il est rempli pour toi ; change-le seulement si tu veux.",
+      "refLabel": "Nom court",
       "saved": "Changes saved.",
       "secretKeepPlaceholder": "Leave blank to keep existing password",
       "secretLabel": "Password or secret",

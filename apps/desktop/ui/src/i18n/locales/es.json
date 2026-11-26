@@ -1236,19 +1236,21 @@
     "preset": {
       "approve-destructive": {
         "hint": "Puede leer, navegar, editar archivos del espacio de trabajo y usar su propio equipo sin preguntar. Pide permiso antes de borrar, enviar, gastar dinero o usar tu equipo.",
-        "name": "Aprobar acciones destructivas"
+        "name": "Aprobar acciones destructivas (Equilibrado)"
       },
       "custom": {
         "hint": "Elige un nivel para cada categoría.",
         "name": "Personalizado"
       },
       "full": {
-        "hint": "Actúa sin preguntar, incluso al borrar. Pide permiso para las acciones de la categoría Dinero, el envío de correo y la activación de tareas programadas. Los comandos catastróficos nunca se aprueban automáticamente. Si tú inicias la ejecución, también puede navegar por cualquier sitio público, registrarse y rellenar formularios sin preguntar, incluso después de leer una página. En ese caso, solo vuelve a pedir permiso si la ejecución contiene datos privados tuyos (archivos, correo o memoria) y un sitio nuevo o formulario incluye parte de esos datos, si necesita un secreto guardado, si va a ejecutar un script en una página o si va a iniciar un programa después de leer contenido no confiable.",
+        "exceptions": "Actúa sin preguntar, incluso al borrar. Pide permiso para las acciones de la categoría Dinero, el envío de correo y la activación de tareas programadas. Los comandos catastróficos nunca se aprueban automáticamente. Si tú inicias la ejecución, también puede navegar por cualquier sitio público, registrarse y rellenar formularios sin preguntar, incluso después de leer una página. En ese caso, solo vuelve a pedir permiso si la ejecución contiene datos privados tuyos (archivos, correo o memoria) y un sitio nuevo o formulario incluye parte de esos datos, si necesita un secreto guardado, si va a ejecutar un script en una página o si va a iniciar un programa después de leer contenido no confiable.",
+        "exceptionsTitle": "Ver excepciones",
+        "hint": "Actúa sin preguntar, incluso al borrar. Unas pocas paradas firmes siempre preguntan antes.",
         "name": "Full"
       },
       "read-and-draft": {
         "hint": "Puede leer sin preguntar. Pide permiso antes de cada cambio, envío, carga de una página, clic o ejecución de un comando.",
-        "name": "Leer y redactar"
+        "name": "Leer y redactar (Prudente)"
       },
       "read-only": {
         "hint": "El bot puede consultar contenido, pero nunca modificar nada.",
@@ -2110,6 +2112,7 @@
     "runFailed": "Falló la ejecución: {{message}}",
     "runStopped": "Detuviste la ejecución.",
     "send": "Enviar",
+    "skipToComposer": "Ir al cuadro de mensaje",
     "slash": {
       "apps": "Abrir aplicaciones",
       "export": "Guardar este chat como archivo Markdown",
@@ -2320,9 +2323,9 @@
         "running": "Escribiendo un archivo"
       },
       "generic": {
-        "done": "Ejecutó {{name}}",
-        "failed": "No pudo completar {{name}}",
-        "running": "Ejecutando {{name}}"
+        "done": "Usó una herramienta",
+        "failed": "No pudo usar una herramienta",
+        "running": "Usando una herramienta"
       },
       "knowledge_search": {
         "done": "Buscó en las fuentes de conocimiento",
@@ -3580,12 +3583,20 @@
       "title": "You did not allow that step"
     },
     "toolFailed": {
-      "hint": "Ask again, or describe the task differently.",
-      "title": "The bot could not finish this step"
+      "hint": "Abre Detalles para ver lo que dijo la herramienta, o vuelve a preguntar.",
+      "title": "Ese paso no funcionó"
     },
     "toolMissingProgram": {
       "hint": "Install {{name}}, then try again.",
       "title": "{{name}} is not installed"
+    },
+    "toolNoPermission": {
+      "hint": "El bot no puede tocar ese archivo o carpeta. Elige una carpeta que pueda usar o corrige el acceso.",
+      "title": "El equipo lo rechazó: sin permiso"
+    },
+    "toolNoSuchTool": {
+      "hint": "Para archivos y comandos, elige un motor de código en los Permisos del bot, o pide otra cosa.",
+      "title": "Este bot no tiene una herramienta para eso"
     },
     "toolNotFound": {
       "hint": "Ask again and say its name or location.",
@@ -3594,6 +3605,10 @@
     "toolScreenControl": {
       "hint": "You are controlling it right now. Hand control back, then ask again.",
       "title": "The bot could not look at the screen"
+    },
+    "toolSearchDown": {
+      "hint": "Añade una clave de búsqueda gratuita en Ajustes y vuelve a intentarlo. Leer una página que nombres sigue funcionando.",
+      "title": "La búsqueda web no está configurada o está bloqueada"
     },
     "toolTargetOffline": {
       "hint": "It is off or not connected. Turn it on and try again.",
@@ -5874,7 +5889,6 @@
       }
     },
     "computer": {
-      "soon": "Soon",
       "target": {
         "description": "Only the connected computer is currently supported. Manage computer and browser access in Permissions below.",
         "title": "Where the bot runs"
@@ -6354,19 +6368,19 @@
       "levels": {
         "balanced": {
           "ask": "Delete things, send messages or email, spend money, use your own computer.",
-          "name": "Balanced",
+          "name": "Equilibrado",
           "own": "Read, browse, edit files in the work area.",
           "summary": "Everyday work flows. Risky things need your OK."
         },
         "careful": {
           "ask": "Edit or save a file, send a message or email, open a web page, run a command.",
-          "name": "Careful",
+          "name": "Prudente",
           "own": "Read files, look things up, draft text.",
           "summary": "Bots look, but you approve every change."
         },
         "handsOff": {
           "ask": "Spending money, dangerous commands, and anything after reading an untrusted page.",
-          "name": "Hands-off",
+          "name": "Completo",
           "own": "Almost everything, including deleting files and sending messages.",
           "summary": "Bots get on with it. Only the biggest risks stop to ask."
         }
@@ -6374,6 +6388,7 @@
       "offline": "Not connected to the helper yet, so the level cannot be shown or changed.",
       "onItsOwn": "On its own",
       "recommended": "Recommended",
+      "samePresets": "Estos tres niveles son los mismos ajustes que puedes elegir para un solo bot en Permisos: Prudente es Leer y redactar, Equilibrado es Aprobar acciones destructivas y Completo es Full.",
       "saved": "Saved. It applies from the bot’s next step.",
       "title": "What bots can do on their own",
       "willAsk": "Will ask you first"
@@ -7177,8 +7192,8 @@
       "notePlaceholder": "Indicio de recuperación o propósito de la cuenta",
       "originHint": "URLs o dominios separados por comas (p. ej., https://github.com).",
       "originLabel": "Dirección del sitio web",
-      "refHint": "Identificador estable usado internamente para asociar solicitudes de rellenado.",
-      "refLabel": "Clave de referencia",
+      "refHint": "Cómo aparece este acceso en la lista. Se rellena solo; cámbialo solo si quieres.",
+      "refLabel": "Nombre corto",
       "saved": "Cambios guardados.",
       "secretKeepPlaceholder": "Déjalo vacío para conservar la contraseña actual",
       "secretLabel": "Contraseña o secreto",
