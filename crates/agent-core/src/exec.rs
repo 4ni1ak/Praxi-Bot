@@ -2101,15 +2101,7 @@ impl TurnExecutor {
                     control_guard,
                     lane: ctx.lane(),
                 };
-                // A web fetch tool contacts addresses on its own: the owner's site rules
-                // hold for the one asked for and for every redirect it follows.
-                match &url_guard {
-                    Some(guard) => {
-                        tool_registry::with_url_guard(Arc::clone(guard), tool.call(&tctx, input))
-                            .await
-                    }
-                    None => tool.call(&tctx, input).await,
-                }
+                call_with_url_guard(url_guard.as_ref(), tool, &tctx, input).await
             },
         )
         .await;
@@ -2415,4 +2407,18 @@ fn prompt_hint(req: &ChatRequest) -> Option<u64> {
     serde_json::to_vec(req)
         .ok()
         .map(|b| (b.len() as u64).div_ceil(3))
+}
+
+/// Run `tool`; a web fetch tool contacts addresses on its own, so the owner's site rules are
+/// put in force around it (for the address asked for and for every redirect it follows).
+async fn call_with_url_guard(
+    guard: Option<&Arc<dyn tool_registry::UrlGuard>>,
+    tool: &Arc<dyn Tool>,
+    tctx: &ToolContext,
+    input: serde_json::Value,
+) -> Result<ToolOutput, tool_registry::ToolError> {
+    match guard {
+        Some(g) => tool_registry::with_url_guard(Arc::clone(g), tool.call(tctx, input)).await,
+        None => tool.call(tctx, input).await,
+    }
 }

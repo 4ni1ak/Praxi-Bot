@@ -500,7 +500,7 @@ pub(crate) fn resolve_app_key(raw: &str) -> Result<String, AppKeyError> {
     let is_drive = resolved.as_bytes().get(1) == Some(&b':');
     if is_drive {
         let last = resolved.rsplit('/').next().unwrap_or_default();
-        if last.ends_with(".bat") || last.ends_with(".cmd") {
+        if matches!(last.rsplit_once('.'), Some((_, "bat" | "cmd"))) {
             return Err(AppKeyError::Script);
         }
         if resolved == lexical && resolved.split('/').any(is_short_name) {
