@@ -322,6 +322,11 @@ async fn run(
             None,
             false,
         ));
+        // outside the data folder, which a workspace may not overlap; the folder is left to the
+        // temp cleaner
+        let ws = tempfile::tempdir().unwrap();
+        lp.set_workspaces_root(Some(ws.path().join("workspaces")));
+        std::mem::forget(ws);
     }
     if case.saved_sign_in {
         let profiles = Arc::new(builtin_tools::browser::BrowserProfiles::default());
