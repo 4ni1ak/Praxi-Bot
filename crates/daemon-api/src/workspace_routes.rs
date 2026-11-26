@@ -1518,7 +1518,7 @@ pub(crate) mod win_identity {
         let mut info = BY_HANDLE_FILE_INFORMATION::default();
         // SAFETY: the handle is valid for the borrow of `file`; `info` is a
         // properly sized out-structure owned by this frame.
-        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info) }
+        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &raw mut info) }
             .map_err(io::Error::other)?;
         Ok((
             info.dwVolumeSerialNumber,
