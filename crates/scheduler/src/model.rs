@@ -482,7 +482,8 @@ pub enum Trigger {
     Email {
         /// Configured account name (credentials remain in the secret store).
         account: String,
-        /// Required nonempty sender substring.
+        /// Required sender: an exact address (`ann@example.com`) or a whole
+        /// domain (`@example.com`). Never a substring of the header text.
         from_filter: String,
         /// Optional subject substring.
         #[serde(default)]
@@ -502,6 +503,16 @@ pub enum FileEvent {
     Created,
     /// Metadata changed for an existing file.
     Modified,
+}
+
+/// An address or `@domain`: one `@`, no spaces, something after it.
+fn sender_filter_ok(f: &str) -> bool {
+    let f = f.trim();
+    !f.is_empty()
+        && f.len() <= 256
+        && f.matches('@').count() == 1
+        && !f.ends_with('@')
+        && !f.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 impl Trigger {
@@ -534,8 +545,7 @@ impl Trigger {
             } => {
                 !account.trim().is_empty()
                     && account.len() <= 256
-                    && !from_filter.trim().is_empty()
-                    && from_filter.len() <= 256
+                    && sender_filter_ok(from_filter)
                     && subject_filter.as_ref().is_none_or(|s| s.len() <= 256)
             }
         };

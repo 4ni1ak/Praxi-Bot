@@ -22842,6 +22842,12 @@
             "description": "Mails ignored since the channel started because the sender is not on\nthe mailbox's allowed-senders list.",
             "minimum": 0
           },
+          "needs_senders": {
+            "type": "boolean",
+            "description": "The channel is switched on but the mailbox names no allowed sender, so
+it passes NO mail to the bot until the owner adds one (an older channel
+that ran for anybody stops here until the owner confirms a list)."
+          },
           "pending_replies": {
             "type": "integer",
             "description": "Replies waiting for approval.",

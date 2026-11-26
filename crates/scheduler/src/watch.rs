@@ -178,7 +178,7 @@ mod tests {
         let mut state = WatchState::default();
         let trigger = Trigger::Email {
             account: "fake".into(),
-            from_filter: "safe".into(),
+            from_filter: "safe@example.test".into(),
             subject_filter: None,
         };
         state.observe(&trigger, 0, vec![]).unwrap();

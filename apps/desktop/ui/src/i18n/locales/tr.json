@@ -6058,6 +6058,7 @@
       "fromLine": "Gönderen: {{from}}. Gönderim modu: her gönderim onayınızı gerektirir.",
       "full": "Bota her postanın özetini değil tüm metnini göster",
       "ignored": "İzin verilmeyen göndericilerden gelen ve yok sayılan e-postalar: {{n}}",
+      "needsSenders": "Bu kanal izinli gönderici listesi olmadan çalışıyordu, bu yüzden artık bota HİÇ e-posta iletmiyor. Yukarıdaki posta kutusu ayarlarında \"İzinli göndericiler\" bölümüne bota yazabilecek adresleri (örneğin kendi adresini) ekle. O zamana kadar gelen tüm e-postalar posta kutusunda okunmamış kalır.",
       "noAccount": "Önce yukarıdan bir posta kutusu ekleyin.",
       "noSenders": "Seçilen posta kutusunda izinli gönderici yok, bu yüzden bota hiç e-posta ulaşmaz. Yukarıdaki posta kutusu ayarlarında \"İzinli göndericiler\" bölümüne kendi adresini ekle.",
       "note": "Postaları başkaları yazar; bu yüzden bot onları emir değil bilgi olarak ele alır. Varsayılan olarak yalnızca göndereni, konuyu ve ilk birkaç satırı görür. Ekler hiçbir zaman açılmaz. Yanıtlara izin verip her birini burada onaylamadıkça hiçbir şey gönderilmez.",

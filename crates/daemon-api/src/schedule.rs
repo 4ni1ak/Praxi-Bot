@@ -449,6 +449,47 @@ async fn poll_trigger(
     }
 }
 
+/// The bare address of a From header: exactly `addr` or `Name <addr>`, else
+/// empty (which matches nothing). The display name is attacker text and is
+/// never looked at.
+fn bare_from_address(from: &str) -> String {
+    let t = from.trim();
+    let inner = if t.contains('<') || t.contains('>') {
+        let Some(rest) = t.strip_suffix('>') else {
+            return String::new();
+        };
+        let Some((_, addr)) = rest.rsplit_once('<') else {
+            return String::new();
+        };
+        addr
+    } else {
+        t
+    };
+    let inner = inner.trim().to_ascii_lowercase();
+    let ok = inner.matches('@').count() == 1
+        && !inner.starts_with('@')
+        && !inner.ends_with('@')
+        && !inner.chars().any(|c| {
+            c.is_whitespace() || c.is_control() || matches!(c, '<' | '>' | ',' | ';' | '"')
+        });
+    if ok { inner } else { String::new() }
+}
+
+/// A mail trigger fires only for the sender it names: an exact address or an
+/// `@domain`. A substring of the header text is NOT enough, or anybody could
+/// forge a display name and start a run.
+fn sender_matches(from: &str, filter: &str) -> bool {
+    let addr = bare_from_address(from);
+    let filter = filter.trim().to_ascii_lowercase();
+    if addr.is_empty() || filter.is_empty() {
+        return false;
+    }
+    match filter.strip_prefix('@') {
+        Some(domain) => addr.rsplit_once('@').is_some_and(|(_, d)| d == domain),
+        None => addr == filter,
+    }
+}
+
 fn email_observations(
     output: &Value,
     from_filter: &str,
@@ -470,7 +511,7 @@ fn email_observations(
             .ok_or_else(|| exec_err("email subject unavailable"))?;
         // Filter again locally. Connector and fake providers may return
         // a wider result; only headers participate, never a body.
-        if !from.to_lowercase().contains(&from_filter.to_lowercase())
+        if !sender_matches(from, from_filter)
             || subject_filter
                 .as_ref()
                 .is_some_and(|s| !subject.to_lowercase().contains(&s.to_lowercase()))
@@ -691,11 +732,38 @@ mod c225_tests {
         assert!(headers.calls.lock().iter().all(|v| v["folder"] == "INBOX"
             && v["from"] == "ann@example.test"
             && v.get("body").is_none()));
+        // A forged display name or a lookalike address never matches.
+        assert!(sender_matches("Ann <ann@example.test>", "ann@example.test"));
+        assert!(sender_matches("ann@example.test", "@example.test"));
+        assert!(!sender_matches(
+            "ann@example.test.evil.io",
+            "ann@example.test"
+        ));
+        assert!(!sender_matches(
+            "ann@example.test <evil@evil.io>",
+            "ann@example.test"
+        ));
+        assert!(!sender_matches(
+            "\"ann@example.test\" <evil@evil.io>",
+            "ann@example.test"
+        ));
+        assert!(!sender_matches(
+            "evil@evil.io <ann@example.test",
+            "ann@example.test"
+        ));
+        assert!(!sender_matches("xann@example.test", "ann@example.test"));
+        assert!(!sender_matches("bob@evil.io", "example.test"));
         let empty = scheduler::Trigger::Email {
             account: "fake".into(),
             from_filter: " ".into(),
             subject_filter: None,
         };
         assert!(empty.validate().is_err());
+        let word = scheduler::Trigger::Email {
+            account: "fake".into(),
+            from_filter: "ann".into(),
+            subject_filter: None,
+        };
+        assert!(word.validate().is_err(), "a word is not a sender");
     }
 }

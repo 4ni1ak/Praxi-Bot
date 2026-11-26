@@ -6058,6 +6058,7 @@
       "fromLine": "Von: {{from}}. Sendemodus: Jedes Senden braucht Ihre Freigabe.",
       "full": "Dem Bot den ganzen Text jeder Mail zeigen, nicht nur eine Zusammenfassung",
       "ignored": "E-Mails von nicht erlaubten Absendern wurden ignoriert: {{n}}",
+      "needsSenders": "Dieser Kanal lief ohne Liste erlaubter Absender und gibt deshalb jetzt KEINE E-Mail mehr an den Bot weiter. Trage in den Postfach-Einstellungen oben unter „Erlaubte Absender“ die Adressen ein, die dem Bot schreiben dürfen (zum Beispiel deine eigene). Bis dahin bleibt jede eingehende E-Mail ungelesen im Postfach.",
       "noAccount": "Fügen Sie zuerst oben ein Postfach hinzu.",
       "noSenders": "Das gewählte Postfach hat keine erlaubten Absender, daher erreicht keine E-Mail den Bot. Trage deine eigene Adresse in den Postfach-Einstellungen oben unter „Erlaubte Absender“ ein.",
       "note": "Mails stammen von anderen Personen, deshalb behandelt der Bot sie als Information, nie als Anweisung. Standardmäßig sieht er nur Absender, Betreff und die ersten Zeilen. Anhänge werden nie geöffnet. Es wird nichts gesendet, außer Sie erlauben Antworten und bestätigen jede einzelne hier.",
