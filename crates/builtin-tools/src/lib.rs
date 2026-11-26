@@ -35,6 +35,7 @@ pub mod meta;
 pub mod notes;
 pub mod pc;
 pub mod provenance;
+pub mod pty_shell;
 pub mod pure_tools;
 pub mod schedule;
 pub mod script;
@@ -167,6 +168,9 @@ pub struct BuiltinConfig {
     pub account_register: account_register::AccountRegisterConfig,
     /// Ledger of files with an untrusted origin (see [`provenance`]); `None` = rules only.
     pub provenance: Option<Arc<dyn provenance::Provenance>>,
+    /// The daemon's redactor, which knows the vault's values: `shell_interactive` masks what a
+    /// program prints with it before the bot sees it. `None` = the key-shape patterns only.
+    pub output_redactor: Option<pty_shell::OutputRedactor>,
     /// Late-bound mail connector: the host binds it once the mail accounts are
     /// loaded (`email` above, when set, binds it here too). `email_wait_for` and
     /// `account_register` use it; the run loop reads the same handle.
@@ -256,6 +260,7 @@ impl BuiltinConfig {
             secret_requests: false,
             account_register: account_register::AccountRegisterConfig::default(),
             provenance: None,
+            output_redactor: None,
             mail: Arc::new(connector_email::MailHandle::new()),
             page_origin: Arc::new(connector_email::PageOriginSlot::new()),
         }
@@ -344,6 +349,11 @@ pub fn build_builtin_tools(cfg: BuiltinConfig, registry: &ToolRegistry) -> Vec<A
         cfg.provenance.clone(),
         cfg.fs_access.clone(),
     ));
+    all.push(pty_shell::tool(
+        cfg.fs_access.clone(),
+        cfg.provenance.clone(),
+        cfg.output_redactor.clone(),
+    ));
     all.push(script::tool_with_control(
         registry.clone(),
         cfg.gate,
@@ -426,6 +436,7 @@ mod tests {
         // program or drives input must be added here and in `classify`.
         let executors = [
             "shell_run",
+            "shell_interactive",
             "script_run",
             "desktop_launch",
             "desktop_type",
@@ -476,8 +487,9 @@ mod tests {
             println!("schema-bytes {n:>6} {name}");
         }
         println!("schema-bytes total {total} over {} tools", rows.len());
-        // Loose ceiling so a runaway description is noticed; not a target.
-        assert!(total < 24_000, "tool list grew to {total} bytes");
+        // Loose ceiling so a runaway description is noticed; not a target. Raised from 24 000
+        // when `shell_interactive` (about 1.9 KB) joined a list that was already near it.
+        assert!(total < 26_000, "tool list grew to {total} bytes");
     }
 
     #[test]
@@ -633,6 +645,7 @@ mod tests {
             ("checkpoint_list", R, Fs),
             ("checkpoint_restore", W, Fs),
             ("shell_run", D, Sh),
+            ("shell_interactive", D, Sh),
             ("script_run", W, Sc),
             ("ask_user", R, Me),
             ("todo_write", W, Me),
@@ -1233,7 +1246,7 @@ mod tests {
         cfg.browser = Some(Arc::new(browser::fake::FakeBrowser::default()));
         cfg.email = Some(connector.clone());
         let added = register_builtin_tools(&reg, cfg);
-        assert_eq!(added, 43 + 7 + 2 + 2 + 1 + 1);
+        assert_eq!(added, 44 + 7 + 2 + 2 + 1 + 1);
 
         // Verification of email tools and their effects
         let send_tool = reg

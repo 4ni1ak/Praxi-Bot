@@ -1,4 +1,4 @@
-import type { AdminCliLogin } from "../api/types.ts";
+import type { AdminCliEngine, AdminCliLogin } from "../api/types.ts";
 
 /** What the sign-in modal shows. `idle` = nothing started yet (or the engine cannot be driven). */
 export type SignInPhase =
@@ -41,5 +41,46 @@ export function apiKeyProvider(engineId: string): string | null {
       return "openai";
     default:
       return null;
+  }
+}
+
+/** Failures that mean the CLI never showed its sign-in page: the plain command is the way on. */
+export function needsManualFallback(job: Pick<AdminCliLogin, "state" | "error"> | null): boolean {
+  return job?.state === "failed" && (job.error === "login_start_timeout" || job.error === "login_cli_outdated");
+}
+
+/** What a sign-in waits for while the person works in the browser: a typed code, or nothing. */
+export function waitingFor(job: Pick<AdminCliLogin, "code"> | null): "device" | "browser" {
+  return job?.code ? "device" : "browser";
+}
+
+/** The status line of one engine in the server's engine list (an i18n key plus its values). */
+export function engineStatus(
+  engine: Pick<AdminCliEngine, "installed" | "signed_in" | "account">
+): { key: string; values?: { account: string } } {
+  if (!engine.installed) {
+    return { key: "home.engines.notInstalled" };
+  }
+  if (engine.signed_in === true) {
+    return engine.account ? { key: "home.engines.readyAs", values: { account: engine.account } } : { key: "home.engines.ready" };
+  }
+  return { key: engine.signed_in === false ? "home.engines.needsSignIn" : "home.engines.installedUnknown" };
+}
+
+/**
+ * What the person is about to open: the host and path of the sign-in page, as the browser will
+ * read them (the query is left out: it carries sign-in state). `null` unless it is an https page.
+ * The server only hands over a page on the vendor's own host, and the window shows the host so
+ * the person can see that too; a page that is anything else is not offered at all.
+ */
+export function pageAddress(url: string | null | undefined): { host: string; shown: string } | null {
+  if (!url) {
+    return null;
+  }
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && u.host ? { host: u.host, shown: `${u.host}${u.pathname}` } : null;
+  } catch {
+    return null;
   }
 }

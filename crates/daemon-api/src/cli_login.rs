@@ -8,7 +8,8 @@
 //! `cli_provider::login`. This module is only the job state machine around it:
 //!
 //! ```text
-//! starting -> needs_browser {url, code}   (device-code flow: open the page, type the code)
+//! starting -> needs_browser {url, code}   (device-code flow: open the page, type the code;
+//!                                          browser flow: open the page, nothing to type)
 //!          -> needs_code {url}            (paste-code flow: sign in, paste the page's code back)
 //!          -> verifying -> done           (the host's own detection reports "signed in")
 //!                       -> failed {code} | timed_out | cancelled
@@ -17,6 +18,12 @@
 //! Nothing secret is ever kept or sent: the output stays private to `LoginRun`, a pasted code
 //! goes to the process' stdin and is dropped, and the audit rows name the engine and the
 //! outcome only. The whole process tree is killed on cancel, timeout or shutdown.
+//!
+//! Engines whose CLI only talks on a terminal run on a pseudo terminal (`cli_provider::login`,
+//! `pty_session`); the state machine is the same. "Signed in" is confirmed by the CLI's own
+//! status where it has one, else by the success line it printed together with a clean exit, or
+//! (a CLI that keeps running) by the credential file it wrote after the code was handed over.
+//! The account name the CLI reports (never a token) is kept for the app to show.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -33,7 +40,7 @@ use tokio_util::sync::CancellationToken;
 use utoipa::ToSchema;
 
 use crate::{
-    ApiError, AppState, PeerIdentity,
+    ApiError, AppState, PeerIdentity, PeerRole,
     host_admin::{Gate, audit, require_admin},
     routes::ApiJson,
 };
@@ -58,6 +65,23 @@ fn lifetime() -> Duration {
 
 /// How long the CLI may take after the code was handed to it.
 const AFTER_CODE: Duration = Duration::from_secs(60);
+/// How often the credential files are looked at.
+const WATCH_EVERY: Duration = Duration::from_secs(1);
+/// How often the owner desktop's admin right is read again while a sign-in runs.
+const ADMIN_RECHECK: Duration = Duration::from_secs(2);
+
+/// Completes once the desktop that started the sign-in is no longer a host administrator
+/// (the pairing store is read on every look, as for a terminal session).
+async fn revoked(still_admin: &impl Fn() -> bool) {
+    let mut every =
+        tokio::time::interval_at(tokio::time::Instant::now() + ADMIN_RECHECK, ADMIN_RECHECK);
+    loop {
+        every.tick().await;
+        if !still_admin() {
+            return;
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct Job {
@@ -72,6 +96,8 @@ struct Job {
     /// The paired desktop (peer key) that started this sign-in; nobody else may touch it.
     owner: String,
     code_tx: Option<tokio::sync::mpsc::Sender<zeroize::Zeroizing<String>>>,
+    /// The account the CLI reported once it signed in (an e-mail or a user name).
+    account: Option<String>,
 }
 
 fn new_token() -> Result<String, ApiError> {
@@ -140,8 +166,9 @@ pub struct AdminCliLoginDto {
     /// `idle`, `starting`, `needs_browser`, `needs_code`, `verifying`, `done`, `failed`,
     /// `timed_out` or `cancelled`.
     pub state: String,
-    /// How this engine can be signed in from the desktop: `device_code`, `paste_code` or
-    /// `manual` (it cannot be driven remotely: run `command` over SSH).
+    /// How this engine can be signed in from the desktop: `device_code`, `paste_code`,
+    /// `browser` (open the link, nothing to type) or `manual` (it cannot be driven remotely:
+    /// run `command` over SSH).
     pub flow: String,
     /// The vendor's sign-in page (verified against its allow-listed hosts).
     pub url: Option<String>,
@@ -155,6 +182,9 @@ pub struct AdminCliLoginDto {
     pub installed: bool,
     /// Signed in, when the CLI can say.
     pub signed_in: Option<bool>,
+    /// The account this engine is signed in as (an e-mail or user name), when the CLI names
+    /// one. Never a token or key.
+    pub account: Option<String>,
     /// Unpredictable id of this sign-in; status, code and cancel must present it (and come from
     /// the desktop that started it).
     pub job_id: Option<String>,
@@ -188,10 +218,11 @@ fn spec_of(engine: &str) -> Result<&'static cli_provider::registry::CliEngineSpe
     cli_provider::engine_spec(engine).ok_or_else(|| ApiError::not_found("unknown engine"))
 }
 
-fn flow_name(engine: &str) -> &'static str {
+pub(crate) fn flow_name(engine: &str) -> &'static str {
     match login::login_spec(engine).map(|s| s.kind) {
         Some(FlowKind::DeviceCode) => "device_code",
         Some(FlowKind::PasteCode) => "paste_code",
+        Some(FlowKind::Browser) => "browser",
         None => "manual",
     }
 }
@@ -218,6 +249,10 @@ async fn dto(
         command: (flow == "manual").then(|| engine.login.to_owned()),
         job_id: job.as_ref().map(|j| j.token.clone()),
         installed: row.as_ref().is_some_and(|r| r.installed),
+        account: job
+            .as_ref()
+            .and_then(|j| j.account.clone())
+            .or_else(|| row.as_ref().and_then(|r| r.account_label.clone())),
         signed_in: row.and_then(|r| match r.auth {
             cli_provider::AuthState::SignedIn => Some(true),
             cli_provider::AuthState::SignedOut => Some(false),
@@ -272,11 +307,18 @@ async fn run_job(
     s: AppState,
     spec: &'static LoginSpec,
     id: u64,
+    owner: String,
     cancel: CancellationToken,
     mut code_rx: tokio::sync::mpsc::Receiver<zeroize::Zeroizing<String>>,
 ) {
     let engine = spec.engine;
     let shutdown = s.shutdown_token();
+    let still_admin = || {
+        s.is_host_admin(Some(&PeerIdentity {
+            key: owner.clone(),
+            role: PeerRole::Desktop,
+        }))
+    };
     let deadline = tokio::time::Instant::now() + lifetime();
     let detector = s.detector();
     let pins = read_pins(&s.data_dir()).remove(engine);
@@ -304,9 +346,10 @@ async fn run_job(
         p = run.next_prompt(spec, STARTUP) => p,
         () = cancel.cancelled() => { run.terminate().await; finish(&s, engine, id, "cancelled", None); return; }
         () = shutdown.cancelled() => { run.terminate().await; finish(&s, engine, id, "cancelled", None); return; }
+        () = revoked(&still_admin) => { run.terminate().await; finish(&s, engine, id, "failed", Some("admin_revoked")); return; }
     };
     let Some(Prompt::Page { url, code }) = prompt else {
-        let reason = classify(run.private_output());
+        let reason = classify(&run.private_output());
         run.terminate().await;
         finish(
             &s,
@@ -322,19 +365,35 @@ async fn run_job(
         return;
     };
     let paste = spec.kind == FlowKind::PasteCode;
+    // Whatever the CLI wrote while it started up is not the sign-in: only a change from here on.
+    run.watch_credentials(spec, detector.environment());
     update(&s, engine, id, |j| {
         j.state = if paste { "needs_code" } else { "needs_browser" };
         j.url = Some(url);
         j.code = code;
     });
-    // 2. A pasted code (paste flow), then the exit and the confirmation.
+    // 2. A pasted code (paste flow), then the exit (or the credential file of a CLI that keeps
+    //    running) and the confirmation.
     let mut sent_at: Option<tokio::time::Instant> = None;
-    let exit = loop {
+    // The first look comes after a full period, never at once.
+    let first = tokio::time::Instant::now() + WATCH_EVERY;
+    let mut watch = tokio::time::interval_at(first, WATCH_EVERY);
+    let mut recheck = tokio::time::interval_at(first, ADMIN_RECHECK);
+    let ended = loop {
         let limit = sent_at.map_or(deadline, |t| (t + AFTER_CODE).min(deadline));
         tokio::select! {
             biased;
             () = cancel.cancelled() => { run.terminate().await; finish(&s, engine, id, "cancelled", None); return; }
             () = shutdown.cancelled() => { run.terminate().await; finish(&s, engine, id, "cancelled", None); return; }
+            // The owner's admin right can be withdrawn while the sign-in waits: stop at once, and
+            // do not hand a pasted code to the process after that.
+            _ = recheck.tick() => {
+                if !still_admin() {
+                    run.terminate().await;
+                    finish(&s, engine, id, "failed", Some("admin_revoked"));
+                    return;
+                }
+            }
             () = tokio::time::sleep_until(limit) => {
                 run.terminate().await;
                 if sent_at.is_some() && tokio::time::Instant::now() < deadline {
@@ -345,6 +404,11 @@ async fn run_job(
                 return;
             }
             Some(pasted) = code_rx.recv(), if paste && sent_at.is_none() => {
+                if !still_admin() {
+                    run.terminate().await;
+                    finish(&s, engine, id, "failed", Some("admin_revoked"));
+                    return;
+                }
                 // Straight to the process' stdin; the value is dropped right after.
                 if run.send_line(pasted.as_str()).await.is_err() {
                     run.terminate().await;
@@ -355,30 +419,80 @@ async fn run_job(
                 sent_at = Some(tokio::time::Instant::now());
                 update(&s, engine, id, |j| j.state = "verifying");
             }
-            exit = run.wait_exit(Duration::from_secs(3600)) => break exit,
+            _ = watch.tick(), if !spec.credentials.is_empty() && (sent_at.is_some() || !paste) => {
+                if run.credential_written(spec, detector.environment()) {
+                    // The CLI keeps running after it signed in: give it a moment to finish
+                    // writing, then stop it.
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    break Ended::Credential;
+                }
+            }
+            exit = run.wait_exit(Duration::from_secs(3600)) => break Ended::Exit(matches!(exit, Some(Some(0)))),
         }
     };
-    // 3. Confirm with the host's own detection, the way turns will see it.
-    let exited_ok = matches!(exit, Some(Some(0)));
-    if !exited_ok {
-        let reason = classify(run.private_output());
+    // 3. Confirm: with the CLI's own status where it has one, the way turns will see it.
+    let output = run.private_output();
+    let wrote = run.credential_written(spec, detector.environment());
+    if ended == Ended::Exit(false) {
+        let reason = classify(&output);
         run.terminate().await;
         finish(&s, engine, id, "failed", Some(reason));
         return;
     }
     run.terminate().await;
     update(&s, engine, id, |j| j.state = "verifying");
-    let signed_in = s
+    let row = s
         .detector()
         .detect(true)
         .await
         .into_iter()
-        .find(|r| r.id == engine)
-        .is_some_and(|r| r.auth == cli_provider::AuthState::SignedIn);
-    if signed_in {
-        finish(&s, engine, id, "done", None);
-    } else {
-        finish(&s, engine, id, "failed", Some("login_not_confirmed"));
+        .find(|r| r.id == engine);
+    match confirm(spec, ended, wrote, row.as_ref().map(|r| r.auth), &output) {
+        Confirmed::Yes => {
+            let account =
+                login::parse_account(&output).or_else(|| row.and_then(|r| r.account_label));
+            update(&s, engine, id, |j| j.account = account);
+            finish(&s, engine, id, "done", None);
+        }
+        Confirmed::No => finish(&s, engine, id, "failed", Some("login_not_confirmed")),
+    }
+}
+
+/// How the CLI stopped (or was stopped).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ended {
+    /// The process ended; `true` when it exited with code 0.
+    Exit(bool),
+    /// The CLI keeps running; its credential file was written.
+    Credential,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Confirmed {
+    Yes,
+    No,
+}
+
+/// Was the sign-in successful? The CLI's own status decides when it has one (signed in: yes,
+/// signed out: no). A CLI without a status command is confirmed by its success line after a clean
+/// exit, or by the credential file it wrote during this sign-in (`wrote`). Never from an exit
+/// code alone.
+fn confirm(
+    spec: &LoginSpec,
+    ended: Ended,
+    wrote: bool,
+    auth: Option<cli_provider::AuthState>,
+    output: &str,
+) -> Confirmed {
+    use cli_provider::AuthState;
+    match auth {
+        Some(AuthState::SignedIn) => Confirmed::Yes,
+        Some(AuthState::SignedOut) => Confirmed::No,
+        Some(AuthState::Unknown) | None => match ended {
+            Ended::Credential => Confirmed::Yes,
+            Ended::Exit(_) if wrote || login::printed_success(spec, output) => Confirmed::Yes,
+            Ended::Exit(_) => Confirmed::No,
+        },
     }
 }
 
@@ -497,7 +611,10 @@ pub(crate) async fn start_login(
     }
     let token = new_token()?;
     // A working sign-in is never replaced from here.
-    if row.is_some_and(|r| r.auth == cli_provider::AuthState::SignedIn) {
+    if row
+        .as_ref()
+        .is_some_and(|r| r.auth == cli_provider::AuthState::SignedIn)
+    {
         let job = Job {
             id: s
                 .0
@@ -512,6 +629,7 @@ pub(crate) async fn start_login(
             token,
             owner: device,
             code_tx: None,
+            account: row.as_ref().and_then(|r| r.account_label.clone()),
         };
         s.0.cli_logins
             .jobs
@@ -558,8 +676,9 @@ pub(crate) async fn start_login(
         error: None,
         cancel: cancel.clone(),
         token,
-        owner: device,
+        owner: device.clone(),
         code_tx: Some(tx),
+        account: None,
     };
     s.0.cli_logins
         .jobs
@@ -568,7 +687,7 @@ pub(crate) async fn start_login(
     let task = s.clone();
     tokio::spawn(async move {
         let _permit = permit;
-        run_job(task.clone(), spec, job_id, cancel, rx).await;
+        run_job(task.clone(), spec, job_id, device, cancel, rx).await;
         let outcome = task
             .0
             .cli_logins
@@ -697,4 +816,43 @@ pub(crate) async fn cancel_login(
         .ok()
         .map(|j| j.clone());
     Ok(Json(dto(&s, engine, job).await))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A CLI without a status command is confirmed by a success line after a clean exit; a
+    /// denial that contains the same words ("not logged in") is not one.
+    #[test]
+    fn a_negated_success_phrase_does_not_confirm_a_sign_in() {
+        let kiro = login::login_spec("kiro").unwrap();
+        let ended = Ended::Exit(true);
+        for denial in [
+            "You are not logged in\n",
+            "Error: not logged in. Run `kiro-cli login` again\n",
+            "Session expired, you are no longer logged in\n",
+        ] {
+            assert_eq!(
+                confirm(kiro, ended, false, None, denial),
+                Confirmed::No,
+                "{denial:?}"
+            );
+        }
+        assert_eq!(
+            confirm(kiro, ended, false, None, "Logged in successfully\n"),
+            Confirmed::Yes
+        );
+        // The CLI's own status still decides first.
+        assert_eq!(
+            confirm(
+                kiro,
+                ended,
+                false,
+                Some(cli_provider::AuthState::SignedOut),
+                "Logged in\n"
+            ),
+            Confirmed::No
+        );
+    }
 }

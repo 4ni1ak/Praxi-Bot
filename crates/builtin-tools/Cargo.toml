@@ -33,6 +33,7 @@ permission-engine = { path = "../permission-engine", version = "0.1.0" }
 # enabled; tree kill is TerminateJobObject / killpg while the call is armed.
 process-wrap = { version = "10.0.1", features = ["tokio1"] }
 protocol.workspace = true
+pty-session = { path = "../pty-session", version = "0.1.0" }
 script-runtime = { path = "../script-runtime", version = "0.1.0" }
 secret-store.workspace = true
 serde.workspace = true
@@ -54,6 +55,11 @@ windows = { workspace = true, features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Threading",
 ] }
+
+# A stand-in interactive program for the `shell_interactive` integration tests.
+[[bin]]
+name = "pty-fixture"
+path = "tests/fixtures/pty_fixture.rs"
 
 [dev-dependencies]
 tempfile.workspace = true
