@@ -277,6 +277,8 @@ impl Tool for McpToolAdapter {
                 )));
             }
         };
+        // While the call runs, the server may ask this run's owner for input.
+        let _in_flight = self.server.begin_call(&ctx.run_id);
         let result = self
             .server
             .call(&self.remote_name, arguments)

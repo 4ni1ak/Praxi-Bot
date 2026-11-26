@@ -25,7 +25,7 @@ use tool_registry::{Tool, ToolRegistry};
 
 use crate::pins::{MemoryPinStore, PinStore, ToolChange, change_of, new_tool_change, pin_of};
 use crate::{
-    client::Signals,
+    client::{CallGuard, ElicitorSlot, Signals},
     config::{McpServerConfig, McpTransport, ToolFilter},
     diagnostics::StderrLog,
     discovery::discover,
@@ -214,6 +214,11 @@ impl Server {
 
     pub(crate) fn config(&self) -> &McpServerConfig {
         &self.config
+    }
+
+    /// Mark a tool call of run `run_id` in flight (elicitation correlation).
+    pub(crate) fn begin_call(&self, run_id: &str) -> CallGuard {
+        self.signals.begin_call(run_id)
     }
 
     fn oauth_options(
@@ -554,11 +559,16 @@ impl Server {
             let id = self.config.id.clone();
             // Dropping the request future (this timeout, or the caller's own
             // cancellation) makes rmcp send `notifications/cancelled` for it.
-            let outcome = tokio::time::timeout(
-                self.policy.call_timeout,
-                run.clone()(session.peer().clone()),
-            )
-            .await;
+            let request = run.clone()(session.peer().clone());
+            tokio::pin!(request);
+            let outcome = loop {
+                match tokio::time::timeout(self.policy.call_timeout, &mut request).await {
+                    // An elicitation form is open: the call waits for the owner (the
+                    // agent loop bounds that wait), not for a stuck server.
+                    Err(_) if self.signals.is_eliciting() => {}
+                    outcome => break outcome,
+                }
+            };
             let failure = match outcome {
                 Ok(Ok(result)) => {
                     self.record_session_success(&session).await;
@@ -977,6 +987,7 @@ pub struct McpManager {
     pins: Arc<dyn PinStore>,
     change_events: tokio::sync::broadcast::Sender<String>,
     servers: Mutex<BTreeMap<String, Arc<Server>>>,
+    elicitor: Arc<ElicitorSlot>,
 }
 
 impl McpManager {
@@ -999,7 +1010,14 @@ impl McpManager {
             pins: Arc::new(MemoryPinStore::default()),
             change_events: tokio::sync::broadcast::channel(32).0,
             servers: Mutex::new(BTreeMap::new()),
+            elicitor: Arc::default(),
         }
+    }
+
+    /// Install the host's form for MCP elicitation requests. Until then (and
+    /// for a request the host cannot place) every request is declined.
+    pub fn set_elicitor(&self, elicitor: Arc<dyn tool_registry::Elicitor>) {
+        *self.elicitor.write() = Some(elicitor);
     }
 
     /// Where approved tool fingerprints are kept (default: in memory, so a
@@ -1184,7 +1202,7 @@ impl McpManager {
             operation: tokio::sync::Mutex::new(()),
             retired: tokio::sync::watch::channel(false).0,
             bots: Mutex::new(config.bots.clone()),
-            signals: Arc::default(),
+            signals: Arc::new(Signals::new(config.id.clone(), Arc::clone(&self.elicitor))),
             pins: Arc::clone(&self.pins),
             change_events: self.change_events.clone(),
             registrar: self.registrar.clone(),
