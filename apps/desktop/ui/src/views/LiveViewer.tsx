@@ -1,4 +1,4 @@
-import { ArrowLeft, ExternalLink, Globe, Info, Monitor, OctagonX, RefreshCw } from "lucide-react";
+import { ArrowLeft, ExternalLink, Globe, Info, Maximize, Minimize, Monitor, OctagonX, RefreshCw } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -20,9 +20,20 @@ import {
   computeImageRect,
   mapClientPointToNormalized
 } from "../lib/liveViewInput";
-import { useScreenFit } from "../state/useScreenFit";
+import {
+  ACTUAL_SCALE,
+  atZoomLimit,
+  FIT_SCALE,
+  remoteSize,
+  stageGeometry,
+  stepZoom,
+  type ViewScale,
+  zoomPercent
+} from "../lib/liveViewScale";
+import { useOsFullscreen } from "../state/useOsFullscreen";
 import {
   createStageController,
+  wheelBelongsToRemote,
   focusLeftScope,
   type StageDeps
 } from "../lib/liveViewStage";
@@ -191,7 +202,11 @@ export function LiveViewer({
   const [captureTab, setCaptureTab] = useState(false);
   const [imeBuffer, setImeBuffer] = useState("");
   const [fit, setFit] = useState<FitMode>("fit");
-  const { screenFit, toggleScreenFit } = useScreenFit();
+  // The screen always opens fitted whole; 1:1 and zoom are the owner's choice for this viewing only.
+  const [scale, setScale] = useState<ViewScale>(FIT_SCALE);
+  const osFullscreen = useOsFullscreen(viewerOpen);
+  const osFullscreenRef = useRef(osFullscreen);
+  osFullscreenRef.current = osFullscreen;
   const headerDrag = useDragPopOut({
     onPopOut: onPopOut ? (opts) => onPopOut({ targetId: selectedTarget?.target_id, ...opts }) : undefined,
     ignoreSelector: "button, a, input, select"
@@ -202,6 +217,11 @@ export function LiveViewer({
     w: 0,
     h: 0
   });
+  // The free room the picture is fitted into (the scroll area around the stage).
+  const [area, setArea] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+  const areaRef = useRef(area);
+  areaRef.current = area;
+  const viewportRef = useRef<HTMLDivElement | null>(null);
 
   const [chatMode, setChatMode] = useState<ChatDockMode>(() => loadChatMode(botId));
   const chatModeRef = useRef(chatMode);
@@ -265,6 +285,25 @@ export function LiveViewer({
     return () => obs.disconnect();
   }, [active, frameUrl]);
 
+  useEffect(() => {
+    if (!active) {
+      setScale(FIT_SCALE);
+      return undefined;
+    }
+    const el = viewportRef.current;
+    if (!el) {
+      return undefined;
+    }
+    const update = () => setArea({ width: el.clientWidth, height: el.clientHeight });
+    update();
+    if (typeof ResizeObserver === "undefined") {
+      return undefined;
+    }
+    const obs = new ResizeObserver(update);
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [active]);
+
   // Reset captured pointer/key state if stage ceases to allow input.
   const inputGate = canSendLiveInput(state, Date.now());
   const isInteractive = inputGate.ok;
@@ -276,6 +315,23 @@ export function LiveViewer({
   const stageBoxRef = useRef(stageBox);
   stageBoxRef.current = stageBox;
 
+  // Driving: the wheel goes to the remote screen only, never also to the local scroll of a zoomed
+  // picture. Watching: the browser scrolls it as usual (wheel, Shift+wheel, scrollbars, drag).
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!active || !el) {
+      return undefined;
+    }
+    const onWheel = (e: WheelEvent) => {
+      const overStage = e.target instanceof Node && Boolean(stageRef.current?.contains(e.target));
+      if (wheelBelongsToRemote(isInteractiveRef.current, overStage)) {
+        e.preventDefault();
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [active]);
+
   useEffect(() => {
     if (!isInteractive) {
       stageController.reset();
@@ -283,6 +339,20 @@ export function LiveViewer({
       setCaptureTab(false);
     }
   }, [isInteractive, stageController]);
+
+  const content = state.latestFrame ? remoteSize(state.latestFrame) : null;
+  const contentRef = useRef(content);
+  contentRef.current = content;
+  const applyScale = useCallback((action: "fit" | "actual" | "in" | "out") => {
+    const dpr = window.devicePixelRatio || 1;
+    setScale((current) =>
+      action === "fit"
+        ? FIT_SCALE
+        : action === "actual"
+          ? ACTUAL_SCALE
+          : stepZoom(current, action === "in" ? 1 : -1, areaRef.current, contentRef.current, dpr)
+    );
+  }, []);
 
   // Allow Escape to close overlay viewer only when not actively driving remote screen.
   useEffect(() => {
@@ -308,8 +378,20 @@ export function LiveViewer({
         e.preventDefault();
         if (shortcut === "fit") {
           setFit(toggleFit);
-        } else {
+        } else if (shortcut === "takeover") {
           takeoverRef.current?.();
+        } else if (shortcut === "fullscreen") {
+          osFullscreenRef.current.toggle();
+        } else {
+          applyScale(
+            shortcut === "zoomFit"
+              ? "fit"
+              : shortcut === "zoomActual"
+                ? "actual"
+                : shortcut === "zoomIn"
+                  ? "in"
+                  : "out"
+          );
         }
         return;
       }
@@ -327,6 +409,8 @@ export function LiveViewer({
         const inChat = e.target instanceof Node && chatDockRef.current?.contains(e.target);
         if (inChat && chatModeRef.current !== "closed") {
           applyChatMode(escapeChatMode(chatModeRef.current));
+        } else if (osFullscreenRef.current.fullscreen) {
+          osFullscreenRef.current.exit();
         } else if (infoPanelRef.current?.open) {
           infoPanelRef.current.onClose();
         } else {
@@ -336,7 +420,7 @@ export function LiveViewer({
     };
     window.addEventListener("keydown", onGlobalKey);
     return () => window.removeEventListener("keydown", onGlobalKey);
-  }, [overlayOpen, isInteractive, stageFocused, closeViewer, applyChatMode]);
+  }, [overlayOpen, isInteractive, stageFocused, closeViewer, applyChatMode, applyScale]);
 
   const mapPointer = useCallback(
     (clientX: number, clientY: number, clamp: boolean) => {
@@ -353,10 +437,10 @@ export function LiveViewer({
         img.getBoundingClientRect(),
         natW,
         natH,
-        { clamp, fit: screenFit }
+        { clamp }
       );
     },
-    [state.latestFrame, screenFit]
+    [state.latestFrame]
   );
 
   const exitKeyboardFocus = () => {
@@ -470,8 +554,7 @@ export function LiveViewer({
           stageBox.w,
           stageBox.h,
           state.latestFrame.width,
-          state.latestFrame.height,
-          screenFit
+          state.latestFrame.height
         )
       : null;
 
@@ -541,7 +624,13 @@ export function LiveViewer({
 
   const KindIcon = selectedTarget?.kind === "browser" ? Globe : Monitor;
 
-  const content = (
+  const dpr = window.devicePixelRatio || 1;
+  const geometry = stageGeometry(scale, area, content, dpr);
+  // A zoomed picture larger than the area scrolls. While watching, the area takes the keyboard focus
+  // so the arrow keys and Page Up/Down scroll it; while driving, every key belongs to the remote.
+  const scrollFocusable = Boolean(geometry?.scrolls) && !isInteractive;
+
+  const viewer = (
     <div
       className={styles.backdrop}
       role="dialog"
@@ -569,7 +658,7 @@ export function LiveViewer({
             }
             data-testid="live-viewer-close"
           >
-            <ArrowLeft />
+            <ArrowLeft aria-hidden="true" />
             <span>{embedded ? t("window.close") : t("liveView.backToChat")}</span>
           </Button>
         </div>
@@ -584,7 +673,7 @@ export function LiveViewer({
                 trg.bot_id ? botNames.get(trg.bot_id) ?? null : null,
                 t
               ),
-              icon: trg.kind === "browser" ? <Globe /> : <Monitor />
+              icon: trg.kind === "browser" ? <Globe aria-hidden="true" /> : <Monitor aria-hidden="true" />
             }))}
             value={selectedTarget?.target_id ?? ""}
             onPick={selectTarget}
@@ -616,16 +705,33 @@ export function LiveViewer({
               data-testid="live-viewer-popout"
               onClick={() => onPopOut({ targetId: selectedTarget?.target_id })}
             >
-              <ExternalLink />
+              <ExternalLink aria-hidden="true" />
             </button>
           ) : null}
+          <button
+            type="button"
+            className={styles.iconBtn}
+            title={osFullscreen.fullscreen ? t("liveView.toolbar.fullscreenExit") : t("liveView.toolbar.fullscreen")}
+            aria-label={t("liveView.toolbar.fullscreen")}
+            aria-pressed={osFullscreen.fullscreen}
+            aria-keyshortcuts="F11"
+            data-testid="live-viewer-fullscreen"
+            onClick={osFullscreen.toggle}
+          >
+            {osFullscreen.fullscreen ? <Minimize aria-hidden="true" /> : <Maximize aria-hidden="true" />}
+          </button>
           <LiveViewMenu
             quality={qualityMode}
             onQuality={setQualityMode}
             fit={fit}
             onToggleFit={() => setFit(toggleFit)}
-            screenFit={screenFit}
-            onToggleScreenFit={toggleScreenFit}
+            scale={scale}
+            onScale={applyScale}
+            zoom={{
+              percent: zoomPercent(scale, area, content, dpr),
+              canIn: !atZoomLimit(scale, 1, area, content, dpr),
+              canOut: !atZoomLimit(scale, -1, area, content, dpr)
+            }}
             onRefresh={() => void refreshTargets()}
             refreshing={loadingTargets}
             infoPanel={infoPanel ? { open: infoPanel.open, onToggle: infoPanel.onToggle } : undefined}
@@ -640,7 +746,7 @@ export function LiveViewer({
               }}
               data-testid="live-viewer-stop"
             >
-              <OctagonX />
+              <OctagonX aria-hidden="true" />
               <span>{t("liveView.emergencyStop")}</span>
             </Button>
           ) : null}
@@ -682,16 +788,24 @@ export function LiveViewer({
             ) : null}
           </div>
 
-          <div className={styles.stageArea} data-fit={fit} data-screen-fit={screenFit}>
+          <div className={styles.stageArea} data-fit={fit}>
+            <div
+              ref={viewportRef}
+              className={styles.stageViewport}
+              data-scroll={geometry?.scrolls ? "true" : "false"}
+              tabIndex={scrollFocusable ? 0 : undefined}
+              role={scrollFocusable ? "region" : undefined}
+              aria-label={scrollFocusable ? t("liveView.toolbar.viewport") : undefined}
+              data-testid="live-viewer-viewport"
+            >
             <div
               className={styles.stageFrame}
               data-active={isInteractive ? "true" : "false"}
               data-has-frame={frameUrl && state.latestFrame ? "true" : "false"}
+              data-scale={scale.kind}
               style={
-                frameUrl && state.latestFrame && screenFit === "contain"
-                  ? {
-                      aspectRatio: `${state.latestFrame.width} / ${state.latestFrame.height}`
-                    }
+                frameUrl && state.latestFrame && geometry
+                  ? { width: `${geometry.width}px`, height: `${geometry.height}px` }
                   : undefined
               }
             >
@@ -803,12 +917,13 @@ export function LiveViewer({
                         void refreshTargets();
                       }}
                     >
-                      <RefreshCw />
+                      <RefreshCw aria-hidden="true" />
                       <span>{t("liveView.refresh")}</span>
                     </Button>
                   )}
                 </div>
               )}
+            </div>
             </div>
             <div
               ref={focusBarRef}
@@ -1036,5 +1151,5 @@ export function LiveViewer({
     </div>
   );
 
-  return embedded ? content : createPortal(content, document.body);
+  return embedded ? viewer : createPortal(viewer, document.body);
 }
