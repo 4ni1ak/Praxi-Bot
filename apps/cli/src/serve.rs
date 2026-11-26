@@ -506,6 +506,29 @@ fn parse_origins(list: &str) -> Vec<String> {
         .collect()
 }
 
+/// A stray hang-up (a controlling terminal that goes away, a closed ssh session) must never
+/// stop the service: register a SIGHUP handler, which replaces the default "terminate" action,
+/// and log each one. Stopping stays `SIGTERM` / Ctrl-C ([`shutdown_signal`]). No-op off Unix.
+/// Must run inside the runtime.
+fn ignore_hangups() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::hangup()) {
+            Ok(mut hup) => {
+                tokio::spawn(async move {
+                    while hup.recv().await.is_some() {
+                        support_logs::tracing::info!(target: "praxi_support", reason = "sighup_ignored", "ignored SIGHUP; the service keeps running");
+                    }
+                });
+            }
+            Err(e) => {
+                support_logs::tracing::warn!(target: "praxi_support", reason = "component_warning", "warning: could not install the SIGHUP handler: {e}");
+            }
+        }
+    }
+}
+
 /// Resolves on the first stop request: Ctrl-C everywhere, `SIGTERM` on Unix,
 /// console close / logoff / system shutdown on Windows (the OS only allows a few
 /// seconds after those, so a long grace period cannot always be honoured there).
@@ -1224,6 +1247,7 @@ pub fn serve(
         .build()?;
     step("runtime built");
     rt.block_on(async {
+        ignore_hangups();
         // Daily signed catalog refresh: one GET of a fixed https URL, only
         // while the owner allows it (`bot catalog auto-update off`).
         tokio::spawn(provider_catalog::catalog_update::daily_loop(catalog_store));
@@ -1594,6 +1618,44 @@ mod tests {
     use crate::email_host::register_email;
     use provider_catalog::ProviderConfig;
     use secret_store::MemoryStore;
+
+    /// A SIGHUP to the daemon must not kill it. Runs in a child process: without the handler the
+    /// signal terminates the process, which a test cannot survive in-process.
+    #[cfg(unix)]
+    #[test]
+    fn sighup_does_not_stop_the_daemon() {
+        const HELPER: &str = "PRAXI_SIGHUP_HELPER";
+        const TEST: &str = "serve::tests::sighup_does_not_stop_the_daemon";
+        if std::env::var_os(HELPER).is_some() {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                ignore_hangups();
+                tokio::task::yield_now().await;
+                let hup = std::process::Command::new("kill")
+                    .args(["-HUP", &std::process::id().to_string()])
+                    .status()
+                    .unwrap();
+                assert!(hup.success());
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            });
+            println!("survived sighup");
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+            .env(HELPER, "1")
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && text.contains("survived sighup"),
+            "SIGHUP stopped the process ({:?}): {text}",
+            out.status
+        );
+    }
 
     #[test]
     fn host_flag_enables_dynamic_desktop_even_when_peer_config_is_disabled() {

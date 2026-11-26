@@ -252,10 +252,30 @@ mod pty {
         }
     }
 
+    static HOST: std::sync::OnceLock<Strategy> = std::sync::OnceLock::new();
+
     /// The strategy for this host, probed once and remembered.
     pub(super) fn host_strategy() -> Strategy {
-        static HOST: std::sync::OnceLock<Strategy> = std::sync::OnceLock::new();
         *HOST.get_or_init(|| probe("setsid"))
+    }
+
+    /// Resolves `cell` (probing at most once) on a blocking thread, so the first terminal open
+    /// never parks an async worker for the probe's up to 3 s.
+    pub(super) async fn strategy_off_runtime(
+        cell: &'static std::sync::OnceLock<Strategy>,
+        probe: impl FnOnce() -> Strategy + Send + 'static,
+    ) -> Strategy {
+        if let Some(s) = cell.get() {
+            return *s;
+        }
+        tokio::task::spawn_blocking(move || *cell.get_or_init(probe))
+            .await
+            .unwrap_or(Strategy::Plain)
+    }
+
+    /// Makes sure [`host_strategy`] is known, probing off the async runtime if needed.
+    pub(super) async fn warm_host_strategy() {
+        strategy_off_runtime(&HOST, || probe("setsid")).await;
     }
 
     /// A shell on a fresh pseudo-terminal; returns the handle, the child and a reader of
@@ -576,6 +596,9 @@ pub(crate) async fn open(
 ) -> Result<Json<TerminalInfo>, ApiError> {
     let admin = require_admin(&s, peer.as_ref().map(|p| &p.0))?;
     let key = peer_key(peer.as_ref())?;
+    // The first open probes `setsid -c` (up to 3 s): do that on a blocking thread.
+    #[cfg(unix)]
+    pty::warm_host_strategy().await;
     open_session(&s, &admin, key, input)
 }
 
@@ -1172,6 +1195,36 @@ mod tests {
             "the pty became the daemon's controlling terminal ({:?}): {text}",
             out.status
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_strategy_probe_does_not_block_the_async_runtime() {
+        static CELL: std::sync::OnceLock<pty::Strategy> = std::sync::OnceLock::new();
+        let ticks = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let t = ticks.clone();
+        let ticker = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                t.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        // A probe that takes 500 ms on a single-threaded runtime: a blocking probe would starve
+        // the ticker for the whole time.
+        let s = pty::strategy_off_runtime(&CELL, || {
+            std::thread::sleep(Duration::from_millis(500));
+            pty::Strategy::Setsid
+        })
+        .await;
+        ticker.abort();
+        assert_eq!(s, pty::Strategy::Setsid);
+        assert!(
+            ticks.load(std::sync::atomic::Ordering::SeqCst) >= 5,
+            "the runtime stalled during the probe"
+        );
+        // Remembered: a second call does not probe again.
+        let again = pty::strategy_off_runtime(&CELL, || unreachable!()).await;
+        assert_eq!(again, pty::Strategy::Setsid);
     }
 
     #[cfg(unix)]
