@@ -301,22 +301,29 @@ fn wire_mailbox_name(name: &str) -> Result<Cow<'_, str>, EmailError> {
 }
 
 fn display_mailbox_name(name: &str) -> Option<String> {
+    // A mailbox name is also a SELECT identifier. Keep permitted characters
+    // (including tabs) so displaying a folder cannot select a different one.
+    // Sender/subject display text still uses the stricter header cleaner.
+    let cap_name = |value: &str| {
+        value
+            .chars()
+            .take(crate::message::MAX_UNTRUSTED_FIELD_CHARS)
+            .collect()
+    };
     if name.is_ascii() {
         // Like outgoing selectors, keep permitted legacy ASCII names with
         // no shifts byte-for-byte (subject to the display cap).
         if !name.contains('&') {
             check_folder(name).ok()?;
-            return Some(cap_untrusted(name));
+            return Some(cap_name(name));
         }
         // Omit a malformed name rather than returning text that a caller
         // could pass back and inadvertently select a different mailbox.
-        decode_mailbox_name(name)
-            .ok()
-            .map(|name| cap_untrusted(&name))
+        decode_mailbox_name(name).ok().map(|name| cap_name(&name))
     } else {
         // RFC 3501 §5.1 recommends interpreting 8-bit names as UTF-8.
         // This is already a string; preserve any literal ampersands.
-        Some(cap_untrusted(name))
+        Some(cap_name(name))
     }
 }
 
@@ -523,7 +530,10 @@ impl ImapSession {
         }
         let header_set = uid_set(&allowed);
         let fetches = self
-            .uid_fetch(&header_set, "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER])")
+            .uid_fetch(
+                &header_set,
+                "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER] BODYSTRUCTURE)",
+            )
             .await?;
         let mut out: Vec<MessageSummary> = fetches
             .iter()
@@ -538,7 +548,9 @@ impl ImapSession {
                     return None;
                 }
                 let unread = !f.flags().any(|fl| matches!(fl, Flag::Seen));
-                Some(parse_summary(uid, header, unread, f.size))
+                let mut summary = parse_summary(uid, header, unread, f.size);
+                summary.has_attachment = f.bodystructure().map(|body| has_attachment(body, 0));
+                Some(summary)
             })
             .collect();
         out.sort_unstable_by_key(|a| std::cmp::Reverse(a.uid));
@@ -657,6 +669,26 @@ fn uid_set(uids: &[u32]) -> String {
         let _ = write!(set, "{u}");
     }
     set
+}
+
+// BODYSTRUCTURE is metadata; never fetch a body to decide an attachment filter.
+fn has_attachment(body: &async_imap::imap_proto::BodyStructure<'_>, depth: usize) -> bool {
+    use async_imap::imap_proto::BodyStructure;
+    if depth > 16 {
+        return false;
+    }
+    let (common, children) = match body {
+        BodyStructure::Basic { common, .. } | BodyStructure::Text { common, .. } => (common, false),
+        BodyStructure::Message { common, body, .. } => (common, has_attachment(body, depth + 1)),
+        BodyStructure::Multipart { common, bodies, .. } => {
+            (common, bodies.iter().any(|b| has_attachment(b, depth + 1)))
+        }
+    };
+    children
+        || common
+            .disposition
+            .as_ref()
+            .is_some_and(|d| d.ty.eq_ignore_ascii_case("attachment"))
 }
 
 #[cfg(test)]
