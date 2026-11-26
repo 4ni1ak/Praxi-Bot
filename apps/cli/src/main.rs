@@ -216,6 +216,9 @@ enum Command {
         /// The desktop app uses this so the key never appears in argv, a file, or the environment.
         #[arg(long)]
         owner_key_stdin: bool,
+        /// Keep stdin open after the key for desktop stop/EOF lifecycle control.
+        #[arg(long, hide = true, requires = "owner_key_stdin")]
+        desktop_control_stdin: bool,
         /// Safe mode (also `BOT_SAFE_MODE=1`): chat works without tools; tools, schedules,
         /// channels, MCP servers, apps, memory work and peer networking stay off.
         ///
@@ -1157,7 +1160,7 @@ fn run_doctor(cli: &Cli, c: &DoctorCmd, data_dir: &std::path::Path) -> Result<()
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // ownership/handshake must precede all daemon assembly paths
 fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result<()> {
     use std::sync::Arc;
 
@@ -1166,7 +1169,9 @@ fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result
     // children are spawned. Never fatal; the result is recorded in `serve`
     // and shown by `doctor`.
     // Held for the whole run so `bot backup restore` can tell a daemon is using the data dir.
-    let _daemon_lock = backup_cmd::hold_daemon_lock(data_dir)?;
+    let _daemon_lock = backup_cmd::hold_daemon_lock(data_dir).inspect_err(|_| {
+        eprintln!("Praxi is already using this data folder, or the folder cannot be locked.");
+    })?;
     support_logs::init(data_dir, "daemon").map_err(
         |_| "The service could not open its log folder. Check access to the data folder.",
     )?;
@@ -1175,7 +1180,54 @@ fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result
     if guard.outcome == process_guard::Outcome::Failed {
         support_logs::tracing::warn!(target: "praxi_support", reason = "component_warning", "warning: DEGRADED process guard: {}", guard.detail);
     }
-
+    // The desktop releases this handshake only after assigning our process to its job.
+    // Its original Child handle retains assignment rights after our DACL is restricted.
+    // The owner key must only be read after protection, just like provider secrets.
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    #[cfg(windows)]
+    {
+        process_guard::supervision::Job::contain_current_process()?;
+        let event = process_guard::supervision::StopEvent::new()?;
+        let event_stop = stop_tx.clone();
+        std::thread::spawn(move || {
+            if event.wait() {
+                let _ = event_stop.send(true);
+            }
+        });
+    }
+    let owner_key = if matches!(
+        command,
+        Command::Serve {
+            owner_key_stdin: true,
+            ..
+        }
+    ) {
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        let key = line.trim().to_owned();
+        if key.len() < 32 {
+            return Err("Praxi could not read a valid owner key from standard input.".into());
+        }
+        if matches!(
+            command,
+            Command::Serve {
+                desktop_control_stdin: true,
+                ..
+            }
+        ) {
+            let pipe_stop = stop_tx.clone();
+            std::thread::spawn(move || {
+                let mut line = String::new();
+                // EOF means the owning app exited only for the persistent control protocol.
+                // Ordinary --owner-key-stdin callers may close stdin after their one-line key.
+                let _ = std::io::stdin().read_line(&mut line);
+                let _ = pipe_stop.send(true);
+            });
+        }
+        Some(key)
+    } else {
+        None
+    };
     let (host_mode, peer_enabled) = match command {
         Command::Serve { host, peer, .. } => (*host, *peer),
         _ => (false, false),
@@ -1217,25 +1269,12 @@ fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result
             telegram_store: None,
             host_mode,
             peer_enabled,
-            owner_key: None,
+            owner_key,
+            stop: stop_rx,
             safe_mode,
         };
         return serve::serve(data_dir, &opts, providers, None, Some(desktop));
     }
-    let owner_key = if matches!(
-        command,
-        Command::Serve {
-            owner_key_stdin: true,
-            ..
-        }
-    ) {
-        let mut line = String::new();
-        std::io::stdin().read_line(&mut line)?;
-        let key = line.trim().to_owned();
-        (key.len() >= 32).then_some(key)
-    } else {
-        None
-    };
     let (store, kind) = open_store(cli.secrets_backend, data_dir, &ask_passphrase)?;
     support_logs::tracing::warn!(target: "praxi_support", reason = "component_warning", "(secret backend: {})", secret_backend_label(kind));
     support_logs::tracing::info!(target: "praxi_support", phase = "providers");
@@ -1272,6 +1311,7 @@ fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result
         host_mode,
         peer_enabled,
         owner_key,
+        stop: stop_rx,
         safe_mode,
     };
     serve::serve(data_dir, &opts, providers, Some(host), desktop)
@@ -1279,10 +1319,32 @@ fn run_serve(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result
 
 /// A client of the daemon: token from `BOT_API_TOKEN` or the token file,
 /// address from `--url` / `--port`.
+///
+/// The on-disk token and owner key only ever go to the daemon proven by
+/// [`recorded_daemon`] (recorded pid owns the loopback listener, runs as this user
+/// and runs THIS binary). An explicit `BOT_API_TOKEN` is the user's own secret and
+/// may be sent to the `--url` they chose, but never together with the owner key.
 fn make_client(cli: &Cli, data_dir: &std::path::Path) -> Result<Client> {
-    let token = match std::env::var("BOT_API_TOKEN") {
-        Ok(t) if !t.trim().is_empty() => t.trim().to_owned(),
-        _ => daemon_api::read_token(data_dir).map_err(|e| {
+    let verified = recorded_daemon(data_dir)?;
+    let env_token = std::env::var("BOT_API_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_owned())
+        .filter(|t| !t.is_empty());
+    let base = match (&cli.url, verified) {
+        (Some(url), _) => url.trim_end_matches('/').to_owned(),
+        (None, Some(endpoint))
+            if cli.port == daemon_api::DEFAULT_PORT || cli.port == endpoint.requested_port =>
+        {
+            endpoint.url()
+        }
+        (None, _) if env_token.is_some() => format!("http://127.0.0.1:{}", cli.port),
+        (None, _) => return Err(no_verified_daemon()),
+    };
+    // Disk secrets: only for exactly the verified loopback listener.
+    let is_verified = verified.is_some_and(|e| base == e.url());
+    let token = match env_token {
+        Some(t) => t,
+        None if is_verified => daemon_api::read_token(data_dir).map_err(|e| {
             let msg = if e.kind() == std::io::ErrorKind::NotFound {
                 "daemon API token not found in this data directory; start the daemon with `bot serve` (or pass the same `--data-dir` / set `BOT_API_TOKEN`)".to_owned()
             } else {
@@ -1293,14 +1355,48 @@ fn make_client(cli: &Cli, data_dir: &std::path::Path) -> Result<Client> {
             };
             client::fail(client::exit::AUTH, msg)
         })?,
+        None => return Err(no_verified_daemon()),
     };
-    let base = cli
-        .url
-        .clone()
-        .unwrap_or_else(|| format!("http://127.0.0.1:{}", cli.port));
     // The owner key of this data dir: present when the daemon is a terminal
     // `bot serve` or a host, absent for a daemon the app started (memory only).
-    Ok(Client::new(&base, token).with_owner_key(daemon_api::read_owner_key(data_dir).ok()))
+    let owner_key = if is_verified {
+        daemon_api::read_owner_key(data_dir).ok()
+    } else {
+        None
+    };
+    let mut client = Client::new(&base, token).with_owner_key(owner_key);
+    if is_verified {
+        // The proof above can go stale (the daemon may die and its port be rebound):
+        // repeat it right before every request that carries the token or owner key.
+        let dir = data_dir.to_path_buf();
+        let url = base.clone();
+        client = client.with_guard(std::sync::Arc::new(
+            move || matches!(recorded_daemon(&dir), Ok(Some(e)) if e.url() == url),
+        ));
+    }
+    Ok(client)
+}
+
+fn no_verified_daemon() -> Box<dyn std::error::Error> {
+    client::fail(
+        client::exit::AUTH,
+        "no verified Praxi daemon for this data directory (its recorded process must own the          loopback port, run as you and be this `bot` binary); start `bot serve`, or set          `BOT_API_TOKEN` with `--url` to a daemon you trust",
+    )
+}
+
+/// The daemon in the discovery record, or `None` when no daemon holds the lock. The
+/// record is plain data, so a record that fails the proof is an error: never a
+/// fallback to a port that might be a squatter's.
+fn recorded_daemon(
+    data_dir: &std::path::Path,
+) -> Result<Option<process_guard::lifecycle::Endpoint>> {
+    let expected: Vec<std::path::PathBuf> = std::env::current_exe().into_iter().collect();
+    process_guard::owner::discover_trusted(data_dir, &expected).map_err(|_| {
+        client::fail(
+            client::exit::AUTH,
+            process_guard::owner::FOREIGN_PORT_MESSAGE,
+        )
+    })
 }
 
 fn current_thread_runtime() -> Result<tokio::runtime::Runtime> {
@@ -1741,6 +1837,36 @@ fn run_setup(c: &SetupCmd, env: &SetupEnv<'_>) -> Result<()> {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+
+    #[test]
+    fn a_planted_endpoint_record_gets_no_token_or_owner_key() {
+        // A same-user process lists itself as the daemon: it listens on a real port, but
+        // the recorded pid is another one, so the record is not the listener's proof.
+        let dir = tempfile::tempdir().unwrap();
+        let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = socket.local_addr().unwrap().port();
+        let _lock = process_guard::lifecycle::acquire(dir.path()).unwrap();
+        process_guard::lifecycle::Endpoint {
+            pid: std::process::id().wrapping_add(1),
+            port,
+            requested_port: daemon_api::DEFAULT_PORT,
+        }
+        .publish(dir.path())
+        .unwrap();
+        std::fs::write(dir.path().join("api-token"), "a".repeat(64)).unwrap();
+        assert!(recorded_daemon(dir.path()).is_err());
+        let cli = Cli::try_parse_from([
+            "bot",
+            "--url",
+            &format!("http://127.0.0.1:{port}"),
+            "status",
+        ])
+        .unwrap();
+        assert!(
+            make_client(&cli, dir.path()).is_err(),
+            "no token may be attached to a planted record"
+        );
+    }
 
     #[test]
     fn host_invite_accepts_ttl_and_ticket_only_for_the_one_command_setup() {

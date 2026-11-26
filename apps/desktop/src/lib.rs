@@ -5,6 +5,8 @@ pub mod command_names;
 pub mod control;
 pub mod daemon;
 mod deep_link;
+#[cfg(windows)]
+mod lifecycle_windows;
 pub mod listener;
 mod microphone;
 pub mod popout;
@@ -781,9 +783,10 @@ async fn daemon_connect(
 /// `x-praxi-owner-key` on owner-only requests. Main window only.
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)] // tauri hands the window over by value
-fn owner_key(window: Window) -> Result<String, String> {
+fn owner_key(window: Window, daemon: State<'_, Arc<DaemonHandle>>) -> Result<String, String> {
     require_window(&window, MAIN_ONLY)?;
-    daemon::owner_key().map(str::to_owned)
+    // Only for the socket that is verified right now (see `daemon::verified_owner_key`).
+    daemon::verified_owner_key(&daemon).map(str::to_owned)
 }
 
 /// Stop a daemon this app started, then start it again (e.g. to pick up new
@@ -1292,6 +1295,8 @@ pub fn run() {
             if app.state::<deep_link::Pending>().has_pending() {
                 focus_main_for_launch(&app_handle, true);
             }
+            #[cfg(windows)]
+            lifecycle_windows::install(&app_handle, Arc::clone(&daemon_for_setup))?;
             #[cfg(windows)]
             microphone::install(&app_handle)?;
             control_for_setup.set_sink(Arc::new(TauriOverlaySink {
@@ -2020,11 +2025,13 @@ mod acl_tests {
             "default-src 'self'; script-src 'self'; style-src 'self'; \
              style-src-attr 'unsafe-inline'; img-src 'self' blob: data:; \
              font-src 'self' data:; \
-             connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* \
-             http://localhost:* http://[::1]:*; \
+             connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*; \
              object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
         );
         assert!(!csp.contains("unsafe-eval"));
+        // The secrets go to the verified 127.0.0.1 socket only: `localhost` can resolve to
+        // `[::1]`, a different socket, so neither may be reachable from the webview.
+        assert!(!csp.contains("localhost:*") && !csp.contains("[::1]"));
         let script_src = csp
             .split("; ")
             .find(|d| d.starts_with("script-src "))

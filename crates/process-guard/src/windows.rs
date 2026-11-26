@@ -3,21 +3,202 @@
 //! not revoke handles already opened, protect thread objects, or sandbox files.
 #![allow(unsafe_code)]
 
+use std::collections::BTreeSet;
 use std::io;
+use std::os::windows::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 use windows::Win32::{
-    Foundation::{CloseHandle, HLOCAL, LocalFree},
+    Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree},
+    NetworkManagement::IpHelper::{
+        GetExtendedTcpTable, MIB_TCPROW_OWNER_PID, TCP_TABLE_OWNER_PID_LISTENER,
+    },
+    Networking::WinSock::AF_INET,
     Security::{
         Authorization::{
-            ConvertStringSecurityDescriptorToSecurityDescriptorW, SE_KERNEL_OBJECT, SetSecurityInfo,
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, SE_FILE_OBJECT, SE_KERNEL_OBJECT,
+            SetNamedSecurityInfoW, SetSecurityInfo,
         },
-        DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR,
+        DACL_SECURITY_INFORMATION, EqualSid, GetSecurityDescriptorDacl, GetTokenInformation,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, TOKEN_QUERY, TOKEN_USER,
+        TokenUser,
     },
     System::Threading::{
-        GetCurrentProcess, OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_DUP_HANDLE, PROCESS_VM_READ,
+        GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_ACCESS_RIGHTS,
+        PROCESS_DUP_HANDLE, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+        QueryFullProcessImageNameW,
     },
 };
-use windows::core::{BOOL, w};
+use windows::core::{BOOL, PCWSTR, PWSTR, w};
+
+/// Kernel answers for `owner::verify_with`.
+pub(super) struct SystemProbe;
+
+impl crate::owner::Probe for SystemProbe {
+    fn image_path(&self, pid: u32) -> Option<PathBuf> {
+        // SAFETY: query-only handle, closed once; the buffer is sized for the API maximum.
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+            let mut path = vec![0u16; 32768];
+            let mut len = u32::try_from(path.len()).ok()?;
+            let ok = QueryFullProcessImageNameW(
+                handle,
+                PROCESS_NAME_WIN32,
+                PWSTR(path.as_mut_ptr()),
+                &raw mut len,
+            )
+            .is_ok();
+            let _ = CloseHandle(handle);
+            ok.then(|| PathBuf::from(String::from_utf16_lossy(&path[..len as usize])))
+        }
+    }
+
+    fn same_user(&self, pid: u32) -> bool {
+        // SAFETY: pseudo handle for ourselves, never closed.
+        let me = token_user(unsafe { GetCurrentProcess() });
+        // SAFETY: query-only handle, closed once; failure means untrusted.
+        let Ok(h) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }) else {
+            return false;
+        };
+        let them = token_user(h);
+        // SAFETY: handle opened above.
+        let _ = unsafe { CloseHandle(h) };
+        let (Some(a), Some(b)) = (me, them) else {
+            return false;
+        };
+        // SAFETY: both buffers hold a TOKEN_USER written by the OS and outlive the call.
+        unsafe {
+            let sa = (*a.as_ptr().cast::<TOKEN_USER>()).User.Sid;
+            let sb = (*b.as_ptr().cast::<TOKEN_USER>()).User.Sid;
+            EqualSid(sa, sb).is_ok()
+        }
+    }
+
+    fn listener_pids(&self, port: u16) -> Result<BTreeSet<u32>, String> {
+        let mut size = 0u32;
+        let mut buf: Vec<u8> = Vec::new();
+        for _ in 0..8 {
+            let ptr = if buf.is_empty() {
+                None
+            } else {
+                Some(buf.as_mut_ptr().cast())
+            };
+            // SAFETY: `ptr` is null or points to `size` writable bytes.
+            let rc = unsafe {
+                GetExtendedTcpTable(
+                    ptr,
+                    &raw mut size,
+                    false,
+                    u32::from(AF_INET.0),
+                    TCP_TABLE_OWNER_PID_LISTENER,
+                    0,
+                )
+            };
+            match rc {
+                0 => return Ok(parse_listeners(&buf, port)),
+                122 => buf = vec![0u8; size as usize], // ERROR_INSUFFICIENT_BUFFER
+                e => return Err(format!("GetExtendedTcpTable failed ({e})")),
+            }
+        }
+        Err("GetExtendedTcpTable kept growing".to_owned())
+    }
+}
+
+/// `TOKEN_USER` bytes in an 8-aligned buffer.
+fn token_user(process: HANDLE) -> Option<Vec<u64>> {
+    let mut tok = HANDLE::default();
+    // SAFETY: valid process handle, out pointer to a local.
+    unsafe { OpenProcessToken(process, TOKEN_QUERY, &raw mut tok) }.ok()?;
+    let mut len = 0u32;
+    // SAFETY: size query; the expected error is ignored.
+    let _ = unsafe { GetTokenInformation(tok, TokenUser, None, 0, &raw mut len) };
+    let buf = if len == 0 {
+        None
+    } else {
+        let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+        // SAFETY: `buf` has at least `len` writable bytes.
+        unsafe {
+            GetTokenInformation(
+                tok,
+                TokenUser,
+                Some(buf.as_mut_ptr().cast()),
+                len,
+                &raw mut len,
+            )
+        }
+        .ok()
+        .map(|()| buf)
+    };
+    // SAFETY: token opened above, closed once.
+    let _ = unsafe { CloseHandle(tok) };
+    buf
+}
+
+fn parse_listeners(buf: &[u8], port: u16) -> BTreeSet<u32> {
+    let mut out = BTreeSet::new();
+    if buf.len() < 4 {
+        return out;
+    }
+    let n = u32::from_ne_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+    let row = size_of::<MIB_TCPROW_OWNER_PID>();
+    for i in 0..n {
+        let off = 4 + i * row;
+        if off + row > buf.len() {
+            break;
+        }
+        // SAFETY: in bounds (checked); rows are plain integers, read unaligned.
+        let r: MIB_TCPROW_OWNER_PID =
+            unsafe { std::ptr::read_unaligned(buf.as_ptr().add(off).cast()) };
+        let local = u16::from_be((r.dwLocalPort & 0xFFFF) as u16);
+        if local == port && (r.dwLocalAddr == 0x0100_007F || r.dwLocalAddr == 0) {
+            out.insert(r.dwOwningPid);
+        }
+    }
+    out
+}
+
+/// Replace the file's DACL with owner + SYSTEM only, protected from inheritance.
+pub(super) fn owner_only_file(path: &Path) -> io::Result<()> {
+    let mut raw = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: fixed valid SDDL; out pointer is writable and starts empty.
+    unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            w!("D:P(A;;FA;;;OW)(A;;FA;;;SY)"),
+            1,
+            &raw mut raw,
+            None,
+        )
+    }
+    .map_err(io::Error::other)?;
+    let descriptor = Descriptor(raw);
+    let mut present = BOOL::default();
+    let mut defaulted = BOOL::default();
+    let mut acl = std::ptr::null_mut();
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: descriptor outlives the ACL pointer use; `wide` is NUL-terminated.
+    unsafe {
+        GetSecurityDescriptorDacl(
+            descriptor.0,
+            &raw mut present,
+            &raw mut acl,
+            &raw mut defaulted,
+        )
+        .map_err(io::Error::other)?;
+        if !present.as_bool() || acl.is_null() {
+            return Err(io::Error::other("missing file DACL"));
+        }
+        SetNamedSecurityInfoW(
+            PCWSTR(wide.as_ptr()),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            Some(acl),
+            None,
+        )
+        .ok()
+        .map_err(io::Error::other)
+    }
+}
 
 struct Descriptor(PSECURITY_DESCRIPTOR);
 
@@ -162,6 +343,42 @@ mod tests {
             ok.unwrap();
         }
         elevation.TokenIsElevated != 0
+    }
+
+    #[test]
+    fn system_probe_sees_our_own_image_and_listener() {
+        use crate::owner::{Probe, same_file};
+        let me = std::process::id();
+        let probe = super::SystemProbe;
+        let image = probe.image_path(me).expect("own image path");
+        assert!(same_file(&image, &std::env::current_exe().unwrap()));
+        let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = socket.local_addr().unwrap().port();
+        assert_eq!(
+            probe
+                .listener_pids(port)
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            [me]
+        );
+    }
+
+    #[test]
+    fn endpoint_and_lock_files_get_an_owner_only_dacl() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = crate::lifecycle::acquire(dir.path()).unwrap();
+        crate::lifecycle::Endpoint {
+            pid: 1,
+            port: 2,
+            requested_port: 2,
+        }
+        .publish(dir.path())
+        .unwrap();
+        // Still readable/lockable by us, and the lock file cannot be deleted while held.
+        assert!(crate::lifecycle::discover(dir.path()).is_some());
+        assert!(std::fs::remove_file(dir.path().join(crate::lifecycle::LOCK_FILE)).is_err());
+        drop(lock);
     }
 
     #[test]

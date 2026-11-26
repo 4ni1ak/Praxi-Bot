@@ -14,8 +14,8 @@ use std::collections::BTreeSet;
 pub enum Expect {
     /// Exactly the child process this app spawned.
     Child(u32),
-    /// Any process of the current OS user (a daemon started from a shell).
-    SameUser,
+    /// A discovered daemon must match the record AND the current OS user.
+    Recorded(u32),
 }
 
 /// Pure decision: every listener PID satisfies `expect`, and there is at least one.
@@ -23,14 +23,8 @@ pub fn trusted(pids: &BTreeSet<u32>, expect: Expect, same_user: impl Fn(u32) -> 
     !pids.is_empty()
         && pids.iter().all(|&p| match expect {
             Expect::Child(c) => p == c,
-            Expect::SameUser => same_user(p),
+            Expect::Recorded(c) => p == c && same_user(p),
         })
-}
-
-/// PIDs listening on loopback `port` (empty when none or when the OS cannot say), for messages only.
-#[must_use]
-pub fn listener_owners(port: u16) -> BTreeSet<u32> {
-    platform::listener_pids(port).unwrap_or_default()
 }
 
 /// Check the listeners on loopback `port`.
@@ -323,9 +317,11 @@ mod tests {
         assert!(trusted(&set(&[5]), Expect::Child(5), |_| false));
         assert!(!trusted(&set(&[6]), Expect::Child(5), |_| true));
         assert!(!trusted(&set(&[5, 6]), Expect::Child(5), |_| true));
-        assert!(trusted(&set(&[7]), Expect::SameUser, |_| true));
-        assert!(!trusted(&set(&[7, 8]), Expect::SameUser, |p| p == 7));
-        assert!(!trusted(&set(&[]), Expect::SameUser, |_| true));
+        assert!(trusted(&set(&[7]), Expect::Recorded(7), |_| true));
+        assert!(!trusted(&set(&[7]), Expect::Recorded(7), |_| false));
+        assert!(!trusted(&set(&[8]), Expect::Recorded(7), |_| true));
+        assert!(!trusted(&set(&[7, 8]), Expect::Recorded(7), |_| true));
+        assert!(!trusted(&set(&[]), Expect::Recorded(7), |_| true));
     }
 
     #[test]
@@ -338,7 +334,7 @@ mod tests {
         let me = std::process::id();
         assert!(platform::listener_pids(port).unwrap().contains(&me));
         assert!(platform::is_same_user(me));
-        assert!(verify(port, Expect::SameUser).is_ok());
+        assert!(verify(port, Expect::Recorded(me)).is_ok());
         assert!(verify(port, Expect::Child(me)).is_ok());
         // A listener that is not the expected child is refused.
         assert!(verify(port, Expect::Child(me.wrapping_add(1))).is_err());

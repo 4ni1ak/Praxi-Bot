@@ -1,7 +1,7 @@
 //! Daemon lifecycle for the desktop app (task 017).
 //!
 //! The app talks to `bot serve` over loopback HTTP.  [`connect`] probes the
-//! configured port; if no daemon answers it starts `bot serve` as a child
+//! per-data-folder discovery record; if no daemon answers it starts `bot serve` as a child
 //! process (a "sidecar": the `bot` binary next to the app), waits until it is
 //! healthy and reads the per-install bearer token from `<data dir>/api-token`.
 //! A daemon the app started is stopped again when the app exits; one that was
@@ -55,6 +55,9 @@ pub struct DaemonHandle {
     /// retry) never start two daemons.
     connecting: tokio::sync::Mutex<()>,
     child: Mutex<Option<Child>>,
+    #[cfg(windows)]
+    job: Mutex<Option<process_guard::supervision::Job>>,
+    shutting_down: AtomicBool,
     fake: Mutex<bool>,
     /// Safe mode for every daemon this app starts, until a restart says otherwise. Held in
     /// memory only: a fresh launch of the app always starts normally.
@@ -80,7 +83,7 @@ pub enum Stage {
     Idle,
     /// The OS is still creating the process (antivirus scans happen here).
     Spawning,
-    /// The process runs; its health probe does not answer yet.
+    /// The process runs; its health probe has not signalled readiness yet.
     Waiting,
     /// Connected.
     Ready,
@@ -286,8 +289,43 @@ fn classify_spawn_error(e: &std::io::Error, sidecar_exists: bool) -> Stage {
 impl DaemonHandle {
     /// Stop the daemon if (and only if) this app started it.
     pub fn stop(&self) {
-        if let Some(mut child) = self.child.lock().take() {
-            let _ = child.kill();
+        self.shutting_down.store(true, Ordering::SeqCst);
+        self.stop_for("app quit, uninstall or Windows logoff");
+    }
+
+    fn stop_for(&self, reason: &str) {
+        // Hold the slot across shutdown, so an in-flight spawn cannot escape quit.
+        let mut slot = self.child.lock();
+        if let Some(mut child) = slot.take() {
+            if let Ok(data) = data_dir() {
+                append_log(
+                    &data,
+                    "app",
+                    &format!("stop pid {} reason={reason}", child.id()),
+                );
+            }
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                let _ = writeln!(stdin, "stop");
+            }
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            let forced = matches!(child.try_wait(), Ok(None));
+            if forced && let Ok(data) = data_dir() {
+                append_log(
+                    &data,
+                    "app",
+                    "grace deadline reached; terminating process tree",
+                );
+            }
+            // Even after graceful exit, close the job to remove remaining descendants.
+            #[cfg(windows)]
+            drop(self.job.lock().take());
+            if forced {
+                let _ = child.kill();
+            }
             let _ = child.wait();
         }
     }
@@ -327,32 +365,37 @@ fn port() -> u16 {
 fn base_url() -> Result<String, String> {
     match std::env::var("BOT_URL") {
         Ok(u) if !u.trim().is_empty() => validate_bot_url(u.trim()),
-        _ => Ok(format!("http://127.0.0.1:{}", port())),
+        _ => {
+            // Only a record whose pid owns the socket, runs as this user and runs this
+            // install's bot binary may decide the URL.
+            if let Ok(data) = data_dir()
+                && let Ok(Some(endpoint)) =
+                    process_guard::owner::discover_trusted(&data, &trusted_images())
+            {
+                return Ok(endpoint.url());
+            }
+            Ok(format!("http://127.0.0.1:{}", port()))
+        }
     }
 }
 
-/// Accepts `http://127.0.0.1:PORT`, `http://localhost:PORT` and `http://[::1]:PORT`
-/// (optionally with a path, which is dropped); everything else is an error.
+/// Accepts `http://127.0.0.1:PORT` and `http://localhost:PORT` (optionally with a path,
+/// which is dropped) and returns the literal `http://127.0.0.1:PORT`: the socket the
+/// owner check verifies is the only one the webview and its secrets may ever reach, and
+/// `localhost` can resolve to `[::1]`, which is a different socket. `[::1]` is refused.
 fn validate_bot_url(url: &str) -> Result<String, String> {
-    let url = url.trim_end_matches('/');
-    let loopback = host_port(url)
-        .and_then(|hp| {
-            hp.rsplit_once(':')
-                .map(|(h, p)| (h.to_owned(), p.to_owned()))
+    loopback_port(url.trim_end_matches('/'))
+        .map(canonical_url)
+        .ok_or_else(|| {
+            format!(
+                "BOT_URL must be http://127.0.0.1:PORT or http://localhost:PORT              (got {url}): the desktop app only connects to a daemon on this machine's              IPv4 loopback, because its content security policy blocks every other origin"
+            )
         })
-        .is_some_and(|(host, port)| {
-            matches!(host.as_str(), "127.0.0.1" | "localhost" | "[::1]")
-                && port.parse::<u16>().is_ok()
-        });
-    if loopback {
-        Ok(url.to_owned())
-    } else {
-        Err(format!(
-            "BOT_URL must be http://127.0.0.1:PORT, http://localhost:PORT or http://[::1]:PORT \
-             (got {url}): the desktop app only connects to a daemon on this machine, \
-             because its content security policy blocks every other origin"
-        ))
-    }
+}
+
+/// The one URL secrets are ever sent to for `port`.
+fn canonical_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
 }
 
 /// `BOT_DATA_DIR`, else the OS data directory (same resolver as the CLI).
@@ -390,8 +433,13 @@ enum HealthState {
 }
 
 impl HealthState {
+    #[cfg(test)]
     fn is_up(self) -> bool {
         self != Self::Unreachable
+    }
+
+    fn is_ready(self) -> bool {
+        matches!(self, Self::Ok | Self::SetupRequired | Self::Degraded)
     }
 }
 
@@ -417,14 +465,15 @@ fn health_state(text: &str) -> HealthState {
     }
 }
 
+#[cfg(test)]
 fn health_reply_is_alive(text: &str) -> bool {
     health_state(text).is_up()
 }
 
 /// Plain HTTP/1.1 `GET /v1/health` over loopback (no HTTP client needed).
-async fn healthy(url: &str) -> bool {
+async fn probe_health(url: &str) -> HealthState {
     let Some(hp) = host_port(url) else {
-        return false;
+        return HealthState::Unreachable;
     };
     let probe = async {
         let mut s = TcpStream::connect(&hp).await.ok()?;
@@ -433,12 +482,18 @@ async fn healthy(url: &str) -> bool {
         let mut buf = Vec::new();
         s.read_to_end(&mut buf).await.ok()?;
         let text = String::from_utf8_lossy(&buf);
-        health_reply_is_alive(&text).then_some(())
+        Some(health_state(&text))
     };
-    matches!(
-        tokio::time::timeout(PROBE_TIMEOUT, probe).await,
-        Ok(Some(()))
-    )
+    tokio::time::timeout(PROBE_TIMEOUT, probe)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(HealthState::Unreachable)
+}
+
+#[cfg(test)]
+async fn healthy(url: &str) -> bool {
+    probe_health(url).await.is_up()
 }
 
 fn valid_token(s: &str) -> bool {
@@ -557,10 +612,33 @@ pub fn owner_key() -> Result<&'static str, String> {
     Ok(KEY.get_or_init(|| key))
 }
 
+/// The owner key for the main window, only after the socket it will be sent to
+/// (`http://127.0.0.1:PORT`) was just proven to belong to the daemon this app
+/// trusts; otherwise an error and no key.
+///
+/// # Errors
+/// The daemon URL is not the IPv4 loopback, the listener cannot be verified, or the
+/// OS offers no randomness.
+pub fn verified_owner_key(handle: &DaemonHandle) -> Result<&'static str, String> {
+    let url = base_url()?;
+    verified_owner_key_for(handle, &url, listener::verify)
+}
+
+fn verified_owner_key_for(
+    handle: &DaemonHandle,
+    url: &str,
+    verify: impl FnOnce(u16, Expect) -> Result<(), String>,
+) -> Result<&'static str, String> {
+    let (port, expect) = listener_expectation(handle, url, false)?;
+    verify(port, expect).map_err(|e| format!("{e}; refusing to send the owner key to {url}"))?;
+    owner_key()
+}
+
 fn spawn_daemon(handle: &DaemonHandle, data_dir: &Path, fake: bool) -> Result<Child, String> {
     let mut cmd = bot_command();
     cmd.arg("serve").arg("--port").arg(port().to_string());
-    cmd.arg("--owner-key-stdin");
+    cmd.arg("--shutdown-grace").arg("3");
+    cmd.arg("--owner-key-stdin").arg("--desktop-control-stdin");
     if *handle.safe.lock() {
         cmd.arg("--safe");
     }
@@ -594,6 +672,10 @@ fn spawn_daemon(handle: &DaemonHandle, data_dir: &Path, fake: bool) -> Result<Ch
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+    #[cfg(windows)]
+    let job = process_guard::supervision::Job::new().map_err(|e| {
+        format!("Praxi could not protect its background processes ({e}). Restart Praxi.")
+    })?;
     let mut child = cmd.spawn().map_err(|e| {
         let msg = format!(
             "cannot start `{}` ({e}); set PRAXIBOT_BOT_BIN or put `bot` next to the app",
@@ -603,6 +685,22 @@ fn spawn_daemon(handle: &DaemonHandle, data_dir: &Path, fake: bool) -> Result<Ch
         handle.set_stage(classify_spawn_error(&e, sidecar_exists), Some(msg.clone()));
         msg
     })?;
+    #[cfg(windows)]
+    {
+        // A competing launch can lose the directory lock and exit before job
+        // assignment. It never passed the stdin handshake or spawned tools;
+        // retain its stderr/exit status so connect can wait for and reuse the winner.
+        if let Err(e) = job.assign(&child)
+            && !matches!(child.try_wait(), Ok(Some(_)))
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "Praxi could not protect its background processes ({e}). Restart Praxi."
+            ));
+        }
+        *handle.job.lock() = Some(job);
+    }
     handle.tail.lock().clear();
     if let Some(stderr) = child.stderr.take() {
         let done = Arc::new(AtomicBool::new(false));
@@ -615,20 +713,19 @@ fn spawn_daemon(handle: &DaemonHandle, data_dir: &Path, fake: bool) -> Result<Ch
         );
     }
     append_log(data_dir, "app", &format!("started pid {}", child.id()));
-    // One line on the child's stdin, then the pipe is closed: the key is in no
-    // argument, file or environment variable.
-    if let Some(mut stdin) = child.stdin.take() {
+    // Keep the private pipe open after the key: stop/EOF requests graceful shutdown.
+    // The key is still in no argument, file or environment variable.
+    if let Some(stdin) = child.stdin.as_mut() {
         use std::io::Write;
         let key = match owner_key() {
             Ok(key) => key,
             Err(e) => {
                 let _ = child.kill();
+                let _ = child.wait();
                 handle.set_stage(Stage::SpawnFailed, Some(e.clone()));
                 return Err(e);
             }
         };
-        // Written and flushed, then `stdin` drops at the end of this block and closes the pipe,
-        // so the daemon's `read_line` returns at once.
         if let Err(e) = writeln!(stdin, "{key}").and_then(|()| stdin.flush()) {
             append_log(
                 data_dir,
@@ -667,6 +764,10 @@ fn no_usable_provider_since(data_dir: &Path, offset: u64) -> bool {
 
 /// Spawn the daemon and remember where its log output will start.
 fn spawn_tracked(handle: &DaemonHandle, data: &Path, fake: bool) -> Result<(), String> {
+    let mut slot = handle.child.lock();
+    if handle.shutting_down.load(Ordering::SeqCst) {
+        return Err("Praxi is closing. Open it again to reconnect.".to_owned());
+    }
     handle.set_stage(Stage::Spawning, None);
     // The OS may take long to create the process (antivirus scan of a new, unsigned program).
     let _ = std::fs::create_dir_all(data);
@@ -675,7 +776,7 @@ fn spawn_tracked(handle: &DaemonHandle, data: &Path, fake: bool) -> Result<(), S
     let child = spawn_daemon(handle, data, fake)?;
     handle.set_stage(Stage::Waiting, None);
     *handle.log_offset.lock() = offset;
-    *handle.child.lock() = Some(child);
+    *slot = Some(child);
     *handle.fake.lock() = fake;
     *handle.last_spawn.lock() = Some(Instant::now());
     append_log(
@@ -693,26 +794,45 @@ fn child_pid(handle: &DaemonHandle) -> Option<u32> {
     matches!(c.try_wait(), Ok(None)).then(|| c.id())
 }
 
-/// Loopback port of `url` when its host is a local one (remote `BOT_URL`s are
-/// the user's explicit choice and cannot be checked by socket owner).
+/// IPv4 loopback port of `url`; every other host (including `[::1]`) is `None`
+/// and is refused, because the socket-owner check only covers 127.0.0.1.
 fn loopback_port(url: &str) -> Option<u16> {
-    let hp = host_port(url)?;
+    let hp = host_port(url.trim_end_matches('/'))?;
     let (host, port) = hp.rsplit_once(':')?;
     matches!(host, "127.0.0.1" | "localhost")
         .then(|| port.parse().ok())
         .flatten()
 }
 
+/// Binaries that may be this install's daemon: the resolved sidecar and `bot[.exe]`
+/// next to the app.
+fn trusted_images() -> Vec<std::path::PathBuf> {
+    let mut images = vec![std::path::PathBuf::from(bot_binary())];
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+    {
+        images.push(dir.join(if cfg!(windows) { "bot.exe" } else { "bot" }));
+    }
+    images
+}
+
 /// Identity gate run before the bearer token is handed out.  The health probe
 /// is unauthenticated, so an answer only proves "something listens".  The
 /// owning process of the socket must be the child this app spawned (exact PID),
-/// or, when the app has no running child and did not just spawn one, a process
-/// of the same OS user.  After our own spawn with no running child the
-/// listener is a squatter that won the bind race.
-async fn check_listener(handle: &DaemonHandle, url: &str, after_spawn: bool) -> Result<(), String> {
-    let Some(port) = loopback_port(url) else {
-        return Ok(());
-    };
+/// or, when the app has no running child and did not just spawn one, a
+/// verified endpoint (pid owns the socket, same OS user, this install's bot image).
+/// There is no weaker "any same-user process" fallback: a missing or different
+/// record fails closed.  After our own spawn with no running child the listener
+/// is a squatter that won the bind race.
+fn listener_expectation(
+    handle: &DaemonHandle,
+    url: &str,
+    after_spawn: bool,
+) -> Result<(u16, Expect), String> {
+    let port = loopback_port(url).ok_or_else(|| {
+        format!("cannot verify the owner of {url} (only http://127.0.0.1:PORT can be checked); refusing to send the API token")
+    })?;
     let expect = match child_pid(handle) {
         Some(pid) => Expect::Child(pid),
         None if after_spawn => {
@@ -721,20 +841,45 @@ async fn check_listener(handle: &DaemonHandle, url: &str, after_spawn: bool) -> 
                  refusing to send the API token"
             ));
         }
-        None => Expect::SameUser,
+        None => {
+            // The record is plain data any same-user process can rewrite.
+            let data = data_dir()?;
+            let endpoint = process_guard::owner::discover_trusted(&data, &trusted_images())
+                .map_err(|_| process_guard::owner::FOREIGN_PORT_MESSAGE.to_owned())?
+                .filter(|endpoint| endpoint.port == port)
+                .ok_or_else(|| {
+                    format!(
+                        "no verified Praxi daemon is recorded for {url}; refusing to send the API token"
+                    )
+                })?;
+            Expect::Recorded(endpoint.pid)
+        }
     };
+    Ok((port, expect))
+}
+
+async fn check_listener(handle: &DaemonHandle, url: &str, after_spawn: bool) -> Result<(), String> {
+    let (port, expect) = listener_expectation(handle, url, after_spawn)?;
     tokio::task::spawn_blocking(move || listener::verify(port, expect))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| format!("{e}; refusing to send the API token to {url}"))
 }
 
-fn connection(handle: &DaemonHandle, url: String, data: &Path) -> Result<Connection, String> {
+fn connection(handle: &DaemonHandle, url: &str, data: &Path) -> Result<Connection, String> {
+    // Re-check immediately before the token is read: the earlier async check may be
+    // stale (the record or the listener can change in between).  The webview later
+    // sends the owner key to exactly this verified `url`.
+    let (port, expect) = listener_expectation(handle, url, false)?;
+    listener::verify(port, expect)
+        .map_err(|e| format!("{e}; refusing to send the API token to {url}"))?;
     let token = read_token(data)?;
     ensure_logging(data);
     support_logs::tracing::info!(target: "praxi_support", phase = "ready");
     Ok(Connection {
-        base_url: url,
+        // Never the caller's spelling (`localhost` may resolve to `[::1]`): exactly
+        // the socket that was just verified.
+        base_url: canonical_url(port),
         token,
         started_by_app: handle.started_by_app(),
         fake_provider: *handle.fake.lock(),
@@ -761,11 +906,11 @@ pub async fn connect(handle: &DaemonHandle) -> Result<Connection, String> {
 pub async fn connect_existing(handle: &DaemonHandle) -> Result<Connection, String> {
     let _one_at_a_time = handle.connecting.lock().await;
     let url = base_url()?;
-    if !healthy(&url).await {
+    if !probe_health(&url).await.is_ready() {
         return Err("the service is unavailable; open the main window to reconnect".to_owned());
     }
     check_listener(handle, &url, false).await?;
-    connection(handle, url, &data_dir()?)
+    connection(handle, &url, &data_dir()?)
 }
 
 /// Stop a daemon this app started and connect again.  The `connecting` lock is
@@ -802,7 +947,7 @@ pub async fn restart(
         && handle.started_by_app()
     {
         let url = base_url()?;
-        if healthy(&url).await {
+        if probe_health(&url).await.is_ready() {
             support_logs::tracing::info!(target: "praxi_support", reason = "restart_skipped");
             // Another restart (or the start-up) brought the service up moments ago and it
             // answers: killing it again would only cause a second gap.
@@ -819,13 +964,12 @@ pub async fn restart(
         "app",
         &format!("restart requested, reason: {reason}, safe mode: {safe:?}"),
     );
-    handle.stop();
+    handle.stop_for("restart");
     // `None` keeps the current mode (a provider reload must not leave safe mode);
     // only the owner's explicit choice in the app changes it.
     if let Some(safe) = safe {
         *handle.safe.lock() = safe;
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
     connect_locked(handle).await
 }
 
@@ -855,24 +999,25 @@ fn clean_reason(reason: &str) -> String {
 
 /// [`connect`] with the `connecting` lock already held by the caller.
 async fn connect_locked(handle: &DaemonHandle) -> Result<Connection, String> {
-    let url = base_url()?;
+    let mut url = base_url()?;
     let data = data_dir()?;
-    if healthy(&url).await {
+    if handle.shutting_down.load(Ordering::SeqCst) {
+        return Err("Praxi is closing. Open it again to reconnect.".to_owned());
+    }
+    if (std::env::var_os("BOT_URL").is_some()
+        || process_guard::lifecycle::discover(&data).is_some()
+        || handle.started_by_app())
+        && probe_health(&url).await.is_ready()
+    {
         check_listener(handle, &url, false).await?;
         handle.set_stage(Stage::Ready, None);
-        return connection(handle, url, &data);
+        return connection(handle, &url, &data);
     }
     // A previously started child that died is dropped first.
     if !handle.started_by_app() {
-        handle.stop();
+        handle.stop_for("recover exited daemon");
         if std::env::var_os("BOT_URL").is_some() {
             return Err(format!("no daemon answers at {url}"));
-        }
-        if let Some(who) = foreign_listener(&url).await {
-            let msg = format!("port {} is in use by another program{who}", port());
-            append_log(&data, "app", &msg);
-            handle.set_stage(Stage::PortInUse, Some(msg.clone()));
-            return Err(msg);
         }
         let fake = wants_fake();
         spawn_tracked(handle, &data, fake)?;
@@ -880,7 +1025,24 @@ async fn connect_locked(handle: &DaemonHandle) -> Result<Connection, String> {
     let mut fake = *handle.fake.lock();
     let deadline = tokio::time::Instant::now() + START_TIMEOUT;
     loop {
-        if healthy(&url).await {
+        if tokio::time::Instant::now() >= deadline {
+            let msg = format!(
+                "Praxi did not finish starting at {url}. Restart Praxi; details are in {}.",
+                log_path(&data).display()
+            );
+            append_log(&data, "app", &msg);
+            handle.set_stage(Stage::NotResponding, Some(msg.clone()));
+            handle.stop_for("readiness deadline exceeded");
+            return Err(msg);
+        }
+        // Discovery is published only after the daemon has reserved its actual port.
+        // Readiness still requires health AND the existing socket identity gate.
+        if std::env::var_os("BOT_URL").is_none() {
+            url = base_url()?;
+        }
+        let endpoint = process_guard::lifecycle::discover(&data);
+        let own_listener = endpoint.is_some_and(|e| Some(e.pid) == child_pid(handle));
+        if own_listener && probe_health(&url).await.is_ready() {
             if let Err(e) = check_listener(handle, &url, true).await {
                 append_log(&data, "app", &e);
                 handle.set_stage(Stage::Unreachable, Some(e.clone()));
@@ -891,6 +1053,24 @@ async fn connect_locked(handle: &DaemonHandle) -> Result<Connection, String> {
         // A child that already exited will never answer.
         if let Some(code) = child_exit_code(handle) {
             wait_for_pump(handle).await;
+            // Another launch won the per-directory lock. Reuse only its verified
+            // listener, retaining the same-user gate; never transfer an owner key.
+            if endpoint.is_some() && probe_health(&url).await.is_ready() {
+                check_listener(handle, &url, false).await?;
+                handle.stop_for("reuse daemon that won the startup lock");
+                handle.set_stage(Stage::Ready, None);
+                return connection(handle, &url, &data);
+            }
+            if handle
+                .tail
+                .lock()
+                .iter()
+                .any(|line| line.contains("already using this data folder"))
+            {
+                // The winner may still be opening its database or preparing channels.
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
             // No usable provider (none configured, all disabled, key missing):
             // `bot serve` exits immediately.  Retry once with `--fake-provider`
             // so the UI can still connect and the user can fix it, but only
@@ -900,25 +1080,20 @@ async fn connect_locked(handle: &DaemonHandle) -> Result<Connection, String> {
                 && no_usable_provider_since(&data, offset)
                 && spawn_tracked(handle, &data, true).is_ok()
             {
+                append_log(
+                    &data,
+                    "app",
+                    "restart reason=no usable provider; using setup fallback",
+                );
                 fake = true;
-                tokio::time::sleep(Duration::from_millis(250)).await;
                 continue;
             }
             return Err(exited(handle, &data, code));
         }
-        if tokio::time::Instant::now() >= deadline {
-            let msg = format!(
-                "the daemon did not become healthy at {url} (see {})",
-                log_path(&data).display()
-            );
-            append_log(&data, "app", &msg);
-            handle.set_stage(Stage::NotResponding, Some(msg.clone()));
-            return Err(msg);
-        }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     handle.set_stage(Stage::Ready, None);
-    connection(handle, url, &data)
+    connection(handle, &url, &data)
 }
 
 /// Record that the child ended with `code` and word it.
@@ -974,35 +1149,6 @@ async fn wait_for_pump(handle: &DaemonHandle) {
     }
 }
 
-/// Whether a socket is open on `url` that is not a Praxi daemon (it accepts connections but never
-/// answers the health probe).  Returns " (pid N)" when the owner is known, else an empty string.
-async fn foreign_listener(url: &str) -> Option<String> {
-    let hp = host_port(url)?;
-    let open = matches!(
-        tokio::time::timeout(PROBE_TIMEOUT, TcpStream::connect(&hp)).await,
-        Ok(Ok(_))
-    );
-    if !open {
-        return None;
-    }
-    // A daemon that is just binding answers within a moment.
-    for _ in 0..4 {
-        tokio::time::sleep(Duration::from_millis(400)).await;
-        if healthy(url).await {
-            return None;
-        }
-    }
-    let owners = loopback_port(url)
-        .map(listener::listener_owners)
-        .unwrap_or_default();
-    Some(
-        owners
-            .iter()
-            .next()
-            .map_or_else(String::new, |pid| format!(" (pid {pid})")),
-    )
-}
-
 /// The start-up facts for the "the service does not start" screen.
 #[must_use]
 pub fn diagnostics(handle: &DaemonHandle) -> Diagnostics {
@@ -1028,7 +1174,10 @@ pub fn diagnostics(handle: &DaemonHandle) -> Diagnostics {
         elapsed_ms: since.map_or(0, |s| {
             u64::try_from(s.elapsed().as_millis()).unwrap_or(u64::MAX)
         }),
-        port: port(),
+        port: base_url()
+            .ok()
+            .and_then(|u| loopback_port(&u))
+            .unwrap_or_else(port),
         base_url: base_url().unwrap_or_default(),
         data_dir: data.display().to_string(),
         log_path: log_path(&data).display().to_string(),
@@ -1050,7 +1199,10 @@ pub fn prereq_report(handle: &DaemonHandle) -> crate::prereq::Report {
     crate::prereq::check(
         &data,
         Path::new(&bot_binary()),
-        port(),
+        base_url()
+            .ok()
+            .and_then(|u| loopback_port(&u))
+            .unwrap_or_else(port),
         handle.started_by_app(),
     )
 }
@@ -1130,6 +1282,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn startup_waits_for_readiness_but_allows_setup_and_degraded_recovery() {
+        assert!(!HealthState::Starting.is_ready());
+        assert!(!HealthState::Unreachable.is_ready());
+        assert!(HealthState::SetupRequired.is_ready());
+        assert!(HealthState::Ok.is_ready());
+        assert!(HealthState::Degraded.is_ready());
+    }
+
+    #[test]
     fn host_port_parses_loopback_urls() {
         assert_eq!(
             host_port("http://127.0.0.1:47821").as_deref(),
@@ -1144,18 +1305,18 @@ mod tests {
 
     #[test]
     fn bot_url_must_be_a_loopback_http_origin() {
-        for ok in [
-            "http://127.0.0.1:47821",
-            "http://localhost:9000/",
-            "http://[::1]:47821",
-        ] {
-            assert!(validate_bot_url(ok).is_ok(), "{ok}");
-        }
+        assert_eq!(
+            validate_bot_url("http://127.0.0.1:47821").as_deref(),
+            Ok("http://127.0.0.1:47821")
+        );
+        // `localhost` may resolve to `[::1]` (another socket): it is normalised to the
+        // literal verified IPv4 endpoint.
         assert_eq!(
             validate_bot_url("http://localhost:9000/").as_deref(),
-            Ok("http://localhost:9000")
+            Ok("http://127.0.0.1:9000")
         );
         for bad in [
+            "http://[::1]:47821",
             "http://example.com:47821",
             "http://192.168.1.5:47821",
             "http://0.0.0.0:47821",
@@ -1168,6 +1329,39 @@ mod tests {
             let err = validate_bot_url(bad).expect_err(bad);
             assert!(err.contains("BOT_URL must be"), "{bad}: {err}");
         }
+    }
+
+    #[test]
+    fn owner_key_is_refused_unless_the_socket_verifies() {
+        let handle = DaemonHandle::default();
+        // No child and no verified record: refused before the verifier even runs.
+        let mut called = false;
+        let r = verified_owner_key_for(&handle, "http://127.0.0.1:1", |_, _| {
+            called = true;
+            Ok(())
+        });
+        assert!(r.is_err() && !called, "{r:?}");
+        // IPv6 / foreign hosts never get a key.
+        assert!(verified_owner_key_for(&handle, "http://[::1]:1", |_, _| Ok(())).is_err());
+        // A running child but a failing verification: no key.
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "ping -n 30 127.0.0.1 >NUL"]);
+            c
+        } else {
+            let mut c = Command::new("sleep");
+            c.arg("30");
+            c
+        };
+        *handle.child.lock() = Some(cmd.stdout(Stdio::null()).spawn().unwrap());
+        let err = verified_owner_key_for(&handle, "http://localhost:1", |_, _| {
+            Err("not the daemon".to_owned())
+        })
+        .unwrap_err();
+        assert!(err.contains("refusing to send the owner key"), "{err}");
+        // Control: a passing verification yields the key.
+        assert!(verified_owner_key_for(&handle, "http://localhost:1", |_, _| Ok(())).is_ok());
+        handle.stop();
     }
 
     #[test]
@@ -1318,7 +1512,7 @@ mod tests {
         // This test process plays the squatter: it answers a healthy probe.
         let port = ok_daemon().await;
         let url = format!("http://127.0.0.1:{port}");
-        assert!(healthy(&url).await);
+        assert!(probe_health(&url).await.is_ready());
 
         // The app spawned a child (any process that is not the listener).
         let handle = DaemonHandle::default();
@@ -1341,8 +1535,12 @@ mod tests {
 
         // Control: the check passes for the real owner of the socket.
         assert!(listener::verify(port, Expect::Child(std::process::id())).is_ok());
-        // A pre-existing daemon of the same user is accepted.
-        assert!(check_listener(&handle, &url, false).await.is_ok());
+        // A same-user process that merely answers health (no verified record, as when it
+        // planted its own pid/port) must NOT receive the token.
+        assert!(check_listener(&handle, &url, false).await.is_err());
+        // IPv6 loopback cannot be owner-checked and is refused, not skipped.
+        let v6 = format!("http://[::1]:{port}");
+        assert!(check_listener(&handle, &v6, false).await.is_err());
     }
 
     #[test]
