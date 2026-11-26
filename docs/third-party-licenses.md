@@ -11,23 +11,23 @@ Regenerate with `python scripts/license_report.py` and verify in CI with
 
 ## Summary
 
-- Rust external crates: **919**
+- Rust external crates: **923**
 - Desktop UI production npm packages: **26**
 
 | Licence expression | Packages |
 | --- | ---: |
 | `MIT OR Apache-2.0` | 442 |
 | `MIT` | 219 |
-| `Apache-2.0 OR MIT` | 96 |
+| `Apache-2.0 OR MIT` | 97 |
 | `MIT/Apache-2.0` | 42 |
 | `Zlib OR Apache-2.0 OR MIT` | 23 |
 | `Unicode-3.0` | 18 |
 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | 14 |
 | `Apache-2.0` | 9 |
+| `Unlicense OR MIT` | 9 |
 | `BSD-3-Clause` | 6 |
 | `ISC` | 6 |
 | `MPL-2.0` | 6 |
-| `Unlicense OR MIT` | 6 |
 | `MIT OR Apache-2.0 OR Zlib` | 5 |
 | `Unlicense/MIT` | 4 |
 | `(MIT OR Apache-2.0) AND Unicode-3.0` | 3 |
@@ -237,7 +237,7 @@ Packages whose effective licence requires an entry in `THIRD_PARTY_NOTICES.md`:
 | `cpufeatures` | `0.2.17` | `MIT OR Apache-2.0` | [https://github.com/RustCrypto/utils](https://github.com/RustCrypto/utils) |
 | `cpufeatures` | `0.3.1` | `MIT OR Apache-2.0` | [https://github.com/RustCrypto/utils](https://github.com/RustCrypto/utils) |
 | `crc32fast` | `1.5.4` | `MIT OR Apache-2.0` | [https://github.com/srijs/rust-crc32fast](https://github.com/srijs/rust-crc32fast) |
-| `croner` | `2.2.0` | `MIT` | [https://github.com/hexagon/croner-rust](https://github.com/hexagon/croner-rust) |
+| `croner` | `5.0.1` | `MIT` | [https://github.com/hexagon/croner-rust](https://github.com/hexagon/croner-rust) |
 | `crossbeam-channel` | `0.5.17` | `MIT OR Apache-2.0` | [https://github.com/crossbeam-rs/crossbeam](https://github.com/crossbeam-rs/crossbeam) |
 | `crossbeam-deque` | `0.8.8` | `MIT OR Apache-2.0` | [https://github.com/crossbeam-rs/crossbeam](https://github.com/crossbeam-rs/crossbeam) |
 | `crossbeam-epoch` | `0.9.21` | `MIT OR Apache-2.0` | [https://github.com/crossbeam-rs/crossbeam](https://github.com/crossbeam-rs/crossbeam) |
@@ -438,6 +438,9 @@ Packages whose effective licence requires an entry in `THIRD_PARTY_NOTICES.md`:
 | `itoa` | `1.0.18` | `MIT OR Apache-2.0` | [https://github.com/dtolnay/itoa](https://github.com/dtolnay/itoa) |
 | `javascriptcore-rs` | `1.1.2` | `MIT` | [https://github.com/tauri-apps/javascriptcore-rs](https://github.com/tauri-apps/javascriptcore-rs) |
 | `javascriptcore-rs-sys` | `1.1.1` | `MIT` | [https://github.com/tauri-apps/javascriptcore-rs](https://github.com/tauri-apps/javascriptcore-rs) |
+| `jiff` | `1.0.3` | `Unlicense OR MIT` | [https://github.com/BurntSushi/jiff](https://github.com/BurntSushi/jiff) |
+| `jiff-core` | `1.0.2` | `Unlicense OR MIT` | [https://github.com/BurntSushi/jiff](https://github.com/BurntSushi/jiff) |
+| `jiff-static` | `1.0.3` | `Unlicense OR MIT` | [https://github.com/BurntSushi/jiff](https://github.com/BurntSushi/jiff) |
 | `jni` | `0.21.1` | `MIT/Apache-2.0` | [https://github.com/jni-rs/jni-rs](https://github.com/jni-rs/jni-rs) |
 | `jni` | `0.22.4` | `MIT OR Apache-2.0` | [https://github.com/jni-rs/jni-rs](https://github.com/jni-rs/jni-rs) |
 | `jni-macros` | `0.22.4` | `MIT OR Apache-2.0` | [https://github.com/jni-rs/jni-rs](https://github.com/jni-rs/jni-rs) |
@@ -600,6 +603,7 @@ Packages whose effective licence requires an entry in `THIRD_PARTY_NOTICES.md`:
 | `poly1305` | `0.8.0` | `Apache-2.0 OR MIT` | [https://github.com/RustCrypto/universal-hashes](https://github.com/RustCrypto/universal-hashes) |
 | `polyval` | `0.6.2` | `Apache-2.0 OR MIT` | [https://github.com/RustCrypto/universal-hashes](https://github.com/RustCrypto/universal-hashes) |
 | `portable-atomic` | `1.15.0` | `Apache-2.0 OR MIT` | [https://github.com/taiki-e/portable-atomic](https://github.com/taiki-e/portable-atomic) |
+| `portable-atomic-util` | `0.2.8` | `Apache-2.0 OR MIT` | [https://github.com/taiki-e/portable-atomic-util](https://github.com/taiki-e/portable-atomic-util) |
 | `portmapper` | `0.19.3` | `MIT OR Apache-2.0` | [https://github.com/n0-computer/net-tools](https://github.com/n0-computer/net-tools) |
 | `postcard` | `1.1.3` | `MIT OR Apache-2.0` | [https://github.com/jamesmunns/postcard](https://github.com/jamesmunns/postcard) |
 | `postcard-derive` | `0.2.2` | `MIT OR Apache-2.0` | [https://github.com/jamesmunns/postcard](https://github.com/jamesmunns/postcard) |
@@ -820,14 +824,14 @@ Packages whose effective licence requires an entry in `THIRD_PARTY_NOTICES.md`:
 | `tokio-websockets` | `0.13.3` | `MIT` | [https://github.com/Gelbpunkt/tokio-websockets/](https://github.com/Gelbpunkt/tokio-websockets/) |
 | `toml` | `0.8.2` | `MIT OR Apache-2.0` | [https://github.com/toml-rs/toml](https://github.com/toml-rs/toml) |
 | `toml` | `0.9.12+spec-1.1.0` | `MIT OR Apache-2.0` | [https://github.com/toml-rs/toml](https://github.com/toml-rs/toml) |
-| `toml` | `1.2.1+spec-1.1.0` | `MIT OR Apache-2.0` | [https://github.com/toml-rs/toml](https://github.com/toml-rs/toml) |
+| `toml` | `1.2.3+spec-1.1.0` | `MIT OR Apache-2.0` | [https://github.com/toml-rs/toml](https://github.com/toml-rs/toml) |
 | `toml_datetime` | `0.6.3` | `MIT OR Apache-2.0` | [https://github.com/toml-rs/toml](https://github.com/toml-rs/toml) |
 | `toml_datetime` | `0.7.5+spec-1.1.0` | `MIT OR Apache-2.0` | [https://github.com/toml-rs/toml](https://github.com/toml-rs/toml) |
 | `toml_datetime` | `1.1.3+spec-1.1.0` | `MIT OR Apache-2.0` | [https://github.com/toml-rs/toml](https://github.com/toml-rs/toml) |
 | `toml_edit` | `0.19.15` | `MIT OR Apache-2.0` | [https://github.com/toml-rs/toml](https://github.com/toml-rs/toml) |
 | `toml_edit` | `0.20.2` | `MIT OR Apache-2.0` | [https://github.com/toml-rs/toml](https://github.com/toml-rs/toml) |
 | `toml_edit` | `0.25.19+spec-1.1.0` | `MIT OR Apache-2.0` | [https://github.com/toml-rs/toml](https://github.com/toml-rs/toml) |
-| `toml_parser` | `1.1.5+spec-1.1.0` | `MIT OR Apache-2.0` | [https://github.com/toml-rs/toml](https://github.com/toml-rs/toml) |
+| `toml_parser` | `1.1.7+spec-1.1.0` | `MIT OR Apache-2.0` | [https://github.com/toml-rs/toml](https://github.com/toml-rs/toml) |
 | `toml_writer` | `1.2.0+spec-1.1.0` | `MIT OR Apache-2.0` | [https://github.com/toml-rs/toml](https://github.com/toml-rs/toml) |
 | `tower` | `0.5.3` | `MIT` | [https://github.com/tower-rs/tower](https://github.com/tower-rs/tower) |
 | `tower-http` | `0.6.11` | `MIT` | [https://github.com/tower-rs/tower-http](https://github.com/tower-rs/tower-http) |
