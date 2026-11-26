@@ -2071,6 +2071,7 @@ dependencies = [
  "utoipa",
  "uuid",
  "web-tools",
+ "windows 0.62.2",
  "wiremock",
  "workflow-replay",
  "zeroize",

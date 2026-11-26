@@ -68,6 +68,9 @@ zeroize = "1"
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", default-features = false, features = ["fs", "process", "pty", "termios", "std"] }
 
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 tokio-tungstenite.workspace = true
 base64.workspace = true

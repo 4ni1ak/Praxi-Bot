@@ -1371,6 +1371,20 @@ pub(crate) fn read_workspace_file_checked(
     limit_name: &str,
     before_open: &dyn Fn(),
 ) -> Result<(PathBuf, Vec<u8>), ApiError> {
+    read_workspace_file_checked_with_hooks(ws_root, segments, max, limit_name, before_open, &|| {})
+}
+
+/// Same as [`read_workspace_file_checked`]; `after_open` additionally runs
+/// right after the open and before the second path check (tests swap a link
+/// back there, the classic "open the outside file, restore the path" race).
+pub(crate) fn read_workspace_file_checked_with_hooks(
+    ws_root: &Path,
+    segments: &[String],
+    max: u64,
+    limit_name: &str,
+    before_open: &dyn Fn(),
+    after_open: &dyn Fn(),
+) -> Result<(PathBuf, Vec<u8>), ApiError> {
     use std::io::Read;
 
     let file_path = resolve_existing_in_workspace(ws_root, segments, false)?;
@@ -1401,10 +1415,10 @@ pub(crate) fn read_workspace_file_checked(
             max / (1024 * 1024),
         )));
     }
+    after_open();
     // The handle is the file that gets served: the path must still lead to it.
     let again = resolve_existing_in_workspace(ws_root, segments, false)?;
-    let now = fs::symlink_metadata(&again).map_err(|_| ApiError::not_found("workspace file"))?;
-    if again != file_path || !same_file(&meta, &now) {
+    if again != file_path || !opened_file_is_still_at(&file, &meta, &again, ws_root) {
         return Err(ApiError::forbidden("workspace file changed while reading"));
     }
     let mut bytes = Vec::new();
@@ -1444,16 +1458,108 @@ fn open_without_following_links(path: &Path) -> std::io::Result<fs::File> {
         .open(path)
 }
 
+/// Does `path` still lead to the file behind the open handle `file`?
+/// Unix: device and inode of the handle against the path.
 #[cfg(unix)]
-fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+fn opened_file_is_still_at(
+    file: &fs::File,
+    _meta: &fs::Metadata,
+    path: &Path,
+    _ws_root: &Path,
+) -> bool {
     use std::os::unix::fs::MetadataExt;
+    let (Ok(a), Ok(b)) = (file.metadata(), fs::symlink_metadata(path)) else {
+        return false;
+    };
     a.dev() == b.dev() && a.ino() == b.ino()
 }
 
-/// std has no stable file id on Windows; size and write time must match.
-#[cfg(not(unix))]
-fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
-    a.len() == b.len() && a.modified().ok() == b.modified().ok()
+/// Windows: size and write time are forgeable from inside the workspace, so the
+/// real identity is compared (volume serial and file index of the opened handle
+/// against a second handle on the path), and the final path of the OPENED
+/// handle must lie inside the workspace root.
+#[cfg(windows)]
+fn opened_file_is_still_at(
+    file: &fs::File,
+    _meta: &fs::Metadata,
+    path: &Path,
+    ws_root: &Path,
+) -> bool {
+    let Ok(root_canon) = fs::canonicalize(ws_root) else {
+        return false;
+    };
+    let Ok(again) = open_without_following_links(path) else {
+        return false;
+    };
+    win_identity::final_path_is_inside(file, &root_canon)
+        && win_identity::same_open_file(file, &again)
+}
+
+#[cfg(windows)]
+pub(crate) mod win_identity {
+    //! Real file identity from open handles (std has no stable API for it).
+    #![allow(unsafe_code)]
+
+    use std::ffi::OsString;
+    use std::fs;
+    use std::io;
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::io::AsRawHandle;
+    use std::path::{Path, PathBuf};
+
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_NAME_NORMALIZED, GetFileInformationByHandle,
+        GetFinalPathNameByHandleW,
+    };
+
+    /// Volume serial number and 64-bit file index of an open handle.
+    pub(crate) fn file_id(file: &fs::File) -> io::Result<(u32, u64)> {
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        // SAFETY: the handle is valid for the borrow of `file`; `info` is a
+        // properly sized out-structure owned by this frame.
+        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info) }
+            .map_err(io::Error::other)?;
+        Ok((
+            info.dwVolumeSerialNumber,
+            (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+        ))
+    }
+
+    /// Are both handles the very same file?
+    pub(crate) fn same_open_file(a: &fs::File, b: &fs::File) -> bool {
+        matches!((file_id(a), file_id(b)), (Ok(x), Ok(y)) if x == y)
+    }
+
+    /// Final (symlink/junction resolved) path of an open handle.
+    pub(crate) fn final_path(file: &fs::File) -> io::Result<PathBuf> {
+        let handle = HANDLE(file.as_raw_handle());
+        let mut buf = vec![0u16; 1024];
+        loop {
+            // SAFETY: `buf` is a valid writable slice for the whole call.
+            let n = unsafe { GetFinalPathNameByHandleW(handle, &mut buf, FILE_NAME_NORMALIZED) }
+                as usize;
+            if n == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if n < buf.len() {
+                buf.truncate(n);
+                return Ok(PathBuf::from(OsString::from_wide(&buf)));
+            }
+            buf.resize(n + 1, 0);
+        }
+    }
+
+    fn comparable(p: &Path) -> PathBuf {
+        let lower = p.to_string_lossy().to_lowercase();
+        let lower = lower.strip_prefix("\\\\?\\").unwrap_or(&lower);
+        PathBuf::from(lower.replace('/', "\\"))
+    }
+
+    /// Does the file behind the handle live inside `root` (canonical)?
+    pub(crate) fn final_path_is_inside(file: &fs::File, root: &Path) -> bool {
+        final_path(file).is_ok_and(|p| comparable(&p).starts_with(comparable(root)))
+    }
 }
 
 /// Read or download a single file strictly within a bot's workspace.

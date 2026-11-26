@@ -636,3 +636,103 @@ fn workspace_file_read_still_serves_a_plain_file() {
     .unwrap();
     assert_eq!(bytes, b"inside");
 }
+
+/// Like `link_dir`, but reports instead of panicking when links cannot be made
+/// (a junction normally needs no privilege, a locked-down machine may refuse).
+fn try_link_dir(link: &std::path::Path, target: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .creation_flags(0x0800_0000)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+}
+
+fn force_mtime(path: &std::path::Path, to: std::time::SystemTime) {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(to)
+        .unwrap();
+}
+
+/// The race: the path is swapped to a link, the OUTSIDE file is opened, and the
+/// path is swapped back before the second check.  The decoy inside the
+/// workspace has the same size and write time as the outside file (both
+/// forgeable by a bot), so only a real file identity or the final path of the
+/// opened handle can catch it.
+#[test]
+fn workspace_file_read_refuses_outside_file_opened_then_path_restored_with_forged_size_and_mtime() {
+    let ws = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::create_dir(ws.path().join("notes")).unwrap();
+    let decoy = ws.path().join("notes").join("a.txt");
+    let secret = outside.path().join("a.txt");
+    std::fs::write(&decoy, "DECOY-0123456789").unwrap();
+    std::fs::write(&secret, "OUTSIDE-SECRET!!").unwrap();
+    force_mtime(
+        &decoy,
+        std::fs::metadata(&secret).unwrap().modified().unwrap(),
+    );
+    let probe = ws.path().join("probe-link");
+    if !try_link_dir(&probe, outside.path()) {
+        eprintln!("SKIPPED: this machine does not allow creating directory links/junctions");
+        return;
+    }
+    std::fs::remove_dir(&probe).unwrap();
+    let before = || {
+        std::fs::rename(ws.path().join("notes"), ws.path().join("notes-real")).unwrap();
+        assert!(try_link_dir(&ws.path().join("notes"), outside.path()));
+    };
+    let after = || {
+        std::fs::remove_dir(ws.path().join("notes")).unwrap();
+        std::fs::rename(ws.path().join("notes-real"), ws.path().join("notes")).unwrap();
+    };
+    let err = crate::workspace_routes::read_workspace_file_checked_with_hooks(
+        ws.path(),
+        &["notes".to_owned(), "a.txt".to_owned()],
+        1024,
+        "preview",
+        &before,
+        &after,
+    )
+    .expect_err("the outside file must never be served");
+    assert_eq!(err.status(), StatusCode::FORBIDDEN);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_file_identity_is_not_fooled_by_equal_size_and_mtime() {
+    use crate::workspace_routes::win_identity::{final_path, same_open_file};
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "same-length-1").unwrap();
+    std::fs::write(&b, "same-length-2").unwrap();
+    force_mtime(&b, std::fs::metadata(&a).unwrap().modified().unwrap());
+    let (ma, mb) = (
+        std::fs::metadata(&a).unwrap(),
+        std::fs::metadata(&b).unwrap(),
+    );
+    // What the old check compared: identical, yet two different files.
+    assert_eq!(ma.len(), mb.len());
+    assert_eq!(ma.modified().unwrap(), mb.modified().unwrap());
+    let (fa, fb) = (
+        std::fs::File::open(&a).unwrap(),
+        std::fs::File::open(&b).unwrap(),
+    );
+    assert!(!same_open_file(&fa, &fb));
+    assert!(same_open_file(&fa, &std::fs::File::open(&a).unwrap()));
+    let fp = final_path(&fa).unwrap().to_string_lossy().to_lowercase();
+    assert!(fp.ends_with("a.txt"), "final path was {fp}");
+}
