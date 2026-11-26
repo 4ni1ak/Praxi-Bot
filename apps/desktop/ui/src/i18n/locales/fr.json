@@ -636,261 +636,261 @@
   },
   "apps": {
     "access": {
-      "all": "All bots",
-      "deletedBot": "deleted bot",
+      "all": "Tous les bots",
+      "deletedBot": "bot supprimé",
       "edit": "Bots",
-      "label": "Who can use this app",
-      "noBotsYet": "There are no bots yet. Create a bot first.",
-      "nobody": "No bot can use this app until you tick at least one.",
-      "notApplied": "{{name}}: not saved, this app was changed elsewhere (for example it is now open to all bots). Showing its current state.",
-      "save": "Save",
-      "savedToast": "{{name}}: bot access saved",
-      "some": "Only these bots"
+      "label": "Qui peut utiliser cette application",
+      "noBotsYet": "Il n'y a pas encore de bot. Créez d'abord un bot.",
+      "nobody": "Aucun bot ne peut utiliser cette application tant que vous n'en cochez pas au moins un.",
+      "notApplied": "{{name}} : non enregistré, cette application a été modifiée ailleurs (par exemple elle est maintenant ouverte à tous les bots). Affichage de son état actuel.",
+      "save": "Enregistrer",
+      "savedToast": "{{name}} : accès des bots enregistré",
+      "some": "Seulement ces bots"
     },
     "advanced": {
-      "localTitle": "Local developer servers",
-      "title": "Custom MCP server",
-      "tokenCards": "Services with an access token",
-      "tokenHint": "These ask for a personal token you create yourself. Most services connect without one through Composio on the main screen."
+      "localTitle": "Serveurs de développement locaux",
+      "title": "Serveur MCP personnalisé",
+      "tokenCards": "Services avec un jeton d'accès",
+      "tokenHint": "Ceux-ci demandent un jeton personnel que vous créez vous-même. La plupart des services se connectent sans jeton via Composio sur l'écran principal."
     },
     "auth": {
-      "expiredToast": "The {{name}} sign-in was not finished within {{minutes}} minutes and was cancelled.",
-      "failedToast": "{{name}}: sign-in did not finish",
-      "openFailed": "{{name}}: the sign-in page could not be opened in the browser",
-      "pasteHint": "If the browser runs on another computer and shows an error page after you sign in, copy that page's full address and paste it here.",
-      "pasteLabel": "Redirect address from the browser",
-      "pasteSubmit": "Finish sign-in",
-      "signIn": "Sign in",
-      "signOut": "Sign out",
-      "signedInToast": "{{name}}: signed in",
-      "signedOutToast": "{{name}}: signed out",
-      "waiting": "Waiting for the browser sign-in…"
+      "expiredToast": "La connexion à {{name}} n'a pas été terminée en {{minutes}} minutes et a été annulée.",
+      "failedToast": "{{name}} : la connexion n'a pas abouti",
+      "openFailed": "{{name}} : la page de connexion n'a pas pu être ouverte dans le navigateur",
+      "pasteHint": "Si le navigateur s'exécute sur un autre ordinateur et affiche une page d'erreur après votre connexion, copiez l'adresse complète de cette page et collez-la ici.",
+      "pasteLabel": "Adresse de redirection du navigateur",
+      "pasteSubmit": "Terminer la connexion",
+      "signIn": "Se connecter",
+      "signOut": "Se déconnecter",
+      "signedInToast": "{{name}} : connecté",
+      "signedOutToast": "{{name}} : déconnecté",
+      "waiting": "En attente de la connexion dans le navigateur…"
     },
-    "botsAll": "All bots",
-    "botsNone": "No bots",
-    "botsSome": "Bots: {{names}}",
-    "catalogSection": "Discover",
+    "botsAll": "Tous les bots",
+    "botsNone": "Aucun bot",
+    "botsSome": "Bots : {{names}}",
+    "catalogSection": "Découvrir",
     "categories": {
-      "all": "All",
-      "browser": "Browser",
+      "all": "Toutes",
+      "browser": "Navigateur",
       "communication": "Communication",
-      "data": "Data",
-      "developer": "Developer",
-      "files": "Files",
-      "home": "Home",
-      "productivity": "Productivity",
-      "search": "Search"
+      "data": "Données",
+      "developer": "Développement",
+      "files": "Fichiers",
+      "home": "Maison",
+      "productivity": "Productivité",
+      "search": "Recherche"
     },
-    "categoriesLabel": "Categories",
+    "categoriesLabel": "Catégories",
     "changed": {
-      "advice": "Only turn it back on if you trust this app and the new wording looks right.",
-      "after": "What it says now",
-      "approve": "Trust the new version",
-      "before": "What you approved",
-      "intro": "{{name}} changed how it describes “{{tool}}”. The tool is switched off, and Praxi cannot use it, until you decide.",
-      "newIntro": "{{name}} offers a tool, “{{tool}}”, that you never approved. It is switched off, and Praxi cannot use it, until you decide.",
-      "other": "Something you cannot see in the text changed too (for example hidden characters).",
-      "schema": "The inputs this tool accepts changed too.",
-      "title": "A tool changed after you approved it",
-      "toast": "{{name}}: new version of “{{tool}}” approved"
+      "advice": "Ne le réactivez que si vous faites confiance à cette application et que la nouvelle description vous convient.",
+      "after": "Ce qu'il dit maintenant",
+      "approve": "Faire confiance à la nouvelle version",
+      "before": "Ce que vous avez approuvé",
+      "intro": "{{name}} a modifié la façon dont il décrit « {{tool}} ». L'outil est désactivé, et Praxi ne peut pas l'utiliser, tant que vous n'avez pas décidé.",
+      "newIntro": "{{name}} propose un outil, « {{tool}} », que vous n'avez jamais approuvé. Il est désactivé, et Praxi ne peut pas l'utiliser, tant que vous n'avez pas décidé.",
+      "other": "Un élément invisible dans le texte a aussi changé (par exemple des caractères cachés).",
+      "schema": "Les entrées que cet outil accepte ont aussi changé.",
+      "title": "Un outil a changé après votre approbation",
+      "toast": "{{name}} : nouvelle version de « {{tool}} » approuvée"
     },
-    "close": "Close",
+    "close": "Fermer",
     "component": {
-      "confirm": "Praxi will run this command to install {{name}}:",
+      "confirm": "Praxi va exécuter cette commande pour installer {{name}} :",
       "failed": {
-        "exit": "The installer did not finish. Try again, or install it yourself from the official page.",
-        "not_detected": "The installer finished but the program was not found yet. Press Reconnect, or restart Praxi-Bot once.",
-        "timeout": "The installer took too long and was stopped.",
-        "unavailable": "The installer could not be started."
+        "exit": "Le programme d'installation ne s'est pas terminé. Réessayez, ou installez-le vous-même depuis la page officielle.",
+        "not_detected": "Le programme d'installation s'est terminé mais le programme est introuvable pour l'instant. Appuyez sur Reconnecter, ou redémarrez Praxi-Bot une fois.",
+        "timeout": "Le programme d'installation a pris trop de temps et a été arrêté.",
+        "unavailable": "Le programme d'installation n'a pas pu être lancé."
       },
-      "install": "Install {{name}}",
-      "installing": "Installing {{name}}… this can take a minute.",
-      "manual": "Installing it from here is not possible on this computer. The official page shows how:",
+      "install": "Installer {{name}}",
+      "installing": "Installation de {{name}}… cela peut prendre une minute.",
+      "manual": "L'installer depuis ici n'est pas possible sur cet ordinateur. La page officielle explique comment faire :",
       "name": {
         "node": "Node.js",
         "uv": "uv"
       },
       "needs": {
-        "node": "This app needs Node.js, which runs JavaScript tools.",
-        "uv": "This app needs uv, a small Python tool runner."
+        "node": "Cette application a besoin de Node.js, qui exécute des outils JavaScript.",
+        "uv": "Cette application a besoin de uv, un petit exécuteur d'outils Python."
       },
-      "openPage": "Open the official page",
-      "run": "Install",
-      "source": "Source: {{source}}"
+      "openPage": "Ouvrir la page officielle",
+      "run": "Installer",
+      "source": "Source : {{source}}"
     },
     "composio": {
       "advanced": {
         "mode": {
-          "login": "Linked through your Composio sign-in.",
-          "none": "Not linked yet. The first Connect on an app asks you to sign in once.",
-          "project_key": "Using your own Composio project key."
+          "login": "Lié via votre connexion Composio.",
+          "none": "Pas encore lié. Le premier Connecter sur une application vous demande de vous connecter une fois.",
+          "project_key": "Utilisation de votre propre clé de projet Composio."
         },
-        "ownKey": "Use my own project key",
-        "signOut": "Sign out of Composio",
+        "ownKey": "Utiliser ma propre clé de projet",
+        "signOut": "Se déconnecter de Composio",
         "title": "Composio"
       },
       "catalogError": {
-        "failed": "The app list could not be refreshed: showing the saved one.",
-        "offline": "No connection: showing the saved app list.",
-        "rate_limited": "Composio is busy: showing the saved app list.",
+        "failed": "La liste des applications n'a pas pu être actualisée : la liste enregistrée est affichée.",
+        "offline": "Pas de connexion : la liste d'applications enregistrée est affichée.",
+        "rate_limited": "Composio est occupé : la liste d'applications enregistrée est affichée.",
         "unauthorized": "Composio n'accepte plus la connexion enregistrée : la liste d'applications enregistrée est affichée."
       },
-      "connectedSection": "Connected",
-      "disable": "Turn off",
-      "disconnectedLocal": "{{name}} was removed here. Remove it in the Composio dashboard too.",
-      "enable": "Turn on",
-      "expiredHint": "The sign-in ran out. Reconnect to continue.",
-      "failedHint": "The sign-in did not finish. Try again.",
-      "getKey": "Open the Composio key page",
-      "keyHint": "Checked immediately, then kept in your system keychain. It is never shown again.",
-      "keyLabel": "Composio API key",
-      "keySave": "Save key",
+      "connectedSection": "Connectées",
+      "disable": "Désactiver",
+      "disconnectedLocal": "{{name}} a été retirée ici. Retirez-la aussi dans le tableau de bord Composio.",
+      "enable": "Activer",
+      "expiredHint": "La connexion a expiré. Reconnectez-vous pour continuer.",
+      "failedHint": "La connexion n'a pas abouti. Réessayez.",
+      "getKey": "Ouvrir la page des clés Composio",
+      "keyHint": "Vérifiée immédiatement, puis conservée dans votre trousseau système. Elle n'est plus jamais affichée.",
+      "keyLabel": "Clé d'API Composio",
+      "keySave": "Enregistrer la clé",
       "link": {
-        "body": "A free Composio account connects your apps. Press the button, sign in in your browser and come back. There is nothing to copy.",
-        "failed": "The sign-in did not finish. Try again.",
-        "open": "Open Composio",
-        "privacy": "Inputs and results pass through Composio's servers. Praxi asks you before every action.",
-        "title": "Link Composio (free) — one time",
-        "waiting": "Waiting for you in the browser…"
+        "body": "Un compte Composio gratuit connecte vos applications. Appuyez sur le bouton, connectez-vous dans votre navigateur et revenez. Il n'y a rien à copier.",
+        "failed": "La connexion n'a pas abouti. Réessayez.",
+        "open": "Ouvrir Composio",
+        "privacy": "Les entrées et les résultats transitent par les serveurs de Composio. Praxi vous demande avant chaque action.",
+        "title": "Lier Composio (gratuit), une seule fois",
+        "waiting": "En attente de vous dans le navigateur…"
       },
-      "loadFailed": "The app list could not be loaded.",
-      "loadMore": "Show more",
-      "loading": "Loading apps…",
-      "noResults": "No matching apps.",
-      "openFailed": "The sign-in link was not opened because it is not a Composio link.",
+      "loadFailed": "La liste des applications n'a pas pu être chargée.",
+      "loadMore": "Afficher plus",
+      "loading": "Chargement des applications…",
+      "noResults": "Aucune application correspondante.",
+      "openFailed": "Le lien de connexion n'a pas été ouvert car ce n'est pas un lien Composio.",
       "relogin": "Se reconnecter à Composio",
-      "retry": "Try again",
+      "retry": "Réessayer",
       "state": {
-        "active": "Connected",
-        "expired": "Sign-in expired",
-        "failed": "Not finished",
-        "not_connected": "Not connected",
-        "pending": "Signing in"
+        "active": "Connectée",
+        "expired": "Connexion expirée",
+        "failed": "Non terminée",
+        "not_connected": "Non connectée",
+        "pending": "Connexion en cours"
       },
       "title": "Composio",
-      "waiting": "Waiting for you in the browser…"
+      "waiting": "En attente de vous dans le navigateur…"
     },
-    "connect": "Connect",
-    "connectApp": "Connect {{name}}",
-    "connectNow": "Connect",
-    "connected": "Connected",
-    "connectedSection": "Connected",
-    "connectedToast": "{{name}} connected",
+    "connect": "Connecter",
+    "connectApp": "Connecter {{name}}",
+    "connectNow": "Connecter",
+    "connected": "Connecté",
+    "connectedSection": "Connectés",
+    "connectedToast": "{{name}} connecté",
     "custom": {
-      "add": "Add server",
-      "command": "Command",
-      "env": "Environment",
-      "envHint": "One KEY=value per line.",
-      "errCommand": "Enter the command to run.",
-      "errName": "Enter a name.",
-      "errUrl": "Enter a valid HTTP URL.",
+      "add": "Ajouter un serveur",
+      "command": "Commande",
+      "env": "Environnement",
+      "envHint": "Un KEY=value par ligne.",
+      "errCommand": "Saisissez la commande à exécuter.",
+      "errName": "Saisissez un nom.",
+      "errUrl": "Saisissez une URL HTTP valide.",
       "http": "HTTP",
-      "intro": "Add a stdio or HTTP MCP server by hand.",
-      "name": "Server name",
+      "intro": "Ajoutez à la main un serveur MCP stdio ou HTTP.",
+      "name": "Nom du serveur",
       "stdio": "Stdio",
       "transport": "Transport",
-      "url": "Server URL"
+      "url": "URL du serveur"
     },
-    "disconnect": "Disconnect",
-    "disconnectConfirm": "Disconnect this server?",
-    "disconnectedToast": "{{name}} disconnected",
+    "disconnect": "Déconnecter",
+    "disconnectConfirm": "Déconnecter ce serveur ?",
+    "disconnectedToast": "{{name}} déconnecté",
     "error": {
-      "generic": "This app could not start. Open the details to see why.",
-      "hideDetails": "Hide details",
+      "generic": "Cette application n'a pas pu démarrer. Ouvrez les détails pour en connaître la raison.",
+      "hideDetails": "Masquer les détails",
       "hint": {
-        "closed": "The server stopped while starting. Open the details to see what it printed (for example Docker installed but not running), fix that, then press Reconnect.",
-        "config": "The server settings or a required secret are missing or invalid. Fix them and press Reconnect.",
-        "needs_folder": "Choose the one folder this app may read and write, then press Save and connect.",
-        "runtime_docker": "The docker command was not found on PATH. Install Docker (or add its folder to PATH), restart Praxi-Bot, then press Reconnect.",
-        "runtime_node": "Node.js was not found on PATH. Install it from the button above, or from https://nodejs.org, then press Reconnect.",
-        "runtime_other": "The program that starts this server was not found on PATH. Install it, add its folder to PATH or give its full path in the server settings, restart Praxi-Bot, then press Reconnect.",
-        "runtime_pipx": "pipx was not found on PATH. Install it from https://pipx.pypa.io (or add its folder to PATH), restart Praxi-Bot, then press Reconnect.",
-        "runtime_uv": "uv was not found on PATH. Install it from the button above, or from https://docs.astral.sh/uv/, then press Reconnect.",
-        "spawn": "The server program could not be started. Check the command in the server settings, then press Reconnect.",
-        "timeout": "The server did not answer in time. The first start can be slow while packages download; press Reconnect to try again."
+        "closed": "Le serveur s'est arrêté pendant son démarrage. Ouvrez les détails pour voir ce qu'il a affiché (par exemple Docker installé mais non lancé), corrigez le problème, puis appuyez sur Reconnecter.",
+        "config": "Les réglages du serveur ou un secret requis sont manquants ou invalides. Corrigez-les et appuyez sur Reconnecter.",
+        "needs_folder": "Choisissez l'unique dossier que cette application peut lire et modifier, puis appuyez sur Enregistrer et connecter.",
+        "runtime_docker": "La commande docker est introuvable dans le PATH. Installez Docker (ou ajoutez son dossier au PATH), redémarrez Praxi-Bot, puis appuyez sur Reconnecter.",
+        "runtime_node": "Node.js est introuvable dans le PATH. Installez-le avec le bouton ci-dessus, ou depuis https://nodejs.org, puis appuyez sur Reconnecter.",
+        "runtime_other": "Le programme qui démarre ce serveur est introuvable dans le PATH. Installez-le, ajoutez son dossier au PATH ou indiquez son chemin complet dans les réglages du serveur, redémarrez Praxi-Bot, puis appuyez sur Reconnecter.",
+        "runtime_pipx": "pipx est introuvable dans le PATH. Installez-le depuis https://pipx.pypa.io (ou ajoutez son dossier au PATH), redémarrez Praxi-Bot, puis appuyez sur Reconnecter.",
+        "runtime_uv": "uv est introuvable dans le PATH. Installez-le avec le bouton ci-dessus, ou depuis https://docs.astral.sh/uv/, puis appuyez sur Reconnecter.",
+        "spawn": "Le programme du serveur n'a pas pu être démarré. Vérifiez la commande dans les réglages du serveur, puis appuyez sur Reconnecter.",
+        "timeout": "Le serveur n'a pas répondu à temps. Le premier démarrage peut être lent pendant le téléchargement des paquets ; appuyez sur Reconnecter pour réessayer."
       },
-      "message": "Error",
-      "noStderr": "The server printed nothing before it stopped.",
-      "showDetails": "Show details",
-      "stderr": "What the server printed"
+      "message": "Erreur",
+      "noStderr": "Le serveur n'a rien affiché avant de s'arrêter.",
+      "showDetails": "Afficher les détails",
+      "stderr": "Ce que le serveur a affiché"
     },
     "folder": {
-      "hint": "Only this folder is shared with the app. Praxi-Bot's own data and your password or sign-in folders can never be shared.",
-      "label": "Folder the bot may read and write",
-      "missing": "Choose a folder first.",
-      "placeholder": "Full path, for example C:\\Users\\you\\Documents",
-      "save": "Save and connect"
+      "hint": "Seul ce dossier est partagé avec l'application. Les données propres à Praxi-Bot et vos dossiers de mots de passe ou de connexion ne peuvent jamais être partagés.",
+      "label": "Dossier que le bot peut lire et modifier",
+      "missing": "Choisissez d'abord un dossier.",
+      "placeholder": "Chemin complet, par exemple C:\\Users\\you\\Documents",
+      "save": "Enregistrer et connecter"
     },
-    "getKey": "Get API key",
+    "getKey": "Obtenir une clé d'API",
     "group": {
-      "all": "All",
-      "business": "Business",
+      "all": "Tous",
+      "business": "Entreprise",
       "communication": "Communication",
-      "dev": "Dev",
+      "dev": "Dév.",
       "finance": "Finance",
-      "label": "Categories",
-      "other": "Other",
-      "productivity": "Productivity",
-      "social": "Social"
+      "label": "Catégories",
+      "other": "Autre",
+      "productivity": "Productivité",
+      "social": "Réseaux sociaux"
     },
-    "loading": "Loading catalog…",
-    "localSection": "On this computer",
-    "manage": "Manage",
-    "mcpServers": "Advanced",
-    "missingSecret": "Enter every required secret.",
-    "noResults": "No matching servers.",
-    "reconnect": "Reconnect",
-    "search": "Search apps",
-    "secretHint": "Secrets are stored in your OS keychain and never shown again.",
+    "loading": "Chargement du catalogue…",
+    "localSection": "Sur cet ordinateur",
+    "manage": "Gérer",
+    "mcpServers": "Avancé",
+    "missingSecret": "Saisissez tous les secrets requis.",
+    "noResults": "Aucun serveur correspondant.",
+    "reconnect": "Reconnecter",
+    "search": "Rechercher des applications",
+    "secretHint": "Les secrets sont stockés dans le trousseau système de votre système d'exploitation et ne sont plus jamais affichés.",
     "sheet": {
-      "app": "Opening {{name}}'s own page…",
-      "cancelled": "Cancelled.",
+      "app": "Ouverture de la page de {{name}}…",
+      "cancelled": "Annulé.",
       "failed": {
-        "app_link": "The page for {{name}} could not be prepared. Try again.",
-        "app_open": "The page for {{name}} could not be opened.",
-        "login_expired": "Composio n'accepte plus la connexion enregistrée, donc {{name}} ne peut pas encore être connectée. Reconnecte-toi à Composio.",
-        "login_failed": "The sign-in did not finish. Try again.",
-        "login_open": "The sign-in page could not be opened.",
-        "rate_limited": "Composio est occupé en ce moment. Attends une minute, puis réessaie avec {{name}}.",
-        "upstream": "Composio est injoignable ou n'a pas répondu. Vérifie la connexion de l'ordinateur sur lequel tournent les bots, puis réessaie."
+        "app_link": "La page de {{name}} n'a pas pu être préparée. Réessayez.",
+        "app_open": "La page de {{name}} n'a pas pu être ouverte.",
+        "login_expired": "Composio n'accepte plus la connexion enregistrée, donc {{name}} ne peut pas encore être connectée. Reconnectez-vous à Composio.",
+        "login_failed": "La connexion n'a pas abouti. Réessayez.",
+        "login_open": "La page de connexion n'a pas pu être ouverte.",
+        "rate_limited": "Composio est occupé en ce moment. Attendez une minute, puis réessayez avec {{name}}.",
+        "upstream": "Composio est injoignable ou n'a pas répondu. Vérifiez la connexion de l'ordinateur sur lequel tournent les bots, puis réessayez."
       },
-      "login": "The sign-in page opened in your browser. Finish it there and {{name}} opens next by itself.",
-      "opened": "{{name}}'s page is open in your browser. Allow access there; it shows up as Connected here.",
-      "progress": "Step {{current}} of {{total}}",
-      "timedOut": "The sign-in was not finished in time. Press Connect to start again.",
-      "title": "Connect {{name}}"
+      "login": "La page de connexion s'est ouverte dans votre navigateur. Terminez-la là-bas et {{name}} s'ouvre ensuite tout seul.",
+      "opened": "La page de {{name}} est ouverte dans votre navigateur. Autorisez l'accès là-bas ; elle apparaît comme Connectée ici.",
+      "progress": "Étape {{current}} sur {{total}}",
+      "timedOut": "La connexion n'a pas été terminée à temps. Appuyez sur Connecter pour recommencer.",
+      "title": "Connecter {{name}}"
     },
     "status": {
-      "auth_required": "Sign-in required",
-      "connected": "Connected",
-      "connecting": "Connecting",
-      "disconnected": "Disconnected",
-      "error": "Error",
-      "quarantined": "Quarantined"
+      "auth_required": "Connexion requise",
+      "connected": "Connecté",
+      "connecting": "Connexion en cours",
+      "disconnected": "Déconnecté",
+      "error": "Erreur",
+      "quarantined": "En quarantaine"
     },
-    "title": "Apps",
-    "toolCount": "{{count}} tools",
-    "toolCount_one": "{{count}} tool",
+    "title": "Applications",
+    "toolCount": "{{count}} outils",
+    "toolCount_one": "{{count}} outil",
     "tools": {
       "effect": {
-        "destructive": "can delete or send",
-        "write": "changes data"
+        "destructive": "peut supprimer ou envoyer",
+        "write": "modifie des données"
       },
-      "label": "Tools bots may use",
-      "restricted": "Some tools are limited by a custom allow-list; edit it in the server settings."
+      "label": "Outils que les bots peuvent utiliser",
+      "restricted": "Certains outils sont limités par une liste d'autorisations personnalisée ; modifiez-la dans les réglages du serveur."
     },
     "trust": {
-      "badgeAsks": "Always asks",
-      "badgeTrusted": "Labels trusted",
-      "explain": "A server labels each tool as read-only or not. If you answer No, every action asks first. If you answer Yes, only tools it marks read-only run without asking; anything that changes or deletes still asks. You can change this later in the app's settings.",
-      "learn": "Learn more",
-      "no": "No, ask me for every action",
-      "question": "Do you trust this server to describe its own tools honestly?",
-      "savedNo": "{{name}}: every action asks again.",
-      "savedYes": "{{name}}: its read-only tools now run without asking.",
-      "yes": "Yes, let its read-only tools run without asking"
+      "badgeAsks": "Demande toujours",
+      "badgeTrusted": "Étiquettes de confiance",
+      "explain": "Un serveur étiquette chaque outil comme lecture seule ou non. Si vous répondez Non, chaque action demande d'abord votre accord. Si vous répondez Oui, seuls les outils qu'il marque en lecture seule s'exécutent sans demander ; tout ce qui modifie ou supprime demande toujours. Vous pourrez changer cela plus tard dans les réglages de l'application.",
+      "learn": "En savoir plus",
+      "no": "Non, demandez-moi pour chaque action",
+      "question": "Faites-vous confiance à ce serveur pour décrire honnêtement ses propres outils ?",
+      "savedNo": "{{name}} : chaque action demande de nouveau.",
+      "savedYes": "{{name}} : ses outils en lecture seule s'exécutent désormais sans demander.",
+      "yes": "Oui, laisser ses outils en lecture seule s'exécuter sans demander"
     },
-    "usedBy": "Used by"
+    "usedBy": "Utilisé par"
   },
   "audit": {
     "action": "Nom technique",
@@ -2866,129 +2866,133 @@
   },
   "errors": {
     "cliNotInstalled": {
-      "hint": "Install or update it in Settings, AI, then try again.",
-      "title": "That coding tool is not installed or needs an update"
+      "hint": "Installez-le ou mettez-le à jour dans Réglages, IA, puis réessayez.",
+      "title": "Cet outil de programmation n'est pas installé ou doit être mis à jour"
     },
     "cliQuota": {
-      "hint": "Wait until it resets or pick another model.",
-      "title": "That subscription has reached its usage limit"
+      "hint": "Attendez sa réinitialisation ou choisissez un autre modèle.",
+      "title": "Cet abonnement a atteint sa limite d'utilisation"
     },
     "cliSignedOut": {
-      "hint": "Sign in to it in Settings, AI, then try again.",
-      "title": "You are signed out of that coding tool"
+      "hint": "Connectez-vous-y dans Réglages, IA, puis réessayez.",
+      "title": "Vous êtes déconnecté de cet outil de programmation"
     },
     "codes": {
       "admin_rate_limit": {
-        "hint": "Wait a minute and try again.",
-        "title": "Too many administration changes"
+        "hint": "Attendez une minute, puis réessayez.",
+        "title": "Trop de modifications d'administration"
       },
       "approval_once_only": {
-        "hint": "Allow it for this step only, or deny it.",
-        "title": "This approval can only be given once"
+        "hint": "Autorisez-la pour cette étape seulement, ou refusez-la.",
+        "title": "Cette approbation ne peut être donnée qu'une seule fois"
       },
       "attachment_too_large": {
-        "hint": "Attach a smaller file (15 MB at most, images 5 MB).",
-        "title": "That file is too large"
+        "hint": "Joignez un fichier plus petit (15 Mo au maximum, 5 Mo pour les images).",
+        "title": "Ce fichier est trop volumineux"
       },
       "bad_composio_request": {
-        "hint": "Check the app and the values you entered, then try again.",
-        "title": "Composio did not understand the request"
+        "hint": "Vérifiez l'application et les valeurs saisies, puis réessayez.",
+        "title": "Composio n'a pas compris la demande"
       },
       "bad_email_config": {
-        "hint": "Check the address, server and password, then save again.",
-        "title": "The email settings are not valid"
+        "hint": "Vérifiez l'adresse, le serveur et le mot de passe, puis enregistrez à nouveau.",
+        "title": "Les réglages e-mail ne sont pas valides"
       },
       "bad_engine": {
-        "hint": "Pick one of the options in the list and save again.",
-        "title": "That engine setting is not valid"
+        "hint": "Choisissez l'une des options de la liste, puis enregistrez à nouveau.",
+        "title": "Ce réglage de moteur n'est pas valide"
       },
       "bad_mcp_config": {
-        "hint": "Check the command or address and try again.",
-        "title": "The server settings are not valid"
+        "hint": "Vérifiez la commande ou l'adresse, puis réessayez.",
+        "title": "Les réglages du serveur ne sont pas valides"
       },
       "bad_profile": {
-        "hint": "Check the highlighted fields and save again.",
-        "title": "The bot's settings are not valid"
+        "hint": "Vérifiez les champs signalés, puis enregistrez à nouveau.",
+        "title": "Les réglages du bot ne sont pas valides"
       },
       "bad_request": {
-        "hint": "Check what you entered and try again.",
-        "title": "That did not go through"
+        "hint": "Vérifiez ce que vous avez saisi, puis réessayez.",
+        "title": "Cela n'a pas abouti"
       },
       "bad_schedule": {
-        "hint": "Check the time or repeat rule and try again.",
-        "title": "That schedule is not valid"
+        "hint": "Vérifiez l'heure ou la règle de répétition, puis réessayez.",
+        "title": "Cette planification n'est pas valide"
+      },
+      "bad_trigger_config": {
+        "hint": "Choisissez une source, ajoutez un filtre d'expéditeur pour les e-mails, et vérifiez l'instruction, les heures calmes et les limites.",
+        "title": "Vérifiez cette règle"
       },
       "bad_voice_config": {
-        "hint": "Check the transcription service address, model and key in Settings, then try again.",
-        "title": "Dictation settings were not accepted"
+        "hint": "Vérifiez l'adresse du service de transcription, le modèle et la clé dans Réglages, puis réessayez.",
+        "title": "Les réglages de dictée n'ont pas été acceptés"
       },
       "bad_web_config": {
-        "hint": "Check the key or address and save again.",
-        "title": "The web search settings are not valid"
+        "hint": "Vérifiez la clé ou l'adresse, puis enregistrez à nouveau.",
+        "title": "Les réglages de la recherche web ne sont pas valides"
       },
       "bot_limit_exhausted": {
-        "hint": "It has used 100% of a warning level. Runs continue until the stop level.",
-        "title": "This bot used all of a limit you set"
+        "hint": "Il a utilisé 100 % d'un seuil d'alerte. Les exécutions continuent jusqu'au seuil d'arrêt.",
+        "title": "Ce bot a utilisé toute une limite que vous avez définie"
       },
       "bot_limit_reached": {
-        "hint": "The model was not called. Raise the limit in the bot settings, wait for it to reset, or leave the run stopped.",
-        "title": "Bot limit reached"
+        "hint": "Le modèle n'a pas été appelé. Relevez la limite dans les réglages du bot, attendez sa réinitialisation, ou laissez l'exécution arrêtée.",
+        "title": "Limite du bot atteinte"
       },
       "bot_limit_warning": {
-        "hint": "It has used 80% of a spending limit. Check the limits in the bot settings.",
-        "title": "This bot is close to its limit"
+        "hint": "Il a utilisé 80 % d'une limite de dépenses. Vérifiez les limites dans les réglages du bot.",
+        "title": "Ce bot approche de sa limite"
       },
       "browser_profile_error": {
-        "hint": "Terminez d’abord la connexion manuelle, puis actualisez et réessayez. La connexion manuelle nécessite un écran de bureau sur l’ordinateur du bot. Si cela échoue encore, consultez les détails.",
-        "title": "Le profil du navigateur n’a pas pu être mis à jour"
+        "hint": "Terminez d'abord la connexion manuelle, puis actualisez et réessayez. La connexion manuelle nécessite un écran de bureau sur l'ordinateur du bot. Si cela échoue encore, consultez les détails.",
+        "title": "Le profil du navigateur n'a pas pu être mis à jour"
       },
       "busy": {
-        "hint": "Wait a moment and try again.",
-        "title": "Praxi is busy with something else"
+        "hint": "Patientez un instant, puis réessayez.",
+        "title": "Praxi est occupé à autre chose"
       },
       "component_conflict": {
-        "hint": "It is already installed or being installed, or no installer is available on this computer.",
-        "title": "Nothing to install right now"
+        "hint": "Il est déjà installé ou en cours d'installation, ou aucun programme d'installation n'est disponible sur cet ordinateur.",
+        "title": "Rien à installer pour le moment"
       },
       "composio_error": {
-        "hint": "Try again in a moment. If it keeps failing, reconnect the app.",
-        "title": "Composio could not finish that"
+        "hint": "Réessayez dans un instant. Si l'échec persiste, reconnectez l'application.",
+        "title": "Composio n'a pas pu terminer cette action"
       },
       "composio_login_expired": {
-        "hint": "Ouvre Applications et appuie sur Se reconnecter à Composio. Un seul clic dans le navigateur suffit.",
-        "title": "Composio n'accepte plus ta connexion"
+        "hint": "Ouvrez Applications et appuyez sur Se reconnecter à Composio. Un seul clic dans le navigateur suffit.",
+        "title": "Composio n'accepte plus votre connexion"
       },
       "composio_not_configured": {
-        "hint": "Add your Composio key in Apps, then try again.",
-        "title": "Composio is not set up yet"
+        "hint": "Ajoutez votre clé Composio dans Applications, puis réessayez.",
+        "title": "Composio n'est pas encore configuré"
       },
       "composio_rate_limited": {
-        "hint": "Wait a minute and try again.",
-        "title": "Composio is asking you to slow down"
+        "hint": "Attendez une minute, puis réessayez.",
+        "title": "Composio vous demande de ralentir"
       },
       "conflict": {
-        "hint": "Reload to see the latest version, then try again.",
-        "title": "Someone changed this at the same time"
+        "hint": "Rechargez pour voir la dernière version, puis réessayez.",
+        "title": "Quelqu'un a modifié cet élément en même temps"
       },
       "could_not_verify": {
-        "hint": "They may have changed since the bot touched them. Look at them before restoring.",
-        "title": "Some files could not be checked"
+        "hint": "Ils ont peut-être changé depuis que le bot y a touché. Examinez-les avant de restaurer.",
+        "title": "Certains fichiers n'ont pas pu être vérifiés"
       },
       "disabled": {
-        "hint": "Turn it on in Settings, then try again.",
-        "title": "This is switched off"
+        "hint": "Activez-le dans Réglages, puis réessayez.",
+        "title": "Ceci est désactivé"
       },
       "email_provider_error": {
-        "hint": "Check the account and password, then try again.",
-        "title": "Your email provider refused the request"
+        "hint": "Vérifiez le compte et le mot de passe, puis réessayez.",
+        "title": "Votre fournisseur de messagerie a refusé la demande"
       },
       "engine_owner_only": {
-        "hint": "Use the app on the computer that runs the bot.",
-        "title": "Only the owner can change this"
+        "hint": "Utilisez l'application sur l'ordinateur qui exécute le bot.",
+        "title": "Seul le propriétaire peut modifier ceci"
       },
       "forbidden": {
-        "hint": "This action is only available on the computer that runs the bot.",
-        "title": "You are not allowed to do that here"
+        "hint": "Cette action n'est disponible que sur l'ordinateur qui exécute le bot.",
+        "title": "Vous n'avez pas le droit de faire cela ici"
       },
       "handover_gone": {
         "hint": "Elle a reçu une réponse, a été annulée ou a expiré. Demandez au bot de réessayer si c'est encore nécessaire.",
@@ -2999,603 +3003,607 @@
         "title": "La page ne peut pas encore l'accepter"
       },
       "host_admin_forbidden": {
-        "hint": "Only the owner's paired desktop can change the server's setup.",
-        "title": "This computer may not manage that server"
+        "hint": "Seul l'ordinateur de bureau associé du propriétaire peut modifier la configuration du serveur.",
+        "title": "Cet ordinateur n'a pas le droit de gérer ce serveur"
       },
       "host_admin_required": {
-        "hint": "Run the command shown below on the server once, then try again.",
-        "title": "Confirm this computer on the server first"
+        "hint": "Exécutez une fois sur le serveur la commande indiquée ci-dessous, puis réessayez.",
+        "title": "Confirmez d'abord cet ordinateur sur le serveur"
       },
       "host_link_failed": {
-        "hint": "Check that it is on and online, then try again.",
-        "title": "Could not reach that computer"
+        "hint": "Vérifiez qu'il est allumé et en ligne, puis réessayez.",
+        "title": "Impossible de joindre cet ordinateur"
       },
       "host_not_permitted": {
-        "hint": "The computer is online, but it only allows the terminal for its owner's paired desktop. Pair this computer again from the host, then try again.",
-        "title": "That computer did not allow the terminal"
+        "hint": "L'ordinateur est en ligne, mais il n'autorise le terminal que pour l'ordinateur de bureau associé de son propriétaire. Associez à nouveau cet ordinateur depuis l'hôte, puis réessayez.",
+        "title": "Cet ordinateur n'a pas autorisé le terminal"
       },
       "host_outdated": {
-        "hint": "The computer is online, but its Praxi-Bot version does not know the terminal yet. Update the server, then try again.",
-        "title": "That computer runs an older Praxi-Bot"
+        "hint": "L'ordinateur est en ligne, mais sa version de Praxi-Bot ne connaît pas encore le terminal. Mettez le serveur à jour, puis réessayez.",
+        "title": "Cet ordinateur exécute une ancienne version de Praxi-Bot"
       },
       "host_setup_conflict": {
-        "hint": "Wait for the current setup to finish, then try again.",
-        "title": "That computer is already being set up"
+        "hint": "Attendez la fin de la configuration en cours, puis réessayez.",
+        "title": "Cet ordinateur est déjà en cours de configuration"
       },
       "host_terminal_failed": {
-        "hint": "L'ordinateur est en ligne et a répondu, mais son terminal a signalé une erreur. Consulte les détails ci-dessous, puis réessaie.",
+        "hint": "L'ordinateur est en ligne et a répondu, mais son terminal a signalé une erreur. Consultez les détails ci-dessous, puis réessayez.",
         "title": "Le terminal a échoué sur cet ordinateur"
       },
       "host_unreachable": {
-        "hint": "Its copy may still be running. Try again, or confirm to bring the schedule back anyway.",
-        "title": "The server did not answer"
+        "hint": "Sa copie tourne peut-être encore. Réessayez, ou confirmez pour rétablir quand même la planification.",
+        "title": "Le serveur n'a pas répondu"
       },
       "input_busy": {
-        "hint": "Wait until they are done, or take over from the live view.",
-        "title": "Someone else is already controlling the screen"
+        "hint": "Attendez qu'ils aient terminé, ou prenez le contrôle depuis la vue en direct.",
+        "title": "Quelqu'un d'autre contrôle déjà l'écran"
       },
       "input_rate_limited": {
-        "hint": "Slow down a little and try again.",
-        "title": "Too many keystrokes at once"
+        "hint": "Ralentissez un peu, puis réessayez.",
+        "title": "Trop de frappes à la fois"
       },
       "install_copy_only": {
-        "hint": "Use the command shown or the official page.",
-        "title": "This CLI cannot be installed on the server automatically"
+        "hint": "Utilisez la commande indiquée ou la page officielle.",
+        "title": "Ce CLI ne peut pas être installé automatiquement sur le serveur"
       },
       "internal": {
-        "hint": "Try again. If it keeps happening, copy the details and report it.",
-        "title": "Something went wrong inside Praxi"
+        "hint": "Réessayez. Si cela se reproduit, copiez les détails et signalez le problème.",
+        "title": "Un problème est survenu dans Praxi"
       },
       "invalid_mcp_grant": {
-        "hint": "Open the bot's apps and grant access again.",
-        "title": "That app access is not valid"
+        "hint": "Ouvrez les applications du bot et accordez à nouveau l'accès.",
+        "title": "Cet accès à l'application n'est pas valide"
       },
       "invalid_signature": {
-        "hint": "Check the secret code you set up for this trigger and try again.",
-        "title": "The request could not be verified"
+        "hint": "Vérifiez le code secret que vous avez défini pour ce déclencheur, puis réessayez.",
+        "title": "La demande n'a pas pu être vérifiée"
       },
       "invalid_skill": {
-        "hint": "Check the skill's files and try again.",
-        "title": "This skill is not valid"
+        "hint": "Vérifiez les fichiers de la compétence, puis réessayez.",
+        "title": "Cette compétence n'est pas valide"
       },
       "invalid_skill_name": {
-        "hint": "Use letters, numbers and dashes only.",
-        "title": "That skill name is not allowed"
+        "hint": "Utilisez uniquement des lettres, des chiffres et des tirets.",
+        "title": "Ce nom de compétence n'est pas autorisé"
       },
       "invite_rate_limit": {
-        "hint": "Wait a few minutes and try again.",
-        "title": "Too many invitations"
+        "hint": "Attendez quelques minutes, puis réessayez.",
+        "title": "Trop d'invitations"
       },
       "knowledge_busy": {
-        "hint": "It is still reading your files. Try again in a moment.",
-        "title": "The knowledge base is busy"
+        "hint": "Il est encore en train de lire vos fichiers. Réessayez dans un instant.",
+        "title": "La base de connaissances est occupée"
       },
       "login_busy": {
-        "hint": "Finish or cancel it, then try again.",
-        "title": "Another sign-in is running on the server"
+        "hint": "Terminez-la ou annulez-la, puis réessayez.",
+        "title": "Une autre connexion est en cours sur le serveur"
       },
       "login_files_changed": {
-        "hint": "Reinstall it on the server (Install on server), then sign in.",
-        "title": "The engine's files changed since it was installed"
+        "hint": "Réinstallez-le sur le serveur (Installer sur le serveur), puis connectez-vous.",
+        "title": "Les fichiers du moteur ont changé depuis son installation"
       },
       "login_forbidden": {
-        "hint": "Start your own sign-in.",
-        "title": "This sign-in belongs to another desktop"
+        "hint": "Lancez votre propre connexion.",
+        "title": "Cette connexion appartient à un autre ordinateur de bureau"
       },
       "login_manual": {
-        "hint": "Run its login command once on the server (shown in the sign-in window).",
-        "title": "This engine cannot be signed in from here"
+        "hint": "Exécutez une fois sa commande de connexion sur le serveur (indiquée dans la fenêtre de connexion).",
+        "title": "Ce moteur ne peut pas être connecté depuis ici"
       },
       "login_stale": {
-        "hint": "Close this window and start the sign-in again.",
-        "title": "This sign-in was replaced by a newer one"
+        "hint": "Fermez cette fenêtre et relancez la connexion.",
+        "title": "Cette connexion a été remplacée par une plus récente"
       },
       "login_untrusted_location": {
-        "hint": "Reinstall it with Install on server, or sign in over SSH.",
-        "title": "Praxi did not install this engine"
+        "hint": "Réinstallez-le avec Installer sur le serveur, ou connectez-vous via SSH.",
+        "title": "Praxi n'a pas installé ce moteur"
       },
       "mcp_approval_timeout": {
-        "hint": "Ask again and answer the approval card.",
-        "title": "The approval was not answered in time"
+        "hint": "Redemandez et répondez à la carte d'approbation.",
+        "title": "L'approbation n'a pas reçu de réponse à temps"
       },
       "mcp_rate_limit": {
-        "hint": "Wait a moment and try again.",
-        "title": "That app is being asked too often"
+        "hint": "Patientez un instant, puis réessayez.",
+        "title": "Cette application est sollicitée trop souvent"
       },
       "mcp_tool_changed_again": {
-        "hint": "Reload the card and read the new wording before you decide. Nothing was approved.",
-        "title": "The app changed this tool again"
+        "hint": "Rechargez la carte et lisez la nouvelle description avant de décider. Rien n'a été approuvé.",
+        "title": "L'application a encore modifié cet outil"
       },
       "memory_owner_only": {
-        "hint": "Change a bot's memory settings in the app on the computer that runs the bot.",
-        "title": "Only the owner can change this"
+        "hint": "Modifiez les réglages de mémoire d'un bot dans l'application sur l'ordinateur qui exécute le bot.",
+        "title": "Seul le propriétaire peut modifier ceci"
       },
       "message_not_editable": {
-        "hint": "Only your own latest message can be edited or regenerated, and only once the bot has finished.",
-        "title": "This message can't be edited"
+        "hint": "Seul votre dernier message peut être modifié ou régénéré, et seulement une fois que le bot a terminé.",
+        "title": "Ce message ne peut pas être modifié"
       },
       "message_not_last": {
-        "hint": "The chat has moved on. Reload it, then edit or regenerate the newest message.",
-        "title": "This is no longer the last message"
+        "hint": "La conversation a avancé. Rechargez-la, puis modifiez ou régénérez le message le plus récent.",
+        "title": "Ce n'est plus le dernier message"
       },
       "modified_since": {
-        "hint": "Restoring would overwrite your newer changes. Review them first.",
-        "title": "Some files changed after the bot touched them"
+        "hint": "La restauration écraserait vos modifications plus récentes. Examinez-les d'abord.",
+        "title": "Certains fichiers ont changé après le passage du bot"
       },
       "not_found": {
-        "hint": "It may have been deleted. Go back and pick another.",
-        "title": "That no longer exists"
+        "hint": "Il a peut-être été supprimé. Revenez en arrière et choisissez-en un autre.",
+        "title": "Cet élément n'existe plus"
       },
       "not_installed": {
-        "hint": "Install it on the server first, then sign in.",
-        "title": "Not installed on the server yet"
+        "hint": "Installez-le d'abord sur le serveur, puis connectez-vous.",
+        "title": "Pas encore installé sur le serveur"
       },
       "owner_key_required": {
-        "hint": "Use the Praxi desktop app on this computer to allow it for the chat.",
-        "title": "Only the owner can give this permission"
+        "hint": "Utilisez l'application de bureau Praxi sur cet ordinateur pour l'autoriser pour la conversation.",
+        "title": "Seul le propriétaire peut donner cette autorisation"
       },
       "payload_too_large": {
-        "hint": "Use a smaller file or fewer items.",
-        "title": "That is too large"
+        "hint": "Utilisez un fichier plus petit ou moins d'éléments.",
+        "title": "C'est trop volumineux"
       },
       "precondition_required": {
-        "hint": "Reload it to get the latest version, then make your change again.",
-        "title": "This page is out of date"
+        "hint": "Rechargez pour obtenir la dernière version, puis refaites votre modification.",
+        "title": "Cette page n'est plus à jour"
       },
       "prerequisite_missing": {
-        "hint": "Install Node.js on the server first, then try again.",
-        "title": "The server is missing a required component"
+        "hint": "Installez d'abord Node.js sur le serveur, puis réessayez.",
+        "title": "Il manque un composant requis sur le serveur"
       },
       "provider_endpoint": {
-        "hint": "Open Settings → AI and check the web address you typed for this provider. Copy it again from the provider's website.",
-        "title": "That web address does not work"
+        "hint": "Ouvrez Réglages → Modèles d'IA et vérifiez l'adresse web saisie pour ce fournisseur. Copiez-la à nouveau depuis le site du fournisseur.",
+        "title": "Cette adresse web ne fonctionne pas"
       },
       "provider_model": {
-        "hint": "Open Settings → AI and pick another model from the list. Choose one your account can use.",
-        "title": "The provider could not find the configured model"
+        "hint": "Ouvrez Réglages → Modèles d'IA et choisissez un autre modèle dans la liste. Prenez-en un que votre compte peut utiliser.",
+        "title": "Le fournisseur n'a pas trouvé le modèle configuré"
       },
       "reload_failed": {
-        "hint": "Check them for mistakes, or restart the local service.",
-        "title": "The new settings could not be loaded"
+        "hint": "Vérifiez qu'ils ne contiennent pas d'erreurs, ou redémarrez le service local.",
+        "title": "Les nouveaux réglages n'ont pas pu être chargés"
       },
       "repair_failed": {
-        "hint": "Open Diagnostics for the next step, or restart Praxi.",
-        "title": "The automatic fix did not work"
+        "hint": "Ouvrez Diagnostics pour connaître la suite, ou redémarrez Praxi.",
+        "title": "La réparation automatique n'a pas fonctionné"
       },
       "restore_in_progress": {
-        "hint": "Wait for it to finish.",
-        "title": "A restore is already running"
+        "hint": "Attendez qu'elle se termine.",
+        "title": "Une restauration est déjà en cours"
       },
       "resync_required": {
-        "hint": "Reopen the live view to continue.",
-        "title": "The live view lost track of the screen"
+        "hint": "Rouvrez la vue en direct pour continuer.",
+        "title": "La vue en direct a perdu le fil de l'écran"
       },
       "run_files_in_use": {
-        "hint": "Wait for the bot to finish, then try again.",
-        "title": "Those files are in use right now"
+        "hint": "Attendez que le bot ait terminé, puis réessayez.",
+        "title": "Ces fichiers sont en cours d'utilisation"
       },
       "schedule_moved": {
-        "hint": "It runs there and is frozen on this computer. Use Bring back to this computer on its row.",
-        "title": "That schedule moved to a server"
+        "hint": "Elle s'exécute là-bas et est gelée sur cet ordinateur. Utilisez Rapatrier sur cet ordinateur sur sa ligne.",
+        "title": "Cette planification a été déplacée vers un serveur"
       },
       "schedule_retry_limited": {
-        "hint": "Wait a moment before retrying this run again. Retries of the same run are spaced at least 30 seconds apart.",
-        "title": "Retried too quickly"
+        "hint": "Attendez un instant avant de relancer cette exécution. Les nouvelles tentatives d'une même exécution sont espacées d'au moins 30 secondes.",
+        "title": "Nouvelle tentative trop rapide"
       },
       "secret_request_exists": {
-        "hint": "Ask the bot to replace it explicitly, or pick another name. Nothing was changed.",
-        "title": "This name is already taken"
+        "hint": "Demandez au bot de le remplacer explicitement, ou choisissez un autre nom. Rien n'a été modifié.",
+        "title": "Ce nom est déjà pris"
       },
       "secret_request_gone": {
-        "hint": "It was answered, cancelled or timed out. Ask the bot to request it again if it is still needed.",
-        "title": "That request is no longer open"
+        "hint": "Elle a reçu une réponse, a été annulée ou a expiré. Demandez au bot de la redemander si c'est encore nécessaire.",
+        "title": "Cette demande n'est plus ouverte"
       },
       "secret_store_failed": {
-        "hint": "Try again. If it keeps failing, check the server's disk and its secret store.",
-        "title": "The server could not save the key"
+        "hint": "Réessayez. Si l'échec persiste, vérifiez le disque du serveur et son stockage de secrets.",
+        "title": "Le serveur n'a pas pu enregistrer la clé"
       },
       "secrets_unavailable": {
-        "hint": "Follow the setup note shown below on the server, then try again.",
-        "title": "The server cannot store keys yet"
+        "hint": "Suivez la note de configuration indiquée ci-dessous sur le serveur, puis réessayez.",
+        "title": "Le serveur ne peut pas encore stocker de clés"
       },
       "session_expired": {
-        "hint": "Open the live view again.",
-        "title": "The live view session ended"
+        "hint": "Rouvrez la vue en direct.",
+        "title": "La session de la vue en direct est terminée"
       },
       "setup_required": {
-        "hint": "Connect a model in Settings, then try again.",
-        "title": "Praxi needs a brain first"
+        "hint": "Connectez un modèle dans Réglages, puis réessayez.",
+        "title": "Praxi a d'abord besoin d'un cerveau"
       },
       "skill_access_not_accepted": {
-        "hint": "Review what is new, tick the box and try again.",
-        "title": "This update asks for more than before"
+        "hint": "Examinez ce qui est nouveau, cochez la case et réessayez.",
+        "title": "Cette mise à jour demande plus qu'avant"
       },
       "skill_changed": {
-        "hint": "Review it again before you add the skill.",
-        "title": "The repository changed since the preview"
+        "hint": "Examinez-la à nouveau avant d'ajouter la compétence.",
+        "title": "Le dépôt a changé depuis l'aperçu"
       },
       "skill_conflict": {
-        "hint": "Pick another name or replace the old one.",
-        "title": "A skill with that name already exists"
+        "hint": "Choisissez un autre nom ou remplacez l'ancienne.",
+        "title": "Une compétence portant ce nom existe déjà"
       },
       "skill_contains_secret": {
-        "hint": "Remove the secret from its files, then add it again.",
-        "title": "The skill seems to contain a password or key"
+        "hint": "Retirez le secret de ses fichiers, puis ajoutez-la à nouveau.",
+        "title": "La compétence semble contenir un mot de passe ou une clé"
       },
       "skill_draft_ack_required": {
-        "hint": "Cette skill vient d'une tâche qui a lu du contenu externe, ou la vérification a relevé des avertissements. Cochez la case pour confirmer, puis enregistrez.",
-        "title": "Confirmez que vous l'avez relu"
+        "hint": "Cette compétence vient d'une tâche qui a lu du contenu externe, ou la vérification a relevé des avertissements. Cochez la case pour confirmer, puis enregistrez.",
+        "title": "Confirmez que vous l'avez relue"
       },
       "skill_draft_changed": {
-        "hint": "Vérifiez-la à nouveau avant de l’enregistrer.",
-        "title": "La skill a changé depuis la vérification"
+        "hint": "Vérifiez-la à nouveau avant de l'enregistrer.",
+        "title": "La compétence a changé depuis la vérification"
       },
       "skill_draft_no_run": {
-        "hint": "Terminez d’abord une tâche avec le bot dans ce chat, puis réessayez.",
+        "hint": "Terminez d'abord une tâche avec le bot dans cette conversation, puis réessayez.",
         "title": "Aucune tâche terminée à enregistrer"
       },
       "skill_draft_no_steps": {
-        "hint": "La dernière tâche n’a utilisé aucun outil : il n’y a donc aucune étape à transformer en skill.",
+        "hint": "La dernière tâche n'a utilisé aucun outil : il n'y a donc aucune étape à transformer en compétence.",
         "title": "Rien à enregistrer"
       },
       "skill_index_invalid": {
-        "hint": "Check the address, or go back to the list that comes with Praxi.",
-        "title": "That skill list is not valid"
+        "hint": "Vérifiez l'adresse, ou revenez à la liste fournie avec Praxi.",
+        "title": "Cette liste de compétences n'est pas valide"
       },
       "skill_not_found": {
-        "hint": "Reload the list.",
-        "title": "That skill no longer exists"
+        "hint": "Rechargez la liste.",
+        "title": "Cette compétence n'existe plus"
       },
       "skill_risk_not_accepted": {
-        "hint": "Read the findings, tick the box and try again.",
-        "title": "This skill needs your explicit okay"
+        "hint": "Lisez les constats, cochez la case et réessayez.",
+        "title": "Cette compétence nécessite votre accord explicite"
       },
       "skill_source_unreachable": {
-        "hint": "Check the address and your connection, then try again.",
-        "title": "The repository could not be reached"
+        "hint": "Vérifiez l'adresse et votre connexion, puis réessayez.",
+        "title": "Le dépôt est injoignable"
       },
       "skill_storage": {
-        "hint": "Check that the disk has space, then try again.",
-        "title": "The skill could not be saved"
+        "hint": "Vérifiez que le disque dispose d'assez d'espace, puis réessayez.",
+        "title": "La compétence n'a pas pu être enregistrée"
       },
       "skill_too_large": {
-        "hint": "Remove big files from it and try again.",
-        "title": "That skill is too large"
+        "hint": "Retirez-en les gros fichiers, puis réessayez.",
+        "title": "Cette compétence est trop volumineuse"
       },
       "spend_limit_reached": {
-        "hint": "The model was not called. Raise or remove the limit on the Usage page, then run again.",
-        "title": "Monthly spending limit reached"
+        "hint": "Le modèle n'a pas été appelé. Relevez ou supprimez la limite dans la page Utilisation, puis relancez.",
+        "title": "Limite de dépenses mensuelle atteinte"
       },
       "spend_limit_unreadable": {
-        "hint": "The saved monthly limit could not be read, so paid model calls are blocked. Set the limit again on the Usage page.",
-        "title": "Spending limit unreadable"
+        "hint": "La limite mensuelle enregistrée n'a pas pu être lue, donc les appels de modèle payants sont bloqués. Définissez à nouveau la limite dans la page Utilisation.",
+        "title": "Limite de dépenses illisible"
       },
       "starting": {
-        "hint": "The app is still starting up. Try again in a few seconds.",
-        "title": "Still starting"
+        "hint": "L'application est encore en cours de démarrage. Réessayez dans quelques secondes.",
+        "title": "Démarrage en cours"
       },
       "terminal_busy": {
-        "hint": "Close another terminal on the server, then try again.",
-        "title": "All terminals on the server are in use"
+        "hint": "Fermez un autre terminal sur le serveur, puis réessayez.",
+        "title": "Tous les terminaux du serveur sont utilisés"
       },
       "terminal_gone": {
-        "hint": "Open the terminal again.",
-        "title": "The terminal session ended"
+        "hint": "Rouvrez le terminal.",
+        "title": "La session du terminal est terminée"
       },
       "terminal_start_failed": {
-        "hint": "The server could not start a shell. Try again in a moment.",
-        "title": "The terminal could not start"
+        "hint": "Le serveur n'a pas pu démarrer un shell. Réessayez dans un instant.",
+        "title": "Le terminal n'a pas pu démarrer"
       },
       "terminal_unsupported": {
-        "hint": "Only a Linux server can open a terminal here.",
-        "title": "The terminal needs a Linux server"
+        "hint": "Seul un serveur Linux peut ouvrir un terminal ici.",
+        "title": "Le terminal nécessite un serveur Linux"
       },
       "too_many_requests": {
-        "hint": "Wait a moment and try again.",
-        "title": "Too many requests"
+        "hint": "Patientez un instant, puis réessayez.",
+        "title": "Trop de requêtes"
       },
       "too_many_skills": {
-        "hint": "Remove one you no longer use.",
-        "title": "This bot has too many skills"
+        "hint": "Supprimez-en une que vous n'utilisez plus.",
+        "title": "Ce bot a trop de compétences"
       },
       "too_many_streams": {
-        "hint": "Close one and try again.",
-        "title": "Too many live views are open"
+        "hint": "Fermez-en une, puis réessayez.",
+        "title": "Trop de vues en direct sont ouvertes"
+      },
+      "trigger_source_unavailable": {
+        "hint": "Connectez une boîte aux lettres IMAP que ce bot peut utiliser et autorisez la lecture planifiée de la boîte dans ses permissions.",
+        "title": "Cette boîte aux lettres ne peut pas encore être surveillée"
       },
       "unauthorized": {
-        "hint": "Restart the local service. If that does not help, restart Praxi.",
-        "title": "Praxi could not confirm it is you"
+        "hint": "Redémarrez le service local. Si cela ne suffit pas, redémarrez Praxi.",
+        "title": "Praxi n'a pas pu confirmer que c'est bien vous"
       },
       "unavailable": {
-        "hint": "Try again in a moment.",
-        "title": "That is not available right now"
+        "hint": "Réessayez dans un instant.",
+        "title": "Ce n'est pas disponible pour le moment"
       },
       "unsupported_attachment": {
-        "hint": "Use an image, PDF, Word, Excel, PowerPoint or a text file.",
-        "title": "That file cannot be attached"
+        "hint": "Utilisez une image, un PDF, un fichier Word, Excel, PowerPoint ou un fichier texte.",
+        "title": "Ce fichier ne peut pas être joint"
       },
       "unsupported_media_type": {
-        "hint": "Try another file.",
-        "title": "That file type is not supported"
+        "hint": "Essayez un autre fichier.",
+        "title": "Ce type de fichier n'est pas pris en charge"
       },
       "version_conflict": {
-        "hint": "Reload to see the latest version, then make your change again.",
-        "title": "This was changed somewhere else"
+        "hint": "Rechargez pour voir la dernière version, puis refaites votre modification.",
+        "title": "Cet élément a été modifié ailleurs"
       },
       "view_media_type": {
-        "hint": "Update Praxi, then open the live view again.",
-        "title": "The live view could not start"
+        "hint": "Mettez Praxi à jour, puis rouvrez la vue en direct.",
+        "title": "La vue en direct n'a pas pu démarrer"
       },
       "view_quota": {
-        "hint": "Close one and try again.",
-        "title": "Too many live views are open"
+        "hint": "Fermez-en une, puis réessayez.",
+        "title": "Trop de vues en direct sont ouvertes"
       },
       "voice_not_configured": {
-        "hint": "Add a transcription service in Settings to dictate messages.",
-        "title": "Dictation is not set up"
+        "hint": "Ajoutez un service de transcription dans Réglages pour dicter des messages.",
+        "title": "La dictée n'est pas configurée"
       },
       "voice_upstream_failed": {
-        "hint": "Your recording was not turned into text. Check the service and your key in Settings, then try again.",
-        "title": "The transcription service did not answer"
+        "hint": "Votre enregistrement n'a pas été transformé en texte. Vérifiez le service et votre clé dans Réglages, puis réessayez.",
+        "title": "Le service de transcription n'a pas répondu"
       }
     },
-    "copied": "Copied",
-    "copy": "Copy details",
+    "copied": "Copié",
+    "copy": "Copier les détails",
     "desktop_only": {
-      "hint": "Open Praxi on this computer and try again.",
-      "title": "This only works in the desktop app"
+      "hint": "Ouvrez Praxi sur cet ordinateur, puis réessayez.",
+      "title": "Cela ne fonctionne que dans l'application de bureau"
     },
-    "details": "Details",
+    "details": "Détails",
     "emailProvider": {
       "auth": {
-        "hint": "Vérifie que tu as copié la clé entière depuis ton compte AgentMail, puis réessaie.",
+        "hint": "Vérifiez que vous avez copié la clé entière depuis votre compte AgentMail, puis réessayez.",
         "title": "AgentMail n'a pas accepté cette clé d'API"
       },
       "forbidden": {
-        "hint": "Crée dans ton compte AgentMail une clé autorisée à créer des boîtes.",
+        "hint": "Créez dans votre compte AgentMail une clé autorisée à créer des boîtes.",
         "title": "Cette clé AgentMail n'a pas le droit de faire cela"
       },
       "quota": {
-        "hint": "Supprime une boîte inutilisée ou passe à un forfait supérieur chez AgentMail, puis réessaie.",
-        "title": "Ton forfait AgentMail a atteint sa limite"
+        "hint": "Supprimez une boîte inutilisée ou passez à un forfait supérieur chez AgentMail, puis réessayez.",
+        "title": "Votre forfait AgentMail a atteint sa limite"
       },
       "rateLimited": {
-        "hint": "Attends une minute, puis réessaie.",
-        "title": "AgentMail te demande de ralentir"
+        "hint": "Attendez une minute, puis réessayez.",
+        "title": "AgentMail vous demande de ralentir"
       },
       "rejected": {
-        "hint": "Vérifie la clé et le nom de l'adresse (lettres, chiffres, tirets), puis réessaie.",
+        "hint": "Vérifiez la clé et le nom de l'adresse (lettres, chiffres, tirets), puis réessayez.",
         "title": "AgentMail n'a pas accepté cette demande"
       },
       "taken": {
-        "hint": "Les noms sur agentmail.to sont partagés par tout le monde. Choisis-en un autre ; un nom probablement libre est déjà proposé.",
+        "hint": "Les noms sur agentmail.to sont partagés par tout le monde. Choisissez-en un autre ; un nom probablement libre est déjà proposé.",
         "title": "Ce nom d'adresse est déjà pris chez AgentMail"
       },
       "transient": {
-        "hint": "Le problème vient de leur côté. Réessaie dans quelques minutes.",
+        "hint": "Le problème vient de leur côté. Réessayez dans quelques minutes.",
         "title": "AgentMail n'est pas disponible pour le moment"
       }
     },
     "engineNeedsNative": {
-      "hint": "It works with its own tools. Press Fix to allow that for this bot.",
-      "title": "This model needs your OK first"
+      "hint": "Il fonctionne avec ses propres outils. Appuyez sur Corriger pour l'autoriser pour ce bot.",
+      "title": "Ce modèle a d'abord besoin de votre accord"
     },
     "events_disconnected": {
-      "hint": "Praxi is reconnecting. Nothing is lost.",
-      "title": "Live updates were interrupted"
+      "hint": "Praxi se reconnecte. Rien n'est perdu.",
+      "title": "Les mises à jour en direct ont été interrompues"
     },
-    "fixEngine": "Fix",
+    "fixEngine": "Corriger",
     "generic": {
-      "hint": "Try again. If it keeps happening, copy the details and report it.",
-      "title": "Something went wrong"
+      "hint": "Réessayez. Si cela se reproduit, copiez les détails et signalez le problème.",
+      "title": "Un problème est survenu"
     },
     "hostBusy": {
-      "hint": "Wait a few seconds and try again.",
-      "title": "The host is busy"
+      "hint": "Attendez quelques secondes, puis réessayez.",
+      "title": "L'hôte est occupé"
     },
     "hostManaged": {
-      "hint": "Change it in Praxi on the computer that runs the bot.",
-      "title": "This is managed on the other computer"
+      "hint": "Modifiez-le dans Praxi sur l'ordinateur qui exécute le bot.",
+      "title": "Ceci est géré sur l'autre ordinateur"
     },
     "hostSilent": {
-      "hint": "Check that {{name}} is on and connected to the network, then try again.",
-      "title": "{{name}} did not answer"
+      "hint": "Vérifiez que {{name}} est allumé et connecté au réseau, puis réessayez.",
+      "title": "{{name}} n'a pas répondu"
     },
     "http_error": {
-      "hint": "Try again. If it keeps happening, copy the details and report it.",
-      "title": "The service answered with a problem"
+      "hint": "Réessayez. Si cela se reproduit, copiez les détails et signalez le problème.",
+      "title": "Le service a répondu par une erreur"
     },
     "localOnly": {
-      "hint": "Use Praxi on the host computer itself, or clear it from the administrator desktop.",
-      "title": "Only the person at the host computer can do this"
+      "hint": "Utilisez Praxi sur l'ordinateur hôte lui-même, ou effacez-le depuis l'ordinateur de bureau de l'administrateur.",
+      "title": "Seule la personne devant l'ordinateur hôte peut faire cela"
     },
     "modelFailed": {
-      "hint": "Try again, or pick another model. The details below say what the model reported.",
-      "title": "The model could not answer"
+      "hint": "Réessayez, ou choisissez un autre modèle. Les détails ci-dessous indiquent ce que le modèle a signalé.",
+      "title": "Le modèle n'a pas pu répondre"
     },
     "network": {
-      "hint": "Nothing you typed is lost. Praxi keeps trying; press the button again when the notice at the top is gone.",
-      "title": "The local service is not answering right now"
+      "hint": "Rien de ce que vous avez saisi n'est perdu. Praxi continue d'essayer ; appuyez de nouveau sur le bouton quand l'avis en haut aura disparu.",
+      "title": "Le service local ne répond pas pour le moment"
     },
     "noInputBackend": {
-      "hint": "The host has no keyboard and mouse access for this screen (for example a server without a desktop session). You can watch it, but not take it over.",
-      "title": "This screen cannot be controlled"
+      "hint": "L'hôte n'a pas d'accès au clavier et à la souris pour cet écran (par exemple un serveur sans session de bureau). Vous pouvez le regarder, mais pas en prendre le contrôle.",
+      "title": "Cet écran ne peut pas être contrôlé"
     },
-    "openSettings": "Open Settings",
+    "openSettings": "Ouvrir les Réglages",
     "prereq": {
-      "advanced": "Advanced (technical details)",
+      "advanced": "Avancé (détails techniques)",
       "clock_wrong": {
-        "hint": "Secure connections and sign-ins fail when the date is far off. Set the correct date and time in Windows settings, then press Try again.",
-        "title": "The clock of this computer looks wrong"
+        "hint": "Les connexions sécurisées et les ouvertures de session échouent quand la date est très éloignée de la réalité. Réglez la date et l'heure exactes dans les paramètres Windows, puis appuyez sur Réessayer.",
+        "title": "L'horloge de cet ordinateur semble incorrecte"
       },
       "data_dir_network": {
-        "hint": "Praxi works best with a folder on this computer. A network drive can be slow or disappear. Consider moving the data folder to a local disk.",
-        "title": "Your data folder is on a network drive"
+        "hint": "Praxi fonctionne mieux avec un dossier situé sur cet ordinateur. Un lecteur réseau peut être lent ou disparaître. Pensez à déplacer le dossier de données vers un disque local.",
+        "title": "Votre dossier de données se trouve sur un lecteur réseau"
       },
       "data_dir_unusable": {
-        "hint": "The folder where Praxi keeps your bots is not writable or is blocked. Open it and check that it exists and your account may change it (also check that the disk is not full or read-only).",
-        "title": "Praxi cannot save to its data folder"
+        "hint": "Le dossier où Praxi conserve vos bots n'est pas accessible en écriture ou est bloqué. Ouvrez-le et vérifiez qu'il existe et que votre compte peut le modifier (vérifiez aussi que le disque n'est ni plein ni en lecture seule).",
+        "title": "Praxi ne peut pas enregistrer dans son dossier de données"
       },
-      "detailsTitle": "Checked on this computer (personal folder names removed)",
-      "download": "Download WebView2 from Microsoft",
-      "openDataFolder": "Open the data folder",
+      "detailsTitle": "Vérifié sur cet ordinateur (noms de dossiers personnels retirés)",
+      "download": "Télécharger WebView2 depuis Microsoft",
+      "openDataFolder": "Ouvrir le dossier de données",
       "port_busy": {
-        "hint": "Something else on this computer already uses the address Praxi needs. Close the other program or restart the computer, then press Try again.",
-        "title": "Another program is using Praxi's port"
+        "hint": "Un autre programme de cet ordinateur utilise déjà l'adresse dont Praxi a besoin. Fermez l'autre programme ou redémarrez l'ordinateur, puis appuyez sur Réessayer.",
+        "title": "Un autre programme utilise le port de Praxi"
       },
       "sidecar_missing": {
-        "hint": "Praxi's service file is missing, often because antivirus software quarantined it. Restore it in your antivirus program (look for \"Praxi\" or \"bot.exe\" in its quarantine) or reinstall Praxi, then press Try again.",
-        "title": "A file Praxi needs is gone"
+        "hint": "Le fichier du service de Praxi est manquant, souvent parce qu'un antivirus l'a mis en quarantaine. Restaurez-le dans votre antivirus (cherchez « Praxi » ou « bot.exe » dans sa quarantaine) ou réinstallez Praxi, puis appuyez sur Réessayer.",
+        "title": "Un fichier dont Praxi a besoin a disparu"
       },
       "webview2_missing": {
-        "hint": "Praxi needs Microsoft WebView2, a free part of Windows from Microsoft. Download it from the official Microsoft page, install it, then start Praxi again.",
-        "title": "Windows is missing a part Praxi needs to show its window"
+        "hint": "Praxi a besoin de Microsoft WebView2, un composant gratuit de Windows fourni par Microsoft. Téléchargez-le depuis la page officielle de Microsoft, installez-le, puis relancez Praxi.",
+        "title": "Il manque à Windows un composant dont Praxi a besoin pour afficher sa fenêtre"
       },
       "webview2_old": {
-        "hint": "Praxi may look wrong or misbehave. Download the current WebView2 from the official Microsoft page and install it.",
-        "title": "Your WebView2 is quite old"
+        "hint": "Praxi risque de mal s'afficher ou de mal fonctionner. Téléchargez le WebView2 actuel depuis la page officielle de Microsoft et installez-le.",
+        "title": "Votre WebView2 est assez ancien"
       }
     },
-    "reload": "Reload",
-    "restartApp": "Restart Praxi",
-    "restartService": "Restart the local service",
-    "restarting": "Restarting…",
-    "retry": "Try again",
-    "retrying": "Trying again in {{seconds}} s",
+    "reload": "Recharger",
+    "restartApp": "Redémarrer Praxi",
+    "restartService": "Redémarrer le service local",
+    "restarting": "Redémarrage…",
+    "retry": "Réessayer",
+    "retrying": "Nouvelle tentative dans {{seconds}} s",
     "safeModeBlocked": {
-      "hint": "Tools, workflows and schedules are switched off while safe mode is on. Restart Praxi normally to use them.",
-      "title": "Safe mode is on"
+      "hint": "Les outils, les workflows et les planifications sont désactivés tant que le mode sans échec est actif. Redémarrez Praxi normalement pour les utiliser.",
+      "title": "Le mode sans échec est actif"
     },
     "screenInputDenied": {
-      "hint": "Allow screen control for this computer in Praxi on the host, then try again.",
-      "title": "Screen control is not allowed for this computer"
+      "hint": "Autorisez le contrôle de l'écran pour cet ordinateur dans Praxi sur l'hôte, puis réessayez.",
+      "title": "Le contrôle de l'écran n'est pas autorisé pour cet ordinateur"
     },
     "screenNoConfirm": {
-      "hint": "The screen did not confirm that keys were released, so the pause was kept. Try again; if it keeps failing, restart Praxi on the host.",
-      "title": "The screen did not confirm"
+      "hint": "L'écran n'a pas confirmé que les touches étaient relâchées, la pause a donc été maintenue. Réessayez ; si l'échec persiste, redémarrez Praxi sur l'hôte.",
+      "title": "L'écran n'a pas confirmé"
     },
     "sendFailed": {
-      "hint": "Check the connection and try again.",
-      "title": "Your message was not sent"
+      "hint": "Vérifiez la connexion, puis réessayez.",
+      "title": "Votre message n'a pas été envoyé"
     },
     "serviceConnection": {
       "hint": "Vérifiez votre connexion et réessayez. Avant de répéter une action, vérifiez si elle a déjà eu lieu.",
       "title": "Ce service est inaccessible"
     },
     "serviceDown": {
-      "hint": "Restart it. Your bots and chats are safe.",
-      "title": "Praxi's local service stopped"
+      "hint": "Redémarrez-le. Vos bots et vos conversations sont en sécurité.",
+      "title": "Le service local de Praxi s'est arrêté"
     },
     "serviceStarting": {
-      "hint": "This takes a few seconds. Praxi keeps trying by itself.",
-      "title": "Praxi's local service is starting"
+      "hint": "Cela prend quelques secondes. Praxi continue d'essayer tout seul.",
+      "title": "Le service local de Praxi démarre"
     },
     "serviceWrongTarget": {
-      "hint": "Switch back to This computer, or restart the local service.",
-      "title": "Praxi is pointed at a service that does not answer"
+      "hint": "Revenez à Cet ordinateur, ou redémarrez le service local.",
+      "title": "Praxi pointe vers un service qui ne répond pas"
     },
     "startup": {
       "exited": {
-        "hint": "The last lines of its log are below. If this repeats, copy the details and send them.",
-        "title": "Praxi's service stopped right after starting (exit code {{code}})"
+        "hint": "Les dernières lignes de son journal figurent ci-dessous. Si cela se reproduit, copiez les détails et envoyez-les.",
+        "title": "Le service de Praxi s'est arrêté juste après son démarrage (code de sortie {{code}})"
       },
       "exitedBadImage": {
-        "hint": "Reinstall Praxi. If it repeats, copy the details and send them.",
-        "title": "Praxi's service file is damaged or does not fit this computer (exit code {{code}})"
+        "hint": "Réinstallez Praxi. Si cela se reproduit, copiez les détails et envoyez-les.",
+        "title": "Le fichier du service de Praxi est endommagé ou ne convient pas à cet ordinateur (code de sortie {{code}})"
       },
       "exitedCrash": {
-        "hint": "Copy the details below and send them: they name the exit code and the last step it reached.",
-        "title": "Praxi's service crashed while starting (exit code {{code}})"
+        "hint": "Copiez les détails ci-dessous et envoyez-les : ils indiquent le code de sortie et la dernière étape atteinte.",
+        "title": "Le service de Praxi a planté au démarrage (code de sortie {{code}})"
       },
       "exitedDll": {
-        "hint": "Install the Microsoft Visual C++ Redistributable (x64) from Microsoft, then try again.",
-        "title": "Praxi's service cannot start: a Windows component is missing (exit code {{code}})"
+        "hint": "Installez le Microsoft Visual C++ Redistributable (x64) depuis Microsoft, puis réessayez.",
+        "title": "Le service de Praxi ne peut pas démarrer : un composant Windows est manquant (code de sortie {{code}})"
       },
       "notResponding": {
-        "hint": "It may be slow on this computer. Restart the service; if it repeats, copy the details.",
-        "title": "Praxi's service is running but does not answer"
+        "hint": "Il est peut-être lent sur cet ordinateur. Redémarrez le service ; si cela se reproduit, copiez les détails.",
+        "title": "Le service de Praxi est en cours d'exécution mais ne répond pas"
       },
       "portInUse": {
-        "hint": "Close that program or restart the computer, then try again.",
-        "title": "Another program is using the connection Praxi needs ({{port}})"
+        "hint": "Fermez ce programme ou redémarrez l'ordinateur, puis réessayez.",
+        "title": "Un autre programme utilise la connexion dont Praxi a besoin ({{port}})"
       },
       "sidecarBlocked": {
-        "hint": "Antivirus, SmartScreen or a policy refused to run it. Allow bot.exe in Praxi's folder, then try again.",
-        "title": "Windows blocked Praxi's service"
+        "hint": "Un antivirus, SmartScreen ou une stratégie a refusé de l'exécuter. Autorisez bot.exe dans le dossier de Praxi, puis réessayez.",
+        "title": "Windows a bloqué le service de Praxi"
       },
       "sidecarMissing": {
-        "hint": "The file {{file}} was not found. Reinstall Praxi and do not remove files from its folder.",
-        "title": "Praxi's service program is missing"
+        "hint": "Le fichier {{file}} est introuvable. Réinstallez Praxi et ne supprimez aucun fichier de son dossier.",
+        "title": "Le programme du service de Praxi est manquant"
       },
       "spawnFailed": {
-        "hint": "The details below say why. Try again or restart the service.",
-        "title": "Praxi's service could not be started"
+        "hint": "Les détails ci-dessous en donnent la raison. Réessayez ou redémarrez le service.",
+        "title": "Le service de Praxi n'a pas pu être démarré"
       },
       "spawning": {
-        "hint": "Antivirus or SmartScreen may be checking the program. The first start can take a minute.",
-        "title": "Windows is still launching Praxi's service"
+        "hint": "Un antivirus ou SmartScreen est peut-être en train de vérifier le programme. Le premier démarrage peut prendre une minute.",
+        "title": "Windows lance encore le service de Praxi"
       },
       "starting": {
-        "hint": "Praxi keeps waiting; nothing is lost. If this does not change, restart the service.",
-        "title": "Praxi's service is taking longer than usual to start"
+        "hint": "Praxi continue d'attendre ; rien n'est perdu. Si rien ne change, redémarrez le service.",
+        "title": "Le service de Praxi met plus de temps que d'habitude à démarrer"
       },
       "unreachable": {
-        "hint": "Another program may be using the connection ({{port}}) Praxi needs. Restart the service.",
-        "title": "Praxi's service answers, but the app does not trust it"
+        "hint": "Un autre programme utilise peut-être la connexion ({{port}}) dont Praxi a besoin. Redémarrez le service.",
+        "title": "Le service de Praxi répond, mais l'application ne lui fait pas confiance"
       }
     },
     "startupPanel": {
-      "copied": "Copied",
-      "copy": "Copy details",
-      "logTitle": "Last lines of the service log",
-      "openLogs": "Open log folder",
-      "restart": "Restart service",
-      "retry": "Try again",
-      "waited": "Waiting for {{seconds}} s"
+      "copied": "Copié",
+      "copy": "Copier les détails",
+      "logTitle": "Dernières lignes du journal du service",
+      "openLogs": "Ouvrir le dossier des journaux",
+      "restart": "Redémarrer le service",
+      "retry": "Réessayer",
+      "waited": "Attente de {{seconds}} s"
     },
     "takeoverAlreadyOwned": {
-      "hint": "Wait until that device lets go, or clear its pause first if you are the owner of this computer.",
-      "title": "Another device already controls this screen"
+      "hint": "Attendez que cet appareil lâche la main, ou levez d'abord sa pause si vous êtes le propriétaire de cet ordinateur.",
+      "title": "Un autre appareil contrôle déjà cet écran"
     },
     "takeoverRecoveryRequired": {
-      "hint": "The server restarted (or the connection dropped) while a screen takeover was open. Press \"Clear pause\" at the top of the window to continue.",
-      "title": "A screen takeover is still open on the server"
+      "hint": "Le serveur a redémarré (ou la connexion a été coupée) alors qu'une prise de contrôle de l'écran était ouverte. Appuyez sur « Lever la pause » en haut de la fenêtre pour continuer.",
+      "title": "Une prise de contrôle de l'écran est encore ouverte sur le serveur"
     },
     "takeoverRequestConflict": {
-      "hint": "Another takeover request with the same number is already known to the server. Close the live view, open it again and retry.",
-      "title": "This takeover request clashes with an earlier one"
+      "hint": "Une autre demande de prise de contrôle portant le même numéro est déjà connue du serveur. Fermez la vue en direct, rouvrez-la et réessayez.",
+      "title": "Cette demande de prise de contrôle entre en conflit avec une précédente"
     },
     "timeout": {
-      "hint": "Check your connection and try again.",
-      "title": "That took too long"
+      "hint": "Vérifiez votre connexion, puis réessayez.",
+      "title": "Cela a pris trop de temps"
     },
     "toolDenied": {
-      "hint": "Ask again and choose Allow when the card appears.",
-      "title": "You did not allow that step"
+      "hint": "Redemandez et choisissez Autoriser quand la carte apparaîtra.",
+      "title": "Vous n'avez pas autorisé cette étape"
     },
     "toolFailed": {
-      "hint": "Ask again, or describe the task differently.",
-      "title": "The bot could not finish this step"
+      "hint": "Redemandez, ou décrivez la tâche autrement.",
+      "title": "Le bot n'a pas pu terminer cette étape"
     },
     "toolMissingProgram": {
-      "hint": "Install {{name}}, then try again.",
-      "title": "{{name}} is not installed"
+      "hint": "Installez {{name}}, puis réessayez.",
+      "title": "{{name}} n'est pas installé"
     },
     "toolNotFound": {
-      "hint": "Ask again and say its name or location.",
-      "title": "The bot could not find the file or program"
+      "hint": "Redemandez en indiquant son nom ou son emplacement.",
+      "title": "Le bot n'a pas trouvé le fichier ou le programme"
     },
     "toolScreenControl": {
-      "hint": "You are controlling it right now. Hand control back, then ask again.",
-      "title": "The bot could not look at the screen"
+      "hint": "Vous en avez le contrôle en ce moment. Rendez-le au bot, puis redemandez.",
+      "title": "Le bot n'a pas pu regarder l'écran"
     },
     "toolTargetOffline": {
-      "hint": "It is off or not connected. Turn it on and try again.",
-      "title": "The bot could not reach the target computer"
+      "hint": "Il est éteint ou non connecté. Allumez-le, puis réessayez.",
+      "title": "Le bot n'a pas pu joindre l'ordinateur cible"
     },
     "toolWrongMachine": {
-      "hint": "That program or path does not exist on that computer's operating system. The bot should try on its own computer; ask again.",
-      "title": "The bot sent a command to the wrong computer"
+      "hint": "Ce programme ou ce chemin n'existe pas sur le système d'exploitation de cet ordinateur. Le bot devrait essayer sur son propre ordinateur ; redemandez.",
+      "title": "Le bot a envoyé une commande au mauvais ordinateur"
     }
   },
   "firstRun": {
@@ -4219,193 +4227,193 @@
   },
   "liveView": {
     "announce": {
-      "connecting": "Connecting to the screen.",
-      "reconnecting": "Connection to the screen lost, reconnecting.",
-      "stalled": "The picture has stopped updating."
+      "connecting": "Connexion à l'écran.",
+      "reconnecting": "Connexion à l'écran perdue, reconnexion en cours.",
+      "stalled": "L'image ne se met plus à jour."
     },
-    "approvalsWaiting": "{{count}} item(s) are waiting for your decision. Decide below or in the chat.",
-    "backToChat": "Back",
-    "captureTab": "Tab key capture",
+    "approvalsWaiting": "{{count}} élément(s) attendent votre décision. Décidez ci-dessous ou dans la conversation.",
+    "backToChat": "Retour",
+    "captureTab": "Capture de la touche Tab",
     "chat": {
-      "approve": "Approve",
-      "button": "Chat",
-      "close": "Close chat",
-      "collapse": "Collapse chat",
-      "expand": "Expand chat",
-      "reject": "Reject",
-      "replying": "Bot is replying…",
-      "title": "Chat with bot",
-      "working": "Bot is working…"
+      "approve": "Approuver",
+      "button": "Conversation",
+      "close": "Fermer la conversation",
+      "collapse": "Réduire la conversation",
+      "expand": "Agrandir la conversation",
+      "reject": "Refuser",
+      "replying": "Le bot répond…",
+      "title": "Conversation avec le bot",
+      "working": "Le bot travaille…"
     },
-    "checkingTargets": "Checking for screens…",
-    "clearForeignPause": "Clear {{owner}}'s pause",
-    "clearPauseAction": "Clear pause",
-    "close": "Close viewer",
-    "connectionLost": "Connection to the screen lost. Reconnecting…",
-    "dismissKeepsControl": "Closing only hides the viewer: control stays with you. Use “I'm done” or Retry in the panel.",
-    "doneAction": "I'm done",
-    "doneLabel": "I'm done",
-    "emergencyStop": "Stop bots",
+    "checkingTargets": "Recherche des écrans…",
+    "clearForeignPause": "Lever la pause de {{owner}}",
+    "clearPauseAction": "Lever la pause",
+    "close": "Fermer la visionneuse",
+    "connectionLost": "Connexion à l'écran perdue. Reconnexion…",
+    "dismissKeepsControl": "Fermer ne fait que masquer la visionneuse : le contrôle reste avec vous. Utilisez « J'ai terminé » ou Réessayer dans le panneau.",
+    "doneAction": "J'ai terminé",
+    "doneLabel": "J'ai terminé",
+    "emergencyStop": "Arrêter les bots",
     "errors": {
-      "generic": "The request failed. Check the connection and try again.",
-      "network": "The connection to the screen was interrupted. Check your network and try again.",
-      "pause_changed": "The control state changed. Check the screen and try again.",
-      "recover_failed": "Could not recover control. Try again.",
-      "release_failed": "Could not hand control back. The bot stays paused; try “I'm done” again.",
-      "release_interrupted": "The takeover was interrupted before hand-back finished. Clear the pause to let the bot continue, or reacquire control.",
-      "release_unconfirmed": "The background service still reports your takeover as active. Try “I'm done” again.",
-      "server_restarting": "The server may be restarting. Try again when it comes back online.",
-      "takeover_failed": "Could not take control. Try again.",
+      "generic": "La requête a échoué. Vérifiez la connexion et réessayez.",
+      "network": "La connexion à l'écran a été interrompue. Vérifiez votre réseau et réessayez.",
+      "pause_changed": "L'état du contrôle a changé. Vérifiez l'écran et réessayez.",
+      "recover_failed": "Impossible de récupérer le contrôle. Réessayez.",
+      "release_failed": "Impossible de rendre le contrôle. Le bot reste en pause ; réessayez « J'ai terminé ».",
+      "release_interrupted": "La prise de contrôle a été interrompue avant la fin de la restitution. Levez la pause pour que le bot continue, ou reprenez le contrôle.",
+      "release_unconfirmed": "Le service d'arrière-plan indique toujours votre prise de contrôle comme active. Réessayez « J'ai terminé ».",
+      "server_restarting": "Le serveur est peut-être en train de redémarrer. Réessayez quand il sera de nouveau en ligne.",
+      "takeover_failed": "Impossible de prendre le contrôle. Réessayez.",
       "timeout": "L'écran n'a pas démarré à temps.",
-      "too_many_streams": "This connection has too many open streams. Close another stream and try again.",
-      "unauthorized": "Your session is no longer authorized. Reconnect to this computer.",
-      "view_quota": "The server has too many screen sessions. Close an unused viewer or try again in a moment."
+      "too_many_streams": "Cette connexion a trop de flux ouverts. Fermez un autre flux et réessayez.",
+      "unauthorized": "Votre session n'est plus autorisée. Reconnectez-vous à cet ordinateur.",
+      "view_quota": "Le serveur a trop de sessions d'écran. Fermez une visionneuse inutilisée ou réessayez dans un instant."
     },
-    "expand": "Open large viewer",
-    "focusTrapHint": "Keyboard goes to the screen. Shift+Esc to leave.",
-    "globalPauseNotice": "Taking control or pausing applies globally across all bots.",
-    "handBackAction": "Hand back",
-    "hostLabel": "Host: {{host}}",
-    "infoPanel": "Bot info",
-    "interactive": "Interactive",
+    "expand": "Ouvrir la grande visionneuse",
+    "focusTrapHint": "Le clavier va vers l'écran. Maj+Échap pour quitter.",
+    "globalPauseNotice": "Prendre le contrôle ou mettre en pause s'applique à tous les bots.",
+    "handBackAction": "Rendre le contrôle",
+    "hostLabel": "Hôte : {{host}}",
+    "infoPanel": "Infos du bot",
+    "interactive": "Interactif",
     "kind": {
-      "browser": "Browser",
-      "desktop": "Desktop"
+      "browser": "Navigateur",
+      "desktop": "Bureau"
     },
-    "loadingPreview": "Loading the first frame…",
+    "loadingPreview": "Chargement de la première image…",
     "noScreen": {
-      "desktop_off": "desktop control is switched off",
-      "no_display": "no display is available",
-      "screen_unavailable": "the screen cannot be opened right now (locked session or missing permission)",
-      "start_failed": "screen capture could not start",
-      "starting": "checking the screen…",
+      "desktop_off": "le contrôle du bureau est désactivé",
+      "no_display": "aucun écran n'est disponible",
+      "screen_unavailable": "l'écran ne peut pas être ouvert pour le moment (session verrouillée ou autorisation manquante)",
+      "start_failed": "la capture d'écran n'a pas pu démarrer",
+      "starting": "vérification de l'écran…",
       "timed_out": "l'écran n'a pas démarré à temps",
-      "unknown": "the screen is not available",
-      "unsupported_platform": "this platform has no screen capture",
-      "wayland": "Wayland sessions are not supported, use an X11 session"
+      "unknown": "l'écran n'est pas disponible",
+      "unsupported_platform": "cette plateforme ne permet pas la capture d'écran",
+      "wayland": "Les sessions Wayland ne sont pas prises en charge, utilisez une session X11"
     },
     "noScreenFix": {
-      "addSession": "The server has no desktop session yet. Add it by running this on the server, then open the screen again:",
-      "browserOwnWindow": "Le navigateur propre au bot s'exécute dans sa propre fenêtre. Dès que le bot ouvre une page, elle apparaît dans la liste en haut et tu peux la regarder là.",
-      "generic": "Most often the server has no desktop session yet, its display does not answer, or the screen permission is missing. To add the desktop session run this on the server:",
-      "localLinux": "L'écran de cet ordinateur n'a pas pu être ouvert. Vérifie que tu es connecté à une session X11 (Wayland n'est pas pris en charge) et que la session n'est pas verrouillée, puis réessaie.",
-      "localMac": "Autorise Praxi dans Réglages Système, Confidentialité et sécurité, Enregistrement d'écran, redémarre l'application et réessaie.",
-      "localNoDisplay": "Cet ordinateur n'a pas d'écran à partager pour le moment (personne n'est connecté ou la session est verrouillée). Déverrouille-le et réessaie.",
-      "localOff": "Le contrôle du bureau est désactivé pour cet ordinateur. Active-le dans Réglages, Ordinateurs, puis rouvre l'écran.",
-      "localPlatform": "Cet ordinateur ne peut pas partager son écran. Utilise un ordinateur Windows ou macOS, ou un serveur Linux avec une session de bureau.",
-      "localWait": "Cet ordinateur vérifie encore son écran. Attends quelques secondes et réessaie.",
-      "localWayland": "Passe cet ordinateur sur une session X11 (Wayland n'est pas pris en charge), puis rouvre l'écran.",
-      "localWindows": "Déverrouille Windows et ferme ce qui bloque la capture d'écran (une session distante ou une invite sécurisée), puis réessaie. Praxi s'exécute sur ce PC, aucune commande serveur n'est nécessaire.",
-      "locked": "Unlock the session on the server and check that the screen permission is granted, then try again.",
-      "platform": "This computer cannot show its screen. Use a Linux server with a desktop session or a Windows or macOS computer.",
-      "restart": "Restart the Praxi service on the server, then try again.",
-      "wait": "The server is still checking its screen. Wait a few seconds and refresh.",
-      "wayland": "Switch the server's desktop to an X11 session, then open the screen again."
+      "addSession": "Le serveur n'a pas encore de session de bureau. Ajoutez-en une en exécutant ceci sur le serveur, puis rouvrez l'écran :",
+      "browserOwnWindow": "Le navigateur propre au bot s'exécute dans sa propre fenêtre. Dès que le bot ouvre une page, elle apparaît dans la liste en haut et vous pouvez la regarder là.",
+      "generic": "Le plus souvent, le serveur n'a pas encore de session de bureau, son affichage ne répond pas, ou l'autorisation d'écran est manquante. Pour ajouter la session de bureau, exécutez ceci sur le serveur :",
+      "localLinux": "L'écran de cet ordinateur n'a pas pu être ouvert. Vérifiez que vous êtes connecté à une session X11 (Wayland n'est pas pris en charge) et que la session n'est pas verrouillée, puis réessayez.",
+      "localMac": "Autorisez Praxi dans Réglages Système, Confidentialité et sécurité, Enregistrement d'écran, redémarrez l'application et réessayez.",
+      "localNoDisplay": "Cet ordinateur n'a pas d'écran à partager pour le moment (personne n'est connecté ou la session est verrouillée). Déverrouillez-le et réessayez.",
+      "localOff": "Le contrôle du bureau est désactivé pour cet ordinateur. Activez-le dans Réglages, Ordinateurs, puis rouvrez l'écran.",
+      "localPlatform": "Cet ordinateur ne peut pas partager son écran. Utilisez un ordinateur Windows ou macOS, ou un serveur Linux avec une session de bureau.",
+      "localWait": "Cet ordinateur vérifie encore son écran. Attendez quelques secondes et réessayez.",
+      "localWayland": "Passez cet ordinateur sur une session X11 (Wayland n'est pas pris en charge), puis rouvrez l'écran.",
+      "localWindows": "Déverrouillez Windows et fermez ce qui bloque la capture d'écran (une session distante ou une invite sécurisée), puis réessayez. Praxi s'exécute sur ce PC, aucune commande serveur n'est nécessaire.",
+      "locked": "Déverrouillez la session sur le serveur et vérifiez que l'autorisation d'écran est accordée, puis réessayez.",
+      "platform": "Cet ordinateur ne peut pas afficher son écran. Utilisez un serveur Linux avec une session de bureau ou un ordinateur Windows ou macOS.",
+      "restart": "Redémarrez le service Praxi sur le serveur, puis réessayez.",
+      "wait": "Le serveur vérifie encore son écran. Attendez quelques secondes et actualisez.",
+      "wayland": "Passez le bureau du serveur sur une session X11, puis rouvrez l'écran."
     },
-    "noTargets": "No screen targets reported yet.",
-    "openScreen": "Open screen",
-    "otherOwner": "Controlled by {{owner}}",
-    "outcomeHint": "What did you complete? (optional)",
+    "noTargets": "Aucun écran cible signalé pour le moment.",
+    "openScreen": "Ouvrir l'écran",
+    "otherOwner": "Contrôlé par {{owner}}",
+    "outcomeHint": "Qu'avez-vous accompli ? (facultatif)",
     "outcomes": {
-      "application_opened": "Opened app",
-      "login_completed": "Logged in",
-      "none": "Just finished",
-      "other": "Other step"
+      "application_opened": "Application ouverte",
+      "login_completed": "Connexion effectuée",
+      "none": "Simplement terminé",
+      "other": "Autre étape"
     },
     "panelSummary": {
-      "acquiring": "Acquiring control…",
-      "active": "You have the wheel",
-      "empty": "No active screen",
-      "noScreenReason": "No screen: {{detail}}",
-      "paused": "Paused · Waiting for you",
-      "ready": "This computer · ready",
-      "unavailable": "Idle · Not active",
-      "watch": "Awake · Watching live"
+      "acquiring": "Prise de contrôle…",
+      "active": "Vous avez la main",
+      "empty": "Aucun écran actif",
+      "noScreenReason": "Aucun écran : {{detail}}",
+      "paused": "En pause · En attente de vous",
+      "ready": "Cet ordinateur · prêt",
+      "unavailable": "Au repos · Inactif",
+      "watch": "Éveillé · Observation en direct"
     },
     "pausedBanner": {
-      "body": "You took over the bot's screen and it stayed paused, so the bot is waiting for you. Hand control back, or remove the pause so it carries on.",
-      "title": "Bot paused, waiting for you"
+      "body": "Vous avez pris le contrôle de l'écran du bot et il est resté en pause : le bot vous attend. Rendez-lui le contrôle, ou levez la pause pour qu'il reprenne.",
+      "title": "Bot en pause, il vous attend"
     },
-    "privacyNotice": "Screen pixels cannot be redacted (may show passwords or OTPs); this stream stays in memory only and is never sent to model providers.",
+    "privacyNotice": "Les pixels de l'écran ne peuvent pas être masqués (ils peuvent montrer des mots de passe ou des codes à usage unique) ; ce flux reste uniquement en mémoire et n'est jamais envoyé aux fournisseurs de modèles.",
     "quality": {
       "auto": "Auto",
-      "autoHint": "Sharp, and lighter automatically when this computer or the connection cannot keep up",
-      "high": "High",
-      "highHint": "Largest and sharpest picture (up to 1920×1080), uses the most data",
-      "label": "Picture quality",
-      "saver": "Data saver",
-      "saverHint": "Smaller picture, uses the least data"
+      "autoHint": "Net, et allégé automatiquement quand cet ordinateur ou la connexion ne suit pas",
+      "high": "Élevée",
+      "highHint": "Image la plus grande et la plus nette (jusqu'à 1920×1080), consomme le plus de données",
+      "label": "Qualité de l'image",
+      "saver": "Économie de données",
+      "saverHint": "Image plus petite, consomme le moins de données"
     },
-    "queryFailed": "Could not load the screen list. It is retried automatically.",
-    "reacquireAction": "Reacquire control",
+    "queryFailed": "Impossible de charger la liste des écrans. Une nouvelle tentative a lieu automatiquement.",
+    "reacquireAction": "Reprendre le contrôle",
     "reasons": {
-      "audit_failed": "Action could not be recorded in the audit log; paused safely.",
-      "browser_idle": "Browser is idle. Send a browser task to open a session before viewing.",
-      "disconnected": "The screen connection dropped and the bot is paused. Reacquire control, or clear the pause so the bot can run again.",
-      "drain_timeout": "Timed out waiting for bot screen actions to finish.",
-      "expired": "The view session expired. Reopen or refresh to watch again.",
-      "frame_budget_exceeded": "Quality reduced automatically to fit bandwidth budget.",
-      "geometry_changed": "Screen resolution changed. Waiting for a refreshed frame.",
-      "local_override": "Stopped locally. Clear the pause when ready to continue.",
-      "partial_injection": "Input could not be applied completely.",
-      "persistence_failed": "Control state could not be saved cleanly; paused safely.",
-      "rate_limited": "Input temporarily slowed down due to rate limits.",
-      "refresh_pending": "Waiting for the target to publish a fresh frame.",
-      "remote_node_live_view": "Remote host live view is not available on this connection.",
-      "reset_failed": "Could not verify input key reset cleanly; paused safely.",
-      "restart": "The background service restarted while you had control. Clear the pause when you want the bot to continue.",
-      "resync_required": "Screen geometry or sequence updated; syncing with latest frame.",
-      "revoked": "Screen access for this device was revoked.",
-      "stale": "Frames became stale. Bots stay paused until a fresh frame arrives and you recover.",
-      "stream_stale": "No recent stream frames or heartbeats arrived; input locked safely.",
-      "unavailable": "Screen target is currently unavailable.",
-      "unsupported": "Screen streaming is not supported for this target."
+      "audit_failed": "L'action n'a pas pu être enregistrée dans le journal d'audit ; mise en pause par sécurité.",
+      "browser_idle": "Le navigateur est inactif. Envoyez une tâche de navigation pour ouvrir une session avant d'afficher.",
+      "disconnected": "La connexion à l'écran a été coupée et le bot est en pause. Reprenez le contrôle, ou levez la pause pour que le bot puisse repartir.",
+      "drain_timeout": "Délai dépassé en attendant la fin des actions d'écran du bot.",
+      "expired": "La session de la vue a expiré. Rouvrez ou actualisez pour regarder à nouveau.",
+      "frame_budget_exceeded": "Qualité réduite automatiquement pour respecter le budget de bande passante.",
+      "geometry_changed": "La résolution de l'écran a changé. En attente d'une image actualisée.",
+      "local_override": "Arrêté localement. Levez la pause quand vous êtes prêt à continuer.",
+      "partial_injection": "La saisie n'a pas pu être appliquée entièrement.",
+      "persistence_failed": "L'état du contrôle n'a pas pu être enregistré correctement ; mise en pause par sécurité.",
+      "rate_limited": "Saisie temporairement ralentie en raison des limites de débit.",
+      "refresh_pending": "En attente que la cible publie une nouvelle image.",
+      "remote_node_live_view": "La vue en direct de l'hôte distant n'est pas disponible sur cette connexion.",
+      "reset_failed": "Impossible de vérifier correctement la réinitialisation des touches de saisie ; mise en pause par sécurité.",
+      "restart": "Le service d'arrière-plan a redémarré pendant que vous aviez le contrôle. Levez la pause quand vous voulez que le bot continue.",
+      "resync_required": "La géométrie ou la séquence de l'écran a été mise à jour ; synchronisation avec la dernière image.",
+      "revoked": "L'accès à l'écran pour cet appareil a été révoqué.",
+      "stale": "Les images sont devenues obsolètes. Les bots restent en pause jusqu'à l'arrivée d'une nouvelle image et votre reprise.",
+      "stream_stale": "Aucune image récente ni signal de présence du flux n'est arrivé ; saisie verrouillée par sécurité.",
+      "unavailable": "La cible d'écran est actuellement indisponible.",
+      "unsupported": "La diffusion d'écran n'est pas prise en charge pour cette cible."
     },
-    "reconnecting": "Reconnecting to the screen stream…",
-    "recoverAction": "Clear pause (the bot can run again)",
-    "refresh": "Refresh targets",
-    "releaseFocus": "Leave keyboard",
-    "releaseOnClose": "Closing hands control back to the bot first.",
-    "retryDone": "Retry hand-back",
-    "retryingDone": "Handing back…",
-    "reviewApprovals": "Back to the chat",
-    "stageAlt": "Live screen preview for {{target}}",
-    "stageFocusPrompt": "Click the screen to type into it.",
-    "stageHint": "Interactive screen canvas. Click inside to focus, Shift+Esc to return to toolbar controls.",
+    "reconnecting": "Reconnexion au flux de l'écran…",
+    "recoverAction": "Lever la pause (le bot peut repartir)",
+    "refresh": "Actualiser les cibles",
+    "releaseFocus": "Quitter le clavier",
+    "releaseOnClose": "La fermeture rend d'abord le contrôle au bot.",
+    "retryDone": "Réessayer de rendre le contrôle",
+    "retryingDone": "Restitution du contrôle…",
+    "reviewApprovals": "Retour à la conversation",
+    "stageAlt": "Aperçu en direct de l'écran pour {{target}}",
+    "stageFocusPrompt": "Cliquez sur l'écran pour y saisir du texte.",
+    "stageHint": "Zone d'écran interactive. Cliquez dedans pour y placer le focus, Maj+Échap pour revenir aux commandes de la barre d'outils.",
     "states": {
-      "acquiring": "Acquiring control…",
-      "active": "You are in control",
-      "checking": "Checking screens…",
-      "closed": "Closed",
-      "disconnected": "Connection lost",
-      "finishing": "Handing back…",
-      "noScreen": "No screen yet",
-      "paused": "Paused",
-      "queryFailed": "Could not load screens",
-      "stale": "No recent frames",
-      "unavailable": "Unavailable",
-      "watch": "Watching"
+      "acquiring": "Prise de contrôle…",
+      "active": "Vous avez le contrôle",
+      "checking": "Recherche des écrans…",
+      "closed": "Fermé",
+      "disconnected": "Connexion perdue",
+      "finishing": "Restitution du contrôle…",
+      "noScreen": "Pas encore d'écran",
+      "paused": "En pause",
+      "queryFailed": "Impossible de charger les écrans",
+      "stale": "Aucune image récente",
+      "unavailable": "Indisponible",
+      "watch": "Observation"
     },
-    "targetLocked": "Finish control (“I'm done”) before switching the screen target.",
-    "targetsLabel": "Target screen",
-    "title": "Computer live view",
+    "targetLocked": "Terminez le contrôle (« J'ai terminé ») avant de changer d'écran cible.",
+    "targetsLabel": "Écran cible",
+    "title": "Vue en direct de l'ordinateur",
     "toolbar": {
-      "fitOff": "Fill the window",
-      "fitOn": "Back to normal size",
+      "fitOff": "Remplir la fenêtre",
+      "fitOn": "Revenir à la taille normale",
       "keys": {
-        "exit": "Leave the screen view",
-        "fit": "Fill the window / normal size",
-        "release": "Leave the screen to use the buttons",
-        "takeover": "Take control"
+        "exit": "Quitter la vue de l'écran",
+        "fit": "Remplir la fenêtre / taille normale",
+        "release": "Quitter l'écran pour utiliser les boutons",
+        "takeover": "Prendre le contrôle"
       },
       "screenFill": "Remplir sans bandes",
       "screenFillHint": "Rogne légèrement les bords de l'écran pour que l'image remplisse la zone. Désactivé : tout l'écran avec des bandes.",
-      "shortcuts": "Keyboard shortcuts",
-      "takeoverHint": "Take control of this screen yourself (Ctrl+Shift+D). The bots pause until you hand it back.",
+      "shortcuts": "Raccourcis clavier",
+      "takeoverHint": "Prenez vous-même le contrôle de cet écran (Ctrl+Maj+D). Les bots se mettent en pause jusqu'à ce que vous le rendiez.",
       "view": "Affichage"
     },
-    "viewOnly": "View only",
-    "watchAction": "Take control"
+    "viewOnly": "Lecture seule",
+    "watchAction": "Prendre le contrôle"
   },
   "localInstall": {
     "cancel": "Arrêter le téléchargement",
@@ -5075,86 +5083,86 @@
     "unpinOnTop": "Ne plus garder au premier plan"
   },
   "profileShare": {
-    "back": "Back",
-    "categories": "Categories it may use",
+    "back": "Retour",
+    "categories": "Catégories qu'il peut utiliser",
     "category": {
-      "accounts": "Accounts",
-      "browser": "Browser",
-      "desktop": "Desktop",
-      "fs": "Files",
-      "messaging": "Messaging",
-      "money": "Money",
-      "remote": "Remote",
+      "accounts": "Comptes",
+      "browser": "Navigateur",
+      "desktop": "Bureau",
+      "fs": "Fichiers",
+      "messaging": "Messagerie",
+      "money": "Argent",
+      "remote": "À distance",
       "script": "Scripts",
-      "shell": "Commands",
-      "system": "System"
+      "shell": "Commandes",
+      "system": "Système"
     },
     "categoryLevel": {
-      "allow": "allowed",
-      "ask": "asks first",
-      "deny": "blocked"
+      "allow": "autorisé",
+      "ask": "demande d'abord",
+      "deny": "bloqué"
     },
-    "chooseFile": "Choose a profile file…",
-    "computerFiles": "Let file tools use this whole computer",
-    "computerFilesHint": "Off: the bot has no file access until you pick folders for it, and shell commands and scripts stay unavailable.",
-    "create": "Create bot",
-    "export": "Export profile",
-    "exportHint": "Save this bot's shareable profile: name, instructions, model choice, tools and permission level. Never secrets, memory, chats, folders or devices.",
-    "exportSaveFirst": "Save your changes first: the profile is built from the saved bot.",
-    "exported": "Profile of {{name}} saved as a file.",
-    "galleryLabel": "Start from a template",
-    "importFromFile": "Import from file…",
-    "level": "Highest permission level",
-    "levelHint": "The bot never gets more than this, whatever the file asks for.",
-    "levelLine": "The file asks for “{{requested}}”. The bot will get “{{granted}}”.",
+    "chooseFile": "Choisir un fichier de profil…",
+    "computerFiles": "Laisser les outils de fichiers utiliser tout cet ordinateur",
+    "computerFilesHint": "Désactivé : le bot n'a aucun accès aux fichiers tant que vous ne lui choisissez pas de dossiers, et les commandes shell et les scripts restent indisponibles.",
+    "create": "Créer le bot",
+    "export": "Exporter le profil",
+    "exportHint": "Enregistrez le profil partageable de ce bot : nom, instructions, choix du modèle, outils et niveau d'autorisation. Jamais les secrets, la mémoire, les conversations, les dossiers ni les appareils.",
+    "exportSaveFirst": "Enregistrez d'abord vos modifications : le profil est construit à partir du bot enregistré.",
+    "exported": "Le profil de {{name}} a été enregistré dans un fichier.",
+    "galleryLabel": "Partir d'un modèle",
+    "importFromFile": "Importer depuis un fichier…",
+    "level": "Niveau d'autorisation maximal",
+    "levelHint": "Le bot n'obtient jamais plus que ce niveau, quoi que demande le fichier.",
+    "levelLine": "Le fichier demande « {{requested}} ». Le bot obtiendra « {{granted}} ».",
     "levels": {
-      "approve-destructive": "Balanced",
-      "full": "Free",
-      "read-and-draft": "Ask first",
-      "read-only": "Read only"
+      "approve-destructive": "Équilibré",
+      "full": "Libre",
+      "read-and-draft": "Demander d'abord",
+      "read-only": "Lecture seule"
     },
-    "name": "Name",
-    "noModel": "The model this profile prefers is not set up here. The app's default model will be used.",
+    "name": "Nom",
+    "noModel": "Le modèle préféré de ce profil n'est pas configuré ici. Le modèle par défaut de l'application sera utilisé.",
     "note": {
-      "files_none": "No file access until you choose folders for this bot.",
-      "level_lowered": "Lowered to “{{subject}}”: the file asked for more than you allowed.",
-      "model_cli_dropped": "“{{subject}}” is a command-line engine, which a profile cannot choose. It was left out.",
-      "model_dropped": "Model “{{subject}}” is not set up here and was left out.",
-      "model_unavailable": "“{{subject}}” is not set up here.",
-      "rule_lowered": "A rule for “{{subject}}” asked for more than you allowed and was lowered.",
-      "schedules_not_created": "The scheduled task ideas were not created.",
-      "skill_missing": "Skill “{{subject}}” is not installed here.",
-      "tool_dropped_binding": "“{{subject}}” points at a connected app or account. Those never travel in a profile and were left out.",
-      "tool_dropped_unknown": "Tool “{{subject}}” does not exist here and was left out.",
-      "tools_all_unknown": "None of the listed tools exist here, so the bot only gets its basic helper tools."
+      "files_none": "Aucun accès aux fichiers tant que vous n'avez pas choisi de dossiers pour ce bot.",
+      "level_lowered": "Abaissé à « {{subject}} » : le fichier demandait plus que ce que vous avez autorisé.",
+      "model_cli_dropped": "« {{subject}} » est un moteur en ligne de commande, qu'un profil ne peut pas choisir. Il a été écarté.",
+      "model_dropped": "Le modèle « {{subject}} » n'est pas configuré ici et a été écarté.",
+      "model_unavailable": "« {{subject}} » n'est pas configuré ici.",
+      "rule_lowered": "Une règle pour « {{subject}} » demandait plus que ce que vous avez autorisé et a été abaissée.",
+      "schedules_not_created": "Les idées de tâches planifiées n'ont pas été créées.",
+      "skill_missing": "La compétence « {{subject}} » n'est pas installée ici.",
+      "tool_dropped_binding": "« {{subject}} » pointe vers une application ou un compte connecté. Ceux-ci ne voyagent jamais dans un profil et ont été écartés.",
+      "tool_dropped_unknown": "L'outil « {{subject}} » n'existe pas ici et a été écarté.",
+      "tools_all_unknown": "Aucun des outils listés n'existe ici, donc le bot n'obtient que ses outils d'assistance de base."
     },
-    "notes": "What was changed or left out",
-    "otherFile": "Other file…",
+    "notes": "Ce qui a été modifié ou écarté",
+    "otherFile": "Autre fichier…",
     "persona": "Instructions (persona)",
-    "personaEmpty": "(none)",
-    "personaHint": "Written by whoever made this profile. Read it: it tells the bot how to behave.",
-    "pickHint": "Choose a bot profile file (.json). Nothing is created until you have seen what it may do.",
+    "personaEmpty": "(aucune)",
+    "personaHint": "Rédigées par la personne qui a créé ce profil. Lisez-les : elles indiquent au bot comment se comporter.",
+    "pickHint": "Choisissez un fichier de profil de bot (.json). Rien n'est créé tant que vous n'avez pas vu ce qu'il peut faire.",
     "reach": {
-      "browser": "Can use a browser",
-      "desktop": "Can control the desktop",
-      "files": "Can read or change files on this computer",
-      "ownComputer": "Can act on your own computer",
-      "scripts": "Can run scripts",
-      "shell": "Can run shell commands"
+      "browser": "Peut utiliser un navigateur",
+      "desktop": "Peut contrôler le bureau",
+      "files": "Peut lire ou modifier des fichiers sur cet ordinateur",
+      "ownComputer": "Peut agir sur votre propre ordinateur",
+      "scripts": "Peut exécuter des scripts",
+      "shell": "Peut exécuter des commandes shell"
     },
-    "reachNone": "It cannot run commands, change files, use the desktop, browser or scripts.",
-    "schedules": "Scheduled task ideas",
-    "schedulesHint": "These are only suggestions. No schedule is created.",
-    "skillInstalled": "installed here",
-    "skillMissing": "not installed",
-    "skills": "Skills it expects",
-    "skillsHint": "Nothing is installed or trusted by this import. Skills you have installed keep their own review.",
-    "subtitle": "See what this bot would be allowed to do before it is created.",
-    "title": "Import a bot profile",
-    "tooLarge": "This file is larger than 64 KiB and cannot be a bot profile.",
-    "toolsAll": "Tools: every tool, within the permission level.",
-    "toolsOnly": "Tools: {{tools}}",
-    "willDo": "What it will be allowed to do"
+    "reachNone": "Il ne peut pas exécuter de commandes, modifier de fichiers, ni utiliser le bureau, le navigateur ou des scripts.",
+    "schedules": "Idées de tâches planifiées",
+    "schedulesHint": "Ce ne sont que des suggestions. Aucune planification n'est créée.",
+    "skillInstalled": "installée ici",
+    "skillMissing": "non installée",
+    "skills": "Compétences attendues",
+    "skillsHint": "Rien n'est installé ni approuvé par cet import. Les compétences que vous avez installées conservent leur propre vérification.",
+    "subtitle": "Voyez ce que ce bot serait autorisé à faire avant sa création.",
+    "title": "Importer un profil de bot",
+    "tooLarge": "Ce fichier dépasse 64 Kio et ne peut pas être un profil de bot.",
+    "toolsAll": "Outils : tous les outils, dans la limite du niveau d'autorisation.",
+    "toolsOnly": "Outils : {{tools}}",
+    "willDo": "Ce qu'il sera autorisé à faire"
   },
   "queued": {
     "label": "En file d'attente.",
@@ -7417,29 +7425,29 @@
     "label": "Nouveautés"
   },
   "widget": {
-    "dismissStop": "Hide the Stop indicator (the main window keeps its status)",
-    "dragHandleAria": "Drag floating control widget",
-    "giveBack": "Give back",
-    "hotkeyHint": "Stop in app: {{hotkey}}",
-    "humanDrivingStep": "You are in control — bot desktop actions are refused.",
-    "idleStep": "No active bot run.",
+    "dismissStop": "Masquer l'indicateur Arrêt (la fenêtre principale conserve son état)",
+    "dragHandleAria": "Faire glisser le widget de contrôle flottant",
+    "giveBack": "Rendre",
+    "hotkeyHint": "Arrêter dans l'application : {{hotkey}}",
+    "humanDrivingStep": "Vous avez le contrôle : les actions de bureau du bot sont refusées.",
+    "idleStep": "Aucune exécution de bot active.",
     "pause": "Pause",
-    "pausedStep": "Run paused — waiting to resume.",
-    "refusedBadge": "{{count}} bot actions refused",
-    "refusedBadge_one": "{{count}} bot action refused",
-    "refusedBadge_other": "{{count}} bot actions refused",
-    "resume": "Resume",
+    "pausedStep": "Exécution en pause, en attente de reprise.",
+    "refusedBadge": "{{count}} actions du bot refusées",
+    "refusedBadge_one": "{{count}} action du bot refusée",
+    "refusedBadge_other": "{{count}} actions du bot refusées",
+    "resume": "Reprendre",
     "status": {
-      "bot_driving": "Bot Driving",
-      "human_driving": "You are in control",
-      "idle": "Idle",
-      "paused": "Paused"
+      "bot_driving": "Bot aux commandes",
+      "human_driving": "Vous avez le contrôle",
+      "idle": "Inactif",
+      "paused": "En pause"
     },
-    "stop": "Stop",
-    "stopConfirmed": "Stopped — every run confirmed",
-    "stopPending": "Stopping — confirming every run…",
-    "stopUnknown": "Stopping — could not confirm with the app yet",
-    "takeTheWheel": "Take the wheel"
+    "stop": "Arrêter",
+    "stopConfirmed": "Arrêté, toutes les exécutions sont confirmées",
+    "stopPending": "Arrêt en cours, confirmation de chaque exécution…",
+    "stopUnknown": "Arrêt en cours, pas encore de confirmation de l'application",
+    "takeTheWheel": "Prendre le volant"
   },
   "window": {
     "close": "Fermer",
