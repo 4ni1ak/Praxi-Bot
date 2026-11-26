@@ -22844,9 +22844,7 @@
           },
           "needs_senders": {
             "type": "boolean",
-            "description": "The channel is switched on but the mailbox names no allowed sender, so
-it passes NO mail to the bot until the owner adds one (an older channel
-that ran for anybody stops here until the owner confirms a list)."
+            "description": "The channel is switched on but the mailbox names no allowed sender, so\nit passes NO mail to the bot until the owner adds one (an older channel\nthat ran for anybody stops here until the owner confirms a list)."
           },
           "pending_replies": {
             "type": "integer",
