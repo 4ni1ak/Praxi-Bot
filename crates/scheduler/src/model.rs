@@ -344,8 +344,8 @@ impl ParsedCron {
             }
         };
 
-        let cron = Cron::new(&expr_str)
-            .parse()
+        let cron = expr_str
+            .parse::<Cron>()
             .map_err(|e| SchedulerError::InvalidSpec(format!("cron '{expr_str}': {e}")))?;
 
         Ok(Self { cron, tz })

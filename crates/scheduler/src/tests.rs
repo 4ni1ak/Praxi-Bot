@@ -1721,3 +1721,30 @@ fn cron_at_a_nonexistent_dst_local_time_fires_once_at_the_transition_instant() {
         ]
     );
 }
+
+/// croner 5 rejects weekday/month names in the wrong field instead of silently reading them as
+/// numbers (`0 0 * * jan` used to run on Mondays); a bare `L` in day-of-week is rejected too.
+/// Names in their own fields and a `SUN-SUN` range keep working and mean what they say.
+#[test]
+fn cron_names_in_wrong_fields_are_rejected_and_right_fields_work() {
+    for bad in ["0 0 * * jan", "0 0 * mon *", "0 0 * * L"] {
+        assert!(
+            crate::ParsedCron::parse(bad).is_err(),
+            "{bad} must be rejected"
+        );
+    }
+    let sundays = crate::ParsedCron::parse("0 0 * * SUN-SUN").expect("SUN-SUN parses");
+    // 2026-11-26 is a Thursday: the next run is Sunday 2026-11-29 00:00 UTC, not the next day.
+    let after = Utc
+        .with_ymd_and_hms(2026, 11, 26, 12, 0, 0)
+        .unwrap()
+        .timestamp_millis();
+    let next = sundays.next_after(after).unwrap().unwrap();
+    assert_eq!(
+        next,
+        Utc.with_ymd_and_hms(2026, 11, 29, 0, 0, 0)
+            .unwrap()
+            .timestamp_millis()
+    );
+    assert!(crate::ParsedCron::parse("0 9 * jan-mar MON-FRI").is_ok());
+}
