@@ -18,6 +18,23 @@ const box = (el: Element | null): Box | null => {
   return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width };
 };
 
+/**
+ * Try everything that moved the shell sideways in the field: focus every focusable element (the parked
+ * panel included), scroll the parked panel into view and scroll the layout container itself.
+ * The shell must still sit at 0,0 afterwards.
+ */
+function provokeLayoutScroll(): { scrollLeft: number; scrollTop: number; scrollWidth: number; clientWidth: number } | null {
+  const layout = document.querySelector('[data-shell-part="main"]')?.parentElement?.parentElement;
+  if (!layout) return null;
+  const focusable = "a[href],button,input,textarea,select,summary,[tabindex],[contenteditable='true']";
+  document.querySelectorAll<HTMLElement>(focusable).forEach((el) => el.focus());
+  document.querySelector('[data-shell-part="panel"]')?.scrollIntoView({ inline: "end", block: "nearest" });
+  document.querySelector('[data-shell-part="panel"] *')?.scrollIntoView({ inline: "end", block: "nearest" });
+  layout.scrollTo(300, 40);
+  layout.scrollLeft = 300;
+  return { scrollLeft: layout.scrollLeft, scrollTop: layout.scrollTop, scrollWidth: layout.scrollWidth, clientWidth: layout.clientWidth };
+}
+
 function measure() {
   const part = (name: string) => document.querySelector(`[data-shell-part="${name}"]`);
   const rail = document.querySelector("[data-rail-tier]");
@@ -64,7 +81,8 @@ function measure() {
     panelInner: box(inner),
     panelInnerScroll: inner ? { scrollWidth: inner.scrollWidth, clientWidth: inner.clientWidth } : null,
     panelRightMostDescendant: worst,
-    document: { scrollWidth: root.scrollWidth, clientWidth: root.clientWidth }
+    document: { scrollWidth: root.scrollWidth, clientWidth: root.clientWidth },
+    layoutScroll: provokeLayoutScroll()
   };
 }
 

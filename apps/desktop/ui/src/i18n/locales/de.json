@@ -2123,6 +2123,7 @@
       "schedules": "Geplante Aufgaben öffnen",
       "settings": "Einstellungen öffnen",
       "stop": "Aktuellen Lauf stoppen",
+      "unknown": "Diesen Befehl gibt es nicht: /{{name}}. Tippe /, um die Befehle zu sehen.",
       "vault": "Tresor öffnen"
     },
     "starters": {

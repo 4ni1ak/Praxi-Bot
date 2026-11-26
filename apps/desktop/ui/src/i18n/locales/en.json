@@ -2123,6 +2123,7 @@
       "schedules": "Open schedules",
       "settings": "Open settings",
       "stop": "Stop the current run",
+      "unknown": "No such command: /{{name}}. Type / to see the commands.",
       "vault": "Open the vault"
     },
     "starters": {

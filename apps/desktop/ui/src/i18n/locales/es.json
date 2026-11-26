@@ -2123,6 +2123,7 @@
       "schedules": "Abrir tareas programadas",
       "settings": "Abrir ajustes",
       "stop": "Detener la ejecución actual",
+      "unknown": "No existe ese comando: /{{name}}. Escribe / para ver los comandos.",
       "vault": "Abrir la bóveda"
     },
     "starters": {

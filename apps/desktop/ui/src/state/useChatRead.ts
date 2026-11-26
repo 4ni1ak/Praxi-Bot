@@ -35,6 +35,17 @@ export function useChatRead(
   if (anchor.current?.chatId !== chatId) anchor.current = { chatId, ms: lastReadMs(state, chatId) };
   const [dismissed, setDismissed] = useState<string | null>(null);
   const newest = messages.reduce((ms, m) => Math.max(ms, m.created_at_ms), activityMs);
+  // Output that arrives while the owner is looking at this very chat is read as it arrives: the
+  // divider only marks what was already waiting when the chat was opened (or came in while away).
+  const watched = useRef<{ chatId: string; newest: number | null } | null>(null);
+  if (watched.current?.chatId !== chatId) watched.current = { chatId, newest: null };
+  if (messages.length > 0) {
+    // The first loaded history is the baseline (the divider may sit in it); only later growth counts.
+    if (attended && !external && watched.current.newest !== null && newest > watched.current.newest) {
+      anchor.current = { chatId, ms: Math.max(anchor.current.ms, newest) };
+    }
+    if (attended || watched.current.newest === null) watched.current = { chatId, newest };
+  }
   useEffect(() => {
     if (!external && attended && newest > 0) markChatRead(host, chatId, newest);
   }, [external, attended, host, chatId, newest]);

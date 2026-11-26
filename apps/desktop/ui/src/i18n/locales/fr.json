@@ -2045,6 +2045,7 @@
       "schedules": "Open schedules",
       "settings": "Open settings",
       "stop": "Stop the current run",
+      "unknown": "Cette commande n'existe pas : /{{name}}. Tapez / pour voir les commandes.",
       "vault": "Ouvrir le coffre-fort"
     },
     "starters": {

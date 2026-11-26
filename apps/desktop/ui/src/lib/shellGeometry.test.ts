@@ -81,8 +81,8 @@ test("the rail reserve keeps the chat above its minimum at every frame of the cl
   const settled = evaluateShell(sources, APP_FNS, { railPolicy: "settled" });
   assert.deepEqual(settled.violations, []);
   const immediate = evaluateShell(sources, APP_FNS, { railPolicy: "immediate" });
-  // Review numbers: 760 px, float, stored rail 440, panel 260: the chat is squeezed while the panel still slides.
-  assert.ok(immediate.violations.some((v) => /vw=760 rail=440 panel=260 float=on closing t=0ms progress=1\.00 \(transition\): main 4\d(\.\d+)?px/.test(v)));
+  // Review numbers (the rail is icons only below 800 px, so the case moved to 900 px): stored rail 440, panel 260: the chat is squeezed while the panel still slides.
+  assert.ok(immediate.violations.some((v) => /vw=900 rail=440 panel=260 float=off closing t=0ms progress=1\.00 \(transition\): main 200(\.\d+)?px/.test(v)));
 });
 
 test("overlay panel keeps main column width identical to closed state", () => {

@@ -3,6 +3,9 @@
   width: 100%;
   height: 100vh;
   overflow: hidden;
+  /* `clip` (unlike `hidden`) is not a scroll container: focus, find-in-page or scrollIntoView on the
+     parked (off-screen) side panel can never drag the whole shell sideways. */
+  overflow: clip;
   background-color: var(--color-background);
   background-image: radial-gradient(130% 90% at 50% -10%, var(--color-bg-gradient), transparent 62%);
   color: var(--color-text);
@@ -37,6 +40,7 @@
   display: flex;
   width: 100%;
   height: 100%;
+  overflow: clip;
 }
 
 .sidebar {

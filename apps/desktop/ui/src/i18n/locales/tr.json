@@ -2123,6 +2123,7 @@
       "schedules": "Zamanlamaları aç",
       "settings": "Ayarları aç",
       "stop": "Çalışan işi durdur",
+      "unknown": "Böyle bir komut yok: /{{name}}. Komutları görmek için / yazın.",
       "vault": "Kasayı aç"
     },
     "starters": {

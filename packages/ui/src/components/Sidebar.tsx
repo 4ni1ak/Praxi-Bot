@@ -22,11 +22,22 @@ export function SidebarLayout({
   aside,
   children,
   className,
+  onScroll,
   ...props
 }: SidebarLayoutProps) {
   const classes = [styles.layout, className ?? ""].filter(Boolean).join(" ");
   return (
-    <div className={classes} {...props}>
+    <div
+      className={classes}
+      {...props}
+      onScroll={(event) => {
+        // Guard behind `overflow: clip`: the shell never scrolls, whatever moved focus or the caret.
+        const el = event.currentTarget;
+        if (el.scrollLeft !== 0) el.scrollLeft = 0;
+        if (el.scrollTop !== 0) el.scrollTop = 0;
+        onScroll?.(event);
+      }}
+    >
       <div className={styles.backgroundImageLayer} aria-hidden="true" />
       {backdrop}
       <div className={styles.backgroundDimLayer} aria-hidden="true" />
