@@ -35,8 +35,9 @@ pub struct MessageSummary {
     /// The one bare sender address, lower-case, taken BEFORE `from` was capped;
     /// empty when the header has no address or more than one (fail closed).
     /// Every sender decision (allowed senders, own address) uses this field,
-    /// never the display text. Not serialized.
-    #[serde(skip)]
+    /// never the display text. Serialized only when set, so a trigger that
+    /// reads search results can apply the same rule (absent means no match).
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub from_addr: String,
     /// Recipients.
     pub to: Vec<String>,

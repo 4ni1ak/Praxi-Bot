@@ -505,14 +505,10 @@ pub enum FileEvent {
     Modified,
 }
 
-/// An address or `@domain`: one `@`, no spaces, something after it.
+/// An address, `@domain` or domain: the shared sender rule
+/// ([`protocol::sender`]). Free text is refused.
 fn sender_filter_ok(f: &str) -> bool {
-    let f = f.trim();
-    !f.is_empty()
-        && f.len() <= 256
-        && f.matches('@').count() == 1
-        && !f.ends_with('@')
-        && !f.chars().any(|c| c.is_whitespace() || c.is_control())
+    protocol::sender::sender_rule_ok(f)
 }
 
 impl Trigger {
