@@ -270,8 +270,14 @@ impl DaemonExecutor {
         }
         if occurrence.is_some() {
             let current = self.store.get(schedule.id)?;
-            if !current.is_some_and(|s| s.enabled && s.revision == schedule.revision)
-                || self.store.frozen_for(schedule.id)?.is_some()
+            // Claiming a one-shot exhausts its clock without editing the
+            // definition. An owner pause/edit instead changes the revision.
+            if !current.is_some_and(|s| {
+                s.revision == schedule.revision
+                    && (s.enabled
+                        || (matches!(s.spec, scheduler::ScheduleSpec::At { .. })
+                            && s.next_run_at.is_none()))
+            }) || self.store.frozen_for(schedule.id)?.is_some()
             {
                 return Err(exec_err(
                     "This schedule was changed or stopped while waiting for the connection. Nothing was started.",

@@ -39,6 +39,62 @@ fn input() -> Value {
 }
 
 #[tokio::test]
+async fn exhausted_one_shot_still_runs_but_an_owner_pause_cancels_the_claim() {
+    use scheduler::ScheduleExecutor;
+    let t = super::setup();
+    let (bot, _) = make_chat(&t).await;
+    let due = storage::now_ms();
+    let bot = protocol::BotId(bot.parse().unwrap());
+    let mut config = input()["config"].clone();
+    config["source"]["spec"] = json!({"at":{"unix_ms":due}});
+    let rule: scheduler::registry::Rule = serde_json::from_value(config).unwrap();
+    let mut row = scheduler::Schedule::new(
+        bot,
+        None,
+        "One-time review",
+        scheduler::ScheduleSpec::At { unix_ms: due },
+        scheduler::Payload::AgentPrompt {
+            text: "Summarize this event.".into(),
+        },
+        scheduler::MisfirePolicy::Skip,
+        due - 1_000,
+    )
+    .unwrap();
+    let store = t.state.schedule_store().unwrap();
+    store
+        .insert_registry_config(&row, None, Some(&rule))
+        .unwrap();
+    store.record_run_intent(row.id, due, None).unwrap();
+    row.external_input = store
+        .registry_dispatch(&row, Some(json!({"received_at":due})), due)
+        .unwrap();
+    let current = store.get(row.id).unwrap().unwrap();
+    assert!(!current.enabled && current.next_run_at.is_none());
+    let executor = crate::schedule::DaemonExecutor {
+        agent: t.agent.clone(),
+        storage: t.state.storage_arc(),
+        store: store.clone(),
+        user_id: t.state.user_id(),
+        leader: t.state.leader().clone(),
+    };
+    executor.execute_attempt(&row, due, 0).await.unwrap();
+    let runs = t.state.storage().list_runs(t.state.user_id()).unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].state, "succeeded");
+    // An explicit pause increments the revision, unlike clock exhaustion.
+    store.set_enabled(row.id, false, None).unwrap();
+    assert!(executor.execute_attempt(&row, due + 1, 0).await.is_err());
+    assert_eq!(
+        t.state
+            .storage()
+            .list_runs(t.state.user_id())
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn existing_prompt_schedule_is_visible_and_adoption_pauses_it_and_takes_ownership() {
     let t = super::setup();
     let (bot, _) = make_chat(&t).await;
