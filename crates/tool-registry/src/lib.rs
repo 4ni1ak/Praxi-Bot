@@ -8,6 +8,7 @@ pub mod error;
 pub mod registry;
 pub mod spec;
 pub mod tool;
+pub mod url_guard;
 
 pub use error::ToolError;
 pub use registry::ToolRegistry;
@@ -18,3 +19,4 @@ pub use tool::{
     ContentPart, ControlIdentity, ControlKind, ControlTarget, OutputExposure, SpillRef,
     StandingGrant, Tool, ToolContext, ToolOutput, ToolWrapper,
 };
+pub use url_guard::{UrlGuard, url_blocked, with_url_guard};

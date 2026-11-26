@@ -3063,9 +3063,21 @@ impl BrowserTool {
     }
 
     async fn current_origin_in_lane(&self, ctx: &ToolContext, input: &Value) -> Option<String> {
-        // The actions that act on, or read, the page that is open now (not open/eval/tabs).
-        // `Back` reads the page it leaves; where it lands is checked after the call.
-        if matches!(self.op, Op::Snapshot | Op::Screenshot | Op::Back) {
+        // Every call that acts on, reads or leaves the page that is open now is judged by that
+        // page's origin (only `open` is judged by where it goes): the owner's site rules cover
+        // them all. `Back` / `Tabs` leave the page; where they land is checked after the call.
+        if matches!(
+            self.op,
+            Op::Snapshot
+                | Op::Screenshot
+                | Op::Back
+                | Op::Hover
+                | Op::Scroll
+                | Op::Wait
+                | Op::Tabs
+                | Op::Handover
+                | Op::Eval
+        ) {
             let shared = self.select_shared(ctx).ok()?;
             return shared
                 .driver

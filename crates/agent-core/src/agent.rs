@@ -2178,6 +2178,20 @@ impl AgentLoop {
             .storage
             .get_bot(bot_id)?
             .ok_or_else(|| LoopError::NotFound(format!("bot {bot_id}")))?;
+        // A program key is brought to the form a running program is matched by (`.exe`
+        // added, short 8.3 and junction paths resolved on this computer); a key that cannot
+        // be is refused, never stored as a block that could not match.
+        let resolved_app;
+        let new = if new.kind == permission_engine::SubjectKind::App {
+            resolved_app = crate::site_profiles::resolve_app_key(new.raw_key)
+                .map_err(|e| LoopError::Profile(e.to_string()))?;
+            &permission_engine::profiles::NewRule {
+                raw_key: &resolved_app,
+                ..new.clone()
+            }
+        } else {
+            new
+        };
         let rule =
             permission_engine::ProfileRule::new(Uuid::now_v7().to_string(), new, storage::now_ms())
                 .map_err(|e| LoopError::Profile(e.to_string()))?;

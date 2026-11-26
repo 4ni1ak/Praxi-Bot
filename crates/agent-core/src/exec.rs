@@ -1520,9 +1520,7 @@ impl TurnExecutor {
                 _ => None,
             };
             // Page actions are judged against the origin the browser reports right now.
-            if crate::shared::is_page_action(&resolved.name)
-                || crate::shared::is_page_read(&resolved.name)
-            {
+            if crate::site_profiles::is_page_judged(&resolved.name) {
                 let tctx = ToolContext {
                     run_id: ctx.run_id.to_string(),
                     bot_id: Some(ctx.bot_id.to_string()),
@@ -2037,6 +2035,7 @@ impl TurnExecutor {
         // covers the tool itself.
         let started = std::time::Instant::now();
         let control = self.sh.control.read().clone();
+        let url_guard = self.sh.url_guard_for(ctx, &tool.spec().name);
         // `wait` may legitimately last up to its own cap (300 s); every other tool keeps the
         // configured limit.
         let tool_timeout = if tool.spec().name == "wait" {
@@ -2095,7 +2094,15 @@ impl TurnExecutor {
                     control_guard,
                     lane: ctx.lane(),
                 };
-                tool.call(&tctx, input).await
+                // A web fetch tool contacts addresses on its own: the owner's site rules
+                // hold for the one asked for and for every redirect it follows.
+                match &url_guard {
+                    Some(guard) => {
+                        tool_registry::with_url_guard(Arc::clone(guard), tool.call(&tctx, input))
+                            .await
+                    }
+                    None => tool.call(&tctx, input).await,
+                }
             },
         )
         .await;
@@ -2121,7 +2128,9 @@ impl TurnExecutor {
         };
         // The page the browser ended on may be one the owner blocked (a redirect from an
         // allowed site, a click, a back step): its content is withheld from the model.
-        if matches!(outcome, Ok(Ok(_)))
+        // An error result is withheld too: a failing call on a blocked page must not leak
+        // what the page said. Only a timeout (a fixed text) skips the check.
+        if !matches!(outcome, Err(()))
             && let Some(text) = self.blocked_landing_of(run, ctx, tool).await
         {
             return (text, true, Some(duration_ms), None, None);

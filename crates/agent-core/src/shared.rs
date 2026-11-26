@@ -763,15 +763,6 @@ pub(crate) fn is_page_action(name: &str) -> bool {
     )
 }
 
-/// Browser calls that read (or leave) the page open right now. They are not "page actions"
-/// (no grant is bound to their origin), but a site rule judges them by the page's origin.
-pub(crate) fn is_page_read(name: &str) -> bool {
-    matches!(
-        name,
-        "browser_snapshot" | "browser_screenshot" | "browser_back"
-    )
-}
-
 #[derive(Default)]
 pub(crate) struct Grants {
     /// `(chat, bot, tool, computer)`: a grant given to one bot never covers another
