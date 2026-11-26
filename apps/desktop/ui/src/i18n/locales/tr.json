@@ -4510,6 +4510,7 @@
     "sources": {
       "api": "yerel API",
       "app": "bu uygulama",
+      "discord": "Discord üzerinden",
       "imported": "içe aktarılan dosya",
       "peer": "başka bir bilgisayar",
       "telegram": "Telegram",

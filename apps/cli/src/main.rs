@@ -5,6 +5,7 @@ mod backup_crypto;
 mod calendar_host;
 mod catalog_cmd;
 mod channels;
+mod channels_discord;
 #[cfg(test)]
 mod channels_tests;
 mod chats_cmd;
@@ -545,6 +546,32 @@ enum ChannelsCmd {
         #[command(subcommand)]
         action: TelegramCmd,
     },
+    /// Manage the Discord channel (a bot account: private chat and allow-listed server channels).
+    Discord {
+        #[command(subcommand)]
+        action: DiscordCmd,
+    },
+}
+
+#[derive(Subcommand, Debug, PartialEq, Eq)]
+enum DiscordCmd {
+    /// Walk through connecting a Discord bot: store its token (hidden prompt, never printed), then test it.
+    Setup {
+        /// Read the token from this environment variable instead of prompting.
+        #[arg(long)]
+        token_env: Option<String>,
+        /// Language of the setup steps and Discord replies.
+        #[arg(long, value_parser = ["en", "tr", "de"], default_value = "en")]
+        lang: String,
+    },
+    /// Check the saved token with Discord and say in plain words what is wrong, if anything.
+    Test,
+    /// Print a one-time 6-digit pairing code (valid for 10 minutes) from the running daemon.
+    Pair,
+    /// Show whether Discord is configured, enabled, running, and whether an owner is paired.
+    Status,
+    /// Disable the Discord channel while keeping the stored token.
+    Disable,
 }
 
 #[derive(Subcommand, Debug, PartialEq, Eq)]
@@ -793,12 +820,14 @@ fn run() -> Result<()> {
                 | Command::Channels {
                     action: ChannelsCmd::Telegram {
                         action: TelegramCmd::Pair
+                    } | ChannelsCmd::Discord {
+                        action: DiscordCmd::Pair
                     }
                 }
         )
     {
         return Err(
-            "`--remote` is not supported for this local command; supported remote commands are `status`, `proxy`, `bots`, `chat`, `approve`, `answer`, `grants`, `schedules`, `workflow`, `email`, `channels telegram pair`, and `host status|devices|invite|revoke|standby|activate`".into(),
+            "`--remote` is not supported for this local command; supported remote commands are `status`, `proxy`, `bots`, `chat`, `approve`, `answer`, `grants`, `schedules`, `workflow`, `email`, `channels telegram pair`, `channels discord pair`, and `host status|devices|invite|revoke|standby|activate`".into(),
         );
     }
 
@@ -872,9 +901,13 @@ fn run() -> Result<()> {
         | Command::Mcp { .. }
         | Command::Grants { .. }
         | Command::Channels {
-            action: ChannelsCmd::Telegram {
-                action: TelegramCmd::Pair,
-            },
+            action:
+                ChannelsCmd::Telegram {
+                    action: TelegramCmd::Pair,
+                }
+                | ChannelsCmd::Discord {
+                    action: DiscordCmd::Pair,
+                },
         } => {
             return run_client(&cli, command, &data_dir);
         }
@@ -884,6 +917,12 @@ fn run() -> Result<()> {
                     action: TelegramCmd::Disable,
                 },
         } => return channels::telegram_disable(&data_dir, cli.json, &mut say),
+        Command::Channels {
+            action:
+                ChannelsCmd::Discord {
+                    action: DiscordCmd::Disable,
+                },
+        } => return channels_discord::discord_disable(&data_dir, cli.json, &mut say),
         _ => {}
     }
 
@@ -947,6 +986,9 @@ fn run() -> Result<()> {
         Command::Channels {
             action: ChannelsCmd::Telegram { action },
         } => run_telegram(&cli, &data_dir, store, action, &mut say),
+        Command::Channels {
+            action: ChannelsCmd::Discord { action },
+        } => run_discord(&cli, &data_dir, store, action, &mut say),
         Command::Secrets { action } => match action {
             SecretsCmd::List if cli.json => {
                 println!(
@@ -1267,6 +1309,66 @@ fn current_thread_runtime() -> Result<tokio::runtime::Runtime> {
         .build()?)
 }
 
+/// `bot channels discord setup|test|status` (the ones that read the secret store).
+fn run_discord(
+    cli: &Cli,
+    data_dir: &std::path::Path,
+    store: &dyn SecretStore,
+    action: &DiscordCmd,
+    say: &mut dyn FnMut(&str),
+) -> Result<()> {
+    match action {
+        DiscordCmd::Setup { token_env, lang } => {
+            let language = channel_discord::Lang::from_code(lang).unwrap_or_default();
+            if !cli.json && token_env.is_none() {
+                say(channels_discord::setup_steps(language));
+            }
+            let token = read_value(token_env.as_deref(), "Discord bot token (input hidden)")?;
+            channels_discord::discord_setup(store, data_dir, &token, cli.json, say)?;
+            channels_discord::save_language(data_dir, language)?;
+            current_thread_runtime()?.block_on(channels_discord::discord_setup_check(
+                store,
+                cli.json,
+                channels_discord::saved_language(data_dir),
+                say,
+            ))?;
+            Ok(())
+        }
+        DiscordCmd::Test => {
+            current_thread_runtime()?.block_on(channels_discord::discord_setup_check(
+                store,
+                cli.json,
+                channels_discord::saved_language(data_dir),
+                say,
+            ))?;
+            Ok(())
+        }
+        DiscordCmd::Status => {
+            let configured = channels_discord::discord_configured(store)?;
+            let enabled = channels_discord::discord_enabled(data_dir);
+            let daemon = make_client(cli, data_dir).ok().and_then(|c| {
+                current_thread_runtime()
+                    .ok()?
+                    .block_on(c.request(reqwest::Method::GET, "/v1/channels", None))
+                    .ok()?
+                    .as_array()?
+                    .iter()
+                    .find(|ch| ch["id"] == "discord")
+                    .cloned()
+            });
+            channels_discord::discord_status(
+                configured,
+                enabled,
+                daemon.as_ref(),
+                channels_discord::discord_paired_on_disk(data_dir),
+                cli.json,
+                &mut std::io::stdout().lock(),
+            )
+        }
+        DiscordCmd::Pair | DiscordCmd::Disable => Ok(()),
+    }
+}
+
 /// `bot channels telegram setup|status` (the ones that read the secret store).
 fn run_telegram(
     cli: &Cli,
@@ -1344,6 +1446,7 @@ async fn proxy_hold(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1416,6 +1519,12 @@ fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Resul
                         action: TelegramCmd::Pair,
                     },
             } => channels::telegram_pair(&c, json, &mut out).await,
+            Command::Channels {
+                action:
+                    ChannelsCmd::Discord {
+                        action: DiscordCmd::Pair,
+                    },
+            } => channels_discord::discord_pair(&c, json, &mut out).await,
             Command::Approve {
                 tool_call_id,
                 scope,

@@ -180,6 +180,8 @@ pub struct HttpDaemonClient {
     base_url: String,
     token: SecretValue,
     owner_key: Option<SecretValue>,
+    /// Source label sent with user messages (`x-praxi-message-source`).
+    message_source: &'static str,
     http: Client,
 }
 
@@ -201,6 +203,7 @@ impl HttpDaemonClient {
             base_url,
             token,
             owner_key: None,
+            message_source: "telegram",
             http: Client::new(),
         }
     }
@@ -211,6 +214,14 @@ impl HttpDaemonClient {
     #[must_use]
     pub fn with_owner_key(mut self, key: Option<SecretValue>) -> Self {
         self.owner_key = key;
+        self
+    }
+
+    /// Label user messages with another messaging channel (`discord`); the
+    /// daemon only accepts the known labels and treats others as the local API.
+    #[must_use]
+    pub fn with_message_source(mut self, source: &'static str) -> Self {
+        self.message_source = source;
         self
     }
 
@@ -231,7 +242,7 @@ impl HttpDaemonClient {
             .bearer_auth(self.token.expose())
             .timeout(Duration::from_secs(30));
         if path.starts_with("/v1/chats/") && path.ends_with("/messages") {
-            rb = rb.header("x-praxi-message-source", "telegram");
+            rb = rb.header("x-praxi-message-source", self.message_source);
         }
         if let Some(key) = &self.owner_key {
             rb = rb.header("x-praxi-owner-key", key.expose());

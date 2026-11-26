@@ -82,6 +82,19 @@
     "summary": "Jeder Schlüssel und jede App-Verbindung in Praxi-Bot hat eine Schaltfläche Verbindung testen:"
   },
   {
+    "doc": "de/discord.md",
+    "title": "Discord",
+    "headings": [
+      "Verbinden (etwa 5 Minuten)",
+      "Wer mit dem Bot sprechen darf",
+      "Im Chat",
+      "Freigaben",
+      "Nachrichten und Anhänge",
+      "Gut zu wissen"
+    ],
+    "summary": "Sprechen Sie mit Ihren Bots über Discord: in einer privaten Nachricht an Ihr"
+  },
+  {
     "doc": "de/embeddings.md",
     "title": "Helfer (optional): Embeddings und Entscheidungshelfer",
     "headings": [

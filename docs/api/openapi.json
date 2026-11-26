@@ -4819,6 +4819,62 @@
         ]
       }
     },
+    "/v1/channels/discord/pair-code": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Create a one-time pairing code for the Discord channel (valid 10 minutes;\nthe user sends `!pair <code>` to the bot in a private message).",
+        "operationId": "discord_pair_code",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairCodeDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the channel is not running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the daemon is still starting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/channels/telegram/pair-code": {
       "post": {
         "tags": [

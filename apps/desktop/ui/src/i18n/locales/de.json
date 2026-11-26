@@ -4510,6 +4510,7 @@
     "sources": {
       "api": "lokale API",
       "app": "diese App",
+      "discord": "über Discord",
       "imported": "importierte Datei",
       "peer": "ein anderer Computer",
       "telegram": "Telegram",
