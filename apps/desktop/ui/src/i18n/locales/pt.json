@@ -1402,7 +1402,8 @@
       "activity": "Activity",
       "automation": "Automation",
       "label": "Panel sections",
-      "library": "Library"
+      "library": "Library",
+      "tools": "Ferramentas"
     },
     "thisBot": "This bot",
     "toggle": "Bot panel",
@@ -1497,6 +1498,28 @@
       "tooMany": "Only {{max}} skills can be assigned. Pick fewer skills, or use \"All shared skills\"."
     },
     "writeConflict": "This bot was changed somewhere else while you were saving. Reload it and try again."
+  },
+  "browserProfile": {
+    "confirmAll": "O navegador deste bot será fechado e todos os seus dados salvos serão apagados, incluindo perfis nomeados. Você precisará entrar de novo. Os outros bots não são afetados.",
+    "confirmSite": "O navegador deste bot será fechado e os cookies e dados salvos de {{domain}} e dos seus subdomínios salvos serão apagados no perfil padrão. Talvez você precise entrar de novo.",
+    "done": "Terminei de entrar",
+    "empty": "Ainda não há sites com cookies salvos.",
+    "encrypted": "A pasta do perfil é criptografada pelo Windows. O navegador também usa a proteção de cookies do sistema quando disponível.",
+    "forgetAll": "Esquecer tudo",
+    "forgetNamed": "Esquecer {{domain}}",
+    "forgetSite": "Esquecer este site",
+    "intro": "Entre você mesmo no navegador gerenciado deste bot. O Praxi não pede nem guarda a sua senha. O navegador mantém cookies e dados dos sites para que as sessões sobrevivam às próximas execuções.",
+    "isolation": "Este perfil de navegador pertence apenas a este bot. Os outros bots não compartilham as suas sessões salvas.",
+    "manualHint": "Use a janela do navegador no computador que executa este bot. As ferramentas de navegador ficam em pausa para este bot. Escolha “Terminei de entrar” quando acabar.",
+    "protection": "O navegador usa a proteção de cookies do sistema quando disponível. Não foi possível confirmar a criptografia da pasta; alguns dados de sites podem ser guardados sem criptografia.",
+    "refresh": "Atualizar",
+    "signIn": "Entrar manualmente",
+    "siteHint": "Um cookie salvo não prova que você continua conectado. Sites que usam apenas outros tipos de armazenamento podem não aparecer aqui. Esquecer um site também apaga os outros dados de navegador salvos dele.",
+    "sites": "Sites com cookies salvos",
+    "sitesUnavailable": "Os nomes dos sites salvos não podem ser lidos agora. Termine de entrar, feche o navegador e atualize. Você ainda pode esquecer tudo.",
+    "size": "Tamanho do perfil: {{bytes}} bytes",
+    "title": "Perfil do navegador",
+    "warning": "Nos sites em que você entrou, este bot pode agir em seu nome. Suas regras de aprovação continuam valendo. Entre apenas nas contas que você quer que este bot use."
   },
   "chat": {
     "addCommand": "Add a command or bot",
@@ -2841,6 +2864,10 @@
       "bot_limit_warning": {
         "hint": "It has used 80% of a spending limit. Check the limits in the bot settings.",
         "title": "This bot is close to its limit"
+      },
+      "browser_profile_error": {
+        "hint": "Termine primeiro o login manual, depois atualize e tente de novo. O login manual precisa de uma tela de desktop no computador do bot. Se ainda falhar, veja os detalhes.",
+        "title": "Não foi possível atualizar o perfil do navegador"
       },
       "busy": {
         "hint": "Wait a moment and try again.",

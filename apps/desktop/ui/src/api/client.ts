@@ -2,6 +2,7 @@ import { createSseParser } from "./events.ts";
 import { exportQuery } from "../lib/chatHistory.ts";
 import { isLocalBaseUrl } from "../lib/liveViewState.ts";
 import type { Connection } from "./connection";
+import type { BrowserProfileStatus } from "./types";
 import type {
   ExportOutput,
   ImportInput,
@@ -1707,6 +1708,26 @@ export class ApiClient {
 
   listEmailAccounts(): Promise<EmailAccount[]> {
     return this.request("GET", "/email/accounts");
+  }
+
+  browserProfile(botId: string): Promise<BrowserProfileStatus> {
+    return this.request("GET", `/bots/${encodeURIComponent(botId)}/browser-profile`);
+  }
+
+  startBrowserSignIn(botId: string): Promise<void> {
+    return this.request("POST", `/bots/${encodeURIComponent(botId)}/browser-profile/sign-in`);
+  }
+
+  finishBrowserSignIn(botId: string): Promise<void> {
+    return this.request("POST", `/bots/${encodeURIComponent(botId)}/browser-profile/finish-sign-in`);
+  }
+
+  forgetBrowserSite(botId: string, domain: string): Promise<void> {
+    return this.request("POST", `/bots/${encodeURIComponent(botId)}/browser-profile/forget-site`, { body: { domain } });
+  }
+
+  forgetBrowserProfile(botId: string): Promise<void> {
+    return this.request("DELETE", `/bots/${encodeURIComponent(botId)}/browser-profile`);
   }
   /** The `password` is write-only: the daemon stores it and never returns it. */
   createEmailAccount(input: EmailAccountInput): Promise<EmailAccount> {

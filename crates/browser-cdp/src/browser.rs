@@ -214,6 +214,16 @@ impl Browser {
             let _ =
                 tokio::task::spawn_blocking(move || crate::profile::mark_clean_exit(&dir)).await;
         }
+        if opts.user_data_dir.is_some() {
+            let dir = profile.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::saved_sites::prepare(&dir)?;
+                let _ = crate::saved_sites::encrypt_directory(&dir);
+                Ok::<_, Error>(())
+            })
+            .await
+            .map_err(|e| Error::Io(e.to_string()))??;
+        }
         // A stale file from a previous run would point at a dead port.
         let _ = tokio::fs::remove_file(profile.join("DevToolsActivePort")).await;
 

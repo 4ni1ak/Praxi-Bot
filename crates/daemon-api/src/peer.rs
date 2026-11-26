@@ -406,7 +406,11 @@ fn is_site_rules_write(method: &Method, path: &str) -> bool {
 
 /// Why `method path` is refused to every paired peer role, if it is: the
 /// host-local provider management, MCP management and diagnostics endpoints.
+#[allow(clippy::too_many_lines)] // one ordered chain of guard checks
 fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> {
+    if crate::browser_profiles::is_profile_path(check_path) {
+        return Some("browser sessions are managed by the local owner only");
+    }
     if check_path == "/v1/channels/discord/pair-code" {
         return Some("Discord pairing is done on this computer by the owner");
     }

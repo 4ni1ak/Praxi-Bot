@@ -1402,7 +1402,8 @@
       "activity": "Activity",
       "automation": "Automation",
       "label": "Panel sections",
-      "library": "Library"
+      "library": "Library",
+      "tools": "Outils"
     },
     "thisBot": "This bot",
     "toggle": "Bot panel",
@@ -1497,6 +1498,28 @@
       "tooMany": "Only {{max}} skills can be assigned. Pick fewer skills, or use \"All shared skills\"."
     },
     "writeConflict": "This bot was changed somewhere else while you were saving. Reload it and try again."
+  },
+  "browserProfile": {
+    "confirmAll": "Le navigateur de ce bot sera fermé et toutes ses données enregistrées seront supprimées, y compris les profils nommés. Vous devrez vous reconnecter. Les autres bots ne sont pas affectés.",
+    "confirmSite": "Le navigateur de ce bot sera fermé et les cookies et données enregistrées de {{domain}} et de ses sous-domaines enregistrés seront effacés dans le profil par défaut. Vous devrez peut-être vous reconnecter.",
+    "done": "J’ai fini de me connecter",
+    "empty": "Aucun site avec des cookies enregistrés pour l’instant.",
+    "encrypted": "Le dossier du profil est chiffré par Windows. Le navigateur utilise aussi la protection des cookies du système lorsqu’elle est disponible.",
+    "forgetAll": "Tout oublier",
+    "forgetNamed": "Oublier {{domain}}",
+    "forgetSite": "Oublier ce site",
+    "intro": "Connectez-vous vous-même dans le navigateur géré de ce bot. Praxi ne demande ni n’enregistre votre mot de passe. Le navigateur conserve les cookies et les données des sites pour que les sessions survivent aux prochaines exécutions.",
+    "isolation": "Ce profil de navigateur appartient uniquement à ce bot. Les autres bots ne partagent pas ses sessions enregistrées.",
+    "manualHint": "Utilisez la fenêtre du navigateur sur l’ordinateur qui exécute ce bot. Les outils de navigateur sont en pause pour ce bot. Choisissez « J’ai fini de me connecter » une fois terminé.",
+    "protection": "Le navigateur utilise la protection des cookies du système lorsqu’elle est disponible. Le chiffrement du dossier n’a pas pu être confirmé ; certaines données de sites peuvent être stockées sans chiffrement.",
+    "refresh": "Actualiser",
+    "signIn": "Se connecter manuellement",
+    "siteHint": "Un cookie enregistré ne prouve pas que vous êtes toujours connecté. Les sites qui n’utilisent que d’autres stockages peuvent ne pas apparaître ici. Oublier un site efface aussi ses autres données de navigateur enregistrées.",
+    "sites": "Sites avec cookies enregistrés",
+    "sitesUnavailable": "Les noms des sites enregistrés ne peuvent pas être lus pour le moment. Terminez la connexion, fermez le navigateur, puis actualisez. Vous pouvez toujours tout oublier.",
+    "size": "Taille du profil : {{bytes}} octets",
+    "title": "Profil du navigateur",
+    "warning": "Sur les sites où vous êtes connecté, ce bot peut agir en votre nom. Vos règles d’approbation s’appliquent toujours. Ne vous connectez qu’aux comptes que ce bot doit utiliser."
   },
   "chat": {
     "addCommand": "Add a command or bot",
@@ -2841,6 +2864,10 @@
       "bot_limit_warning": {
         "hint": "It has used 80% of a spending limit. Check the limits in the bot settings.",
         "title": "This bot is close to its limit"
+      },
+      "browser_profile_error": {
+        "hint": "Terminez d’abord la connexion manuelle, puis actualisez et réessayez. La connexion manuelle nécessite un écran de bureau sur l’ordinateur du bot. Si cela échoue encore, consultez les détails.",
+        "title": "Le profil du navigateur n’a pas pu être mis à jour"
       },
       "busy": {
         "hint": "Wait a moment and try again.",

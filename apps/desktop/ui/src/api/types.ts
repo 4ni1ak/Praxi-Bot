@@ -2,6 +2,7 @@ import type { components } from "./schema";
 
 /** Types generated from `docs/api/openapi.json` (`pnpm --filter desktop-ui gen:api`). */
 type S = components["schemas"];
+export type BrowserProfileStatus = S["BrowserProfileStatus"];
 export type RecentLogs = S["RecentLogs"];
 export type AuditPage = S["AuditPage"];
 export type AuditEvent = S["AuditEventDto"];
