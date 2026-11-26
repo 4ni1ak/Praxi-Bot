@@ -16,6 +16,8 @@ At the top of the dialog you have:
   custom MCP servers, local developer servers, token-based services, and
   Composio account settings.
 
+![The Apps dialog: connected apps at the top, category chips, and the Discover grid](images/apps/apps-main.png)
+
 ## Three ways apps connect
 
 ### 1. Direct OAuth apps
@@ -79,6 +81,8 @@ Click **Advanced** in the top bar for developer and self-managed connections:
   **Connect** opens password fields under the row with a **Get API key** link
   where available. Secrets are saved in your OS keychain and never shown again.
 
+![The Advanced view, starting with the form for a custom MCP server](images/apps/apps-advanced.png)
+
 ## What "Connected" means
 
 The **Connected** section at the top of the main screen shows only **settled**
@@ -122,6 +126,12 @@ Inside **Manage** you can:
 
 - **Choose which bots may use the app** under **Who can use this app** and click
   **Save**.
+- **Decide whether the server may label its own tools** under **Do you trust
+  this server to describe its own tools honestly?** With **No** (the default),
+  every action asks first; with **Yes**, only the tools the server marks
+  read-only run without asking. See [MCP servers](mcp-servers.md) for how these
+  labels are used, and [Connect your apps](connect-your-apps.md#when-an-app-changes)
+  for what happens when a tool changes after you approved it.
 - **Turn individual tools on or off** under **Tools bots may use** (this writes
   `tool_exclude` in `mcp.toml`). Tools that modify or send/delete data are
   labeled **changes data** or **can delete or send**. If you configured a custom
@@ -134,6 +144,10 @@ Inside **Manage** you can:
   daemon to restart or reconnect the server immediately.
 - **Disconnect**: asks for confirmation (**Disconnect this server?**), then
   removes the server configuration from `mcp.toml`.
+- **Test connection**: starts the server and lists its tools, without running
+  any of them (see [Test connection](connection-test.md)).
+
+![The Manage panel of a connected app: bot access, the trust question, tools, and Test connection](images/apps/apps-manage.png)
 
 ### Composio apps
 
@@ -209,6 +223,8 @@ A few important rules:
 Failed MCP servers display a specific hint directly under the row together with
 a **Show details** toggle containing the **Error** message and **What the server
 printed** (`stderr`):
+
+![A local server that cannot start: the inline Install uv prompt and the expanded details](images/apps/apps-error.png)
 
 - **Missing runtime (`Node.js`, `uv`, `pipx`, `docker`):** for **Node.js** and
   **uv**, Praxi shows an inline **Install** prompt (or you can install them from
