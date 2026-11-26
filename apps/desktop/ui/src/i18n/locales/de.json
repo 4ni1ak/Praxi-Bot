@@ -6436,6 +6436,7 @@
       "recentTitle": "Aus einem letzten OK",
       "remove": "Entfernen",
       "removed": "Regel entfernt.",
+      "scope": "Eine Regel gilt auf jedem Computer, den dieser Bot nutzt: deinem Computer und dem Host. Programme werden über ihren vollständigen Pfad erkannt.",
       "site": "Website",
       "siteHint": "Nur der Name, z. B. example.com (ohne https://, ohne Pfad).",
       "subdomains": "Auch Subdomains einbeziehen (z. B. shop.example.com)",

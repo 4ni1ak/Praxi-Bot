@@ -320,12 +320,22 @@ fn host_of(url: &url::Url) -> Option<String> {
     (!host.is_empty()).then_some(host)
 }
 
-/// Normalise a program image path: `/` separators, no `.` parts, refused when relative
-/// or containing `..` / NUL. A Windows drive path is lower-cased (case-insensitive).
+/// Normalise a program image path: surrounding quotes and spaces removed, `/` separators,
+/// no `.` parts, refused when relative or containing `..` / NUL. A Windows drive path is
+/// lower-cased (case-insensitive), loses the trailing dots / spaces Windows ignores and gets
+/// `.exe` when its last part has no program extension (`exe`, `com`, `bat`, `cmd`), so
+/// `C:\Windows\notepad` and `C:\Windows\NOTEPAD.EXE` are one key. The same function is
+/// applied to a rule's key and to the image path of a running program.
 #[must_use]
 pub fn normalize_app(path: &str) -> Option<String> {
-    let path = path.trim().replace('\\', "/");
-    if path.is_empty() || path.len() > 1024 || path.contains('\0') {
+    let mut path = path.trim();
+    for q in ['"', '\''] {
+        if let Some(inner) = path.strip_prefix(q).and_then(|p| p.strip_suffix(q)) {
+            path = inner.trim();
+        }
+    }
+    let path = path.replace('\\', "/");
+    if path.is_empty() || path.len() > 1024 || path.contains('\0') || path.contains('"') {
         return None;
     }
     let bytes = path.as_bytes();
@@ -333,7 +343,7 @@ pub fn normalize_app(path: &str) -> Option<String> {
     if !(drive && bytes[2] == b'/' || path.starts_with('/') && !path.starts_with("//")) {
         return None;
     }
-    let mut parts = Vec::new();
+    let mut parts: Vec<&str> = Vec::new();
     for part in path.split('/') {
         match part {
             "" | "." => {}
@@ -344,12 +354,23 @@ pub fn normalize_app(path: &str) -> Option<String> {
     if parts.is_empty() || (drive && parts.len() < 2) {
         return None;
     }
-    let joined = parts.join("/");
-    Some(if drive {
-        joined.to_ascii_lowercase()
-    } else {
-        format!("/{joined}")
-    })
+    if !drive {
+        return Some(format!("/{}", parts.join("/")));
+    }
+    // Windows ignores trailing dots and spaces in a name.
+    for part in parts.iter_mut().skip(1) {
+        *part = part.trim_end_matches(['.', ' ']);
+        if part.is_empty() {
+            return None;
+        }
+    }
+    let mut joined = parts.join("/").to_ascii_lowercase();
+    let last = parts.last().copied().unwrap_or_default();
+    let ext = last.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+    if !matches!(ext.as_deref(), Some("exe" | "com" | "bat" | "cmd")) {
+        joined.push_str(".exe");
+    }
+    Some(joined)
 }
 
 #[cfg(test)]
@@ -532,6 +553,36 @@ mod tests {
             10,
         );
         assert!(past.is_err());
+    }
+
+    #[test]
+    fn app_keys_typed_loosely_reach_the_same_key_as_the_os_image_path() {
+        let image = normalize_app(r"C:\Windows\System32\notepad.exe").unwrap();
+        for typed in [
+            r"C:\Windows\System32\notepad",
+            r"c:\windows\system32\NOTEPAD.EXE",
+            r#""C:\Windows\System32\notepad.exe""#,
+            r"'C:/Windows/System32/notepad'",
+            r"  C:\Windows\System32\notepad.exe.  ",
+        ] {
+            assert_eq!(
+                normalize_app(typed).as_deref(),
+                Some(image.as_str()),
+                "{typed}"
+            );
+        }
+        // Idempotent, and a program with another extension in its name still gets `.exe`.
+        assert_eq!(normalize_app(&image).as_deref(), Some(image.as_str()));
+        assert_eq!(
+            normalize_app(r"C:\Apps\tool.v2").as_deref(),
+            Some("c:/apps/tool.v2.exe")
+        );
+        // Unix paths keep their name (executables have no extension there).
+        assert_eq!(
+            normalize_app("/usr/bin/foo").as_deref(),
+            Some("/usr/bin/foo")
+        );
+        assert_eq!(normalize_app(r#"C:\a"b\x.exe"#), None);
     }
 
     #[test]

@@ -6322,6 +6322,7 @@
       "recentTitle": "From a recent OK",
       "remove": "Remove",
       "removed": "Rule removed.",
+      "scope": "Aturan berlaku di setiap komputer yang dipakai bot ini: komputermu dan host. Program dikenali lewat path lengkapnya.",
       "site": "Website",
       "siteHint": "Only the name, like example.com (no https://, no path).",
       "subdomains": "Also cover its subdomains (like shop.example.com)",

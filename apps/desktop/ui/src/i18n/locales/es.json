@@ -6436,6 +6436,7 @@
       "recentTitle": "De un visto bueno reciente",
       "remove": "Quitar",
       "removed": "Regla quitada.",
+      "scope": "Una regla se aplica en todos los ordenadores que usa este bot: el tuyo y el host. Los programas se reconocen por su ruta completa.",
       "site": "Sitio web",
       "siteHint": "Solo el nombre, como example.com (sin https:// ni ruta).",
       "subdomains": "Incluir también sus subdominios (como shop.example.com)",
