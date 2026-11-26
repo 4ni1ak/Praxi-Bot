@@ -8,7 +8,8 @@ the rule, and turn it on. New rules always start off.
 Existing mail schedules, prompt schedules and signed addresses appear in this same list. Open one to add quiet hours and limits; saving pauses it until you turn the reviewed rule on. Advanced workflow, precheck and file-watch schedules remain in Schedules.
 
 For mail, connect an IMAP mailbox first and allow the bot's scheduled mailbox
-reads. Choose a folder, sender address (exact, contains, or domain), and optional
+reads. Choose a folder, sender (an exact address, or a domain that also covers its subdomains; never a
+part of the text), and optional
 subject or attachment filter. Checks run every two minutes by default, never
 more often than once a minute. The first check establishes a starting point;
 old mail does not start runs. Bursts become one run with a list of headers.

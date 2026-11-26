@@ -157,6 +157,15 @@ allowed_senders = ["alice@example.com", "@corp.example"]   # who may reach a bot
   ignored, counted and logged without its text. A mail that cannot be handed to
   the bot is retried three times and then skipped (counted), so it cannot block
   later mails. Mails above `max_per_poll` stay unread and come at the next check.
+  A channel that was switched on before this rule existed and has no list keeps
+  its settings but passes nothing on; the channel card shows a notice until you
+  add a sender. A schedule trigger of kind `email` follows the same rule (one
+  shared matcher): an entry with `@` is an exact address; `corp.com` or
+  `@corp.com` is that domain or a subdomain of it (`mail.corp.com`, never
+  `corp.com.evil.test` or `evilcorp.com`). Only the bare address counts, never
+  a piece of the display name, and there is no "contains" mode. The From
+  header is not authenticated (no DMARC check), so a spoofed owner address
+  passes where the sender's domain does not enforce DMARC.
 - The "Test connection" action logs in over TLS exactly as configured and
   reports one status per server (`ok`, `unreachable`, `tls`, `auth_failed`,
   `protocol`, `timeout`); it never sends or reads mail and never shows what the

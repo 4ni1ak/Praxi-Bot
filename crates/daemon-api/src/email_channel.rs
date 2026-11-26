@@ -86,6 +86,11 @@ pub struct EmailChannelDto {
     /// Mails ignored since the channel started because the sender is not on
     /// the mailbox's allowed-senders list.
     pub ignored_mails: usize,
+    /// The channel is switched on but the mailbox names no allowed sender, so
+    /// it passes NO mail to the bot until the owner adds one (an older channel
+    /// that ran for anybody stops here until the owner confirms a list).
+    #[serde(default)]
+    pub needs_senders: bool,
 }
 
 /// Implemented by the embedder.

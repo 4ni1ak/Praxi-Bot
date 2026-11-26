@@ -9,8 +9,8 @@ sind immer zunächst ausgeschaltet.
 Bestehende Mail- und Auftragszeitpläne sowie signierte Adressen erscheinen in derselben Liste. Öffnen Sie einen Eintrag, um Ruhezeiten und Grenzen hinzuzufügen. Speichern pausiert ihn bis zum erneuten Einschalten. Erweiterte Workflow-, Vorprüfungs- und Dateiüberwachungszeitpläne bleiben unter Zeitpläne.
 
 Verbinden Sie für E-Mails zuerst ein IMAP-Postfach und erlauben Sie dem Bot
-geplante Postfachabfragen. Wählen Sie Ordner, Absender (genaue Adresse,
-enthält oder Domain) und optional Betreff oder Anhang. Standardmäßig wird
+geplante Postfachabfragen. Wählen Sie Ordner, Absender (genaue Adresse
+oder eine Domain samt Subdomains, nie ein Textteil) und optional Betreff oder Anhang. Standardmäßig wird
 alle zwei Minuten geprüft, frühestens jede Minute. Die erste Prüfung setzt
 den Ausgangspunkt; alte E-Mails starten keine Ausführung. Mehrere neue
 E-Mails werden zu einer Liste von Kopfzeilen zusammengefasst. Die Suche

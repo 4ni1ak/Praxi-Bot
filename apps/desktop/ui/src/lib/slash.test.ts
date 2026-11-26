@@ -7,7 +7,8 @@ import {
   appCommandFor,
   APP_COMMANDS,
   parseSlashInput,
-  SLASH_COMMANDS
+  SLASH_COMMANDS,
+  unknownSlashCommand
 } from "./slash.ts";
 
 test("slash trigger only in the first word of the message", () => {
@@ -105,5 +106,13 @@ test("an app command is exactly /name; arguments or other text go to the bot", (
   assert.equal(appCommandFor("/nope"), null);
   for (const c of APP_COMMANDS) {
     assert.ok(!SLASH_COMMANDS.some((d) => d.name === c.name), `${c.name} clashes with a daemon command`);
+  }
+});
+
+test("a lone unknown /word is flagged, known commands, arguments and paths are not", () => {
+  assert.equal(unknownSlashCommand("/foobar"), "foobar");
+  assert.equal(unknownSlashCommand("  /FooBar "), "foobar");
+  for (const ok of ["/new", "/stop", "/help", "/export", "/workflow", "/foobar with text", "/usr/bin/ls", "hello /foobar"]) {
+    assert.equal(unknownSlashCommand(ok), null, ok);
   }
 });

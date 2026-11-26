@@ -270,7 +270,9 @@ impl ChannelControl for EmailChannelHost {
 #[async_trait::async_trait]
 impl EmailChannelControl for EmailChannelHost {
     fn get(&self) -> EmailChannelDto {
-        let settings = dto_of(&self.settings.lock());
+        let raw = self.settings.lock().clone();
+        let needs_senders = raw.enabled && self.require_senders(&raw).is_err();
+        let settings = dto_of(&raw);
         let channel = self.channel();
         EmailChannelDto {
             settings,
@@ -278,6 +280,7 @@ impl EmailChannelControl for EmailChannelHost {
             pending_replies: channel.as_ref().map_or(0, |c| c.pending_replies().len()),
             skipped_mails: channel.as_ref().map_or(0, EmailChannel::skipped_count),
             ignored_mails: channel.as_ref().map_or(0, EmailChannel::ignored_count),
+            needs_senders,
         }
     }
 

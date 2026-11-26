@@ -77,8 +77,15 @@ fn bot_of(s: &AppState, bot: &str) -> Result<BotId, ApiError> {
         .ok_or_else(|| ApiError::not_found("bot"))
 }
 fn rule_of(config: &Value) -> Result<Rule, ApiError> {
-    let rule: Rule = serde_json::from_value(config.clone())
+    let mut rule: Rule = serde_json::from_value(config.clone())
         .map_err(|_| bad_trigger("check the trigger's source, filters, quiet hours and limits"))?;
+    // There is no "contains" sender mode: a value that is an address or a
+    // domain moves onto the shared rule, free text is refused.
+    if matches!(rule.source, TriggerSource::Mail { .. }) && !rule.filters.migrate_legacy() {
+        return Err(bad_trigger(
+            "use an exact address (ann@example.com) or a domain (example.com) as the sender",
+        ));
+    }
     rule.validate().map_err(bad_trigger)?;
     Ok(rule)
 }
@@ -164,13 +171,21 @@ fn schedule(s: &AppState, bot: BotId, id: Uuid) -> Result<Schedule, ApiError> {
 }
 fn dto(s: &AppState, row: &Schedule) -> Result<TriggerDto, ApiError> {
     let store = s.schedule_store()?;
-    let (rule, state) = store
+    let (mut rule, state) = store
         .registry(row.id)?
         .ok_or_else(|| ApiError::not_found("trigger"))?;
+    // A rule saved with the old "contains" sender mode: show it on the shared
+    // rule when it is an address or a domain, otherwise show it switched off
+    // with a notice (it matches nothing meanwhile; it is never open).
+    let sender_unusable = matches!(rule.source, TriggerSource::Mail { .. })
+        && rule.filters.sender_match == scheduler::registry::SenderMatch::Contains
+        && !rule.filters.migrate_legacy();
     let checks = store.check_state(row)?;
     let now = storage::now_ms();
     let today = now.div_euclid(86_400_000);
-    let last_error = if let Some(reason) = &state.last_error {
+    let last_error = if sender_unusable {
+        Some("sender".into())
+    } else if let Some(reason) = &state.last_error {
         Some(if reason == "queue" { "queue" } else { "run" }.into())
     } else if checks.trigger_errors >= 10 {
         Some("source".into())
@@ -190,7 +205,7 @@ fn dto(s: &AppState, row: &Schedule) -> Result<TriggerDto, ApiError> {
             s,
             serde_json::to_value(rule).map_err(|_| ApiError::internal("could not read trigger"))?,
         ),
-        enabled: row.enabled,
+        enabled: row.enabled && !sender_unusable,
         last_fired_at_ms: state.last_fired_at_ms,
         count_today: Some(
             state
@@ -251,6 +266,7 @@ pub(crate) async fn list(
         if row.precheck.is_some() {
             continue;
         }
+        let mut sender_notice = false;
         let (source, filters) = match store.get_trigger(row.id)? {
             Some(scheduler::Trigger::Email {
                 account,
@@ -261,9 +277,20 @@ pub(crate) async fn list(
                     .iter()
                     .find(|a| a.name == account)
                     .map_or("", |a| a.address.as_str());
+                // The old filter was a substring. Keep it only when it is an
+                // address or a domain (then it follows the shared rule); free
+                // text is shown switched off with a notice.
+                let mut filters = scheduler::registry::Filters {
+                    sender: from_filter.clone(),
+                    ..scheduler::registry::Filters::default()
+                };
+                let usable = filters.migrate_legacy();
+                if !usable {
+                    sender_notice = true;
+                }
                 (
                     serde_json::json!({"kind":"mail","account":account,"folder":"INBOX","own_address":own,"poll_seconds":120}),
-                    serde_json::json!({"sender":from_filter,"sender_match":"contains","subject":subject_filter.unwrap_or_default(),"has_attachment":false}),
+                    serde_json::json!({"sender":filters.sender,"sender_match":filters.sender_match,"subject":subject_filter.unwrap_or_default(),"has_attachment":false}),
                 )
             }
             None => (
@@ -272,7 +299,7 @@ pub(crate) async fn list(
             ),
             _ => continue,
         };
-        out.push(existing_dto(
+        let mut shown = existing_dto(
             &s,
             "schedule",
             row.id.0,
@@ -283,7 +310,12 @@ pub(crate) async fn list(
             filters,
             row.enabled,
             row.last_run_at,
-        ));
+        );
+        if sender_notice {
+            shown.enabled = false;
+            shown.last_error = Some("sender".into());
+        }
+        out.push(shown);
     }
     for hook in s.storage().list_incoming_webhooks(s.user_id(), bot)? {
         if linked.contains(&hook.id) {
