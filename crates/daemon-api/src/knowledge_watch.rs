@@ -401,10 +401,10 @@ async fn step(s: &AppState, owner: Scope, source: Source, p: Params, now: i64) {
         hub.sources.lock().insert(id, w);
         return;
     };
-    if crate::knowledge_runtime::quiesce_bot(s, owner.bot_id)
-        .await
-        .is_err()
-    {
+    // A bot that is searching right now keeps its run: quiescing would cancel
+    // the search and fail it.  Wait for an idle moment (next poll) instead;
+    // the change stays settled, so it is indexed then.
+    if !crate::knowledge_runtime::bot_is_idle(s, owner.bot_id) {
         hub.sources.lock().insert(id, w);
         return;
     }

@@ -556,3 +556,83 @@ async fn workspace_warning_event_carries_no_bot_folder_or_file_names() {
     );
     assert_eq!(soft.soft_limit_bots, vec![bot]);
 }
+
+/// Make `link` a directory link to `target` (symlink on Unix, junction on Windows).
+fn link_dir(link: &std::path::Path, target: &std::path::Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let output = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .creation_flags(0x0800_0000)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "junction creation failed");
+    }
+}
+
+#[test]
+fn workspace_file_read_refuses_a_folder_swapped_for_a_link_after_the_check() {
+    let ws = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::create_dir(ws.path().join("notes")).unwrap();
+    std::fs::write(ws.path().join("notes").join("a.txt"), "inside").unwrap();
+    std::fs::write(outside.path().join("a.txt"), "OUTSIDE SECRET").unwrap();
+    let segments = vec!["notes".to_owned(), "a.txt".to_owned()];
+    let swap = || {
+        std::fs::rename(ws.path().join("notes"), ws.path().join("notes-real")).unwrap();
+        link_dir(&ws.path().join("notes"), outside.path());
+    };
+    let err = crate::workspace_routes::read_workspace_file_checked(
+        ws.path(),
+        &segments,
+        1024,
+        "preview",
+        &swap,
+    )
+    .expect_err("a read that follows a link swapped in after the check must be refused");
+    assert_eq!(err.status(), StatusCode::FORBIDDEN);
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_file_read_refuses_a_file_swapped_for_a_symlink_after_the_check() {
+    let ws = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(ws.path().join("a.txt"), "inside").unwrap();
+    std::fs::write(outside.path().join("secret.txt"), "OUTSIDE SECRET").unwrap();
+    let segments = vec!["a.txt".to_owned()];
+    let swap = || {
+        std::fs::remove_file(ws.path().join("a.txt")).unwrap();
+        std::os::unix::fs::symlink(outside.path().join("secret.txt"), ws.path().join("a.txt"))
+            .unwrap();
+    };
+    let err = crate::workspace_routes::read_workspace_file_checked(
+        ws.path(),
+        &segments,
+        1024,
+        "preview",
+        &swap,
+    )
+    .expect_err("a file swapped for a symlink after the check must be refused");
+    assert_eq!(err.status(), StatusCode::FORBIDDEN);
+}
+
+#[test]
+fn workspace_file_read_still_serves_a_plain_file() {
+    let ws = tempfile::tempdir().unwrap();
+    std::fs::write(ws.path().join("a.txt"), "inside").unwrap();
+    let (_, bytes) = crate::workspace_routes::read_workspace_file_checked(
+        ws.path(),
+        &["a.txt".to_owned()],
+        1024,
+        "preview",
+        &|| {},
+    )
+    .unwrap();
+    assert_eq!(bytes, b"inside");
+}

@@ -1357,6 +1357,105 @@ pub(crate) async fn get_bot_workspace(
     }))
 }
 
+/// Read one regular file of a bot workspace without trusting the earlier path
+/// check: the path is validated, the file is then opened without following a
+/// final link (`O_NOFOLLOW` on Unix, `FILE_FLAG_OPEN_REPARSE_POINT` on Windows),
+/// and the path is validated again and must still lead to the file that was
+/// opened.  A link swapped in between the check and the open is refused.
+/// `before_open` runs between the first check and the open (tests swap files
+/// there).
+pub(crate) fn read_workspace_file_checked(
+    ws_root: &Path,
+    segments: &[String],
+    max: u64,
+    limit_name: &str,
+    before_open: &dyn Fn(),
+) -> Result<(PathBuf, Vec<u8>), ApiError> {
+    use std::io::Read;
+
+    let file_path = resolve_existing_in_workspace(ws_root, segments, false)?;
+    before_open();
+    let mut file = open_without_following_links(&file_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            ApiError::not_found("workspace file")
+        } else {
+            ApiError::forbidden("symlinks and reparse points are not accessible")
+        }
+    })?;
+    let meta = file
+        .metadata()
+        .map_err(|e| ApiError::internal(format!("read file: {e}")))?;
+    if crate::data_routes::is_reparse_point(&meta) {
+        return Err(ApiError::forbidden(
+            "symlinks and reparse points are not accessible",
+        ));
+    }
+    if !meta.is_file() {
+        return Err(ApiError::bad_request(
+            "requested path is not a regular file",
+        ));
+    }
+    if meta.len() > max {
+        return Err(ApiError::bad_request(format!(
+            "file exceeds the {} MiB limit for {limit_name}",
+            max / (1024 * 1024),
+        )));
+    }
+    // The handle is the file that gets served: the path must still lead to it.
+    let again = resolve_existing_in_workspace(ws_root, segments, false)?;
+    let now = fs::symlink_metadata(&again).map_err(|_| ApiError::not_found("workspace file"))?;
+    if again != file_path || !same_file(&meta, &now) {
+        return Err(ApiError::forbidden("workspace file changed while reading"));
+    }
+    let mut bytes = Vec::new();
+    // Bounded read: the file may grow after the size check.
+    (&mut file)
+        .take(max + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| ApiError::internal(format!("read file: {e}")))?;
+    if bytes.len() as u64 > max {
+        return Err(ApiError::bad_request(format!(
+            "file exceeds the {} MiB limit for {limit_name}",
+            max / (1024 * 1024),
+        )));
+    }
+    Ok((file_path, bytes))
+}
+
+#[cfg(unix)]
+fn open_without_following_links(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    // NONBLOCK: a FIFO swapped in must not hang the open; it is refused as a
+    // non-regular file afterwards.
+    let flags = rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(flags.bits().cast_signed())
+        .open(path)
+}
+
+#[cfg(windows)]
+fn open_without_following_links(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+#[cfg(unix)]
+fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+/// std has no stable file id on Windows; size and write time must match.
+#[cfg(not(unix))]
+fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    a.len() == b.len() && a.modified().ok() == b.modified().ok()
+}
+
 /// Read or download a single file strictly within a bot's workspace.
 #[utoipa::path(
     get,
@@ -1385,31 +1484,22 @@ pub(crate) async fn get_bot_workspace_file(
     let ws_root =
         ws_dir.ok_or_else(|| ApiError::bad_request("workspaces root is not configured"))?;
     let segments = normalize_rel_segments(&query.path)?;
-    let file_path = resolve_existing_in_workspace(&ws_root, &segments, false)?;
-    let meta =
-        fs::symlink_metadata(&file_path).map_err(|_| ApiError::not_found("workspace file"))?;
-    if !meta.is_file() {
-        return Err(ApiError::bad_request(
-            "requested path is not a regular file",
-        ));
-    }
     let max = if query.download {
         MAX_DOWNLOAD_BYTES
     } else {
         MAX_PREVIEW_BYTES
     };
-    if meta.len() > max {
-        return Err(ApiError::bad_request(format!(
-            "file exceeds the {} MiB limit for {}",
-            max / (1024 * 1024),
-            if query.download {
-                "download"
-            } else {
-                "preview"
-            }
-        )));
-    }
-    let bytes = fs::read(&file_path).map_err(|e| ApiError::internal(format!("read file: {e}")))?;
+    let limit_name = if query.download {
+        "download"
+    } else {
+        "preview"
+    };
+    // Blocking file system work stays off the async workers.
+    let (file_path, bytes) = tokio::task::spawn_blocking(move || {
+        read_workspace_file_checked(&ws_root, &segments, max, limit_name, &|| {})
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("read file: {e}")))??;
 
     let content_type = if query.download {
         "application/octet-stream"
