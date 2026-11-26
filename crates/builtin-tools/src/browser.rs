@@ -28,11 +28,21 @@ use crate::fill_secret::{Source, names_a_secret, refused, scrub, source};
 use crate::util::{exec_err, finish_text, parse, save_file, spec};
 
 mod act;
+mod attach;
+#[cfg(test)]
+mod attach_tests;
+mod pointer;
+#[cfg(test)]
+mod pointer_tests;
 mod profiles;
+mod recover;
 #[cfg(test)]
 mod reopen_tests;
+mod sideband;
 pub use act::{can_egress as act_can_egress, summary as act_summary};
 pub use profiles::{BrowserProfiles, ProfileStatus};
+pub use recover::{RECOVERY_CLOSE, RECOVERY_OPEN, split_recovery};
+pub use sideband::{Sideband, note_screenshot, take as take_sideband};
 
 pub use browser_cdp::FieldTarget;
 
@@ -42,6 +52,10 @@ const NO_SECRET_FILL: &str = "this browser backend cannot tell which page frame 
 const NO_SMART_SCROLL: &str = "this browser backend only scrolls by pixels: use dy (positive = down) and, if you need to reach something, snapshot again";
 const NO_HOVER: &str = "this browser backend cannot hover: click the element instead";
 const NO_SELECT_TEXT: &str = "this browser backend cannot select text";
+const NO_POINTER: &str =
+    "this browser backend cannot point at coordinates: use refs from browser_snapshot";
+const NO_ATTACH: &str =
+    "this browser backend cannot attach to a browser the owner already has open";
 const NO_CONSENT: &str = "this browser backend cannot dismiss a consent dialog by itself: use browser_snapshot and click its reject / necessary-only button";
 
 /// What `browser_scroll` was asked to do. At most one of `dx`/`dy`, `pages`, `to`, `into_view`.
@@ -83,6 +97,62 @@ pub enum Wait {
     Selector(String),
     /// No network activity for a short while.
     Idle,
+}
+
+/// What `browser_pointer` does. Points are screenshot pixels (see [`GroundedShot`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum PointerAct {
+    /// Press and release at the point.
+    Click {
+        /// Context-menu button instead of the main one.
+        right: bool,
+        /// Two presses in a row.
+        double: bool,
+    },
+    /// Move there and rest (hover menus, tooltips).
+    Move,
+    /// Press at the point, release at `to`.
+    Drag {
+        /// Where the button is released.
+        to: (f64, f64),
+    },
+    /// Mouse wheel over the point; CSS pixels, positive is down / right.
+    Scroll {
+        /// Pixels right.
+        dx: f64,
+        /// Pixels down.
+        dy: f64,
+    },
+    /// Type into whatever has keyboard focus (a pointer click put it there).
+    Type(String),
+    /// Press a key or chord such as `Enter` or `Control+a`.
+    Key(String),
+}
+
+/// One `browser_pointer` call.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PointerOpts {
+    /// What to do.
+    pub act: PointerAct,
+    /// The point, in screenshot pixels (`None` for typing and keys).
+    pub at: Option<(f64, f64)>,
+    /// How to answer a dialog the action opens.
+    pub dialog: Option<String>,
+}
+
+/// A screenshot taken to point at.
+#[derive(Debug, Clone)]
+pub struct GroundedShot {
+    /// Image bytes.
+    pub bytes: Vec<u8>,
+    /// File extension.
+    pub ext: &'static str,
+    /// Picture width in pixels.
+    pub width: u32,
+    /// Picture height in pixels.
+    pub height: u32,
+    /// How the model maps the picture to pointer coordinates, and the frames it cannot reach by ref.
+    pub notes: String,
 }
 
 /// Abstraction over a controllable browser. Every mutating call returns a
@@ -192,6 +262,40 @@ pub trait BrowserDriver: Send + Sync {
     /// the page after it, or says that no dialog was found.
     async fn dismiss_consent(&self) -> Result<String, String> {
         Err(NO_CONSENT.into())
+    }
+    /// Click, drag, scroll or type by coordinates read off a screenshot: the fallback for what
+    /// has no ref (a widget in another site's frame, a canvas, a control drawn without a role).
+    /// Returns the refreshed page view and what the browser found under the point.
+    async fn pointer(&self, o: &PointerOpts) -> Result<String, String> {
+        let _ = o;
+        Err(NO_POINTER.into())
+    }
+    /// Browser-reported origin of the frame that would receive the pointer events of `o` (for
+    /// a drag, both ends; `None` when they differ, or when it cannot be told). A backend that
+    /// cannot look under a point says only where the top page is, which an embedded frame of
+    /// another site can differ from: such a backend must not be trusted with site rules.
+    async fn pointer_origin(&self, o: &PointerOpts) -> Option<String> {
+        let _ = o;
+        self.current_url().await.and_then(|u| origin_of(&u))
+    }
+    /// A screenshot made for pointing at (see [`GroundedShot`]).
+    async fn grounded_screenshot(&self) -> Result<GroundedShot, String> {
+        Err(NO_POINTER.into())
+    }
+    /// Use the browser the owner already has open (remote debugging on this computer)
+    /// instead of the assistant's own. `None` looks for one at the usual places. Returns a
+    /// description of the browser now in use.
+    async fn attach(&self, endpoint: Option<&str>) -> Result<String, String> {
+        let _ = endpoint;
+        Err(NO_ATTACH.into())
+    }
+    /// Go back to the assistant's own browser.
+    async fn detach(&self) -> Result<String, String> {
+        Err(NO_ATTACH.into())
+    }
+    /// The endpoint of the owner's browser in use; `None`: the assistant's own.
+    fn attached(&self) -> Option<String> {
+        None
     }
     /// Wait for a condition.
     async fn wait(&self, cond: Wait, timeout: Option<Duration>) -> Result<String, String>;
@@ -383,6 +487,20 @@ pub struct CdpDriver {
     view: Option<Arc<browser_cdp::BrowserViewTarget>>,
     /// Network guard of served sessions (`None`: unrestricted).
     served: parking_lot::RwLock<Option<browser_cdp::ServedNetwork>>,
+    /// The owner's own browser while the bot is attached to it (see [`BrowserDriver::attach`]);
+    /// shared by the headless and headed drivers of one bot. While set for the run that asked,
+    /// a new session connects there and never starts a browser of the assistant's own. It
+    /// belongs to ONE run: another run's first browser call, an idle close and `shutdown` end it.
+    attach: Arc<parking_lot::Mutex<Option<AttachScope>>>,
+}
+
+/// An attach to the owner's browser, and the run it was made for.
+#[derive(Debug, Clone)]
+struct AttachScope {
+    /// Where the owner's browser listens.
+    endpoint: String,
+    /// The run that asked for it (`None`: made outside a tool call, in force for any run).
+    run: Option<String>,
 }
 
 /// Reports whether real bot work is going on (see [`CdpDriver::set_activity_probe`]).
@@ -424,6 +542,15 @@ pub(crate) fn sanitize_dialog_message(msg: &str) -> String {
     };
     out = out.replace('"', "\\\"");
     out
+}
+
+/// Said after a click that changed neither the page's text and controls nor its address: a
+/// custom widget (a styled checkbox or radio, a toggle) often ignores a synthetic click on its
+/// accessible stand-in, and the model should look rather than assume it worked.
+fn silent_click_note(diff: &browser_cdp::SnapshotDiff) -> Option<&'static str> {
+    diff.is_empty().then_some(
+        "~ the click changed nothing in the page text or controls. If something should have changed (a checkbox, a radio, a toggle, a custom widget), check it with a screenshot and, if it did not, use browser_pointer on the control itself; a new tab or a canvas does not show here (browser_tabs, screenshot).",
+    )
 }
 
 fn render_action(r: &ActionResult) -> Result<String, String> {
@@ -493,6 +620,7 @@ impl CdpDriver {
             reaper_started: std::sync::atomic::AtomicBool::new(false),
             view: None,
             served: parking_lot::RwLock::new(None),
+            attach: Arc::new(parking_lot::Mutex::new(None)),
         }
     }
 
@@ -570,6 +698,48 @@ impl CdpDriver {
             }
         }
         let headless = self.desired_headless();
+        // An attach is honoured only for the run that made it: a later run (a schedule, a
+        // webhook, another chat) that finds one left behind drops it and gets its own browser.
+        let attached = {
+            let mut slot = self.attach.lock();
+            match slot.as_ref() {
+                Some(scope) if scope.run.is_none() || scope.run == current_run() => {
+                    Some(scope.endpoint.clone())
+                }
+                Some(_) => {
+                    *slot = None;
+                    None
+                }
+                None => None,
+            }
+        };
+        if let Some(endpoint) = attached {
+            // The owner asked for the browser they already have open: never fall back to a
+            // browser of the assistant's own, say what is wrong instead.
+            let started = async {
+                let (browser, _) =
+                    browser_cdp::attach::connect_first(std::slice::from_ref(&endpoint))
+                        .await
+                        .map_err(|e| {
+                            format!(
+                                "cannot reach the owner's browser at {endpoint} ({e}). Ask the owner to start it with --remote-debugging-port=9222 (or switch on remote debugging in chrome://inspect), or call browser_attach with detach:true to use the assistant's own browser"
+                            )
+                        })?;
+                let page = browser.visible_page().await.map_err(s)?;
+                Ok::<_, String>((browser, page))
+            };
+            let (browser, page) = tokio::time::timeout(LAUNCH_DEADLINE, started)
+                .await
+                .map_err(|_| format!("the owner's browser at {endpoint} did not answer"))??;
+            return Ok(Session {
+                browser,
+                page,
+                profile: Some("owner's browser".to_owned()),
+                headless,
+                last_work: tokio::time::Instant::now(),
+                lanes: Vec::new(),
+            });
+        }
         let opts = LaunchOptions {
             executable: self.settings.executable.clone(),
             headless,
@@ -615,17 +785,25 @@ impl CdpDriver {
             );
         }
         self.start_idle_reaper();
+        self.end_foreign_attach(guard).await;
         let desired_headless = self.desired_headless();
         // A crashed, closed, or mode-mismatched (headless vs headed) browser
         // must not stay cached across runs.
-        if guard
-            .as_ref()
-            .is_some_and(|sess| !Self::session_alive(sess) || sess.headless != desired_headless)
-            && let Some(old) = guard.take()
+        let attached = self.is_attached();
+        if guard.as_ref().is_some_and(|sess| {
+            !Self::session_alive(sess) || (sess.headless != desired_headless && !attached)
+        }) && let Some(old) = guard.take()
         {
             close_session(self.view.as_deref(), old).await;
         }
         if let Some(existing) = guard.as_ref() {
+            if let Some(p) = profile
+                && attached
+            {
+                return Err(format!(
+                    "the bot is attached to the owner's own browser, which has its own profile: leave out profile {p:?}, or call browser_attach with detach:true first"
+                ));
+            }
             if let Some(p) = profile
                 && existing.profile.as_deref().unwrap_or("isolated") != p
             {
@@ -678,12 +856,16 @@ impl CdpDriver {
             return;
         }
         let weak_session = Arc::downgrade(&self.session);
+        let attach = Arc::clone(&self.attach);
         let view = self.view.clone();
         let pin = Arc::clone(&self.takeover_pin);
         let activity = Arc::clone(&self.activity);
         let timeout = self.settings.idle_timeout;
         tokio::spawn(async move {
-            let mut state = ReapState::default();
+            let mut state = ReapState {
+                attach: Some(attach),
+                ..ReapState::default()
+            };
             loop {
                 tokio::time::sleep(
                     timeout
@@ -707,8 +889,44 @@ impl CdpDriver {
         });
     }
 
+    /// A run other than the one that attached makes a call: the attach ends and the cached
+    /// session (the owner's browser) is only disconnected, never reused for the other run.
+    async fn end_foreign_attach(&self, guard: &mut Option<Session>) {
+        let foreign = match (self.attach.lock().as_ref(), current_run()) {
+            (Some(scope), Some(run)) => scope.run.as_ref().is_some_and(|r| *r != run),
+            _ => false,
+        };
+        if foreign {
+            *self.attach.lock() = None;
+            if let Some(old) = guard.take() {
+                close_session(self.view.as_deref(), old).await;
+            }
+            self.close_alternate_session().await;
+        }
+    }
+
+    /// The other mode's driver keeps its own session when this bot has no persistent profile:
+    /// it must not outlive a change of browsers.
+    async fn close_alternate_session(&self) {
+        let alternate = self.alternate_mode.lock().clone();
+        if let Some(alt) = alternate
+            && !Arc::ptr_eq(&self.session, &alt.session)
+        {
+            let session = alt.session.lock().await.take();
+            if let Some(sess) = session {
+                close_session(alt.view.as_deref(), sess).await;
+            }
+        }
+    }
+
+    /// Whether the bot is attached to the owner's own browser right now.
+    pub(crate) fn is_attached(&self) -> bool {
+        self.attach.lock().is_some()
+    }
+
     /// Close the browser (the next call launches a new one).
     pub async fn shutdown(&self) {
+        *self.attach.lock() = None;
         let mut guard = self.session.lock().await;
         if let Some(browser) = self.manual.lock().await.take() {
             let _ = browser.close().await;
@@ -739,6 +957,8 @@ impl CdpDriver {
 struct ReapState {
     /// The previous tick saw a bot run using the computer.
     was_active: bool,
+    /// The bot's attach to the owner's browser: closing the idle session ends it.
+    attach: Option<Arc<parking_lot::Mutex<Option<AttachScope>>>>,
 }
 
 /// One idle-reaper tick, separated from its timer so tests can drive it with a
@@ -784,6 +1004,9 @@ async fn reap_tick(
         && !run_active()
         && let Some(s) = slot.take()
     {
+        if let Some(attach) = &state.attach {
+            *attach.lock() = None;
+        }
         close_session(view, s).await;
     }
 }
@@ -806,6 +1029,16 @@ tokio::task_local! {
 tokio::task_local! {
     // The subagent run whose browser tab this call uses (`None`: the shared tab).
     static BROWSER_LANE: Option<String>;
+}
+
+tokio::task_local! {
+    // The run that makes this browser call: an attach to the owner's own browser belongs to it.
+    static BROWSER_RUN: String;
+}
+
+/// The run making this call; `None` outside a tool call (the handover hub, tests).
+fn current_run() -> Option<String> {
+    BROWSER_RUN.try_with(Clone::clone).ok()
 }
 
 tokio::task_local! {
@@ -885,7 +1118,8 @@ macro_rules! with_session {
 #[async_trait]
 impl BrowserDriver for CdpDriver {
     fn on_desktop(&self) -> bool {
-        !self.desired_headless() && browser_cdp::host::has_display()
+        // The owner's own browser is a window on their desktop, whatever this bot's mode says.
+        self.is_attached() || (!self.desired_headless() && browser_cdp::host::has_display())
     }
 
     fn live_view_attached(&self) -> Option<bool> {
@@ -930,6 +1164,7 @@ impl BrowserDriver for CdpDriver {
                     // the other mode's page from it).
                     driver.view.clone_from(&self.view);
                     (*driver.served.write()).clone_from(&self.served.read());
+                    driver.attach = Arc::clone(&self.attach);
                     Arc::new(driver)
                 })
                 .clone(),
@@ -994,7 +1229,14 @@ impl BrowserDriver for CdpDriver {
                 )
                 .await
         })?;
-        render_action(&acted)
+        let mut text = render_action(&acted)?;
+        if acted.ok
+            && let Some(note) = silent_click_note(&acted.new_snapshot_diff)
+        {
+            text.push('\n');
+            text.push_str(note);
+        }
+        Ok(text)
     }
 
     async fn click(&self, r: &str) -> Result<String, String> {
@@ -1159,6 +1401,179 @@ impl BrowserDriver for CdpDriver {
         render_action(&acted)
     }
 
+    async fn pointer(&self, o: &PointerOpts) -> Result<String, String> {
+        let feel = self.feel();
+        let dialog_opts = DialogOptions {
+            action: DialogAction::from_str_opt(o.dialog.as_deref()),
+            prompt_text: None,
+        };
+        match &o.act {
+            PointerAct::Type(text) => {
+                pause(browser_cdp::human::prepare_pause(
+                    feel,
+                    &mut browser_cdp::human::Jitter::from_clock(),
+                ))
+                .await;
+                let acted = with_session!(self, None, |sess| {
+                    sess.page
+                        .pointer_type(text, expected_input_origin().as_deref())
+                        .await
+                })?;
+                render_action(&acted)
+            }
+            PointerAct::Key(key) => self.press(key).await,
+            act => {
+                let at =
+                    o.at.ok_or_else(|| "this pointer action needs a point (x and y)".to_owned())?;
+                let op = match act {
+                    PointerAct::Click { right, double } => browser_cdp::PointerOp::Click {
+                        button: if *right {
+                            browser_cdp::PointerButton::Right
+                        } else {
+                            browser_cdp::PointerButton::Left
+                        },
+                        count: if *double { 2 } else { 1 },
+                    },
+                    PointerAct::Move => browser_cdp::PointerOp::Move,
+                    PointerAct::Drag { to } => browser_cdp::PointerOp::Drag { to: *to },
+                    PointerAct::Scroll { dx, dy } => {
+                        browser_cdp::PointerOp::Wheel { dx: *dx, dy: *dy }
+                    }
+                    PointerAct::Type(_) | PointerAct::Key(_) => unreachable!("handled above"),
+                };
+                let (acted, hit) = with_session!(self, None, |sess| {
+                    sess.page
+                        .pointer(
+                            &browser_cdp::PointerRequest {
+                                op,
+                                at,
+                                feel,
+                                expected: expected_input_origin().as_deref(),
+                            },
+                            &dialog_opts,
+                        )
+                        .await
+                })?;
+                let mut text = match render_action(&acted) {
+                    Ok(t) => t,
+                    Err(mut e) => {
+                        if !hit.is_empty() {
+                            let _ = write!(e, "\n~ under the point: {hit}");
+                        }
+                        return Err(e);
+                    }
+                };
+                if !hit.is_empty() {
+                    let _ = write!(text, "\n~ under the point: {hit}");
+                }
+                Ok(text)
+            }
+        }
+    }
+
+    async fn pointer_origin(&self, o: &PointerOpts) -> Option<String> {
+        let at = o.at?;
+        let to = match &o.act {
+            PointerAct::Drag { to } => Some(*to),
+            _ => None,
+        };
+        let result: Result<Option<String>, String> = async {
+            with_session!(self, None, false, |sess| {
+                sess.page.pointer_origin(at, to).await
+            })
+        }
+        .await;
+        result.ok().flatten().and_then(|o| origin_of(&o))
+    }
+
+    async fn grounded_screenshot(&self) -> Result<GroundedShot, String> {
+        let g = with_session!(self, None, false, |sess| {
+            sess.page.grounded_screenshot().await
+        })?;
+        Ok(GroundedShot {
+            notes: g.describe(),
+            width: g.image.0,
+            height: g.image.1,
+            ext: "jpg",
+            bytes: g.bytes,
+        })
+    }
+
+    async fn attach(&self, endpoint: Option<&str>) -> Result<String, String> {
+        let candidates = match endpoint {
+            Some(e) => {
+                browser_cdp::attach::loopback_endpoint(e).map_err(s)?;
+                vec![e.trim().to_owned()]
+            }
+            None => browser_cdp::attach::discover_owner_endpoints().await,
+        };
+        let (probe, found) = browser_cdp::attach::connect_first(&candidates)
+            .await
+            .map_err(|e| {
+                format!(
+                    "no browser with remote debugging was found on this computer ({e}). Ask the owner to start their browser with --remote-debugging-port=9222 (or switch on remote debugging in chrome://inspect), then try again"
+                )
+            })?;
+        // Only the probe connection is dropped here: the session below connects again, and
+        // nothing of the owner's browser is closed (it was not started by the assistant).
+        let version = probe.version().await.ok();
+        drop(probe);
+        let mut guard = tokio::time::timeout(SESSION_WAIT, self.session.lock())
+            .await
+            .map_err(|_| {
+                "another browser call is using the browser; try again shortly".to_owned()
+            })?;
+        if let Some(old) = guard.take() {
+            close_session(self.view.as_deref(), old).await;
+        }
+        self.close_alternate_session().await;
+        let previous = self.attach.lock().replace(AttachScope {
+            endpoint: found.clone(),
+            run: current_run(),
+        });
+        match self.ensure(&mut guard, None, true).await {
+            Ok(_) => {}
+            Err(e) => {
+                *self.attach.lock() = previous;
+                return Err(e);
+            }
+        }
+        let product = version
+            .as_ref()
+            .and_then(|v| v["product"].as_str())
+            .unwrap_or("a Chromium browser");
+        Ok(format!(
+            "attached to the owner's own browser ({product}) at {found}"
+        ))
+    }
+
+    async fn detach(&self) -> Result<String, String> {
+        let mut guard = tokio::time::timeout(SESSION_WAIT, self.session.lock())
+            .await
+            .map_err(|_| {
+                "another browser call is using the browser; try again shortly".to_owned()
+            })?;
+        let was = self.attach.lock().take().map(|scope| scope.endpoint);
+        if let Some(old) = guard.take() {
+            // The owner's browser keeps running: closing an attached session only disconnects.
+            close_session(self.view.as_deref(), old).await;
+        }
+        self.close_alternate_session().await;
+        Ok(match was {
+            Some(endpoint) => format!(
+                "detached from the owner's browser at {endpoint}; the next browser call uses the assistant's own browser"
+            ),
+            None => "the assistant's own browser was already in use".to_owned(),
+        })
+    }
+
+    fn attached(&self) -> Option<String> {
+        self.attach
+            .lock()
+            .as_ref()
+            .map(|scope| scope.endpoint.clone())
+    }
+
     async fn select_text(&self, o: &SelectOpts) -> Result<String, String> {
         let feel = self.feel();
         let unit = match o.unit.as_str() {
@@ -1233,6 +1648,7 @@ impl BrowserDriver for CdpDriver {
                     sess.page.bring_to_front().await?;
                 }
                 let current = sess.page.target_id().to_string();
+                let trim = self.is_attached();
                 Ok(pages
                     .iter()
                     .enumerate()
@@ -1242,7 +1658,13 @@ impl BrowserDriver for CdpDriver {
                             i + 1,
                             if t.target_id == current { "*" } else { "" },
                             t.title.replace('"', "'"),
-                            t.url
+                            // The owner's other tabs: no query token, fragment or login in the
+                            // address the model reads.
+                            if trim {
+                                without_query(&t.url)
+                            } else {
+                                t.url.clone()
+                            }
                         )
                     })
                     .collect::<Vec<_>>()
@@ -1316,6 +1738,8 @@ enum Op {
     Eval,
     Act,
     Handover,
+    Pointer,
+    Attach,
 }
 
 struct Shared {
@@ -1781,7 +2205,7 @@ fn tools_with_pool(
             Op::Screenshot,
             spec(
                 "browser_screenshot",
-                "Save a screenshot and return the file path. Example: {\"full_page\":true}",
+                "Save a screenshot and return the file path. A plain one (no `ref`, not full_page) also gives the picture's size and the frames and canvases on screen: browser_pointer takes its x,y from that picture. Take one only when the question is how the page looks, or before browser_pointer. Example: {\"full_page\":true}",
                 json!({"type":"object","properties":{
                     "full_page":{"type":"boolean"},
                     "ref":ref_prop
@@ -1837,6 +2261,8 @@ fn tools_with_pool(
                 PermissionCategory::Script,
             ),
         ),
+        (Op::Pointer, pointer::tool_spec(b)),
+        (Op::Attach, attach::tool_spec(b)),
     ];
     if let (Some(slot), Some((_, snapshot_spec))) =
         (page_origin, defs.iter().find(|(op, _)| *op == Op::Snapshot))
@@ -2272,8 +2698,8 @@ impl BrowserTool {
                 .load(std::sync::atomic::Ordering::SeqCst)
                 == epoch
         {
-            if self.op == Op::Open {
-                // A navigation has no receiving element to inspect. Do not probe
+            if matches!(self.op, Op::Open | Op::Attach) {
+                // A navigation (or switching browsers) has no receiving element to inspect. Do not probe
                 // a remote URL here: Option cannot distinguish a refusal from
                 // an unopened browser, and a refusal must never cause a retry.
                 // Leaving or reloading a challenge page gives no attempts back:
@@ -2831,13 +3257,28 @@ impl BrowserTool {
             }
             Op::Screenshot => {
                 let i: ShotIn = parse(input)?;
+                // A plain viewport shot is the picture `browser_pointer` points at: it says its
+                // size and where the frames are. A backend that cannot make one, and the
+                // full-page / element forms, save the picture as before.
+                if !i.full_page && i.r#ref.is_none() {
+                    match self.save_grounded(&d).await {
+                        Ok(text) => return Ok(text),
+                        Err(ToolError::Execution(m)) if m.contains(NO_POINTER) => {}
+                        Err(e) => return Err(e),
+                    }
+                }
                 let (bytes, ext) = d
                     .screenshot(i.full_page, i.r#ref.as_deref())
                     .await
                     .map_err(exec_err)?;
                 let path = save_file(&self.shared.data_dir.join("screenshots"), ext, &bytes)?;
+                if let Some(run) = current_run() {
+                    sideband::note_screenshot(&run, std::path::Path::new(&path));
+                }
                 Ok(format!("screenshot: {path}"))
             }
+            Op::Pointer => return self.run_pointer(run_id, input).await,
+            Op::Attach => return self.run_attach(run_id, input).await,
             Op::Act => return self.run_act(run_id, input, bot).await,
             Op::Handover => {
                 return Err(exec_err("browser_handover runs through the handover path"));
@@ -2879,6 +3320,22 @@ impl BrowserTool {
             }
         };
         text.map_err(exec_err)
+    }
+}
+
+/// `url` without user info, query and fragment (what a tab list shows of the owner's own tabs).
+fn without_query(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(mut u) if matches!(u.scheme(), "http" | "https") => {
+            u.set_query(None);
+            u.set_fragment(None);
+            let _ = u.set_username("");
+            let _ = u.set_password(None);
+            u.to_string()
+        }
+        // A `data:` / `blob:` page carries its own content in the address: only its kind shows.
+        Ok(u) => format!("({}: page)", u.scheme()),
+        Err(_) => String::from("(not an address)"),
     }
 }
 
@@ -3094,10 +3551,27 @@ impl BrowserTool {
                 | Op::Act
                 | Op::SelectText
                 | Op::DismissConsent
+                | Op::Pointer
         ) {
             return None;
         }
         let shared = self.select_shared(ctx).ok()?;
+        if self.op == Op::Pointer {
+            // The origin of the frame that RECEIVES the action: the one under the point (both
+            // ends of a drag), or the one that has keyboard focus for typing and keys. A click
+            // into a frame of another site is judged by that site, not by the page around it.
+            let opts = serde_json::from_value::<pointer::PointerIn>(input.clone())
+                .ok()
+                .and_then(|i| i.opts().ok())?;
+            return match opts.act {
+                PointerAct::Type(_) | PointerAct::Key(_) => shared
+                    .driver
+                    .input_origin(None)
+                    .await
+                    .and_then(|o| origin_of(&o)),
+                _ => shared.driver.pointer_origin(&opts).await,
+            };
+        }
         if self.op == Op::DismissConsent {
             // No ref: the dialog belongs to the page itself, so the page's own origin counts.
             return shared
@@ -3212,6 +3686,7 @@ impl BrowserTool {
                     | Op::Act
                     | Op::SelectText
                     | Op::DismissConsent
+                    | Op::Pointer
             )
         {
             let now = self.current_origin(ctx, &input).await;
@@ -3231,12 +3706,36 @@ impl BrowserTool {
             op: self.op,
             shared,
         };
-        let mut text = EXPECTED_PAGE_ORIGIN
+        // The failing step, as the loop sees repetition: the same tool with the same input.
+        let step_key = recover::step_key(self.op, &input);
+        let ran = EXPECTED_PAGE_ORIGIN
             .scope(
                 ctx.expected_origin.clone(),
                 selected.run(&ctx.run_id, input, ctx.bot_id.as_deref()),
             )
-            .await?;
+            .await;
+        let mut text = match ran {
+            Ok(text) => {
+                if recover::is_page_step(self.op) {
+                    recover::forget_streak(&ctx.run_id);
+                }
+                text
+            }
+            // A step that failed on an open page keeps the page and says how to carry on.
+            Err(e) => {
+                let mut e = selected.with_recovery(&ctx.run_id, &step_key, e).await;
+                // An error can quote the page too. While the owner's own browser is attached
+                // that page is the owner's private data, so the failed call says so as well.
+                if let Some(endpoint) = selected.shared.driver.attached() {
+                    sideband::note_exposure(&ctx.run_id, attach::owner_exposure());
+                    if let ToolError::Execution(m) = &mut e {
+                        m.push('\n');
+                        m.push_str(&attach::browser_line(&endpoint));
+                    }
+                }
+                return Err(e);
+            }
+        };
         if matches!(self.op, Op::Open | Op::Snapshot) {
             let origin = selected
                 .shared
@@ -3247,8 +3746,19 @@ impl BrowserTool {
             Self::append_challenge_notice(ctx, origin.as_deref(), &mut text);
         }
         let view = selected.shared.driver.live_view_attached();
+        let owner_browser = selected.shared.driver.attached();
         let mut out = finish_text(ctx, &self.shared.data_dir.join("spill"), text);
-        // Honest "seen by user" signal, after any truncation so it is never cut.
+        // Which browser this came from, so the run timeline shows it. Only said when it is the
+        // owner's own (after a `browser_attach`): then what the result shows is the owner's
+        // private data. The assistant's own browser needs no line on every call.
+        if let Some(endpoint) = &owner_browser {
+            if let Some(tool_registry::ContentPart::Text { text }) = out.content.first_mut() {
+                text.push('\n');
+                text.push_str(&attach::browser_line(endpoint));
+            }
+            out.exposure = Some(attach::owner_exposure());
+        }
+        // Honest "seen by user" signal, after any truncation so it is never cut (and last).
         if let Some(attached) = view
             && let Some(tool_registry::ContentPart::Text { text }) = out.content.first_mut()
         {
@@ -3266,6 +3776,9 @@ impl Tool for BrowserTool {
     }
 
     fn egress_extra(&self, _ctx: &ToolContext, input: &Value) -> Option<String> {
+        if self.op == Op::Attach && attach::attaches(input) {
+            return Some(attach::card_line(input));
+        }
         if !matches!(self.op, Op::Open) {
             return None;
         }
@@ -3287,7 +3800,9 @@ impl Tool for BrowserTool {
     /// Typing an owner-stored secret is confirmed on every call, however
     /// permissive the policy, preset, grants or read shortcuts are.
     fn always_ask_for(&self, input: &Value) -> bool {
-        self.op == Op::Fill && names_a_secret(input)
+        (self.op == Op::Fill && names_a_secret(input))
+            // The owner's own browser holds their signed-in sessions: every attach is confirmed.
+            || (self.op == Op::Attach && attach::attaches(input))
     }
 
     async fn current_origin(&self, ctx: &ToolContext, input: &Value) -> Option<String> {
@@ -3326,8 +3841,11 @@ impl Tool for BrowserTool {
     }
 
     async fn call(&self, ctx: &ToolContext, input: Value) -> Result<ToolOutput, ToolError> {
-        BROWSER_LANE
-            .scope(ctx.lane.clone(), self.call_in_lane(ctx, input))
+        BROWSER_RUN
+            .scope(
+                ctx.run_id.clone(),
+                BROWSER_LANE.scope(ctx.lane.clone(), self.call_in_lane(ctx, input)),
+            )
             .await
     }
 }
@@ -3370,8 +3888,13 @@ pub(crate) mod fake {
         pub covered: PMutex<std::collections::HashSet<String>>,
         /// The ref that really has keyboard focus (page scripts can move it).
         pub focus: PMutex<Option<String>>,
+        /// The origin of the frame under a pointer point, when it is not the top page's (a
+        /// frame of another site embedded in the page).
+        pub pointer_frame: PMutex<Option<String>>,
         /// What `live_view_attached` reports (`None`: cannot tell).
         pub watched: PMutex<Option<bool>>,
+        /// The owner's browser the fake is attached to (`attach` / `detach` / `attached`).
+        pub attached: PMutex<Option<String>>,
     }
 
     impl FakeBrowser {
@@ -3400,6 +3923,14 @@ pub(crate) mod fake {
                 .lock()
                 .get(r.unwrap_or("focused"))
                 .and_then(|t| t.frame_origin.clone())
+        }
+
+        async fn pointer_origin(&self, _o: &PointerOpts) -> Option<String> {
+            let frame = self.pointer_frame.lock().clone();
+            match frame {
+                Some(frame) => origin_of(&frame),
+                None => self.current_url().await.and_then(|u| origin_of(&u)),
+            }
         }
 
         async fn ref_identity(&self, r: &str) -> Option<(String, String)> {
@@ -3529,6 +4060,35 @@ pub(crate) mod fake {
         }
         async fn select_text(&self, o: &SelectOpts) -> Result<String, String> {
             self.rec(&format!("select_text:{o:?}"))
+        }
+        async fn pointer(&self, o: &PointerOpts) -> Result<String, String> {
+            self.rec(&format!("pointer:{:?}:{:?}", o.act, o.at))
+        }
+        async fn grounded_screenshot(&self) -> Result<GroundedShot, String> {
+            self.rec("grounded_screenshot")?;
+            Ok(GroundedShot {
+                bytes: b"\xff\xd8fake-jpeg".to_vec(),
+                ext: "jpg",
+                width: 1000,
+                height: 600,
+                notes: "image 1000x600 px = the visible part of the page; browser_pointer takes x,y in these pixels (0,0 is the top-left corner)".into(),
+            })
+        }
+        async fn attach(&self, endpoint: Option<&str>) -> Result<String, String> {
+            let at = endpoint.unwrap_or("http://127.0.0.1:9222").to_owned();
+            self.rec(&format!("attach:{at}"))?;
+            *self.attached.lock() = Some(at.clone());
+            Ok(format!(
+                "attached to the owner's own browser (FakeChrome) at {at}"
+            ))
+        }
+        async fn detach(&self) -> Result<String, String> {
+            self.rec("detach")?;
+            *self.attached.lock() = None;
+            Ok("detached from the owner's browser".into())
+        }
+        fn attached(&self) -> Option<String> {
+            self.attached.lock().clone()
         }
         async fn wait(&self, c: Wait, _t: Option<Duration>) -> Result<String, String> {
             self.rec(&format!("wait:{c:?}"))
@@ -4053,7 +4613,13 @@ mod tests {
             .await
             .unwrap();
         let s = text(&out);
-        let path = s.strip_prefix("screenshot: ").unwrap();
+        // The first line names the file; the lines after it say how to point at the picture.
+        let path = s
+            .lines()
+            .next()
+            .and_then(|l| l.strip_prefix("screenshot: "))
+            .and_then(|l| l.split(" (").next())
+            .unwrap();
         assert!(Path::new(path).exists());
         let out = get(&t, "browser_eval")
             .call(&ctx, json!({"js": "document.title"}))

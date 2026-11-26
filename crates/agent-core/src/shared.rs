@@ -623,6 +623,10 @@ impl ChatProvider for RedactingProvider {
         self.inner.id()
     }
 
+    fn supports_vision(&self, model: &str) -> bool {
+        self.inner.supports_vision(model)
+    }
+
     async fn stream(
         &self,
         mut req: provider_catalog::ChatRequest,
@@ -760,6 +764,7 @@ pub(crate) fn is_page_action(name: &str) -> bool {
             | "browser_select_text"
             | "browser_dismiss_consent"
             | "browser_act"
+            | "browser_pointer"
     )
 }
 
@@ -2886,6 +2891,11 @@ pub(crate) struct ResultRec {
     /// A validated, successful run-local schema activation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activated_tool: Option<String>,
+    /// The picture this call saved, as the tool reported it out of band (never read back from
+    /// the result text, which a page can also write). Absent when the call made none, or when
+    /// the run's pages are read through the quarantined reader.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shot: Option<String>,
 }
 
 pub(crate) const STEP_USER: &str = "user_message";

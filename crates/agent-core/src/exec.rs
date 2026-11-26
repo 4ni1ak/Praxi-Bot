@@ -841,6 +841,19 @@ impl TurnExecutor {
             let at = messages.len() - usize::from(note.is_some());
             messages.insert(at, Message::text(MessageRole::User, digest));
         }
+        // The newest screenshot a browser step reported, for this call only (see `grounding`).
+        // It is NOT put into `messages`: each candidate model gets the request that suits it
+        // (the picture only for a model that takes images), built from these two bodies.
+        let shot_messages = crate::grounding::latest(&steps, self.sh.storage.data_dir())
+            .and_then(|file| crate::grounding::message(&file))
+            .map(|shot| {
+                crate::grounding::with_picture(
+                    &messages,
+                    messages.len() - usize::from(note.is_some()),
+                    shot,
+                )
+            });
+        let plain_messages = messages;
         if let Some(from) = origin {
             if let Some(reason) = step.input["tier_upgrade_reason"].as_str() {
                 self.emit_tier_upgrade(&ctx, from, reason)?;
@@ -854,7 +867,7 @@ impl TurnExecutor {
                 self.emit_tier_upgrade(&ctx, from, "guard_close")?;
             }
         }
-        let mut req = ChatRequest::new(ModelRef(primary.clone()), messages);
+        let mut req = ChatRequest::new(ModelRef(primary.clone()), plain_messages.clone());
         req.max_tokens = self.sh.cfg.max_tokens;
         req.temperature = self.sh.cfg.temperature;
 
@@ -915,13 +928,23 @@ impl TurnExecutor {
                 continue;
             }
             req.model = ModelRef(name.clone());
-            let provider_id = self
-                .sh
-                .providers
-                .read()
-                .pick(&req.model)
-                .ok()
-                .map(|p| p.id().to_owned());
+            let picked = self.sh.providers.read().pick(&req.model).ok();
+            let provider_id = picked.as_ref().map(|p| p.id().to_owned());
+            // The picture goes only to a model its provider says takes images, never to a CLI
+            // model, and never by changing the messages the other candidates are built from.
+            let mut sent_picture = false;
+            req.messages = match &shot_messages {
+                Some(with)
+                    if !name.starts_with("cli:")
+                        && picked
+                            .as_ref()
+                            .is_some_and(|p| p.supports_vision(req.model.model())) =>
+                {
+                    sent_picture = true;
+                    with.clone()
+                }
+                _ => plain_messages.clone(),
+            };
             if provider_id
                 .as_ref()
                 .and_then(|id| cooldowns.get(id))
@@ -968,24 +991,39 @@ impl TurnExecutor {
             req.tools = tool_defs(offered, using_deferred);
             note_metadata(&ctx, offered, &mut metadata);
             let timeout = self.sh.cfg.guards.model_timeout;
-            let attempt = tokio::time::timeout(
-                timeout,
-                self.call_with_retries(
-                    &ctx,
-                    run,
-                    &req,
-                    offered,
-                    purpose,
-                    tier_active.then_some(if tier_light && name.as_str() == primary {
-                        crate::tiering::LIGHT
-                    } else {
-                        crate::tiering::STANDARD
-                    }),
-                    cancel,
-                ),
-            )
-            .await
-            .unwrap_or(Err(ProviderError::Timeout));
+            let mut attempt;
+            loop {
+                attempt = tokio::time::timeout(
+                    timeout,
+                    self.call_with_retries(
+                        &ctx,
+                        run,
+                        &req,
+                        offered,
+                        purpose,
+                        tier_active.then_some(if tier_light && name.as_str() == primary {
+                            crate::tiering::LIGHT
+                        } else {
+                            crate::tiering::STANDARD
+                        }),
+                        cancel,
+                    ),
+                )
+                .await
+                .unwrap_or(Err(ProviderError::Timeout));
+                // A model that turns the screenshot down: ask again without it.
+                if sent_picture
+                    && attempt
+                        .as_ref()
+                        .err()
+                        .is_some_and(crate::grounding::refused_picture)
+                {
+                    sent_picture = false;
+                    req.messages = plain_messages.clone();
+                    continue;
+                }
+                break;
+            }
             match attempt {
                 Ok(mut out) => {
                     if using_deferred {
@@ -1766,6 +1804,22 @@ impl TurnExecutor {
             slots.push(slot);
         }
 
+        // How this bot reads pages (the reader decides what the main model may see of one, a
+        // screenshot of it included).
+        let reader_mode = crate::page_guard::ReaderMode::from_bot_config(
+            &self
+                .sh
+                .storage
+                .get_bot(run.bot_id)
+                .ok()
+                .flatten()
+                .map(|b| b.config)
+                .unwrap_or_default(),
+        );
+        // The pictures the calls of this step reported out of band, by call.
+        let pictures: std::sync::Mutex<std::collections::HashMap<String, String>> =
+            std::sync::Mutex::default();
+        let pictures_ref = &pictures;
         // Reads batched by `pending_tools` run concurrently; everything else is a single call.
         let ctx_ref: &RunCtx = &ctx;
         let outcomes = futures::future::join_all(slots.into_iter().map(|slot| async move {
@@ -1821,7 +1875,7 @@ impl TurnExecutor {
                                 .map(str::to_owned)
                         })
                         .flatten();
-                    let (text, is_error, duration_ms, own_spill, exposure) = self
+                    let (text, is_error, duration_ms, own_spill, mut exposure) = self
                         .run_tool(
                             run,
                             ctx_ref,
@@ -1833,6 +1887,19 @@ impl TurnExecutor {
                             class.page_origin.clone(),
                         )
                         .await;
+                    // What a browser or desktop call reported OUTSIDE its text: the picture it saved,
+                    // and what its error is made of (a failed step quotes the page, and the owner's
+                    // own browser when it is attached; an error has no exposure field of its own).
+                    let tool_name = tool.spec().name.clone();
+                    let reported =
+                        if tool_name.starts_with("browser_") || tool_name.starts_with("desktop_") {
+                            builtin_tools::browser::take_sideband(&run.id.to_string())
+                        } else {
+                            builtin_tools::browser::Sideband::default()
+                        };
+                    if is_error && exposure.is_none() {
+                        exposure = reported.exposure;
+                    }
                     // The result is in the model context even when the tool
                     // returned an error. A denial before this point is not.
                     // The class was captured at resolution time. Output
@@ -1885,6 +1952,13 @@ impl TurnExecutor {
                     } else {
                         fact_note(ctx_ref, &fact);
                     }
+                    // A picture of a page the main model may not read raw is not shown either.
+                    if let Some(path) = reported.screenshot
+                        && !crate::page_guard::quarantined(reader_mode, ctx_ref)
+                        && let Ok(mut m) = pictures_ref.lock()
+                    {
+                        m.insert(call_id.to_string(), path.display().to_string());
+                    }
                     (text, is_error, duration_ms, own_spill, fact)
                 }
             }
@@ -1917,20 +1991,10 @@ impl TurnExecutor {
                 && !is_bot_answer
                 && knowledge_request.is_none()
             {
-                let mode = crate::page_guard::ReaderMode::from_bot_config(
-                    &self
-                        .sh
-                        .storage
-                        .get_bot(run.bot_id)
-                        .ok()
-                        .flatten()
-                        .map(|b| b.config)
-                        .unwrap_or_default(),
-                );
                 let framed = crate::page_guard::frame_tool_result(
                     &self.sh,
                     &ctx,
-                    mode,
+                    reader_mode,
                     &call.name,
                     &fact.label,
                     text,
@@ -1946,9 +2010,19 @@ impl TurnExecutor {
                 && !is_bot_answer
                 && knowledge_request.is_none()
             {
-                // An error can quote the page too (a title, a message): same frame, no reader.
+                // An error can quote the page too (a title, a message, and for a failed browser
+                // step the page's state): the tool's words are framed as data, the page part
+                // goes through the same reader decision as a page read.
                 (
-                    crate::page_guard::wrap_data_block(&call.name, &text),
+                    crate::page_guard::frame_error(
+                        &self.sh,
+                        &ctx,
+                        reader_mode,
+                        &call.name,
+                        &fact.label,
+                        text,
+                    )
+                    .await,
                     own_spill,
                 )
             } else {
@@ -1997,6 +2071,10 @@ impl TurnExecutor {
                 } else {
                     None
                 },
+                shot: pictures
+                    .lock()
+                    .ok()
+                    .and_then(|mut m| m.remove(&call_uuid.to_string())),
                 fact: Some(fact),
                 tier_executed: light.then_some(duration_ms.is_some()),
                 tier_invalid: light.then(|| invalid_calls.contains(&call_uuid)),
