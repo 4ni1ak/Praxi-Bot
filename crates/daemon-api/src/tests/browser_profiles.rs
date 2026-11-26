@@ -20,7 +20,7 @@ async fn profile_routes_require_owner_key_and_check_bot_ownership() {
     assert_eq!(r.json()["size_bytes"], 0);
     assert_eq!(r.json()["signing_in"], false);
     assert!(r.json().get("path").is_none());
-    let missing = format!("/v1/bots/{}/browser-profile", uuid::Uuid::new_v4());
+    let missing = format!("/v1/bots/{}/browser-profile", uuid::Uuid::now_v7());
     assert_eq!(
         call(&t, Method::GET, &missing, None).await.status,
         StatusCode::NOT_FOUND
@@ -49,7 +49,7 @@ async fn profile_routes_require_owner_key_and_check_bot_ownership() {
         )
         .await
         .status,
-        StatusCode::UNPROCESSABLE_ENTITY
+        StatusCode::BAD_REQUEST
     );
     assert_eq!(
         call(&t, Method::DELETE, &path, None).await.status,
@@ -58,7 +58,7 @@ async fn profile_routes_require_owner_key_and_check_bot_ownership() {
 
     let remote_toml = format!(
         "{PROFILE}\n[runtime]\ncomputer = \"server:{}\"\n",
-        uuid::Uuid::new_v4()
+        uuid::Uuid::now_v7()
     );
     let remote = call(
         &t,
@@ -68,7 +68,8 @@ async fn profile_routes_require_owner_key_and_check_bot_ownership() {
     )
     .await;
     assert_eq!(remote.status, StatusCode::CREATED, "{:?}", remote.json());
-    let remote_id = remote.json()["id"].as_str().unwrap();
+    let remote_body = remote.json();
+    let remote_id = remote_body["id"].as_str().unwrap();
     let remote_resp = call(
         &t,
         Method::GET,

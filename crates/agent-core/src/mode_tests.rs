@@ -42,6 +42,7 @@ async fn balanced_saved_browser_accounts_ask_even_without_a_profile_argument() {
         None,
         None,
         None,
+        None,
         Some(profiles.clone()),
     );
     assert!(lp.sh.browser_profiles.set(profiles).is_ok());

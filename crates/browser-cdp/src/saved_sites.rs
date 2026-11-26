@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn site_names_only_and_password_saving_off() {
-        let path = std::env::temp_dir().join(format!("profile-test-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("profile-test-{}", uuid::Uuid::now_v7()));
         prepare(&path).unwrap();
         let conn = Connection::open(path.join("Default/Cookies")).unwrap();
         conn.execute_batch("CREATE TABLE cookies(host_key TEXT, encrypted_value BLOB); INSERT INTO cookies VALUES('.example.org', X'736563726574'), ('example.org', X'00'), ('../escape', X'00');").unwrap();
@@ -248,7 +248,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn housekeeping_refuses_links_outside_the_profile() {
-        let path = std::env::temp_dir().join(format!("profile-link-test-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("profile-link-test-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&path).unwrap();
         std::os::unix::fs::symlink(std::env::temp_dir(), path.join("outside")).unwrap();
         assert!(size(&path).is_err());

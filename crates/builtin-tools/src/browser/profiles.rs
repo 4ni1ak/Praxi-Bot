@@ -232,6 +232,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some(profiles.clone()),
         );
         let a = profiles.driver("bot-a").unwrap();

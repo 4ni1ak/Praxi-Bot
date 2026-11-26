@@ -1445,7 +1445,15 @@ pub fn managed_tools_with_origin(
     fill_secrets: Option<Arc<FillSecrets>>,
     page_origin: Option<Arc<connector_email::PageOriginSlot>>,
 ) -> Vec<Arc<dyn Tool>> {
-    managed_tools_with_profiles(settings, data_dir, control, views, fill_secrets, page_origin, None)
+    managed_tools_with_profiles(
+        settings,
+        data_dir,
+        control,
+        views,
+        fill_secrets,
+        page_origin,
+        None,
+    )
 }
 
 /// Managed tools and an optional owner-only housekeeping handle to the SAME pool.
@@ -1537,7 +1545,15 @@ pub fn tools_with_origin(
     fill_secrets: Option<Arc<FillSecrets>>,
     page_origin: Option<Arc<connector_email::PageOriginSlot>>,
 ) -> Vec<Arc<dyn Tool>> {
-    tools_with_pool(driver, data_dir, control, None, fill_secrets, page_origin, None)
+    tools_with_pool(
+        driver,
+        data_dir,
+        control,
+        None,
+        fill_secrets,
+        page_origin,
+        None,
+    )
 }
 
 /// Asks the BROWSER (target info, never page script) which page a run is on.
