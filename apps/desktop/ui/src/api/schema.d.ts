@@ -6946,6 +6946,12 @@ export interface components {
              *     the mailbox's allowed-senders list.
              */
             ignored_mails: number;
+            /**
+             * @description The channel is switched on but the mailbox names no allowed sender, so
+             *     it passes NO mail to the bot until the owner adds one (an older channel
+             *     that ran for anybody stops here until the owner confirms a list).
+             */
+            needs_senders?: boolean;
             /** @description Replies waiting for approval. */
             pending_replies: number;
             /** @description The channel is running in this daemon. */

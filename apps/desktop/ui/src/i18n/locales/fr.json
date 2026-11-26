@@ -6093,6 +6093,7 @@
       "fromLine": "From: {{from}}. Send mode: every send needs your approval.",
       "full": "Show the bot the whole text of each mail, not just a summary",
       "ignored": "Mails from senders who are not allowed were ignored: {{n}}",
+      "needsSenders": "Ce canal fonctionnait sans liste d'expéditeurs autorisés : il ne transmet donc plus AUCUN e-mail au bot. Ajoutez, sous « Expéditeurs autorisés » dans les réglages de la boîte aux lettres ci-dessus, les adresses autorisées à écrire au bot (par exemple la vôtre). D'ici là, chaque e-mail reçu reste non lu dans la boîte.",
       "noAccount": "Add a mailbox above first.",
       "noSenders": "The selected mailbox has no allowed senders, so no mail will reach the bot. Add your own address under \"Allowed senders\" in the mailbox settings above.",
       "note": "Mail is written by other people, so the bot treats it as information, never as orders. By default it only sees the sender, the subject and the first few lines. Attachments are never opened. Nothing is sent unless you allow replies and then approve each one here.",

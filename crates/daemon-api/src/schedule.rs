@@ -504,13 +504,20 @@ fn email_observations(
             .get("from")
             .and_then(Value::as_str)
             .ok_or_else(|| exec_err("email sender unavailable"))?;
+        // The sender decision uses the connector's `from_addr` (the sole From
+        // address; absent or empty when the header holds several or none),
+        // never the display text in `from`.
+        let from_addr = message
+            .get("from_addr")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let subject = message
             .get("subject")
             .and_then(Value::as_str)
             .ok_or_else(|| exec_err("email subject unavailable"))?;
         // Filter again locally. Connector and fake providers may return
         // a wider result; only headers participate, never a body.
-        if !from.to_lowercase().contains(&from_filter.to_lowercase())
+        if !protocol::sender::sender_matches(from_addr, from_filter)
             || subject_filter
                 .as_ref()
                 .is_some_and(|s| !subject.to_lowercase().contains(&s.to_lowercase()))
@@ -751,9 +758,9 @@ mod c225_tests {
             )
             .unwrap();
         *headers.messages.lock() = vec![
-            json!({"uid":1,"from":"ann@example.test","subject":"Invoice 1","body":"POISON_BODY_MUST_NEVER_APPEAR"}),
-            json!({"uid":2,"from":"other@example.test","subject":"Invoice 2"}),
-            json!({"uid":3,"from":"ann@example.test","subject":"Unrelated"}),
+            json!({"uid":1,"from":"ann@example.test","from_addr":"ann@example.test","subject":"Invoice 1","body":"POISON_BODY_MUST_NEVER_APPEAR"}),
+            json!({"uid":2,"from":"other@example.test","from_addr":"other@example.test","subject":"Invoice 2"}),
+            json!({"uid":3,"from":"ann@example.test","from_addr":"ann@example.test","subject":"Unrelated"}),
         ];
         state
             .observe(
@@ -783,6 +790,31 @@ mod c225_tests {
         assert!(headers.calls.lock().iter().all(|v| v["folder"] == "INBOX"
             && v["from"] == "ann@example.test"
             && v.get("body").is_none()));
+        // Several From addresses: the connector leaves `from_addr` empty (or
+        // omits it) while `from` shows only the first one. No match, no run.
+        let two = |from_addr: Option<&str>| {
+            let mut m = json!({"uid":9,"from":"Ann <ann@example.test>","subject":"Invoice 9"});
+            if let Some(a) = from_addr {
+                m["from_addr"] = json!(a);
+            }
+            json!({"messages":[m]})
+        };
+        assert!(
+            email_observations(&two(Some("")), "ann@example.test", None)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            email_observations(&two(None), "ann@example.test", None)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            email_observations(&two(Some("ann@example.test")), "ann@example.test", None)
+                .unwrap()
+                .len(),
+            1
+        );
         // Same registered fake, now through the owner registry and the real
         // daemon executor. New mail becomes one isolated, wrapped agent run.
         let rule: scheduler::registry::Rule=serde_json::from_value(json!({
@@ -867,5 +899,11 @@ mod c225_tests {
             subject_filter: None,
         };
         assert!(empty.validate().is_err());
+        let word = scheduler::Trigger::Email {
+            account: "fake".into(),
+            from_filter: "ann".into(),
+            subject_filter: None,
+        };
+        assert!(word.validate().is_err(), "a word is not a sender");
     }
 }
