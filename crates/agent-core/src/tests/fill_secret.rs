@@ -11,6 +11,8 @@ use secret_store::{FillSecrets, MemoryStore, SecretStore};
 
 use super::*;
 
+mod vault_leak;
+
 const VALUE: &str = "hunter2-Correct-Horse-9!";
 const PLANTED: &str = "planted-control-string-7731";
 const GITHUB: &str = "https://github.com";
@@ -25,6 +27,8 @@ struct Page {
     echo: bool,
     url: Mutex<Option<String>>,
     snapshot_pause: Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
+    /// A ref whose input handler throws an error that quotes the typed value.
+    throw_on: Mutex<Option<String>>,
 }
 
 fn target(frame: &str) -> FieldTarget {
@@ -59,6 +63,9 @@ impl BrowserDriver for Page {
             .and_then(|t| t.frame_origin.clone());
         if !accept(live) {
             return Err("refused: nothing was typed".into());
+        }
+        if self.throw_on.lock().as_deref() == Some(r) {
+            return Err(format!("input handler threw: {text}"));
         }
         self.typed_secrets.lock().push(text.to_owned());
         Ok(if self.echo {
