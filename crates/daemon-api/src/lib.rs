@@ -86,6 +86,7 @@ mod browser_profiles;
 pub mod calendar;
 mod calendar_routes;
 mod data_routes;
+mod elicitation_routes;
 mod embeddings_routes;
 mod incoming_webhook;
 mod page_reader_routes;
@@ -2062,6 +2063,14 @@ fn api_routes() -> Router<AppState> {
         .route(
             "/v1/secret-requests/{call_id}/cancel",
             post(secret_request_routes::cancel_secret_request),
+        )
+        .route(
+            "/v1/elicitations/{call_id}",
+            post(elicitation_routes::answer_elicitation),
+        )
+        .route(
+            "/v1/elicitations/{call_id}/cancel",
+            post(elicitation_routes::cancel_elicitation),
         )
         .route(
             "/v1/handovers/{call_id}/code",
