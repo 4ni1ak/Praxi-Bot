@@ -476,7 +476,14 @@ mod tests {
             user_data_dir: Some("/managed/profile".into()),
             ..Default::default()
         };
-        let args = build_args_for_host(&opts, Path::new("/managed/profile"), false, true, false);
+        let args = build_args_for_host(
+            &opts,
+            Path::new("/managed/profile"),
+            false,
+            true,
+            false,
+            None,
+        );
         assert!(
             !args
                 .iter()
