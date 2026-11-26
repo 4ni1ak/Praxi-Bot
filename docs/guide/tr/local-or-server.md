@@ -34,7 +34,7 @@ Sunucuyu yalnızca şu durumlarda seç:
 2. **Sunucu ekle…**'yi seç.
 3. Üç kısa adımı izle. Praxi sunucuyu kontrol eder ve neyi düzeltmen gerektiğini söyler.
 
-Ücretsiz bir seçenek dahil tam anlatım [Sunucu ekleme](../servers.md) sayfasında. Linux sunucu komutları [Her zaman açık Linux sunucusu](linux-host.md) sayfasında.
+Ücretsiz bir seçenek dahil tam anlatım [Sunucu ekleme](servers.md) sayfasında. Linux sunucu komutları [Her zaman açık Linux sunucusu](linux-host.md) sayfasında.
 
 > **Resim:** **Bu bilgisayar** ve **Sunucu ekle…** ile bilgisayar menüsü.
 

@@ -1,6 +1,6 @@
 # Linux sunucuda 7/24 çalışma (sanal ekran, güncelleme, kaldırma)
 
-Bu sayfa, Praxi'yi gece gündüz açık duran bir Linux sunucuda (örneğin ücretsiz ARM Ubuntu VM) çalıştırmak için kopyala-yapıştır komutlarını verir. [Sunucu ekle sihirbazı](../servers.md) aynı kurulum betiğini çalıştırır ve aynı mesajları gösterir; ayrıntılı anlatım için [Uzak sunucuda çalıştırma](../remote-host.md) sayfasına bak.
+Bu sayfa, Praxi'yi gece gündüz açık duran bir Linux sunucuda (örneğin ücretsiz ARM Ubuntu VM) çalıştırmak için kopyala-yapıştır komutlarını verir. [Sunucu ekle sihirbazı](servers.md) aynı kurulum betiğini çalıştırır ve aynı mesajları gösterir; ayrıntılı anlatım için [Uzak sunucuda çalıştırma](remote-host.md) sayfasına bak.
 
 Tüm komutları sunucuda, SSH ile çalıştır. `v0.1.0` yerine istediğin sürümü yaz.
 
@@ -12,7 +12,7 @@ Tüm komutları sunucuda, SSH ile çalıştır. `v0.1.0` yerine istediğin sür�
 bash ./install-linux.sh --dry-run --headless --version v0.1.0
 ```
 
-Kurulum (önce betiği [remote-host.md](../remote-host.md) sayfasındaki gibi doğrula):
+Kurulum (önce betiği [remote-host.md](remote-host.md) sayfasındaki gibi doğrula):
 
 ```bash
 sudo bash ./install-linux.sh --headless --version v0.1.0

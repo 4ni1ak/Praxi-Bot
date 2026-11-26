@@ -45,7 +45,7 @@ Masaüstü uygulamasının Ayarlar bölümünde bir **Tanılama** sayfası var. 
 
 ## 7/24 çalışan sunucu
 
-Günlükler, yeniden başlatma, yükseltme, yedek ve sunucu çevrimdışı / yavaş başlangıç / eş tablosu [Sunucu işletimi](../host-operations.md) sayfasında.
+Günlükler, yeniden başlatma, yükseltme, yedek ve sunucu çevrimdışı / yavaş başlangıç / eş tablosu [Sunucu işletimi](host-operations.md) sayfasında.
 
 ## `daemon not reachable at http://127.0.0.1:47821` (çıkış kodu 3)
 
@@ -77,7 +77,7 @@ Erişim anahtarı ya da Host/Origin denetimi başarısız oldu.
 
 ## Bir bot "has no usable profile" yanıtı veriyor
 
-Botun kayıtlı profili geçerli bir profil değil. Bu, CLI sihirbazının (`bot setup`) kaydettiği ilk botta olur. Bunun yerine `bot bots add` ile bir profil dosyasından bot oluştur; bkz. [Botlar ve profiller](../bots-and-profiles.md). Bir profilde en az `id` ve `name` içeren `[bot]` ile `executor` içeren `[models]` bulunmalı.
+Botun kayıtlı profili geçerli bir profil değil. Bu, CLI sihirbazının (`bot setup`) kaydettiği ilk botta olur. Bunun yerine `bot bots add` ile bir profil dosyasından bot oluştur; bkz. [Botlar ve profiller](bots-and-profiles.md). Bir profilde en az `id` ve `name` içeren `[bot]` ile `executor` içeren `[models]` bulunmalı.
 
 ## `bot bots add` reddedildi (çıkış kodu 6)
 
@@ -99,7 +99,7 @@ Seni bekliyor: bir onay ya da bir soru var. Sayısını görmek için `bot statu
 
 ## Gemini'den hız sınırı hataları (HTTP 429)
 
-Ücretsiz kullanım sınırına takıldın, büyük olasılıkla o modelin günlük istek sınırına. Sıfırlanmasını bekle, daha yüksek sınırlı bir modele geç, zamanlamaları azalt ya da ücretli bir anahtar ya da başka bir sağlayıcı kullan. Bkz. [Gemini ücretsiz kullanım](../providers-and-models.md#gemini-free-tier).
+Ücretsiz kullanım sınırına takıldın, büyük olasılıkla o modelin günlük istek sınırına. Sıfırlanmasını bekle, daha yüksek sınırlı bir modele geç, zamanlamaları azalt ya da ücretli bir anahtar ya da başka bir sağlayıcı kullan. Bkz. [Gemini ücretsiz kullanım](providers-and-models.md).
 
 ## Güvenli mod: her şey kapalı başlasın
 
@@ -119,7 +119,7 @@ Hiçbir şey silinmez ya da değişmez: botlar, sohbetler, zamanlamalar, kanalla
 ## Zamanlamalar tetiklenmiyor
 
 - Daemon, vakti geldiğinde çalışıyor olmalı. Kaçırılan tetiklemeler varsayılan olarak atlanır.
-- `bot schedules list` bir sonraki çalışma zamanını gösterir. İfade anlaşılmadıysa `add` başarısız olur; [Zamanlanmış işler](../scheduled-tasks.md) sayfasından bir kalıp dene ya da `POST /v1/schedules/parse` ile önizle.
+- `bot schedules list` bir sonraki çalışma zamanını gösterir. İfade anlaşılmadıysa `add` başarısız olur; [Zamanlanmış işler](scheduled-tasks.md) sayfasından bir kalıp dene ya da `POST /v1/schedules/parse` ile önizle.
 - Takvim ifadeleri, `--tz` vermezsen UTC kullanır.
 - Aynı zamanlamanın önceki çalışması hâlâ bekliyor ya da çalışıyorsa yeni tetikleme atlanır.
 

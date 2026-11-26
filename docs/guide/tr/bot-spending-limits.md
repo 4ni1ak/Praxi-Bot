@@ -29,7 +29,7 @@ kanal mesajları (örneğin Telegram), alt ajanlar ve arka plandaki hafıza işl
 
 ## Kullanım nasıl sayılır
 
-- Para, her çağrının kaydedilen maliyetinden gelir ([LLM çağrı defteri](../llm-call-ledger.md)).
+- Para, her çağrının kaydedilen maliyetinden gelir ([LLM çağrı defteri](llm-call-ledger.md)).
   Fiyatı bilinmeyen modeller yalnızca token ekler. Bu yüzden para (USD) sınırı onları sayamaz: fiyatı
   bilinmeyen bir modeli durdurmaz. Her yeni bota bir token sınırı da konmasının nedeni budur; token sınırı her modeli sayar.
   Fiyatı bilinmeyen modeller kullanıyorsan ayrıca bir token sınırı koy.

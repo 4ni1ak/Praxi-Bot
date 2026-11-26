@@ -63,6 +63,6 @@ Bu ayarları yalnızca sen, botun çalıştığı bilgisayarda değiştirebilirs
 ## Notlar nasıl bulunur: Temel veya Akıllı
 
 * **Temel (kelime eşleşmesi)** varsayılandır. Bir not, mesajınla aynı kelimeleri içeriyorsa bulunur ("çay", "yeşil çay seviyor"u bulur). Model gerektirmez ve hiçbir yere bir şey göndermez. "Araba" ile "otomobil"in aynı şey olduğunu anlamaz.
-* **Akıllı (anlam)**, bir botun bilgi kaynakları için zaten kurduğun bir gömme modelini kullanır ([Bilgi gömmeleri](../knowledge-embeddings.md) sayfasına bak); böylece "araba", "otomobil kullanıyor"u bulabilir. Açmak, notlarını arka planda yeniden dizinler ve ilerlemeyi gösterir; bitene kadar Temel kullanılır. Model başarısız olursa Praxi Temel'e döner ve hiçbir şey kaybolmaz.
+* **Akıllı (anlam)**, bir botun bilgi kaynakları için zaten kurduğun bir gömme modelini kullanır ([Bilgi gömmeleri](knowledge-embeddings.md) sayfasına bak); böylece "araba", "otomobil kullanıyor"u bulabilir. Açmak, notlarını arka planda yeniden dizinler ve ilerlemeyi gösterir; bitene kadar Temel kullanılır. Model başarısız olursa Praxi Temel'e döner ve hiçbir şey kaybolmaz.
 
 Geçiş için **Ayarlar → Kişisel bellek → Anılar nasıl bulunur** bölümünü kullan.

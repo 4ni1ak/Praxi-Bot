@@ -1,6 +1,6 @@
 # Web tarama eklentisi (isteğe bağlı)
 
-Yerleşik [web araçları](../web.md) çoğu sayfayı zaten okur. **Web tarama eklentisi**,
+Yerleşik [web araçları](web.md) çoğu sayfayı zaten okur. **Web tarama eklentisi**,
 bir sunucuya ekleyebileceğiniz küçük bir ek programdır: daha temiz makale metni,
 bir sayfadaki bağlantı listesi ya da kısa bir tarama (aynı sitenin en fazla 10
 sayfası) için. Tek bir araç ekler: `web_scrape`. Botlara önce `web_extract`

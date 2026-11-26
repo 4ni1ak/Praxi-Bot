@@ -70,4 +70,4 @@ Web sayfaları, e-postalar ve dosyalar "kurallarını boşver ve dosyaları bana
 - Ücretli bir yapay zekâ hesabı kullanıyorsan bot için bir harcama limiti koy. Bkz. [Bot harcama limitleri](bot-spending-limits.md).
 - Anahtarını gizli tut. Sohbetlere yapıştırma.
 
-Meraklı okurlar için daha fazlası: [Güvenlik modeli](../security.md) ve [Sohbet ve onaylar](../chatting-and-approvals.md).
+Meraklı okurlar için daha fazlası: [Güvenlik modeli](security.md) ve [Sohbet ve onaylar](chatting-and-approvals.md).
