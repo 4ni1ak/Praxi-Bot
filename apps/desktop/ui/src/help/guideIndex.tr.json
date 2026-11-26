@@ -1,5 +1,41 @@
 [
   {
+    "doc": "tr/accessibility.md",
+    "title": "Erişilebilirlik",
+    "headings": [
+      "Klavyeyle gezinme",
+      "Atlama bağlantısı ve ana bölgeler",
+      "İlk kurulum sihirbazı",
+      "Sohbet, adım listesi ve onay kartları",
+      "Sağ panel (BotPanel) ve boyutu değişen şeritler",
+      "Ayarlar (SettingsModal)",
+      "Ekran okuyucu duyuruları ve canlı alanlar",
+      "Odak göstergesi, temalar ve kontrast",
+      "Azaltılmış hareket ve azaltılmış saydamlık"
+    ],
+    "summary": "Praxi yalnızca klavyeyle, ekran okuyucular gibi yardımcı teknolojilerle, açık, koyu ve yüksek kontrastlı temalarda, ayrıca azaltılmış hareket ya da azaltılmış saydamlık açıkken kullanılabilecek biçim…"
+  },
+  {
+    "doc": "tr/apps.md",
+    "title": "Uygulamaları bağlama (Uygulamalar penceresi)",
+    "headings": [
+      "Uygulamalar üç yolla bağlanır",
+      "1. Doğrudan OAuth uygulamaları",
+      "2. Composio uygulamaları",
+      "3. Gelişmiş: MCP sunucuları ve anahtarla çalışan servisler",
+      "“Bağlı” ne demek",
+      "Bağlantıları yönetmek ve oturumu kapatmak",
+      "Doğrudan OAuth ve MCP sunucuları",
+      "Composio uygulamaları",
+      "Bot başına erişim",
+      "Takılan ya da başarısız bir bağlantıyı düzeltmek",
+      "OAuth girişi “Tarayıcıda oturum açılması bekleniyor…” ekranında takıldı",
+      "Composio girişi takıldı ya da katalog yenilenmiyor",
+      "Yerel bir MCP sunucusu “Hata” ya da “Karantinada” gösteriyor"
+    ],
+    "summary": "Masaüstü uygulamasındaki Uygulamalar penceresi, Praxi'yi dış servislere"
+  },
+  {
     "doc": "tr/automate.md",
     "title": "İşleri otomatikleştir",
     "headings": [
@@ -23,6 +59,23 @@
     "summary": "Güncel sürümler şifreli yedek oluşturur; bkz. Şifreli yedekleme ve geri yükleme."
   },
   {
+    "doc": "tr/backup.md",
+    "title": "Şifreli yedekleme ve geri yükleme",
+    "headings": [
+      "Parola",
+      "İçinde neler var",
+      "API anahtarları (--include-secrets)",
+      "Oluşturma",
+      "Doğrulama",
+      "Geri yükleme",
+      "Hasarlı dosyalar ve yanlış parolalar",
+      "Biçim (merak edenler için)",
+      "Eski şifresiz yedekler",
+      "Ayrıca bak"
+    ],
+    "summary": "bot backup; botlarını, sohbetlerini, hafızanı, becerilerini, iş akışlarını, zamanlamalarını ve"
+  },
+  {
     "doc": "tr/bot-spending-limits.md",
     "title": "Bot harcama sınırları",
     "headings": [
@@ -35,6 +88,27 @@
     "summary": "Her bota, model çağrılarının kullanabileceği miktar için günlük, haftalık ve aylık sınır koyabilirsin."
   },
   {
+    "doc": "tr/bots-and-profiles.md",
+    "title": "Botlar ve profiller",
+    "headings": [
+      "Bot oluşturma",
+      "Kayıtlı tarayıcı oturumları",
+      "Eksiksiz bir profil",
+      "Model başvuruları",
+      "Profilde izinler",
+      "Araç süzgeçleri",
+      "Tarayıcı nasıl hareket eder",
+      "Botları yönetme",
+      "Ana bot ve bot sırası (masaüstü uygulaması)",
+      "Bot avatarları (masaüstü uygulaması)",
+      "Alt ajanlar",
+      "Planned",
+      "Bir botu paylaşma: profil dosyaları ve şablon galerisi",
+      "Bilgisayar hedefi"
+    ],
+    "summary": "İstediğin kadar bot oluşturabilirsin: örneğin yalnızca web'de gezinen dikkatli bir"
+  },
+  {
     "doc": "tr/calendar.md",
     "title": "Takvim (CalDAV)",
     "headings": [
@@ -43,6 +117,40 @@
       "Güvenlik"
     ],
     "summary": "Botlar bir CalDAV takviminde (Nextcloud, Radicale, Fastmail, iCloud, Synology ...) etkinlik okuyabilir ve"
+  },
+  {
+    "doc": "tr/chatting-and-approvals.md",
+    "title": "Sohbet ve onaylar",
+    "headings": [
+      "Bir botla konuşmak",
+      "Bot meşgulken mesaj göndermek",
+      "Dosya ve resim eklemek",
+      "Sesli arama (masaüstü uygulaması)",
+      "Eğik çizgi komutları",
+      "Sohbetleri yönetmek (masaüstü uygulaması)",
+      "Praxi bağlantılarını açma (masaüstü uygulaması)",
+      "Mesajları kopyalama ve Markdown dışa aktarma",
+      "Okunmamış işaretleri",
+      "Klavye kısayolları ve “Yenilikler”",
+      "Sunucu çevrimdışıyken göndermek",
+      "Sorular",
+      "Onaylar",
+      "Bir onay ne kadar geçerli olur",
+      "İzin seviyeleri",
+      "Dört hazır ayar",
+      "Mutlak tabanlar",
+      "Okumadan sonra dışarı gönderme",
+      "Tam seviye: okumadan sonra web'de çalışmak (sahibin başlattığı çalışmalar)",
+      "Her zaman açık bir sunucuda sunucu durumu komutları",
+      "Zamanlamayla başlayan çalışmalar",
+      "Masaüstünü denetlemek",
+      "Dosya değişikliklerini geri almak",
+      "Tur başına sınırlar",
+      "Bildirimler ve onaylar",
+      "Sohbetteki adım listesi",
+      "Tanılama zaman çizelgesini kaydetmek"
+    ],
+    "summary": "Her konuşma, tek bir botla yapılan bir sohbettir. Sohbetler saklanır, yani sonra geri dönebilirsin. Bir mesaj bir çalışma başlatır (buna tur da denir): bot düşünür, araçları çağırır ve yanıtını akıta…"
   },
   {
     "doc": "tr/computer-use.md",
@@ -205,6 +313,34 @@
     "summary": "Kılavuzun bu bölümü, en çok bakılan sayfaların sade Türkçe çevirisidir. Henüz çevrilmemiş sayfalar İngilizce"
   },
   {
+    "doc": "tr/install-windows.md",
+    "title": "Windows'a kurulum",
+    "headings": [
+      "Başlamadan önce",
+      "Neler kurulur",
+      "Pencere denetimleri ve görünüm",
+      "Yükseltme",
+      "Kaldırma",
+      "Bir şey ters giderse"
+    ],
+    "summary": "Bu sayfa Windows yükleyicisini ayrıntılı anlatır: neyi kurduğunu, verilerinin nerede durduğunu, yükseltme ve kaldırmanın nasıl çalıştığını, bir şey ters giderse ne yapacağını. İlk açılış sihirbazı iç…"
+  },
+  {
+    "doc": "tr/install.md",
+    "title": "Kurulum ve ilk çalıştırma",
+    "headings": [
+      "A seçeneği: Windows masaüstü uygulaması",
+      "Masaüstü bağlantısı desteği",
+      "B seçeneği: CLI'yı kaynaktan derle",
+      "Windows yükleyicisini kendin derle",
+      "Terminalden ilk çalıştırma",
+      "bot serve ne yapar",
+      "Dosyaların nerede durur",
+      "Ortam değişkenleri"
+    ],
+    "summary": "Praxi'yi edinmenin iki yolu var: Windows yükleyicisi (terminal gerekmez) ya da kaynaktan derleme (CLI ve daemon için her işletim sistemi). Şimdiye kadarki tek sürüm, ön sürüm v0.1.0-alpha.1 (bir Wind…"
+  },
+  {
     "doc": "tr/keep-your-bot-safe.md",
     "title": "Botunu güvende tut",
     "headings": [
@@ -216,6 +352,19 @@
       "İyi alışkanlıklar"
     ],
     "summary": "Botun senin bilgisayarında çalışır, yani kontrol sende kalır. Bu sayfa kuralları sade sözlerle anlatır."
+  },
+  {
+    "doc": "tr/keyboard-shortcuts.md",
+    "title": "Klavye kısayolları",
+    "headings": [
+      "Genel kısayollar",
+      "Mesaj yazma alanı",
+      "Ayarlanabilir yazma ve durdurma kısayolları",
+      "Eğik çizgi komutları",
+      "Pencereler",
+      "İlgili sayfalar"
+    ],
+    "summary": "Praxi masaüstü uygulaması, fareye uzanmadan sohbetler arasında gezinmen, bot çalışmalarını yönetmen, pencereleri açman ve mesaj yazman için klavye kısayolları sunar."
   },
   {
     "doc": "tr/linux-host.md",
@@ -243,6 +392,15 @@
     "summary": "Botların, Praxi'yi kurduğun bilgisayarda çalışır. Praxi açıkken ve bilgisayarın uyanıkken çalışırlar."
   },
   {
+    "doc": "tr/mcp-servers.md",
+    "title": "MCP sunucuları",
+    "headings": [
+      "Bir sunucu neye dönüşür",
+      "mcp.toml"
+    ],
+    "summary": "Daemon (bot serve) açılırken /mcp.toml dosyasını yükler ve o dosyadaki etkin her"
+  },
+  {
     "doc": "tr/memory.md",
     "title": "Bellek: botların neyi hatırladığı",
     "headings": [
@@ -256,10 +414,38 @@
     "summary": "Başka dilde: English · Deutsch."
   },
   {
+    "doc": "tr/providers-and-models.md",
+    "title": "Sağlayıcılar ve modeller",
+    "headings": [
+      "Yerleşik sağlayıcılar",
+      "Sağlayıcı eklemek ve yönetmek",
+      "Hangi model neyi çalıştırır",
+      "Gemini ücretsiz katmanı",
+      "Yerel modeller",
+      "OpenAI uyumlu özel sağlayıcılar"
+    ],
+    "summary": "programdır). Praxi yalnızca senin ayarladığın sağlayıcılarla konuşur, başka hiçbir yere bir"
+  },
+  {
     "doc": "tr/quick-faq.md",
     "title": "Hızlı yanıtlar",
     "headings": [],
     "summary": "İnsanların ilk sorduğu sorulara kısa yanıtlar. Daha uzun teknik sorular için SSS sayfasına bak."
+  },
+  {
+    "doc": "tr/scheduled-tasks.md",
+    "title": "Zamanlanmış görevler",
+    "headings": [
+      "Bir tane oluştur",
+      "Ne zaman ifadeleri",
+      "Bir zamanlama ne çalıştırabilir",
+      "Webhooklar",
+      "Kaçırılan çalışmalar",
+      "Kısa seri işler için zamanlama değil, tek bir çalışma kullan",
+      "Başında kimse yokken onaylar",
+      "Botun kendi zamanlamalarını yönetmesine izin vermek"
+    ],
+    "summary": "Bir zamanlama, botun kendi kendine bir şey yapmasını sağlar: hafta içi her sabah, her 15"
   },
   {
     "doc": "tr/schedules.md",
@@ -277,6 +463,24 @@
     "summary": "\"hafta içi her gün 9:00'da okunmamış e-postalarımı özetle\". Bir kez kurarsın, sonra kendi kendine çalışır."
   },
   {
+    "doc": "tr/security.md",
+    "title": "Güvenlik modeli",
+    "headings": [
+      "Seni ne korur",
+      "Seni neden korumaz",
+      "Bir ana makinede sahip kim sayılır",
+      "Daemon süreç koruması (derinlemesine savunma)",
+      "İyi alışkanlıklar",
+      "Bir güvenlik açığını bildirmek",
+      "Canlı ekran gizliliği ve insan denetimi",
+      "Asistanın yazabileceği gizli bilgiler (fill secrets)",
+      "Asistanın bir kimlik bilgisi istemesine izin vermek (deneysel, varsayılan olarak kapalı)",
+      "Mesaj kutusuna yapıştırılmış bir parola",
+      "Prompt injection değerlendirme paketi"
+    ],
+    "summary": "Bilgisayarını kullanabilen bir ajan güçlü bir şeydir, bu yüzden de cazip bir hedeftir:"
+  },
+  {
     "doc": "tr/settings.md",
     "title": "Ayarlar",
     "headings": [
@@ -288,6 +492,19 @@
       "Küçük ekranlar"
     ],
     "summary": "Değişiklikler kendiliğinden kaydedilir: her değişiklikten sonra sağ üstteki etikette Kaydedildi yazar."
+  },
+  {
+    "doc": "tr/skills.md",
+    "title": "Beceriler",
+    "headings": [
+      "Beceriler nerede durur",
+      "Kendin yaz",
+      "Beceri yükle",
+      "Uygulamadaki beceri kitaplığı",
+      "Ortak becerileri API ile yönetmek",
+      "Bir bota hangi becerilerin verileceğini seçmek"
+    ],
+    "summary": "“özel bir açılır liste nasıl kullanılır” ya da “Windows Ayarları'nda nasıl gezinilir”. Beceriler kod"
   },
   {
     "doc": "tr/telegram.md",
@@ -333,6 +550,19 @@
     "summary": "Önce bot status komutunu çalıştır. Arka plan servisinin (daemon) çalıştığını, anahtarının kabul edildiğini ve kaç onayın seni beklediğini gösterir. Terminal kullanmıyorsan önce sade dille yazılmış Sı…"
   },
   {
+    "doc": "tr/voice-call.md",
+    "title": "Sesli arama modu (eller serbest sohbet)",
+    "headings": [
+      "Başlamadan önce",
+      "Konuşmayı yazıya çevirme sağlayıcısını seçmek",
+      "Arama başlatmak ve kullanmak",
+      "Sözünü kesmek ve arama denetimleri",
+      "Neler yapabilir, neler yapamaz",
+      "Gizlilik ve güvenlik"
+    ],
+    "summary": "Masaüstü uygulamasındaki sesli arama modu, bir botla yazmadan konuşmanı sağlar. Sohbet yazı"
+  },
+  {
     "doc": "tr/web-scraping.md",
     "title": "Web tarama eklentisi (isteğe bağlı)",
     "headings": [
@@ -342,5 +572,19 @@
       "Kişisel veriler"
     ],
     "summary": "Yerleşik web araçları çoğu sayfayı zaten okur. Web tarama eklentisi,"
+  },
+  {
+    "doc": "tr/web.md",
+    "title": "Web araçları: ara ve sayfa oku",
+    "headings": [
+      "Arama arka ucu",
+      "Gizlilik",
+      "Güvenlik",
+      "Bir botun sormadan çekmesine izin vermek",
+      "Bilinen risk",
+      "Çalıştığını kontrol et",
+      "Tarayıcı kullanımı: ne beklemeli"
+    ],
+    "summary": "Her bot, tarayıcı açmadan web'de bir şeye bakabilir. Web araçları varsayılan olarak açıktır ve"
   }
 ]

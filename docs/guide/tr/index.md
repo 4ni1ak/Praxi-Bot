@@ -8,7 +8,7 @@ kılavuzda arama yapar ve sayfa çevrilmişse Türkçesini açar.
 
 | Sayfa | Ne anlatır |
 | --- | --- |
-| E-posta veya imzalı çağrıyla botu uyandırma | [Bir şey olduğunda](triggers.md) |
+| [Bir şey olduğunda](triggers.md) | E-posta veya imzalı çağrıyla botu uyandırma. |
 | [5 dakikada başlangıç](getting-started.md) | Kur, ücretsiz anahtar al, ilk sohbetini yap, bot nedir öğren. |
 | [Botunu güvende tut](keep-your-bot-safe.md) | İzin seviyeleri, onaylar ve bilgisayarından ne çıkar. |
 | [Bu bilgisayarda mı, sunucuda mı çalışsın](local-or-server.md) | Neden sunucuya ihtiyacın yok ve istersen nasıl eklenir. |
@@ -31,3 +31,18 @@ kılavuzda arama yapar ve sayfa çevrilmişse Türkçesini açar.
 | [SSS](faq.md) | Sık sorulan sorular. |
 | [Linux sunucuda 7/24 çalışma](linux-host.md) | Sanal ekran, güncelleme ve kaldırma için komutlar. |
 | [Sözlük](glossary.md) | Temel terimler. |
+| [Sohbet ve onaylar](chatting-and-approvals.md) | Bir botla konuşma, onaylar, izin seviyeleri, bildirimler ve geri alma. |
+| [Kurulum ve ilk çalıştırma](install.md) | Windows yükleyicisi, kaynaktan derleme, ilk çalıştırma, `bot serve` ve ortam değişkenleri. |
+| [Windows'a kurulum](install-windows.md) | Yükleyicinin neyi nereye kurduğu, yükseltme, kaldırma ve sorun giderme. |
+| [Klavye kısayolları](keyboard-shortcuts.md) | Masaüstü uygulamasındaki kısayollar ve eğik çizgi komutları. |
+| [Erişilebilirlik](accessibility.md) | Klavyeyle gezinme, ekran okuyucu, odak, yüksek kontrast ve azaltılmış hareket. |
+| [Güvenlik modeli](security.md) | Praxi seni nelerden korur, nelerden koruyamaz; izin, onay ve gizli bilgi kuralları. |
+| [Botlar ve profiller](bots-and-profiles.md) | Bot oluşturma, izinler, araçlar, kayıtlı tarayıcı oturumları ve profil paylaşma. |
+| [Şifreli yedekleme ve geri yükleme](backup.md) | Botlarını ve verilerini parolalı tek bir dosyaya yedekleme ve geri yükleme. |
+| [Uygulamaları bağlama](apps.md) | Uygulamalar penceresi, bağlantı türleri, durumlar, bot başına erişim ve takılan bağlantılar. |
+| [Sağlayıcılar ve modeller](providers-and-models.md) | Sağlayıcılar, anahtar ekleme, model rolleri, Gemini ücretsiz katmanı ve yerel modeller. |
+| [Beceriler](skills.md) | Beceri nedir, nerede durur, nasıl yazılır, güvenle yüklenir ve bota verilir. |
+| [Zamanlanmış görevler](scheduled-tasks.md) | Zamanlama ifadeleri, kaçırılan çalışmalar, onaylar ve botun kendi zamanlamaları. |
+| [MCP sunucuları](mcp-servers.md) | `mcp.toml` ayarları, güven ve izin kuralları, bot başına erişim ve OAuth. |
+| [Sesli arama modu](voice-call.md) | Eller serbest sesli sohbet, yazıya çevirme sağlayıcıları ve gizlilik. |
+| [Web araçları](web.md) | Web araması, sayfa okuma, ağ güvenliği, onaylar ve tarayıcı kullanımı. |

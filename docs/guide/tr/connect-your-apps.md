@@ -68,4 +68,4 @@ Bir uygulama, araçlarından birini tanımlama biçimini değiştirebilir. Sen o
 | **Hata** | Satırın altındaki ayrıntıları aç. Yazanı düzelt, sonra **Yeniden bağlan**'a bas. |
 | **Karantinada** | Uygulama birkaç kez başarısız oldu ve duraklatıldı. Sorunu düzelt, sonra **Yeniden bağlan**'a bas. |
 
-Daha fazlası: [Uygulamaları bağlama](../apps.md) (tüm ayrıntılar) ve [MCP sunucuları](../mcp-servers.md) (elle kuranlar için).
+Daha fazlası: [Uygulamaları bağlama](apps.md) (tüm ayrıntılar) ve [MCP sunucuları](mcp-servers.md) (elle kuranlar için).

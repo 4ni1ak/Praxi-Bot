@@ -2,7 +2,7 @@
 
 **Zamanlanmış iş**, bir botun senin seçtiğin zamanlarda kendiliğinden bir şey yapmasını sağlar:
 "hafta içi her gün 9:00'da okunmamış e-postalarımı özetle". Bir kez kurarsın, sonra kendi kendine çalışır.
-(Teknik başvuru: [Zamanlanmış görevler](../scheduled-tasks.md).)
+(Teknik başvuru: [Zamanlanmış görevler](scheduled-tasks.md).)
 
 ## İlk işini oluştur
 

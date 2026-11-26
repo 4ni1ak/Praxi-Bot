@@ -1,6 +1,6 @@
 # Eski şifresiz yedekleri geri yükleme
 
-Güncel sürümler **şifreli** yedek oluşturur; bkz. [Şifreli yedekleme ve geri yükleme](../backup.md).
+Güncel sürümler **şifreli** yedek oluşturur; bkz. [Şifreli yedekleme ve geri yükleme](backup.md).
 Eski sürümler `bot backup <DOSYA>` ile şifresiz arşivler yazıyordu. `bot restore` bunları hâlâ okur:
 
 ```sh

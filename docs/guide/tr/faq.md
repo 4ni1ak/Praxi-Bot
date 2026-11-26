@@ -11,7 +11,7 @@ hiçbir şey bilgisayarından çıkmaz.
 
 ### Para harcar mı?
 Praxi'nin kendisi ücretsiz ve açık kaynaklıdır (Apache-2.0). Model sağlayıcına ödeme yaparsın; ücretsiz
-katmanda ya da yerel modellerle hiçbir şey ödemezsin. Bkz. [Sağlayıcılar ve modeller](../providers-and-models.md).
+katmanda ya da yerel modellerle hiçbir şey ödemezsin. Bkz. [Sağlayıcılar ve modeller](providers-and-models.md).
 API, token kullanımını ve katalogda fiyat varsa tahmini maliyeti bildirir (`/v1/usage`; masaüstü uygulamasında
 bir kullanım ekranı var).
 
@@ -28,7 +28,7 @@ Windows'ta evet: masaüstü uygulamasını kur, sihirbazı izle, sohbet et, onay
 ### Bot, bana sormadan bir şey yapabilir mi?
 Yalnızca politikanın izin verdiği şeyleri. Varsayılan olarak okumak serbesttir, değişiklikler sorar.
 Bunu bot başına ve kategori başına genişletebilirsin. Para ve yıkıcı kabuk komutları her zaman sorar.
-Bkz. [Sohbet ve onaylar](../chatting-and-approvals.md).
+Bkz. [Sohbet ve onaylar](chatting-and-approvals.md).
 
 ### Bir botu hemen nasıl durdururum?
 Sohbette ya da Telegram'da `/stop` gönder, genel kısayola bas (masaüstü uygulamasında varsayılan `Ctrl+Alt+Esc`),
@@ -36,13 +36,13 @@ masaüstü uygulamasında kontrolü devral ya da daemon'u durdur (Ctrl-C); bu, c
 `POST /v1/runs/{id}/cancel` tek bir çalışmayı iptal eder.
 
 ### Birden fazla bot çalıştırabilir miyim?
-Evet. Her birinin kendi profili, sohbetleri ve izinleri vardır; bkz. [Botlar ve profiller](../bots-and-profiles.md).
+Evet. Her birinin kendi profili, sohbetleri ve izinleri vardır; bkz. [Botlar ve profiller](bots-and-profiles.md).
 
 ### Verilerim nerede ve nasıl yedeklerim?
 Veri klasöründe (`--data-dir` / `BOT_DATA_DIR`; yoksa `praxi-bot` için işletim sisteminin kullanıcıya özel
 uygulama verisi klasörü): bir SQLite veritabanı, olay günlükleri, `providers.toml`, beceriler, iş akışları ve
 API belirteci. `bot backup create <dosya>` komutunu çalıştır: parolayla şifrelenmiş tek bir dosya yazar ve
-bunu `bot backup restore` ile geri yükleyebilirsin (bkz. [Şifreli yedekleme ve geri yükleme](../backup.md)).
+bunu `bot backup restore` ile geri yükleyebilirsin (bkz. [Şifreli yedekleme ve geri yükleme](backup.md)).
 API anahtarları işletim sisteminin anahtarlığında (ya da veri klasöründeki şifreli bir dosyada) durur ve
 yalnızca `--include-secrets` ile yedeğe dahil edilir.
 
@@ -57,7 +57,7 @@ yüklemek için daemon'un durmuş olması gerekir (aynı birimde tek seferlik bi
 ### Bir botu nasıl daha hızlı ve ucuz yaparım?
 Küçük bir `classifier` modeli kullan, tekrarlayan işler için [iş akışları](../workflows.md) kaydet,
 iyi giden bir çalışmadan sonra **Bunu hatırla**'ya bas ve botun zorlandığı siteler ve uygulamalar için
-[beceriler](../skills.md) yaz.
+[beceriler](skills.md) yaz.
 
 ### Bir iş akışını göstererek kaydedebilir miyim?
 Henüz değil (**Planlandı**). Bugün iş akışları senin yazdığın TOML dosyalarıdır ve "Hatırla", başarılı bir
@@ -71,13 +71,13 @@ unutturabilir ve kapatabilirsin; bkz. [Bellek](memory.md). Sohbetler ayrıca ken
 
 ### MCP sunucuları ya da eklentiler ekleyebilir miyim?
 MCP sunucuları için evet: `bot serve`, `mcp.toml` dosyasını yükler ve etkin sunucuları çalıştırır; bunları
-`/v1/mcp/servers` üzerinden yönetebilirsin. Bkz. [MCP sunucuları](../mcp-servers.md). Eklentiler hâlâ
+`/v1/mcp/servers` üzerinden yönetebilirsin. Bkz. [MCP sunucuları](mcp-servers.md). Eklentiler hâlâ
 **Planlandı**: tasarım araçlar, sağlayıcılar ve kanallar için eklentiler öngörüyor, ancak son kullanıcılar için
 henüz bir eklenti API'si yok.
 
 ### Bir bot başka bir bilgisayarı yönetebilir mi?
 Evet, deneysel olarak. Bir bot, eşleştirilmiş bir bilgisayara yönlendirilebilir (profilin bilgisayar hedefi;
-bkz. [Botlar ve profiller](../bots-and-profiles.md)) ve daemon, onu sunan eş ağını başlatır. Node-agent
+bkz. [Botlar ve profiller](bots-and-profiles.md)) ve daemon, onu sunan eş ağını başlatır. Node-agent
 (`bot-node`, `join`, `run`, `devices` komutları), sahip olduğun bir makinenin gelen port açmadan yönetilmesini
 sağlar. Uzak bilgisayar çalışmaları yalnızca masaüstü araçlarını sunar. Bu yolun tamamını **deneysel** say.
 

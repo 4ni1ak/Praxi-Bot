@@ -65,7 +65,7 @@ Her işte **Şimdi çalıştır**'a, **Düzenle**'ye ya da **Sil**'e basabilirsi
 - İşin okuduğu web sayfaları ve e-postalar bilgidir, emir değildir.
 - Koyduğun harcama limitleri işler için de geçerlidir.
 
-Daha fazlası: [Zamanlanmış işler, sade sözlerle](schedules.md) ve [teknik başvuru](../scheduled-tasks.md).
+Daha fazlası: [Zamanlanmış işler, sade sözlerle](schedules.md) ve [teknik başvuru](scheduled-tasks.md).
 
 ## Botu dışarıdan başlat
 

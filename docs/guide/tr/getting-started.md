@@ -17,7 +17,7 @@ Bu sayfa seni hiçbir şeyden ilk sohbetine kadar götürür. Kod yazmayı bilme
 3. Windows mavi bir uyarı ("SmartScreen") gösterebilir. Yeni uygulamalarda bu normaldir. **Daha fazla bilgi**'ye, sonra **Yine de çalıştır**'a bas.
 4. Kurulum bitince Praxi kendiliğinden açılır.
 
-Ayrıntılar: [Windows'a kurulum](../install-windows.md).
+Ayrıntılar: [Windows'a kurulum](install-windows.md).
 
 > **Resim:** **Daha fazla bilgi** ve **Yine de çalıştır** düğmeleriyle Windows uyarısı.
 
@@ -36,7 +36,7 @@ Anahtarın bilgisayarının kendi parola deposuna kaydedilir. Praxi onu bir daha
 
 Hazır değil misin? **Bunu sonra eklerim**'e bas. Etrafa göz atabilirsin. Anahtar ekler eklemez botun yanıt vermeye başlar.
 
-Modeller ve anahtarlar hakkında daha fazlası: [Sağlayıcılar ve modeller](../providers-and-models.md).
+Modeller ve anahtarlar hakkında daha fazlası: [Sağlayıcılar ve modeller](providers-and-models.md).
 
 > **Resim:** **Ücretsiz bir model kullan** ve **Anahtarımı al** düğmesiyle **Bir beyin seç** ekranı.
 
