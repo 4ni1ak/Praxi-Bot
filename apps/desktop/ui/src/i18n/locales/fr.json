@@ -1131,7 +1131,7 @@
       "name": "Praxi-governed",
       "text": "Praxi runs files and shell with its own tools and asks you per action. The CLI's own tools are off."
     },
-    "hint": "Who runs this bot's files and shell commands. Praxi's own tools (browser, apps, secrets, memory) always keep Praxi's approvals.",
+    "hint": "Facultatif. Les outils de fichiers et de commandes de Praxi fonctionnent sans aucune CLI ; une CLI de programmation peut les exécuter à la place. Les outils propres à Praxi (navigateur, apps, secrets, mémoire) gardent toujours les validations de Praxi.",
     "kill": "Stop and turn off",
     "label": "Files and shell: governed by {{cli}}",
     "level": {
@@ -1160,10 +1160,16 @@
       "name": "{{cli}} with its own tools",
       "text": "{{cli}} reads, edits and runs commands itself in the workspace folder, under the approval level below. Praxi does not see or control those actions."
     },
-    "needCli": "Choose a coding CLI model for this bot above and save it first (a model that starts with cli:). Enable the CLI in Settings, AI, Detected accounts.",
+    "needCli": "Aucune CLI de programmation n'est configurée, et il n'en faut pas : ce bot utilise les outils de fichiers et de commandes de Praxi. Pour les confier à une CLI, choisis plus haut un modèle de CLI de programmation pour ce bot et enregistre d'abord.",
     "workspace": "Workspace folder",
     "workspaceHint": "The coding tool works in this folder. Praxi's own data, your home folder, whole drives and folders that hold passwords or sign-ins are not allowed.",
     "workspacePlaceholder": "Empty: Praxi makes a folder for this bot. Or type a path such as C:/Projects/my-app"
+  },
+  "botFiles": {
+    "action": "Laisser ce bot utiliser les fichiers et les commandes",
+    "error": "Impossible de modifier ce bot : {{message}}",
+    "hint": "Sa liste d'outils les exclut. Il te demandera toujours d'abord si son niveau d'autorisation l'exige.",
+    "title": "Ce bot ne peut pas encore créer de fichiers ni exécuter de commandes"
   },
   "botForm": {
     "allowEgressAfterReads": {
@@ -3669,7 +3675,7 @@
     "prompts": {
       "draft": "Help me write a short, friendly message to a neighbour",
       "folder": "Summarise this folder",
-      "news": "Find today's top AI news",
+      "plan": "Prépare-moi un voyage de trois jours à Lisbonne",
       "screen": "What is on my screen right now?"
     },
     "service": {
