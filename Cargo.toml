@@ -25,6 +25,7 @@ members = [
     "crates/task-runtime",
     "crates/channel-api",
     "crates/channel-telegram",
+    "crates/channel-discord",
     "crates/peer-network",
     "crates/remote-api",
     "crates/script-runtime",

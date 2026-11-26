@@ -1,0 +1,34 @@
+[package]
+name = "channel-discord"
+description = "Discord channel adapter: bot token, DMs and an allow-listed server channel, owner-only pairing, low-risk approval buttons, mention-safe replies."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+channel-api = { path = "../channel-api", version = "0.1.0" }
+channel-telegram = { path = "../channel-telegram", version = "0.1.0" }
+futures.workspace = true
+futures-util.workspace = true
+parking_lot.workspace = true
+protocol.workspace = true
+reqwest.workspace = true
+secret-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
+tokio-util.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+wiremock.workspace = true

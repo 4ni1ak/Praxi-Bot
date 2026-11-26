@@ -32,6 +32,7 @@ export const DAEMON_ERROR_CODES = [
   "bad_voice_config",
   "bad_web_config",
   "bot_limit_reached",
+  "browser_profile_error",
   "busy",
   "component_conflict",
   "composio_error",

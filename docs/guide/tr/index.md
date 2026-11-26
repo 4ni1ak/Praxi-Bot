@@ -21,6 +21,7 @@ kılavuzda arama yapar ve sayfa çevrilmişse Türkçesini açar.
 | [Bot harcama sınırları](bot-spending-limits.md) | Günlük, haftalık ve aylık sınırlar. |
 | [Bellek](memory.md) | Botların neyi hatırladığını gör, düzelt, unutturup kapat. |
 | [Telegram](telegram.md) | Botlarınla telefonundan konuşmak. |
+| [Discord](discord.md) | Botlarınla Discord üzerinden konuşmak. |
 | [Takvim](calendar.md) | Botların CalDAV takviminde etkinlik okuması ve eklemesi. |
 | [Home Assistant](home-assistant.md) | Botların evdeki cihazları okuması ve yönetmesi. |
 | [Bilgisayar kullanımı](computer-use.md) | Botların kendi Windows bilgisayarında uygulama kullanması. |

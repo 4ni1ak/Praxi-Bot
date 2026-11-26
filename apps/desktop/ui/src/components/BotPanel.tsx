@@ -35,6 +35,7 @@ import { BotComputerBlock } from "./BotComputerBlock";
 import { StopStatusNotice } from "./StopStatusNotice";
 import styles from "./BotPanel.module.css";
 import { BotPanelMail } from "./BotPanelMail";
+import { BotBrowserProfile } from "./BotBrowserProfile";
 import { BotPanelTriggers } from "./BotPanelTriggers";
 import { BotPanelWebhooks } from "./BotPanelWebhooks";
 import { BotPanelSkills } from "./BotPanelSkills";
@@ -178,7 +179,7 @@ export function BotPanel({
 }) {
   const { t, i18n } = useTranslation();
   const { events, refreshRuns } = useDaemon();
-  const [tab, setTab] = useState<"activity" | "automation" | "library">("activity");
+  const [tab, setTab] = useState<"activity" | "automation" | "library" | "tools">("activity");
   const [openSub, setOpenSub] = useState<string | null>(null);
   const [chatQuery, setChatQuery] = useState("");
   const visibleChats = filterChats(chats, chatQuery, t("botPanel.untitled"));
@@ -291,7 +292,7 @@ export function BotPanel({
       </header>
 
       <div className={styles.tabs} role="tablist" aria-label={t("botPanel.tabs.label")}>
-        {(["activity", "automation", "library"] as const).map((id, index, tabs) => (
+        {(["activity", "automation", "library", "tools"] as const).map((id, index, tabs) => (
           <button
             key={id}
             type="button"
@@ -383,6 +384,8 @@ export function BotPanel({
           </>
         ) : tab === "automation" ? (
           <><BotPanelTriggers botId={bot.id} /><details><summary>{t("botPanel.triggers.manageHooks")}</summary><BotPanelWebhooks botId={bot.id} /></details></>
+        ) : tab === "tools" ? (
+          <BotBrowserProfile key={bot.id} botId={bot.id} />
         ) : (
           library.map((id) =>
             id === "skills" ? (

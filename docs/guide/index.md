@@ -98,6 +98,7 @@ Seven short pages in plain words. Read them in this order:
 | See, correct, forget and switch off what your bots remember | [Memory](memory.md) |
 | Use a local coding CLI (Claude Code, Codex, Cursor, ...) as the engine | [Coding CLI engines](cli-engines.md) |
 | Talk to your bots from your phone | [Telegram](telegram.md) |
+| Talk to your bots from Discord | [Discord](discord.md) |
 | Read, search, draft or send e-mails | [Email integration](email.md) |
 | Read and add calendar events | [Calendar (CalDAV)](calendar.md) |
 | Let a bot read Home Assistant entities and call services | [Home Assistant](home-assistant.md) |

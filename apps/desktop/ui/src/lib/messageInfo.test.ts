@@ -48,3 +48,8 @@ test("the owner's own message shows the sent time with seconds and where it came
   assert.deepEqual(userInfoRows(at(1, 2, 3), undefined, "en", (k) => k).map((r) => r.key), ["sent"]);
   assert.equal(durationLabel(65_000, "en", { s: "s", m: "min" }), "1 min 5 s");
 });
+
+
+test("Discord messages show their channel source", () => {
+  assert.equal(userInfoRows(at(1, 2, 3), "discord", "en", (k) => k).find((r) => r.key === "source")?.value, "discord");
+});

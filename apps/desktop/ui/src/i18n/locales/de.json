@@ -1402,7 +1402,8 @@
       "activity": "Aktivität",
       "automation": "Automatisierung",
       "label": "Panel-Bereiche",
-      "library": "Bibliothek"
+      "library": "Bibliothek",
+      "tools": "Werkzeuge"
     },
     "thisBot": "Dieser Bot",
     "toggle": "Bot-Panel",
@@ -1568,6 +1569,28 @@
       "tooMany": "Es können nur {{max}} Skills zugewiesen werden. Wähle weniger Skills oder verwende „Alle geteilten Skills“."
     },
     "writeConflict": "Dieser Bot wurde während des Speicherns anderswo geändert. Lade ihn neu und versuche es erneut."
+  },
+  "browserProfile": {
+    "confirmAll": "Der Browser dieses Bots wird geschlossen. Alle gespeicherten Browserdaten einschließlich benannter Profile werden gelöscht. Sie müssen sich erneut anmelden. Andere Bots sind nicht betroffen.",
+    "confirmSite": "Der Browser dieses Bots wird geschlossen. Cookies und gespeicherte Websitedaten für {{domain}} und deren gespeicherte Subdomains werden im Standardprofil gelöscht. Möglicherweise müssen Sie sich erneut anmelden.",
+    "done": "Anmeldung abgeschlossen",
+    "empty": "Noch keine Websites mit gespeicherten Cookies.",
+    "encrypted": "Das Profilverzeichnis wird von Windows verschlüsselt. Der Browser nutzt zusätzlich den Cookie-Schutz des Systems, sofern verfügbar.",
+    "forgetAll": "Alles vergessen",
+    "forgetNamed": "{{domain}} vergessen",
+    "forgetSite": "Diese Website vergessen",
+    "intro": "Melden Sie sich selbst im verwalteten Browser dieses Bots an. Praxi fragt nicht nach Ihrem Passwort und speichert es nicht. Der Browser behält Cookies und Websitedaten, damit Sitzungen bei späteren Ausführungen erhalten bleiben können.",
+    "isolation": "Dieses Browserprofil gehört ausschließlich diesem Bot. Andere Bots teilen seine gespeicherten Sitzungen nicht.",
+    "manualHint": "Verwenden Sie das Browserfenster auf dem Computer, auf dem dieser Bot läuft. Die Browserwerkzeuge dieses Bots sind pausiert. Wählen Sie anschließend Anmeldung abgeschlossen.",
+    "protection": "Der Browser nutzt den Cookie-Schutz des Systems, sofern verfügbar. Die Verzeichnisverschlüsselung konnte nicht bestätigt werden; einige Websitedaten können unverschlüsselt gespeichert sein.",
+    "refresh": "Aktualisieren",
+    "signIn": "Manuell anmelden",
+    "siteHint": "Ein gespeichertes Cookie bestätigt keine gültige Anmeldung. Websites, die nur andere Speicherarten verwenden, erscheinen hier möglicherweise nicht. Beim Vergessen werden auch die anderen gespeicherten Browserdaten der Website gelöscht.",
+    "sites": "Websites mit gespeicherten Cookies",
+    "sitesUnavailable": "Gespeicherte Websitenamen können derzeit nicht gelesen werden. Schließen Sie die Anmeldung und den Browser ab und aktualisieren Sie dann. Sie können weiterhin alles vergessen.",
+    "size": "Profilgröße: {{bytes}} Byte",
+    "title": "Browserprofil",
+    "warning": "Auf angemeldeten Websites kann dieser Bot in Ihrem Namen handeln. Ihre bisherigen Genehmigungsregeln gelten weiterhin. Melden Sie sich nur bei Konten an, die dieser Bot nutzen soll."
   },
   "chat": {
     "addCommand": "Befehl oder Bot hinzufügen",
@@ -2916,6 +2939,10 @@
       "bot_limit_warning": {
         "hint": "Er hat 80 % eines Ausgabenlimits verbraucht. Prüfe die Limits in den Bot-Einstellungen.",
         "title": "Dieser Bot nähert sich seinem Limit"
+      },
+      "browser_profile_error": {
+        "hint": "Schließen Sie zunächst die manuelle Anmeldung ab. Aktualisieren Sie dann und versuchen Sie es erneut. Die manuelle Anmeldung erfordert eine Desktopanzeige auf dem Computer des Bots. Prüfen Sie bei weiteren Fehlern die Details.",
+        "title": "Browserprofil konnte nicht aktualisiert werden"
       },
       "busy": {
         "hint": "Warte einen Moment und versuche es erneut.",
@@ -4595,6 +4622,7 @@
     "sources": {
       "api": "lokale API",
       "app": "diese App",
+      "discord": "über Discord",
       "imported": "importierte Datei",
       "peer": "ein anderer Computer",
       "telegram": "Telegram",

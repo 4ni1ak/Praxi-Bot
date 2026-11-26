@@ -2,9 +2,13 @@
 
 `channel-api` defines the transport contract used by messaging adapters. It has
 no dependency on the daemon, HTTP clients, protocol crate, secret storage, or a
-runtime. `channel-telegram` is the existing implementation; future adapters for
-[Discord, Slack and Matrix](https://github.com/emreocell/Praxi-Bot/issues/207)
-can use the same contract.
+runtime. `channel-telegram` and `channel-discord` are the existing
+implementations; future adapters for
+[Slack and Matrix](https://github.com/emreocell/Praxi-Bot/issues/207)
+can use the same contract. `channel-discord` is the smaller template: a
+`Channel` transport (gateway in, REST out), a state file with one paired owner,
+and a bridge that follows runs; it reuses the daemon client types of
+`channel-telegram`.
 
 Implement `channel_api::Channel` with `async_trait`. `receive` returns a boxed
 stream of `IncomingMessage`; `send` sends a new message or edits the indicated

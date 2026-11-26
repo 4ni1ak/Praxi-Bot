@@ -9,6 +9,7 @@ import { MockLiveViewService } from "./mockLiveView.ts";
 import { longChatEvents, longChatMessages } from "./mockLongChat.ts";
 import type {
   BotSpendLimits,
+  BrowserProfileStatus,
   IncomingWebhook,
   IncomingWebhookCreated,
   Bot,
@@ -754,6 +755,18 @@ const DOCTOR_CHECKS: DoctorCheck[] = [
  */
 export class MockApiClient extends ApiClient {
   private readonly incomingWebhooks = new Map<string, IncomingWebhook[]>();
+  private readonly browserProfiles = new Map<string, BrowserProfileStatus>([
+    [
+      ATLAS,
+      {
+        domains: ["github.com"],
+        sites_available: true,
+        size_bytes: 428_512,
+        signing_in: false,
+        directory_encrypted: false
+      }
+    ]
+  ]);
   private readonly knowledgeSources = new Map<string, KnowledgeSource[]>();
   private readonly knowledgeSettings = new Map<string, KnowledgeSettings>();
   private readonly knowledgeApprovals = new Map<string, { bot: string; card: KnowledgeEmbeddingApproval; revision?: number }>();
@@ -1868,6 +1881,18 @@ export class MockApiClient extends ApiClient {
         if (seg[1] && seg[2] === "workspace") {
           return ok(this.mockGetBotWorkspace(seg[1], opts.query));
         }
+        if (seg[1] && seg[2] === "browser-profile" && !seg[3]) {
+          const found = this.bots.find((b) => b.id === seg[1]);
+          if (!found) throw new ApiError(404, "not_found", `bot ${seg[1]} not found`);
+          const state = this.browserProfiles.get(seg[1]) ?? {
+            domains: [],
+            sites_available: true,
+            size_bytes: 0,
+            signing_in: false,
+            directory_encrypted: false
+          };
+          return ok(structuredClone(state));
+        }
         if (seg[1] && !seg[2]) {
           const found = this.bots.find((b) => b.id === seg[1]);
           if (!found) throw new ApiError(404, "not_found", `bot ${seg[1]} not found`);
@@ -1881,6 +1906,22 @@ export class MockApiClient extends ApiClient {
         }
         return ok(mockHostScenario() === "empty" ? [] : structuredClone(this.bots));
       case "DELETE /bots":
+        if (seg[1] && seg[2] === "browser-profile" && !seg[3]) {
+          const found = this.bots.find((b) => b.id === seg[1]);
+          if (!found) throw new ApiError(404, "not_found", `bot ${seg[1]} not found`);
+          const cur = this.browserProfiles.get(seg[1]);
+          if (cur?.signing_in) {
+            throw new ApiError(409, "browser_profile_error", "finish manual sign-in before forgetting saved sites");
+          }
+          this.browserProfiles.set(seg[1], {
+            domains: [],
+            sites_available: true,
+            size_bytes: 0,
+            signing_in: false,
+            directory_encrypted: false
+          });
+          return ok(undefined);
+        }
         if (seg[1] && seg[2] === "grants") {
           const body = (opts.body ?? {}) as { target?: GrantTarget };
           const list = this.botGrants.get(seg[1]) ?? [];
@@ -2531,6 +2572,38 @@ export class MockApiClient extends ApiClient {
               modified_at_ms: restored.entry.modified_at_ms,
               preview_kind: restored.entry.kind === "directory" ? "none" : "text"
             } satisfies WorkspaceEntryDto);
+          }
+        }
+        if (seg[1] && seg[2] === "browser-profile") {
+          const found = this.bots.find((b) => b.id === seg[1]);
+          if (!found) throw new ApiError(404, "not_found", `bot ${seg[1]} not found`);
+          const cur = this.browserProfiles.get(seg[1]) ?? {
+            domains: [],
+            sites_available: true,
+            size_bytes: 0,
+            signing_in: false,
+            directory_encrypted: false
+          };
+          if (seg[3] === "sign-in") {
+            this.browserProfiles.set(seg[1], { ...cur, signing_in: true });
+            return ok(undefined);
+          }
+          if (seg[3] === "finish-sign-in") {
+            this.browserProfiles.set(seg[1], { ...cur, signing_in: false });
+            return ok(undefined);
+          }
+          if (seg[3] === "forget-site") {
+            if (cur.signing_in) {
+              throw new ApiError(409, "browser_profile_error", "finish manual sign-in before forgetting saved sites");
+            }
+            const domain = (opts.body as { domain?: string } | undefined)?.domain ?? "";
+            const next = cur.domains.filter((d) => d !== domain && !d.endsWith(`.${domain}`));
+            this.browserProfiles.set(seg[1], {
+              ...cur,
+              domains: next,
+              size_bytes: next.length ? Math.max(4096, Math.floor(cur.size_bytes / 2)) : cur.size_bytes
+            });
+            return ok(undefined);
           }
         }
         const input = opts.body as { name: string; config: unknown };

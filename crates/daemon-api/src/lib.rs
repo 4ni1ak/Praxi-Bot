@@ -77,6 +77,7 @@ pub mod trusted_folders;
 pub(crate) mod workspace_routes;
 pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod bot_limits_routes;
+mod browser_profiles;
 mod data_routes;
 mod embeddings_routes;
 mod incoming_webhook;
@@ -1339,6 +1340,22 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/openapi.json", get(openapi::serve_openapi))
         .route("/v1/bots", get(r::list_bots).post(r::create_bot))
         .route(
+            "/v1/bots/{bot}/browser-profile",
+            get(browser_profiles::get).delete(browser_profiles::forget_all),
+        )
+        .route(
+            "/v1/bots/{bot}/browser-profile/sign-in",
+            post(browser_profiles::sign_in),
+        )
+        .route(
+            "/v1/bots/{bot}/browser-profile/finish-sign-in",
+            post(browser_profiles::finish),
+        )
+        .route(
+            "/v1/bots/{bot}/browser-profile/forget-site",
+            post(browser_profiles::forget_site),
+        )
+        .route(
             "/v1/profile-share/templates",
             get(profile_share_routes::profile_templates),
         )
@@ -1701,6 +1718,7 @@ fn api_routes() -> Router<AppState> {
             "/v1/channels/telegram/pair-code",
             post(r::telegram_pair_code),
         )
+        .route("/v1/channels/discord/pair-code", post(r::discord_pair_code))
         .route(
             "/v1/mcp/servers",
             get(m::list_mcp_servers).post(m::create_mcp_server),
