@@ -1402,10 +1402,89 @@
       "activity": "Aktivität",
       "automation": "Automatisierung",
       "label": "Panel-Bereiche",
-      "library": "Bibliothek"
+      "library": "Bibliothek",
+      "tools": "Werkzeuge"
     },
     "thisBot": "Dieser Bot",
     "toggle": "Bot-Panel",
+    "triggers": {
+      "account": "Postfach",
+      "add": "Regel hinzufügen",
+      "approvalHint": "Es gelten die Berechtigungen dieses Bots. Genehmigungspflichtige Aktionen warten und benachrichtigen Sie.",
+      "attachment": "Hat einen Anhang",
+      "chooseAccount": "Postfach auswählen",
+      "chooseHook": "Webhook auswählen",
+      "close": "Editor schließen",
+      "contains": "Enthält",
+      "count": "Heute {{count}} Ausführungen (UTC)",
+      "count_one": "Heute {{count}} Ausführung (UTC)",
+      "count_other": "Heute {{count}} Ausführungen (UTC)",
+      "customSchedule": "Eigener Zeitplan",
+      "dailyAt": "Täglich um",
+      "digest": "Für eine gemeinsame Zusammenfassung aufheben",
+      "domain": "Domain ist",
+      "drop": "Diese Ereignisse überspringen",
+      "duringQuiet": "Während der Ruhezeit",
+      "edit": "Regel bearbeiten",
+      "empty": "Noch weckt kein Ereignis diesen Bot. Fügen Sie bei Bedarf eine Regel hinzu.",
+      "end": "Bis",
+      "equals": "Adresse ist",
+      "exampleDraft": "Bereite eine Antwort zur Prüfung vor.",
+      "exampleNotify": "Benachrichtige mich nur, wenn Handlungsbedarf besteht.",
+      "exampleSummary": "Fasse zusammen, was meine Aufmerksamkeit braucht.",
+      "existingHint": "Bereits eingerichtet. Öffnen, um Ruhezeiten und Grenzen hinzuzufügen; nach dem Speichern zunächst aus.",
+      "folder": "Ordner / Label",
+      "hook": "Signierter Webhook",
+      "hookHint": "Unten eine signierte Adresse erstellen und hier verknüpfen. Verknüpfte Aufrufe verwenden diese Regel.",
+      "intro": "Kleine Regeln, die diesen Bot wecken. Sie behalten die Kontrolle.",
+      "lastFired": "Letzte Ausführung:",
+      "limitSummary": "{{hour}} / Stunde · {{day}} / Tag",
+      "limits": "Grenzen",
+      "limitsHint": "Mehrere Ereignisse werden zusammengefasst. Weitere warten. Die niedrigste Bot-Grenze gilt für alle Regeln. Warteschlange: 100 Ereignisse, 48 KB; bei Überfüllung pausiert die Regel.",
+      "mail": "Eine E-Mail eintrifft",
+      "mailHint": "Nur IMAP-Postfächer. Liest nur Kopfzeilen. Die erste Prüfung beginnt die Überwachung neuer E-Mails.",
+      "manageHooks": "Signierte Adressen",
+      "name": "Name",
+      "off": "Aus",
+      "on": "An",
+      "paused": "Prüfung nötig",
+      "per_day": "Ausführungen pro Tag",
+      "per_hour": "Ausführungen pro Stunde",
+      "poll": "Prüfintervall (Sekunden)",
+      "preview": "Eingabe für den Bot anzeigen",
+      "previewHint": "Der genaue Auftrag und geschützte Ereignistext, mit Größenbegrenzung. Startet keine Ausführung und verwendet keine Werkzeuge.",
+      "queueError": "Zu viele Ereignisse warten. Grenzen Sie die Filter ein und schalten Sie die Regel wieder ein.",
+      "queued": "{{count}} warten",
+      "queued_one": "{{count}} wartet",
+      "queued_other": "{{count}} warten",
+      "quietHours": "Ruhezeiten",
+      "remove": "Regel entfernen",
+      "runError": "Die letzte Ausführung wurde nicht abgeschlossen oder die Warteschlange ist voll. Aktivität und Filter prüfen, dann wieder einschalten.",
+      "sample": "Beispielbetreff oder Aufruftext",
+      "sampleMatches": "Dieses Beispiel passt zu den Filtern.",
+      "sampleMisses": "Dieses Beispiel passt nicht zu den Filtern.",
+      "save": "Änderungen speichern",
+      "saveOff": "Speichern · zunächst aus",
+      "schedule": "Zeitplan",
+      "scheduleHint": "Beispiel: 0 9 * * * Europe/Berlin (täglich um 09:00 Uhr). Mindestens fünf Minuten Abstand.",
+      "sender": "Absender",
+      "senderError": "Der Absenderfilter ist weder eine Adresse noch eine Domain, daher ist diese Regel aus und passt auf nichts. Geben Sie eine genaue Adresse (ann@example.com) oder eine Domain (example.com) ein und schalten Sie die Regel wieder ein.",
+      "senderMatch": "Absenderregel",
+      "should": "Der Bot soll",
+      "sourceError": "Die Postfachprüfung ist wiederholt fehlgeschlagen. Verbindung und Berechtigungen prüfen, dann wieder einschalten.",
+      "start": "Von",
+      "subject": "Betreff enthält (optional)",
+      "test": "Mit einem Beispiel testen",
+      "thisBot": "Alle Regeln dieses Bots",
+      "thisRule": "Diese Regel",
+      "time": "Nach einem Zeitplan",
+      "timezone": "Zeitzone",
+      "title": "Wenn etwas passiert",
+      "toggle": "{{name}} ein- oder ausschalten",
+      "useQuiet": "Diesen Bot nachts ruhig halten",
+      "webhook": "Ein Webhook aufgerufen wird",
+      "when": "Wenn"
+    },
     "untitled": "Neuer Chat",
     "upcoming": {
       "paused": "Pausiert",
@@ -1491,6 +1570,28 @@
       "tooMany": "Es können nur {{max}} Skills zugewiesen werden. Wähle weniger Skills oder verwende „Alle geteilten Skills“."
     },
     "writeConflict": "Dieser Bot wurde während des Speicherns anderswo geändert. Lade ihn neu und versuche es erneut."
+  },
+  "browserProfile": {
+    "confirmAll": "Der Browser dieses Bots wird geschlossen. Alle gespeicherten Browserdaten einschließlich benannter Profile werden gelöscht. Sie müssen sich erneut anmelden. Andere Bots sind nicht betroffen.",
+    "confirmSite": "Der Browser dieses Bots wird geschlossen. Cookies und gespeicherte Websitedaten für {{domain}} und deren gespeicherte Subdomains werden im Standardprofil gelöscht. Möglicherweise müssen Sie sich erneut anmelden.",
+    "done": "Anmeldung abgeschlossen",
+    "empty": "Noch keine Websites mit gespeicherten Cookies.",
+    "encrypted": "Das Profilverzeichnis wird von Windows verschlüsselt. Der Browser nutzt zusätzlich den Cookie-Schutz des Systems, sofern verfügbar.",
+    "forgetAll": "Alles vergessen",
+    "forgetNamed": "{{domain}} vergessen",
+    "forgetSite": "Diese Website vergessen",
+    "intro": "Melden Sie sich selbst im verwalteten Browser dieses Bots an. Praxi fragt nicht nach Ihrem Passwort und speichert es nicht. Der Browser behält Cookies und Websitedaten, damit Sitzungen bei späteren Ausführungen erhalten bleiben können.",
+    "isolation": "Dieses Browserprofil gehört ausschließlich diesem Bot. Andere Bots teilen seine gespeicherten Sitzungen nicht.",
+    "manualHint": "Verwenden Sie das Browserfenster auf dem Computer, auf dem dieser Bot läuft. Die Browserwerkzeuge dieses Bots sind pausiert. Wählen Sie anschließend Anmeldung abgeschlossen.",
+    "protection": "Der Browser nutzt den Cookie-Schutz des Systems, sofern verfügbar. Die Verzeichnisverschlüsselung konnte nicht bestätigt werden; einige Websitedaten können unverschlüsselt gespeichert sein.",
+    "refresh": "Aktualisieren",
+    "signIn": "Manuell anmelden",
+    "siteHint": "Ein gespeichertes Cookie bestätigt keine gültige Anmeldung. Websites, die nur andere Speicherarten verwenden, erscheinen hier möglicherweise nicht. Beim Vergessen werden auch die anderen gespeicherten Browserdaten der Website gelöscht.",
+    "sites": "Websites mit gespeicherten Cookies",
+    "sitesUnavailable": "Gespeicherte Websitenamen können derzeit nicht gelesen werden. Schließen Sie die Anmeldung und den Browser ab und aktualisieren Sie dann. Sie können weiterhin alles vergessen.",
+    "size": "Profilgröße: {{bytes}} Byte",
+    "title": "Browserprofil",
+    "warning": "Auf angemeldeten Websites kann dieser Bot in Ihrem Namen handeln. Ihre bisherigen Genehmigungsregeln gelten weiterhin. Melden Sie sich nur bei Konten an, die dieser Bot nutzen soll."
   },
   "chat": {
     "addCommand": "Befehl oder Bot hinzufügen",
@@ -2816,6 +2917,10 @@
         "hint": "Prüfe die Zeit oder die Wiederholungsregel und versuche es erneut.",
         "title": "Dieser Zeitplan ist ungültig"
       },
+      "bad_trigger_config": {
+        "hint": "Eine Quelle wählen, für E-Mails einen Absenderfilter hinzufügen und Auftrag, Ruhezeiten und Grenzen prüfen.",
+        "title": "Diese Regel prüfen"
+      },
       "bad_voice_config": {
         "hint": "Prüfe in den Einstellungen Adresse, Modell und Schlüssel des Transkriptionsdienstes und versuche es erneut.",
         "title": "Die Diktier-Einstellungen wurden nicht akzeptiert"
@@ -2835,6 +2940,10 @@
       "bot_limit_warning": {
         "hint": "Er hat 80 % eines Ausgabenlimits verbraucht. Prüfe die Limits in den Bot-Einstellungen.",
         "title": "Dieser Bot nähert sich seinem Limit"
+      },
+      "browser_profile_error": {
+        "hint": "Schließen Sie zunächst die manuelle Anmeldung ab. Aktualisieren Sie dann und versuchen Sie es erneut. Die manuelle Anmeldung erfordert eine Desktopanzeige auf dem Computer des Bots. Prüfen Sie bei weiteren Fehlern die Details.",
+        "title": "Browserprofil konnte nicht aktualisiert werden"
       },
       "busy": {
         "hint": "Warte einen Moment und versuche es erneut.",
@@ -3195,6 +3304,10 @@
       "too_many_streams": {
         "hint": "Schließe eine und versuche es erneut.",
         "title": "Zu viele Live-Ansichten sind geöffnet"
+      },
+      "trigger_source_unavailable": {
+        "hint": "Ein für diesen Bot freigegebenes IMAP-Postfach verbinden und geplante Postfachabfragen in seinen Berechtigungen erlauben.",
+        "title": "Dieses Postfach kann noch nicht überwacht werden"
       },
       "unauthorized": {
         "hint": "Starte den lokalen Dienst neu. Wenn das nicht hilft, starte Praxi neu.",

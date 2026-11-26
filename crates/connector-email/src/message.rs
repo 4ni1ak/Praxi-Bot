@@ -35,9 +35,7 @@ pub struct MessageSummary {
     /// The one bare sender address, lower-case, taken BEFORE `from` was capped;
     /// empty when the header has no address or more than one (fail closed).
     /// Every sender decision (allowed senders, own address) uses this field,
-    /// never the display text. Serialized only when set, so a trigger that
-    /// reads search results can apply the same rule (absent means no match).
-    #[serde(skip_serializing_if = "String::is_empty")]
+    /// never the display text. Exposed to header-only trigger filtering.
     pub from_addr: String,
     /// Recipients.
     pub to: Vec<String>,
@@ -47,6 +45,18 @@ pub struct MessageSummary {
     pub unread: bool,
     /// Size in bytes (RFC822.SIZE).
     pub size: Option<u32>,
+    /// Complete loop-guard headers, when the provider exposes raw headers.
+    pub automation_headers: Option<AutomationHeaders>,
+    /// MIME metadata only; unknown is distinct from no attachments.
+    pub has_attachment: Option<bool>,
+}
+
+/// Minimal metadata for preventing unattended mail loops. No body or secrets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AutomationHeaders {
+    pub auto_submitted: String,
+    pub precedence: String,
+    pub list_unsubscribe: String,
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -174,6 +184,22 @@ pub fn parse_summary(uid: u32, header: &[u8], unread: bool, size: Option<u32>) -
         date,
         unread,
         size,
+        automation_headers: msg.as_ref().map(|m| AutomationHeaders {
+            auto_submitted: m
+                .header_raw("Auto-Submitted")
+                .map_or_else(String::new, |raw| {
+                    if raw.trim().eq_ignore_ascii_case("no") {
+                        "no".into()
+                    } else {
+                        "auto".into()
+                    }
+                }),
+            precedence: cap_untrusted(m.header_raw("Precedence").unwrap_or_default().trim()),
+            list_unsubscribe: m
+                .header_raw("List-Unsubscribe")
+                .map_or_else(String::new, |_| "present".into()),
+        }),
+        has_attachment: None,
     }
 }
 
@@ -269,7 +295,10 @@ fn body_links(msg: &mail_parser::Message<'_>) -> Vec<String> {
 }
 
 pub(crate) fn cap_untrusted(s: &str) -> String {
-    truncate_chars(s, MAX_UNTRUSTED_FIELD_CHARS).0
+    s.chars()
+        .filter(|c| !c.is_control() && !protocol::approval_text::is_hidden(*c))
+        .take(MAX_UNTRUSTED_FIELD_CHARS)
+        .collect()
 }
 
 pub(crate) fn truncate_chars(s: &str, max: usize) -> (String, bool) {

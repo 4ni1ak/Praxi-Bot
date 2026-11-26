@@ -473,6 +473,14 @@ jobs:
         timeout-minutes: 10
         run: pnpm --dir apps/desktop/ui smoke --no-build
 
+      - name: Upload trigger registry screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trigger-registry-${{ matrix.os }}
+          path: ${{ runner.temp }}/desktop-smoke/trigger-registry-*.png
+          retention-days: 7
+
       - name: Upload smoke screenshots and logs
         if: failure()
         uses: actions/upload-artifact@v4

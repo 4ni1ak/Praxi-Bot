@@ -78,6 +78,10 @@ impl AppState {
 /// by the peer router (`peer.rs`), which this table does not change.
 pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("GET", "/v1/connectivity"),
+    ("GET", "/v1/bots/{}/browser-profile"),
+    ("HEAD", "/v1/bots/{}/browser-profile"),
+    ("DELETE", "/v1/bots/{}/browser-profile"),
+    ("POST", "/v1/bots/{}/browser-profile/*"),
     ("GET", "/v1/logs/recent"),
     // the audit trail names bots, folders and decisions: the owner's to read and export
     ("GET", "/v1/audit"),
@@ -208,6 +212,12 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("DELETE", "/v1/skills/market/installed/{}"),
     ("PUT", "/v1/skills/{}"),
     ("DELETE", "/v1/skills/{}"),
+    ("GET", "/v1/bots/{}/triggers"),
+    ("HEAD", "/v1/bots/{}/triggers"),
+    ("POST", "/v1/bots/{}/triggers"),
+    ("PUT", "/v1/bots/{}/triggers/{}"),
+    ("DELETE", "/v1/bots/{}/triggers/{}"),
+    ("POST", "/v1/bots/{}/triggers/preview"),
     ("GET", "/v1/bots/{}/incoming-webhooks"),
     ("POST", "/v1/bots/{}/incoming-webhooks"),
     ("PATCH", "/v1/bots/{}/incoming-webhooks/{}"),

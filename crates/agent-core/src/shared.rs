@@ -1155,6 +1155,7 @@ pub(crate) struct Shared {
     /// it when mail starts. Read for the per-run "your mail identity" block and
     /// to tell a bot's OWN inbox from one every bot may use.
     pub mail: Arc<builtin_tools::connector_email::MailHandle>,
+    pub browser_profiles: OnceLock<Arc<builtin_tools::browser::BrowserProfiles>>,
     /// Foreground browser / app source for skill suggestions.
     pub skill_hints: RwLock<Option<SkillHintFn>>,
     /// The K0-K3 decision ladders (one per bot) and the workflow wiring.
@@ -1426,8 +1427,14 @@ pub fn occurrence_kind(external: bool, id: TaskId, due_ms: i64, attempt: u32) ->
     format!("{KIND_PREFIX}:{prefix}:{id}:{due_ms}:{attempt}")
 }
 
-/// Whether `kind` carries an occurrence idempotency key.
+/// Owner registry prompts already contain their explicit untrusted data block.
+pub(crate) fn is_registry_kind(kind: &str) -> bool {
+    kind.starts_with("turn:external_schedule:") && kind.ends_with(":registry")
+}
+
+/// Whether the kind identifies a reserved timer occurrence.
 pub(crate) fn is_occurrence_kind(kind: &str) -> bool {
+    let kind = kind.strip_suffix(":registry").unwrap_or(kind);
     kind.strip_prefix("turn:schedule:")
         .or_else(|| kind.strip_prefix("turn:external_schedule:"))
         .is_some_and(|rest| rest.split(':').count() == 3)

@@ -77,6 +77,7 @@ pub mod trusted_folders;
 pub(crate) mod workspace_routes;
 pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod bot_limits_routes;
+mod browser_profiles;
 mod data_routes;
 mod embeddings_routes;
 mod incoming_webhook;
@@ -93,6 +94,7 @@ mod spend_routes;
 mod sse;
 mod stop;
 pub mod terminal;
+mod triggers;
 pub mod usage;
 pub mod voice;
 mod voice_routes;
@@ -1338,6 +1340,22 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/openapi.json", get(openapi::serve_openapi))
         .route("/v1/bots", get(r::list_bots).post(r::create_bot))
         .route(
+            "/v1/bots/{bot}/browser-profile",
+            get(browser_profiles::get).delete(browser_profiles::forget_all),
+        )
+        .route(
+            "/v1/bots/{bot}/browser-profile/sign-in",
+            post(browser_profiles::sign_in),
+        )
+        .route(
+            "/v1/bots/{bot}/browser-profile/finish-sign-in",
+            post(browser_profiles::finish),
+        )
+        .route(
+            "/v1/bots/{bot}/browser-profile/forget-site",
+            post(browser_profiles::forget_site),
+        )
+        .route(
             "/v1/profile-share/templates",
             get(profile_share_routes::profile_templates),
         )
@@ -1502,6 +1520,15 @@ fn api_routes() -> Router<AppState> {
         .route(
             "/v1/bots/{id}/page-reader",
             get(page_reader_routes::get_page_reader).put(page_reader_routes::put_page_reader),
+        )
+        .route(
+            "/v1/bots/{id}/triggers",
+            get(triggers::list).post(triggers::create),
+        )
+        .route("/v1/bots/{id}/triggers/preview", post(triggers::preview))
+        .route(
+            "/v1/bots/{id}/triggers/{trigger}",
+            axum::routing::put(triggers::update).delete(triggers::delete),
         )
         .route(
             "/v1/bots/{id}/incoming-webhooks",

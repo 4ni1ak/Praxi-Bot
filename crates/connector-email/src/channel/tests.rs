@@ -30,6 +30,8 @@ fn summary(uid: u32, from: &str, subject: &str) -> MessageSummary {
         date: Some("2026-11-08T12:00:00Z".into()),
         unread: true,
         size: Some(500),
+        automation_headers: None,
+        has_attachment: None,
     }
 }
 

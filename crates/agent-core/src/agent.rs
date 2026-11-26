@@ -255,6 +255,7 @@ impl AgentLoop {
                 spawn_gate: Mutex::new(()),
                 skills: OnceLock::new(),
                 fill_secrets: OnceLock::new(),
+                browser_profiles: OnceLock::new(),
                 secret_requests: Mutex::new(HashMap::new()),
                 handovers: Mutex::new(HashMap::new()),
                 skill_hints: RwLock::new(None),
@@ -363,6 +364,11 @@ impl AgentLoop {
     /// interactive approval flow as direct calls.
     #[must_use]
     pub fn with_builtin_tools(self, mut cfg: BuiltinConfig) -> Self {
+        if cfg.browser.is_none() {
+            let profiles = Arc::new(builtin_tools::browser::BrowserProfiles::default());
+            cfg.browser_profiles = Some(Arc::clone(&profiles));
+            let _ = self.sh.browser_profiles.set(profiles);
+        }
         (*self.sh.static_desktop.write()).clone_from(&cfg.desktop);
         cfg.gate = Arc::new(LoopGate {
             sh: Arc::downgrade(&self.sh),
@@ -400,6 +406,12 @@ impl AgentLoop {
     #[must_use]
     pub fn checkpoint_access(&self) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
         self.sh.checkpoint_access.read().clone()
+    }
+
+    /// Owner-only browser profile UI uses the same drivers as the tools.
+    #[must_use]
+    pub fn browser_profiles(&self) -> Option<Arc<builtin_tools::browser::BrowserProfiles>> {
+        self.sh.browser_profiles.get().cloned()
     }
 
     /// Decide per call whether bots without an explicit file access mode get
@@ -1271,6 +1283,37 @@ impl AgentLoop {
             work,
             note,
             &format!("turn:external_schedule:{schedule_id}"),
+        )
+    }
+
+    /// Start an owner-authored registry prompt with its already wrapped event.
+    /// The daemon supplies the complete instruction/data boundary. Keep the
+    /// external-schedule approval floor and isolation, but bypass the legacy
+    /// router's second JSON envelope so previews match model input exactly.
+    /// The durable suffix preserves this boundary on restart and resume.
+    ///
+    /// # Errors
+    /// Existing chat history or normal run-start errors.
+    pub fn run_trigger_prompt(
+        &self,
+        chat_id: ChatId,
+        schedule_id: TaskId,
+        occurrence: Option<(i64, u32)>,
+        prompt: &str,
+    ) -> Result<RunId> {
+        let base = occurrence.map_or_else(
+            || format!("turn:external_schedule:{schedule_id}"),
+            |(due, attempt)| occurrence_kind(true, schedule_id, due, attempt),
+        );
+        let kind = format!("{base}:registry");
+        if let Some(run) = self.existing_occurrence_run(chat_id, &kind)? {
+            return Ok(run);
+        }
+        self.run_scheduled_external_kind(
+            chat_id,
+            ScheduleWork::Prompt(prompt.to_owned()),
+            None,
+            &kind,
         )
     }
 

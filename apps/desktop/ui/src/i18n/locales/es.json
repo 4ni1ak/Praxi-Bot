@@ -1402,10 +1402,89 @@
       "activity": "Actividad",
       "automation": "Automatización",
       "label": "Secciones del panel",
-      "library": "Biblioteca"
+      "library": "Biblioteca",
+      "tools": "Herramientas"
     },
     "thisBot": "Este bot",
     "toggle": "Panel del bot",
+    "triggers": {
+      "account": "Buzón",
+      "add": "Añadir una regla",
+      "approvalHint": "Usa los permisos de este bot. Las acciones que necesitan tu aprobación esperan y te avisan.",
+      "attachment": "Tiene un archivo adjunto",
+      "chooseAccount": "Elige un buzón",
+      "chooseHook": "Elige un webhook",
+      "close": "Cerrar editor",
+      "contains": "Contiene",
+      "count": "{{count}} ejecuciones hoy (UTC)",
+      "count_one": "{{count}} ejecución hoy (UTC)",
+      "count_other": "{{count}} ejecuciones hoy (UTC)",
+      "customSchedule": "Horario personalizado",
+      "dailyAt": "Cada día a las",
+      "digest": "Guardar para un resumen conjunto después",
+      "domain": "El dominio es",
+      "drop": "Omitir estos eventos",
+      "duringQuiet": "Durante las horas de silencio",
+      "edit": "Editar regla",
+      "empty": "Todavía ningún evento despierta a este bot. Añade una regla cuando la necesites.",
+      "end": "Hasta",
+      "equals": "La dirección es",
+      "exampleDraft": "Prepara una respuesta para que la revise.",
+      "exampleNotify": "Avísame solo si hace falta actuar.",
+      "exampleSummary": "Resume lo que requiere mi atención.",
+      "existingHint": "Ya configurada. Ábrela para añadir horas de silencio y límites; al guardar queda desactivada.",
+      "folder": "Carpeta / etiqueta",
+      "hook": "Webhook firmado",
+      "hookHint": "Crea una dirección firmada abajo y vincúlala aquí. Las llamadas vinculadas usan esta regla en lugar de la instrucción anterior.",
+      "intro": "Pequeñas reglas que despiertan a este bot. Tú mantienes el control.",
+      "lastFired": "Última ejecución:",
+      "limitSummary": "{{hour}} / hora · {{day}} / día",
+      "limits": "Límites",
+      "limitsHint": "Los eventos seguidos se agrupan en una ejecución. Los demás esperan. El menor límite del bot se aplica a todas sus reglas. Cola: 100 eventos, 48 KB; si se llena, la regla se pausa.",
+      "mail": "Llega un correo",
+      "mailHint": "Solo buzones IMAP. Lee las cabeceras, nunca el contenido. La primera consulta inicia la vigilancia del correo nuevo.",
+      "manageHooks": "Direcciones firmadas",
+      "name": "Nombre",
+      "off": "Desactivada",
+      "on": "Activada",
+      "paused": "Requiere atención",
+      "per_day": "Ejecuciones por día",
+      "per_hour": "Ejecuciones por hora",
+      "poll": "Consultar cada (segundos)",
+      "preview": "Mostrar lo que recibe el bot",
+      "previewHint": "La instrucción exacta y el texto del evento protegido, con límite de tamaño. No inicia ejecuciones ni usa herramientas.",
+      "queueError": "Hay demasiados eventos pendientes. Ajusta los filtros y vuelve a activar la regla.",
+      "queued": "{{count}} en espera",
+      "queued_one": "{{count}} en espera",
+      "queued_other": "{{count}} en espera",
+      "quietHours": "Horas de silencio",
+      "remove": "Eliminar regla",
+      "runError": "La última ejecución no terminó o la cola está llena. Revisa la actividad y los filtros antes de reactivarla.",
+      "sample": "Asunto o texto de llamada de ejemplo",
+      "sampleMatches": "Este ejemplo coincide con los filtros.",
+      "sampleMisses": "Este ejemplo no coincide con los filtros.",
+      "save": "Guardar cambios",
+      "saveOff": "Guardar · empieza desactivada",
+      "schedule": "Horario",
+      "scheduleHint": "Ejemplo: 0 9 * * * Europe/Madrid (cada día a las 09:00). Intervalo mínimo de cinco minutos.",
+      "sender": "Remitente",
+      "senderError": "El filtro de remitente no es una dirección ni un dominio, así que esta regla está apagada y no coincide con nada. Escribe una dirección exacta (ann@example.com) o un dominio (example.com) y vuelve a activarla.",
+      "senderMatch": "Regla del remitente",
+      "should": "El bot debe",
+      "sourceError": "Las consultas del buzón han fallado varias veces. Revisa la conexión y los permisos antes de reactivar la regla.",
+      "start": "Desde",
+      "subject": "El asunto contiene (opcional)",
+      "test": "Probar con un ejemplo",
+      "thisBot": "Todas las reglas de este bot",
+      "thisRule": "Esta regla",
+      "time": "Según un horario",
+      "timezone": "Zona horaria",
+      "title": "Cuando pasa algo",
+      "toggle": "Activar o desactivar {{name}}",
+      "useQuiet": "Mantener este bot en silencio por la noche",
+      "webhook": "Se llama a un webhook",
+      "when": "Cuando"
+    },
     "untitled": "Nuevo chat",
     "upcoming": {
       "paused": "En pausa",
@@ -1491,6 +1570,28 @@
       "tooMany": "Solo puedes asignar hasta {{max}} habilidades. Elige menos o usa «Todas las habilidades compartidas»."
     },
     "writeConflict": "El bot se modificó en otro lugar mientras guardabas. Recárgalo y vuelve a intentarlo."
+  },
+  "browserProfile": {
+    "confirmAll": "Se cerrará el navegador de este bot y se borrarán todos sus datos guardados, incluidos los perfiles con nombre. Tendrás que volver a iniciar sesión. Los demás bots no se verán afectados.",
+    "confirmSite": "Se cerrará el navegador de este bot y se borrarán las cookies y los datos guardados de {{domain}} y sus subdominios guardados en el perfil predeterminado. Es posible que tengas que volver a iniciar sesión.",
+    "done": "He terminado de iniciar sesión",
+    "empty": "Aún no hay sitios con cookies guardadas.",
+    "encrypted": "Windows cifra la carpeta del perfil. El navegador también utiliza la protección de cookies del sistema cuando está disponible.",
+    "forgetAll": "Olvidar todo",
+    "forgetNamed": "Olvidar {{domain}}",
+    "forgetSite": "Olvidar este sitio",
+    "intro": "Inicia sesión tú mismo en el navegador gestionado de este bot. Praxi no pide ni guarda tu contraseña. El navegador conserva cookies y datos de los sitios para mantener las sesiones en futuras ejecuciones.",
+    "isolation": "Este perfil del navegador pertenece únicamente a este bot. Los demás bots no comparten sus sesiones guardadas.",
+    "manualHint": "Usa la ventana del navegador en el equipo donde se ejecuta este bot. Sus herramientas del navegador están en pausa. Al terminar, elige He terminado de iniciar sesión.",
+    "protection": "El navegador utiliza la protección de cookies del sistema cuando está disponible. No se pudo confirmar el cifrado de la carpeta; algunos datos de los sitios podrían guardarse sin cifrar.",
+    "refresh": "Actualizar",
+    "signIn": "Iniciar sesión manualmente",
+    "siteHint": "Una cookie guardada no demuestra que la sesión siga abierta. Los sitios que solo usan otros tipos de almacenamiento podrían no aparecer aquí. Al olvidar un sitio también se borran sus otros datos guardados en el navegador.",
+    "sites": "Sitios con cookies guardadas",
+    "sitesUnavailable": "No se pueden leer los nombres de los sitios guardados. Termina de iniciar sesión, cierra el navegador y actualiza. Puedes seguir usando Olvidar todo.",
+    "size": "Tamaño del perfil: {{bytes}} bytes",
+    "title": "Perfil del navegador",
+    "warning": "En los sitios donde hayas iniciado sesión, este bot puede actuar en tu nombre. Tus reglas de aprobación siguen vigentes. Inicia sesión solo en las cuentas que quieras que use este bot."
   },
   "chat": {
     "addCommand": "Añadir un comando o bot",
@@ -2816,6 +2917,10 @@
         "hint": "Check the time or repeat rule and try again.",
         "title": "That schedule is not valid"
       },
+      "bad_trigger_config": {
+        "hint": "Elige una fuente, añade un filtro de remitente para el correo y revisa la instrucción, las horas de silencio y los límites.",
+        "title": "Revisa esta regla"
+      },
       "bad_voice_config": {
         "hint": "Check the transcription service address, model and key in Settings, then try again.",
         "title": "Dictation settings were not accepted"
@@ -2835,6 +2940,10 @@
       "bot_limit_warning": {
         "hint": "It has used 80% of a spending limit. Check the limits in the bot settings.",
         "title": "This bot is close to its limit"
+      },
+      "browser_profile_error": {
+        "hint": "Termina primero el inicio de sesión manual, actualiza y vuelve a intentarlo. El inicio de sesión manual requiere una pantalla de escritorio en el equipo del bot. Si el error continúa, consulta los detalles.",
+        "title": "No se pudo actualizar el perfil del navegador"
       },
       "busy": {
         "hint": "Wait a moment and try again.",
@@ -3195,6 +3304,10 @@
       "too_many_streams": {
         "hint": "Close one and try again.",
         "title": "Too many live views are open"
+      },
+      "trigger_source_unavailable": {
+        "hint": "Conecta un buzón IMAP que este bot pueda usar y permite las lecturas programadas del buzón en sus permisos.",
+        "title": "Este buzón aún no se puede vigilar"
       },
       "unauthorized": {
         "hint": "Restart the local service. If that does not help, restart Praxi.",

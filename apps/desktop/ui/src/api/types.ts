@@ -2,6 +2,7 @@ import type { components } from "./schema";
 
 /** Types generated from `docs/api/openapi.json` (`pnpm --filter desktop-ui gen:api`). */
 type S = components["schemas"];
+export type BrowserProfileStatus = S["BrowserProfileStatus"];
 export type RecentLogs = S["RecentLogs"];
 export type AuditPage = S["AuditPage"];
 export type AuditEvent = S["AuditEventDto"];
@@ -79,8 +80,8 @@ export interface IncomingWebhookPatch {
 export interface IncomingWebhookAccepted {
   status: string;
   webhook_id: string;
-  run_id: string;
-  chat_id: string;
+  run_id: string | null;
+  chat_id: string | null;
 }
 export type Chat = S["ChatDto"];
 export type UpdateChatInput = S["UpdateChat"];

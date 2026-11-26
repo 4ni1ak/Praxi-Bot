@@ -2,6 +2,7 @@ import { createSseParser } from "./events.ts";
 import { exportQuery } from "../lib/chatHistory.ts";
 import { isLocalBaseUrl } from "../lib/liveViewState.ts";
 import type { Connection } from "./connection";
+import type { BrowserProfileStatus } from "./types";
 import type {
   ExportOutput,
   ImportInput,
@@ -1230,6 +1231,21 @@ export class ApiClient {
     return this.request("POST", "/fill-secrets/reveal", { body: { name, confirm: true } });
   }
 
+  listTriggers(bot: string): Promise<import("../lib/triggers").BotTrigger[]> {
+    return this.request("GET", `/bots/${bot}/triggers`);
+  }
+  createTrigger(bot: string, input: import("../lib/triggers").TriggerInput): Promise<import("../lib/triggers").BotTrigger> {
+    return this.request("POST", `/bots/${bot}/triggers`, { body: input });
+  }
+  updateTrigger(bot: string, id: string, input: import("../lib/triggers").TriggerInput): Promise<import("../lib/triggers").BotTrigger> {
+    return this.request("PUT", `/bots/${bot}/triggers/${id}`, { body: input });
+  }
+  deleteTrigger(bot: string, id: string): Promise<void> {
+    return this.request("DELETE", `/bots/${bot}/triggers/${id}`);
+  }
+  previewTrigger(bot: string, input: { instruction: string; config: import("../lib/triggers").TriggerConfig; sample: unknown }): Promise<import("../lib/triggers").TriggerPreview> {
+    return this.request("POST", `/bots/${bot}/triggers/preview`, { body: input });
+  }
   listSchedules(): Promise<Schedule[]> {
     return this.request("GET", "/schedules");
   }
@@ -1699,6 +1715,26 @@ export class ApiClient {
 
   listEmailAccounts(): Promise<EmailAccount[]> {
     return this.request("GET", "/email/accounts");
+  }
+
+  browserProfile(botId: string): Promise<BrowserProfileStatus> {
+    return this.request("GET", `/bots/${encodeURIComponent(botId)}/browser-profile`);
+  }
+
+  startBrowserSignIn(botId: string): Promise<void> {
+    return this.request("POST", `/bots/${encodeURIComponent(botId)}/browser-profile/sign-in`);
+  }
+
+  finishBrowserSignIn(botId: string): Promise<void> {
+    return this.request("POST", `/bots/${encodeURIComponent(botId)}/browser-profile/finish-sign-in`);
+  }
+
+  forgetBrowserSite(botId: string, domain: string): Promise<void> {
+    return this.request("POST", `/bots/${encodeURIComponent(botId)}/browser-profile/forget-site`, { body: { domain } });
+  }
+
+  forgetBrowserProfile(botId: string): Promise<void> {
+    return this.request("DELETE", `/bots/${encodeURIComponent(botId)}/browser-profile`);
   }
   /** The `password` is write-only: the daemon stores it and never returns it. */
   createEmailAccount(input: EmailAccountInput): Promise<EmailAccount> {

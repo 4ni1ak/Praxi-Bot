@@ -416,14 +416,12 @@ pub enum Payload {
 }
 
 impl Payload {
-    /// Return a copy of this payload with `{input}` replaced by `body` (used by
-    /// webhook triggers).
+    /// Bind external input only in typed workflow/tool parameters. Agent prompts
+    /// keep the owner text; executors must wrap `Schedule.external_input` separately.
     #[must_use]
     pub fn with_webhook_input(&self, body: &str) -> Self {
         match self {
-            Self::AgentPrompt { text } => Self::AgentPrompt {
-                text: text.replace("{input}", body),
-            },
+            Self::AgentPrompt { text } => Self::AgentPrompt { text: text.clone() },
             // `input` is only injected through an explicit `{input}` placeholder:
             // most workflows do not declare an `input` parameter and
             // `bind_params` rejects undeclared ones. Null params stay null.

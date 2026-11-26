@@ -1402,10 +1402,89 @@
       "activity": "Etkinlik",
       "automation": "Otomasyon",
       "label": "Panel bölümleri",
-      "library": "Kitaplık"
+      "library": "Kitaplık",
+      "tools": "Araçlar"
     },
     "thisBot": "Bu bot",
     "toggle": "Bot paneli",
+    "triggers": {
+      "account": "Posta kutusu",
+      "add": "Kural ekle",
+      "approvalHint": "Bu botun izinleri geçerlidir. Onayınız gereken işlemler bekler ve size bildirilir.",
+      "attachment": "Eki varsa",
+      "chooseAccount": "Posta kutusu seçin",
+      "chooseHook": "Webhook seçin",
+      "close": "Düzenleyiciyi kapat",
+      "contains": "Şunu içeren",
+      "count": "Bugün {{count}} çalıştırma (UTC)",
+      "count_one": "Bugün {{count}} çalıştırma (UTC)",
+      "count_other": "Bugün {{count}} çalıştırma (UTC)",
+      "customSchedule": "Özel zamanlama",
+      "dailyAt": "Her gün şu saatte",
+      "digest": "Sonrasında tek özet için sakla",
+      "domain": "Alan adı şu olan",
+      "drop": "Bu olayları atla",
+      "duringQuiet": "Sessiz saatlerde",
+      "edit": "Kuralı düzenle",
+      "empty": "Bu botu henüz bir olay uyandırmıyor. Gerektiğinde kural ekleyin.",
+      "end": "Bitiş",
+      "equals": "Adresi şu olan",
+      "exampleDraft": "İncelemem için bir yanıt taslağı hazırla.",
+      "exampleNotify": "Yalnızca işlem gerekiyorsa bana haber ver.",
+      "exampleSummary": "İlgilenmem gerekenleri özetle.",
+      "existingHint": "Önceden ayarlanmış. Sessiz saat ve sınır eklemek için açın; kaydedince kapalı başlar.",
+      "folder": "Klasör / etiket",
+      "hook": "İmzalı webhook",
+      "hookHint": "Aşağıda imzalı bir adres oluşturup buraya bağlayın. Bağlanan çağrılar önceki talimat yerine bu kurala uyar.",
+      "intro": "Bu botu uyandıran küçük kurallar. Kontrol sizde.",
+      "lastFired": "Son çalıştırma:",
+      "limitSummary": "{{hour}} / saat · {{day}} / gün",
+      "limits": "Sınırlar",
+      "limitsHint": "Peş peşe olaylar tek çalıştırmada birleşir. Fazlası bekler. Botun en düşük sınırı tüm kurallarına uygulanır. Kuyruk: 100 olay, 48 KB; dolarsa kural duraklar.",
+      "mail": "Bir e-posta geldiğinde",
+      "mailHint": "Yalnızca IMAP posta kutuları. Gövdeyi değil, başlıkları okur. İlk kontrol yeni postaları izlemeyi başlatır.",
+      "manageHooks": "İmzalı adresler",
+      "name": "Ad",
+      "off": "Kapalı",
+      "on": "Açık",
+      "paused": "İlgilenmeniz gerekiyor",
+      "per_day": "Günlük çalıştırma",
+      "per_hour": "Saatlik çalıştırma",
+      "poll": "Kontrol aralığı (saniye)",
+      "preview": "Botun alacağı metni göster",
+      "previewHint": "Boyutu sınırlanmış, tam talimat ve korumalı olay metni. Çalıştırma başlamaz, araç kullanılmaz.",
+      "queueError": "Çok fazla olay bekliyor. Filtreleri daraltıp bu kuralı yeniden açın.",
+      "queued": "{{count}} bekliyor",
+      "queued_one": "{{count}} bekliyor",
+      "queued_other": "{{count}} bekliyor",
+      "quietHours": "Sessiz saatler",
+      "remove": "Kuralı kaldır",
+      "runError": "Son çalıştırma tamamlanmadı veya kuyruk dolu. Etkinliği ve filtreleri kontrol edip yeniden açın.",
+      "sample": "Örnek konu veya çağrı metni",
+      "sampleMatches": "Bu örnek filtrelere uyuyor.",
+      "sampleMisses": "Bu örnek filtrelere uymuyor.",
+      "save": "Değişiklikleri kaydet",
+      "saveOff": "Kaydet · kapalı başlar",
+      "schedule": "Zamanlama",
+      "scheduleHint": "Örnek: 0 9 * * * Europe/Istanbul (her gün 09.00). En az beş dakika arayla.",
+      "sender": "Gönderen",
+      "senderError": "Gönderen filtresi bir adres ya da alan adı değil; bu yüzden kural kapalı ve hiçbir postayla eşleşmiyor. Tam bir adres (ann@example.com) ya da alan adı (example.com) girip yeniden açın.",
+      "senderMatch": "Gönderen kuralı",
+      "should": "Bot şunu yapsın",
+      "sourceError": "Posta kutusu kontrolleri art arda başarısız oldu. Bağlantıyı ve izinleri kontrol edip yeniden açın.",
+      "start": "Başlangıç",
+      "subject": "Konu şunu içeriyorsa (isteğe bağlı)",
+      "test": "Örnekle dene",
+      "thisBot": "Bu botun tüm kuralları",
+      "thisRule": "Bu kural",
+      "time": "Belirli bir zamanda",
+      "timezone": "Saat dilimi",
+      "title": "Bir şey olduğunda",
+      "toggle": "{{name}} kuralını aç veya kapat",
+      "useQuiet": "Bu bot geceleri sessiz kalsın",
+      "webhook": "Bir webhook çağrıldığında",
+      "when": "Ne zaman"
+    },
     "untitled": "Yeni sohbet",
     "upcoming": {
       "paused": "Duraklatıldı",
@@ -1491,6 +1570,28 @@
       "tooMany": "En fazla {{max}} beceri atanabilir. Daha az beceri seç ya da “Tüm ortak beceriler” seçeneğini kullan."
     },
     "writeConflict": "Bu bot sen kaydederken başka bir yerden değiştirildi. Yeniden yükleyip yeniden dene."
+  },
+  "browserProfile": {
+    "confirmAll": "Bu botun tarayıcısı kapatılacak ve adlandırılmış profiller dâhil tüm kayıtlı tarayıcı verileri silinecek. Yeniden oturum açmanız gerekecek. Diğer botlar etkilenmez.",
+    "confirmSite": "Bu botun tarayıcısı kapatılacak ve varsayılan profilde {{domain}} ile kayıtlı alt alan adlarının çerezleri ve site verileri temizlenecek. Yeniden oturum açmanız gerekebilir.",
+    "done": "Oturum açmayı bitirdim",
+    "empty": "Henüz çerezleri kayıtlı site yok.",
+    "encrypted": "Profil klasörü Windows tarafından şifrelenmiştir. Tarayıcı ayrıca kullanılabiliyorsa sistemin çerez korumasını kullanır.",
+    "forgetAll": "Her şeyi unut",
+    "forgetNamed": "{{domain}} sitesini unut",
+    "forgetSite": "Bu siteyi unut",
+    "intro": "Bu botun yönettiği tarayıcıda kendiniz oturum açın. Praxi şifrenizi istemez veya kaydetmez. Tarayıcı, oturumların sonraki çalışmalarda devam edebilmesi için çerezleri ve site verilerini saklar.",
+    "isolation": "Bu tarayıcı profili yalnızca bu bota aittir. Diğer botlar kayıtlı oturumlarını paylaşmaz.",
+    "manualHint": "Bu botun çalıştığı bilgisayardaki tarayıcı penceresini kullanın. Bu botun tarayıcı araçları duraklatıldı. Bitirdiğinizde Oturum açmayı bitirdim seçeneğine basın.",
+    "protection": "Tarayıcı, kullanılabiliyorsa sistemin çerez korumasını kullanır. Klasör şifrelemesi doğrulanamadı; bazı site verileri şifrelenmeden saklanabilir.",
+    "refresh": "Yenile",
+    "signIn": "Kendiniz oturum açın",
+    "siteHint": "Kayıtlı çerez, oturumunuzun hâlâ açık olduğunu kanıtlamaz. Yalnızca başka depolama türlerini kullanan siteler burada görünmeyebilir. Bir siteyi unutmak, tarayıcıdaki diğer kayıtlı verilerini de temizler.",
+    "sites": "Çerezleri kayıtlı siteler",
+    "sitesUnavailable": "Kayıtlı site adları şu anda okunamıyor. Oturum açmayı bitirin, tarayıcıyı kapatın ve yenileyin. Yine de her şeyi unutabilirsiniz.",
+    "size": "Profil boyutu: {{bytes}} bayt",
+    "title": "Tarayıcı profili",
+    "warning": "Oturum açtığınız sitelerde bu bot sizin adınıza işlem yapabilir. Mevcut onay kurallarınız geçerliliğini korur. Yalnızca bu botun kullanmasını istediğiniz hesaplarda oturum açın."
   },
   "chat": {
     "addCommand": "Komut veya bot ekle",
@@ -2816,6 +2917,10 @@
         "hint": "Saati ya da tekrar kuralını kontrol edip yeniden dene.",
         "title": "Bu zamanlama geçerli değil"
       },
+      "bad_trigger_config": {
+        "hint": "Bir kaynak seçin, posta için gönderen filtresi ekleyin; talimatı, sessiz saatleri ve sınırları kontrol edin.",
+        "title": "Bu kuralı kontrol edin"
+      },
       "bad_voice_config": {
         "hint": "Ayarlar bölümünde yazıya dökme servisinin adresini, modelini ve anahtarını kontrol edip yeniden dene.",
         "title": "Dikte ayarları kabul edilmedi"
@@ -2835,6 +2940,10 @@
       "bot_limit_warning": {
         "hint": "Bir harcama limitinin %80'ini kullandı. Bot ayarlarındaki limitlere bak.",
         "title": "Bu bot limitine yaklaştı"
+      },
+      "browser_profile_error": {
+        "hint": "Önce elle oturum açmayı bitirin, ardından yenileyip tekrar deneyin. Elle oturum açmak için botun çalıştığı bilgisayarda masaüstü ekranı gerekir. Sorun sürerse ayrıntıları inceleyin.",
+        "title": "Tarayıcı profili güncellenemedi"
       },
       "busy": {
         "hint": "Biraz bekleyip yeniden dene.",
@@ -3195,6 +3304,10 @@
       "too_many_streams": {
         "hint": "Birini kapatıp yeniden dene.",
         "title": "Çok fazla canlı görünüm açık"
+      },
+      "trigger_source_unavailable": {
+        "hint": "Botun kullanabileceği bir IMAP posta kutusu bağlayın ve izinlerinde zamanlanmış posta okumalarını açın.",
+        "title": "Bu posta kutusu henüz izlenemiyor"
       },
       "unauthorized": {
         "hint": "Yerel servisi yeniden başlat. Olmazsa Praxi'yi yeniden başlat.",
