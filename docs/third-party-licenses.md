@@ -12,12 +12,12 @@ Regenerate with `python scripts/license_report.py` and verify in CI with
 ## Summary
 
 - Rust external crates: **919**
-- Desktop UI production npm packages: **26**
+- Desktop UI production npm packages: **24**
 
 | Licence expression | Packages |
 | --- | ---: |
 | `MIT OR Apache-2.0` | 442 |
-| `MIT` | 219 |
+| `MIT` | 217 |
 | `Apache-2.0 OR MIT` | 96 |
 | `MIT/Apache-2.0` | 42 |
 | `Zlib OR Apache-2.0 OR MIT` | 23 |
@@ -1029,7 +1029,6 @@ Packages whose effective licence requires an entry in `THIRD_PARTY_NOTICES.md`:
 
 | Package | Version | Licence |
 | --- | --- | --- |
-| `@babel/runtime` | `7.29.13` | `MIT` |
 | `@fontsource-variable/geist` | `5.3.0` | `OFL-1.1` |
 | `@fontsource-variable/geist-mono` | `5.3.0` | `OFL-1.1` |
 | `@fontsource/opendyslexic` | `5.3.0` | `OFL-1.1` |
@@ -1044,14 +1043,13 @@ Packages whose effective licence requires an entry in `THIRD_PARTY_NOTICES.md`:
 | `@radix-ui/react-use-layout-effect` | `1.1.4` | `MIT` |
 | `@tauri-apps/api` | `2.12.4` | `Apache-2.0 OR MIT` |
 | `@tauri-apps/plugin-store` | `2.5.0` | `MIT OR Apache-2.0` |
-| `@xterm/addon-fit` | `0.10.0` | `MIT` |
-| `@xterm/xterm` | `5.5.0` | `MIT` |
-| `html-parse-stringify` | `3.1.0` | `MIT` |
-| `i18next` | `24.2.3` | `MIT` |
+| `@xterm/addon-fit` | `0.11.0` | `MIT` |
+| `@xterm/xterm` | `6.0.0` | `MIT` |
+| `html-parse-stringify` | `4.0.1` | `MIT` |
+| `i18next` | `27.2.7` | `MIT` |
 | `lucide-react` | `1.70.0` | `ISC` |
 | `react` | `19.3.1` | `MIT` |
 | `react-dom` | `19.3.1` | `MIT` |
-| `react-i18next` | `15.7.4` | `MIT` |
+| `react-i18next` | `18.0.3` | `MIT` |
 | `scheduler` | `0.28.0` | `MIT` |
 | `simple-icons` | `16.36.0` | `CC0-1.0` |
-| `void-elements` | `3.1.0` | `MIT` |
