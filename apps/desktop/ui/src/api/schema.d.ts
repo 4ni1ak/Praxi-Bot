@@ -4857,6 +4857,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workflows/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["import_workflow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workflows/{name}": {
         parameters: {
             query?: never;
@@ -4865,9 +4881,57 @@ export interface paths {
             cookie?: never;
         };
         get: operations["show_workflow"];
-        put?: never;
+        put: operations["edit_workflow"];
         post?: never;
         delete: operations["delete_workflow"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{name}/duplicate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["duplicate_workflow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{name}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["export_workflow"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{name}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["workflow_history"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6511,6 +6575,60 @@ export interface components {
             effect: string;
             name: string;
         };
+        DuplicateWorkflow: {
+            /** Format: uuid */
+            bot_id: string;
+            new_name: string;
+        };
+        /** @description Final check after the last step ("assert"). */
+        EditCheck: {
+            /** @description `window_title`, `browser_text` or `desktop_text`. */
+            kind: string;
+            text: string;
+        };
+        EditParam: {
+            /**
+             * @description Absent means "ask every time". A parameter that had no default cannot
+             *     gain one here (it may be sensitive).
+             */
+            default?: string | null;
+            description: string;
+            name: string;
+        };
+        /**
+         * @description One step of the edited list: an existing step by its current index, or a
+         *     new wait step.
+         */
+        EditStep: {
+            keep?: number | null;
+            wait?: null | components["schemas"]["EditWait"];
+        };
+        /** @description Wait step from the palette. Exactly one condition. */
+        EditWait: {
+            /** @description Page network is idle. */
+            idle?: boolean;
+            /** @description Page contains this text. */
+            text?: string | null;
+            /** Format: int64 */
+            timeout_secs?: number | null;
+            /** @description A window title matches. */
+            window_title?: string | null;
+        };
+        EditWorkflow: {
+            /** Format: uuid */
+            bot_id: string;
+            description: string;
+            /** @description New name (a rename keeps the old file's content under the new name). */
+            name: string;
+            params: components["schemas"]["EditParam"][];
+            /**
+             * Format: int64
+             * @description Revision the editor started from; a stale edit is refused.
+             */
+            revision: number;
+            steps: components["schemas"]["EditStep"][];
+            success_check?: null | components["schemas"]["EditCheck"];
+        };
         /** @description A bot's permission picture (`GET /v1/bots/{id}`). */
         EffectivePolicyDto: {
             /**
@@ -7374,6 +7492,14 @@ export interface components {
             /** Format: uuid */
             takeover_id?: string | null;
         };
+        HistoryStep: {
+            kind: string;
+            reason?: string | null;
+            /** @description `ok`, `failed` or `interrupted`. */
+            status: string;
+            /** Format: int32 */
+            step_index: number;
+        };
         /** @description `GET /v1/hosts/home`: the host adopted as the bots' home, if any. */
         HomeDto: {
             host_id?: string | null;
@@ -7917,6 +8043,14 @@ export interface components {
         };
         ImportSchedulesReport: {
             items: components["schemas"]["ImportScheduleResult"][];
+        };
+        ImportWorkflow: {
+            /** Format: uuid */
+            bot_id: string;
+            /** @description Contents of a workflow file (JSON), at most 256 KiB. */
+            content: string;
+            /** @description Save under this name instead of the file's own. */
+            name?: string | null;
         };
         /** @description A call was accepted. The run continues in the background. */
         IncomingWebhookAccepted: {
@@ -11167,8 +11301,19 @@ export interface components {
             description: string;
             name: string;
             params: components["schemas"]["WorkflowParam"][];
+            /**
+             * Format: int64
+             * @description Store revision; an edit must name the revision it started from.
+             */
+            revision: number;
             source?: unknown;
             steps: unknown[];
+            /** @description Final check after the last step, if any. */
+            success_check?: unknown;
+        };
+        WorkflowExport: {
+            content: string;
+            file_name: string;
         };
         WorkflowParam: {
             default?: string | null;
@@ -11189,6 +11334,14 @@ export interface components {
         WorkflowRun: {
             /** Format: uuid */
             run_id: string;
+        };
+        WorkflowRunRecord: {
+            /** Format: uuid */
+            run_id: string;
+            /** Format: int64 */
+            started_at_ms: number;
+            state: string;
+            steps: components["schemas"]["HistoryStep"][];
         };
         /** @description Largest item entry surfaced inside warnings and overview suggestions. */
         WorkspaceBigItemDto: {
@@ -23001,6 +23154,45 @@ export interface operations {
             };
         };
     };
+    import_workflow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportWorkflow"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     show_workflow: {
         parameters: {
             query: {
@@ -23032,6 +23224,55 @@ export interface operations {
             };
         };
     };
+    edit_workflow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditWorkflow"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     delete_workflow: {
         parameters: {
             query: {
@@ -23050,6 +23291,117 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    duplicate_workflow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DuplicateWorkflow"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    export_workflow: {
+        parameters: {
+            query: {
+                bot_id: string;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowExport"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    workflow_history: {
+        parameters: {
+            query: {
+                bot_id: string;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRunRecord"][];
+                };
             };
             404: {
                 headers: {

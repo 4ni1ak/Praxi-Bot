@@ -19,6 +19,7 @@ use workflow_replay::{
 
 use crate::{ApiError, AppState, error::ErrorBody, routes::ApiJson};
 
+pub(crate) mod edit;
 mod privacy;
 #[cfg(test)]
 mod tests;
@@ -40,6 +41,10 @@ pub(crate) struct WorkflowDto {
     params: Vec<WorkflowParam>,
     steps: Vec<Value>,
     source: Option<Value>,
+    /// Store revision; an edit must name the revision it started from.
+    revision: u64,
+    /// Final check after the last step, if any.
+    success_check: Option<Value>,
 }
 
 impl WorkflowDto {
@@ -47,6 +52,7 @@ impl WorkflowDto {
         serde_json::from_value(json!({
             "name": wf.name, "description": wf.description,
             "params": wf.params, "steps": wf.steps, "source":wf.source,
+            "revision": wf.revision, "success_check": wf.success_check,
         }))
         .map_err(ApiError::internal)
     }
@@ -122,8 +128,15 @@ pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route("/v1/runs/{id}/workflow-proposal", post(propose))
         .route("/v1/workflows", get(list).post(save))
-        .route("/v1/workflows/{name}", get(show).delete(delete))
+        .route("/v1/workflows/import", post(edit::import))
+        .route(
+            "/v1/workflows/{name}",
+            get(show).delete(delete).put(edit::edit),
+        )
         .route("/v1/workflows/{name}/run", post(run))
+        .route("/v1/workflows/{name}/duplicate", post(edit::duplicate))
+        .route("/v1/workflows/{name}/export", get(edit::export))
+        .route("/v1/workflows/{name}/history", get(edit::history))
 }
 
 fn store(s: &AppState, bot: protocol::BotId) -> Result<WorkflowStore, ApiError> {

@@ -109,9 +109,14 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/workflows"),
     ("DELETE", "/v1/workflows/{}"),
     ("POST", "/v1/workflows/{}/run"),
+    ("PUT", "/v1/workflows/{}"),
+    ("POST", "/v1/workflows/{}/duplicate"),
+    ("POST", "/v1/workflows/import"),
     // saved steps (tools, targets, parameter shapes) are the owner's to read
     ("GET", "/v1/workflows"),
     ("GET", "/v1/workflows/{}"),
+    ("GET", "/v1/workflows/{}/export"),
+    ("GET", "/v1/workflows/{}/history"),
     // policy, bot authority
     ("PUT", "/v1/policy"),
     // embedding providers: keys, the opt-in to send text out, and test calls
