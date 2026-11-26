@@ -82,6 +82,19 @@
     "summary": "Praxi-Bot'taki her anahtarın ve uygulama bağlantısının bir Bağlantıyı dene düğmesi var: yapay zekâ"
   },
   {
+    "doc": "tr/discord.md",
+    "title": "Discord",
+    "headings": [
+      "Bağlayın (yaklaşık 5 dakika)",
+      "Bota kimler yazabilir",
+      "Sohbette",
+      "Onaylar",
+      "Mesajlar ve ekler",
+      "Bilmekte fayda var"
+    ],
+    "summary": "Botlarınızla Discord'dan konuşun: kendi bot hesabınızla özel mesajda ya da izin"
+  },
+  {
     "doc": "tr/embeddings.md",
     "title": "Yardımcılar (isteğe bağlı): embedding ve karar yardımcısı",
     "headings": [

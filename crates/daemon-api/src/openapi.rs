@@ -358,6 +358,7 @@ impl Modify for Security {
         routes::send_message,
         routes::resend_last_turn,
         routes::telegram_pair_code,
+        routes::discord_pair_code,
         routes::update_bot,
         routes::update_chat,
         routes::update_schedule,

@@ -200,6 +200,7 @@
       "bot catalog",
       "bot secrets",
       "bot channels telegram",
+      "bot channels discord",
       "bot completions",
       "bot man-pages",
       "bot skills",
@@ -259,6 +260,19 @@
       "Input, answers, and accounting"
     ],
     "summary": "The decision pool is an opt-in facility for asking small, structured questions"
+  },
+  {
+    "doc": "discord.md",
+    "title": "Discord",
+    "headings": [
+      "Connect it (about 5 minutes)",
+      "Who can talk to the bot",
+      "In the chat",
+      "Approvals",
+      "Messages and attachments",
+      "Good to know"
+    ],
+    "summary": "Talk to your bots from Discord, in a private chat with your own bot account or"
   },
   {
     "doc": "docker-host.md",

@@ -4537,6 +4537,7 @@
     "sources": {
       "api": "API local",
       "app": "esta app",
+      "discord": "a través de Discord",
       "imported": "archivo importado",
       "peer": "otro equipo",
       "telegram": "Telegram",

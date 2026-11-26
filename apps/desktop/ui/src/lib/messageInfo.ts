@@ -87,7 +87,7 @@ export function replyInfoRows(
 }
 
 /** Where a user message came from, as the daemon records it (`owner` = this app). */
-export type MessageSourceKind = "app" | "telegram" | "peer" | "api" | "imported" | "unknown";
+export type MessageSourceKind = "app" | "discord" | "telegram" | "peer" | "api" | "imported" | "unknown";
 
 export function messageSourceKind(source: string | null | undefined): MessageSourceKind {
   if (source?.startsWith("imported")) {
@@ -96,6 +96,8 @@ export function messageSourceKind(source: string | null | undefined): MessageSou
   switch (source) {
     case "owner":
       return "app";
+    case "discord":
+      return "discord";
     case "telegram":
       return "telegram";
     case "peer":

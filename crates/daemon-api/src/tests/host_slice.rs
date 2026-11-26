@@ -126,6 +126,7 @@ async fn a_desktop_peer_on_a_host_cannot_administer_credentials_tools_or_pairing
         (Method::PUT, "/v1/web/search/".into()),
         (Method::POST, "/v1/web/search/test".into()),
         (Method::POST, "/v1/channels/telegram/pair-code".into()),
+        (Method::POST, "/v1/channels/discord/pair-code".into()),
         (Method::POST, "/v1/channels/telegram//pair-code".into()),
         (Method::POST, "/v1/host/import".into()),
         (Method::POST, "/v1/host/import/".into()),

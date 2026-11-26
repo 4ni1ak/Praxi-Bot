@@ -289,7 +289,8 @@ fn host_mode_desktop_denial(method: &Method, check_path: &str) -> Option<&'stati
     }
     if *method == Method::POST
         && (PHONE_DENIED_POST_PATHS.contains(&check_path)
-            || check_path == "/v1/channels/telegram/pair-code")
+            || check_path == "/v1/channels/telegram/pair-code"
+            || check_path == "/v1/channels/discord/pair-code")
     {
         return Some("host transfer and channel pairing are done on the host itself");
     }
@@ -408,6 +409,9 @@ fn is_site_rules_write(method: &Method, path: &str) -> bool {
 fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> {
     if crate::browser_profiles::is_profile_path(check_path) {
         return Some("browser sessions are managed by the local owner only");
+    }
+    if check_path == "/v1/channels/discord/pair-code" {
+        return Some("Discord pairing is done on this computer by the owner");
     }
     if is_incoming_webhook_path(check_path) {
         return Some("incoming webhooks are managed on this computer by the owner");

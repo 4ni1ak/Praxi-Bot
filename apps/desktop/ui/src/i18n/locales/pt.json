@@ -4537,6 +4537,7 @@
     "sources": {
       "api": "local API",
       "app": "this app",
+      "discord": "pelo Discord",
       "imported": "imported file",
       "peer": "another computer",
       "telegram": "Telegram",
