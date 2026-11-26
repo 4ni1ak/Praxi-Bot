@@ -1357,6 +1357,211 @@ pub(crate) async fn get_bot_workspace(
     }))
 }
 
+/// Read one regular file of a bot workspace without trusting the earlier path
+/// check: the path is validated, the file is then opened without following a
+/// final link (`O_NOFOLLOW` on Unix, `FILE_FLAG_OPEN_REPARSE_POINT` on Windows),
+/// and the path is validated again and must still lead to the file that was
+/// opened.  A link swapped in between the check and the open is refused.
+/// `before_open` runs between the first check and the open (tests swap files
+/// there).
+pub(crate) fn read_workspace_file_checked(
+    ws_root: &Path,
+    segments: &[String],
+    max: u64,
+    limit_name: &str,
+    before_open: &dyn Fn(),
+) -> Result<(PathBuf, Vec<u8>), ApiError> {
+    read_workspace_file_checked_with_hooks(ws_root, segments, max, limit_name, before_open, &|| {})
+}
+
+/// Same as [`read_workspace_file_checked`]; `after_open` additionally runs
+/// right after the open and before the second path check (tests swap a link
+/// back there, the classic "open the outside file, restore the path" race).
+pub(crate) fn read_workspace_file_checked_with_hooks(
+    ws_root: &Path,
+    segments: &[String],
+    max: u64,
+    limit_name: &str,
+    before_open: &dyn Fn(),
+    after_open: &dyn Fn(),
+) -> Result<(PathBuf, Vec<u8>), ApiError> {
+    use std::io::Read;
+
+    let file_path = resolve_existing_in_workspace(ws_root, segments, false)?;
+    before_open();
+    let mut file = open_without_following_links(&file_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            ApiError::not_found("workspace file")
+        } else {
+            ApiError::forbidden("symlinks and reparse points are not accessible")
+        }
+    })?;
+    let meta = file
+        .metadata()
+        .map_err(|e| ApiError::internal(format!("read file: {e}")))?;
+    if crate::data_routes::is_reparse_point(&meta) {
+        return Err(ApiError::forbidden(
+            "symlinks and reparse points are not accessible",
+        ));
+    }
+    if !meta.is_file() {
+        return Err(ApiError::bad_request(
+            "requested path is not a regular file",
+        ));
+    }
+    if meta.len() > max {
+        return Err(ApiError::bad_request(format!(
+            "file exceeds the {} MiB limit for {limit_name}",
+            max / (1024 * 1024),
+        )));
+    }
+    after_open();
+    // The handle is the file that gets served: the path must still lead to it.
+    let again = resolve_existing_in_workspace(ws_root, segments, false)?;
+    if again != file_path || !opened_file_is_still_at(&file, &meta, &again, ws_root) {
+        return Err(ApiError::forbidden("workspace file changed while reading"));
+    }
+    let mut bytes = Vec::new();
+    // Bounded read: the file may grow after the size check.
+    (&mut file)
+        .take(max + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| ApiError::internal(format!("read file: {e}")))?;
+    if bytes.len() as u64 > max {
+        return Err(ApiError::bad_request(format!(
+            "file exceeds the {} MiB limit for {limit_name}",
+            max / (1024 * 1024),
+        )));
+    }
+    Ok((file_path, bytes))
+}
+
+#[cfg(unix)]
+fn open_without_following_links(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    // NONBLOCK: a FIFO swapped in must not hang the open; it is refused as a
+    // non-regular file afterwards.
+    let flags = rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(flags.bits().cast_signed())
+        .open(path)
+}
+
+#[cfg(windows)]
+fn open_without_following_links(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+/// Does `path` still lead to the file behind the open handle `file`?
+/// Unix: device and inode of the handle against the path.
+#[cfg(unix)]
+fn opened_file_is_still_at(
+    file: &fs::File,
+    _meta: &fs::Metadata,
+    path: &Path,
+    _ws_root: &Path,
+) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let (Ok(a), Ok(b)) = (file.metadata(), fs::symlink_metadata(path)) else {
+        return false;
+    };
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+/// Windows: size and write time are forgeable from inside the workspace, so the
+/// real identity is compared (volume serial and file index of the opened handle
+/// against a second handle on the path), and the final path of the OPENED
+/// handle must lie inside the workspace root.
+#[cfg(windows)]
+fn opened_file_is_still_at(
+    file: &fs::File,
+    _meta: &fs::Metadata,
+    path: &Path,
+    ws_root: &Path,
+) -> bool {
+    let Ok(root_canon) = fs::canonicalize(ws_root) else {
+        return false;
+    };
+    let Ok(again) = open_without_following_links(path) else {
+        return false;
+    };
+    win_identity::final_path_is_inside(file, &root_canon)
+        && win_identity::same_open_file(file, &again)
+}
+
+#[cfg(windows)]
+pub(crate) mod win_identity {
+    //! Real file identity from open handles (std has no stable API for it).
+    #![allow(unsafe_code)]
+
+    use std::ffi::OsString;
+    use std::fs;
+    use std::io;
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::io::AsRawHandle;
+    use std::path::{Path, PathBuf};
+
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_NAME_NORMALIZED, GetFileInformationByHandle,
+        GetFinalPathNameByHandleW,
+    };
+
+    /// Volume serial number and 64-bit file index of an open handle.
+    pub(crate) fn file_id(file: &fs::File) -> io::Result<(u32, u64)> {
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        // SAFETY: the handle is valid for the borrow of `file`; `info` is a
+        // properly sized out-structure owned by this frame.
+        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &raw mut info) }
+            .map_err(io::Error::other)?;
+        Ok((
+            info.dwVolumeSerialNumber,
+            (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+        ))
+    }
+
+    /// Are both handles the very same file?
+    pub(crate) fn same_open_file(a: &fs::File, b: &fs::File) -> bool {
+        matches!((file_id(a), file_id(b)), (Ok(x), Ok(y)) if x == y)
+    }
+
+    /// Final (symlink/junction resolved) path of an open handle.
+    pub(crate) fn final_path(file: &fs::File) -> io::Result<PathBuf> {
+        let handle = HANDLE(file.as_raw_handle());
+        let mut buf = vec![0u16; 1024];
+        loop {
+            // SAFETY: `buf` is a valid writable slice for the whole call.
+            let n = unsafe { GetFinalPathNameByHandleW(handle, &mut buf, FILE_NAME_NORMALIZED) }
+                as usize;
+            if n == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if n < buf.len() {
+                buf.truncate(n);
+                return Ok(PathBuf::from(OsString::from_wide(&buf)));
+            }
+            buf.resize(n + 1, 0);
+        }
+    }
+
+    fn comparable(p: &Path) -> PathBuf {
+        let lower = p.to_string_lossy().to_lowercase();
+        let lower = lower.strip_prefix("\\\\?\\").unwrap_or(&lower);
+        PathBuf::from(lower.replace('/', "\\"))
+    }
+
+    /// Does the file behind the handle live inside `root` (canonical)?
+    pub(crate) fn final_path_is_inside(file: &fs::File, root: &Path) -> bool {
+        final_path(file).is_ok_and(|p| comparable(&p).starts_with(comparable(root)))
+    }
+}
+
 /// Read or download a single file strictly within a bot's workspace.
 #[utoipa::path(
     get,
@@ -1385,31 +1590,22 @@ pub(crate) async fn get_bot_workspace_file(
     let ws_root =
         ws_dir.ok_or_else(|| ApiError::bad_request("workspaces root is not configured"))?;
     let segments = normalize_rel_segments(&query.path)?;
-    let file_path = resolve_existing_in_workspace(&ws_root, &segments, false)?;
-    let meta =
-        fs::symlink_metadata(&file_path).map_err(|_| ApiError::not_found("workspace file"))?;
-    if !meta.is_file() {
-        return Err(ApiError::bad_request(
-            "requested path is not a regular file",
-        ));
-    }
     let max = if query.download {
         MAX_DOWNLOAD_BYTES
     } else {
         MAX_PREVIEW_BYTES
     };
-    if meta.len() > max {
-        return Err(ApiError::bad_request(format!(
-            "file exceeds the {} MiB limit for {}",
-            max / (1024 * 1024),
-            if query.download {
-                "download"
-            } else {
-                "preview"
-            }
-        )));
-    }
-    let bytes = fs::read(&file_path).map_err(|e| ApiError::internal(format!("read file: {e}")))?;
+    let limit_name = if query.download {
+        "download"
+    } else {
+        "preview"
+    };
+    // Blocking file system work stays off the async workers.
+    let (file_path, bytes) = tokio::task::spawn_blocking(move || {
+        read_workspace_file_checked(&ws_root, &segments, max, limit_name, &|| {})
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("read file: {e}")))??;
 
     let content_type = if query.download {
         "application/octet-stream"

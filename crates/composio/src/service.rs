@@ -322,7 +322,7 @@ impl ComposioService {
         let auth = match Stored::parse(&stored) {
             Stored::Project(key) => Auth::Project(key),
             Stored::User(key) => {
-                let ids = self.repaired_ids(&key).await;
+                let ids = self.repaired_ids(&key).await?;
                 Auth::User {
                     key,
                     org_id: ids.org_id,
@@ -338,28 +338,41 @@ impl ComposioService {
     /// The org and project ids sent with a login key.  Installations that
     /// linked before the project NANO id was read hold the project UUID, which
     /// Composio refuses on every call: read the ids again once and save them.
-    async fn repaired_ids(&self, key: &str) -> LoginIds {
+    ///
+    /// When the ids cannot be read (network down, Composio busy) nothing is
+    /// saved and the error is returned, so no client is cached with the wrong
+    /// ids and the next call tries the repair again.
+    async fn repaired_ids(&self, key: &str) -> Result<LoginIds> {
         let ids = self.0.state.lock().login.clone().unwrap_or_default();
         let stale = [&ids.project_id, &ids.org_id]
             .into_iter()
             .any(|id| id.as_deref().is_some_and(crate::client::looks_like_uuid));
         if !stale {
-            return ids;
+            return Ok(ids);
         }
-        let fresh = match self.build_with(&Auth::User {
+        let probe = self.build_with(&Auth::User {
             key: key.to_owned(),
             org_id: None,
             project_id: None,
-        }) {
-            Ok(c) => c.session_info().await.ok(),
-            Err(_) => None,
+        })?;
+        let (org_id, project_id) = match probe.session_info().await {
+            Ok(found) => found,
+            Err(e) => {
+                tracing_warn(&format!(
+                    "could not refresh the Composio login ids, will retry: {}",
+                    (self.0.redact)(&e.to_string())
+                ));
+                return Err(e);
+            }
         };
-        let fresh = fresh.map_or_else(LoginIds::default, |(org_id, project_id)| LoginIds {
-            org_id,
-            project_id,
-        });
-        let _ = self.save_state(|st| st.login = Some(fresh.clone()));
-        fresh
+        let fresh = LoginIds { org_id, project_id };
+        if let Err(e) = self.save_state(|st| st.login = Some(fresh.clone())) {
+            tracing_warn(&format!(
+                "could not save the refreshed Composio login ids: {}",
+                (self.0.redact)(&e.to_string())
+            ));
+        }
+        Ok(fresh)
     }
 
     fn build_client(&self, key: &str) -> Result<ComposioClient> {

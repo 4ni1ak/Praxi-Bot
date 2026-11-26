@@ -108,6 +108,24 @@ pub async fn quiesce_bot(state: &AppState, bot: BotId) -> Result<(), ApiError> {
     .map_err(|_| ApiError::conflict("knowledge worker is still releasing its handles"))
 }
 
+/// Whether no search or embedding work of this bot is running right now.
+/// Unlike [`quiesce_bot`] this cancels nothing: background jobs use it to wait
+/// their turn instead of failing a run that is in progress.
+pub(crate) fn bot_is_idle(state: &AppState, bot: BotId) -> bool {
+    lane(state, bot).active.load(Ordering::SeqCst) == 0
+}
+
+/// Pretend a knowledge search of `bot` is running; returns its cancel token.
+#[cfg(test)]
+pub(crate) fn test_begin_activity(
+    state: &AppState,
+    bot: BotId,
+) -> (impl Drop + use<>, CancellationToken) {
+    let activity = Activity::begin(lane(state, bot));
+    let cancel = activity.cancel.clone();
+    (activity, cancel)
+}
+
 #[cfg(test)]
 pub(crate) async fn test_guard() -> OwnedMutexGuard<()> {
     static LOCK: OnceLock<Arc<Mutex<()>>> = OnceLock::new();

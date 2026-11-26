@@ -257,6 +257,30 @@ async fn a_missing_folder_reports_a_plain_error_and_recovers() {
 }
 
 #[tokio::test]
+async fn a_settled_change_waits_for_a_running_search_instead_of_cancelling_it() {
+    let host = Host::new();
+    host.write("a.md", "alpha notes");
+    tick(&host.state, P, 1_000).await;
+    assert_eq!(host.indexed(), ["a.md"]);
+    host.write("b.md", "beta notes");
+    tick(&host.state, P, 2_000).await;
+
+    let (running, cancel) =
+        crate::knowledge_runtime::test_begin_activity(&host.state, host.owner.bot_id);
+    tick(&host.state, P, 3_000).await;
+    assert!(!cancel.is_cancelled(), "the running search was cancelled");
+    assert_eq!(
+        host.indexed(),
+        ["a.md"],
+        "indexed while a search was running"
+    );
+
+    drop(running);
+    tick(&host.state, P, 4_000).await;
+    assert_eq!(host.indexed(), ["a.md", "b.md"]);
+}
+
+#[tokio::test]
 async fn only_consented_enabled_folders_are_watched_and_attempts_share_a_budget() {
     let host = Host::new();
     let unselected = tempfile::tempdir().unwrap();

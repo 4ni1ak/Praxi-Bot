@@ -556,3 +556,191 @@ async fn workspace_warning_event_carries_no_bot_folder_or_file_names() {
     );
     assert_eq!(soft.soft_limit_bots, vec![bot]);
 }
+
+/// Make `link` a directory link to `target` (symlink on Unix, junction on Windows).
+fn link_dir(link: &std::path::Path, target: &std::path::Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let output = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .creation_flags(0x0800_0000)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "junction creation failed");
+    }
+}
+
+#[test]
+fn workspace_file_read_refuses_a_folder_swapped_for_a_link_after_the_check() {
+    let ws = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::create_dir(ws.path().join("notes")).unwrap();
+    std::fs::write(ws.path().join("notes").join("a.txt"), "inside").unwrap();
+    std::fs::write(outside.path().join("a.txt"), "OUTSIDE SECRET").unwrap();
+    let segments = vec!["notes".to_owned(), "a.txt".to_owned()];
+    let swap = || {
+        std::fs::rename(ws.path().join("notes"), ws.path().join("notes-real")).unwrap();
+        link_dir(&ws.path().join("notes"), outside.path());
+    };
+    let err = crate::workspace_routes::read_workspace_file_checked(
+        ws.path(),
+        &segments,
+        1024,
+        "preview",
+        &swap,
+    )
+    .expect_err("a read that follows a link swapped in after the check must be refused");
+    assert_eq!(err.status(), StatusCode::FORBIDDEN);
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_file_read_refuses_a_file_swapped_for_a_symlink_after_the_check() {
+    let ws = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(ws.path().join("a.txt"), "inside").unwrap();
+    std::fs::write(outside.path().join("secret.txt"), "OUTSIDE SECRET").unwrap();
+    let segments = vec!["a.txt".to_owned()];
+    let swap = || {
+        std::fs::remove_file(ws.path().join("a.txt")).unwrap();
+        std::os::unix::fs::symlink(outside.path().join("secret.txt"), ws.path().join("a.txt"))
+            .unwrap();
+    };
+    let err = crate::workspace_routes::read_workspace_file_checked(
+        ws.path(),
+        &segments,
+        1024,
+        "preview",
+        &swap,
+    )
+    .expect_err("a file swapped for a symlink after the check must be refused");
+    assert_eq!(err.status(), StatusCode::FORBIDDEN);
+}
+
+#[test]
+fn workspace_file_read_still_serves_a_plain_file() {
+    let ws = tempfile::tempdir().unwrap();
+    std::fs::write(ws.path().join("a.txt"), "inside").unwrap();
+    let (_, bytes) = crate::workspace_routes::read_workspace_file_checked(
+        ws.path(),
+        &["a.txt".to_owned()],
+        1024,
+        "preview",
+        &|| {},
+    )
+    .unwrap();
+    assert_eq!(bytes, b"inside");
+}
+
+/// Like `link_dir`, but reports instead of panicking when links cannot be made
+/// (a junction normally needs no privilege, a locked-down machine may refuse).
+fn try_link_dir(link: &std::path::Path, target: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .creation_flags(0x0800_0000)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+}
+
+/// Remove a link made by `try_link_dir` (a symlink is a file on Unix, a junction a directory).
+fn remove_dir_link(link: &std::path::Path) {
+    #[cfg(unix)]
+    std::fs::remove_file(link).unwrap();
+    #[cfg(windows)]
+    std::fs::remove_dir(link).unwrap();
+}
+
+fn force_mtime(path: &std::path::Path, to: std::time::SystemTime) {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(to)
+        .unwrap();
+}
+
+/// The race: the path is swapped to a link, the OUTSIDE file is opened, and the
+/// path is swapped back before the second check.  The decoy inside the
+/// workspace has the same size and write time as the outside file (both
+/// forgeable by a bot), so only a real file identity or the final path of the
+/// opened handle can catch it.
+#[test]
+fn workspace_file_read_refuses_outside_file_opened_then_path_restored_with_forged_size_and_mtime() {
+    let ws = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::create_dir(ws.path().join("notes")).unwrap();
+    let decoy = ws.path().join("notes").join("a.txt");
+    let secret = outside.path().join("a.txt");
+    std::fs::write(&decoy, "DECOY-0123456789").unwrap();
+    std::fs::write(&secret, "OUTSIDE-SECRET!!").unwrap();
+    force_mtime(
+        &decoy,
+        std::fs::metadata(&secret).unwrap().modified().unwrap(),
+    );
+    let probe = ws.path().join("probe-link");
+    if !try_link_dir(&probe, outside.path()) {
+        eprintln!("SKIPPED: this machine does not allow creating directory links/junctions");
+        return;
+    }
+    remove_dir_link(&probe);
+    let before = || {
+        std::fs::rename(ws.path().join("notes"), ws.path().join("notes-real")).unwrap();
+        assert!(try_link_dir(&ws.path().join("notes"), outside.path()));
+    };
+    let after = || {
+        remove_dir_link(&ws.path().join("notes"));
+        std::fs::rename(ws.path().join("notes-real"), ws.path().join("notes")).unwrap();
+    };
+    let err = crate::workspace_routes::read_workspace_file_checked_with_hooks(
+        ws.path(),
+        &["notes".to_owned(), "a.txt".to_owned()],
+        1024,
+        "preview",
+        &before,
+        &after,
+    )
+    .expect_err("the outside file must never be served");
+    assert_eq!(err.status(), StatusCode::FORBIDDEN);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_file_identity_is_not_fooled_by_equal_size_and_mtime() {
+    use crate::workspace_routes::win_identity::{final_path, same_open_file};
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "same-length-1").unwrap();
+    std::fs::write(&b, "same-length-2").unwrap();
+    force_mtime(&b, std::fs::metadata(&a).unwrap().modified().unwrap());
+    let (ma, mb) = (
+        std::fs::metadata(&a).unwrap(),
+        std::fs::metadata(&b).unwrap(),
+    );
+    // What the old check compared: identical, yet two different files.
+    assert_eq!(ma.len(), mb.len());
+    assert_eq!(ma.modified().unwrap(), mb.modified().unwrap());
+    let (fa, fb) = (
+        std::fs::File::open(&a).unwrap(),
+        std::fs::File::open(&b).unwrap(),
+    );
+    assert!(!same_open_file(&fa, &fb));
+    assert!(same_open_file(&fa, &std::fs::File::open(&a).unwrap()));
+    let fp = final_path(&fa).unwrap().to_string_lossy().to_lowercase();
+    assert!(fp.ends_with("a.txt"), "final path was {fp}");
+}

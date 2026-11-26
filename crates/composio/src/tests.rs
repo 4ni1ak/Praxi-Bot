@@ -1101,6 +1101,54 @@ async fn a_state_file_saved_with_the_project_uuid_is_repaired_on_first_use() {
 }
 
 #[tokio::test]
+async fn a_failed_id_repair_saves_nothing_and_is_retried_next_time() {
+    let h = harness().await;
+    h.store
+        .set(KEY_SECRET, &format!("user-login:{USER_KEY}"))
+        .unwrap();
+    let stale = format!(
+        "user_id = \"praxi-{}\"
+[login]
+org_id = \"org_1\"
+project_id = \"{PROJECT_UUID}\"
+",
+        uuid::Uuid::new_v4()
+    );
+    std::fs::write(h.dir.path().join(crate::FILE_NAME), &stale).unwrap();
+    // The first lookup of the ids fails, later ones work.
+    Mock::given(method("GET"))
+        .and(path("/auth/session/info"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .mount(&h.server)
+        .await;
+    mount_session_info(&h).await;
+    mount_strict_router(&h).await;
+    let svc = ComposioService::new(ServiceConfig {
+        data_dir: h.dir.path().to_path_buf(),
+        keys: Arc::new(crate::LocalKeySource::new(h.store.clone())),
+        registry: ToolRegistry::new(),
+        redact: Arc::new(str::to_owned),
+        register_secret: Arc::new(|_| {}),
+        audit: h.rows.clone(),
+        loopback_base: Some(h.server.uri()),
+    })
+    .unwrap();
+    assert!(svc.refresh_catalog().await.is_err());
+    let after_failure = std::fs::read_to_string(svc.state_path()).unwrap();
+    assert!(
+        after_failure.contains(PROJECT_UUID) && after_failure.contains("org_1"),
+        "a transient failure must not wipe the saved ids: {after_failure}"
+    );
+    svc.refresh_catalog().await.unwrap();
+    assert!(
+        std::fs::read_to_string(svc.state_path())
+            .unwrap()
+            .contains("proj_nano1")
+    );
+}
+
+#[tokio::test]
 async fn a_refused_login_is_flagged_not_retried_and_a_new_login_renews_it() {
     let h = harness().await;
     logged_in(&h).await;
