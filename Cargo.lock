@@ -93,7 +93,7 @@ dependencies = [
  "tiktoken-rs",
  "tokio",
  "tokio-util",
- "toml 0.8.2",
+ "toml 1.2.3+spec-1.1.0",
  "tool-registry",
  "tracing",
  "unicode-normalization",
@@ -1433,7 +1433,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
- "toml 0.8.2",
+ "toml 1.2.3+spec-1.1.0",
  "tool-registry",
  "url",
  "uuid",
@@ -1464,7 +1464,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
- "toml 0.8.2",
+ "toml 1.2.3+spec-1.1.0",
  "tool-registry",
  "url",
  "uuid",
@@ -1541,7 +1541,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
- "toml 0.8.2",
+ "toml 1.2.3+spec-1.1.0",
  "tool-registry",
  "url",
  "uuid",
@@ -1626,7 +1626,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
- "toml 0.8.2",
+ "toml 1.2.3+spec-1.1.0",
  "tool-registry",
  "url",
  "uuid",
@@ -2038,7 +2038,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
- "toml 0.8.2",
+ "toml 1.2.3+spec-1.1.0",
  "tool-registry",
  "tower",
  "url",
@@ -2697,7 +2697,7 @@ dependencies = [
  "cc",
  "memchr",
  "rustc_version",
- "toml 1.2.1+spec-1.1.0",
+ "toml 1.2.3+spec-1.1.0",
  "vswhom",
  "winreg",
 ]
@@ -2853,7 +2853,7 @@ dependencies = [
  "task-runtime",
  "tempfile",
  "tokio",
- "toml 0.8.2",
+ "toml 1.2.3+spec-1.1.0",
  "tool-registry",
  "tower",
  "wiremock",
@@ -4946,7 +4946,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
- "toml 0.8.2",
+ "toml 1.2.3+spec-1.1.0",
  "tool-registry",
  "tracing",
  "url",
@@ -6811,7 +6811,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
- "toml 0.8.2",
+ "toml 1.2.3+spec-1.1.0",
  "toml_edit 0.20.2",
  "wiremock",
  "zip",
@@ -8589,7 +8589,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
- "toml 0.8.2",
+ "toml 1.2.3+spec-1.1.0",
  "tool-registry",
  "uuid",
  "zeroize",
@@ -9235,7 +9235,7 @@ dependencies = [
  "serde_with",
  "swift-rs",
  "thiserror 2.0.21",
- "toml 1.2.1+spec-1.1.0",
+ "toml 0.9.12+spec-1.1.0",
  "url",
  "urlpattern",
  "uuid",
@@ -9250,7 +9250,7 @@ checksum = "c52bb6904475a6ca662f15ef787f18ade61d5740a1ee12c45d3b748efdb6f796"
 dependencies = [
  "dunce",
  "embed-resource",
- "toml 1.2.1+spec-1.1.0",
+ "toml 1.2.3+spec-1.1.0",
 ]
 
 [[package]]
@@ -9573,9 +9573,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "1.2.1+spec-1.1.0"
+version = "1.2.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5755c51863cdac711f1956baf8eb9588e060755f7d3c4c979e70ea1e1f32cd7"
+checksum = "26b1f26e9485c1fa43ee89fe76e9f3fb9e2e52bb227f8594b4d687496b83d073"
 dependencies = [
  "indexmap 2.14.2",
  "serde_core",
@@ -9651,9 +9651,9 @@ dependencies = [
 
 [[package]]
 name = "toml_parser"
-version = "1.1.5+spec-1.1.0"
+version = "1.1.7+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
+checksum = "0bb28d6e049a9766c3bd91a8326e6179f5b132dec87906bb97018ef7a2f3431a"
 dependencies = [
  "winnow 1.0.5",
 ]
@@ -11180,7 +11180,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
- "toml 0.8.2",
+ "toml 1.2.3+spec-1.1.0",
  "tool-registry",
  "url",
  "uuid",
