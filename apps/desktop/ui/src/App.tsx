@@ -1023,6 +1023,13 @@ function AppShell({ deepLinks }: { deepLinks: ReturnType<typeof createDeepLinkDi
     .sort()
     .join(",");
   const [dismissedNeedKey, setDismissedNeedKey] = useState("");
+  // On a narrow window the panel and the full-screen view cannot sit side by side: the picture would be
+  // squeezed to a sliver beside it. Opening the view closes the panel once; the view's own menu brings it back.
+  const wasScreenOpen = useRef(false);
+  useEffect(() => {
+    if (screenOpen && !wasScreenOpen.current && viewportWidth < PANEL_DOCK_MIN_WIDTH) setPanelOpen(false);
+    wasScreenOpen.current = screenOpen;
+  }, [screenOpen, viewportWidth]);
   const unanswerableNeed = hasUnanswerableNeed({
     routeKind: route.kind,
     selectedBotId: selectedBot?.id,

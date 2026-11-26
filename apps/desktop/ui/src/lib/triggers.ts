@@ -6,7 +6,7 @@ export type TriggerSource =
   | { kind: "time"; spec: ScheduleSpec };
 export interface TriggerConfig {
   source: TriggerSource;
-  filters: { sender: string; sender_match: "equals" | "contains" | "domain"; subject: string; has_attachment: boolean };
+  filters: { sender: string; sender_match: "equals" | "domain"; subject: string; has_attachment: boolean };
   quiet_hours: { start: number; end: number; timezone: string; drop: boolean } | null;
   limits: { per_hour: number; per_day: number };
   bot_limits: { per_hour: number; per_day: number };
@@ -24,7 +24,7 @@ export interface BotTrigger extends TriggerInput {
   last_fired_at_ms: number | null;
   count_today: number | null;
   queued: number | null;
-  last_error: "run" | "source" | "queue" | null;
+  last_error: "run" | "source" | "queue" | "sender" | null;
 }
 export interface TriggerPreview { text: string; matches: boolean }
 

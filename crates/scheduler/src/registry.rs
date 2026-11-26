@@ -33,10 +33,58 @@ const fn default_poll() -> u64 {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SenderMatch {
+    /// The sender filter is one exact address.
     Equals,
+    /// Legacy marker, and the default when a stored or posted rule names no
+    /// mode. There is NO substring mode: `migrate_legacy` turns it into
+    /// `equals`/`domain` when the value looks like an address or a domain;
+    /// free text is refused (a stored trigger is disabled with a notice).
+    /// `validate` never accepts `contains`.
     #[default]
     Contains,
+    /// The sender filter is a domain; subdomains match on a label boundary.
     Domain,
+}
+
+impl SenderMatch {
+    /// The mode that fits a filter value under the shared sender rule
+    /// ([`protocol::sender`]): `equals` for an address, `domain` for a domain,
+    /// `None` for anything else (free text).
+    #[must_use]
+    pub fn for_value(value: &str) -> Option<Self> {
+        match protocol::sender::SenderRule::parse(value)? {
+            protocol::sender::SenderRule::Address(_) => Some(Self::Equals),
+            protocol::sender::SenderRule::Domain(_) => Some(Self::Domain),
+        }
+    }
+}
+
+impl Filters {
+    /// Move a legacy `contains` filter onto the shared rule: the value becomes
+    /// its canonical address/`@domain` form with the matching mode. Returns
+    /// `false` (nothing changed) when the value is free text; the caller must
+    /// then disable the trigger and tell the owner.
+    pub fn migrate_legacy(&mut self) -> bool {
+        if self.sender_match != SenderMatch::Contains {
+            return true;
+        }
+        let Some(canonical) = protocol::sender::migrate_legacy_contains(&self.sender) else {
+            return false;
+        };
+        let Some(mode) = SenderMatch::for_value(&canonical) else {
+            return false;
+        };
+        self.sender = canonical;
+        self.sender_match = mode;
+        true
+    }
+}
+
+/// Mail rules need a sender: an address (`equals`) or a domain (`domain`),
+/// and the mode must say what the value is. `contains` is refused.
+fn sender_filter_consistent(filters: &Filters) -> bool {
+    SenderMatch::for_value(&filters.sender)
+        .is_some_and(|m| m == filters.sender_match && m != SenderMatch::Contains)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,7 +208,7 @@ impl Rule {
                     || !safe_config(account, 256)
                     || !safe_config(folder, 256)
                     || !safe_config(own_address, 320)
-                    || self.filters.sender.trim().is_empty()
+                    || !sender_filter_consistent(&self.filters)
                     || !(60..=86400).contains(poll_seconds)
                 {
                     return Err(
@@ -233,16 +281,10 @@ impl Rule {
             return false;
         }
         let wanted = self.filters.sender.trim().to_lowercase();
-        if wanted.is_empty() {
-            return false;
-        }
-        let sender_matches = match self.filters.sender_match {
-            SenderMatch::Equals => address == wanted,
-            SenderMatch::Contains => address.contains(&wanted),
-            SenderMatch::Domain => address
-                .rsplit_once('@')
-                .is_some_and(|(_, domain)| domain == wanted.trim_start_matches('@')),
-        };
+        // ONE shared rule (also used by the mail channel): the parsed address
+        // equals the wanted address or sits in the wanted domain (label
+        // boundary). Empty or free-text filters match nothing.
+        let sender_matches = protocol::sender::sender_matches(&address, &wanted);
         let header = |key: &str| {
             message["automation_headers"][key]
                 .as_str()

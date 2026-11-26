@@ -273,28 +273,17 @@ pub fn validate_account_name(name: &str) -> Result<(), EmailError> {
     }
 }
 
-/// Trim and lower-case one `allowed_senders` entry and check it is an address
-/// or an `@domain`.
+/// Check one `allowed_senders` entry against the shared sender rule
+/// ([`protocol::sender`]) and return its canonical form: an address
+/// (`ann@example.com`) or `@domain` (a bare `example.com` is accepted and
+/// stored as `@example.com`). A domain also covers its subdomains.
 ///
 /// # Errors
 /// [`EmailError::Config`] for anything else.
 pub fn normalize_sender(entry: &str) -> Result<String, EmailError> {
-    let bad = || EmailError::Config("allowed senders must be addresses or @domains".into());
-    let e = entry.trim().to_ascii_lowercase();
-    if e.is_empty() || e.len() > 254 || e.chars().any(|c| c.is_control() || c.is_whitespace()) {
-        return Err(bad());
-    }
-    if let Some(domain) = e.strip_prefix('@') {
-        if validate_host(domain, "sender domain").is_ok() && domain.contains('.') {
-            return Ok(e);
-        }
-        return Err(bad());
-    }
-    if e.parse::<email_address::EmailAddress>().is_ok() {
-        Ok(e)
-    } else {
-        Err(bad())
-    }
+    protocol::sender::SenderRule::parse(entry)
+        .map(|r| r.canonical())
+        .ok_or_else(|| EmailError::Config("allowed senders must be addresses or domains".into()))
 }
 
 impl AccountConfig {

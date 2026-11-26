@@ -274,7 +274,7 @@ pub fn tools(host: &Arc<dyn ScheduleHost>) -> Vec<Arc<dyn Tool>> {
         "cron": {"type":"string","description":"5-field cron expression, e.g. \"30 10 * * 1-5\". Give `when` or `cron`, not both."},
         "tz": {"type":"string","description":"IANA timezone for calendar times (default: the user's timezone)."},
         "precheck": {"type":["object","null"],"description":"Read-only condition: {kind:hash_changed,tool,input} or {kind:script,code}. Script is an async function body returning bool or {run:bool,input:string}; 20s, 10 Read calls, 64KiB. Ask/Deny tools are refused. Full source is shown before approval."},
-        "trigger": {"type":["object","null"],"description":"Event trigger: {kind:file_watch,path,glob,events:[created|modified],debounce_ms} or {kind:email,account,from_filter,subject_filter}. Explicit workspace roots and Allow reads are required. Event payload is untrusted; every tool in the firing needs once-only approval."}
+        "trigger": {"type":["object","null"],"description":"Event trigger: {kind:file_watch,path,glob,events:[created|modified],debounce_ms} or {kind:email,account,from_filter (exact sender address or @domain),subject_filter}. Explicit workspace roots and Allow reads are required. Event payload is untrusted; every tool in the firing needs once-only approval."}
     });
     let mut create_props = json!({
         "name": {"type":"string","description":"Short name for the schedule."},

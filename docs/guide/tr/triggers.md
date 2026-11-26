@@ -8,7 +8,8 @@ kurallar her zaman kapalı başlar.
 Mevcut posta ve talimat zamanlamaları ile imzalı adresler aynı listede görünür. Sessiz saat ve sınır eklemek için birini açın; kaydetmek, kuralı inceleyip yeniden açana kadar durdurur. Gelişmiş iş akışı, ön kontrol ve dosya izleme zamanlamaları Zamanlamalar bölümünde kalır.
 
 E-posta için önce bir IMAP posta kutusu bağlayın ve botun zamanlanmış posta
-okumalarına izin verin. Klasörü, göndereni (tam adres, içerir veya alan adı),
+okumalarına izin verin. Klasörü, göndereni (tam adres veya alt alan adlarını da kapsayan alan adı; metin parçası
+olmaz),
 isteğe bağlı konu ve ek filtresini seçin. Varsayılan kontrol aralığı iki
 dakikadır; bir dakikadan kısa olamaz. İlk kontrol başlangıç noktası oluşturur;
 eski postalar çalıştırma başlatmaz. Birlikte gelen postalar tek çalıştırmada
