@@ -685,6 +685,9 @@ pub(crate) enum Verdict {
     /// The owner finished a `browser_handover` (a code was typed into the page, or
     /// the CAPTCHA was solved and the page moved on). Carries nothing.
     HandoverDone,
+    /// The owner answered an MCP elicitation form (checked against the form).
+    /// The content goes back to the server only.
+    Elicited(tool_registry::ElicitationAnswer),
 }
 
 /// What a parked `browser_handover` asks for: facts only, never a code.
@@ -768,6 +771,8 @@ pub(crate) enum PendingKind {
     Secret,
     /// A CAPTCHA or one-time-code handover (`browser_handover`).
     Handover,
+    /// An MCP server's form (elicitation).
+    Elicitation,
 }
 
 /// Browser actions that act on the page open right now: their allowance is bound to its origin.
@@ -1170,6 +1175,8 @@ pub(crate) struct Shared {
     pub secret_requests: Mutex<HashMap<ToolCallId, SecretRequestInfo>>,
     /// `browser_handover` calls waiting for the owner (see `approval.rs`).
     pub handovers: Mutex<HashMap<ToolCallId, HandoverInfo>>,
+    /// MCP elicitation forms waiting for the owner (see `elicitation.rs`).
+    pub elicitations: Mutex<HashMap<ToolCallId, crate::elicitation::ElicitationInfo>>,
     pub grants: Mutex<Grants>,
     /// Per-site / per-app permission rules of every bot (see `site_profiles`).
     pub profile_rules: Mutex<Vec<(BotId, permission_engine::ProfileRule)>>,
@@ -2874,6 +2881,7 @@ fn needs_barrier(event: &Event) -> bool {
             | Event::QuestionAsked(_)
             | Event::SecretRequested(_)
             | Event::HandoverRequested(_)
+            | Event::ElicitationRequested(_)
             | Event::ControlRequested(_)
             | Event::SubagentStarted(_)
             | Event::SubagentFinished(_)
