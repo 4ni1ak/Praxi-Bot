@@ -154,6 +154,8 @@ import type {
   Schedule,
   ScheduleHistoryEntry,
   HandoverAnswer,
+  AnswerElicitation,
+  ElicitationAnswer,
   SecretRequestAnswer,
   FillSecretInfo,
   CreateFillSecretInput,
@@ -1238,6 +1240,18 @@ export class ApiClient {
 
   cancelHandover(callId: string): Promise<HandoverAnswer> {
     return this.request("POST", `/handovers/${encodeURIComponent(callId)}/cancel`);
+  }
+
+  /**
+   * Answer an MCP server's form (`elicitation_requested`): the answer goes to that server only,
+   * never to the model. Owner-only (the owner key is added for this computer's daemon).
+   */
+  answerElicitation(callId: string, body: AnswerElicitation): Promise<ElicitationAnswer> {
+    return this.request("POST", `/elicitations/${encodeURIComponent(callId)}`, { body });
+  }
+
+  cancelElicitation(callId: string): Promise<ElicitationAnswer> {
+    return this.request("POST", `/elicitations/${encodeURIComponent(callId)}/cancel`);
   }
 
   cancelSecretRequest(callId: string): Promise<SecretRequestAnswer> {

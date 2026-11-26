@@ -3360,6 +3360,33 @@
       "xlsx": "Excel"
     }
   },
+  "elicitation": {
+    "cancel": "Abbrechen",
+    "choose": "Auswählen…",
+    "closed": "Diese Anfrage ist nicht mehr offen.",
+    "decline": "Ablehnen",
+    "expired": "Die Zeit für diese Anfrage ist abgelaufen.",
+    "expiresIn": "Verbleibende Zeit zum Antworten",
+    "messageLabel": "Nachricht von {{server}}:",
+    "notConnected": "Keine Verbindung zum Dienst. Es wurde nichts gesendet, deine Eingaben sind noch da.",
+    "note": "Dieser Text kommt vom MCP-Server {{server}}, nicht von Praxi. Deine Antworten gehen nur an diesen Server, nicht an den Bot.",
+    "outcome": {
+      "accepted": "Gesendet. Nur der Server hat deine Antworten erhalten.",
+      "cancelled": "Abgebrochen.",
+      "declined": "Abgelehnt. Der Server weiß jetzt, dass du nicht antworten möchtest."
+    },
+    "problem": {
+      "integer": "{{field}} muss eine ganze Zahl sein.",
+      "number": "{{field}} muss eine Zahl sein.",
+      "required": "{{field}} ist ein Pflichtfeld.",
+      "tooLarge": "{{field}} darf höchstens {{max}} sein.",
+      "tooLong": "{{field}} darf höchstens {{max}} Zeichen haben.",
+      "tooShort": "{{field}} braucht mindestens {{min}} Zeichen.",
+      "tooSmall": "{{field}} muss mindestens {{min}} sein."
+    },
+    "submit": "Senden",
+    "title": "{{server}} bittet um Angaben"
+  },
   "engineConsent": {
     "allow": "{{cli}} erlauben",
     "blocked": {
@@ -3515,6 +3542,10 @@
       "disabled": {
         "hint": "Schalte es in den Einstellungen ein und versuche es dann erneut.",
         "title": "Das ist ausgeschaltet"
+      },
+      "elicitation_gone": {
+        "hint": "Es wurde beantwortet, abgebrochen oder ist abgelaufen, oder der Lauf ist beendet. Bitte den Bot, es erneut zu versuchen, falls es noch nötig ist.",
+        "title": "Dieses Formular ist nicht mehr offen"
       },
       "email_provider_error": {
         "hint": "Prüfe Konto und Passwort und versuche es erneut.",

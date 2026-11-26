@@ -3424,6 +3424,33 @@
       "xlsx": "Excel"
     }
   },
+  "elicitation": {
+    "cancel": "İptal",
+    "choose": "Seç…",
+    "closed": "Bu istek artık açık değil.",
+    "decline": "Reddet",
+    "expired": "Bu isteğin süresi doldu.",
+    "expiresIn": "Yanıtlamak için kalan süre",
+    "messageLabel": "{{server}} sunucusunun mesajı:",
+    "notConnected": "Servise bağlantı yok. Hiçbir şey gönderilmedi, yazdıkların hâlâ burada.",
+    "note": "Bu metin Praxi'den değil, {{server}} MCP sunucusundan geliyor. Yanıtların yalnızca bu sunucuya gider, bot onları görmez.",
+    "outcome": {
+      "accepted": "Gönderildi. Yanıtlarını yalnızca sunucu aldı.",
+      "cancelled": "İptal edildi.",
+      "declined": "Reddedildi. Sunucuya yanıt vermek istemediğin bildirildi."
+    },
+    "problem": {
+      "integer": "{{field}} alanına tam sayı yaz.",
+      "number": "{{field}} alanına bir sayı yaz.",
+      "required": "{{field}} alanı zorunlu.",
+      "tooLarge": "{{field}} en fazla {{max}} olabilir.",
+      "tooLong": "{{field}} en fazla {{max}} karakter olabilir.",
+      "tooShort": "{{field}} en az {{min}} karakter olmalı.",
+      "tooSmall": "{{field}} en az {{min}} olmalı."
+    },
+    "submit": "Gönder",
+    "title": "{{server}} senden bilgi istiyor"
+  },
   "engineConsent": {
     "allow": "{{cli}} için izin ver",
     "blocked": {
@@ -3579,6 +3606,10 @@
       "disabled": {
         "hint": "Ayarlardan açıp yeniden dene.",
         "title": "Bu özellik kapalı"
+      },
+      "elicitation_gone": {
+        "hint": "Yanıtlandı, iptal edildi, süresi doldu ya da çalışma bitti. Hâlâ gerekiyorsa botun yeniden denemesini iste.",
+        "title": "Bu form artık açık değil"
       },
       "email_provider_error": {
         "hint": "Hesabı ve parolayı kontrol edip yeniden dene.",

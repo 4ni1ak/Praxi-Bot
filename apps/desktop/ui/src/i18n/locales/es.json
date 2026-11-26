@@ -3360,6 +3360,33 @@
       "xlsx": "Excel"
     }
   },
+  "elicitation": {
+    "cancel": "Cancelar",
+    "choose": "Elegir…",
+    "closed": "Esta solicitud ya no está abierta.",
+    "decline": "Rechazar",
+    "expired": "Se acabó el tiempo de esta solicitud.",
+    "expiresIn": "Tiempo restante para responder",
+    "messageLabel": "Mensaje de {{server}}:",
+    "notConnected": "No hay conexión con el servicio. No se envió nada y lo que escribiste sigue aquí.",
+    "note": "Este texto viene del servidor MCP {{server}}, no de Praxi. Tus respuestas van solo a ese servidor, no al bot.",
+    "outcome": {
+      "accepted": "Enviado. Solo el servidor recibió tus respuestas.",
+      "cancelled": "Cancelado.",
+      "declined": "Rechazado. Se avisó al servidor de que no quieres responder."
+    },
+    "problem": {
+      "integer": "{{field}} debe ser un número entero.",
+      "number": "{{field}} debe ser un número.",
+      "required": "{{field}} es obligatorio.",
+      "tooLarge": "{{field}} debe ser como máximo {{max}}.",
+      "tooLong": "{{field}} admite como máximo {{max}} caracteres.",
+      "tooShort": "{{field}} necesita al menos {{min}} caracteres.",
+      "tooSmall": "{{field}} debe ser al menos {{min}}."
+    },
+    "submit": "Enviar",
+    "title": "{{server}} te pide información"
+  },
   "engineConsent": {
     "allow": "Permitir que {{cli}} actúe",
     "blocked": {
@@ -3515,6 +3542,10 @@
       "disabled": {
         "hint": "Actívalo en Ajustes y vuelve a intentarlo.",
         "title": "Esto está desactivado"
+      },
+      "elicitation_gone": {
+        "hint": "Se respondió, se canceló o caducó, o la ejecución terminó. Pide al bot que lo intente de nuevo si aún hace falta.",
+        "title": "Ese formulario ya no está abierto"
       },
       "email_provider_error": {
         "hint": "Revisa la cuenta y la contraseña y vuelve a intentarlo.",
