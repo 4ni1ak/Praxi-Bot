@@ -17,13 +17,26 @@
 //! return a.filter(x => x.score > 0.5).map(x => x.id);
 //! ```
 //!
-//! Hard limits ([`Limits`]): wall-clock timeout, memory, tool-call count and
-//! output size. Errors ([`ScriptError`]) carry the JS message, stack and line
-//! number so the model can fix its script.
+//! Hard limits ([`Limits`]): two clocks, memory, tool-call count and output
+//! size.
+//!
+//! * The **compute budget** ([`Limits::cpu_timeout`]) counts only the time the
+//!   interpreter is running the script's own code. It is paused only while the
+//!   script is itself awaiting (no JavaScript is runnable and the host is
+//!   working), so a script that waits on a slow browser page or web request is
+//!   not killed for it, while a busy loop still is: also one that starts tool
+//!   calls without awaiting them, which keeps computing while they are pending.
+//! * The **total cap** ([`Limits::total_timeout`]) is the wall clock of the whole
+//!   run, tool waits included. It is always bounded (never above
+//!   [`MAX_TOTAL_TIMEOUT`]), so a tool that never answers cannot hold a run for
+//!   ever.
+//!
+//! Errors ([`ScriptError`]) carry the JS message, stack and line number so the
+//! model can fix its script.
 //!
 //! Note: `QuickJS` is single threaded and a busy loop occupies the polling
-//! thread until the interrupt handler fires (at most `timeout`). Callers that
-//! cannot afford this on an async worker should run the future with
+//! thread until the interrupt handler fires (at most `cpu_timeout`). Callers
+//! that cannot afford this on an async worker should run the future with
 //! `spawn_blocking` or on a dedicated runtime.
 
 use std::fmt;
@@ -59,11 +72,19 @@ pub trait ScriptHost: Send + Sync {
     async fn call_tool(&self, name: &str, input: Json) -> Result<Json, String>;
 }
 
+/// Largest total (wall-clock) duration a run may be given, whatever
+/// [`Limits::total_timeout`] says.
+pub const MAX_TOTAL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
 /// Hard resource limits for a single script run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Limits {
-    /// Wall-clock budget for the whole run (including awaited tool calls).
-    pub timeout: Duration,
+    /// Compute budget: how long the script's own code may run, summed over the
+    /// whole run. The clock stops while any `tools.call` is awaited.
+    pub cpu_timeout: Duration,
+    /// Wall-clock cap for the whole run, awaited tool calls included. Clamped to
+    /// [`MAX_TOTAL_TIMEOUT`].
+    pub total_timeout: Duration,
     /// Maximum JS heap size in bytes.
     pub memory_bytes: usize,
     /// Maximum JS native stack size in bytes (guards against deep recursion).
@@ -78,7 +99,8 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(10),
+            cpu_timeout: Duration::from_secs(10),
+            total_timeout: Duration::from_secs(10 * 60),
             memory_bytes: 32 * 1024 * 1024,
             max_stack_bytes: 512 * 1024,
             max_tool_calls: 50,
@@ -154,9 +176,15 @@ pub enum ScriptError {
     /// The script threw (including syntax errors).
     #[error("script error: {0}")]
     Js(JsError),
-    /// The wall-clock timeout elapsed.
-    #[error("script timed out after {0:?}")]
+    /// The whole run (tool waits included) took longer than the total cap.
+    #[error("script timed out after {0:?} in total (waiting for tools counts here)")]
     Timeout(Duration),
+    /// The script's own code used up its compute budget. Time spent waiting for
+    /// tool calls does not count towards it.
+    #[error(
+        "script timed out: its own work used up the compute budget of {0:?} (waiting for tool calls does not count)"
+    )]
+    CpuTimeout(Duration),
     /// The caller cancelled the run.
     #[error("script was cancelled")]
     Cancelled,
@@ -181,9 +209,140 @@ pub enum ScriptError {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScriptRuntime;
 
+/// The compute clock. It runs exactly while the script's own code can execute:
+/// during a poll of the script's future (the interpreter runs JavaScript and the
+/// promise jobs inside such a poll), except while the host is working inside a
+/// tool call's own poll. It is stopped while the script is awaiting, that is,
+/// between polls, when no JavaScript is runnable and the host (a page load, a
+/// download, a person approving a call) is the one working.
+///
+/// The clock does NOT look at how many tool calls are pending: a script that
+/// starts a call and goes on (`while (true) { tools.call(...) }`, never
+/// awaited) keeps computing, and that time counts.
+struct CpuClock {
+    state: Mutex<ClockState>,
+}
+
+struct ClockState {
+    used: Duration,
+    running_since: Option<Instant>,
+    /// Inside a poll of the script's future.
+    script_polling: bool,
+    /// Inside a poll of a host tool call's future (nested in a script poll).
+    host_polling: usize,
+}
+
+impl ClockState {
+    /// Start or stop the running interval to match the flags.
+    fn sync(&mut self) {
+        let run = self.script_polling && self.host_polling == 0;
+        match (run, self.running_since) {
+            (true, None) => self.running_since = Some(Instant::now()),
+            (false, Some(since)) => {
+                self.used += since.elapsed();
+                self.running_since = None;
+            }
+            _ => {}
+        }
+    }
+}
+
+impl CpuClock {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(ClockState {
+                used: Duration::ZERO,
+                running_since: None,
+                script_polling: false,
+                host_polling: 0,
+            }),
+        })
+    }
+
+    /// Compute time used so far.
+    fn used(&self) -> Duration {
+        let st = self.state.lock();
+        st.used + st.running_since.map_or(Duration::ZERO, |t| t.elapsed())
+    }
+
+    /// The clock runs until the returned guard is dropped: the script's future
+    /// is being polled.
+    fn script_poll(&self) -> ClockGuard<'_> {
+        let mut st = self.state.lock();
+        st.script_polling = true;
+        st.sync();
+        drop(st);
+        ClockGuard {
+            clock: self,
+            host: false,
+        }
+    }
+
+    /// The clock stands still until the returned guard is dropped: a host tool
+    /// call's future is being polled.
+    fn host_poll(&self) -> ClockGuard<'_> {
+        let mut st = self.state.lock();
+        st.host_polling += 1;
+        st.sync();
+        drop(st);
+        ClockGuard {
+            clock: self,
+            host: true,
+        }
+    }
+}
+
+struct ClockGuard<'a> {
+    clock: &'a CpuClock,
+    host: bool,
+}
+
+impl Drop for ClockGuard<'_> {
+    fn drop(&mut self) {
+        let mut st = self.clock.state.lock();
+        if self.host {
+            st.host_polling = st.host_polling.saturating_sub(1);
+        } else {
+            st.script_polling = false;
+        }
+        st.sync();
+    }
+}
+
+/// What the engine's interrupt handler consults while script code runs.
+struct Watchdog {
+    cancel: CancellationToken,
+    deadline: Instant,
+    clock: Arc<CpuClock>,
+    cpu_budget: Duration,
+    total_hit: Arc<AtomicBool>,
+    cpu_hit: Arc<AtomicBool>,
+}
+
+impl Watchdog {
+    /// True when the script must be stopped now; records which limit it was.
+    fn should_stop(&self) -> bool {
+        if self.cancel.is_cancelled() {
+            return true;
+        }
+        // A busy loop never yields to the async timer, so the total cap is
+        // enforced here as well.
+        if Instant::now() >= self.deadline {
+            self.total_hit.store(true, Ordering::SeqCst);
+            return true;
+        }
+        if self.clock.used() >= self.cpu_budget {
+            self.cpu_hit.store(true, Ordering::SeqCst);
+            return true;
+        }
+        false
+    }
+}
+
 /// Shared mutable state between the JS closures and the runner.
 struct RunState {
     limits: Limits,
+    clock: Arc<CpuClock>,
     host: Arc<dyn ScriptHost>,
     calls_started: AtomicUsize,
     call_limit_hit: AtomicBool,
@@ -232,7 +391,18 @@ impl RunState {
             Err(e) => return json!({"err": format!("invalid tool input: {e}")}).to_string(),
         };
         let started = Instant::now();
-        let outcome = self.host.call_tool(&name, input.clone()).await;
+        // The compute clock stands still only while the host itself is working
+        // on the call (its polls): a page load, a download, a person approving
+        // it. It does not stand still because a call is pending: the script may
+        // be computing meanwhile, and that counts.
+        let outcome = {
+            let mut call = Box::pin(self.host.call_tool(&name, input.clone()));
+            std::future::poll_fn(|cx| {
+                let _host = self.clock.host_poll();
+                call.as_mut().poll(cx)
+            })
+            .await
+        };
         let duration = started.elapsed();
         let (reply, output, error) = match outcome {
             Ok(v) => (json!({"ok": v}), Some(v), None),
@@ -273,11 +443,22 @@ const SHIM: &str = r"(function (nativeCall, nativeLog) {
   });
   Object.defineProperty(globalThis, 'tools', {
     value: Object.freeze({
-      call: async (name, input) => {
-        const raw = await nativeCall(String(name), JSON.stringify(input === undefined ? null : input));
-        const reply = JSON.parse(raw);
-        if (reply.err !== undefined) throw new Error(reply.err);
-        return reply.ok;
+      // Not an `async` function on purpose: the engine's interrupt (the compute and
+      // total limits) raised inside an async function is turned into a rejected
+      // promise, which a loop of un-awaited calls would never look at. Raised in this
+      // plain function it unwinds the caller, which is what stops the loop.
+      call: (name, input) => {
+        let pending;
+        try {
+          pending = nativeCall(String(name), JSON.stringify(input === undefined ? null : input));
+        } catch (e) {
+          return Promise.reject(e);
+        }
+        return Promise.resolve(pending).then((raw) => {
+          const reply = JSON.parse(raw);
+          if (reply.err !== undefined) throw new Error(reply.err);
+          return reply.ok;
+        });
       },
     }),
     configurable: true, writable: true,
@@ -304,6 +485,7 @@ impl ScriptRuntime {
     ///
     /// # Errors
     /// As [`Self::run`], plus [`ScriptError::Cancelled`] when `cancel` is set.
+    #[allow(clippy::too_many_lines)] // the engine, its three limits and the cancel race in one place
     pub async fn run_cancellable(
         code: &str,
         host: Arc<dyn ScriptHost>,
@@ -314,28 +496,25 @@ impl ScriptRuntime {
             return Err(ScriptError::Cancelled);
         }
         let started = Instant::now();
-        let deadline = started + limits.timeout;
-        let timed_out = Arc::new(AtomicBool::new(false));
+        let total = limits.total_timeout.min(MAX_TOTAL_TIMEOUT);
+        let deadline = started + total;
+        let clock = CpuClock::new();
+        let total_hit = Arc::new(AtomicBool::new(false));
+        let cpu_hit = Arc::new(AtomicBool::new(false));
 
         let rt = AsyncRuntime::new().map_err(|e| internal(&e))?;
         rt.set_memory_limit(limits.memory_bytes).await;
         rt.set_max_stack_size(limits.max_stack_bytes).await;
-        {
-            let flag = Arc::clone(&timed_out);
-            let interrupt_cancel = cancel.clone();
-            rt.set_interrupt_handler(Some(Box::new(move || {
-                if interrupt_cancel.is_cancelled() {
-                    return true;
-                }
-                if Instant::now() >= deadline {
-                    flag.store(true, Ordering::SeqCst);
-                    true
-                } else {
-                    false
-                }
-            })))
+        let watch = Watchdog {
+            cancel: cancel.clone(),
+            deadline,
+            clock: Arc::clone(&clock),
+            cpu_budget: limits.cpu_timeout,
+            total_hit: Arc::clone(&total_hit),
+            cpu_hit: Arc::clone(&cpu_hit),
+        };
+        rt.set_interrupt_handler(Some(Box::new(move || watch.should_stop())))
             .await;
-        }
         let ctx = AsyncContext::custom::<(
             intrinsic::Eval,
             intrinsic::Json,
@@ -352,6 +531,7 @@ impl ScriptRuntime {
 
         let state = Arc::new(RunState {
             limits: limits.clone(),
+            clock,
             host,
             calls_started: AtomicUsize::new(0),
             call_limit_hit: AtomicBool::new(false),
@@ -366,14 +546,24 @@ impl ScriptRuntime {
             let state = Arc::clone(&state);
             ctx.async_with(async move |ctx| execute(&ctx, &source, &state).await)
         };
+        // The compute clock runs while this future is polled (JavaScript runs
+        // inside the poll) and stops between polls (the script is awaiting).
+        let mut work = Box::pin(work);
+        let work = std::future::poll_fn({
+            let clock = Arc::clone(&state.clock);
+            move |cx| {
+                let _running = clock.script_poll();
+                work.as_mut().poll(cx)
+            }
+        });
 
         let outcome = tokio::select! {
             biased;
             () = cancel.cancelled() => return Err(ScriptError::Cancelled),
-            result = tokio::time::timeout(limits.timeout, work) => result,
+            result = tokio::time::timeout(total, work) => result,
         };
         let Ok(outcome) = outcome else {
-            return Err(ScriptError::Timeout(limits.timeout));
+            return Err(ScriptError::Timeout(total));
         };
 
         if cancel.is_cancelled() {
@@ -384,8 +574,11 @@ impl ScriptRuntime {
                 max: limits.max_tool_calls,
             });
         }
-        if timed_out.load(Ordering::SeqCst) {
-            return Err(ScriptError::Timeout(limits.timeout));
+        if total_hit.load(Ordering::SeqCst) {
+            return Err(ScriptError::Timeout(total));
+        }
+        if cpu_hit.load(Ordering::SeqCst) {
+            return Err(ScriptError::CpuTimeout(limits.cpu_timeout));
         }
         let oom = || ScriptError::MemoryLimitExceeded {
             limit_bytes: limits.memory_bytes,

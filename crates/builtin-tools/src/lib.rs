@@ -43,6 +43,8 @@ pub mod script;
 pub mod secret_request;
 pub mod selfcheck;
 pub mod shell;
+#[cfg(test)]
+mod totp_save_tests;
 mod util;
 pub mod wait;
 pub mod workspace;
@@ -74,7 +76,9 @@ pub use bots::{
     BOT_PRESETS, BOT_TOOL_NAMES, BotCaller, BotChange, BotHost, BotPreview, BotRequest, BotView,
     FieldChange,
 };
-pub use browser::{BrowserDriver, BrowserSettings, CdpDriver, Wait, act_can_egress, act_summary};
+pub use browser::{
+    ACCOUNT_TOTP_SAVE, BrowserDriver, BrowserSettings, CdpDriver, Wait, act_can_egress, act_summary,
+};
 pub use checkpoint::{
     ChangeKind, Checkpoint, CheckpointEntry, CheckpointStore, DiffOmittedReason, FileChange,
     MAX_DIFF_FILE_BYTES, MAX_DIFF_RUN_BYTES, RestoreAction, RestorePreviewEntry, RestoreReport,

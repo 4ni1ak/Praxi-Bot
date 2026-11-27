@@ -322,7 +322,7 @@ impl Tool for AccountRegister {
             }
         };
         Ok(ToolOutput::text(format!(
-            "Account entry created. Secret name: {name}\nSite: {site}\nLogin: {}\nThe password is stored by Praxi and is not shown to you.\nNext: open the sign-up page on {site}, type the login with browser_fill `text`, and the password with browser_fill `secret` = \"{name}\" (the owner approves each typing).\n{mail_hint}\nCAPTCHA, phone number or two-factor code: stop and ask the owner to take over; do not try to solve them.",
+            "Account entry created. Secret name: {name}\nSite: {site}\nLogin: {}\nThe password is stored by Praxi and is not shown to you.\nNext: open the sign-up page on {site}, type the login with browser_fill `text`, and the password with browser_fill `secret` = \"{name}\" (the owner approves each typing).\n{mail_hint}\nCAPTCHA, phone number, or a code sent by SMS or e-mail you cannot read: stop and ask the owner to take over; do not try to solve them. If the site makes you set up an authenticator app and shows a key (or an otpauth address), keep it with account_totp_save (point it at the element that shows the key; never copy the key yourself), then type each code with browser_fill `secret` = \"totp:{name}\".",
             plain(&info.login_id, SHOWN_CAP)
         )))
     }
@@ -461,6 +461,13 @@ impl Tool for AccountList {
                     ""
                 },
             );
+            if a.has_totp && a.created_by == "bot" {
+                let _ = writeln!(
+                    out,
+                    "  two-factor key stored: type the code with browser_fill `secret` = \"totp:{}\"",
+                    plain(&a.name, SHOWN_CAP)
+                );
+            }
         }
         if end < total {
             let _ = writeln!(out, "... {} more; next offset: {end}", total - end);
