@@ -4438,7 +4438,7 @@
       "stalled": "Görüntü güncellenmeyi bıraktı."
     },
     "approvalsWaiting": "Kararını bekleyen {{count}} öğe var. Aşağıdan veya sohbette karar ver.",
-    "backToChat": "Geri",
+    "backToChat": "Sohbete dön",
     "captureTab": "Tab tuşunu yakala",
     "chat": {
       "approve": "Onayla",
@@ -4457,9 +4457,14 @@
     "close": "Görünümü kapat",
     "connectionLost": "Ekran bağlantısı koptu. Yeniden bağlanılıyor…",
     "dismissKeepsControl": "Kapatmak yalnızca görünümü gizler: kontrol sende kalır. Panelden Bitirdim veya Yeniden dene'yi kullan.",
+    "dock": {
+      "inControl": "Kontrol sende, botlar bekliyor",
+      "watching": "Sadece izliyorsun"
+    },
     "doneAction": "Bitirdim",
     "doneLabel": "Bitirdim",
-    "emergencyStop": "Botları durdur",
+    "emergencyStop": "Tüm botları durdur",
+    "emergencyStopHint": "Her bot o an yaptığı işi hemen bırakır.",
     "errors": {
       "generic": "İstek başarısız oldu. Bağlantıyı kontrol edip yeniden dene.",
       "network": "Ekran bağlantısı kesildi. Ağını kontrol edip yeniden dene.",
@@ -4478,7 +4483,7 @@
     "expand": "Büyük görünümü aç",
     "focusTrapHint": "Klavye ekrana gider. Çıkmak için Shift+Esc.",
     "globalPauseNotice": "Devralma veya durdurma işlemi tüm bot çalışmalarını genel olarak duraklatır.",
-    "handBackAction": "Geri ver",
+    "handBackAction": "Bota geri ver",
     "hostLabel": "Sunucu: {{host}}",
     "infoPanel": "Bot bilgisi",
     "interactive": "Etkileşimli",
@@ -4523,7 +4528,7 @@
     "outcomes": {
       "application_opened": "Uygulama açıldı",
       "login_completed": "Giriş yapıldı",
-      "none": "Tamamlandı",
+      "none": "Ne yaptın? (isteğe bağlı)",
       "other": "Diğer adım"
     },
     "panelSummary": {
@@ -4577,7 +4582,7 @@
     },
     "reconnecting": "Ekran akışına yeniden bağlanılıyor…",
     "recoverAction": "Duraklatmayı kaldır (bot yeniden çalışabilir)",
-    "refresh": "Hedefleri yenile",
+    "refresh": "Ekran listesini yenile",
     "releaseFocus": "Klavyeden çık",
     "releaseOnClose": "Kapatmak önce kontrolü bota geri verir.",
     "retryDone": "Bitirdim'i yeniden dene",
@@ -4593,6 +4598,7 @@
       "closed": "Kapalı",
       "disconnected": "Bağlantı kesildi",
       "finishing": "Geri veriliyor…",
+      "live": "Canlı",
       "noScreen": "Henüz ekran yok",
       "paused": "Duraklatıldı",
       "queryFailed": "Ekranlar yüklenemedi",
@@ -4632,7 +4638,7 @@
       "zoomOut": "Uzaklaştır"
     },
     "viewOnly": "Salt izleme",
-    "watchAction": "Devral"
+    "watchAction": "Kontrolü devral"
   },
   "localInstall": {
     "cancel": "İndirmeyi durdur",
