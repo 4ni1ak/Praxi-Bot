@@ -812,6 +812,7 @@ pub(crate) struct Grants {
 }
 
 impl Grants {
+    #[cfg(test)]
     pub fn covers(
         &self,
         bot: BotId,
@@ -819,16 +820,30 @@ impl Grants {
         category: PermissionCategory,
         computer: Option<&str>,
     ) -> bool {
-        self.always.iter().any(|g| {
-            !g.inert
-                && g.bot_id == bot
-                && g.computer.as_deref() == computer
-                && match &g.target {
-                    GrantTarget::Tool(t) => t == tool,
-                    GrantTarget::Category(c) => *c == category,
-                    GrantTarget::Scoped { .. } => false,
-                }
-        })
+        self.covering(bot, tool, category, computer).is_some()
+    }
+
+    /// The first persisted tool or category rule that covers the call.
+    pub fn covering(
+        &self,
+        bot: BotId,
+        tool: &str,
+        category: PermissionCategory,
+        computer: Option<&str>,
+    ) -> Option<&GrantTarget> {
+        self.always
+            .iter()
+            .find(|g| {
+                !g.inert
+                    && g.bot_id == bot
+                    && g.computer.as_deref() == computer
+                    && match &g.target {
+                        GrantTarget::Tool(t) => t == tool,
+                        GrantTarget::Category(c) => *c == category,
+                        GrantTarget::Scoped { .. } => false,
+                    }
+            })
+            .map(|g| &g.target)
     }
 
     /// A persisted rule for this tool whose target covers `call`.
@@ -2906,7 +2921,7 @@ pub(crate) fn redact_value(r: &SharedRedactor, v: &mut serde_json::Value) -> boo
 
 /// Events that must be on disk before `emit` returns: approvals, questions,
 /// control hand-over and run state.  Everything else is journaled in batches.
-fn needs_barrier(event: &Event) -> bool {
+pub(crate) fn needs_barrier(event: &Event) -> bool {
     matches!(
         event,
         Event::RunStarted(_)
