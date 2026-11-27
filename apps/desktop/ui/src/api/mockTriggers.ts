@@ -17,6 +17,8 @@ export class MockTriggers {
         id: "trg-1",
         bot_id: seedBot,
         origin: "rule",
+        author: "unknown",
+        revision: 1,
         name: "Muhasebeciden gelen faturalar",
         instruction: "Faturayı özetle, son ödeme tarihini söyle.",
         enabled: true,
@@ -31,6 +33,8 @@ export class MockTriggers {
         id: "hook-1",
         bot_id: seedBot,
         origin: "webhook",
+        author: "unknown",
+        revision: 1,
         name: "Web sitesi iletişim formu",
         instruction: "Yeni mesajı özetle.",
         enabled: true,
@@ -53,7 +57,7 @@ export class MockTriggers {
     }
     if (method === "POST" && !id) {
       const input = body as TriggerInput;
-      const row: BotTrigger = { ...input, id: `trg-new-${this.next++}`, bot_id: bot, origin: "rule", last_fired_at_ms: null, count_today: 0, queued: 0, last_error: null };
+      const row: BotTrigger = { ...input, id: `trg-new-${this.next++}`, bot_id: bot, origin: "rule", author: "owner", revision: 1, last_fired_at_ms: null, count_today: 0, queued: 0, last_error: null };
       this.rows.set(bot, [...list, row]);
       return structuredClone(row);
     }
@@ -63,8 +67,14 @@ export class MockTriggers {
       this.rows.set(bot, list.filter((r) => r.id !== id));
       return undefined;
     }
+    if (method === "POST" && seg[4] === "confirm") {
+      const asked = (body as { revision?: number } | undefined)?.revision;
+      if (asked !== list[index].revision) throw new ApiError(409, "conflict", "this trigger changed after you looked at it");
+      list[index] = { ...list[index], author: "owner", revision: list[index].revision + 1 };
+      return structuredClone(list[index]);
+    }
     if (method === "PUT") {
-      list[index] = { ...list[index], ...(body as TriggerInput) };
+      list[index] = { ...list[index], ...(body as TriggerInput), author: "owner", revision: list[index].revision + 1 };
       return structuredClone(list[index]);
     }
     throw new ApiError(404, "not_found", `mock: ${method} triggers`);

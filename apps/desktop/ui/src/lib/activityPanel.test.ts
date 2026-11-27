@@ -78,6 +78,7 @@ test("sections without data are not rendered", () => {
       has_webhook: false,
       misfire_policy: "skip",
       origin: "user",
+      author: "owner", revision: 1,
       created_at_ms: 0,
       spec: {},
       payload: {},

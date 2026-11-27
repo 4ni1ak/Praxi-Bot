@@ -61,6 +61,8 @@ mod approval_expiry_tests;
 #[cfg(test)]
 mod auto_continue_tests;
 #[cfg(test)]
+mod automation_author_tests;
+#[cfg(test)]
 mod bot_limit_tests;
 #[cfg(test)]
 mod browser_mcp_tests;
@@ -131,8 +133,8 @@ pub use profile::{
 };
 pub use scoped_grant::{Scope, ScopeKind};
 pub use shared::{
-    ApprovalScope, CategoryDecision, Delivery, EffectivePolicy, Grant, GrantTarget, HandoverInfo,
-    LoopError, MessageMode, MissionTarget, Providers, QueuedMessage, ScheduleWork,
+    ApprovalScope, CategoryDecision, Delivery, EffectivePolicy, ExternalSource, Grant, GrantTarget,
+    HandoverInfo, LoopError, MessageMode, MissionTarget, Providers, QueuedMessage, ScheduleWork,
     SecretRequestInfo, SkillHintFn, SkillHints, StreamItem, WorkspaceWarningEvent, build_providers,
     embedding_key_resolver, initiator_of, occurrence_kind, schedule_id_of,
 };
