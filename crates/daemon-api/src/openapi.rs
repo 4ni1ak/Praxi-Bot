@@ -509,6 +509,7 @@ impl Modify for Security {
         components::ComponentDto,
         components::ComponentId,
         components::ComponentInstallState,
+        composio::ComposioActionClass,
         composio::ComposioActionDto,
         composio::ComposioAppDto,
         composio::ComposioBotsInput,

@@ -11,6 +11,7 @@ use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod contract;
+mod risk;
 
 use crate::{ComposioError, ComposioService, ConnState, KEY_SECRET, ServiceConfig};
 
@@ -109,7 +110,7 @@ async fn mount_accounts(h: &Harness, status: &str) {
             "input_parameters": {"type": "object", "properties": {"x": {"type": "string"}}}}),
         );
     }
-    items.push(json!({"slug": "GITHUB_LIST_REPOSITORY_ISSUES", "description": "list issues", "toolkit":{"slug":"github"}, "version":"20260901_00",
+    items.push(json!({"slug": "GITHUB_LIST_REPOSITORY_ISSUES", "description": "list issues", "toolkit":{"slug":"github"}, "version":"20260901_00", "http_method": "GET",
         "input_parameters": {"type": "object", "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}},
         "required": ["owner", "repo"]}}));
     Mock::given(method("GET"))
@@ -224,16 +225,12 @@ async fn connect_pending_active_and_expired_drive_the_tools() {
     assert!(tools.contains(&"app:github/list_repository_issues".to_owned()));
     let t = h.registry.get("app:github/list_repository_issues").unwrap();
     assert!(t.visible_to(Some("bot-1")));
-    assert!(
-        t.always_ask(),
-        "the read table is display and ordering only"
-    );
-    assert!(
-        h.registry
-            .get("app:github/do_thing_0")
-            .unwrap()
-            .always_ask()
-    );
+    assert_eq!(t.spec().effect, tool_registry::Effect::Read);
+    assert!(!t.always_ask(), "a read needs no card");
+    // An ambiguous name is a write: no card of its own, the level decides.
+    let ambiguous = h.registry.get("app:github/do_thing_0").unwrap();
+    assert_eq!(ambiguous.spec().effect, tool_registry::Effect::Write);
+    assert!(!ambiguous.always_ask());
     // Disabled: tools vanish.
     h.svc.set_enabled("github", false).await.unwrap();
     assert!(h.registry.get("app:github/do_thing_0").is_none());
@@ -378,7 +375,7 @@ async fn approval_card_shows_app_action_and_exact_arguments() {
             .await
             .is_err()
     );
-    assert_eq!(t.spec().effect, tool_registry::Effect::Destructive);
+    assert_eq!(t.spec().effect, tool_registry::Effect::Write);
 }
 
 #[tokio::test]
@@ -404,7 +401,8 @@ async fn find_and_run_reach_actions_without_a_direct_tool() {
         "{text}"
     );
     let run = h.registry.get("apps_run_action").unwrap();
-    assert!(run.always_ask());
+    assert!(!run.always_ask_for(&json!({"app": "github", "action": "do_thing_29"})));
+    assert!(run.always_ask_for(&json!({"app": "github", "action": "does_not_exist"})));
     assert!(
         run.call(&ctx(), json!({"app": "github", "action": "does_not_exist"}))
             .await
@@ -599,7 +597,8 @@ async fn actions_can_be_previewed_before_connecting_and_use_the_bot_filter_on_ev
     let action = |slug, toolkit| {
         json!({
             "slug": slug, "description": "Find records", "toolkit": {"slug": toolkit},
-            "version": "20260901_00", "input_parameters": {"type": "object", "properties": {}}
+            "version": "20260901_00", "http_method": "GET",
+            "input_parameters": {"type": "object", "properties": {}}
         })
     };
     Mock::given(path("/tools"))
@@ -1192,10 +1191,6 @@ async fn execution_audit_precedes_http_and_audit_failure_sends_nothing() {
         .expect(1)
         .mount(&h.server)
         .await;
-    assert!(
-        t.call(&ctx(), args.clone()).await.is_err(),
-        "no approval prepared"
-    );
     t.approval_details(&ctx(), &args).await.unwrap();
     h.rows.1.store(true, std::sync::atomic::Ordering::SeqCst);
     assert!(
@@ -1797,7 +1792,7 @@ async fn a_slug_in_an_odd_letter_case_is_refused_as_unsupported_not_connected() 
 
 async fn mount_user_probe(h: &Harness, execute: ResponseTemplate) {
     let user_action = json!({"slug": "GITHUB_GET_THE_AUTHENTICATED_USER", "description": "who am I",
-        "toolkit": {"slug": "github"}, "version": "20260901_00",
+        "toolkit": {"slug": "github"}, "version": "20260901_00", "http_method": "GET",
         "input_parameters": {"type": "object", "properties": {}}});
     Mock::given(method("GET"))
         .and(path("/tools"))
