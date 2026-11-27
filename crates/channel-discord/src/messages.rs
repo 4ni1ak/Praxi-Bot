@@ -78,6 +78,8 @@ pub enum Msg<'a> {
     Help,
     /// Message too long.
     TooLong,
+    /// A secret was cut out of the owner's message (`whole`: nothing was left to pass on).
+    SecretRemoved { whole: bool },
     /// Too many messages too fast.
     TooFast,
     /// Message waits behind a running turn.
@@ -208,6 +210,19 @@ impl Msg<'_> {
             (Msg::TooLong, Tr) => "Mesaj çok uzun. Lütfen daha kısa bir mesaj gönderin.".into(),
             (Msg::TooLong, De) => "Die Nachricht ist zu lang. Bitte senden Sie eine kürzere.".into(),
 
+            (Msg::SecretRemoved { whole }, En) => format!(
+                "🔒 That message looks like a secret (a key, token, password or card number), so I {}. Discord keeps the original in this chat: please delete it. To give me a secret safely, store it in the vault in the desktop app.",
+                if whole { "did not pass it on" } else { "cut that part out and passed on the rest" }
+            ),
+            (Msg::SecretRemoved { whole }, Tr) => format!(
+                "🔒 Bu mesaj gizli bilgiye benziyor (anahtar, jeton, parola ya da kart numarası), o yüzden {}. Discord asıl mesajı bu sohbette tutuyor: lütfen sil. Gizli bir bilgiyi bana güvenle vermek için masaüstü uygulamasındaki kasaya kaydet.",
+                if whole { "iletmedim" } else { "o kısmı çıkarıp mesajın geri kalanını ilettim" }
+            ),
+            (Msg::SecretRemoved { whole }, De) => format!(
+                "🔒 Diese Nachricht sieht nach einem Geheimnis aus (Schlüssel, Token, Passwort oder Kartennummer), deshalb habe ich sie {}. Discord behält das Original in diesem Chat: bitte löschen Sie es. Um mir ein Geheimnis sicher zu geben, speichern Sie es im Tresor der Desktop-App.",
+                if whole { "nicht weitergegeben" } else { "an dieser Stelle gekürzt und den Rest weitergegeben" }
+            ),
+
             (Msg::TooFast, En) => "Too many messages at once. Please wait a moment.".into(),
             (Msg::TooFast, Tr) => "Aynı anda çok fazla mesaj. Lütfen biraz bekleyin.".into(),
             (Msg::TooFast, De) => "Zu viele Nachrichten auf einmal. Bitte warten Sie einen Moment.".into(),
@@ -336,6 +351,8 @@ mod tests {
             Msg::LangUsage,
             Msg::Help,
             Msg::TooLong,
+            Msg::SecretRemoved { whole: false },
+            Msg::SecretRemoved { whole: true },
             Msg::TooFast,
             Msg::Queued,
             Msg::RunStopped,
@@ -393,6 +410,7 @@ mod tests {
             | Msg::LangUsage
             | Msg::Help
             | Msg::TooLong
+            | Msg::SecretRemoved { .. }
             | Msg::TooFast
             | Msg::Queued
             | Msg::RunStopped

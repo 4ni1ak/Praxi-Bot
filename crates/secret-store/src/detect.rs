@@ -11,6 +11,9 @@
 //!   more documented ones listed in [`EXTRA_SHAPES`].
 //! * **Labelled context** ([`Confidence::Medium`]): a random-looking value
 //!   right after a label such as `api key`, `token`, `password`, `şifre`.
+//! * **Card numbers** ([`Confidence::Medium`]): a Luhn-valid number with a
+//!   real card-network prefix, either written in the usual groups or
+//!   contiguous right after a word such as `card` / `kart`.
 //!
 //! Entropy and character mix only ever *support* a labelled match. Text with
 //! no known shape and no label is never reported.
@@ -59,6 +62,8 @@ pub enum SecretKind {
     DigitalOceanToken,
     /// A PEM private key block.
     PrivateKey,
+    /// A payment card number (Luhn-valid, known network prefix).
+    PaymentCard,
     /// Random-looking value labelled "api key" / "anahtar".
     LabelledApiKey,
     /// Random-looking value labelled "token" / "bearer" / "jeton".
@@ -89,6 +94,7 @@ impl SecretKind {
             Self::GroqKey => "groq_key",
             Self::DigitalOceanToken => "digitalocean_token",
             Self::PrivateKey => "private_key",
+            Self::PaymentCard => "payment_card",
             Self::LabelledApiKey => "labelled_api_key",
             Self::LabelledToken => "labelled_token",
             Self::LabelledSecret => "labelled_secret",
@@ -219,21 +225,47 @@ fn shapes() -> &'static [Shape] {
     })
 }
 
+/// A message is scanned in windows of this many bytes, so one huge paste costs
+/// a bounded amount of work per window and never a quadratic one.
+const SCAN_WINDOW: usize = 64 * 1024;
+
+/// Each window also reads this much of the text on either side, so a value or
+/// the word before it that straddles a window edge is seen whole. It is far
+/// more than the longest labelled value (512 bytes) and card number.
+const SCAN_CONTEXT: usize = 4 * 1024;
+
 /// Find suspected secrets in `text`. Results are sorted by start and do not
 /// overlap; a known shape wins over a labelled match on the same bytes.
 ///
-/// Pure and local. Linear in the length of `text`.
+/// Pure and local. The text is read in [`SCAN_WINDOW`] pieces (a candidate
+/// belongs to the piece that holds its first byte), so the work is linear in
+/// the length of `text` and no part of a long text goes unscanned. A shape
+/// longer than [`SCAN_CONTEXT`] that crosses a window edge is cut at the
+/// window's far edge, so its tail stays; no real credential is that long.
 #[must_use]
 pub fn detect_secrets(text: &str) -> Vec<SecretCandidate> {
-    let mut out: Vec<SecretCandidate> = Vec::new();
-    detect_known_shapes(text, &mut out);
-    detect_private_keys(text, &mut out);
-    let known = out.clone();
-    for c in detect_labelled(text) {
-        if !known.iter().any(|k| c.start < k.end && k.start < c.end) {
-            out.push(c);
+    // A private key block can be long, so it is found over the whole text.
+    let mut known: Vec<SecretCandidate> = Vec::new();
+    detect_private_keys(text, &mut known);
+    let mut labelled: Vec<SecretCandidate> = Vec::new();
+    let mut own_start = 0_usize;
+    loop {
+        let own_end = floor_char_boundary(text, own_start.saturating_add(SCAN_WINDOW));
+        let from = floor_char_boundary(text, own_start.saturating_sub(SCAN_CONTEXT));
+        let to = floor_char_boundary(text, own_end.saturating_add(SCAN_CONTEXT));
+        let window = &text[from..to];
+        let mut found = Vec::new();
+        detect_known_shapes(window, &mut found);
+        detect_cards(window, &mut found);
+        known.extend(owned_by(found, from, own_start..own_end));
+        labelled.extend(owned_by(detect_labelled(window), from, own_start..own_end));
+        if own_end >= text.len() {
+            break;
         }
+        own_start = own_end;
     }
+    let mut out = drop_overlapping(&known, labelled);
+    out.extend(known);
     out.sort_by_key(|c| (c.start, std::cmp::Reverse(c.end)));
     // Drop overlaps (keep the earliest / longest).
     let mut last_end = 0usize;
@@ -245,6 +277,123 @@ pub fn detect_secrets(text: &str) -> Vec<SecretCandidate> {
         keep
     });
     out
+}
+
+/// The largest char boundary of `text` that is at most `at` (clamped to the end).
+fn floor_char_boundary(text: &str, at: usize) -> usize {
+    let mut i = at.min(text.len());
+    while !text.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// The candidates found in a window that starts at byte `from` of the whole
+/// text, moved to whole-text offsets, keeping those that start in `own`.
+fn owned_by(
+    found: Vec<SecretCandidate>,
+    from: usize,
+    own: Range<usize>,
+) -> impl Iterator<Item = SecretCandidate> {
+    found.into_iter().filter_map(move |c| {
+        let c = SecretCandidate {
+            start: c.start + from,
+            end: c.end + from,
+            ..c
+        };
+        own.contains(&c.start).then_some(c)
+    })
+}
+
+/// `later` without the candidates that share a byte with one of `first`,
+/// in `O((n + m) log n)`.
+fn drop_overlapping(
+    first: &[SecretCandidate],
+    later: Vec<SecretCandidate>,
+) -> Vec<SecretCandidate> {
+    let mut sorted: Vec<(usize, usize)> = first.iter().map(|c| (c.start, c.end)).collect();
+    sorted.sort_unstable();
+    // `reach[i]` is the furthest end among the first `i + 1` spans.
+    let mut reach: Vec<usize> = Vec::with_capacity(sorted.len());
+    for &(_, end) in &sorted {
+        reach.push(end.max(reach.last().copied().unwrap_or(0)));
+    }
+    later
+        .into_iter()
+        .filter(|c| {
+            // Spans that start before `c` ends; one of them must reach past `c.start`.
+            let before = sorted.partition_point(|&(start, _)| start < c.end);
+            before == 0 || reach[before - 1] <= c.start
+        })
+        .collect()
+}
+
+/// The parts of `text` outside the candidates' spans, in order: one more than
+/// the number of usable candidates. A candidate that is not a span of `text`
+/// (out of order, past the end, or inside a character: the caller passed
+/// candidates of another text) is skipped, never sliced, so this cannot panic.
+fn kept_segments<'a>(text: &'a str, candidates: &[SecretCandidate]) -> Vec<&'a str> {
+    let mut parts = Vec::with_capacity(candidates.len() + 1);
+    let mut at = 0;
+    for c in candidates {
+        // `get` is `None` for a span that is reversed, behind `at`, past the end
+        // or not on a character boundary.
+        let (Some(gap), Some(_)) = (text.get(at..c.start), text.get(c.start..c.end)) else {
+            continue;
+        };
+        parts.push(gap);
+        at = c.end;
+    }
+    parts.push(text.get(at..).unwrap_or_default());
+    parts
+}
+
+/// `text` with every candidate's span replaced by [`crate::REDACTED`], for
+/// callers that must not pass the value on (a message from a channel that
+/// cannot show the offer). `candidates` must come from [`detect_secrets`] on
+/// the same `text`; one that does not fit `text` is skipped.
+#[must_use]
+pub fn redact_candidates(text: &str, candidates: &[SecretCandidate]) -> String {
+    kept_segments(text, candidates).join(crate::REDACTED)
+}
+
+/// An inbound message with its suspected secrets cut out; see [`screen_inbound`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScreenedMessage {
+    /// The message with each secret replaced by [`crate::REDACTED`].
+    pub text: String,
+    /// What was found, each kind once, in order of appearance. Never the values.
+    pub kinds: Vec<SecretKind>,
+    /// Nothing but secrets was in the message: there is nothing left to pass on.
+    pub only_secrets: bool,
+}
+
+/// The daemon-side second check for a channel that cannot show the owner the
+/// "keep it out of the chat" card (Telegram, Discord): `None` when `text` has
+/// no suspected secret, otherwise the message with the values cut out. The
+/// caller passes on `text` (or nothing, when `only_secrets`), tells the owner
+/// what happened and never logs the original.
+#[must_use]
+pub fn screen_inbound(text: &str) -> Option<ScreenedMessage> {
+    let found = detect_secrets(text);
+    if found.is_empty() {
+        return None;
+    }
+    let mut kinds: Vec<SecretKind> = Vec::new();
+    for c in &found {
+        if !kinds.contains(&c.kind) {
+            kinds.push(c.kind);
+        }
+    }
+    // Decided from what lies outside the spans, not from the redacted string:
+    // a `[REDACTED]` the sender typed is a word like any other.
+    let parts = kept_segments(text, &found);
+    let only_secrets = !parts.iter().any(|p| p.chars().any(char::is_alphanumeric));
+    Some(ScreenedMessage {
+        text: parts.join(crate::REDACTED),
+        kinds,
+        only_secrets,
+    })
 }
 
 fn prev_is_alnum(text: &str, start: usize) -> bool {
@@ -294,15 +443,177 @@ fn detect_private_keys(text: &str, out: &mut Vec<SecretCandidate>) {
         Regex::new(r"-----BEGIN [A-Z ]*PRIVATE KEY-----").expect("built-in pattern is valid")
     });
     for m in header.find_iter(text) {
-        let end = text[m.end()..]
-            .find("PRIVATE KEY-----")
-            .map_or(text.len(), |i| m.end() + i + "PRIVATE KEY-----".len());
+        let end = text[m.end()..].find("PRIVATE KEY-----");
         out.push(SecretCandidate {
             kind: SecretKind::PrivateKey,
             confidence: Confidence::High,
             start: m.start(),
-            end,
+            end: end.map_or(text.len(), |i| m.end() + i + "PRIVATE KEY-----".len()),
         });
+        if end.is_none() {
+            // An unterminated block runs to the end of the text: a later header
+            // is inside it, and searching again would rescan the same tail.
+            break;
+        }
+    }
+}
+
+// ----------------------------------------------------------------- cards ---
+
+/// Words (folded) that make a contiguous digit run a card number.
+const CARD_LABELS: &[&str] = &[
+    "card",
+    "cc",
+    "ccn",
+    "visa",
+    "mastercard",
+    "amex",
+    "kart",
+    "kredi",
+    "banka",
+];
+
+/// Digit group sizes people write a card number in.
+const CARD_LAYOUTS: &[&[usize]] = &[&[4, 4, 4, 4], &[4, 4, 4, 4, 3], &[4, 6, 5], &[4, 6, 4]];
+
+fn luhn_ok(digits: &[u8]) -> bool {
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, &d)| {
+            let d = u32::from(d);
+            if i % 2 == 1 {
+                let x = d * 2;
+                if x > 9 { x - 9 } else { x }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum.is_multiple_of(10)
+}
+
+/// A real card network prefix with the matching length (Visa, Mastercard,
+/// Amex, Discover, Diners, JCB, `UnionPay`, Troy).
+fn card_network_ok(d: &[u8]) -> bool {
+    let n = d.len();
+    let p = |k: usize| d[..k].iter().fold(0u32, |a, &x| a * 10 + u32::from(x));
+    match d[0] {
+        4 => matches!(n, 13 | 16 | 19),
+        5 => n == 16 && (51..=55).contains(&p(2)),
+        2 => n == 16 && (2221..=2720).contains(&p(4)),
+        3 => match p(2) {
+            34 | 37 => n == 15,
+            36 | 38 | 39 => (14..=16).contains(&n),
+            30 => n == 14 && (300..=305).contains(&p(3)),
+            35 => (16..=19).contains(&n) && (3528..=3589).contains(&p(4)),
+            _ => false,
+        },
+        6 => {
+            (16..=19).contains(&n)
+                && (p(4) == 6011 || p(2) == 65 || (644..=649).contains(&p(3)) || p(2) == 62)
+        }
+        9 => n == 16 && p(4) == 9792,
+        _ => false,
+    }
+}
+
+/// True when one of the last few words before `start` is a card label.
+fn card_label_before(text: &str, start: usize) -> bool {
+    let tail: String = text[..start]
+        .chars()
+        .rev()
+        .take(32)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(fold)
+        .collect();
+    tail.split(|c: char| !c.is_ascii_alphanumeric())
+        .rev()
+        .filter(|w| !w.is_empty())
+        .take(4)
+        .any(|w| CARD_LABELS.contains(&w) || w.starts_with("kart") || w.starts_with("kredi"))
+}
+
+fn detect_cards(text: &str, out: &mut Vec<SecretCandidate>) {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        // A maximal chain of digit groups joined by one space or dash.
+        let start = i;
+        let mut groups: Vec<usize> = Vec::new();
+        let mut sep: Option<u8> = None;
+        let mut mixed = false;
+        let end = loop {
+            let g0 = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            groups.push(i - g0);
+            if i + 1 < bytes.len()
+                && matches!(bytes[i], b' ' | b'-')
+                && bytes[i + 1].is_ascii_digit()
+            {
+                if sep.is_some_and(|s| s != bytes[i]) {
+                    mixed = true;
+                }
+                sep = Some(bytes[i]);
+                i += 1;
+            } else {
+                break i;
+            }
+        };
+        if mixed || prev_blocks_card(text, start) || next_blocks_card(text, end) {
+            continue;
+        }
+        let digits: Vec<u8> = bytes[start..end]
+            .iter()
+            .filter(|b| b.is_ascii_digit())
+            .map(|b| b - b'0')
+            .collect();
+        if !(13..=19).contains(&digits.len()) {
+            continue;
+        }
+        let layout_ok = if groups.len() == 1 {
+            card_label_before(text, start)
+        } else {
+            CARD_LAYOUTS.contains(&groups.as_slice())
+        };
+        let same = digits.iter().all(|&d| d == digits[0]);
+        if layout_ok && !same && card_network_ok(&digits) && luhn_ok(&digits) {
+            out.push(SecretCandidate {
+                kind: SecretKind::PaymentCard,
+                confidence: Confidence::Medium,
+                start,
+                end,
+            });
+        }
+    }
+}
+
+/// A digit run glued to a letter, `+`, `#` or a decimal point is a phone
+/// number, an id or an amount, not a card.
+fn prev_blocks_card(text: &str, start: usize) -> bool {
+    let mut back = text[..start].chars().rev();
+    match back.next() {
+        Some(c) if c.is_alphanumeric() || matches!(c, '+' | '#' | '_') => true,
+        Some('.' | ',') => back.next().is_some_and(|c| c.is_ascii_digit()),
+        _ => false,
+    }
+}
+
+fn next_blocks_card(text: &str, end: usize) -> bool {
+    let mut fwd = text[end..].chars();
+    match fwd.next() {
+        Some(c) if c.is_alphanumeric() || c == '_' => true,
+        Some('.' | ',') => fwd.next().is_some_and(|c| c.is_ascii_digit()),
+        _ => false,
     }
 }
 
@@ -388,6 +699,10 @@ struct Word {
 
 const MAX_GAP_CHARS: usize = 24;
 
+/// Chars of a labelled value that are read before giving up on it: the longest
+/// value (512) plus trailing punctuation.
+const MAX_VALUE_SCAN: usize = 520;
+
 fn detect_labelled(text: &str) -> Vec<SecretCandidate> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let folded: Vec<char> = chars.iter().map(|&(_, c)| fold(c)).collect();
@@ -467,7 +782,7 @@ fn value_after_label(
     let mut nw = next_word;
     let gap_start = p;
     loop {
-        while p < chars.len() && is_gap(chars[p].1) {
+        while p < chars.len() && p - gap_start <= MAX_GAP_CHARS && is_gap(chars[p].1) {
             p += 1;
         }
         // Skip one glue word ("is", "olarak", "şu"...), then more gap chars.
@@ -506,8 +821,15 @@ fn value_after_label(
                     | '’'
             )
     };
-    while p < chars.len() && !value_end(chars[p].1) {
+    // Look at no more than MAX_VALUE_SCAN chars: a longer run is no value (the
+    // checks below allow 512 at most) and `token:token:token:...` must not make
+    // every label rescan the rest of the text.
+    let scan_to = chars.len().min(start_char + MAX_VALUE_SCAN);
+    while p < scan_to && !value_end(chars[p].1) {
         p += 1;
+    }
+    if p == scan_to && scan_to < chars.len() {
+        return None;
     }
     // Trailing sentence punctuation is not part of the value.
     while p > start_char && matches!(chars[p - 1].1, '.' | ':' | '?') {
@@ -675,6 +997,151 @@ mod tests {
     fn own_placeholder_is_not_a_candidate() {
         let found = detect_secrets("use [secret: login/openai2024x] here");
         assert_eq!(found, Vec::<SecretCandidate>::new());
+    }
+
+    fn candidate(start: usize, end: usize) -> SecretCandidate {
+        SecretCandidate {
+            kind: SecretKind::OpenAiStyleKey,
+            confidence: Confidence::High,
+            start,
+            end,
+        }
+    }
+
+    // Assembled at run time so no secret-shaped literal sits in the source.
+    fn key() -> String {
+        format!("{}{}", "sk-", "proj-Ab12Cd34Ef56Gh78Ij90Kl12Mn34")
+    }
+
+    #[test]
+    fn redacting_around_multibyte_text_keeps_every_character_whole() {
+        let text = format!("é🙂 {} 🙂é şifre: Tr0ub4dor&3 🙂", key());
+        let found = detect_secrets(&text);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(
+            redact_candidates(&text, &found),
+            format!("é🙂 {r} 🙂é şifre: {r} 🙂", r = crate::REDACTED)
+        );
+    }
+
+    #[test]
+    fn candidates_that_do_not_fit_the_text_are_skipped_not_sliced() {
+        // `🙂` is bytes 1..5: 2, 3 and 4 are inside it, 6 is past the end.
+        let text = "a🙂b";
+        for bad in [
+            candidate(2, 4),
+            candidate(1, 3),
+            candidate(0, 2),
+            candidate(1, 99),
+            candidate(5, 4),
+            candidate(99, 100),
+        ] {
+            assert_eq!(redact_candidates(text, &[bad]), text, "{bad:?}");
+            assert_eq!(
+                redact_candidates(text, &[candidate(1, 5), bad]),
+                "a[REDACTED]b"
+            );
+        }
+        // Out of order: the second starts inside the first.
+        assert_eq!(
+            redact_candidates(text, &[candidate(1, 5), candidate(0, 1)]),
+            "a[REDACTED]b"
+        );
+        assert_eq!(redact_candidates("", &[candidate(0, 0)]), "[REDACTED]");
+    }
+
+    #[test]
+    fn only_secrets_looks_at_what_is_outside_the_spans() {
+        let k = key();
+        let only = |t: &str| screen_inbound(t).expect("a secret").only_secrets;
+        assert!(only(&k));
+        assert!(only(&format!("  {k}\n")));
+        assert!(only(&format!("{k} - {k}, ({k})")));
+        assert!(!only(&format!("deploy {k}")));
+        assert!(!only(&format!("{k} 🙂 ok")));
+        // A marker the sender typed is a word like any other, whatever the marker looks like.
+        assert!(!only(&format!("[REDACTED] {k}")));
+        assert!(!only(&format!("REDACTED {k}")));
+        // Non-ASCII letters count, so a Turkish sentence around a key is not dropped.
+        assert!(!only(&format!("şifremi {k}")));
+    }
+
+    #[test]
+    fn a_secret_across_a_window_edge_is_found_whole() {
+        let k = key();
+        // Put the key so that the window edge falls inside it, with a 2-byte
+        // letter first so the edge also falls inside a 4-byte emoji elsewhere.
+        for lead in [
+            SCAN_WINDOW - 9,
+            SCAN_WINDOW - 1,
+            SCAN_WINDOW,
+            SCAN_WINDOW + 5,
+        ] {
+            let text = format!("é{}{k} end", "ab ".repeat(lead / 3));
+            let found = detect_secrets(&text);
+            assert_eq!(found.len(), 1, "lead {lead}: {found:?}");
+            assert_eq!(found[0].slice(&text), Some(k.as_str()), "lead {lead}");
+        }
+        let emoji = format!("é{}x {k} y", "🙂".repeat(SCAN_WINDOW / 4 + 3));
+        let found = detect_secrets(&emoji);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].slice(&emoji), Some(k.as_str()));
+    }
+
+    #[test]
+    fn a_secret_at_the_end_of_a_long_text_is_still_found_and_redacted() {
+        let k = key();
+        let filler = "lorem ipsum dolor sit amet ".repeat(40_000);
+        let text = format!("{filler}password: Tr0ub4dor&3 and {k}");
+        assert!(text.len() > 10 * SCAN_WINDOW);
+        let screened = screen_inbound(&text).expect("secrets");
+        assert_eq!(
+            screened.kinds,
+            [SecretKind::LabelledPassword, SecretKind::OpenAiStyleKey]
+        );
+        assert!(
+            screened
+                .text
+                .ends_with("password: [REDACTED] and [REDACTED]")
+        );
+        assert!(!screened.only_secrets);
+    }
+
+    #[test]
+    fn a_label_just_before_a_window_edge_still_labels_its_value() {
+        // The label is in one window, its value in the next.
+        let text = format!(
+            "{}password: Tr0ub4dor&3 x",
+            "ab ".repeat(SCAN_WINDOW / 3 - 3)
+        );
+        let found = detect_secrets(&text);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].slice(&text), Some("Tr0ub4dor&3"));
+    }
+
+    #[test]
+    fn overlap_filter_matches_the_naive_one() {
+        let spans =
+            |v: &[(usize, usize)]| v.iter().map(|&(s, e)| candidate(s, e)).collect::<Vec<_>>();
+        let first = spans(&[(10, 20), (12, 14), (30, 31), (50, 90)]);
+        let later = spans(&[
+            (0, 10),
+            (0, 11),
+            (19, 25),
+            (20, 30),
+            (30, 31),
+            (31, 32),
+            (60, 61),
+            (89, 120),
+            (90, 91),
+        ]);
+        let naive: Vec<_> = later
+            .iter()
+            .copied()
+            .filter(|c| !first.iter().any(|k| c.start < k.end && k.start < c.end))
+            .collect();
+        assert_eq!(drop_overlapping(&first, later), naive);
+        assert_eq!(drop_overlapping(&[], spans(&[(0, 1)])), spans(&[(0, 1)]));
     }
 
     #[test]
