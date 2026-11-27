@@ -269,6 +269,9 @@ pub trait ChannelControl: Send + Sync {
     /// Notify the paired owner about a secure form in the local desktop chat.
     /// A chat id is navigation only and conveys no authority or request content.
     async fn notify_secret_request(&self, _chat: protocol::ChatId) {}
+    /// Notify the paired owner that an MCP server's form waits in the local desktop chat.
+    /// Same rule: a chat id is navigation only, and no form text is sent.
+    async fn notify_elicitation(&self, _chat: protocol::ChatId) {}
     /// Current state of the channel.
     fn info(&self) -> dto::ChannelDto;
     /// A fresh one-time pairing code.
