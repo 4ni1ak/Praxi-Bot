@@ -4,6 +4,8 @@ Sol çubuktan ya da komut paletinden (`Ctrl/Cmd+K`) **Uygulamalar**'ı aç.
 Ana görünümde Composio üzerinden uygulama bağlayabilirsin. Doğrudan, yerel ve
 özel bağlantılar için üst çubuktaki **MCP sunucuları** düğmesini kullan.
 
+![Uygulamalar penceresi: arama, Composio, Home Assistant ve uygulama kataloğu](../images/tr/apps/apps-main.webp)
+
 ## Composio hesabını bağla
 
 **Composio hesabını bağla** ile tarayıcında oturum aç ya da **Proje API anahtarı
@@ -63,6 +65,13 @@ yapar** sayılır.
 Composio kartından oturumu kapatırsan botların Composio uygulamalarına erişimi
 duraklar. Uygulama ayarları ve hangi botların erişebildiği saklanır.
 
+## Home Assistant
+
+Ana görünümdeki **Home Assistant** kartı akıllı evini dosya düzenlemeden kurar: adres, uzun ömürlü erişim anahtarı,
+**Kaydet ve test et**, hangi botların kullanabileceği ve hangi servislerin kart çıkmadan çalışabileceği.
+Bkz. [Home Assistant](home-assistant.md). (Aşağıdaki katalogdaki **Home Assistant** MCP sunucusu ayrı,
+isteğe bağlı bir bağlantıdır.)
+
 ## MCP sunucuları
 
 Doğrudan ve kendin yönettiğin bağlantılar için üst çubukta **MCP sunucuları**'na tıkla:
@@ -89,6 +98,8 @@ Doğrudan ve kendin yönettiğin bağlantılar için üst çubukta **MCP sunucul
   **API anahtarı al** bağlantısı da görünür. Gizli bilgiler işletim sisteminin anahtarlığına
   kaydedilir ve bir daha hiç gösterilmez.
 
+![MCP sunucuları görünümü, özel bir MCP sunucusu formuyla başlar](../images/tr/apps/apps-advanced.webp)
+
 ## MCP sunucusunun durumu
 
 Yeni bir OAuth bağlantısı, izin tamamlanana kadar **Giriş yapılıyor** durumunda
@@ -112,6 +123,9 @@ MCP sunucularındaki durum etiketlerinin anlamı:
 
 ### Doğrudan OAuth ve MCP sunucuları
 
+Her uygulamayı bağlamak için neyin gerektiği (düz bir oturum açma, kendi oluşturacağın bir istemci
+ya da bir anahtar) [Her uygulamayı bağlamak için ne gerekir](app-catalog.md) sayfasında listelenir.
+
 **Yönet** içinde şunları yapabilirsin:
 
 - **Uygulamayı hangi botların kullanabileceğini seç:** **Bu uygulamayı kimler kullanabilir**
@@ -128,6 +142,8 @@ MCP sunucularındaki durum etiketlerinin anlamı:
   hemen yeniden başlatmasını ya da yeniden bağlamasını söyler.
 - **Bağlantıyı kes**: önce onay ister (**Bu sunucunun bağlantısı kesilsin mi?**), sonra sunucu
   ayarını `mcp.toml` dosyasından siler.
+
+![Bağlı bir uygulamanın Yönet paneli: bot erişimi, güven sorusu, araçlar ve Bağlantıyı test et](../images/tr/apps/apps-manage.webp)
 
 ## Bot başına erişim
 
@@ -191,6 +207,8 @@ Birkaç önemli kural:
 Başarısız MCP sunucuları, satırın hemen altında duruma özel bir ipucu gösterir. Yanında,
 **Hata** mesajını ve **Sunucunun yazdıkları** bölümünü (`stderr`) içeren bir
 **Ayrıntıları göster** düğmesi bulunur:
+
+![Başlamayan yerel bir sunucu: uv kur önerisi ve açılmış ayrıntılar](../images/tr/apps/apps-error.webp)
 
 - **Eksik çalışma ortamı (`Node.js`, `uv`, `pipx`, `docker`):** **Node.js** ve **uv** için
   Praxi orada bir **Kur** önerisi gösterir (istersen bunları resmi sitelerinden kurup

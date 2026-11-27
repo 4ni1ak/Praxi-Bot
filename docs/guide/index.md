@@ -88,6 +88,7 @@ Seven short pages in plain words. Read them in this order:
 | Teach a bot how to handle a tricky web page or app | [Skills](skills.md) |
 | Create, import, update or delete shared skills through the local API | [Managing shared skills](skill-management-api.md) |
 | Connect external apps (OAuth, Composio, and MCP servers in the desktop app) | [Connecting apps](apps.md) |
+| See what each app needs to connect (sign-in, where it runs, licence) | [What you need to connect each app](app-catalog.md) |
 | Connect Gmail, Drive and Calendar with your own Google client, also on a server | [Google Workspace](google-workspace.md) |
 | Configure external MCP servers by hand (`mcp.toml` and API) | [MCP servers](mcp-servers.md) |
 | Let another MCP agent use a selected Praxi bot; client recipes and troubleshooting | [Praxi as an MCP server](mcp-server.md) |
@@ -101,9 +102,10 @@ Seven short pages in plain words. Read them in this order:
 | Use a local coding CLI (Claude Code, Codex, Cursor, ...) as the engine | [Coding CLI engines](cli-engines.md) |
 | Talk to your bots from your phone | [Telegram](telegram.md) |
 | Talk to your bots from Discord | [Discord](discord.md) |
+| Connect my e-mail and calendar step by step (Gmail, Outlook, iCloud, Yahoo, Fastmail, others) | [Connect my email and calendar](connect-email-calendar.md) |
 | Read, search, draft or send e-mails | [Email integration](email.md) |
 | Read and add calendar events | [Calendar (CalDAV)](calendar.md) |
-| Let a bot read Home Assistant entities and call services | [Home Assistant](home-assistant.md) |
+| Set up Home Assistant from the app, so a bot can read your entities and call services | [Home Assistant](home-assistant.md) |
 | Let a bot search the web and read pages without a browser | [Web tools](web.md) |
 | Add the optional page reader for cleaner text and small crawls | [Web scraping add-on](web-scraping.md) |
 | Give a bot a scratchpad between runs | [Notes](agent-tools.md) |

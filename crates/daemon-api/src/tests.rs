@@ -22,6 +22,7 @@ use tower::ServiceExt;
 use crate::fake::FakeProvider;
 use crate::{AppState, DaemonConfig, router};
 
+mod assistant_import;
 mod attachments;
 mod audit;
 mod bot_patch;
@@ -39,6 +40,7 @@ mod email;
 mod email_channel;
 mod embeddings;
 mod fill_secrets;
+mod homeassistant;
 mod host;
 mod host_admin;
 mod host_slice;
@@ -2641,7 +2643,7 @@ async fn providers_detected_reports_five_rows_without_the_retired_gemini_cli() {
     assert_eq!(r.status, StatusCode::OK);
     let list = r.json();
     let items = list.as_array().unwrap();
-    assert_eq!(items.len(), 12);
+    assert_eq!(items.len(), 14);
     let ids: Vec<&str> = items
         .iter()
         .map(|item| item["id"].as_str().unwrap())
@@ -2650,7 +2652,7 @@ async fn providers_detected_reports_five_rows_without_the_retired_gemini_cli() {
         ids,
         vec![
             "claude", "codex", "cursor", "opencode", "agy", "qwen", "copilot", "kiro", "kimi",
-            "qoder", "vibe", "goose"
+            "qoder", "vibe", "goose", "auggie", "cline"
         ]
     );
     for row in items {

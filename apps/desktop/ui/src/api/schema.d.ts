@@ -455,6 +455,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bot-cursor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether the bot's own pointer is drawn (owner only, like the switch itself). */
+        get: operations["get_bot_cursor"];
+        /** Turn the bot's own pointer on or off (owner only). Off removes it everywhere at once. */
+        put: operations["put_bot_cursor"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bots": {
         parameters: {
             query?: never;
@@ -2878,6 +2896,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/homeassistant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The saved Home Assistant setup: the address, whether a token is stored (never the token), the
+         *     owner's list of services bots may call without a card, and which bots may use it. Owner only.
+         */
+        get: operations["get_homeassistant"];
+        /**
+         * Check the hub (`GET /api/`, then count its entities), and only then save it. The `token` goes to
+         *     the secret store (never to `homeassistant.toml`, never returned). Takes effect for the next
+         *     tool call, no restart needed. Without `token` the stored one is kept, but only when the address
+         *     is unchanged. Owner only.
+         */
+        put: operations["put_homeassistant"];
+        post?: never;
+        /**
+         * Remove the setup and its stored token. The `ha_*` tools disappear from every bot at once.
+         *     Owner only.
+         */
+        delete: operations["delete_homeassistant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/homeassistant/bots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Choose which bots may use Home Assistant. `bots: null` = every bot, `[]` = none. Owner only. */
+        put: operations["put_homeassistant_bots"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/homeassistant/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Try the saved hub (an empty body), or an address and token that are not saved yet (`url` and
+         *     `token`), and count its entities. A hub that cannot be reached or refuses the token answers `200`
+         *     with `ok: false` and a plain message. The daemon only ever dials the address given here or the
+         *     saved one. At most two connection tests run at once (`429`). Owner only.
+         */
+        post: operations["test_homeassistant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/host": {
         parameters: {
             query?: never;
@@ -3394,6 +3481,40 @@ export interface paths {
         get: operations["hosts_version"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/import/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import what the owner ticked. Scans again first: what is written is what is on disk now. */
+        post: operations["run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/import/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Look for the setups of other assistants on this machine. Reads files; writes nothing. */
+        post: operations["scan"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5209,6 +5330,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/view/bot-terminals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The terminals the bot runs (`shell_interactive`) as masked text, so the live view can show
+         *     what a pseudo-terminal prints (it has no window to appear in the picture). Read-only: there is
+         *     no way to type into a terminal through this route. Same access rule as `GET /v1/view/targets`.
+         */
+        get: operations["terminals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/view/privileges/{peer_key}": {
         parameters: {
             query?: never;
@@ -6051,6 +6193,11 @@ export interface components {
             /** @description `version_conflict`. */
             error: components["schemas"]["ErrorDetail"];
         };
+        /** @description Whether the bot's own pointer is drawn. */
+        BotCursorSettings: {
+            /** @description `false`: no bot pointer on the desktop, in the browser page or in the live viewer. */
+            enabled: boolean;
+        };
         /** @description Public bot representation. */
         BotDto: {
             /** @description Bot profile (ADR-0011) as JSON. */
@@ -6196,6 +6343,24 @@ export interface components {
             /** @description The new value (`set` only). */
             value?: unknown;
         };
+        /** @description Where the bot's pointer is on a frame, as the viewer draws it. */
+        BotPointer: {
+            /**
+             * Format: int64
+             * @description Counts the bot's clicks at this pointer; a viewer plays a ripple when it grows.
+             */
+            click_seq: number;
+            /**
+             * Format: double
+             * @description Fraction of the frame width from the left edge, `0.0..=1.0`.
+             */
+            x: number;
+            /**
+             * Format: double
+             * @description Fraction of the frame height from the top edge, `0.0..=1.0`.
+             */
+            y: number;
+        };
         /** @description Response of `GET /v1/bots/{id}/skills` and `PUT /v1/bots/{id}/skills`. */
         BotSkillsDto: {
             /** @description Explicitly assigned names when `mode == "selected"`. */
@@ -6238,6 +6403,35 @@ export interface components {
             /** @description What each period has used. */
             usage: components["schemas"]["BotLimitUsageDto"];
         };
+        /**
+         * @description One terminal session as the live view shows it. `command` and `screen` are already masked
+         *     (the vault's values and key shapes), exactly as the bot sees them.
+         */
+        BotTerminal: {
+            /**
+             * Format: int64
+             * @description Seconds since the session started.
+             */
+            age_secs: number;
+            /** Format: uuid */
+            bot_id?: string | null;
+            /** Format: int32 */
+            cols: number;
+            command: string;
+            /** Format: int32 */
+            exit_code?: number | null;
+            id: string;
+            /** Format: int32 */
+            rows: number;
+            /** @description The whole screen right now, blank rows at the end trimmed. */
+            screen: string;
+            state: components["schemas"]["BotTerminalState"];
+        };
+        /**
+         * @description Where a terminal session stands (the same four words the tool tells the bot).
+         * @enum {string}
+         */
+        BotTerminalState: "running" | "waiting_for_input" | "finished" | "failed";
         /** @description Usage of one bot. */
         BotUsage: components["schemas"]["UsageTotals"] & {
             /**
@@ -6350,6 +6544,14 @@ export interface components {
             name?: string | null;
             /** @description (App) password, **write-only**, used once. */
             password?: string | null;
+            /**
+             * @description Only dial a public `https` server: plain `http`, loopback, LAN, link-local and
+             *     metadata addresses are refused, so a typed or guessed address cannot be used to reach
+             *     into the owner's network or to send the password in the clear. Set by the guided
+             *     "Connect my email and calendar" flow; the default keeps the self-hosted case (a
+             *     Radicale on the LAN) open for the calendar settings.
+             */
+            public_only?: boolean;
             /** @description Address to try. */
             url?: string | null;
             /** @description Login name. */
@@ -7645,6 +7847,14 @@ export interface components {
              *     `api_key` is required.
              */
             provider?: components["schemas"]["EmailProviderKind"];
+            /**
+             * @description Only for `POST /v1/email/test`: refuse a server whose name resolves to a loopback,
+             *     LAN, link-local or metadata address, so a typed or guessed host cannot be used to
+             *     reach into the owner's network. Mail connections are always TLS with a verified
+             *     certificate; this adds the "public servers only" rule for the guided setup. Ignored
+             *     when saving an account.
+             */
+            public_hosts_only?: boolean;
             /** @description Draft only, or ask the owner each time (default). */
             send_mode?: components["schemas"]["EmailSendMode"];
             /** @description Further bots that may use the account besides `bot`. */
@@ -8235,6 +8445,7 @@ export interface components {
         FrameMetadata: {
             /** Format: int64 */
             action_seq?: number | null;
+            bot_pointer?: null | components["schemas"]["BotPointer"];
             /** Format: int64 */
             captured_at_ms: number;
             cause: components["schemas"]["Cause"];
@@ -8399,6 +8610,82 @@ export interface components {
             status: string;
             /** Format: int32 */
             step_index: number;
+        };
+        /** @description Body of `PUT /v1/homeassistant/bots`. */
+        HomeAssistantBotsInput: {
+            /**
+             * @description The bots that may use Home Assistant; `null` = every bot, an empty list = none.
+             *     The field must be present: an empty body or a misspelled name is refused instead of
+             *     silently granting every bot.
+             */
+            bots: string[] | null;
+        };
+        /** @description The saved Home Assistant setup (non-secret fields only). */
+        HomeAssistantDto: {
+            /** @description The bots that may use Home Assistant; `null` = every bot, an empty list = none. */
+            bots?: string[] | null;
+            /** @description Whether a hub is set up at all. */
+            configured: boolean;
+            /** @description Whether an access token is stored (never returned). */
+            token_set: boolean;
+            /**
+             * @description Services (`cover.open_cover`) bots may call without a card even though they open,
+             *     unlock or disarm something.
+             */
+            trusted_services: string[];
+            /** @description Address of the hub (`null` when not set up). */
+            url?: string | null;
+        };
+        /**
+         * @description Body of `PUT /v1/homeassistant`: the address and token are checked against the hub before
+         *     anything is saved.
+         */
+        HomeAssistantInput: {
+            /**
+             * @description Long-lived access token, **write-only**. Required the first time and whenever the address
+             *     changes; omitted otherwise it keeps the stored one.
+             */
+            token?: string | null;
+            /**
+             * @description Services bots may call without a card even though they open, unlock or disarm something:
+             *     exact `domain.service` names. Empty = none.
+             */
+            trusted_services?: string[];
+            /** @description Address of the hub, e.g. `http://homeassistant.local:8123`. */
+            url: string;
+        };
+        /** @description Result of `PUT /v1/homeassistant`. */
+        HomeAssistantSaved: {
+            /**
+             * Format: int32
+             * @description How many entities the hub reported when it was checked.
+             */
+            entities: number;
+            /** @description What is saved now. */
+            settings: components["schemas"]["HomeAssistantDto"];
+        };
+        /**
+         * @description Body of `POST /v1/homeassistant/test`: the saved hub (an empty body), or an address and
+         *     token that are not saved yet (`url` with `token`). Never a mix: the stored token is only
+         *     ever sent to the saved address.
+         */
+        HomeAssistantTestInput: {
+            /** @description Access token, **write-only**, used once. */
+            token?: string | null;
+            /** @description Address to try. */
+            url?: string | null;
+        };
+        /** @description Result of `POST /v1/homeassistant/test`. */
+        HomeAssistantTestReport: {
+            /**
+             * Format: int32
+             * @description How many entities the hub reports (`null` when the test failed).
+             */
+            entities?: number | null;
+            /** @description What went wrong, in plain words (`null` on success). */
+            error?: string | null;
+            /** @description `true` when the hub was reachable and accepted the token. */
+            ok: boolean;
         };
         /** @description `GET /v1/hosts/home`: the host adopted as the bots' home, if any. */
         HomeDto: {
@@ -8813,6 +9100,33 @@ export interface components {
             name?: string | null;
             permission_level?: null | components["schemas"]["SharePreset"];
         };
+        /** @description One line of the preview. */
+        ImportItemDto: {
+            /** @description `claude`, `cursor`, `vscode`, `codex`, `openclaw`, `hermes` or `folder`. */
+            app: string;
+            /** @description Ticked by default. */
+            default_on: boolean;
+            /** @description A safe one-line summary (never a value). */
+            detail?: string | null;
+            /** @description Names whose value was only a variable reference and is not copied. */
+            dropped: string[];
+            /** @description Stable between a scan and a run. */
+            id: string;
+            /** @description Can be imported. */
+            import: boolean;
+            /** @description `mcp_server`, `skill`, `instructions` or `other`. */
+            kind: string;
+            /** @description Server or skill name, or a file name. */
+            name: string;
+            /** @description Outcome in English. */
+            note: string;
+            /** @description Outcome as a code (`ready`, `already_have`, `unpinned`, ...). */
+            reason: string;
+            /** @description Values that go to the secret store (names only). */
+            secrets: components["schemas"]["ImportSecretDto"][];
+            /** @description The file it came from (`~/.cursor/mcp.json`). */
+            source: string;
+        };
         ImportMessage: {
             /** Format: uuid */
             chat_id: string;
@@ -8881,6 +9195,23 @@ export interface components {
             /** @description Tool patterns removed. */
             tools_exclude: string[];
         };
+        /** @description What happened to one item. */
+        ImportResultDto: {
+            /** @description The item's `id`. */
+            id: string;
+            /** @description Outcome in English. */
+            message: string;
+            /** @description Outcome code when it was skipped or failed. */
+            reason?: string | null;
+            /** @description Environment variables / headers left out (not confirmed, or not storable). */
+            secrets_left_out: string[];
+            /** @description Secret names stored. */
+            secrets_stored: string[];
+            /** @description `imported`, `skipped` or `failed`. */
+            status: string;
+            /** @description Instruction items: the text to add to a bot. */
+            text?: string | null;
+        };
         /**
          * @description A tool step or approval row. Kept only for its count; it is never stored
          *     in the run or approval tables.
@@ -8901,6 +9232,34 @@ export interface components {
             state: string;
             /** Format: int64 */
             updated_at_ms: number;
+        };
+        /** @description The outcome of a run. */
+        ImportRunDto: {
+            /** @description One entry per requested id, in order. */
+            results: components["schemas"]["ImportResultDto"][];
+        };
+        /** @description Import the ticked items. */
+        ImportRunInput: {
+            /** @description `name` of every secret the owner agreed to move into the secret store. */
+            confirmed_secrets?: string[];
+            /** @description Same as in the scan. */
+            folder?: string | null;
+            /** @description `id` of every ticked item. */
+            ids: string[];
+            /** @description Same as in the scan. */
+            only?: string | null;
+        };
+        /** @description The preview. */
+        ImportScanDto: {
+            /** @description Everything found, importable or not. */
+            items: components["schemas"]["ImportItemDto"][];
+        };
+        /** @description What to look at. */
+        ImportScanInput: {
+            /** @description A folder (on the machine of this daemon) of skill and prompt markdown. Read only when set. */
+            folder?: string | null;
+            /** @description Only this app: `claude`, `cursor`, `vscode`, `codex`, `openclaw`, `hermes` or `folder`. */
+            only?: string | null;
         };
         ImportScheduleItem: {
             /**
@@ -8952,6 +9311,15 @@ export interface components {
         };
         ImportSchedulesReport: {
             items: components["schemas"]["ImportScheduleResult"][];
+        };
+        /** @description A value that moves to the secret store when the owner confirms it. Never the value. */
+        ImportSecretDto: {
+            /** @description The environment variable or header it belongs to. */
+            key: string;
+            /** @description The secret's name in the store. */
+            name: string;
+            /** @description `env` or `header`. */
+            place: string;
         };
         ImportWorkflow: {
             /** Format: uuid */
@@ -14059,6 +14427,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditVerify"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_bot_cursor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotCursorSettings"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_bot_cursor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BotCursorSettings"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotCursorSettings"];
                 };
             };
             403: {
@@ -20556,6 +20982,292 @@ export interface operations {
             };
         };
     };
+    get_homeassistant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeAssistantDto"];
+                };
+            };
+            /** @description owner key required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Home Assistant setup is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_homeassistant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HomeAssistantInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeAssistantSaved"];
+                };
+            };
+            /** @description bad token or list */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description owner key required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description invalid address, or the hub refused the token */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description too many tests running */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Home Assistant setup is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_homeassistant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description owner key required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Home Assistant is not set up */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Home Assistant setup is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_homeassistant_bots: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HomeAssistantBotsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeAssistantDto"];
+                };
+            };
+            /** @description too many bots */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description owner key required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Home Assistant is not set up */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Home Assistant setup is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    test_homeassistant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HomeAssistantTestInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeAssistantTestReport"];
+                };
+            };
+            /** @description bad token */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description owner key required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description nothing saved to test */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description an address needs a token, and the other way round */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description too many tests running */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Home Assistant setup is not available */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     host_status: {
         parameters: {
             query?: never;
@@ -21450,6 +22162,84 @@ export interface operations {
                 };
             };
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRunInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportRunDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    scan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportScanInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportScanDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25696,6 +26486,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TargetUnavailable"][];
+                };
+            };
+        };
+    };
+    terminals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotTerminal"][];
                 };
             };
         };

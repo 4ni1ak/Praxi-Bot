@@ -18,6 +18,7 @@ import { Modal } from "../components/Modal";
 import { Segmented } from "../components/SettingsUi";
 import { useToast } from "../components/Toast";
 import { oauthRelay, openExternal, openSignInLink } from "../lib/externalLink";
+import type { AppsStart } from "../lib/settingsLink";
 import { addGoogleApp, GoogleClientError, googleEntries } from "../lib/googleSetup";
 import { type SignInControl, type SignInState, expectedSignInHosts, runSignIn } from "../lib/mcpSignIn";
 import { isLocalBaseUrl } from "../lib/liveViewState";
@@ -50,6 +51,7 @@ import { ComposioAppPage } from "./ComposioAppPage";
 import { type AppTestState, appsToTestNow, runAppTest } from "../lib/appTest";
 import { type FlowCancel, type FlowState, runConnectFlow } from "../lib/connectFlow";
 import { ComposioAccount } from "./ComposioAccount";
+import { HomeAssistantCard } from "./HomeAssistantCard";
 import { MissingComponent, componentFor } from "./MissingComponent";
 import { useComposio } from "../state/useComposio";
 import { directEntries, filterDirect, isRemoteServer } from "../lib/appTiles";
@@ -792,7 +794,12 @@ function CustomServerForm({
   );
 }
 
-type AppsModalProps = { open: boolean; onClose: () => void };
+type AppsModalProps = {
+  open: boolean;
+  onClose: () => void;
+  /** Where it opens: on the Advanced list (Google apps) and/or with the search box filled in. */
+  start?: AppsStart | null;
+};
 
 export function AppsModal(props: AppsModalProps) {
   const { activeComputerId } = useDaemon();
@@ -801,7 +808,8 @@ export function AppsModal(props: AppsModalProps) {
 
 function AppsDialog({
   open,
-  onClose
+  onClose,
+  start
 }: AppsModalProps) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -959,12 +967,12 @@ function AppsDialog({
 
   useEffect(() => {
     if (open) {
-      setQuery("");
+      setQuery(start?.query ?? "");
       setGroup("all");
       setSelected(null);
-      setAdvanced(false);
+      setAdvanced(start?.advanced ?? false);
     }
-  }, [open]);
+  }, [open, start]);
 
   const shownServers = useMemo(() => filterServers(servers, query), [servers, query]);
   const available = useMemo(
@@ -1485,6 +1493,9 @@ function AppsDialog({
                   </div>
                 ) : null}
               </div>
+              {/home\s?assistant|smart\s?home|hass/i.test(query) || query.trim() === "" ? (
+                <HomeAssistantCard />
+              ) : null}
               {featured.length > 0 ? (
                 <section className={styles.section} aria-labelledby="apps-connected-h">
                   <h3 className={styles.sectionLabel} id="apps-connected-h">{t("apps.composioHub.yourApps")}</h3>

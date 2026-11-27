@@ -153,6 +153,10 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/v1/owner-notices/settings"),
     ("POST", "/v1/owner-notices/{}/answers"),
     ("POST", "/v1/owner-notices/{}/retry"),
+    // the switch for the bot's own pointer (cosmetic, but the owner's to read and change)
+    ("GET", "/v1/bot-cursor"),
+    ("HEAD", "/v1/bot-cursor"),
+    ("PUT", "/v1/bot-cursor"),
     // per-bot spending limits: a bot or token holder must not lift its own cap
     ("PUT", "/v1/bots/{}/spend-limits"),
     // how outside text reaches a bot (the quarantined page reader): a bot must not switch off
@@ -234,6 +238,9 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/chats/{}/skill-draft"),
     ("POST", "/v1/skills/draft/preview"),
     ("POST", "/v1/skills/draft/install"),
+    // looking through other assistants' files and importing them: the owner's own action
+    ("POST", "/v1/import/scan"),
+    ("POST", "/v1/import/run"),
     ("POST", "/v1/skills/hub/preview"),
     ("POST", "/v1/skills/hub/install"),
     ("POST", "/v1/skills/market/index"),
@@ -352,6 +359,14 @@ pub const OWNER_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/v1/calendar/accounts/{}"),
     ("DELETE", "/v1/calendar/accounts/{}"),
     ("POST", "/v1/calendar/test"),
+    // Home Assistant: the address and the long-lived token decide what a bot can do to the
+    // owner's home; a test dials an address the caller names. Reads included (the address).
+    ("GET", "/v1/homeassistant"),
+    ("HEAD", "/v1/homeassistant"),
+    ("PUT", "/v1/homeassistant"),
+    ("DELETE", "/v1/homeassistant"),
+    ("PUT", "/v1/homeassistant/bots"),
+    ("POST", "/v1/homeassistant/test"),
     ("PUT", "/v1/web/search"),
     // a probe spends the stored search keys (or the owner-typed SearXNG address) on a query the
     // caller chooses: a token holder must not run it

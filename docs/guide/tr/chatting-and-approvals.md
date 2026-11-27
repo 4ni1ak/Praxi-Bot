@@ -4,6 +4,8 @@
 
 Her konuşma, tek bir botla yapılan bir **sohbettir**. Sohbetler saklanır, yani sonra geri dönebilirsin. Bir mesaj bir **çalışma** başlatır (buna tur da denir): bot düşünür, araçları çağırır ve yanıtını akıtarak getirir. Bunu masaüstü uygulamasında, bir terminalde ya da Telegram'da izleyebilirsin.
 
+![Bir botla sohbet: botlarının olduğu sol çubuk, konuşma ve mesaj kutusu](../images/tr/chat.webp)
+
 Terminalden:
 
 ```sh
@@ -39,6 +41,8 @@ Eller serbest konuşmak için masaüstü yazı alanındaki telefon düğmesine (
 Yönlendirici açıkken `/stop` (geçerli çalışmayı durdur), `/new` (yeni sohbet başlat) ve `/workflow <name> key=value ...` (kayıtlı bir iş akışını doğrudan çalıştır, bkz. [İş akışları](workflows.md)) modele ulaşmadan doğrudan işlenir.
 
 Masaüstü yazı alanında bir mesajın başına `/` yazmak, uygulamanın kendi işlediği (bota hiç gönderilmeyen) yerel komutları da içeren bir komut menüsü açar: `/export` (açık sohbeti Markdown olarak indir) ve uygulama kısayolları `/help`, `/settings`, `/models`, `/apps` ile `/schedules`. Telegram'da ek komutlar var, bkz. [Telegram](telegram.md).
+
+![Mesaj kutusuna / yazınca komut menüsü açılır](../images/tr/composer-commands.webp)
 
 ### Sohbetleri yönetmek (masaüstü uygulaması)
 
@@ -186,6 +190,8 @@ Bunun neden yeterince güvenli olduğu: bir site, bot oraya gitti diye asla “s
 
 Durduramadığı şeyler: harf harf hecelemeyi (`h-a-n-n-e-l-o-r-e`) ve punycode sunucu adlarını, 6 harften kısa özel sözcükleri (4 haneli bir PIN, kısa bir ilk ad) ve üç sözcükten kısa her şeyi asla tanımaz. Düşmanca bir sayfa modeli, özel verini **yeniden kodlamaya ya da başka sözcüklerle ifade etmeye** (örneğin çevirmeye ya da farklı kelimelerle hecelemeye) ve yeni bir siteye göndermeye ikna edebilir. Ayrıca modelin bildiği ama bu çalışmanın hiçbir araç sonucundan gelmemiş özel veriyi de tanımaz. **Önceki bir turdan** gelen özel veri, özgün posta ya da dosya üzerinden değil, hâlâ sohbette duran o turun yanıtı üzerinden karşılaştırılır. Birkaç sözcük uzunluğundaki bir arama sorgusu arama sağlayıcısına gider, dolayısıyla içindeki özel verinin başka sözcüklerle ifadesi de tanınmaz (hacim yukarıdaki bütçeyle sınırlanır). Bu kuralın geçirdiği her çağrı denetim günlüğüne `mode.full.owner_browse` olarak yazılır (web okuma araçları da).
 
+Tam seviyenin, senin başlattığın bir çalışma ya da görevin için kartsız yaptığı bir şey daha var: botun **kendi kayıtları** ([e-posta kılavuzundaki “Kayıtlar” bölümüne](email.md) bak). `account_register`, botun kendi açtığı bir hesabın parolasını `browser_fill` `secret` ile yazmak ve `browser_capture_secret`, çalışma sayfaları ya da postanı okumuş olsa bile sormadan çalışır; çünkü parolayı uygulama üretir, bot onu asla görmez ve yalnızca kaydedildiği tam siteye yazılır. Kendi sakladığın gizli bilgiler ve para yine sorar. Bu çağrılar denetim günlüğüne `mode.full.own_signup` olarak yazılır.
+
 **Bota ne söylenir.** Tam seviyede botun temel talimatları şunu der: görevi, “başlayayım mı?” diye ya da onay istemeden sonuna kadar götür. Mantıklı varsayılanları (hangi siteler, adlar, ifadeler) kendin seç ve neyi seçtiğini söyle. Yalnızca senin bildiğin bir şeyi (bir parola, kişisel bir tercih) ya da kesin bir durma noktasında (para harcamak, çalışma alanının dışında silmek, gizli bilgiler, üçüncü kişilere mesaj göndermek, bir CAPTCHA ya da 2FA devri) sor. Sonunda “Tamam:” yaz ve geriye ne kaldığını söyle. Küçük bir model yine de durup sorabilir. **Ajan işleri, “lite” bir katmandan daha güçlü bir model ister** (örneğin Flash-Lite, mini, nano ya da Haiku modelleri): onlar uzun, çok adımlı talimatları daha az güvenilir izler. Tam seviyedeki bir bot böyle bir modelle çalışıyorsa bot paneli bir ipucu gösterir.
 
 **Tam seviyede hâlâ soranlar.** Çalışma bir web sayfası okuduktan sonra bir program ya da kabuk komutu başlatmak (bir sayfa komutu seçmemelidir) her zaman sorar, yukarıdaki kesin durma noktaları da öyle. **Telegram** (ya da herhangi bir kanal, yerel API ya da yönetici masaüstün olmayan eşleşmiş bir cihaz) üzerinden gelen çalışma bu kurala göre sahibin başlattığı sayılmaz: onun web ve tarayıcı adımları tek seferlik kartlarını korur. Bu, şu anki durumdur, gelecek için bir söz değildir.
@@ -265,6 +271,8 @@ Kontrolden çıkan çalışmaları durdurmak için her tur varsayılan olarak 40
 ## Bildirimler ve onaylar
 
 Pencere odakta değilken ve bir çalışma onayına ihtiyaç duyduğunda masaüstü uygulaması, sade sözlerle kısa bir bildirim gösterir (“Praxi, Playwright'ı kullanmak istiyor (tarayıcıda değerlendirme)”). Ham çağrıyı, argümanlarını ya da bilgisayar kimliklerini asla göstermez. “Özel bildirimler” açıkken yalnızca genel bir metin gösterilir.
+
+![Bota göre gruplanmış Bildirimler listesi: seni bekleyenler, başarısız olanlar ve biten işler](../images/tr/notifications.webp)
 
 **Windows.** Bildirimin düğmeleri vardır: **İzin ver** (yalnızca bu çağrı), **Her zaman izin ver** ve **Reddet**. Bir düğme, sohbetteki kartla aynı onay yolunu çalıştırır: o anda bekleyen onaya karşı denetlenir, “Her zaman izin ver” yalnızca kart onu sunacaksa görünür ve kart düğmesiyle aynı sahip yetkisini ister. Önce okuman gereken bir şey taşıyan onaylar (incelenecek bir yük, bir zamanlama, bir bot profili, bir bilgisayar denetimi izni, mesaj ya da e-posta gönderen her şey) düğmesiz bir bildirim alır: ona tıklamak uygulamayı kartın üstünde açar. Bildirimin kendisine (bir düğmeye değil) tıklamak uygulamayı her zaman öne getirir.
 

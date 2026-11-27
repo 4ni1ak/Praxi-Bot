@@ -51,7 +51,7 @@ Ctrl-C'ye kadar açık tutar ([bağlantı ölçüm kılavuzu](../../design/live-
 | 3 | Daemon'a ulaşılamıyor |
 | 4 | Kimlik doğrulama reddedildi (ya da API token'ı yok, ya da Host/Origin reddedildi) |
 | 5 | Bulunamadı |
-| 6 | İstek reddedildi (geçersiz girdi, çakışma, `setup_required` ya da başarısız bir `bot email test`) |
+| 6 | İstek reddedildi (geçersiz girdi, çakışma, `setup_required` ya da başarısız bir `bot email test` ya da `bot ha test`) |
 | 7 | Çalışma bir hatayla bitti ya da iptal edildi |
 
 ## Komutlar
@@ -137,7 +137,7 @@ olarak çalıştırılırsa komut bunu söyler (*Sen ubuntu'sun ama Praxi praxi 
 | Komut | Anlamı |
 | --- | --- |
 | `bot cli status` | Baktığı kullanıcı ve ev klasörü, sonra her CLI: kurulu mu, sürüm, nerede bulundu, girişli mi, girişsiz mi ya da "giriş dosyası bulundu (denetlenmedi)". `--json` aynısını JSON olarak yazar. Giriş dosyasını asla okumaz, yalnızca var olup olmadığına bakar |
-| `bot cli install <ENGINE>` | Motorun sabit kurucusunu bu kullanıcı olarak çalıştırır (uygulamadaki **Sunucuya kur**'un çalıştırdığı aynı kurucu). Bir npm paketi gerekiyor ve npm yoksa önce Node.js'i veri klasörüne indirir. Yalnızca kopyala-çalıştır komutu olan motorlar bunu söyler |
+| `bot cli install <ENGINE>` | Motorun sabit kurucusunu bu kullanıcı olarak çalıştırır (uygulamadaki **Sunucuya kur**'un çalıştırdığı aynı kurucu). Bir npm paketi `PATH`'teki npm ile kurulur (kurucuyla hazırlanmış sunucuda: `/opt/praxi-nodejs` içindeki Node.js, genel önek `/var/lib/praxi/.npm-global`, root gerekmez); yalnızca hiç npm yoksa önce Node.js veri klasörüne indirilir. Yalnızca kopyala-çalıştır komutu olan motorlar bunu söyler |
 | `bot cli login <ENGINE>` | CLI'ın kendi girişini bu terminalde başlatır (`claude auth login`, `codex login`, `agy`, `vibe --setup`, ...); yanıtları ve yazdığı bağlantı dahil, bu kullanıcı olarak |
 
 `<ENGINE>`, `bot cli status`'un gösterdiği kimliktir (`claude`, `codex`, `cursor`, `opencode`, `agy`, `qwen`,
@@ -243,16 +243,23 @@ Bir botu gizli bilgi içermeyen tek bir dosya olarak paylaş (bkz.
 
 ### `bot import`
 
-Claude Desktop, Claude Code, OpenClaw ya da Hermes uygulamalarından MCP sunucularını ve becerileri getirir.
-Önce her zaman bir önizleme gelir (içe aktarılacaklar / atlananlar ve nedenleri). Sunucular kapalı gelir,
-her gizli değer gizli bilgi deposuna gider ve yalnızca tarayıcının düşük riskli bulduğu beceriler içe aktarılır.
-Diğerleri `bot skills install` için bırakılır. Sohbetler, notlar, API anahtarları ve oturum açma bilgileri
-hiçbir zaman kopyalanmaz.
+Claude Desktop ve Claude Code, Cursor, VS Code, Codex, OpenClaw, Hermes ya da beceri ve komut istemi
+içeren düz bir markdown klasöründen MCP sunucularını, becerileri ve yönergeleri getirir.
+Önce her zaman bir önizleme gelir (içe aktarılacaklar / atlananlar ve nedenleri). Sunucular kapalı gelir.
+Gizli bir değer ancak o değeri onayladıktan sonra gizli bilgi deposuna gider (terminalde her değer için sorulur,
+ya da `--move-secrets`) ve hiçbir zaman düz metin olarak bir yapılandırmaya yazılmaz. Yalnızca tarayıcının düşük
+riskli bulduğu beceriler içe aktarılır, diğerleri `bot skills install` için bırakılır. `CLAUDE.md` / `AGENTS.md`
+yalnızca `--bot` ile bir botun yönergelerine eklenir. Sohbetler, notlar, API anahtarları ve oturum açma bilgileri
+hiçbir zaman kopyalanmaz. Masaüstü uygulamasında aynı akış Ayarlar altındadır. `run` işini daemon yapar;
+`--server` ile sunucunun kendi dosyalarından içe aktarılır. Önizleme bir sunucunun komut satırının ya da
+adresinin tamamını gösterir (çok uzunsa `…` ile kesilir); yönerge dosyasında yalnızca boyutunu gösterir.
+`--folder` o makinenin herhangi bir klasörü olabilir, ama `/proc`, `/sys`, `/dev` ya da bir aygıt yolu olamaz;
+klasörün içindeki bağlantılar izlenmez ve çok büyük dosyalar okunmaz.
 
 | Alt komut | Anlamı |
 | --- | --- |
-| `bot import detect` | Diğer uygulamaların kurulumlarını arar ve önizlemeyi gösterir. Hiçbir şey yazmaz, daemon gerektirmez |
-| `bot import run [--from claude\|openclaw\|hermes] [--yes]` | Önizlemeyi gösterir. `--yes` ile içe aktarır (sunucular için daemon gerekir) |
+| `bot import detect [--from APP] [--folder DIR]` | Diğer uygulamaların kurulumlarını arar ve önizlemeyi gösterir. Hiçbir şey yazmaz, daemon gerektirmez |
+| `bot import run [--from APP] [--folder DIR] [--yes] [--move-secrets] [--bot BOT_ID]` | Önizlemeyi gösterir. `--yes` ile daemon üzerinden içe aktarır. `APP`: `claude`, `cursor`, `vscode`, `codex`, `openclaw`, `hermes` ya da `folder` |
 
 ### `bot approve <TOOL_CALL_ID>`
 
@@ -298,6 +305,18 @@ Bekleyen bir soru kartını yanıtlar.
 | `bot email add --provider agentmail --name <NAME> --bot <NAME_OR_ID>\|--all-bots` | **Kendi** AgentMail API anahtarınla bir AgentMail gelen kutusu oluşturur ve onu hesap olarak ekler. Seçenekler: `--name-hint <TEXT>` (`@` işaretinden önceki bölüm, varsayılan: hesap adı), `--domain <VERIFIED_DOMAIN>` (varsayılan: paylaşılan `agentmail.to`), `--allowed-sender`, `--api-key-env <VAR>` (verilmezse gizli istem, anahtar hiçbir zaman argüman olmaz) |
 | `bot email rm <NAME>` | Bir hesabı ve saklanan parolasını ya da anahtarını kaldırır. `--delete-inbox` gelen kutusunu AgentMail'de de siler (geri alınamaz, varsayılan olarak kapalı) |
 | `bot email test <NAME>` | IMAP girişi ile SMTP kimlik doğrulamasını ya da AgentMail anahtarını sınar. Hiçbir şey gönderilmez. Denetim geçmezse 6 ile çıkar |
+
+### `bot ha`
+
+Çalışan arka plan hizmetinde Home Assistant'ı kurar (bkz. [Home Assistant](home-assistant.md)). Yalnızca sahip içindir; değişiklikler sonraki araç çağrısından itibaren geçerli olur.
+
+| Alt komut | Anlamı |
+| --- | --- |
+| `bot ha status` | Kurulu olup olmadığını, adresi, hangi botların kullanabildiğini ve sormadan izin verilen servisleri gösterir (anahtarı asla) |
+| `bot ha setup --url <URL>` | Adresi ve uzun ömürlü erişim anahtarını Home Assistant'a sorar, yalnızca kabul ederse kaydeder ve varlık sayısını yazar. Seçenekler: `--token-env <DEĞİŞKEN>` (verilmezse gizli istem; anahtar asla argüman olmaz), `--keep-token` (saklanan anahtarı korur; yalnızca aynı adres için), `--allow <DOMAIN.SERVICE>` (tekrarlanabilir: o servis için kart çıkmaz) |
+| `bot ha test` | Kayıtlı kurulumu dener. `--url <URL>` ile `--token-env <DEĞİŞKEN>` kayıtlı olmayan bir adresi dener. Home Assistant kabul etmezse 6 ile çıkar |
+| `bot ha access` | Hangi botların kullanabileceğini seçer: `--all` ya da `--bot <AD_VEYA_KİMLİK>` (tekrarlanabilir); ikisi de yoksa hiçbir bot |
+| `bot ha remove` | Kurulumu ve saklanan anahtarı kaldırır |
 
 ### `bot providers`
 

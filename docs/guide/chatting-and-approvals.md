@@ -7,6 +7,8 @@ back later. A message starts a **run** (also called a turn): the bot thinks,
 calls tools, and streams its answer back. You can follow it in the desktop app,
 in a terminal, or in Telegram.
 
+![A chat with a bot: the left rail with your bots, the conversation and the message box](images/en/chat.webp)
+
 From the terminal:
 
 ```sh
@@ -63,6 +65,8 @@ menu that also includes local commands handled by the app itself (never sent to
 the bot): `/export` (download the open chat as Markdown) and app shortcuts
 `/help`, `/settings`, `/models`, `/apps`, and `/schedules`. In Telegram there
 are extra commands, see [Telegram](telegram.md).
+
+![Typing / in the message box opens the command menu](images/en/composer-commands.webp)
 
 ### Managing chats (desktop app)
 
@@ -311,6 +315,10 @@ What still asks, and why:
   and the button's label only), and for replayed workflow browser steps. The same read applies to the command or arguments a coding CLI
   engine hands over for its own tool, in any field, and to a program started on your
   computer. The card is once-only and bound to that page.
+* **Locks, garage doors and alarms.** A [Home Assistant](home-assistant.md) service that
+  opens a lock or a garage door, disarms an alarm, or is not a plain device call asks on
+  every level, Full access included, unless you allowed that exact service in the
+  Home Assistant card.
 * **The never-list** (catastrophic commands), a **deny** in the bot's own rules, an
   **ask you wrote yourself** (a category, or a source such as schedules, set on a bot that is
   otherwise Full access: your rule wins over the preset), the owner's per-site and
@@ -432,6 +440,8 @@ not through the original mail or file; and a search query a few words long goes 
 the search provider, so a paraphrase of private data in it is not recognised either
 (the volume is capped by the budget above). Every call this rule
 lets through is written to the audit log as `mode.full.owner_browse` (the web read tools too).
+
+One more thing the Full level does without a card, for a run you started or a mission of yours: a bot's **own sign-ups** (see [Sign-ups: a bot with its own address](email.md#sign-ups-a-bot-with-its-own-address)). `account_register`, typing the password of an account the bot made itself with `browser_fill` `secret`, and `browser_capture_secret` run without asking, also after the run read pages or your mail, because the password is made by the app, never seen by the bot, and typed only into the exact site it was registered for. Secrets you stored yourself and money still ask. These calls are written to the audit log as `mode.full.own_signup`.
 
 **What the bot is told.** On the Full level the bot's base instructions say: carry
 the task through to the end without asking "shall I start?" or for a go-ahead;
@@ -586,6 +596,8 @@ When the window is not focused and a run needs your approval, the desktop app
 shows a short notification in plain words ("Praxi wants to use Playwright
 (browser evaluate)"), never the raw call, its arguments or computer ids. With
 "private notifications" on, only a generic text is shown.
+
+![The Notifications list, grouped by bot: what needs you, what failed and what finished](images/en/notifications.webp)
 
 **Windows.** The toast has buttons: **Allow** (this call only), **Always allow**
 and **Deny**. A button runs the same approval path as the card in the chat: it

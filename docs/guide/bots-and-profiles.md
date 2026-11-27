@@ -19,6 +19,16 @@ bot bots list
 `bot bots add` sends the file to the running daemon (`bot serve` must be up).
 The desktop app has a bot form that writes the same structure.
 
+![The New bot window](images/en/new-bot.webp)
+
+Edit a bot from its panel with the pencil button. Everything is on one page; the section list on the left jumps to each part:
+
+![The bot editor: identity, instructions, model, where it runs, access, tools and apps, memory, spending limits and advanced options on one page](images/en/bot-editor.webp)
+
+The bot panel shows what the bot is doing now and keeps its Activity, Automation, Library and Tools in tabs:
+
+![A bot's panel: its status, New chat, and the Activity, Automation, Library and Tools tabs](images/en/bot-panel-activity.webp)
+
 ## Saved browser sessions
 
 Open a bot's **Tools** tab and choose **Sign in manually**. A separate managed
@@ -158,6 +168,18 @@ live view and so that menus that only open while the pointer is over them can op
 - `browser_select_text` marks a sentence, a word (double click) or a paragraph (triple click) with the mouse (input-like, asks like `browser_click`, and is only allowed on the page you approved it for).
 - `browser_scroll` can go by screens (`pages`), to the top or bottom (`to`), or bring an element into view (`ref` with `into_view`), and says where on the page you are now. A longer scroll is made of small steps with short pauses.
 - Clicks glide the pointer to the element and pause briefly before and while pressing; typing into a field is still set in one step on the approved field (so a page cannot steal what is typed), after a short pause.
+
+### The bot's own pointer
+
+While the assistant uses the computer it draws a pointer of its own, like the computer-use apps do, so you can see where it is about to click. It is a coloured arrow with a ripple where it clicks, and it never looks like your own pointer. Your real pointer is never moved by it (the browser is driven through the debugging protocol, which does not move it).
+
+- **In the assistant's browser** the arrow is drawn inside the page itself, by a small overlay that cannot be clicked, never takes the keyboard focus, is hidden from screen readers and from the page snapshot, and carries nothing but coordinates. It glides from the previous point to the next one and is taken away completely when you take over (`browser_handover`, **Take control** in the live view) or the browser closes. It is part of the page picture, so the live view and `browser_screenshot` show it too.
+- **On the desktop** a transparent window follows the assistant's pointer over the real screen, with a ripple at every click. It does not take clicks or focus, and it disappears when the assistant stops or you take control. With the desktop app, the app's own overlay windows (the same ones that outline the control about to be used) draw it. A bot started without the app (`bot serve` on Windows, or an X11 session on Linux) draws it with a small window of its own; the app tells the bot it has an overlay by setting `BOT_APP_OVERLAY=1` for the bot it starts, so you never get two.
+- **In the live view** the arrow is drawn over the remote screen at the last place the assistant pointed, with a ripple for each click. While you hold control, only your own pointer is shown.
+
+Turn it off in **Settings > Computer > Show the bot's pointer**: it disappears from all three places at once. This only changes what is drawn, never what the assistant may do.
+
+Before it clicks by position, the assistant also checks what is under the point: if another element (browser) or another window (desktop) has come on top since the screenshot, nothing is pressed and the result says what is there now. Clicking an element scrolls it into view first, smoothly while somebody can watch (see `human_like` below).
 
 ### When there is nothing to click by name
 

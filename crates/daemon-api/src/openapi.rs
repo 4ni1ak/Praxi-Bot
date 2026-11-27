@@ -8,6 +8,7 @@ use axum::Json;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
+use crate::assistant_import_routes;
 use crate::bot_limits_routes;
 use crate::calendar;
 use crate::calendar_routes;
@@ -31,6 +32,8 @@ use crate::favicon;
 use crate::file_access;
 use crate::fill_routes;
 use crate::handover_routes;
+use crate::homeassistant;
+use crate::homeassistant_routes;
 use crate::host;
 use crate::host_admin;
 use crate::host_copy;
@@ -279,6 +282,7 @@ impl Modify for Security {
         live_view::stream::frames,
         live_view::takeover,
         live_view::targets,
+        live_view::terminals,
         live_view::thumbnail,
         live_view::update_session,
         mcp_routes::cancel_mcp_auth,
@@ -382,6 +386,8 @@ impl Modify for Security {
         routes::update_chat,
         routes::update_schedule,
         routes::webhook,
+        assistant_import_routes::scan,
+        assistant_import_routes::run,
         skill_hub::hub_install,
         skill_hub::hub_preview,
         skill_market::market_index,
@@ -428,6 +434,8 @@ impl Modify for Security {
         mission_routes::resume_mission,
         mission_routes::cancel_mission,
         mission_routes::answer_mission,
+        crate::bot_cursor_routes::get_bot_cursor,
+        crate::bot_cursor_routes::put_bot_cursor,
         owner_notify::list_notices,
         owner_notify::get_notice_settings,
         owner_notify::put_notice_settings,
@@ -465,6 +473,11 @@ impl Modify for Security {
         calendar_routes::update_calendar_account,
         calendar_routes::delete_calendar_account,
         calendar_routes::test_calendar,
+        homeassistant_routes::get_homeassistant,
+        homeassistant_routes::put_homeassistant,
+        homeassistant_routes::put_homeassistant_bots,
+        homeassistant_routes::delete_homeassistant,
+        homeassistant_routes::test_homeassistant,
         web_routes::get_web_search,
         web_routes::test_web_search,
         web_routes::update_web_search,
@@ -486,6 +499,8 @@ impl Modify for Security {
         ::live_view::ScreenStatus,
         ::live_view::ScreenStreamState,
         ::live_view::SourceRect,
+        ::live_view::BotTerminal,
+        ::live_view::BotTerminalState,
         connection_test::ConnectionOutcome,
         connection_test::ConnectionTestReport,
         crate::connectivity::ConnectivityReport,
@@ -809,6 +824,13 @@ impl Modify for Security {
         memory::UpdateMemoryInput,
         peer::PeerLink,
         skill_hub::HubFindingDto,
+        assistant_import_routes::ImportItemDto,
+        assistant_import_routes::ImportResultDto,
+        assistant_import_routes::ImportRunDto,
+        assistant_import_routes::ImportRunInput,
+        assistant_import_routes::ImportScanDto,
+        assistant_import_routes::ImportScanInput,
+        assistant_import_routes::ImportSecretDto,
         skill_hub::HubInstallInput,
         skill_hub::HubPreviewDto,
         skill_hub::HubSourceInput,
@@ -873,6 +895,7 @@ impl Modify for Security {
         bot_limits_routes::BotLimitUsageDto,
         mission_routes::MissionAnswerInput,
         mission_routes::MissionAnswersDto,
+        crate::bot_cursor_routes::BotCursorSettings,
         owner_notify::OwnerNotifySettings,
         owner_notify::QuietWindow,
         owner_notify::NoticeAnswersInput,
@@ -922,6 +945,12 @@ impl Modify for Security {
         calendar::CalendarTestInput,
         calendar::CalendarFoundDto,
         calendar::CalendarTestReport,
+        homeassistant::HomeAssistantDto,
+        homeassistant::HomeAssistantInput,
+        homeassistant::HomeAssistantSaved,
+        homeassistant::HomeAssistantBotsInput,
+        homeassistant::HomeAssistantTestInput,
+        homeassistant::HomeAssistantTestReport,
         web::WebSearchConfigDto,
         web::WebSearchConfigInput,
         web::WebSearchTestInput,
@@ -972,10 +1001,12 @@ impl Modify for Security {
         (name = "notifications"),
         (name = "secrets"),
         (name = "skills"),
+        (name = "import"),
         (name = "usage"),
         (name = "view"),
         (name = "voice"),
         (name = "calendar"),
+        (name = "homeassistant"),
         (name = "web"),
         (name = "workspaces"),
         (name = "connection-test"),

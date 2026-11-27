@@ -70,6 +70,8 @@ static FULL_POLICY: OnceLock<Policy> = OnceLock::new();
 
 /// Stable audit code for the existing Full browser and public web waiver.
 const FULL_BROWSE_REASON: &str = "mode.full.owner_browse";
+/// Audit reason when the Full level let a bot's own sign-up through without a card.
+const FULL_SIGNUP_REASON: &str = "mode.full.own_signup";
 
 /// Audit reason code of a `browser_upload` the Full level let through.
 const FULL_UPLOAD_REASON: &str = "mode.full.owner_upload";
@@ -486,9 +488,10 @@ impl Shared {
     ///
     /// What stays a card, whatever the level: a deny, the money floor (including a recognised
     /// payment surface), the never-list, limits the daemon cannot evaluate, the owner's own
-    /// per-site / per-app ask rules, a replayed workflow of tainted origin, and a call that
+    /// per-site / per-app ask rules, a replayed workflow of tainted origin, a call that
     /// hands a durable permission to a run that read untrusted content (a schedule, a bot
-    /// change, the knowledge root).
+    /// change, the knowledge root), and a call its tool marks with
+    /// [`tool_registry::Tool::full_access_asks_for`] (a lock, a garage door, an alarm).
     ///
     /// Who it applies to: [`Self::full_lane_run`]. The decision is a pure function of daemon
     /// facts (the bot's level, the run's recorded initiator and message sources, the call's own
@@ -505,6 +508,16 @@ impl Shared {
         if category == PermissionCategory::Money
             || decision.unsupported_limits().is_some()
             || !self.full_lane_run(ctx)
+        {
+            return false;
+        }
+        // A call the tool itself says the owner cannot undo from the screen (opening a lock or
+        // a garage door, disarming an alarm): the Full level does not waive that card. Decided
+        // by the tool from this call's own input, never from anything a page or mail said.
+        if self
+            .tools
+            .get(name)
+            .is_some_and(|tool| tool.full_access_asks_for(input))
         {
             return false;
         }
@@ -844,6 +857,22 @@ impl Shared {
         // ([`Tool::always_ask_for`]): the policy level, the Full preset, read
         // shortcuts, "this chat" / "always" grants and any run-scoped control
         // grant sit BELOW this early return, so none of them can waive it.
+        // The Full level's unattended sign-up: a bot registering on sites for the owner (or for
+        // their mission) with its own address and a password only the daemon knows. It sits
+        // before the always-ask test because that test is exactly what it waives, for these
+        // three calls only; see [`Self::full_signup_waives`]. A run the Full lane covers is
+        // judged by the lane (audited as `mode.full.policy`); this waiver is for what the lane
+        // does not reach, an unattended mission session.
+        if d == Decision::Allow
+            && !self.full_lane_run(ctx)
+            && !matches!(
+                ctx.initiator,
+                InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
+            )
+            && self.full_signup_waives(ctx, name, input)
+        {
+            return (Decision::Allow, Some(FULL_SIGNUP_REASON));
+        }
         if (self.must_ask(name, input) && !own_totp_on_full)
             || matches!(
                 ctx.initiator,
@@ -1709,6 +1738,52 @@ impl Shared {
         };
         let named = self.owner_named_hosts(ctx);
         self.trusted_host(ctx, &host, &named)
+    }
+
+    /// The owner's Full level for a bot's OWN sign-ups (backlink-style tasks: "register on
+    /// these sites with your own address"), without a card per site. Three calls, nothing else:
+    ///
+    /// * `account_register`: the daemon makes the password and stores it limited to that site
+    ///   and to this bot; the login is the bot's own bound mail address (the tool refuses any
+    ///   identity that is not the bot's own); a second account with the same login on a site is
+    ///   refused by the tool;
+    /// * `browser_fill` with `secret`, only for an account entry THIS bot made itself
+    ///   (`created_by == "bot"`, never an owner-stored secret, which keeps asking), and only
+    ///   while the tool's own checks pass at insertion: the live frame AND the top page must
+    ///   both be on the site the entry is limited to, re-read from the browser right before
+    ///   the text goes in;
+    /// * `browser_capture_secret`: the daemon reads a value the page shows into the vault,
+    ///   limited to that page's verified origin and to this bot; the model never sees it.
+    ///
+    /// Only for the Full level, on a run that is the owner's own ([`Self::full_waivers_apply`]:
+    /// owner-started, or an unattended session of their mission), never a subagent or helper
+    /// bot. Money, the never-list, every other always-ask and the egress gate of everything
+    /// else are decided elsewhere and untouched. The calls are audited with
+    /// `mode.full.own_signup`.
+    fn full_signup_waives(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
+        if ctx.parent_run_id.is_some()
+            || ctx.delegation().is_some()
+            || ctx.profile.permissions.mode() != AutonomyMode::Full
+            || !self.full_waivers_apply(ctx)
+        {
+            return false;
+        }
+        match name {
+            "account_register" | "browser_capture_secret" => true,
+            "browser_fill" => {
+                let Some(secret) = input.get("secret").and_then(Value::as_str) else {
+                    return false;
+                };
+                self.fill_secrets.get().is_some_and(|secrets| {
+                    secrets
+                        .accounts(Some(&ctx.bot_id.to_string()))
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|a| a.name == secret && a.created_by == "bot")
+                })
+            }
+            _ => false,
+        }
     }
 
     /// The owner's Full level for `shell_run` (the bot's OWN host shell) after the run read
@@ -3247,6 +3322,35 @@ impl Shared {
         self.audit(ctx, "user", AUDIT_GRANT_ALWAYS, &grant_detail(&grant));
     }
 
+    /// Where a question of the run goes: parked for the owner when nobody is at the screen
+    /// ([`Self::nobody_answers`]) or when a mission session used its one batch of questions, else
+    /// a card the run waits on. One rule for the `ask_user` tool and for a coding CLI's own
+    /// question, so neither can answer for the owner.
+    pub(crate) async fn route_question(
+        self: &Arc<Self>,
+        ctx: &RunCtx,
+        call_id: ToolCallId,
+        question: &str,
+        options: Vec<String>,
+    ) -> QuestionRoute {
+        if self.nobody_answers(ctx) {
+            return QuestionRoute::Parked(self.park_unattended_question(ctx, question));
+        }
+        if let Some(mission) = ctx.mission.as_deref()
+            && self
+                .mission_store
+                .read()
+                .as_ref()
+                .is_some_and(|s| !s.take_question_slot(mission).unwrap_or(true))
+        {
+            return QuestionRoute::Parked(self.park_item_for_question(ctx, mission, question));
+        }
+        match self.request_answer(ctx, call_id, question, options).await {
+            Ok(answer) => QuestionRoute::Answered(answer),
+            Err(reason) => QuestionRoute::Declined(reason),
+        }
+    }
+
     /// Park the run until the user answers a question card.
     /// `Ok(answer)`, or `Err(reason)` if the user declined to answer.
     pub(crate) async fn request_answer(
@@ -3543,6 +3647,16 @@ fn mission_give_up_text(key: Option<&str>, reason: &str) -> String {
             "Not waiting: this is a mission, so a person is not asked right now, and a CAPTCHA cannot be solved from the ledger. Mark the item you are working on as failed with mission_item (error: {reason}), do not retry the site, and take the next open item now."
         ),
     }
+}
+
+/// How [`Shared::route_question`] disposed of a question.
+pub(crate) enum QuestionRoute {
+    /// The owner answered the card.
+    Answered(String),
+    /// The owner declined to answer (or the card expired), with the reason if there is one.
+    Declined(Option<String>),
+    /// Nobody was asked: the question is parked for the owner. Carries what the model reads.
+    Parked(String),
 }
 
 /// What the model reads when an unattended run's question is parked for the owner: it neither

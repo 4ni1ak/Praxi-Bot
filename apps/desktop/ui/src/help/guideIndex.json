@@ -28,12 +28,23 @@
     "summary": "Every bot has a small built-in scratchpad between runs: a plan for a long task, a checklist, facts it will need tomorrow. Tools: notes_read (list notes, read one, or search) and notes_write (replace,…"
   },
   {
+    "doc": "app-catalog.md",
+    "title": "What you need to connect each app",
+    "headings": [
+      "The four ways to sign in",
+      "The catalog",
+      "Related"
+    ],
+    "summary": "Every app in the Apps list comes from a curated catalog. This page says, for each"
+  },
+  {
     "doc": "apps.md",
     "title": "Connecting apps (the Apps dialog)",
     "headings": [
       "Connect Composio once",
       "Connect and manage an app",
       "What asks before it runs",
+      "Home Assistant",
       "MCP servers",
       "MCP server status",
       "Managing connections and signing out",
@@ -110,6 +121,7 @@
       "Permissions in a profile",
       "Tool filters",
       "How the browser moves",
+      "The bot's own pointer",
       "When there is nothing to click by name",
       "Files and tabs",
       "When a step fails",
@@ -178,7 +190,8 @@
       "Install and sign in on a server",
       "Security boundary",
       "Local evidence and attribution",
-      "Running a CLI with its own tools (engine mode)"
+      "Running a CLI with its own tools (engine mode)",
+      "Engines defined by a data file"
     ],
     "summary": "Settings → Providers lists CLI engines on the daemon's computer. Refresh"
   },
@@ -209,6 +222,7 @@
       "bot grants",
       "bot schedules",
       "bot email",
+      "bot ha",
       "bot providers",
       "bot catalog",
       "bot secrets",
@@ -236,6 +250,22 @@
       "Not verified"
     ],
     "summary": "Bots can work in apps on your Windows PC when the chat uses This computer and"
+  },
+  {
+    "doc": "connect-email-calendar.md",
+    "title": "Connect my email and calendar",
+    "headings": [
+      "The short version",
+      "What each provider uses",
+      "Calendars",
+      "Servers Praxi does not know: you confirm where the password goes",
+      "What the bot may do: read first, sending is a second opt-in",
+      "Where the secrets go",
+      "When something does not work",
+      "Revoke and disconnect",
+      "Notes for the command line"
+    ],
+    "summary": "One guided flow connects your mail and your calendar. You type your address, Praxi"
   },
   {
     "doc": "connect-your-apps.md",
@@ -427,9 +457,11 @@
     "doc": "home-assistant.md",
     "title": "Home Assistant",
     "headings": [
-      "Set it up",
-      "Tools",
-      "Safety"
+      "Set it up in the app",
+      "From the command line",
+      "Tools and what asks",
+      "Safety",
+      "By hand (headless hosts)"
     ],
     "summary": "Bots can read your Home Assistant entities and call services (turn a light on,"
   },
@@ -705,6 +737,7 @@
       "Release administrator setup and dry run",
       "3. Configure and pair",
       "Coding CLIs on a server (Claude Code, Codex, Antigravity, ...)",
+      "Node.js and npm for the coding CLIs (no root needed)",
       "What is a \"desktop peer\", and does a server need one?",
       "First-run checklist for a new server",
       "Using the host from the desktop app",

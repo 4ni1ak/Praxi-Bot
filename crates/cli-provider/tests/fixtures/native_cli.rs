@@ -111,6 +111,7 @@ fn claude(args: &[String]) {
     );
 }
 
+#[allow(clippy::too_many_lines)] // the whole scripted ACP conversation of the fixture
 fn acp(args: &[String]) {
     record_launch(args);
     let mut stdin = std::io::stdin().lock();
@@ -165,6 +166,22 @@ fn acp(args: &[String]) {
         prompt = read(&mut stdin);
     }
     log("prompt", &prompt["params"]["prompt"][0]["text"].to_string());
+    // What the agent offers with a permission request: by default one allow and one reject.
+    let options = match std::env::var("FAKE_MODE").unwrap_or_default().as_str() {
+        // Every kind ACP defines, the "always" ones first: only the exact "once" may be picked.
+        "acp-permission-options" => json!([
+            {"optionId":"always","name":"Always allow","kind":"allow_always"},
+            {"optionId":"yes","name":"Allow","kind":"allow_once"},
+            {"optionId":"no","name":"Reject","kind":"reject_once"},
+            {"optionId":"never","name":"Always reject","kind":"reject_always"}]),
+        // No "once" option at all: a remembered grant must never be chosen below Full.
+        "acp-only-always" => json!([
+            {"optionId":"always","name":"Always allow","kind":"allow_always"},
+            {"optionId":"never","name":"Always reject","kind":"reject_always"}]),
+        _ => json!([
+            {"optionId":"yes","name":"Allow","kind":"allow_once"},
+            {"optionId":"no","name":"Reject","kind":"reject_once"}]),
+    };
     emit(
         &json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{
         "sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"PRIVATE_THINKING"}}}}),
@@ -173,10 +190,36 @@ fn acp(args: &[String]) {
         &json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{
         "sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"native acp"}}}}),
     );
+    // `kimi acp` 2.7.3 bridges its `AskUserQuestion` tool through `session/request_permission`
+    // (`handleQuestion` of the bundled ACP server): the question is the tool call's text, each
+    // answer is an `allow_once` option and `q0_skip` is the `reject_once` "Skip". Then a second
+    // question, then an ordinary tool permission, so one run shows both kinds.
+    if std::env::var("FAKE_MODE").as_deref() == Ok("acp-kimi-question") {
+        let question = |id: u64, text: &str, labels: &[&str]| {
+            let mut options: Vec<Value> = labels
+                .iter()
+                .enumerate()
+                .map(
+                    |(i, l)| json!({"optionId":format!("q0_opt_{i}"),"name":l,"kind":"allow_once"}),
+                )
+                .collect();
+            options.push(json!({"optionId":"q0_skip","name":"Skip","kind":"reject_once"}));
+            json!({"jsonrpc":"2.0","id":id,"method":"session/request_permission","params":{
+                "sessionId":"s1","options":options,
+                "toolCall":{"toolCallId":"turn-1:ask","title":"AskUserQuestion",
+                    "content":[{"type":"content","content":{"type":"text","text":text}}]}}})
+        };
+        emit(&question(90, "Which database?", &["Postgres", "SQLite"]));
+        log("question_answer", &read(&mut stdin).to_string());
+        emit(&question(91, "Proceed?", &["Yes", "No"]));
+        log("question_answer_2", &read(&mut stdin).to_string());
+        emit(&json!({"jsonrpc":"2.0","id":prompt["id"],"result":{"stopReason":"end_turn"}}));
+        return;
+    }
     emit(
         &json!({"jsonrpc":"2.0","id":90,"method":"session/request_permission","params":{
         "sessionId":"s1","toolCall":{"toolCallId":"t","title":"touch note.txt","kind":"execute","rawInput":{"command":"touch note.txt"}},
-        "options":[{"optionId":"yes","name":"Allow","kind":"allow_once"},{"optionId":"no","name":"Reject","kind":"reject_once"}]}}),
+        "options":options}}),
     );
     log("permission_answer", &read(&mut stdin).to_string());
     // fs was not offered: the client must refuse and keep the session alive.

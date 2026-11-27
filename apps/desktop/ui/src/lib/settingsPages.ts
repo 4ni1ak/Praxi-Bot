@@ -69,6 +69,7 @@ export const CARD_META: Record<string, CardMeta> = {
   quickAsk: { page: "general", group: "startup", advanced: true },
   hotkey: { page: "general", group: "startup", advanced: true },
   onboarding: { page: "general", group: "startup", advanced: true },
+  importAssistants: { page: "general", group: "startup" },
 
   // Appearance: the look, and readability (corners is basic: owners look for it next to the theme, #889)
   theme: { page: "appearance", group: "look" },
@@ -100,6 +101,7 @@ export const CARD_META: Record<string, CardMeta> = {
   "my-computer": { page: "connections", group: "computers" },
   "bot-workspaces": { page: "connections", group: "computers", advanced: true },
   "web-search": { page: "connections", group: "mailWeb" },
+  "connect-mail": { page: "connections", group: "mailWeb" },
   email: { page: "connections", group: "mailWeb" },
   calendar: { page: "connections", group: "mailWeb" },
   "email-channel": { page: "connections", group: "mailWeb", advanced: true },

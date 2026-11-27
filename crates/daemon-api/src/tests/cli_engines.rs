@@ -1,6 +1,7 @@
 use super::*;
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // One row per engine, one test.
 async fn registry_is_authenticated_and_preserves_confinement() {
     let t = setup();
     let no_auth = send(&t.app, Method::GET, "/v1/providers/cli", None, &[]).await;
@@ -9,7 +10,7 @@ async fn registry_is_authenticated_and_preserves_confinement() {
     assert_eq!(response.status, StatusCode::OK);
     let body = response.json();
     let rows = body.as_array().unwrap();
-    assert_eq!(rows.len(), 12);
+    assert_eq!(rows.len(), 14);
     let qwen = rows.iter().find(|r| r["detected"]["id"] == "qwen").unwrap();
     assert_eq!(qwen["native"]["support"], "experimental");
     assert_eq!(
@@ -67,6 +68,37 @@ async fn registry_is_authenticated_and_preserves_confinement() {
     assert_eq!(goose["native"]["levels"][1]["applied"], "ask");
     assert_eq!(goose["native"]["levels"][3]["native_setting"], "mode auto");
     assert_eq!(goose["auth_args"], json!([]));
+    // Data-driven engines (`providers/cli/`) look like any other row.
+    let cline = rows
+        .iter()
+        .find(|r| r["detected"]["id"] == "cline")
+        .unwrap();
+    assert_eq!(cline["native"]["support"], "experimental");
+    assert_eq!(cline["native"]["levels"][0]["offered"], true);
+    assert_eq!(cline["native"]["levels"][1]["offered"], false);
+    assert_eq!(
+        cline["native"]["levels"][3]["native_setting"],
+        "--auto-approve true"
+    );
+    assert_eq!(cline["auth_args"], json!([]));
+    // A data-driven engine's install is pinned, shown as unverified and never one-click.
+    assert_eq!(cline["install"]["command"], "npm install -g cline@3.0.76");
+    assert_eq!(cline["install"]["verified"], false);
+    assert_eq!(cline["install"]["executable"], false);
+    assert_eq!(cline["limitation"], "native_only");
+    let auggie = rows
+        .iter()
+        .find(|r| r["detected"]["id"] == "auggie")
+        .unwrap();
+    for level in 0..3 {
+        assert_eq!(auggie["native"]["levels"][level]["offered"], false);
+    }
+    assert_eq!(auggie["native"]["levels"][3]["offered"], true);
+    // No native Windows installer is listed for Auggie (the row has none there).
+    if !auggie["install"].is_null() {
+        assert_eq!(auggie["install"]["verified"], false);
+        assert_eq!(auggie["install"]["executable"], false);
+    }
     let claude = rows
         .iter()
         .find(|r| r["detected"]["id"] == "claude")
@@ -122,6 +154,10 @@ async fn install_requires_single_use_approval_and_audits_before_execution() {
         json!({"id":"claude;whoami"}),
         json!({"id":"claude", "argv":["evil"]}),
         json!({"id":"gemini"}),
+        // Data-driven engines (`providers/cli/`): unverified, so copy and run yourself, the
+        // same as an experimental built-in.
+        json!({"id":"cline"}),
+        json!({"id":"auggie"}),
     ] {
         assert_eq!(
             call(&t, Method::POST, "/v1/providers/cli/install", Some(body))

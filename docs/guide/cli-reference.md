@@ -52,7 +52,7 @@ Documented in `bot --help` and stable across client commands:
 | 3 | Daemon unreachable |
 | 4 | Authentication rejected (or missing API token, or Host/Origin refused) |
 | 5 | Not found |
-| 6 | Request rejected (invalid input, conflict, `setup_required`, or a failing `bot email test`) |
+| 6 | Request rejected (invalid input, conflict, `setup_required`, or a failing `bot email test` or `bot ha test`) |
 | 7 | The run ended with an error or was cancelled |
 
 ## Commands
@@ -138,7 +138,7 @@ but Praxi runs as praxi*) and shows the form to use.
 | Command | Meaning |
 | --- | --- |
 | `bot cli status` | The user and home folder it looked up, then each CLI: installed or not, version, where it was found, signed in, not signed in, or "sign-in file found (not checked)". `--json` prints the same as JSON. It never reads a sign-in file, only whether it exists |
-| `bot cli install <ENGINE>` | Run the engine's fixed installer as this user (the one the app's **Install on server** runs). Fetches Node.js into the data folder first when an npm package is needed and there is no npm. Engines with only a copy-and-run command say so |
+| `bot cli install <ENGINE>` | Run the engine's fixed installer as this user (the one the app's **Install on server** runs). An npm package installs with the npm on `PATH` (on a server set up by the installer: its Node.js in `/opt/praxi-nodejs`, global prefix `/var/lib/praxi/.npm-global`, no root); only when there is no npm at all, Node.js is fetched into the data folder first. Engines with only a copy-and-run command say so |
 | `bot cli login <ENGINE>` | Start the CLI's own sign-in in this terminal (`claude auth login`, `codex login`, `agy`, `vibe --setup`, ...), with its answers and the link it prints, as this user |
 
 `<ENGINE>` is the id shown by `bot cli status` (`claude`, `codex`, `cursor`, `opencode`, `agy`,
@@ -248,15 +248,23 @@ Share a bot as one file without secrets (see
 
 ### `bot import`
 
-Bring MCP servers and skills from Claude Desktop, Claude Code, OpenClaw or Hermes. A preview
-(will import / skipped and why) always comes first. Servers arrive switched off, every secret
-value goes to the secret store, and only skills the scanner rates low-risk are imported; others
-are left for `bot skills install`. Chats, notes, API keys and sign-ins are never copied.
+Bring MCP servers, skills and instructions from Claude Desktop and Claude Code, Cursor, VS Code,
+Codex, OpenClaw, Hermes or a plain folder of skill and prompt markdown. A preview (will import /
+skipped and why) always comes first. Servers arrive switched off; a secret value goes to the
+secret store only after you confirm that one value (asked per value on a terminal, or
+`--move-secrets`), and is never written as plaintext into a config. Only skills the scanner rates
+low-risk are imported; others are left for `bot skills install`. `CLAUDE.md` / `AGENTS.md` are
+added to a bot's instructions only with `--bot`. Chats, notes, API keys and sign-ins are never
+copied. The desktop app has the same flow under Settings. `run` is done by the daemon, so with
+`--server` it imports from the server's own files. The preview shows a server's whole command
+line or URL (cut with `…` when very long) and only the size of an instruction file. `--folder`
+may be any folder of that machine, but not `/proc`, `/sys`, `/dev` or a device path; links
+inside it are not followed and very large files are not read.
 
 | Subcommand | Meaning |
 | --- | --- |
-| `bot import detect` | Look for other apps' setups and show the preview; writes nothing, needs no daemon |
-| `bot import run [--from claude\|openclaw\|hermes] [--yes]` | Show the preview; with `--yes` import it (needs the daemon for servers) |
+| `bot import detect [--from APP] [--folder DIR]` | Look for other apps' setups and show the preview; writes nothing, needs no daemon |
+| `bot import run [--from APP] [--folder DIR] [--yes] [--move-secrets] [--bot BOT_ID]` | Show the preview; with `--yes` import it through the daemon. `APP` is `claude`, `cursor`, `vscode`, `codex`, `openclaw`, `hermes` or `folder` |
 
 ### `bot approve <TOOL_CALL_ID>`
 
@@ -302,6 +310,18 @@ Manage the e-mail accounts of the running daemon (see [email](email.md)). Change
 | `bot email add --provider agentmail --name <NAME> --bot <NAME_OR_ID>\|--all-bots` | Create an AgentMail inbox with **your own** AgentMail API key and add it as an account. Options: `--name-hint <TEXT>` (part before the `@`; default: the account name), `--domain <VERIFIED_DOMAIN>` (default: the shared `agentmail.to`), `--allowed-sender`, `--api-key-env <VAR>` (hidden prompt when omitted; the key is never an argument) |
 | `bot email rm <NAME>` | Remove an account and its stored password or key. `--delete-inbox` also deletes the inbox at AgentMail (irreversible; off by default) |
 | `bot email test <NAME>` | IMAP login and SMTP authentication, or the AgentMail key. Nothing is sent. Exit 6 when the check does not pass |
+
+### `bot ha`
+
+Set up Home Assistant on the running daemon (see [Home Assistant](home-assistant.md)). Owner-only; changes apply to the next tool call.
+
+| Subcommand | Meaning |
+| --- | --- |
+| `bot ha status` | Show whether it is set up, the address, which bots may use it and the services allowed without asking (never the token) |
+| `bot ha setup --url <URL>` | Check the address and the long-lived token against Home Assistant, save only if it accepts, and print the entity count. Options: `--token-env <VAR>` (hidden prompt when omitted; the token is never an argument), `--keep-token` (keep the stored token; only for the same address), `--allow <DOMAIN.SERVICE>` (repeatable: no card for that service) |
+| `bot ha test` | Check the saved setup. `--url <URL>` with `--token-env <VAR>` tries an address that is not saved. Exit 6 when Home Assistant does not accept |
+| `bot ha access` | Choose which bots may use it: `--all`, or `--bot <NAME_OR_ID>` (repeatable); with neither, no bot |
+| `bot ha remove` | Remove the setup and the stored token |
 
 ### `bot providers`
 

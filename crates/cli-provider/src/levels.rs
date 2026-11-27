@@ -8,6 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::acp_data::{self, DataId};
+
 /// Who runs the bot's file and shell actions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -114,6 +116,8 @@ pub enum Driver {
     Vibe,
     /// Goose (`goose acp`).
     Goose,
+    /// An ACP engine defined by a `providers/cli/<id>.toml` file instead of Rust code.
+    Data(DataId),
 }
 
 /// How far a driver's interface was checked.
@@ -138,7 +142,10 @@ pub enum Transport {
 }
 
 impl Driver {
-    pub const ALL: [Self; 13] = [
+    /// The drivers written in Rust. Private on purpose: it leaves out the data-driven
+    /// engines, so a loop over it would skip them (a folder rule, a consent check, a level
+    /// check) and treat them as unchecked. Everything outside this file uses [`Driver::all`].
+    const BUILT_IN: [Self; 13] = [
         Self::Claude,
         Self::Codex,
         Self::Cursor,
@@ -154,10 +161,20 @@ impl Driver {
         Self::Goose,
     ];
 
-    /// Registry id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `agy`, `qwen`, `copilot`, `kiro`, `kimi`, `qoder`, `vibe`, `goose`).
+    /// Every driver: the Rust ones, then the data-driven ACP engines.
     #[must_use]
-    pub const fn id(self) -> &'static str {
+    pub fn all() -> Vec<Self> {
+        Self::BUILT_IN
+            .into_iter()
+            .chain(acp_data::ids().map(Self::Data))
+            .collect()
+    }
+
+    /// Registry id (`claude`, `codex`, `cursor`, `opencode`, `gemini`, `agy`, `qwen`, `copilot`, `kiro`, `kimi`, `qoder`, `vibe`, `goose`, or a data-driven id).
+    #[must_use]
+    pub fn id(self) -> &'static str {
         match self {
+            Self::Data(data) => data.engine().spec.id,
             Self::Claude => "claude",
             Self::Codex => "codex",
             Self::Cursor => "cursor",
@@ -176,12 +193,16 @@ impl Driver {
 
     #[must_use]
     pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|d| d.id() == id)
+        Self::BUILT_IN
+            .into_iter()
+            .find(|d| d.id() == id)
+            .or_else(|| acp_data::data_id(id).map(Self::Data))
     }
 
     #[must_use]
-    pub const fn display_name(self) -> &'static str {
+    pub fn display_name(self) -> &'static str {
         match self {
+            Self::Data(data) => data.engine().spec.display_name,
             Self::Claude => "Claude Code",
             Self::Codex => "Codex",
             Self::Cursor => "Cursor",
@@ -199,7 +220,7 @@ impl Driver {
     }
 
     #[must_use]
-    pub const fn transport(self) -> Transport {
+    pub fn transport(self) -> Transport {
         match self {
             Self::Claude => Transport::StreamJson,
             Self::Codex => Transport::CodexAppServer,
@@ -213,14 +234,15 @@ impl Driver {
             | Self::Kimi
             | Self::Qoder
             | Self::Vibe
-            | Self::Goose => Transport::Acp,
+            | Self::Goose
+            | Self::Data(_) => Transport::Acp,
         }
     }
 
     /// Gemini CLI is not installed on the machine this was written on and its
     /// install command is unverified, so its driver ships as experimental.
     #[must_use]
-    pub const fn support(self) -> Support {
+    pub fn support(self) -> Support {
         match self {
             Self::Gemini
             | Self::OpenCode
@@ -231,7 +253,8 @@ impl Driver {
             | Self::Kimi
             | Self::Qoder
             | Self::Vibe
-            | Self::Goose => Support::Experimental,
+            | Self::Goose
+            | Self::Data(_) => Support::Experimental,
             _ => Support::Verified,
         }
     }
@@ -293,6 +316,7 @@ const fn plan(requested: ApprovalLevel, applied: ApprovalLevel, native: &'static
 pub fn level_plan(driver: Driver, level: ApprovalLevel) -> LevelPlan {
     use ApprovalLevel::{AcceptEdits, Ask, Auto, Full};
     match driver {
+        Driver::Data(data) => data.engine().level_plan(level),
         Driver::Claude => {
             let (mode, native) = match level {
                 Ask => ("default", "--permission-mode default"),
@@ -611,6 +635,7 @@ pub fn acp_args(driver: Driver, plan: &LevelPlan, model: Option<&str>) -> Option
                 args.extend(["--model".into(), m.to_owned()]);
             }
         }
+        Driver::Data(data) => return Some(data.engine().argv(plan)),
         Driver::Claude | Driver::Codex => return None,
     }
     Some(args)
@@ -619,6 +644,55 @@ pub fn acp_args(driver: Driver, plan: &LevelPlan, model: Option<&str>) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every loop over drivers (folder rules, consent, level checks) goes through
+    /// `Driver::all()`. This fails if a data-driven engine is ever left out of it, or if the
+    /// Rust-only list becomes reachable again from another module.
+    #[test]
+    fn all_includes_every_data_driven_engine() {
+        let all = Driver::all();
+        assert!(!acp_data::engines().is_empty());
+        assert_eq!(
+            all.len(),
+            Driver::BUILT_IN.len() + acp_data::engines().len(),
+            "a data-driven engine is missing from Driver::all()"
+        );
+        for engine in acp_data::engines() {
+            let driver = Driver::from_id(engine.spec.id)
+                .unwrap_or_else(|| panic!("{} has no driver", engine.spec.id));
+            assert!(matches!(driver, Driver::Data(_)), "{}", engine.spec.id);
+            assert!(all.contains(&driver), "{} is skipped", engine.spec.id);
+        }
+        // The consent and level gate holds for them too: never wider than asked, and Full is
+        // the only level that auto-allows.
+        for driver in all {
+            for level in ApprovalLevel::ALL {
+                let plan = level_plan(driver, level);
+                assert!(plan.applied.rank() <= level.rank(), "{}", driver.id());
+                assert!(level == ApprovalLevel::Full || !plan.acp_allow_all);
+            }
+        }
+        // No module outside this file can name the Rust-only list: it stays private.
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut stack = vec![src];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs")
+                    && path.file_name().is_some_and(|n| n != "levels.rs")
+                {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    assert!(
+                        !text.contains("Driver::BUILT_IN") && !text.contains("Driver::ALL"),
+                        "{} loops over a list without the data-driven engines; use Driver::all()",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     #[allow(clippy::too_many_lines)] // One table, one test.
@@ -841,14 +915,14 @@ mod tests {
             }
         }
         // Nothing widens: an applied level is never wider than the requested one.
-        for driver in Driver::ALL {
+        for driver in Driver::all() {
             for level in ApprovalLevel::ALL {
                 assert!(level_plan(driver, level).applied.rank() <= level.rank());
             }
         }
         // Full access is never the default and only Full auto-allows ACP requests.
         assert_eq!(ApprovalLevel::default(), Ask);
-        for driver in Driver::ALL {
+        for driver in Driver::all() {
             for level in [Ask, AcceptEdits, Auto] {
                 assert!(!level_plan(driver, level).acp_allow_all);
             }

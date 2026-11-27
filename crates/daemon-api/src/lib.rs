@@ -14,9 +14,11 @@
 //! other exception is `GET /v1/events`, which also accepts `?token=<token>` for
 //! browser `EventSource` clients (Host / Origin still apply).
 
+mod assistant_import_routes;
 mod attachment_routes;
 mod audit_routes;
 pub mod auth;
+mod bot_cursor_routes;
 mod bot_engine;
 mod bot_tools;
 pub mod changes;
@@ -89,6 +91,8 @@ mod calendar_routes;
 mod data_routes;
 mod elicitation_routes;
 mod embeddings_routes;
+pub mod homeassistant;
+mod homeassistant_routes;
 mod incoming_webhook;
 mod page_reader_routes;
 mod routes;
@@ -148,6 +152,7 @@ pub use doctor_routes::{DoctorHost, DoctorReport, RepairResult};
 pub use email::{EmailControl, EmailControlError};
 pub use email_channel::EmailChannelControl;
 pub use error::ApiError;
+pub use homeassistant::{HomeAssistantControl, HomeAssistantControlError};
 pub use mcp::{McpControl, McpControlError};
 pub use openapi::openapi_json;
 pub use policy::{PolicyLoadError, load_policy, validate_policy};
@@ -329,6 +334,8 @@ struct Inner {
     email_tests: Arc<tokio::sync::Semaphore>,
     /// Calendar account management (see [`AppState::set_calendar`]).
     calendar: OnceLock<Arc<dyn CalendarControl>>,
+    /// Home Assistant setup (see [`AppState::set_homeassistant`]).
+    homeassistant: OnceLock<Arc<dyn HomeAssistantControl>>,
     /// Web search settings management (see [`AppState::set_web`]).
     web: OnceLock<Arc<dyn WebControl>>,
     /// Dictation (speech-to-text) management (see [`AppState::set_voice`]).
@@ -342,6 +349,8 @@ struct Inner {
     connection_tests: Arc<tokio::sync::Semaphore>,
     /// Write-only secret sink of `POST /v1/secrets/{name}`.
     secrets: OnceLock<Arc<dyn secret_store::SecretStore>>,
+    /// Where other assistants keep their files (default: this machine; see [`AppState::set_import_roots`]).
+    import_roots: OnceLock<assistant_import::Roots>,
     owner_key: OnceLock<String>,
     /// Owner-stored fill secrets (see [`AppState::set_fill_secrets`]).
     fill_secrets: OnceLock<Arc<secret_store::FillSecrets>>,
@@ -511,6 +520,7 @@ impl AppState {
         let cli_models = cli_provider::models::ModelCache::load(Some(
             storage.data_dir().join("cache").join("cli-models.json"),
         ));
+        bot_cursor_routes::load(storage.data_dir());
         let state = Self(Arc::new(Inner {
             schedule_events: tokio::sync::broadcast::channel(64).0,
             owner_notify: owner_notify::Hub::load(storage.data_dir()),
@@ -541,6 +551,7 @@ impl AppState {
             email_channel: OnceLock::new(),
             email_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             calendar: OnceLock::new(),
+            homeassistant: OnceLock::new(),
             web: OnceLock::new(),
             voice: OnceLock::new(),
             skills: OnceLock::new(),
@@ -548,6 +559,7 @@ impl AppState {
             web_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             connection_tests: Arc::new(tokio::sync::Semaphore::new(EMAIL_TESTS_AT_ONCE)),
             secrets: OnceLock::new(),
+            import_roots: OnceLock::new(),
             owner_key: OnceLock::new(),
             fill_secrets: OnceLock::new(),
             schedules: parking_lot::Mutex::new(None),
@@ -712,6 +724,12 @@ impl AppState {
         let _ = self.0.calendar.set(calendar);
     }
 
+    /// Enable `/v1/homeassistant*` with the embedder Home Assistant manager (call once,
+    /// before serving; a second call is ignored).
+    pub fn set_homeassistant(&self, homeassistant: Arc<dyn HomeAssistantControl>) {
+        let _ = self.0.homeassistant.set(homeassistant);
+    }
+
     /// Enable `/v1/web/search*` with the embedder web-search manager (call once,
     /// before [`serve`]; a second call is ignored).
     pub fn set_web(&self, web: Arc<dyn WebControl>) {
@@ -751,6 +769,16 @@ impl AppState {
             let _ =
                 incoming_webhook::migrate_legacy_secrets(self.storage(), for_migration.as_ref());
         }
+    }
+
+    /// Where `POST /v1/import/scan` looks for other assistants' files instead of this machine's
+    /// home folder (call once; a second call is ignored). Tests use it.
+    pub fn set_import_roots(&self, roots: assistant_import::Roots) {
+        let _ = self.0.import_roots.set(roots);
+    }
+
+    pub(crate) fn import_roots(&self) -> Option<assistant_import::Roots> {
+        self.0.import_roots.get().cloned()
     }
 
     /// Add desktop / browser facts and repairs to `/v1/doctor` (call once;
@@ -815,6 +843,10 @@ impl AppState {
 
     pub(crate) fn calendar(&self) -> Option<Arc<dyn CalendarControl>> {
         self.0.calendar.get().cloned()
+    }
+
+    pub(crate) fn homeassistant(&self) -> Option<Arc<dyn HomeAssistantControl>> {
+        self.0.homeassistant.get().cloned()
     }
 
     pub(crate) fn web(&self) -> Option<Arc<dyn WebControl>> {
@@ -1353,6 +1385,7 @@ fn api_routes() -> Router<AppState> {
     use composio_routes as c;
     use email_routes as e;
     use fill_routes as f;
+    use homeassistant_routes as ha;
     use live_view as v;
     use mcp_routes as m;
     use routes as r;
@@ -1443,6 +1476,7 @@ fn api_routes() -> Router<AppState> {
         .route("/v1/health", get(r::health))
         .route("/v1/view/targets", get(v::targets))
         .route("/v1/view/availability", get(v::availability))
+        .route("/v1/view/bot-terminals", get(v::terminals))
         .route("/v1/peer/link", get(peer::link))
         .route("/v1/view/status", get(v::status))
         .route("/v1/view/targets/{id}/thumbnail", get(v::thumbnail))
@@ -1672,6 +1706,10 @@ fn api_routes() -> Router<AppState> {
             "/v1/missions/{id}/answers",
             post(mission_routes::answer_mission),
         )
+        .route(
+            "/v1/bot-cursor",
+            get(bot_cursor_routes::get_bot_cursor).put(bot_cursor_routes::put_bot_cursor),
+        )
         .route("/v1/owner-notices", get(owner_notify::list_notices))
         .route(
             "/v1/owner-notices/settings",
@@ -1749,6 +1787,8 @@ fn api_routes() -> Router<AppState> {
         )
         .route("/v1/skills/draft/preview", post(skill_draft::draft_preview))
         .route("/v1/skills/draft/install", post(skill_draft::draft_install))
+        .route("/v1/import/scan", post(assistant_import_routes::scan))
+        .route("/v1/import/run", post(assistant_import_routes::run))
         .route("/v1/skills/hub/preview", post(skill_hub::hub_preview))
         .route("/v1/skills/hub/install", post(skill_hub::hub_install))
         .route("/v1/skills/market/index", post(skill_market::market_index))
@@ -2043,6 +2083,17 @@ fn api_routes() -> Router<AppState> {
             axum::routing::put(cal::update_calendar_account).delete(cal::delete_calendar_account),
         )
         .route("/v1/calendar/test", post(cal::test_calendar))
+        .route(
+            "/v1/homeassistant",
+            get(ha::get_homeassistant)
+                .put(ha::put_homeassistant)
+                .delete(ha::delete_homeassistant),
+        )
+        .route(
+            "/v1/homeassistant/bots",
+            axum::routing::put(ha::put_homeassistant_bots),
+        )
+        .route("/v1/homeassistant/test", post(ha::test_homeassistant))
         .route(
             "/v1/connection-test/provider",
             post(connection_test::test_provider),

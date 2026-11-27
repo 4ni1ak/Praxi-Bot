@@ -27,12 +27,23 @@
     "summary": "Her botun, çalışmalar arasında kullandığı küçük bir yerleşik not defteri vardır: uzun bir görevin planı, bir kontrol listesi, yarın lazım olacak bilgiler. Araçlar: notes_read (notları listeler, birin…"
   },
   {
+    "doc": "tr/app-catalog.md",
+    "title": "Her uygulamayı bağlamak için ne gerekir",
+    "headings": [
+      "Oturum açmanın dört yolu",
+      "Katalog",
+      "İlgili sayfalar"
+    ],
+    "summary": "Uygulamalar listesindeki her uygulama, özenle seçilmiş bir katalogdan gelir. Bu sayfa, her biri"
+  },
+  {
     "doc": "tr/apps.md",
     "title": "Uygulamaları bağlama (Uygulamalar penceresi)",
     "headings": [
       "Composio hesabını bağla",
       "Uygulamayı bağla ve yönet",
       "Hangi işlem çalışmadan önce sorar",
+      "Home Assistant",
       "MCP sunucuları",
       "MCP sunucusunun durumu",
       "Bağlantıları yönetmek ve oturumu kapatmak",
@@ -108,6 +119,7 @@
       "Profilde izinler",
       "Araç süzgeçleri",
       "Tarayıcı nasıl hareket eder",
+      "Botun kendi imleci",
       "Adıyla tıklanacak bir şey olmadığında",
       "Dosyalar ve sekmeler",
       "Bir adım başarısız olduğunda",
@@ -174,7 +186,8 @@
     "headings": [
       "Güvenlik sınırı",
       "Yerel kanıtlar ve kaynak belirtme",
-      "Bir CLI'yı kendi araçlarıyla çalıştırma (motor kipi)"
+      "Bir CLI'yı kendi araçlarıyla çalıştırma (motor kipi)",
+      "Veri dosyasıyla tanımlanan motorlar"
     ],
     "summary": "Ayarlar bölümündeki sağlayıcılar sayfası, daemon'ın çalıştığı bilgisayardaki CLI motorlarını listeler. Yeniden tara düğmesi, sınırlı sürüm ve kimlik doğrulama yoklamalarını yeniden çalıştırır. Algıla…"
   },
@@ -205,6 +218,7 @@
       "bot grants",
       "bot schedules",
       "bot email",
+      "bot ha",
       "bot providers",
       "bot catalog",
       "bot secrets",
@@ -232,6 +246,22 @@
       "Doğrulanmayanlar"
     ],
     "summary": "Sohbet Bu bilgisayar'ı kullanıyorsa ve sahip anahtarı Botlarım bu bilgisayarı kullanabilsin açıksa,"
+  },
+  {
+    "doc": "tr/connect-email-calendar.md",
+    "title": "E-postamı ve takvimimi bağla",
+    "headings": [
+      "Kısaca",
+      "Hangi sağlayıcı neyi kullanır",
+      "Takvimler",
+      "Praxi'nin tanımadığı sunucular: parolanın nereye gideceğini sen onaylarsın",
+      "Bot neleri yapabilir: önce okuma, göndermek ikinci bir onay",
+      "Gizli bilgiler nereye gider",
+      "Bir şey çalışmazsa",
+      "İptal etme ve bağlantıyı kesme",
+      "Komut satırı için"
+    ],
+    "summary": "Tek bir yönlendirmeli akış e-postanı ve takvimini bağlar. Adresini yazarsın; Praxi"
   },
   {
     "doc": "tr/connect-your-apps.md",
@@ -422,9 +452,11 @@
     "doc": "tr/home-assistant.md",
     "title": "Home Assistant",
     "headings": [
-      "Kurulum",
-      "Araçlar",
-      "Güvenlik"
+      "Uygulamadan kurulum",
+      "Komut satırından",
+      "Araçlar ve neler sorar",
+      "Güvenlik",
+      "Elle (ekransız sunucular)"
     ],
     "summary": "Botlar Home Assistant varlıklarını okuyabilir ve servisleri çağırabilir (ışığı açmak, termostatı ayarlamak gibi)."
   },
@@ -681,6 +713,7 @@
       "Sürüm yöneticisi kurulumu ve deneme çalıştırması",
       "3. Ayarla ve eşleştir",
       "Sunucuda kodlama CLI'ları (Claude Code, Codex, Antigravity, ...)",
+      "Kodlama CLI'ları için Node.js ve npm (root gerekmez)",
       "\"Masaüstü eşi\" nedir, sunucunun buna ihtiyacı var mı?",
       "Yeni sunucu için ilk çalıştırma kontrol listesi",
       "Sunucuyu masaüstü uygulamasından kullanma",

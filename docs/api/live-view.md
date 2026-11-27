@@ -35,6 +35,9 @@ Frame viewers do not register as overlay controllers.
 ## HTTP and wire contract
 
 - `GET /v1/view/targets` lists registered opaque targets and capability reasons.
+- `GET /v1/view/bot-terminals` lists the terminal sessions the bot runs (`shell_interactive`) as masked
+  text: id, command, state, exit code, size and the current screen. Same `screen:view` rule as the
+  targets; read-only (there is no write route), so input still only travels through a takeover.
 - `POST /v1/view/sessions` creates a watch session. Maximum two per actor, four
   per daemon, and two distinct capture targets. Session TTL is 30 seconds.
 - `GET /v1/view/sessions/{id}/frames` requires
@@ -166,6 +169,23 @@ Pointer movement and scrolling of the managed browser follow `human_like` (`off`
 `host.toml` `[browser] human_like`, or `BOT_BROWSER_HUMAN_LIKE`): `auto` moves smoothly only while a
 viewer is subscribed or the window is visible.
 The adapter must call `CdpDriver::set_takeover_pin` for active takeover only.
+
+## The bot's own pointer
+
+A frame header may carry `bot_pointer: {x, y, click_seq}`: where the bot's own pointer is on that
+frame, as fractions (`0..1`) of its width and height from the top-left corner, and a counter of the
+bot's clicks (a viewer plays a ripple when it grows). It is left out when the bot has no pointer on
+the screen (it stopped, the owner took control, the point is off the picture) and when the owner
+switched the bot cursor off, so older viewers and golden records are unchanged. The host fills it for
+desktop frames only: the managed browser draws its cursor inside the page, so browser frames already
+contain it. Viewers draw it as a marker over the picture and never as input; it is not a second
+pointer for the owner.
+
+`GET /v1/bot-cursor` returns `{"enabled": true|false}` and `PUT /v1/bot-cursor` (owner only, audited)
+changes it. It is stored in `bot-cursor.json` in the data directory, on by default, and switches the
+desktop overlay, the in-page browser cursor and `bot_pointer` together. It never changes what a bot is
+allowed to do. `BOT_APP_OVERLAY=1` (set by the desktop app on the daemon it starts) tells the daemon
+that the app draws the desktop pointer in its own overlay windows, so the daemon does not open one.
 
 The global event stream (`GET /v1/events`, not replayed) carries
 `control_state_changed` (`state` acquiring/active/paused/released/recovered,

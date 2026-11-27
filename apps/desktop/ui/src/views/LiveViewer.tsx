@@ -10,11 +10,14 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { BotCursor } from "../components/BotCursor";
 import { PeerLinkBadge } from "../components/PeerLinkBadge";
 import { Button } from "ui";
 import { PendingDecisions } from "../components/PendingDecisions";
 import { TargetPicker } from "../components/TargetPicker";
 import { LiveViewMenu } from "./LiveViewMenu";
+import { LiveTerminals } from "./LiveTerminals";
+import { terminalsForTarget } from "../lib/liveTerminals";
 import type { HumanAction, TargetInfo } from "../api/types";
 import {
   computeImageRect,
@@ -31,6 +34,7 @@ import {
   zoomPercent
 } from "../lib/liveViewScale";
 import { useOsFullscreen } from "../state/useOsFullscreen";
+import { useDevicePixelRatio } from "../state/useDevicePixelRatio";
 import {
   createStageController,
   wheelBelongsToRemote,
@@ -46,6 +50,8 @@ import {
   summarizeTarget,
   visibleActions
 } from "../lib/liveViewState";
+import { placeCursor, showBotCursor } from "../lib/botCursor";
+import { useReducedMotion } from "../lib/useReducedMotion";
 import { viewerKeyAction } from "../lib/liveViewLayers";
 import {
   toggleFit,
@@ -164,6 +170,7 @@ export function LiveViewer({
     streamFailure,
     targetsError,
     availability,
+    terminals,
     retryStream,
     viewerOpen,
     loadingTargets,
@@ -204,6 +211,9 @@ export function LiveViewer({
   const [fit, setFit] = useState<FitMode>("fit");
   // The screen always opens fitted whole; 1:1 and zoom are the owner's choice for this viewing only.
   const [scale, setScale] = useState<ViewScale>(FIT_SCALE);
+  const dpr = useDevicePixelRatio(viewerOpen);
+  const dprRef = useRef(dpr);
+  dprRef.current = dpr;
   const osFullscreen = useOsFullscreen(viewerOpen);
   const osFullscreenRef = useRef(osFullscreen);
   osFullscreenRef.current = osFullscreen;
@@ -307,6 +317,7 @@ export function LiveViewer({
   // Reset captured pointer/key state if stage ceases to allow input.
   const inputGate = canSendLiveInput(state, Date.now());
   const isInteractive = inputGate.ok;
+  const reducedMotion = useReducedMotion();
 
   const isInteractiveRef = useRef(isInteractive);
   isInteractiveRef.current = isInteractive;
@@ -344,7 +355,7 @@ export function LiveViewer({
   const contentRef = useRef(content);
   contentRef.current = content;
   const applyScale = useCallback((action: "fit" | "actual" | "in" | "out") => {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = dprRef.current;
     setScale((current) =>
       action === "fit"
         ? FIT_SCALE
@@ -588,6 +599,13 @@ export function LiveViewer({
         }
       : null;
 
+  // The bot's own pointer at its last position on the frame; the owner's pointer is their own.
+  const botPose = state.latestFrame?.botPointer ?? null;
+  const botCursorAt =
+    contained && showBotCursor({ pose: botPose, ownerDriving: isInteractive }) && botPose
+      ? placeCursor(botPose, contained)
+      : null;
+
   const unavailableReason =
     state.reason ?? targetSummary?.reason ?? (selectedTarget ? null : "unavailable");
 
@@ -628,7 +646,6 @@ export function LiveViewer({
   // "Desktop · This computer", not the internal id "local".
   const hostLabel = (hostId: string) => (hostId === "local" ? t("computerCard.thisComputer") : hostId);
 
-  const dpr = window.devicePixelRatio || 1;
   const geometry = stageGeometry(scale, area, content, dpr);
   // A zoomed picture larger than the area scrolls. While watching, the area takes the keyboard focus
   // so the arrow keys and Page Up/Down scroll it; while driving, every key belongs to the remote.
@@ -863,6 +880,16 @@ export function LiveViewer({
                     />
                   ) : null}
 
+                  {botCursorAt && botPose ? (
+                    <BotCursor
+                      left={botCursorAt.left}
+                      top={botCursorAt.top}
+                      clickSeq={botPose.clickSeq}
+                      animate={!reducedMotion}
+                      testId="live-viewer-bot-cursor"
+                    />
+                  ) : null}
+
                   {actionOverlayStyle && panelAction ? (
                     <div
                       className={styles.actionBox}
@@ -920,6 +947,7 @@ export function LiveViewer({
               )}
             </div>
             </div>
+            <LiveTerminals terminals={terminalsForTarget(terminals, selectedTarget)} />
             <div
               ref={focusBarRef}
               className={styles.focusSlot}

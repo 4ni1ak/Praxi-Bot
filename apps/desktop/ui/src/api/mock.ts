@@ -5,14 +5,18 @@ import { applyPatchOps, type PatchOp } from "../lib/botPatch.ts";
 import { ApiClient, ApiError } from "./client.ts";
 import { MOCK_MCP_CATALOG } from "./mockCatalog.ts";
 import { seedKnowledgeSources } from "./mockLibrary.ts";
+import { mockImportRun, mockImportScan } from "./mockImport.ts";
 import { MockHostSetup } from "./mockHostSetup.ts";
 import { MockLiveViewService } from "./mockLiveView.ts";
 import { MockMissions } from "./mockMissions.ts";
 import { MockTriggers } from "./mockTriggers.ts";
 import { longChatEvents, longChatMessages } from "./mockLongChat.ts";
 import type {
+  ImportRunInput,
+  ImportScanInput,
   BotSpendLimits,
   CreateMission,
+  BotCursorSettings,
   OwnerNotifySettings,
   MissionAnswer,
   BrowserProfileStatus,
@@ -41,6 +45,7 @@ import type {
   McpServer,
   McpServerConfig,
   McpTool,
+  BotTerminal,
   Message,
   OwnSkill,
   PolicyDto,
@@ -57,6 +62,9 @@ import type {
   CalendarAccount,
   CalendarAccountInput,
   CalendarTestInput,
+  HomeAssistantInput,
+  HomeAssistantSettings,
+  HomeAssistantTestInput,
   WebSearchConfig,
   WebSearchConfigInput,
   WebSearchTestInput,
@@ -857,8 +865,35 @@ const DOCTOR_CHECKS: DoctorCheck[] = [
  * An in-memory daemon: the typed client methods run unchanged against it, so
  * the UI and its tests exercise the real request paths.
  */
+/** Two terminals a bot has open (mock mode `?lvTerm=1`): one waiting for the owner, one that finished. */
+const MOCK_BOT_TERMINALS: BotTerminal[] = [
+  {
+    id: "mock-term-1",
+    bot_id: null,
+    command: "claude auth login",
+    state: "waiting_for_input",
+    exit_code: null,
+    cols: 120,
+    rows: 30,
+    age_secs: 12,
+    screen: "Open this link to sign in:\n  https://claude.example/device\nYour code: AB12-CD34\n\nPaste code here > "
+  },
+  {
+    id: "mock-term-2",
+    bot_id: null,
+    command: "npm install",
+    state: "finished",
+    exit_code: 0,
+    cols: 120,
+    rows: 30,
+    age_secs: 95,
+    screen: "added 212 packages in 14s\n\n38 packages are looking for funding\n  run `npm fund` for details"
+  }
+];
+
 export class MockApiClient extends ApiClient {
   private readonly incomingWebhooks = new Map<string, IncomingWebhook[]>();
+  private botCursor: BotCursorSettings = { enabled: true };
   private ownerNotify: OwnerNotifySettings = {
     finished: true,
     failed: true,
@@ -1640,6 +1675,10 @@ export class MockApiClient extends ApiClient {
     const seg = path.split("/").filter(Boolean).map(decodeURIComponent);
     if (path === "/connectivity" && method === "GET") return ok({ services: [] });
     if (seg[0] === "bots" && seg[2] === "triggers") return ok(this.triggers.route(method, seg, opts.body));
+    if (path === "/bot-cursor") {
+      if (method === "PUT") this.botCursor = opts.body as BotCursorSettings;
+      return ok(this.botCursor);
+    }
     if (seg[0] === "owner-notices") {
       if (seg[1] === "settings") {
         if (method === "PUT") this.ownerNotify = opts.body as OwnerNotifySettings;
@@ -1659,6 +1698,10 @@ export class MockApiClient extends ApiClient {
     }
     if (seg[0] === "knowledge" && seg[1] === "folders" && method === "GET") return ok(mockFolderListing(String(opts.query?.path ?? "")));
     if (seg[0] === "bots" && seg[2] === "knowledge" && seg[3] === "folder-preview" && method === "POST") return ok(mockFolderPreview((opts.body as { path: string }).path));
+    if (seg[0] === "import" && method === "POST") {
+      if (seg[1] === "scan") return ok(mockImportScan((opts.body ?? {}) as ImportScanInput));
+      if (seg[1] === "run") return ok(mockImportRun(opts.body as ImportRunInput));
+    }
     if (seg[0] === "bots" && seg[2] === "incoming-webhooks") {
       return ok(this.incomingWebhookRoute(method, seg, opts.body));
     }
@@ -2951,6 +2994,11 @@ export class MockApiClient extends ApiClient {
       case "PUT /calendar":
       case "DELETE /calendar":
         return ok(this.calendar(method, seg, opts.body));
+      case "GET /homeassistant":
+      case "PUT /homeassistant":
+      case "POST /homeassistant":
+      case "DELETE /homeassistant":
+        return ok(this.homeAssistantRoute(method, seg, opts.body));
       default:
         throw new ApiError(404, "not_found", `mock: ${method} ${path}`);
     }
@@ -2972,6 +3020,11 @@ export class MockApiClient extends ApiClient {
     if (sub === "availability" && method === "GET") {
       const none = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("lv") === "nodisplay";
       return none ? [{ kind: "desktop", code: "no_display" }] : [];
+    }
+    if (sub === "bot-terminals" && method === "GET") {
+      // Review state (mock mode only): `?lvTerm=1` is a bot with two terminals open (#894).
+      const shown = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("lvTerm") === "1";
+      return shown ? MOCK_BOT_TERMINALS : [];
     }
     if (sub === "privileges" && method === "PUT" && id) {
       return undefined;
@@ -3498,6 +3551,58 @@ export class MockApiClient extends ApiClient {
     };
     this.calendarAccounts[at] = next;
     return structuredClone(next);
+  }
+
+  private homeAssistant: (HomeAssistantSettings & { token: string }) | null = null;
+
+  private homeAssistantRoute(method: string, seg: string[], body: unknown): unknown {
+    const [, sub] = seg;
+    const view = (): HomeAssistantSettings =>
+      this.homeAssistant
+        ? { configured: true, url: this.homeAssistant.url, token_set: true, trusted_services: [...this.homeAssistant.trusted_services], bots: this.homeAssistant.bots ? [...this.homeAssistant.bots] : null }
+        : { configured: false, url: null, token_set: false, trusted_services: [], bots: null };
+    if (sub === "test" && method === "POST") {
+      const input = (body ?? {}) as HomeAssistantTestInput;
+      if (!input.url && !input.token) {
+        if (!this.homeAssistant) throw new ApiError(404, "not_found", "Home Assistant is not set up");
+        return { ok: true, entities: 42, error: null };
+      }
+      if (!input.url || !input.token) {
+        throw new ApiError(422, "bad_homeassistant_config", "give the address and the access key together");
+      }
+      return input.token === "wrong"
+        ? { ok: false, entities: null, error: "Home Assistant refused the access key. Create a new long-lived access key in your Home Assistant profile (Security) and try again." }
+        : { ok: true, entities: 42, error: null };
+    }
+    if (sub === "bots" && method === "PUT") {
+      if (!this.homeAssistant) throw new ApiError(404, "not_found", "Home Assistant is not set up");
+      this.homeAssistant.bots = ((body ?? {}) as { bots: string[] | null }).bots;
+      return view();
+    }
+    if (method === "PUT") {
+      const input = (body ?? {}) as HomeAssistantInput;
+      if (input.token === "wrong") {
+        throw new ApiError(422, "bad_homeassistant_config", "Home Assistant refused the access key. Create a new long-lived access key in your Home Assistant profile (Security) and try again.");
+      }
+      if (!input.token && (!this.homeAssistant || this.homeAssistant.url !== input.url)) {
+        throw new ApiError(422, "bad_homeassistant_config", "an access key is needed");
+      }
+      this.homeAssistant = {
+        configured: true,
+        url: input.url,
+        token_set: true,
+        token: input.token ?? this.homeAssistant?.token ?? "",
+        trusted_services: input.trusted_services ?? [],
+        bots: this.homeAssistant?.bots ?? null
+      };
+      return { settings: view(), entities: 42 };
+    }
+    if (method === "DELETE") {
+      if (!this.homeAssistant) throw new ApiError(404, "not_found", "Home Assistant is not set up");
+      this.homeAssistant = null;
+      return undefined;
+    }
+    return view();
   }
 
   private web(method: string, seg: string[], body: unknown): unknown {

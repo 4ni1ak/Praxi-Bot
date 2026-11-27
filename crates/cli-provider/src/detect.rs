@@ -149,7 +149,11 @@ impl PathEnv {
                 ENGINE_ENV.contains(&key.as_str())
                     || matches!(
                         key.as_str(),
-                        "NPM_CONFIG_PREFIX" | "NVM_SYMLINK" | "PROGRAMFILES"
+                        "NPM_CONFIG_PREFIX"
+                            | "NPM_CONFIG_GLOBALCONFIG"
+                            | "NPM_CONFIG_REGISTRY"
+                            | "NVM_SYMLINK"
+                            | "PROGRAMFILES"
                     )
             })
             .collect();
@@ -164,8 +168,11 @@ impl PathEnv {
             sealed_fixture: false,
         };
         crate::search::augment(&mut env);
+        // Praxi's own runtime in the data folder is the fallback for a machine with no npm. The
+        // installer's Node.js (or the admin's) on the search path wins, so every CLI lands in the
+        // one prefix the terminal and the `praxi` command also use.
         if let Some(data) = crate::node_runtime::registered_data_dir() {
-            env = env.with_node_runtime(data);
+            env = env.with_node_runtime_fallback(data);
         }
         env
     }
@@ -194,6 +201,17 @@ impl PathEnv {
             env_vars: HashMap::new(),
             sealed_fixture: true,
         }
+    }
+
+    /// [`Self::with_node_runtime`] only when no `npm` is on the search path yet: Praxi's own runtime
+    /// is the fallback for a machine without one, never a replacement for the installer's or the
+    /// admin's Node.js (two npm prefixes would split the installed CLIs between them).
+    #[must_use]
+    pub fn with_node_runtime_fallback(self, data: &std::path::Path) -> Self {
+        if find_candidate("npm", &self).is_some() {
+            return self;
+        }
+        self.with_node_runtime(data)
     }
 
     /// Put Praxi's own Node.js runtime (and its npm prefix) in front of the search path, when one
@@ -1327,6 +1345,16 @@ impl Detector {
             claude, codex, cursor, opencode, gemini, agy, qwen, copilot, kiro, kimi, qoder, vibe,
             goose,
         ];
+        // Data-driven ACP engines (`providers/cli/`): version probe only, sign-in is never
+        // claimed because their entries state no verified status command.
+        rows.extend(
+            futures::future::join_all(
+                crate::acp_data::engines()
+                    .iter()
+                    .map(|engine| self.probe_unverified_auth(engine.spec.id)),
+            )
+            .await,
+        );
         // Gemini CLI is retired (Antigravity replaces it): never offered for install,
         // listed only where it is already installed so that setup keeps working.
         rows.retain(|r| r.id != "gemini" || r.installed);

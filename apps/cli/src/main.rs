@@ -21,6 +21,7 @@ mod doctor;
 mod email_channel_host;
 mod email_cmd;
 mod email_host;
+mod ha_cmd;
 mod homeassistant_host;
 mod host;
 mod host_compat;
@@ -280,7 +281,7 @@ enum Command {
         action: profile_cmd::ProfileCmd,
     },
     #[allow(clippy::doc_markdown)] // help text; product names stay plain
-    /// Bring MCP servers and skills from Claude, OpenClaw or Hermes (preview first).
+    /// Bring MCP servers, skills and instructions from Claude, Cursor, VS Code, Codex, OpenClaw, Hermes or a folder (preview first).
     Import {
         #[command(subcommand)]
         action: import_cmd::ImportCmd,
@@ -307,6 +308,11 @@ enum Command {
     Email {
         #[command(subcommand)]
         action: EmailCmd,
+    },
+    /// Set up Home Assistant: address, access token, which bots may use it.
+    Ha {
+        #[command(subcommand)]
+        action: HaCmd,
     },
     /// Manage daemon MCP servers and stdio exposure.
     Mcp {
@@ -413,6 +419,59 @@ enum SchedulesCmd {
         /// Schedule ID (see `bot schedules list`).
         id: String,
     },
+}
+
+#[derive(Subcommand)]
+#[allow(clippy::doc_markdown)] // doc comments are the --help text; product names stay plain
+enum HaCmd {
+    /// Show whether Home Assistant is set up, for which bots, and which services bots may call
+    /// without asking (never the access token).
+    Status,
+    /// Set up (or change) Home Assistant: the daemon checks the address and the token against the
+    /// hub, saves them only if it accepts, and the tools work at once.
+    ///
+    /// Example:
+    ///   HA_TOKEN=... bot ha setup --url http://homeassistant.local:8123 --token-env HA_TOKEN
+    ///
+    /// Plain devices (lights, switches, climate, media) follow each bot's access level; everything
+    /// else (locks, alarms, garage doors, scripts ...) always asks the owner.
+    /// `--allow cover.open_cover` lets bots call that one service without a card.
+    Setup {
+        /// Address of Home Assistant (https, or http on your home network).
+        #[arg(long)]
+        url: String,
+        /// Environment variable holding the long-lived access token (hidden prompt when omitted).
+        #[arg(long)]
+        token_env: Option<String>,
+        /// Keep the stored token (only when the address is unchanged).
+        #[arg(long, conflicts_with = "token_env")]
+        keep_token: bool,
+        /// A service bots may call without a card, as domain.service (repeatable).
+        #[arg(long = "allow", value_name = "DOMAIN.SERVICE")]
+        allow: Vec<String>,
+    },
+    /// Check the saved setup, or an address and token that are not saved (`--url`), and count
+    /// the entities. Exit code 6 when Home Assistant did not accept.
+    Test {
+        /// Try this address instead of the saved one (needs the token).
+        #[arg(long)]
+        url: Option<String>,
+        /// Environment variable holding the access token for `--url` (hidden prompt when omitted).
+        #[arg(long, requires = "url")]
+        token_env: Option<String>,
+    },
+    /// Choose which bots may use Home Assistant: `--all` (every bot) or `--bot` (repeatable); with
+    /// neither, no bot.
+    Access {
+        /// Let this bot use it (name or ID; repeatable).
+        #[arg(long = "bot")]
+        bots: Vec<String>,
+        /// Every bot may use it.
+        #[arg(long, conflicts_with = "bots")]
+        all: bool,
+    },
+    /// Remove Home Assistant and its stored token: the tools disappear from every bot.
+    Remove,
 }
 
 #[derive(Subcommand)]
@@ -837,6 +896,7 @@ fn run() -> Result<()> {
                 | Command::Schedules { .. }
                 | Command::Workflow { .. }
                 | Command::Email { .. }
+                | Command::Ha { .. }
                 | Command::Grants { .. }
                 | Command::Channels {
                     action: ChannelsCmd::Telegram {
@@ -880,8 +940,16 @@ fn run() -> Result<()> {
             return skills_cmd::run(&data_dir, action, cli.json, &mut std::io::stdout());
         }
         Command::Import {
-            action: import_cmd::ImportCmd::Detect,
-        } => return import_cmd::detect(&data_dir, cli.json, &mut std::io::stdout()),
+            action: import_cmd::ImportCmd::Detect { from, folder },
+        } => {
+            return import_cmd::detect(
+                &data_dir,
+                from.as_deref(),
+                folder.as_deref(),
+                cli.json,
+                &mut std::io::stdout(),
+            );
+        }
         Command::Mcp {
             action: McpCmd::Serve(args),
         } => return mcp_serve::run(&cli, args, &data_dir),
@@ -925,6 +993,7 @@ fn run() -> Result<()> {
         | Command::Schedules { .. }
         | Command::Workflow { .. }
         | Command::Email { .. }
+        | Command::Ha { .. }
         | Command::Mcp { .. }
         | Command::Grants { .. }
         | Command::Channels {
@@ -1073,6 +1142,7 @@ fn run() -> Result<()> {
         | Command::Schedules { .. }
         | Command::Workflow { .. }
         | Command::Email { .. }
+        | Command::Ha { .. }
         | Command::Grants { .. } => Ok(()),
         Command::Providers { action } => match action {
             ProvidersCmd::Add {
@@ -1602,8 +1672,24 @@ fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Resul
             } => remote::bots_add(&c, file, json, &mut out).await,
             Command::Profile { action } => profile_cmd::run(&c, action, json, &mut out).await,
             Command::Import {
-                action: import_cmd::ImportCmd::Run { from, yes },
-            } => import_cmd::run(&c, data_dir, from.as_deref(), *yes, json, &mut out).await,
+                action:
+                    import_cmd::ImportCmd::Run {
+                        from,
+                        folder,
+                        yes,
+                        move_secrets,
+                        bot,
+                    },
+            } => {
+                let args = import_cmd::RunArgs {
+                    from: from.as_deref(),
+                    folder: folder.as_deref(),
+                    yes: *yes,
+                    move_secrets: *move_secrets,
+                    bot: bot.as_deref(),
+                };
+                import_cmd::run(&c, &args, json, &mut out).await
+            }
             Command::Chat {
                 bot_id,
                 message,
@@ -1639,6 +1725,7 @@ fn run_client(cli: &Cli, command: &Command, data_dir: &std::path::Path) -> Resul
             Command::Schedules { action } => run_schedules(&c, action, json, &mut out).await,
             Command::Workflow { action } => workflow::run(&c, action, &mut out).await,
             Command::Email { action } => run_email(&c, action, json, &mut out).await,
+            Command::Ha { action } => run_ha(&c, action, json, &mut out).await,
             Command::Mcp { action } => run_mcp(&c, action, json, &mut out).await,
             Command::Channels {
                 action:
@@ -1703,6 +1790,60 @@ async fn run_mcp(
     let parsed =
         mcp_paste::parse_argv(&input, name.as_deref()).map_err(|e| email_cmd::rejected(&e))?;
     mcp_paste::add(c, &parsed, *dry_run, json, out).await
+}
+
+async fn run_ha(
+    c: &Client,
+    action: &HaCmd,
+    json: bool,
+    out: &mut dyn std::io::Write,
+) -> Result<()> {
+    match action {
+        HaCmd::Status => ha_cmd::status(c, json, out).await,
+        HaCmd::Setup {
+            url,
+            token_env,
+            keep_token,
+            allow,
+        } => {
+            let token = if *keep_token {
+                None
+            } else {
+                Some(read_value(
+                    token_env.as_deref(),
+                    "Home Assistant long-lived access token; input hidden",
+                )?)
+            };
+            ha_cmd::setup(
+                c,
+                url,
+                token.as_ref().map(SecretValue::expose),
+                allow,
+                json,
+                out,
+            )
+            .await
+        }
+        HaCmd::Test { url, token_env } => {
+            let token = match url {
+                Some(_) => Some(read_value(
+                    token_env.as_deref(),
+                    "Home Assistant long-lived access token; input hidden",
+                )?),
+                None => None,
+            };
+            ha_cmd::test(
+                c,
+                url.as_deref(),
+                token.as_ref().map(SecretValue::expose),
+                json,
+                out,
+            )
+            .await
+        }
+        HaCmd::Access { bots, all } => ha_cmd::access(c, bots, *all, json, out).await,
+        HaCmd::Remove => ha_cmd::remove(c, json, out).await,
+    }
 }
 
 async fn run_email(

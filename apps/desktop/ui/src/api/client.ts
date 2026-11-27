@@ -11,6 +11,10 @@ import type {
   SharedProfile
 } from "../lib/profileShare";
 import type {
+  ImportRunInput,
+  ImportRunOutput,
+  ImportScanInput,
+  ImportScanOutput,
   KnowledgeSource,
   KnowledgeWatchStatus,
   KnowledgeFolderListing,
@@ -33,6 +37,7 @@ import type {
   BotMemorySettings,
   BotMemorySettingsInput,
   OwnerNotice,
+  BotCursorSettings,
   OwnerNotifySettings,
   PageReader,
   MemoryEmbedding,
@@ -176,6 +181,7 @@ import type {
   TakeoverRequest,
   TargetInfo,
   TargetUnavailable,
+  BotTerminal,
   PeerLink,
   ScreenStatus,
   TerminalInfo,
@@ -204,6 +210,11 @@ import type {
   CalendarAccountInput,
   CalendarTestInput,
   CalendarTestReport,
+  HomeAssistantInput,
+  HomeAssistantSaved,
+  HomeAssistantSettings,
+  HomeAssistantTestInput,
+  HomeAssistantTestReport,
   WebSearchConfig,
   WebSearchConfigInput,
   WebSearchTestInput,
@@ -921,6 +932,17 @@ export class ApiClient {
   importProfile(input: ImportInput): Promise<ImportOutput> {
     return this.request("POST", "/profile-share/import", { body: input });
   }
+  /**
+   * Owner-only: look in the known places of other assistants on the machine the daemon runs on
+   * (a server scans its own files). Reads only; nothing is changed, run or sent.
+   */
+  scanImport(input: ImportScanInput = {}): Promise<ImportScanOutput> {
+    return this.request("POST", "/import/scan", { body: input });
+  }
+  /** Owner-only: import the ticked items; `confirmed_secrets` are the secret slots the owner agreed to move. */
+  runImport(input: ImportRunInput): Promise<ImportRunOutput> {
+    return this.request("POST", "/import/run", { body: input });
+  }
   deleteBot(id: string): Promise<void> {
     return this.request("DELETE", `/bots/${id}`);
   }
@@ -1437,6 +1459,14 @@ export class ApiClient {
   steerMission(id: string, action: "pause" | "resume" | "cancel"): Promise<MissionDetail> {
     return this.request("POST", `/missions/${id}/${action}`);
   }
+  /** Whether the bot draws a pointer of its own (desktop overlay, browser page, live view). */
+  getBotCursor(): Promise<BotCursorSettings> {
+    return this.request("GET", "/bot-cursor");
+  }
+  /** Turn that on or off (owner only). */
+  putBotCursor(settings: BotCursorSettings): Promise<BotCursorSettings> {
+    return this.request("PUT", "/bot-cursor", { body: settings });
+  }
   /** Mission and background-run digests, oldest first; `after` = only those with a larger `seq`. */
   ownerNotices(after?: number): Promise<OwnerNotice[]> {
     return this.request("GET", "/owner-notices", { query: { after } });
@@ -1513,6 +1543,10 @@ export class ApiClient {
   /** Which kinds of screen this host cannot offer, and why. */
   listViewAvailability(): Promise<TargetUnavailable[]> {
     return this.request("GET", "/view/availability");
+  }
+  /** The terminals the bot runs, as masked read-only text (they have no window in the picture). */
+  listBotTerminals(signal?: AbortSignal): Promise<BotTerminal[]> {
+    return this.request("GET", "/view/bot-terminals", { signal });
   }
   /** Idle / starting / live / paused-idle / unavailable, and the host's idle limit. */
   peerLink(signal?: AbortSignal): Promise<PeerLink | null> {
@@ -2057,6 +2091,30 @@ export class ApiClient {
   /** Try a saved account (`name`) or an unsaved login; lists its calendars. */
   testCalendar(input: CalendarTestInput): Promise<CalendarTestReport> {
     return this.request("POST", "/calendar/test", { body: input });
+  }
+
+  /** Home Assistant: owner-only. The address, whether a token is stored, the allowed services, the bots. */
+  getHomeAssistant(): Promise<HomeAssistantSettings> {
+    return this.request("GET", "/homeassistant");
+  }
+
+  /** Checks the hub first and saves only if it accepts. The `token` is write-only; omitted keeps the stored one. */
+  saveHomeAssistant(input: HomeAssistantInput): Promise<HomeAssistantSaved> {
+    return this.request("PUT", "/homeassistant", { body: input });
+  }
+
+  /** `null` = every bot, an empty list = none. */
+  setHomeAssistantBots(bots: string[] | null): Promise<HomeAssistantSettings> {
+    return this.request("PUT", "/homeassistant/bots", { body: { bots } });
+  }
+
+  removeHomeAssistant(): Promise<void> {
+    return this.request("DELETE", "/homeassistant");
+  }
+
+  /** The saved hub (empty input), or an address and token that are not saved yet. */
+  testHomeAssistant(input: HomeAssistantTestInput = {}): Promise<HomeAssistantTestReport> {
+    return this.request("POST", "/homeassistant/test", { body: input });
   }
 
   getWebSearch(): Promise<WebSearchConfig> {

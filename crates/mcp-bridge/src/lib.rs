@@ -58,6 +58,7 @@ mod manager;
 pub mod mcpb;
 pub mod oauth;
 pub mod oauth_net;
+pub mod paste;
 mod pins;
 pub mod registry;
 mod roots;
@@ -67,8 +68,8 @@ mod tool;
 mod transport;
 
 pub use catalog::{
-    CatalogEntry, CatalogInstall, RequiredFolder, RequiredSecret, builtin_catalog,
-    check_stdio_package_pin,
+    CatalogAuth, CatalogEntry, CatalogInstall, RequiredFolder, RequiredSecret, builtin_catalog,
+    check_declared_auth, check_stdio_package_pin,
 };
 pub use config::{McpConfigStore, McpServerConfig, McpTransport, OAuthConfig, TomlFileStore};
 pub use diagnostics::ExternalRedactor;

@@ -18,6 +18,16 @@ bot bots list
 `bot bots add`, dosyayı çalışan daemon'a gönderir (`bot serve` açık olmalı). Masaüstü
 uygulamasında aynı yapıyı yazan bir bot formu vardır.
 
+![Yeni bot penceresi](../images/tr/new-bot.webp)
+
+Bir botu panelindeki kalem düğmesiyle düzenlersin. Her şey tek sayfadadır; soldaki bölüm listesi seni ilgili yere götürür:
+
+![Bot düzenleyici: kimlik, talimatlar, model, nerede çalıştığı, erişim, araçlar ve uygulamalar, hafıza, harcama sınırları ve gelişmiş seçenekler tek sayfada](../images/tr/bot-editor.webp)
+
+Bot paneli botun şu an ne yaptığını gösterir; Etkinlik, Otomasyon, Kitaplık ve Araçlar sekmelerde durur:
+
+![Bir botun paneli: durumu, Yeni sohbet düğmesi ve Etkinlik, Otomasyon, Kitaplık ve Araçlar sekmeleri](../images/tr/bot-panel-activity.webp)
+
 ## Kayıtlı tarayıcı oturumları
 
 Bir botun **Araçlar** sekmesini aç ve **Kendiniz oturum açın**'ı seç. Botun çalıştığı
@@ -164,6 +174,18 @@ izleyebilirsin ve yalnızca imleç üzerindeyken açılan menüler açılabilir:
 - Tıklamalarda imleç öğeye süzülür ve basmadan önce ve basarken kısa bir süre durur; bir alana
   yazma ise kısa bir duraklamanın ardından, onaylanan alanda hâlâ tek adımda yapılır (böylece
   bir sayfa yazılanı çalamaz).
+
+### Botun kendi imleci
+
+Asistan bilgisayarı kullanırken, bilgisayar kullanan diğer uygulamalar gibi kendi imlecini çizer. Böylece nereye tıklamak üzere olduğunu görürsünüz. Tıkladığı yerde dalga çıkaran renkli bir oktur ve sizin kendi imlecinize hiç benzemez. Gerçek imlecinizi hiçbir zaman oynatmaz (tarayıcı, imleci oynatmayan hata ayıklama protokolüyle sürülür).
+
+- **Asistanın tarayıcısında** ok, sayfanın içinde küçük bir katmanla çizilir. Bu katman tıklanamaz, klavye odağını almaz, ekran okuyuculardan ve sayfa özetinden gizlidir ve yalnızca koordinat taşır. Önceki noktadan sonrakine süzülür. Siz devraldığınızda (`browser_handover`, canlı görünümde **Kontrolü al**) ya da tarayıcı kapandığında tamamen kaldırılır. Sayfa görüntüsünün parçası olduğu için canlı görünüm ve `browser_screenshot` da onu gösterir.
+- **Masaüstünde** saydam bir pencere asistanın imlecini gerçek ekranın üstünde izler, her tıklamada dalga çıkarır. Tıklama ya da odak almaz; asistan durunca veya siz kontrolü alınca kaybolur. Masaüstü uygulamasıyla birlikte, kullanılacak denetimi çerçeveleyen uygulamanın kendi katman pencereleri onu çizer. Uygulama olmadan başlatılan bir bot (Windows'ta `bot serve`, Linux'ta X11 oturumu) küçük bir pencereyle kendisi çizer. Uygulama başlattığı bota `BOT_APP_OVERLAY=1` vererek katmanı olduğunu bildirir, böylece iki imleç görmezsiniz.
+- **Canlı görünümde** ok, uzak ekranın üstünde asistanın son işaret ettiği yerde, her tıklama için bir dalgayla çizilir. Kontrol sizdeyken yalnızca kendi imleciniz görünür.
+
+**Ayarlar > Bilgisayar > Botun imlecini göster** ile kapatın: üç yerden birden kalkar. Bu yalnızca çizileni değiştirir, asistanın neye izin verildiğini değiştirmez.
+
+Asistan konuma göre tıklamadan önce noktanın altında ne olduğuna da bakar. Ekran görüntüsünden sonra üstüne başka bir öğe (tarayıcı) ya da başka bir pencere (masaüstü) geldiyse hiçbir şeye basılmaz ve sonuç şimdi orada ne olduğunu söyler. Bir öğeye tıklamadan önce öğe görünüme kaydırılır; biri izleyebiliyorsa yumuşak kaydırılır (aşağıdaki `human_like` bölümüne bakın).
 
 ### Adıyla tıklanacak bir şey olmadığında
 

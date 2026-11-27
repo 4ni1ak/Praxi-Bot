@@ -34,7 +34,7 @@ use channel_telegram::{
 use futures_util::StreamExt;
 use parking_lot::Mutex;
 use protocol::{Event, RunId, ToolCallId};
-use secret_store::{Redactor, SecretStore, SecretValue};
+use secret_store::{Redactor, SecretStore, SecretValue, screen_inbound};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -233,6 +233,15 @@ pub struct DiscordChannel {
 impl std::fmt::Debug for DiscordChannel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DiscordChannel").finish_non_exhaustive()
+    }
+}
+
+/// An inbound text with a pasted secret cut out. The flag is `Some(only_secrets)` when one was.
+/// It takes the original by value so no copy of it stays in the caller.
+fn cut_secrets(text: String) -> (String, Option<bool>) {
+    match screen_inbound(&text) {
+        Some(screened) => (screened.text, Some(screened.only_secrets)),
+        None => (text, None),
     }
 }
 
@@ -604,7 +613,12 @@ impl Inner {
         }
         match ev.kind {
             IncomingKind::Text(t) => {
-                self.on_text(&ev.chat, &ev.sender.id, &t, &ev.event_id)
+                // The owner cannot be offered the "keep it out of the chat" card here, so a pasted
+                // secret is cut out before anything else sees the message (a command argument, the
+                // daemon, the history, a log). The original is consumed here: only the redacted
+                // text goes on, and the owner is told in `on_text`.
+                let (text, cut) = cut_secrets(t);
+                self.on_text(&ev.chat, &ev.sender.id, &text, cut, &ev.event_id)
                     .await;
             }
             IncomingKind::Unsupported(label) => {
@@ -684,7 +698,14 @@ impl Inner {
     }
 
     #[allow(clippy::too_many_lines)]
-    async fn on_text(self: &Arc<Self>, chat: &ChatRef, sender: &str, text: &str, event_id: &str) {
+    async fn on_text(
+        self: &Arc<Self>,
+        chat: &ChatRef,
+        sender: &str,
+        text: &str,
+        cut: Option<bool>,
+        event_id: &str,
+    ) {
         let Some(parts) = parse_chat(chat) else {
             return;
         };
@@ -737,6 +758,14 @@ impl Inner {
                 return;
             }
             None => return,
+        }
+        // `text` is already redacted (see `dispatch`); the owner is told, without the value.
+        if let Some(whole) = cut {
+            self.say(chat, &Msg::SecretRemoved { whole }.render(lang))
+                .await;
+            if whole {
+                return;
+            }
         }
 
         if let Some((cmd, arg)) = command {

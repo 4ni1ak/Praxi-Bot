@@ -1,9 +1,12 @@
 //! Provider-independent, memory-only screen transport. Never log input or pixels.
+pub mod bot_cursor;
 pub mod dto;
 mod source;
+mod terminal;
 pub mod wire;
 pub use dto::*;
 pub use source::*;
+pub use terminal::{BotTerminal, BotTerminalSource, BotTerminalState};
 
 /// Protocol failures contain only fixed codes, never backend or user payloads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
