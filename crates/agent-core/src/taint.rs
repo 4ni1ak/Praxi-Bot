@@ -105,6 +105,72 @@ const MAX_SOURCES: usize = 8;
 /// (`path`, `url`, `query`), so an uncapped label can fill the reason line.
 const MAX_LABEL_CHARS: usize = 120;
 
+/// Label of the brief a mission session starts from (see `Shared::initial_taint`).
+pub(crate) const MISSION_LEDGER_LABEL: &str = "mission ledger";
+
+/// Prefix of the label a read of the bot's OWN `AgentMail` inbox carries (see
+/// `Shared::own_inbox_call`): `own inbox INBOX`.
+pub(crate) const OWN_INBOX_LABEL_PREFIX: &str = "own inbox ";
+
+/// Whether a source label names the OWNER's private data. Three kinds of label do not:
+///
+/// * a web page (`page ...`), public web content;
+/// * the mission ledger: the bot's own bookkeeping of what it did and found, text the model
+///   wrote from pages and mails, not something the owner keeps private. It is still untrusted
+///   (the run's exposure says so) and never the owner's words; what an earlier session really
+///   read of the owner's private data reaches this one through the chat's message provenance,
+///   not through this label;
+/// * the bot's own `AgentMail` inbox: an inbox made for the bot, whose mail comes from strangers.
+///   The owner's personal mailboxes keep their `mailbox ...` label.
+///
+/// Only the daemon writes these labels (they are built from fixed prefixes, never from a page,
+/// a mail or the model), so a tool or a page cannot choose one to hide a private read.
+pub(crate) fn names_private_data(label: &str) -> bool {
+    !(label.starts_with("page ") || label == MISSION_LEDGER_LABEL || is_own_inbox_label(label))
+}
+
+/// Most sites remembered from the links of the bot's own inbox per run.
+const MAX_MAIL_SITES: usize = 256;
+
+fn is_own_inbox_label(label: &str) -> bool {
+    label
+        .strip_prefix(OWN_INBOX_LABEL_PREFIX)
+        .is_some_and(plain_folder)
+}
+
+/// The distinct sites (registrable domains) of the `http(s)` links in `text`.
+fn link_sites(text: &str) -> Vec<String> {
+    let mut sites: Vec<String> = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("http") {
+        rest = &rest[at..];
+        let end = rest
+            .find(|c: char| {
+                c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | ')' | ']' | '\\')
+            })
+            .unwrap_or(rest.len());
+        let (candidate, tail) = rest.split_at(end);
+        if let Some(site) = builtin_tools::connector_email::verify::site_domain(candidate)
+            && !sites.contains(&site)
+        {
+            sites.push(site);
+        }
+        // `http` alone does not advance past the candidate, so always move on.
+        rest = if end == 0 { &rest[4..] } else { tail };
+    }
+    sites
+}
+
+/// A folder name the own-inbox label may carry: `A-Z a-z 0-9 _ -`, 1 to 32 characters. The
+/// label names the declassifying prefix, so what follows it is never free text (a folder name
+/// is chosen by the model, and a stored label is read back as it was written).
+fn plain_folder(folder: &str) -> bool {
+    (1..=32).contains(&folder.len())
+        && folder
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
 /// Exposure bits plus the labels the approval card quotes.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ContentTaint {
@@ -119,6 +185,14 @@ pub(crate) struct ContentTaint {
     pub(crate) private_source: bool,
     /// Salted hashes of the words of the private results of this run (see `full_autonomy`).
     pub(crate) seen: crate::full_autonomy::SeenText,
+    /// The sites (registrable domains) that links in the text of the bot's OWN inbox point to.
+    /// Mail from strangers is not the owner's private data, so its words are not in `seen`; but a
+    /// link a stranger wrote must not pass as ordinary browsing either: the Full level's egress
+    /// waiver does not cover these sites, only the verifier-judged path of a verification link
+    /// does (`Shared::own_mail_waived`). Kept as a plain list; more than [`MAX_MAIL_SITES`]
+    /// sets `mail_sites_overflow`, which stands for "any site".
+    pub(crate) mail_sites: Vec<String>,
+    pub(crate) mail_sites_overflow: bool,
     /// The run wrote or changed something that could hold code (a script, a manifest, a build
     /// file, anything but a plain document) AFTER it read untrusted content. A program the bot
     /// starts later may then run what a page chose, so the Full level's shell waiver stops
@@ -225,26 +299,65 @@ impl ContentTaint {
         self.exposure
             .observe(class.ingests_untrusted, class.reads_private);
         // A page (the browser, a search, a fetch) is public web; everything else that reads
-        // private data is the owner's.
-        if class.reads_private && !label.starts_with("page ") {
+        // private data is the owner's (see `names_private_data`).
+        if class.reads_private && names_private_data(label) {
             self.private_source = true;
             match text {
                 Some(text) => self.seen.observe(text),
                 None => self.seen.unhashed = true,
             }
         }
+        if is_own_inbox_label(label) {
+            self.note_own_inbox(text);
+        }
         self.push_label(label);
+    }
+
+    /// Remember the sites of the links in the text of an own-inbox read (see
+    /// [`Self::mail_sites`]). Without the text (a spilled or an earlier turn's result) the links
+    /// are unknown, so any site counts.
+    fn note_own_inbox(&mut self, text: Option<&str>) {
+        match text {
+            Some(text) => {
+                for site in link_sites(text) {
+                    self.add_mail_site(site);
+                }
+            }
+            None => self.mail_sites_overflow = true,
+        }
+    }
+
+    fn add_mail_site(&mut self, site: String) {
+        if self.mail_sites.contains(&site) {
+            return;
+        }
+        if self.mail_sites.len() >= MAX_MAIL_SITES {
+            self.mail_sites_overflow = true;
+        } else {
+            self.mail_sites.push(site);
+        }
+    }
+
+    /// Whether `url` points at a site a link of the bot's own inbox pointed to.
+    pub(crate) fn names_mail_site(&self, url: &str) -> bool {
+        self.mail_sites_overflow
+            || builtin_tools::connector_email::verify::site_domain(url.trim())
+                .is_some_and(|site| self.mail_sites.contains(&site))
     }
 
     /// A label for the card, without changing the bits. Used when a stored
     /// message already carries the bits and we only need the name.
     ///
-    /// A label that does not name a web page (another bot's answer or reply, a file or mailbox
-    /// of an earlier turn) means private data whose text is not at hand: the run counts as
-    /// holding private data it cannot compare against.
+    /// A label that names private data (see [`names_private_data`]: another bot's answer or
+    /// reply, a file or a personal mailbox of an earlier turn, but not a web page, the mission
+    /// ledger or the bot's own inbox) means private data whose text is not at hand: the run
+    /// counts as holding private data it cannot compare against.
     pub(crate) fn note_label(&mut self, label: &str) {
-        if !label.starts_with("page ") {
+        if names_private_data(label) {
             self.mark_private_unhashed();
+        }
+        if is_own_inbox_label(label) {
+            self.note_own_inbox(None);
         }
         self.push_label(label);
     }
@@ -253,8 +366,11 @@ impl ContentTaint {
     /// the model AND that the caller hashes separately (see [`comparable_label`]): the run holds
     /// private data, but it can be compared, so it is not marked unhashed.
     pub(crate) fn note_label_hashed(&mut self, label: &str) {
-        if !label.starts_with("page ") {
+        if names_private_data(label) {
             self.private_source = true;
+        }
+        if is_own_inbox_label(label) {
+            self.note_own_inbox(None);
         }
         self.push_label(label);
     }
@@ -275,6 +391,10 @@ impl ContentTaint {
         self.private_source |= other.private_source;
         self.code_written_after_untrusted |= other.code_written_after_untrusted;
         self.seen.merge(&other.seen);
+        self.mail_sites_overflow |= other.mail_sites_overflow;
+        for site in &other.mail_sites {
+            self.add_mail_site(site.clone());
+        }
         self.trust_folders
             .extend(other.trust_folders.iter().cloned());
         self.earlier += other.earlier;
@@ -494,6 +614,9 @@ pub(crate) fn source_label(name: &str, input: &Value) -> String {
         "email_read" | "email_search" | "email_list_folders" | "email_download_attachment" => {
             format!("mailbox {}", str_field("folder").unwrap_or("INBOX"))
         }
+        // The label NAMES the source and never declassifies: it is the owner's-mailbox label
+        // until `Shared::own_inbox_call` (identity and kind) says the inbox is the bot's own.
+        "email_wait_for" => "mailbox INBOX".to_owned(),
         "web_search" => format!("page {}", str_field("query").unwrap_or("a search")),
         "web_extract"
         | "web_scrape"
@@ -543,6 +666,20 @@ pub(crate) fn source_label(name: &str, input: &Value) -> String {
         "shell_run" | "shell_interactive" | "script_run" => "command output".to_owned(),
         other => format!("tool {other}"),
     }
+}
+
+/// The label of a read of the bot's own `AgentMail` inbox (see `Shared::own_inbox_call`, which
+/// decides from identity and kind, never from a label): the folder the `mailbox ...` label would
+/// name, under the prefix that does not mark the run as holding the owner's private data. The
+/// folder comes from the model, so anything but `A-Z a-z 0-9 _ -` (1 to 32 characters) is read as
+/// `INBOX`.
+pub(crate) fn own_inbox_label(input: &Value) -> String {
+    let folder = input
+        .get("folder")
+        .and_then(Value::as_str)
+        .filter(|f| plain_folder(f))
+        .unwrap_or("INBOX");
+    format!("{OWN_INBOX_LABEL_PREFIX}{folder}")
 }
 
 /// What a call will really send, for the egress checks and card. A mail reply fills in its
@@ -2066,5 +2203,122 @@ mod mail_review_tests {
         assert_eq!(sent["to"], json!(["z@z.test"]));
         assert_eq!(sent["subject"], "s");
         assert_eq!(sent["body"], "y");
+    }
+
+    #[test]
+    fn links_in_the_own_inbox_name_their_sites_and_nothing_else_does() {
+        let own = ContentClass::declared(true, false, false);
+        let mut taint = ContentTaint::default();
+        taint.note_with_text(
+            own,
+            "own inbox INBOX",
+            r#"{"body":"Open https://app.example.com/verify?token=abc, or <a href=\"https://www.other.test/x\">here</a>"}"#,
+        );
+        assert!(!taint.private_source);
+        assert!(taint.names_mail_site("https://example.com/anything"));
+        assert!(taint.names_mail_site("https://other.test/"));
+        assert!(!taint.names_mail_site("https://evil.example.net/steal"));
+        // A page names no mail site.
+        let mut page = ContentTaint::default();
+        page.note_with_text(own, "page https://a.example/", "https://app.example.com/x");
+        assert!(!page.names_mail_site("https://example.com/"));
+        // Without the text, any site counts; the union keeps it.
+        let mut unknown = ContentTaint::default();
+        unknown.note(own, "own inbox INBOX");
+        assert!(unknown.names_mail_site("https://anything.test/"));
+        let mut joined = ContentTaint::default();
+        joined.inherit(&unknown);
+        assert!(joined.names_mail_site("https://anything.test/"));
+        // An address that is not a link names nothing.
+        let mut plain = ContentTaint::default();
+        plain.note_with_text(own, "own inbox INBOX", "write to me@example.com, http");
+        assert!(!plain.names_mail_site("https://example.com/"));
+    }
+
+    #[test]
+    fn only_labels_of_the_owners_private_data_make_a_run_private() {
+        for label in [
+            "page https://a.example/",
+            "mission ledger",
+            "own inbox INBOX",
+        ] {
+            let mut taint = ContentTaint::default();
+            taint.note_label(label);
+            assert!(!taint.private_source && !taint.seen.unhashed, "{label}");
+            taint.note_label_hashed(label);
+            assert!(!taint.private_source, "{label}");
+            // Text that reads private by class under such a label is not the owner's either.
+            taint.note_with_text(ContentClass::all(), label, "Some words here");
+            assert!(!taint.private_source, "{label}");
+            assert!(taint.exposure.untrusted, "{label} stays untrusted content");
+        }
+        for label in [
+            "mailbox INBOX",
+            "file customers.csv",
+            "tool email_search",
+            "another bot's reply",
+            // Only the exact names count: a look-alike is a private label.
+            "mission ledger 2",
+            "own inbox",
+        ] {
+            let mut taint = ContentTaint::default();
+            taint.note_label(label);
+            assert!(taint.private_source && taint.seen.unhashed, "{label}");
+        }
+    }
+
+    #[test]
+    fn the_own_inbox_label_names_the_folder_and_no_tool_declassifies_by_name() {
+        assert_eq!(
+            own_inbox_label(&json!({"folder": "Junk"})),
+            "own inbox Junk"
+        );
+        assert_eq!(own_inbox_label(&json!({})), "own inbox INBOX");
+        // By name alone the wait tool declassifies nothing.
+        assert_eq!(source_label("email_wait_for", &json!({})), "mailbox INBOX");
+        // The owner's own mailbox keeps its label.
+        assert_eq!(source_label("email_search", &json!({})), "mailbox INBOX");
+    }
+
+    #[test]
+    fn a_folder_the_model_chose_cannot_forge_the_declassifying_label() {
+        for folder in [
+            "page https://a.example/",
+            "x\nmission ledger",
+            "Junk and more words",
+            "a/b",
+            "",
+            &"A".repeat(33),
+            "Gönder",
+        ] {
+            let label = own_inbox_label(&json!({"folder": folder}));
+            assert_eq!(label, "own inbox INBOX", "{folder:?}");
+        }
+        assert_eq!(
+            own_inbox_label(&json!({"folder": "Spam_2-b"})),
+            "own inbox Spam_2-b"
+        );
+        assert_eq!(
+            own_inbox_label(&json!({"folder": "A".repeat(32)})),
+            format!("own inbox {}", "A".repeat(32))
+        );
+        // A stored label is read back strictly: free text after the prefix is a private label,
+        // so a label written (or edited) with anything but a plain folder does not declassify.
+        for label in [
+            "own inbox ",
+            "own inbox a b",
+            "own inbox INBOX/../secret",
+            "own inbox INBOX\n",
+            "own inbox Gönder",
+        ] {
+            assert!(names_private_data(label), "{label:?}");
+        }
+        assert!(!names_private_data("own inbox Junk"));
+        // A read the daemon did not clear (an IMAP mailbox) never has the own-inbox label.
+        assert_eq!(
+            source_label("email_read", &json!({"folder": "own inbox INBOX"})),
+            "mailbox own inbox INBOX"
+        );
+        assert!(names_private_data("mailbox own inbox INBOX"));
     }
 }
