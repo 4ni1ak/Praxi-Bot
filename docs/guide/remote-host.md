@@ -425,7 +425,11 @@ platforms (`linux64` and `linux-arm64`) from
 `https://storage.googleapis.com/chrome-for-testing-public/<version>/<platform>/chrome-<platform>.zip`,
 compute their hashes using `sha256sum`, and update `version`,
 `sha256_linux64`, and `sha256_linux_arm64` together at the top of
-`install_cft`.
+`install_cft`, and the same version, checksums and archive sizes in
+`crates/daemon-api/src/browser_install.rs` (a test fails when the checksums or the
+version in the two places differ). That Rust copy is what `bot browser install` and
+Settings > Diagnostics > Install browser download into the data folder on a computer that was not set
+up with the installer script.
 
 Fedora/RHEL uses `chromium` from the administrator's enabled RPM repos, without
 weak dependencies. When those repos have no `chromium` (Oracle Linux, for
@@ -440,7 +444,12 @@ never selected by the installer. Snap-only discovery and snap overrides are
 unsupported and produce a clear diagnostic. With `--skip-packages`, provide a
 working non-snap browser yourself. `BOT_BROWSER_PATH` overrides discovery;
 `PRAXI_BROWSER_PATH` remains a compatible fallback. An invalid override fails
-instead of silently choosing a different browser.
+instead of silently choosing a different browser. Discovery only trusts places that only you or
+root can change: besides the usual distro paths it searches the `PATH` folders that are owned by
+root or the service user and not writable by group or others (a link leading out of such a folder is
+skipped), a browser or folder that every user can write to is refused (also for `BOT_BROWSER_PATH`,
+whose resolved path is logged), and a browser Praxi downloaded is used only while every file of it
+still matches its install manifest.
 
 Re-running the installer (`bot host repair`, upgrades) is idempotent for the
 browser: a working `/opt/praxi-browser` at the pinned version is kept and not

@@ -388,7 +388,11 @@ programını yeniden çalıştır. Chrome for Testing kendiliğinden güncellenm
 güncellemek için, yeni sürümün arşivlerini iki platform için de (`linux64` ve `linux-arm64`)
 `https://storage.googleapis.com/chrome-for-testing-public/<version>/<platform>/chrome-<platform>.zip`
 adresinden indir, `sha256sum` ile özetlerini hesapla ve `install_cft` işlevinin başındaki `version`,
-`sha256_linux64` ve `sha256_linux_arm64` değerlerini birlikte güncelle.
+`sha256_linux64` ve `sha256_linux_arm64` değerlerini birlikte güncelle; aynı sürümü, sağlama
+toplamlarını ve arşiv boyutlarını `crates/daemon-api/src/browser_install.rs` içinde de güncelle
+(iki yerdeki sağlama toplamları ya da sürüm farklıysa bir test başarısız olur). Kurulum betiğiyle
+kurulmamış bir bilgisayarda `bot browser install` ve Ayarlar > Tanılama > Tarayıcıyı kur'un veri
+klasörüne indirdiği, bu Rust kopyasıdır.
 
 Fedora/RHEL, yöneticinin etkinleştirdiği RPM depolarından zayıf bağımlılıklar olmadan `chromium`
 kullanır. Bu depolarda `chromium` yoksa (örneğin Oracle Linux), kurulum programı her iki işlemci için
@@ -401,7 +405,12 @@ Ubuntu'nun `chromium-browser` ve sanal `chromium` paketleri snap'e çözülebili
 asla seçmez. Yalnızca snap bulan keşif ve snap geçersiz kılmaları desteklenmez ve net bir tanılama
 üretir. `--skip-packages` ile snap olmayan, çalışan bir tarayıcıyı kendin sağla. `BOT_BROWSER_PATH`
 keşfi geçersiz kılar. `PRAXI_BROWSER_PATH` uyumlu bir yedek olarak kalır. Geçersiz bir geçersiz kılma,
-sessizce başka bir tarayıcı seçmek yerine başarısız olur.
+sessizce başka bir tarayıcı seçmek yerine başarısız olur. Keşif yalnızca senin ya da root'un
+değiştirebildiği yerlere güvenir: olağan dağıtım yollarının yanında, sahibi root ya da servis
+kullanıcısı olan ve grup veya diğer kullanıcılara yazma izni vermeyen `PATH` klasörlerine bakar
+(böyle bir klasörden dışarı çıkan bağlantı atlanır). Herkesin yazabildiği bir tarayıcı ya da klasör
+reddedilir (`BOT_BROWSER_PATH` için de; onun çözülmüş yolu günlüğe yazılır). Praxi'nin indirdiği bir
+tarayıcı da yalnızca tüm dosyaları kurulum manifestiyle hâlâ eşleştiği sürece kullanılır.
 
 Kurulum programını yeniden çalıştırmak (`bot host repair`, yükseltmeler) tarayıcı için idempotenttir:
 sabitlenmiş sürümde çalışan bir `/opt/praxi-browser` korunur ve yeniden indirilmez, paylaşılan
