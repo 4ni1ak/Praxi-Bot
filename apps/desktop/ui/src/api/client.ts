@@ -120,6 +120,7 @@ import type {
   McpCatalogEntry,
   McpAuthState,
   McpAuthStart,
+  McpTestResult,
   McpServer,
   McpServerPatch,
   McpServerConfig,
@@ -1629,8 +1630,14 @@ export class ApiClient {
       body: patch
     });
   }
-  deleteMcpServer(name: string): Promise<void> {
-    return this.request("DELETE", `/mcp/servers/${encodeURIComponent(name)}`);
+  /**
+   * Remove an app. With `forgetClientSecret` the sign-in client secret it used is deleted too, unless
+   * another app still uses it (several Google apps share one).
+   */
+  deleteMcpServer(name: string, opts: { forgetClientSecret?: boolean } = {}): Promise<void> {
+    return this.request("DELETE", `/mcp/servers/${encodeURIComponent(name)}`, {
+      query: opts.forgetClientSecret ? { forget_client_secret: "true" } : undefined
+    });
   }
   reconnectMcpServer(name: string): Promise<McpServer> {
     return this.request(
@@ -1654,8 +1661,19 @@ export class ApiClient {
   mcpCatalog(): Promise<McpCatalogEntry[]> {
     return this.request("GET", "/mcp/catalog");
   }
-  startMcpAuth(name: string): Promise<McpAuthStart> {
-    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/start`);
+  /**
+   * Start a sign-in. With `relayPort` the browser is on THIS computer while the daemon is on a
+   * server: the daemon opens no listener and expects the redirect to be forwarded
+   * (`completeMcpAuth`) from the app that caught it on that port.
+   */
+  startMcpAuth(name: string, relayPort?: number): Promise<McpAuthStart> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/auth/start`, {
+      body: relayPort === undefined ? undefined : { relay_port: relayPort }
+    });
+  }
+  /** The app's fixed read-only test: the first few items it returns (owner only). */
+  testMcpServer(name: string): Promise<McpTestResult> {
+    return this.request("POST", `/mcp/servers/${encodeURIComponent(name)}/test`);
   }
   /** Finish a sign-in with the redirect address pasted from the browser (headless daemon). */
   completeMcpAuth(name: string, redirectUrl: string): Promise<McpAuthState> {
