@@ -55,6 +55,14 @@ pub(crate) enum Start {
     Resume,
 }
 
+/// Audit action written for each automatic resume after a restart; its count
+/// per run bounds [`AgentLoop::auto_resume_after_restart`].
+const AUTO_RESUMED_ACTION: &str = "run.auto_resumed";
+
+/// Audit action that gives one automatic resume attempt back because the run
+/// never started (see [`AUTO_RESUMED_ACTION`]).
+const AUTO_RESUME_UNUSED_ACTION: &str = "run.auto_resume_unused";
+
 /// Runs bot turns: model -> tool calls -> permission -> execute -> repeat.
 ///
 /// Cheap to clone (shared handles).  Spawning methods must be called inside a
@@ -2613,8 +2621,12 @@ impl AgentLoop {
     }
 
     /// Startup recovery: every run left `Running` **or** `WaitingApproval` gets
-    /// its unfinished steps marked `Interrupted` and becomes `Paused`;
-    /// dangling approvals expire.  Nothing is replayed or resumed.
+    /// its unfinished steps marked `Interrupted` and becomes `Paused`; dangling
+    /// approvals expire.  A `Running` run gets the pause reason
+    /// [`task_runtime::RESTART_PAUSE_REASON`]; a `WaitingApproval` one (parked on
+    /// a person) gets none, so it is never resumed by itself.  Nothing is
+    /// replayed or resumed (the daemon also calls this while it shuts down); see
+    /// [`Self::auto_resume_after_restart`] for the resume.
     ///
     /// # Errors
     /// Fails on storage errors.
@@ -2672,6 +2684,132 @@ impl AgentLoop {
             }
         }
         Ok(())
+    }
+
+    /// After a daemon restart, continue the runs the restart interrupted
+    /// (paused with [`task_runtime::RESTART_PAUSE_REASON`], by a graceful
+    /// shutdown or found `Running` after a crash) when their bot is at the Full
+    /// level, at most `LoopConfig::max_auto_resumes` times per run (counted in
+    /// the audit log, so a run that keeps crashing the daemon stops being
+    /// resumed). Every other run stays paused and keeps its reason for the
+    /// owner to resume.
+    ///
+    /// Only a node that drives runs may call it (the daemon does after it took
+    /// the leader role and recovered a stale takeover). Nothing is continued
+    /// while the loop shuts down, in locked deny-all mode, when the bot is no
+    /// longer at the Full level (its profile is read again now; a bot's own
+    /// permission preset outranks the workspace policy, so tightening that
+    /// changes nothing here), for a run the owner stopped, for a run parked on
+    /// a person (approval, question, secret, handover: those never carry the
+    /// restart reason) or for a CLI-model session whose tool outcomes are unknown.
+    /// The attempt is written to the audit log before the run starts and an
+    /// audit log that cannot be read or written resumes nothing: the bound
+    /// holds even when the run takes the daemon down at once.
+    ///
+    /// It is separate from [`Self::recover`] on purpose: recovery also runs
+    /// during shutdown, where resuming would undo the pause. Subagent runs are
+    /// left to their parent. Returns the resumed run ids.
+    pub async fn auto_resume_after_restart(&self) -> Vec<RunId> {
+        let limit = self.sh.cfg.max_auto_resumes;
+        let mut resumed = Vec::new();
+        if limit == 0
+            || self.sh.shutting_down.load(Ordering::SeqCst)
+            || self.sh.policy_locked.load(Ordering::SeqCst)
+        {
+            return resumed;
+        }
+        let Ok(paused) = self
+            .sh
+            .storage
+            .list_paused_runs_with_reason(task_runtime::RESTART_PAUSE_REASON)
+        else {
+            return resumed;
+        };
+        for run in paused {
+            if run.parent_run_id.is_some() || self.sh.user_stopped.lock().contains(&run.id) {
+                continue;
+            }
+            if !self.may_continue_unattended(&run) {
+                continue;
+            }
+            // Fail closed: no readable audit log, no resume.
+            let Ok(rows) = self.sh.storage.list_audit_for_run(run.user_id, run.id) else {
+                continue;
+            };
+            let count = |action: &str| rows.iter().filter(|r| r.action == action).count();
+            let done = count(AUTO_RESUMED_ACTION).saturating_sub(count(AUTO_RESUME_UNUSED_ACTION));
+            let done = u32::try_from(done).unwrap_or(u32::MAX);
+            if done >= limit {
+                let _ = self
+                    .sh
+                    .storage
+                    .set_run_pause_reason(run.id, Some(task_runtime::RESTART_LIMIT_PAUSE_REASON));
+                let _ = self.sh.storage.append_audit(
+                    run.user_id,
+                    Some(run.id),
+                    "system",
+                    "run.auto_resume_limit",
+                    &serde_json::json!({ "attempts": done }),
+                );
+                continue;
+            }
+            // The attempt is on record before the run can do (or crash) anything.
+            if self
+                .sh
+                .storage
+                .append_audit(
+                    run.user_id,
+                    Some(run.id),
+                    "system",
+                    AUTO_RESUMED_ACTION,
+                    &serde_json::json!({ "attempt": done + 1, "of": limit }),
+                )
+                .is_err()
+            {
+                continue;
+            }
+            for attempt in 0..5 {
+                match self.resume(run.id) {
+                    Ok(()) => {
+                        resumed.push(run.id);
+                        break;
+                    }
+                    Err(LoopError::StillFinishing(_)) if attempt < 4 => {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    // Not configured yet, chat busy, shutting down...: it stays
+                    // paused with its reason and the owner can resume it. The
+                    // run never started, so the attempt is given back (if that
+                    // cannot be written it stays counted).
+                    Err(_) => {
+                        let _ = self.sh.storage.append_audit(
+                            run.user_id,
+                            Some(run.id),
+                            "system",
+                            AUTO_RESUME_UNUSED_ACTION,
+                            &serde_json::json!({}),
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+        resumed
+    }
+
+    /// Whether `run` may continue with nobody watching: its bot is at the Full
+    /// level (read from the stored profile now, not from what it was when the
+    /// run started) and it is not a CLI-model session that was cut off.
+    fn may_continue_unattended(&self, run: &storage::Run) -> bool {
+        let full = self
+            .sh
+            .profile_for(run.bot_id)
+            .is_ok_and(|p| p.permissions.mode() == permission_engine::AutonomyMode::Full);
+        full && self
+            .sh
+            .storage
+            .list_steps(run.id)
+            .is_ok_and(|history| !crate::exec::cli_session_interrupted(&history))
     }
 
     /// Resume any runs paused with `waiting_for_pc` whose target PC desktop is
@@ -2872,6 +3010,9 @@ impl AgentLoop {
         // Hard stop for the unwinding of interrupted runs.
         let hard = deadline + Duration::from_secs(5);
         let mut seen: HashSet<RunId> = HashSet::new();
+        // Runs parked on a person (approval, question, secret, handover) when the
+        // shutdown reached them: they wait for the owner, a restart does not resume them.
+        let mut parked: HashSet<RunId> = HashSet::new();
         loop {
             let active = self.rt.active_runs();
             if active.is_empty() {
@@ -2882,7 +3023,15 @@ impl AgentLoop {
                 break;
             }
             for run in active {
+                // The owner pressed Stop: that run ends `Cancelled`. Asking it to
+                // pause as well would turn the stop into a restart pause.
+                if self.sh.user_stopped.lock().contains(&run) {
+                    continue;
+                }
                 seen.insert(run);
+                if self.rt.state(run).ok() == Some(RunState::WaitingApproval) {
+                    parked.insert(run);
+                }
                 // A finishing tool step is the only thing worth waiting for.
                 let interrupt = now >= deadline || !self.tool_step_in_flight(run);
                 self.rt.request_pause(run, interrupt);
@@ -2908,6 +3057,15 @@ impl AgentLoop {
             }
             self.expire_approvals(run);
             if let Ok(Some(r)) = self.sh.storage.get_run(run) {
+                // Paused by the restart, not by the owner: the next start may
+                // continue it (a reason set by something else is kept). A run
+                // that waited on a person keeps waiting: it is never stamped.
+                if r.pause_reason.is_none() && !parked.contains(&run) {
+                    let _ = self
+                        .sh
+                        .storage
+                        .set_run_pause_reason(run, Some(task_runtime::RESTART_PAUSE_REASON));
+                }
                 let _ = self.sh.storage.append_audit(
                     r.user_id,
                     Some(run),

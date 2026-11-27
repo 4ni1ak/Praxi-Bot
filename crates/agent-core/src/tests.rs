@@ -2,6 +2,7 @@
 
 #![allow(clippy::assert_is_empty)]
 
+mod auto_resume;
 mod c225;
 mod c382;
 mod c812;
@@ -10,7 +11,9 @@ mod composio_approvals;
 mod external_agent;
 mod fill_secret;
 mod grounding;
+mod loop_cycles;
 mod offline;
+mod outage_wait;
 mod page_guard;
 mod planning_pause;
 mod secret_request;
@@ -193,6 +196,10 @@ pub(crate) struct TestTool {
     pub(crate) notes_screenshot: Option<PathBuf>,
     /// Fail with `output` as the error text instead of returning it.
     pub(crate) fails: bool,
+    /// The browser tab this tool reports as the one it just observed (`landed_tab`).
+    pub(crate) tab: Option<String>,
+    /// Append the call number to the output, so every call answers differently.
+    pub(crate) numbered: bool,
 }
 
 pub(crate) fn tool(name: &str, effect: Effect, output: &str) -> TestTool {
@@ -234,6 +241,8 @@ pub(crate) fn with_class(
         moves_to: None,
         notes_screenshot: None,
         fails: false,
+        tab: None,
+        numbered: false,
     }
 }
 
@@ -252,6 +261,9 @@ impl Tool for TestTool {
     }
     async fn landed_origin(&self, _: &ToolContext) -> Option<String> {
         self.page_origin.lock().clone()
+    }
+    async fn landed_tab(&self, _: &ToolContext) -> Option<String> {
+        self.tab.clone()
     }
     async fn call(&self, ctx: &ToolContext, _: Value) -> Result<ToolOutput, ToolError> {
         self.count.fetch_add(1, Ordering::SeqCst);
@@ -287,7 +299,11 @@ impl Tool for TestTool {
         if self.fails {
             return Err(ToolError::Execution(self.output.clone()));
         }
-        let mut out = ToolOutput::text(self.output.clone());
+        let mut out = ToolOutput::text(if self.numbered {
+            format!("{} #{}", self.output, self.count.load(Ordering::SeqCst))
+        } else {
+            self.output.clone()
+        });
         out.exposure = self.exposure.clone();
         Ok(out)
     }
@@ -376,6 +392,8 @@ pub(crate) fn cfg(policy: Policy) -> LoopConfig {
             multiplier: 1,
             max_backoff_ms: 1,
         },
+        // Most tests count provider calls after a failure; the outage wait has its own.
+        transient_outage_budget: Duration::ZERO,
         ..LoopConfig::default()
     }
 }
@@ -5833,15 +5851,14 @@ async fn approving_a_shell_call_after_shell_is_denied_does_not_run_or_grant() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn retry_after_beyond_budget_is_one_request_and_surfaces_rate_limited() {
+async fn retry_after_beyond_backoff_budget_is_honoured() {
     let env = setup();
     let fake = Fake::new(vec![
         Reply::RateLimited(Some(Duration::from_secs(60))),
-        text("should not be asked"),
+        text("recovered"),
     ]);
     let mut config = cfg(Policy::full());
-    // More than one attempt, with a budget far below 60s, so the old loop
-    // would send again after a short backoff.
+    // The server delay exceeds the backoff budget but fits the model timeout.
     config.model_retry.max_attempts = 3;
     config.model_retry.initial_backoff_ms = 500;
     config.model_retry.multiplier = 2;
@@ -5855,16 +5872,26 @@ async fn retry_after_beyond_budget_is_one_request_and_surfaces_rate_limited() {
         config,
     );
     let run = lp.run_turn(env.chat, "hi").unwrap();
-    let state = tokio::time::timeout(Duration::from_secs(3), lp.wait(run))
+    let started = tokio::time::Instant::now();
+    let state = tokio::time::timeout(Duration::from_secs(70), lp.wait(run))
         .await
-        .expect("must not sleep for Retry-After: 60")
+        .expect("must retry after the server delay")
         .unwrap();
-    assert_eq!(state, RunState::Failed);
-    assert_eq!(
-        fake.n_requests(),
-        1,
-        "no second request after a 60s Retry-After"
-    );
+    assert_eq!(state, RunState::Succeeded);
+    assert_eq!(fake.n_requests(), 2);
+    assert!(started.elapsed() >= Duration::from_secs(60));
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_after_beyond_model_timeout_does_not_retry() {
+    let env = setup();
+    let fake = Fake::new(vec![Reply::RateLimited(Some(Duration::from_secs(300)))]);
+    let mut config = cfg(Policy::full());
+    config.model_retry.max_attempts = 2;
+    let lp = make_loop(&env.storage, env.bot, &fake, &[], profile(""), config);
+    let run = lp.run_turn(env.chat, "hi").unwrap();
+    assert_eq!(lp.wait(run).await.unwrap(), RunState::Failed);
+    assert_eq!(fake.n_requests(), 1);
     let err = env.storage.get_run(run).unwrap().unwrap().error.unwrap();
     assert!(err.contains("rate limited"), "{err}");
 }

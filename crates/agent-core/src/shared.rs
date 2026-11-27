@@ -2884,6 +2884,10 @@ pub(crate) struct CallRec {
     pub name: String,
     pub arguments: String,
     pub repeat: u32,
+    /// Repetitions of a 2-3 call cycle this call continues (`<= 1`: none).
+    /// Absent on rows written before cycle detection existed.
+    #[serde(default)]
+    pub cycle: u32,
 }
 
 /// One result inside a persisted tool step's output.
@@ -2917,6 +2921,10 @@ pub(crate) struct ResultRec {
     /// the run's pages are read through the quarantined reader.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shot: Option<String>,
+    /// Browser tab a full page observation came from, as the browser named it
+    /// right after the call. Absent for other results and on older rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<String>,
 }
 
 pub(crate) const STEP_USER: &str = "user_message";

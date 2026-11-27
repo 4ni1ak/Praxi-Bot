@@ -333,6 +333,11 @@ pub trait BrowserDriver: Send + Sync {
     async fn current_url(&self) -> Option<String> {
         None
     }
+    /// Stable id of the tab the current session is on, as the BROWSER reports it
+    /// (the CDP target id). `None`: no session, or the driver cannot tell.
+    async fn current_tab_id(&self) -> Option<String> {
+        None
+    }
     /// Browser document identity used to release a secret capture latch on navigation.
     async fn capture_epoch(&self) -> Option<String> {
         self.current_url().await
@@ -1699,6 +1704,17 @@ impl BrowserDriver for CdpDriver {
 
     async fn eval(&self, js: &str) -> Result<Value, String> {
         with_session!(self, None, |sess| { sess.page.evaluate(js).await })
+    }
+
+    async fn current_tab_id(&self) -> Option<String> {
+        // Never starts a browser just to ask.
+        let id: Result<String, String> = async {
+            with_session!(self, None, false, |sess| {
+                Ok::<_, browser_cdp::Error>(sess.page.target_id().to_string())
+            })
+        }
+        .await;
+        id.ok()
     }
 
     async fn current_url(&self) -> Option<String> {
@@ -3811,6 +3827,15 @@ impl Tool for BrowserTool {
             .await
     }
 
+    async fn landed_tab(&self, ctx: &ToolContext) -> Option<String> {
+        BROWSER_LANE
+            .scope(ctx.lane.clone(), async {
+                let shared = self.select_shared(ctx).ok()?;
+                shared.driver.current_tab_id().await
+            })
+            .await
+    }
+
     async fn landed_origin(&self, ctx: &ToolContext) -> Option<String> {
         BROWSER_LANE
             .scope(ctx.lane.clone(), async {
@@ -3866,6 +3891,8 @@ pub(crate) mod fake {
         pub on_desktop: bool,
         /// The URL `current_url` reports (`None`: unknown).
         pub url: PMutex<Option<String>>,
+        /// The tab id `current_tab_id` reports (`None`: unknown).
+        pub tab: PMutex<Option<String>>,
         /// Runs inside every backend call (a human takeover landing mid-call).
         pub hook: PMutex<Option<FakeHook>>,
         /// Where each ref lives (for `field_target`); an unknown ref errors.
@@ -3942,6 +3969,10 @@ pub(crate) mod fake {
 
         async fn current_url(&self) -> Option<String> {
             self.url.lock().clone()
+        }
+
+        async fn current_tab_id(&self) -> Option<String> {
+            self.tab.lock().clone()
         }
 
         fn on_desktop(&self) -> bool {
@@ -4143,6 +4174,29 @@ mod tests {
 
     fn get(t: &[Arc<dyn Tool>], name: &str) -> Arc<dyn Tool> {
         t.iter().find(|x| x.spec().name == name).unwrap().clone()
+    }
+
+    #[tokio::test]
+    async fn a_browser_tool_reports_the_tab_it_landed_on() {
+        let (_dir, fake, tools) = build();
+        let ctx = ToolContext::default();
+        let snapshot = get(&tools, "browser_snapshot");
+        assert_eq!(
+            snapshot.landed_tab(&ctx).await,
+            None,
+            "unknown stays unknown"
+        );
+        *fake.tab.lock() = Some("TAB-1".into());
+        assert_eq!(snapshot.landed_tab(&ctx).await.as_deref(), Some("TAB-1"));
+        *fake.tab.lock() = Some("TAB-2".into());
+        assert_eq!(
+            get(&tools, "browser_open")
+                .landed_tab(&ctx)
+                .await
+                .as_deref(),
+            Some("TAB-2"),
+            "the id follows a tab switch"
+        );
     }
 
     fn text(o: &ToolOutput) -> String {

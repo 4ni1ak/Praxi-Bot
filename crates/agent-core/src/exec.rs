@@ -18,7 +18,7 @@ use futures::StreamExt;
 use permission_engine::{Decision, Limits};
 use protocol::PermissionCategory;
 use protocol::event::{
-    MessageDelta, ModelFallback, TodoItem, TodoStatus, TodoUpdated, ToolCallCompleted,
+    MessageDelta, ModelFallback, RunError, TodoItem, TodoStatus, TodoUpdated, ToolCallCompleted,
     ToolCallDenied, ToolCallRequested,
 };
 use protocol::{Event, RunId, ToolCallId};
@@ -70,6 +70,8 @@ enum Slot {
     },
     Run {
         tool: Arc<dyn Tool>,
+        /// The tool the model meant: the target of a `use_tool` call, else `tool` itself.
+        name: String,
         input: Value,
         call: ToolCallId,
         meta: bool,
@@ -179,9 +181,45 @@ fn take_matching_card(
     }
 }
 
+/// The run was cut off in the middle of a CLI-model session: what its tools did is unknown, so
+/// it cannot be continued (nor replayed).
+pub(crate) fn cli_session_interrupted(history: &[RunStep]) -> bool {
+    history.last().is_some_and(|s| {
+        s.name == STEP_MODEL
+            && status_of(s) == Some(StepStatus::Interrupted)
+            && (s.input["cli_session"] == true
+                || s.input["model"]
+                    .as_str()
+                    .is_some_and(|m| m.starts_with("cli:")))
+    })
+}
+
 fn call_key(name: &str, args: &str) -> (String, Value) {
     let v = serde_json::from_str(args).unwrap_or_else(|_| Value::String(args.to_owned()));
     (name.to_owned(), v)
+}
+
+/// Every tool call of the run, oldest first, with a fingerprint of its result
+/// (none for a call that has not finished) for cycle detection.
+fn cycle_entries(history: &[RunStep]) -> Vec<crate::loops::Entry> {
+    let mut out = Vec::new();
+    for step in history.iter().filter(|s| s.name == STEP_TOOLS) {
+        let calls: Vec<CallRec> =
+            serde_json::from_value(step.input["calls"].clone()).unwrap_or_default();
+        let results: Vec<ResultRec> = step
+            .output
+            .as_ref()
+            .and_then(|o| serde_json::from_value(o["results"].clone()).ok())
+            .unwrap_or_default();
+        for call in calls {
+            let text = results
+                .iter()
+                .find(|r| r.id == call.id)
+                .map(|r| r.text.as_str());
+            out.push(crate::loops::Entry::new(&call.name, &call.arguments, text));
+        }
+    }
+    out
 }
 
 /// True when the turn's last model step ended with no text after tool calls
@@ -410,14 +448,7 @@ impl TurnExecutor {
         let ctx = self.sh.ctx(run)?;
         // A session can have performed side effects before its model step was
         // interrupted. Replaying the prompt would replay those effects.
-        if history.last().is_some_and(|s| {
-            s.name == STEP_MODEL
-                && status_of(s) == Some(StepStatus::Interrupted)
-                && (s.input["cli_session"] == true
-                    || s.input["model"]
-                        .as_str()
-                        .is_some_and(|m| m.starts_with("cli:")))
-        }) {
+        if cli_session_interrupted(history) {
             return Err(xe(
                 "CLI session was interrupted; its tool outcomes are unknown. Start a new turn.",
             ));
@@ -747,6 +778,7 @@ impl TurnExecutor {
             .iter()
             .map(|c| call_key(&c.name, &c.arguments))
             .collect();
+        let mut cycle_seq = cycle_entries(history);
         let read = |c: &provider_catalog::ToolCall| {
             self.is_read(
                 ctx,
@@ -780,12 +812,24 @@ impl TurnExecutor {
                     c.name
                 ));
             }
+            cycle_seq.push(crate::loops::Entry::new(&c.name, &c.arguments, None));
+            let cycle = crate::loops::trailing_cycle(&cycle_seq);
+            if g.cycle_stop > 0
+                && let Some((repeats, names)) = &cycle
+                && *repeats >= g.cycle_stop
+            {
+                return Err(format!(
+                    "loop detected: the calls {} were repeated {repeats} times in a row and their results did not change",
+                    names.join(" -> ")
+                ));
+            }
             seq.push(key);
             calls.push(CallRec {
                 id: c.id.clone(),
                 name: c.name.clone(),
                 arguments: c.arguments.clone(),
                 repeat,
+                cycle: cycle.map_or(0, |(repeats, _)| repeats),
             });
         }
         let mut input = json!({ "calls": calls });
@@ -1025,145 +1069,194 @@ impl TurnExecutor {
             std::collections::HashMap::<String, (tokio::time::Instant, Duration)>::new();
         let mut last_model = &primary;
         let connectivity = self.sh.providers.read().connectivity.clone();
-        let reachability = connectivity.check().await;
-        for (i, &name) in models.iter().enumerate() {
-            // Only the owner's configured fallback chain is eligible. Unknown/CLI providers
-            // keep their normal path; HTTP responses such as 401/429 never count as offline.
-            if reachability
-                .iter()
-                .any(|r| Some(r.id.as_str()) == ModelRef(name.clone()).provider() && !r.reachable)
-            {
-                other_failure = true;
-                last_model = name;
-                last_err = Some(ProviderError::Connection("The model service cannot be reached. Your message has not been answered; try again when the connection returns.".into()));
-                continue;
-            }
-            req.model = ModelRef(name.clone());
-            let picked = self.sh.providers.read().pick(&req.model).ok();
-            let provider_id = picked.as_ref().map(|p| p.id().to_owned());
-            // The picture goes only to a model its provider says takes images, never to a CLI
-            // model, and never by changing the messages the other candidates are built from.
-            let mut sent_picture = false;
-            req.messages = match &shot_messages {
-                Some(with)
-                    if !name.starts_with("cli:")
-                        && picked
-                            .as_ref()
-                            .is_some_and(|p| p.supports_vision(req.model.model())) =>
-                {
-                    sent_picture = true;
-                    with.clone()
-                }
-                _ => plain_messages.clone(),
-            };
-            if provider_id
-                .as_ref()
-                .and_then(|id| cooldowns.get(id))
-                .is_some_and(|(started, delay)| started.elapsed() < *delay)
-            {
-                continue;
-            }
-            if let Some(prev) = &last_err {
-                if tier_light && i == 1 {
-                    let reason = match prev {
-                        ProviderError::Unsupported { .. } => "unsupported",
-                        ProviderError::MalformedToolCall(_) => "invalid_tool_calls",
-                        _ => "provider_failure",
-                    };
-                    self.record_tier_upgrade(&ctx, &primary, reason)?;
-                }
-                self.sh.emit(
-                    &ctx,
-                    Event::ModelFallback(ModelFallback {
-                        run_id: run.id,
-                        from: last_model.clone(),
-                        to: name.clone(),
-                        reason: prev.to_string(),
-                    }),
-                );
-            }
-            let alternative;
-            let offered = if deferred && guard_reason.is_none() && name.starts_with("cli:") {
-                let mut cli_specs = self.sh.model_specs(&ctx.profile, ctx.bot_id, &hints.tools);
-                crate::discovery::bound_legacy(&mut cli_specs);
-                alternative = cli_specs;
-                &alternative
-            // Only the standard (executor) attempt gets the full deferred surface;
-            // later fallback models keep the light tier's direct-only surface.
-            } else if deferred && tier_light && i == 1 && !ctx.profile.models.direct_tools_only {
-                alternative =
-                    self.sh
-                        .deferred_specs(&ctx, &crate::discovery::activations(&steps), false);
-                &alternative
-            } else {
-                &specs
-            };
-            let using_deferred = deferred && !name.starts_with("cli:");
-            req.tools = tool_defs(offered, using_deferred);
-            note_metadata(&ctx, offered, &mut metadata);
-            let timeout = self.sh.cfg.guards.model_timeout;
-            let mut attempt;
-            loop {
-                attempt = tokio::time::timeout(
-                    timeout,
-                    self.call_with_retries(
-                        &ctx,
-                        run,
-                        &req,
-                        offered,
-                        purpose,
-                        tier_active.then_some(if tier_light && name.as_str() == primary {
-                            crate::tiering::LIGHT
-                        } else {
-                            crate::tiering::STANDARD
-                        }),
-                        cancel,
-                    ),
-                )
-                .await
-                .unwrap_or(Err(ProviderError::Timeout));
-                // A model that turns the screenshot down: ask again without it.
-                if sent_picture
-                    && attempt
-                        .as_ref()
-                        .err()
-                        .is_some_and(crate::grounding::refused_picture)
-                {
-                    sent_picture = false;
-                    req.messages = plain_messages.clone();
+        // A whole chain that failed only for transient reasons (rate limit, a
+        // provider or network outage) is not the end of the run: wait, with
+        // exponential backoff, and try the chain again. The whole wait is bounded by
+        // `transient_outage_budget` of wall time, counted from here: it includes the
+        // time the attempts themselves took (a provider's `Retry-After` inside
+        // `call_with_retries`, model timeouts). A provider that asked for a pause
+        // keeps its cooldown across the rounds.
+        let outage_started = tokio::time::Instant::now();
+        let mut outage_round = 0u32;
+        'outage: loop {
+            let reachability = connectivity.check().await;
+            for (i, &name) in models.iter().enumerate() {
+                // Only the owner's configured fallback chain is eligible. Unknown/CLI providers
+                // keep their normal path; HTTP responses such as 401/429 never count as offline.
+                if reachability.iter().any(|r| {
+                    Some(r.id.as_str()) == ModelRef(name.clone()).provider() && !r.reachable
+                }) {
+                    other_failure = true;
+                    last_model = name;
+                    last_err = Some(ProviderError::Connection("The model service cannot be reached. Your message has not been answered; try again when the connection returns.".into()));
                     continue;
                 }
-                break;
-            }
-            match attempt {
-                Ok(mut out) => {
-                    if using_deferred {
-                        out.offered_tools = Some(offered.iter().map(|s| s.name.clone()).collect());
+                req.model = ModelRef(name.clone());
+                let picked = self.sh.providers.read().pick(&req.model).ok();
+                let provider_id = picked.as_ref().map(|p| p.id().to_owned());
+                // The picture goes only to a model its provider says takes images, never to a CLI
+                // model, and never by changing the messages the other candidates are built from.
+                let mut sent_picture = false;
+                req.messages = match &shot_messages {
+                    Some(with)
+                        if !name.starts_with("cli:")
+                            && picked
+                                .as_ref()
+                                .is_some_and(|p| p.supports_vision(req.model.model())) =>
+                    {
+                        sent_picture = true;
+                        with.clone()
                     }
-                    result = Some(out);
+                    _ => plain_messages.clone(),
+                };
+                if provider_id
+                    .as_ref()
+                    .and_then(|id| cooldowns.get(id))
+                    .is_some_and(|(started, delay)| started.elapsed() < *delay)
+                {
+                    continue;
+                }
+                if i > 0
+                    && let Some(prev) = &last_err
+                {
+                    if tier_light && i == 1 {
+                        let reason = match prev {
+                            ProviderError::Unsupported { .. } => "unsupported",
+                            ProviderError::MalformedToolCall(_) => "invalid_tool_calls",
+                            _ => "provider_failure",
+                        };
+                        self.record_tier_upgrade(&ctx, &primary, reason)?;
+                    }
+                    self.sh.emit(
+                        &ctx,
+                        Event::ModelFallback(ModelFallback {
+                            run_id: run.id,
+                            from: last_model.clone(),
+                            to: name.clone(),
+                            reason: prev.to_string(),
+                        }),
+                    );
+                }
+                let alternative;
+                let offered = if deferred && guard_reason.is_none() && name.starts_with("cli:") {
+                    let mut cli_specs = self.sh.model_specs(&ctx.profile, ctx.bot_id, &hints.tools);
+                    crate::discovery::bound_legacy(&mut cli_specs);
+                    alternative = cli_specs;
+                    &alternative
+                // Only the standard (executor) attempt gets the full deferred surface;
+                // later fallback models keep the light tier's direct-only surface.
+                } else if deferred && tier_light && i == 1 && !ctx.profile.models.direct_tools_only
+                {
+                    alternative =
+                        self.sh
+                            .deferred_specs(&ctx, &crate::discovery::activations(&steps), false);
+                    &alternative
+                } else {
+                    &specs
+                };
+                let using_deferred = deferred && !name.starts_with("cli:");
+                req.tools = tool_defs(offered, using_deferred);
+                note_metadata(&ctx, offered, &mut metadata);
+                let timeout = self.sh.cfg.guards.model_timeout;
+                let mut attempt;
+                loop {
+                    attempt = tokio::time::timeout(
+                        timeout,
+                        self.call_with_retries(
+                            &ctx,
+                            run,
+                            &req,
+                            offered,
+                            purpose,
+                            tier_active.then_some(if tier_light && name.as_str() == primary {
+                                crate::tiering::LIGHT
+                            } else {
+                                crate::tiering::STANDARD
+                            }),
+                            cancel,
+                        ),
+                    )
+                    .await
+                    .unwrap_or(Err(ProviderError::Timeout));
+                    // A model that turns the screenshot down: ask again without it.
+                    if sent_picture
+                        && attempt
+                            .as_ref()
+                            .err()
+                            .is_some_and(crate::grounding::refused_picture)
+                    {
+                        sent_picture = false;
+                        req.messages = plain_messages.clone();
+                        continue;
+                    }
                     break;
                 }
-                Err(e) => {
-                    if cancel.is_cancelled() {
-                        last_err = Some(ProviderError::Interrupted("cancelled"));
+                match attempt {
+                    Ok(mut out) => {
+                        if using_deferred {
+                            out.offered_tools =
+                                Some(offered.iter().map(|s| s.name.clone()).collect());
+                        }
+                        result = Some(out);
                         break;
                     }
-                    if let ProviderError::Unsupported { capability } = &e {
-                        misses.push((name.clone(), capability.clone()));
-                    } else {
-                        other_failure = true;
-                    }
-                    if let (Some(provider_id), Some(delay)) = (provider_id, e.retry_after()) {
-                        cooldowns.insert(provider_id, (tokio::time::Instant::now(), delay));
-                    }
-                    let hard = name.starts_with("cli:") || !e.can_fallback();
-                    last_model = name;
-                    last_err = Some(e);
-                    if hard {
-                        break;
+                    Err(e) => {
+                        if cancel.is_cancelled() {
+                            last_err = Some(ProviderError::Interrupted("cancelled"));
+                            break;
+                        }
+                        if let ProviderError::Unsupported { capability } = &e {
+                            misses.push((name.clone(), capability.clone()));
+                        } else {
+                            other_failure = true;
+                        }
+                        if let (Some(provider_id), Some(delay)) = (provider_id, e.retry_after()) {
+                            cooldowns.insert(provider_id, (tokio::time::Instant::now(), delay));
+                        }
+                        let hard = name.starts_with("cli:") || !e.can_fallback();
+                        last_model = name;
+                        last_err = Some(e);
+                        if hard {
+                            break;
+                        }
                     }
                 }
             }
+            if result.is_none()
+                && !cancel.is_cancelled()
+                && misses.is_empty()
+                && !models.iter().any(|m| m.starts_with("cli:"))
+                && let Some(error) = &last_err
+                && let Some(delay) = outage_delay(
+                    error,
+                    outage_round,
+                    outage_started.elapsed(),
+                    self.sh.cfg.transient_outage_budget,
+                )
+            {
+                self.sh.emit(
+                    &ctx,
+                    Event::Error(RunError {
+                        run_id: run.id,
+                        message: outage_notice(error, delay),
+                        recoverable: true,
+                    }),
+                );
+                tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => {
+                        return Err(xe("the run was stopped while waiting for the model service"));
+                    }
+                    () = tokio::time::sleep(delay) => {}
+                }
+                outage_round += 1;
+                result = None;
+                misses.clear();
+                other_failure = false;
+                last_model = &primary;
+                continue 'outage;
+            }
+            break;
         }
         let Some(mut out) = result else {
             let message = if !other_failure && !misses.is_empty() {
@@ -1337,7 +1430,7 @@ impl TurnExecutor {
         let attempts = policy.max_attempts.max(1);
         let budget = retry_time_budget(policy);
         let started = tokio::time::Instant::now();
-        let mut slept = Duration::ZERO;
+        let mut backoff_slept = Duration::ZERO;
         let mut attempt = 1;
         let mut malformed_retried = false;
         let light = self.light_model(ctx) == Some(req.model.0.as_str());
@@ -1364,15 +1457,14 @@ impl TurnExecutor {
             {
                 return Err(error);
             }
-            let delay = error
-                .retry_after()
-                .unwrap_or_else(|| jittered_backoff(policy.backoff(attempt)));
+            let retry_after = error.retry_after();
+            let delay = retry_after.unwrap_or_else(|| jittered_backoff(policy.backoff(attempt)));
             let sleep_budget = if light_repair {
                 budget.max(policy.backoff(attempt))
             } else {
                 budget
             };
-            if slept.saturating_add(delay) > sleep_budget
+            if (retry_after.is_none() && backoff_slept.saturating_add(delay) > sleep_budget)
                 || started.elapsed().saturating_add(delay) >= self.sh.cfg.guards.model_timeout
             {
                 return Err(error);
@@ -1384,7 +1476,9 @@ impl TurnExecutor {
                 }
                 () = tokio::time::sleep(delay) => {}
             }
-            slept += delay;
+            if retry_after.is_none() {
+                backoff_slept += delay;
+            }
             malformed_retried |= malformed;
             attempt += 1;
         }
@@ -1841,6 +1935,7 @@ impl TurnExecutor {
                 {
                     Slot::Run {
                         tool,
+                        name: resolved.name.clone(),
                         input,
                         call: call_uuid,
                         meta,
@@ -1865,6 +1960,7 @@ impl TurnExecutor {
                     {
                         Ok(permit) => Slot::Run {
                             tool,
+                            name: resolved.name.clone(),
                             input,
                             call: call_uuid,
                             meta,
@@ -1892,6 +1988,7 @@ impl TurnExecutor {
             } else {
                 Slot::Run {
                     tool,
+                    name: resolved.name.clone(),
                     input,
                     call: call_uuid,
                     meta,
@@ -1933,6 +2030,10 @@ impl TurnExecutor {
         let pictures_ref = &pictures;
         // Reads batched by `pending_tools` run concurrently; everything else is a single call.
         let ctx_ref: &RunCtx = &ctx;
+        // Tab of each page observation, noted right after its call ran.
+        let tabs: parking_lot::Mutex<std::collections::HashMap<ToolCallId, String>> =
+            parking_lot::Mutex::new(std::collections::HashMap::new());
+        let tabs_ref = &tabs;
         let outcomes = futures::future::join_all(slots.into_iter().map(|slot| async move {
             let not_run = taint::ExecFact::did_not_run();
             match slot {
@@ -1965,6 +2066,7 @@ impl TurnExecutor {
                 }
                 Slot::Run {
                     tool,
+                    name: observed,
                     input,
                     call: call_id,
                     meta,
@@ -2010,6 +2112,30 @@ impl TurnExecutor {
                         };
                     if is_error && exposure.is_none() {
                         exposure = reported.exposure;
+                    }
+                    // A full page observation is kept per browser tab when the
+                    // conversation is shortened: ask the browser which tab this was.
+                    // A `use_tool` call is a page observation by the name of its target.
+                    if !is_error
+                        && tool_registry::ObservationScope::of_name(&observed)
+                            == Some(tool_registry::ObservationScope::Page)
+                    {
+                        let tctx = ToolContext {
+                            run_id: ctx_ref.run_id.to_string(),
+                            bot_id: Some(ctx_ref.bot_id.to_string()),
+                            lane: ctx_ref.lane(),
+                            ..ToolContext::default()
+                        };
+                        let target = if tool.spec().name == observed {
+                            Some(Arc::clone(&tool))
+                        } else {
+                            self.sh.tools.get(&observed)
+                        };
+                        if let Some(target) = target
+                            && let Some(tab) = target.landed_tab(&tctx).await
+                        {
+                            tabs_ref.lock().insert(call_id, tab);
+                        }
                     }
                     // The result is in the model context even when the tool
                     // returned an error. A denial before this point is not.
@@ -2077,6 +2203,7 @@ impl TurnExecutor {
         .await;
 
         let g = &self.sh.cfg.guards;
+        let mut cycle_tools: Option<Vec<String>> = None;
         let mut results = Vec::with_capacity(calls.len());
         for ((call, call_uuid), (text, mut is_error, duration_ms, own_spill, fact)) in
             calls.iter().zip(uuids).zip(outcomes)
@@ -2152,11 +2279,26 @@ impl TurnExecutor {
                 // unknown and what to do next.
                 let _ = write!(text, "\n{}", crate::ledger::TIMEOUT_HINT);
             }
+            if g.cycle_warn > 0
+                && call.cycle >= g.cycle_warn
+                && knowledge_request.is_none()
+                && !is_error
+            {
+                let names = cycle_tools
+                    .get_or_insert_with(|| {
+                        crate::loops::trailing_cycle(&cycle_entries(&history))
+                            .map(|(_, names)| names)
+                            .unwrap_or_default()
+                    })
+                    .clone();
+                let _ = write!(text, "{}", crate::loops::hint(call.cycle, &names));
+            }
             if call.repeat >= g.repeat_warn && knowledge_request.is_none() {
                 let _ = write!(
                     text,
-                    "\n[warning: this exact call has now been made {} times in a row; \
+                    "{} has now been made {} times in a row; \
                      change your approach or stop]",
+                    crate::loops::REPEAT_WARN_MARK,
                     call.repeat
                 );
             }
@@ -2186,6 +2328,7 @@ impl TurnExecutor {
                     .lock()
                     .ok()
                     .and_then(|mut m| m.remove(&call_uuid.to_string())),
+                tab: tabs.lock().remove(&call_uuid),
                 fact: Some(fact),
                 tier_executed: light.then_some(duration_ms.is_some()),
                 tier_invalid: light.then(|| invalid_calls.contains(&call_uuid)),
@@ -2567,6 +2710,43 @@ fn unsupported_chain_message(misses: &[(String, String)]) -> String {
         "no model supports the request: {listed}. \
          Set model_caps in providers.toml (the user's values override the catalog); \
          for example, under [provider.model_caps.\"<model-id>\"] set tools = true or vision = true"
+    )
+}
+
+/// First pause after a whole model chain failed for a transient reason.
+const OUTAGE_INITIAL_BACKOFF: Duration = Duration::from_secs(5);
+/// Longest single pause of that wait.
+const OUTAGE_MAX_BACKOFF: Duration = Duration::from_secs(60);
+
+/// How long to wait before running the whole model chain again after it failed
+/// with `error`; `None`: fail the step (not transient, or the wait would end after
+/// the budget). `round` counts the waits so far, `elapsed` is the wall time since the
+/// first attempt of the step (the attempts' own time counts, not only the waits).
+///
+/// A provider's `Retry-After` is honoured as the minimum, however long the
+/// per-call retry budget is: only `budget` bounds it.
+fn outage_delay(
+    error: &ProviderError,
+    round: u32,
+    elapsed: Duration,
+    budget: Duration,
+) -> Option<Duration> {
+    if !error.is_retryable() || matches!(error, ProviderError::MalformedToolCall(_)) {
+        return None;
+    }
+    let backoff = OUTAGE_INITIAL_BACKOFF
+        .saturating_mul(2u32.saturating_pow(round))
+        .min(OUTAGE_MAX_BACKOFF);
+    let delay = jittered_backoff(backoff).max(error.retry_after().unwrap_or(Duration::ZERO));
+    (elapsed.saturating_add(delay) <= budget).then_some(delay)
+}
+
+/// What the user is told while the loop waits for the model service.
+fn outage_notice(error: &ProviderError, delay: Duration) -> String {
+    let secs = delay.as_secs().max(1);
+    let why = truncate_utf8(&error.to_string(), 160).to_owned();
+    format!(
+        "The model service did not answer ({why}). Waiting {secs} s, then trying again. / Model servisi yanıt vermedi ({why}). {secs} sn bekleyip yeniden denenecek."
     )
 }
 

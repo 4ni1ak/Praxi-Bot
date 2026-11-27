@@ -46,6 +46,11 @@ pub struct Guards {
     pub repeat_warn: u32,
     /// Identical consecutive tool calls at which the turn is stopped.
     pub repeat_stop: u32,
+    /// Repetitions of a 2-3 call cycle with unchanged results at which a
+    /// recovery hint is added to the tool result (`0` turns cycle detection off).
+    pub cycle_warn: u32,
+    /// Repetitions of such a cycle at which the turn is stopped.
+    pub cycle_stop: u32,
     /// Token budget (prompt + completion, summed over the turn's model calls).
     pub max_tokens_per_turn: u64,
     /// Tool output above this many bytes is spilled to a file.
@@ -78,6 +83,8 @@ impl Default for Guards {
             model_timeout: Duration::from_secs(300),
             repeat_warn: 3,
             repeat_stop: 5,
+            cycle_warn: 3,
+            cycle_stop: 5,
             max_tokens_per_turn: 2_000_000,
             spill_threshold_bytes: 16 * 1024,
             spill_preview_bytes: 2 * 1024,
@@ -329,6 +336,12 @@ impl JournalSlot {
     }
 }
 
+/// Default total wait of a model step for a provider that keeps failing transiently (10 minutes).
+pub const DEFAULT_TRANSIENT_OUTAGE_BUDGET: Duration = Duration::from_secs(10 * 60);
+
+/// Default number of automatic resumes of one restart-interrupted run.
+pub const DEFAULT_MAX_AUTO_RESUMES: u32 = 3;
+
 /// Default max time a run waits for an offline PC node before failing (24 hours).
 pub const DEFAULT_WAIT_FOR_PC_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -344,6 +357,20 @@ pub struct LoopConfig {
     pub global_policy: Policy,
     /// Retry policy for model steps (they are idempotent).
     pub model_retry: RetryPolicy,
+    /// How long in total a model step may wait, with exponential backoff, for a
+    /// provider that keeps failing for transient reasons (a rate limit with a
+    /// long `Retry-After`, an outage, no network) before the run fails. It is
+    /// wall time from the step's first attempt, so a provider's `Retry-After`
+    /// served inside a call and the model timeouts count too; the waits
+    /// themselves are separate from the short per-call retries of
+    /// `model_retry`. `ZERO` fails the step as soon as the per-call retries
+    /// are used up.
+    pub transient_outage_budget: Duration,
+    /// How often one run interrupted by a daemon restart is resumed automatically
+    /// (Full-level bots only, see `AgentLoop::auto_resume_after_restart`); `0`
+    /// turns the automatic resume off. A run that still does not finish stays
+    /// paused for the owner.
+    pub max_auto_resumes: u32,
     /// Prices keyed by the full model reference (`provider/model`).
     pub prices: HashMap<String, ModelPrice>,
     /// Tools with `Effect::Read` skip an `Ask` that comes from the policy level
@@ -417,6 +444,8 @@ impl Default for LoopConfig {
                 multiplier: 2,
                 max_backoff_ms: 8_000,
             },
+            transient_outage_budget: DEFAULT_TRANSIENT_OUTAGE_BUDGET,
+            max_auto_resumes: DEFAULT_MAX_AUTO_RESUMES,
             prices: HashMap::new(),
             read_tools_skip_ask: true,
             max_tokens: None,

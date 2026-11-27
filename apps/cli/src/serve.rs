@@ -1553,7 +1553,7 @@ pub fn serve(
             println!("token file: <data dir>/api-token");
             if !recovered.is_empty() {
                 println!(
-                    "{} interrupted run(s) are paused; resume via POST /v1/runs/{{id}}/resume",
+                    "{} interrupted run(s) were paused; Full-level bots continue by themselves, resume the others via POST /v1/runs/{{id}}/resume",
                     recovered.len()
                 );
             }

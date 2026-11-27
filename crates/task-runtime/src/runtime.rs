@@ -58,6 +58,14 @@ impl Drop for TokenGuard<'_> {
     }
 }
 
+/// `pause_reason` of a run a daemon restart (or crash) left `Paused`: the run
+/// was interrupted, not stopped by the user, and may be resumed automatically.
+pub const RESTART_PAUSE_REASON: &str = "daemon_restart";
+
+/// `pause_reason` of a restart-interrupted run that was resumed automatically
+/// as often as allowed and still did not finish: it now waits for the owner.
+pub const RESTART_LIMIT_PAUSE_REASON: &str = "restart_resume_limit";
+
 /// Durable run runtime.  Storage calls are synchronous and short; they run
 /// inline on the async task.
 pub struct Runtime {
@@ -322,7 +330,14 @@ impl Runtime {
         let Some(token) = tokens.get(&run_id) else {
             return false;
         };
-        self.pausing.lock().insert(run_id);
+        // A run that was cancelled and is not already pausing was stopped on
+        // purpose (`cancel` clears the pause request): it stays `Cancelled`.
+        let mut pausing = self.pausing.lock();
+        if token.is_cancelled() && !pausing.contains(&run_id) {
+            return false;
+        }
+        pausing.insert(run_id);
+        drop(pausing);
         if interrupt {
             token.cancel();
         }
@@ -359,7 +374,10 @@ impl Runtime {
     }
 
     /// Startup recovery: every run left `Running` gets its un-finished steps
-    /// marked `Interrupted` and moves to `Paused`.  Nothing is replayed.
+    /// marked `Interrupted` and moves to `Paused` with the pause reason
+    /// [`RESTART_PAUSE_REASON`].  Nothing is replayed or resumed here (this
+    /// also runs while the daemon shuts down); the owner of the runtime
+    /// decides which of these runs may continue by themselves.
     /// Returns the recovered run ids.
     ///
     /// # Errors
@@ -376,6 +394,8 @@ impl Runtime {
                 StepStatus::Interrupted.as_str(),
             )?;
             self.transition(run.id, RunState::Paused, None)?;
+            self.storage
+                .set_run_pause_reason(run.id, Some(RESTART_PAUSE_REASON))?;
             self.storage.append_audit(
                 run.user_id,
                 Some(run.id),
@@ -844,6 +864,11 @@ mod tests {
         assert_eq!(rt.recover().unwrap(), vec![run]);
         assert_eq!(rt.state(run).unwrap(), RunState::Paused);
         assert_eq!(
+            st.get_run(run).unwrap().unwrap().pause_reason.as_deref(),
+            Some(RESTART_PAUSE_REASON),
+            "a recovered run says why it is paused"
+        );
+        assert_eq!(
             statuses(&st, run),
             vec![("send_mail".into(), "interrupted".into(), 1)]
         );
@@ -1118,6 +1143,25 @@ mod tests {
         wait_for_intent(&st, run).await;
         assert!(rt.request_pause(run, false));
         rt.cancel(run).unwrap();
+        assert_eq!(handle.await.unwrap().unwrap(), RunState::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn a_pause_request_after_a_cancel_does_not_turn_the_stop_into_a_pause() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, u, b) = setup(dir.path());
+        let ex = Arc::new(Fake::new(vec![spec("a", false)]).blocking("a", Block::Pending));
+        let rt = Arc::new(Runtime::new(st.clone(), ex));
+        let run = rt.create_run(u, b, None, "turn").unwrap();
+        let handle = tokio::spawn({
+            let rt = rt.clone();
+            async move { rt.start(run).await }
+        });
+        wait_for_intent(&st, run).await;
+        // Stop lands first; a shutdown then asks the same live run to pause.
+        rt.cancel(run).unwrap();
+        assert!(!rt.request_pause(run, false));
+        assert!(!rt.request_pause(run, true));
         assert_eq!(handle.await.unwrap().unwrap(), RunState::Cancelled);
     }
 
