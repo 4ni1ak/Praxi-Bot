@@ -3396,12 +3396,17 @@
     }
   },
   "elicitation": {
+    "banner": "Lo pide el servidor MCP {{server}} — no Praxi",
+    "blocked": "Bloqueado: parece una credencial, nunca se envía",
+    "blockedRequired": "Este formulario exige un campo que parece una credencial. Praxi nunca envía contraseñas, claves de acceso, códigos ni números de tarjeta a un servidor MCP, así que no se puede enviar. Puedes rechazarlo o cancelarlo.",
     "cancel": "Cancelar",
     "choose": "Elegir…",
     "closed": "Esta solicitud ya no está abierta.",
     "decline": "Rechazar",
     "expired": "Se acabó el tiempo de esta solicitud.",
     "expiresIn": "Tiempo restante para responder",
+    "externalLink": "enlace externo",
+    "externalLinkTitle": "Lo escribió el servidor MCP. Praxi no lo abre. Revísalo con cuidado antes de entrar tú.",
     "messageLabel": "Mensaje de {{server}}:",
     "notConnected": "No hay conexión con el servicio. No se envió nada y lo que escribiste sigue aquí.",
     "note": "Este texto viene del servidor MCP {{server}}, no de Praxi. Tus respuestas van solo a ese servidor, no al bot.",
@@ -3411,6 +3416,7 @@
       "declined": "Rechazado. Se avisó al servidor de que no quieres responder."
     },
     "problem": {
+      "blocked": "{{field}} parece una credencial y nunca se envía.",
       "integer": "{{field}} debe ser un número entero.",
       "number": "{{field}} debe ser un número.",
       "required": "{{field}} es obligatorio.",

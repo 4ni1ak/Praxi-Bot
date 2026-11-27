@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ClipboardList } from "lucide-react";
+import { ClipboardList, Server, ShieldAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "ui";
 import { ApiError } from "../api/client";
@@ -12,12 +12,14 @@ import {
   buildContent,
   defaultChecked,
   defaultText,
+  hasUnsatisfiableField,
   inputType,
   isElicitationGone,
   type RawValue
 } from "../lib/elicitationForm";
+import { splitExternalLinks } from "../lib/externalLinks";
 import formStyles from "./Form.module.css";
-import styles from "./SecretRequestCard.module.css";
+import styles from "./ElicitationCard.module.css";
 
 export interface ElicitationCardProps {
   item: ElicitationItem;
@@ -26,10 +28,33 @@ export interface ElicitationCardProps {
 }
 
 /**
+ * Untrusted server text as plain text nodes. A web address in it is shown as inert monospace
+ * text with an "external link" tag: never an anchor, never opened by Praxi.
+ */
+function ServerText({ text }: { text: string }) {
+  const { t } = useTranslation();
+  return (
+    <>
+      {splitExternalLinks(text).map((seg, i) =>
+        seg.kind === "url" ? (
+          <span key={i} className={styles.link} data-external-link="true" title={t("elicitation.externalLinkTitle")}>
+            <span className={styles.linkText}>{seg.text}</span>
+            <span className={styles.linkTag}>{t("elicitation.externalLink")}</span>
+          </span>
+        ) : (
+          seg.text
+        )
+      )}
+    </>
+  );
+}
+
+/**
  * An MCP server's form for the owner (`elicitation_requested`). The server's message, field
- * titles and descriptions are untrusted text: shown as plain text nodes, never as markup or links.
- * The answer goes to that server only; the model never sees it. Inputs are uncontrolled and only
- * the schema's `default` is ever prefilled.
+ * titles and descriptions are untrusted text: shown as plain text nodes, never as markup, and web
+ * addresses never as links. A suspected credential field (`blocked`) is shown without an input and
+ * is never sent. The answer goes to that server only; the model never sees it. Inputs are
+ * uncontrolled and only the schema's `default` is ever prefilled.
  */
 export function ElicitationCard({ item, onAnswer, onCancel }: ElicitationCardProps) {
   const { t } = useTranslation();
@@ -47,12 +72,14 @@ export function ElicitationCard({ item, onAnswer, onCancel }: ElicitationCardPro
   const expired = left === 0;
   const locked = done || item.closed === true || gone || expired;
   const server = escapeInvisible(item.server);
+  // A required credential field can never be answered: the form can only be declined or cancelled.
+  const unsatisfiable = hasUnsatisfiableField(item.fields);
 
   // While the form is open: tick the countdown and move focus to the first field (the card
   // appears on its own, so a screen reader must be sent here).
   useEffect(() => {
     if (locked) return undefined;
-    formRef.current?.querySelector<HTMLElement>("input, select")?.focus();
+    formRef.current?.querySelector<HTMLElement>("input, select, button:not([disabled])")?.focus();
     if (!limited) return undefined;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
@@ -83,8 +110,10 @@ export function ElicitationCard({ item, onAnswer, onCancel }: ElicitationCardPro
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const form = formRef.current;
-    if (busy || locked || !form) return;
+    if (busy || locked || !form || unsatisfiable) return;
+    // A blocked field has no input: nothing is read for it, and buildContent skips it anyway.
     const raw: RawValue[] = item.fields.map((f, n) => {
+      if (f.blocked === true) return undefined;
       const el = form.elements.namedItem(`f${n}`) as HTMLInputElement | HTMLSelectElement | null;
       if (!el) return undefined;
       return f.type === "boolean" ? (el as HTMLInputElement).checked : el.value;
@@ -128,6 +157,7 @@ export function ElicitationCard({ item, onAnswer, onCancel }: ElicitationCardPro
   const titleId = `${uid}-title`;
   const messageId = `${uid}-message`;
   const errorId = `${uid}-error`;
+  const blockedNoteId = `${uid}-blocked`;
 
   const field = (f: ElicitationField, n: number) => {
     const id = `${uid}-f${n}`;
@@ -142,7 +172,9 @@ export function ElicitationCard({ item, onAnswer, onCancel }: ElicitationCardPro
       "aria-required": f.required || undefined
     };
     const help = helpId ? (
-      <p className={formStyles.hint} id={helpId}>{escapeInvisible(f.description ?? "")}</p>
+      <p className={formStyles.hint} id={helpId}>
+        <ServerText text={escapeInvisible(f.description ?? "")} />
+      </p>
     ) : null;
     const marker = f.required ? (
       <>
@@ -150,6 +182,27 @@ export function ElicitationCard({ item, onAnswer, onCancel }: ElicitationCardPro
         <span aria-hidden="true">*</span>
       </>
     ) : null;
+    if (f.blocked === true) {
+      // No input at all: there is nothing the owner could type, and nothing to send.
+      return (
+        <div key={n} className={formStyles.field}>
+          <div
+            className={styles.blocked}
+            role="group"
+            aria-labelledby={`${id}-label`}
+            aria-describedby={helpId}
+            data-testid="elicitation-blocked-field"
+          >
+            <span className={styles.blockedName} id={`${id}-label`}>{label(f)}{marker}</span>
+            <span className={styles.blockedTag}>
+              <ShieldAlert size={14} aria-hidden="true" />
+              {t("elicitation.blocked")}
+            </span>
+          </div>
+          {help}
+        </div>
+      );
+    }
     if (f.type === "boolean") {
       return (
         <div key={n} className={formStyles.field}>
@@ -201,6 +254,12 @@ export function ElicitationCard({ item, onAnswer, onCancel }: ElicitationCardPro
       aria-labelledby={titleId}
       aria-describedby={messageId}
     >
+      {/* Ours, not the server's: a separate element that stays whatever the card's state. */}
+      <p className={styles.banner} data-testid="elicitation-banner">
+        <Server size={14} aria-hidden="true" />
+        <span>{t("elicitation.banner", { server })}</span>
+      </p>
+
       <div className={styles.head}>
         <h3 className={styles.title} id={titleId}>
           <ClipboardList size={16} aria-hidden="true" />
@@ -214,9 +273,9 @@ export function ElicitationCard({ item, onAnswer, onCancel }: ElicitationCardPro
       </div>
 
       <div>
-        <span className={styles.purposeLabel}>{t("elicitation.messageLabel", { server })}</span>
-        <p className={styles.purpose} id={messageId} data-testid="elicitation-message">
-          {escapeInvisible(item.message)}
+        <span className={styles.messageLabel}>{t("elicitation.messageLabel", { server })}</span>
+        <p className={styles.message} id={messageId} data-testid="elicitation-message">
+          <ServerText text={escapeInvisible(item.message)} />
         </p>
       </div>
       <p className={styles.status}>{t("elicitation.note", { server })}</p>
@@ -239,8 +298,19 @@ export function ElicitationCard({ item, onAnswer, onCancel }: ElicitationCardPro
           noValidate
         >
           {item.fields.map(field)}
+          {unsatisfiable ? (
+            <p className={styles.blockedNote} id={blockedNoteId} data-testid="elicitation-blocked-note">
+              {t("elicitation.blockedRequired")}
+            </p>
+          ) : null}
           <div className={styles.actions}>
-            <Button size="sm" variant="primary" type="submit" disabled={busy}>
+            <Button
+              size="sm"
+              variant="primary"
+              type="submit"
+              disabled={busy || unsatisfiable}
+              aria-describedby={unsatisfiable ? blockedNoteId : undefined}
+            >
               {t("elicitation.submit")}
             </Button>
             <Button size="sm" variant="secondary" type="button" disabled={busy} onClick={decline}>

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ElicitationField } from "../api/types.ts";
-import { buildContent, defaultChecked, defaultText, inputType, isElicitationGone } from "./elicitationForm.ts";
+import { buildContent, defaultChecked, defaultText, hasUnsatisfiableField, inputType, isElicitationGone } from "./elicitationForm.ts";
 
 const f = (over: Partial<ElicitationField> & Pick<ElicitationField, "name" | "type">): ElicitationField => ({
   title: null,
@@ -65,4 +65,35 @@ test("input types follow the format, and only a fitting schema default is prefil
 test("knows the code that closes the card", () => {
   assert.equal(isElicitationGone("elicitation_gone"), true);
   assert.equal(isElicitationGone("secret_request_gone"), false);
+});
+
+test("a blocked field never puts its value in the content, whatever the raw value", () => {
+  const apiKey = f({ name: "api_key", type: "string", blocked: true });
+  const flag = f({ name: "remember", type: "boolean", blocked: true });
+  const num = f({ name: "pin", type: "integer", blocked: true });
+  assert.deepEqual(buildContent([email, apiKey, flag, num, news], ["a@b.c", "sk-live-123", true, "1234", true]), {
+    ok: true,
+    content: { email: "a@b.c", news: true }
+  });
+  const built = buildContent([apiKey], ["sk-live-123"]);
+  assert.equal(built.ok && JSON.stringify(built.content).includes("sk-live"), false);
+  // Raw values past the end are not read either.
+  assert.deepEqual(buildContent([apiKey], []), { ok: true, content: {} });
+});
+
+test("a required blocked field can never be satisfied", () => {
+  const code = f({ name: "otp", type: "string", required: true, blocked: true });
+  const r = buildContent([email, code], ["a@b.c", "123456"]);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.ok ? null : [r.field.name, r.problem], ["otp", "blocked"]);
+  assert.equal(buildContent([code], [undefined]).ok, false);
+});
+
+test("hasUnsatisfiableField is true only for a required blocked field", () => {
+  const optional = f({ name: "token", type: "string", blocked: true });
+  const required = f({ name: "password", type: "string", required: true, blocked: true });
+  const notBlocked = f({ name: "x", type: "string", required: true, blocked: false });
+  assert.equal(hasUnsatisfiableField([]), false);
+  assert.equal(hasUnsatisfiableField([email, optional, notBlocked]), false);
+  assert.equal(hasUnsatisfiableField([email, required]), true);
 });

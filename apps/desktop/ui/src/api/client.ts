@@ -1274,11 +1274,11 @@ export class ApiClient {
    * never to the model. Owner-only (the owner key is added for this computer's daemon).
    */
   answerElicitation(callId: string, body: AnswerElicitation): Promise<ElicitationAnswer> {
-    return this.request("POST", `/elicitations/${encodeURIComponent(callId)}`, { body });
+    return this.request("POST", `/elicitations/${encodeURIComponent(callId)}`, { body, localOwnerOnly: true });
   }
 
   cancelElicitation(callId: string): Promise<ElicitationAnswer> {
-    return this.request("POST", `/elicitations/${encodeURIComponent(callId)}/cancel`);
+    return this.request("POST", `/elicitations/${encodeURIComponent(callId)}/cancel`, { localOwnerOnly: true });
   }
 
   cancelSecretRequest(callId: string): Promise<SecretRequestAnswer> {

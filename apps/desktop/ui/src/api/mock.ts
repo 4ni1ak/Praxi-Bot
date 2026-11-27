@@ -3978,13 +3978,14 @@ export function mockReviewEvents(): { ts_ms: number; event: GlobalEnvelope["even
           run_id: "mock-live",
           call_id: "8f1c2d3e-4b5a-4c6d-8e7f-901234567890",
           server: "acme-crm",
-          message: "Deneme hesabını açmak için birkaç bilgiye ihtiyacım var.",
+          message: "Deneme hesabını açmak için birkaç bilgiye ihtiyacım var. Koşullar: https://acme-crm.example/terms (açılmaz).",
           expires_in_secs: 600,
           fields: [
             { name: "email", title: "E-posta", description: "Hesap bu adrese açılır.", type: "string", required: true, format: "email" },
             { name: "seats", title: "Kullanıcı sayısı", description: null, type: "integer", required: false, minimum: 1, maximum: 9, default: 3 },
             { name: "plan", title: "Paket", description: null, type: "string", required: true, options: [{ value: "starter", label: "Starter" }, { value: "team", label: "Team" }, { value: "business", label: "Business" }] },
-            { name: "newsletter", title: "Ürün haberlerini e-postayla gönder", description: null, type: "boolean", required: false }
+            { name: "newsletter", title: "Ürün haberlerini e-postayla gönder", description: null, type: "boolean", required: false },
+            { name: "api_key", title: "API anahtarı", description: "Ayrıntılar: www.acme-crm.example/keys", type: "string", required: false, blocked: true }
           ]
         }
       ] as GlobalEnvelope["event"][] : []),

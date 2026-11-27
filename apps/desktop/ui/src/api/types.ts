@@ -544,6 +544,11 @@ export interface ElicitationField {
   format?: "email" | "uri" | "date" | "date-time";
   /** The only value a form may prefill. */
   default?: unknown;
+  /**
+   * A suspected credential field (password, token, one-time code, card number, API key): shown
+   * as blocked and never submitted. The event JSON leaves it out when false.
+   */
+  blocked?: boolean;
 }
 export type FillSecretInfo = S["FillSecretDto"];
 export type VaultKind = S["VaultKindDto"];

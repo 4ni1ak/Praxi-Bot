@@ -6,7 +6,7 @@ import type { AnswerElicitation, ElicitationField } from "../api/types.ts";
 
 export type ElicitationContent = AnswerElicitation["content"];
 
-export type FieldProblem = "required" | "number" | "integer" | "tooSmall" | "tooLarge" | "tooShort" | "tooLong";
+export type FieldProblem = "blocked" | "required" | "number" | "integer" | "tooSmall" | "tooLarge" | "tooShort" | "tooLong";
 
 export type BuildResult =
   | { ok: true; content: ElicitationContent }
@@ -18,11 +18,16 @@ export type RawValue = string | boolean | undefined;
 /**
  * The `content` for `POST /v1/elicitations/{call_id}`, or the first field that does not fit.
  * Empty optional fields are left out; numbers are sent as numbers; a `date-time` from the
- * browser's local picker is sent as RFC 3339 (UTC).
+ * browser's local picker is sent as RFC 3339 (UTC). A blocked field (a suspected credential) never
+ * contributes a value, whatever `raw` holds; a required one can never be satisfied.
  */
 export function buildContent(fields: readonly ElicitationField[], raw: readonly RawValue[]): BuildResult {
   const content: ElicitationContent = {};
   for (const [n, field] of fields.entries()) {
+    if (field.blocked === true) {
+      if (field.required) return { ok: false, field, problem: "blocked" };
+      continue;
+    }
     const v = raw[n];
     if (field.type === "boolean") {
       content[field.name] = v === true;
@@ -54,6 +59,11 @@ export function buildContent(fields: readonly ElicitationField[], raw: readonly 
     }
   }
   return { ok: true, content };
+}
+
+/** True when a required field is blocked: the form can then only be declined or cancelled. */
+export function hasUnsatisfiableField(fields: readonly ElicitationField[]): boolean {
+  return fields.some((f) => f.blocked === true && f.required);
 }
 
 /** The browser input type for a text field. */
