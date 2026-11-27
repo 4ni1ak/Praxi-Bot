@@ -528,20 +528,50 @@ fn write_pins(
 pub(crate) async fn record_install_pin(s: &AppState, engine: &'static str) {
     let env = s.detector().environment().clone();
     let data = s.data_dir();
-    let pinned = tokio::task::spawn_blocking(move || login::pin_installed(engine, &env))
-        .await
-        .ok()
-        .and_then(Result::ok);
-    let mut pins = read_pins(&data);
-    match pinned {
-        Some(files) => {
+    let _ = tokio::task::spawn_blocking(move || record_cli_install_pin(&data, &env, engine)).await;
+}
+
+/// The same pin for an install that did not go through the daemon (`bot cli install`, run as the
+/// service user in a terminal): without it the app would refuse to sign in to a CLI that Praxi
+/// itself installed, as it does for one nobody can vouch for.
+///
+/// The pins decide which programs a later sign-in may run, so they are only written by the user
+/// that owns the data folder (the service user): returns `false`, and writes nothing, when that
+/// folder belongs to somebody else.
+#[must_use]
+pub fn record_cli_install_pin(
+    data: &std::path::Path,
+    env: &cli_provider::PathEnv,
+    engine: &str,
+) -> bool {
+    if !data_dir_is_ours(data) {
+        return false;
+    }
+    let mut pins = read_pins(data);
+    match login::pin_installed(engine, env) {
+        Ok(files) => {
             pins.insert(engine.to_owned(), files);
         }
-        None => {
+        Err(_) => {
             pins.remove(engine);
         }
     }
-    let _ = write_pins(&data, &pins);
+    write_pins(data, &pins).is_ok()
+}
+
+/// The data folder does not exist yet (this user creates it) or belongs to the effective user.
+#[cfg(unix)]
+fn data_dir_is_ours(data: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(data).map_or_else(
+        |e| e.kind() == std::io::ErrorKind::NotFound,
+        |m| m.uid() == rustix::process::geteuid().as_raw(),
+    )
+}
+
+#[cfg(not(unix))]
+fn data_dir_is_ours(_data: &std::path::Path) -> bool {
+    true
 }
 
 fn trust_error(e: login::TrustError) -> ApiError {
@@ -554,7 +584,7 @@ fn trust_error(e: login::TrustError) -> ApiError {
         login::TrustError::UntrustedLocation => ApiError::new(
             StatusCode::CONFLICT,
             "login_untrusted_location",
-            "this engine was not installed by Praxi and is not in a system location: reinstall it with Install on server, or sign in over SSH",
+            "this engine was not installed by Praxi and is not in a system location: reinstall it with Install on server, or sign in as the user Praxi runs as (in the app's terminal, or over SSH with `sudo praxi cli login <name>`)",
         ),
         login::TrustError::NotInstalled => ApiError::new(
             StatusCode::CONFLICT,
@@ -854,5 +884,55 @@ mod tests {
             ),
             Confirmed::No
         );
+    }
+
+    /// An install made in a terminal (`bot cli install`, as the service user) is pinned just like
+    /// the app's own, so the app signs in to it; a vanished install drops its pin.
+    #[cfg(unix)]
+    #[test]
+    fn a_terminal_install_is_pinned_for_the_apps_sign_in() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        let claude = bin.join("claude");
+        std::fs::write(&claude, "#!/bin/sh\necho 2.1.300\n").unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let env = cli_provider::PathEnv::for_test(bin);
+
+        assert!(record_cli_install_pin(&data, &env, "claude"));
+        let pins = read_pins(&data);
+        let files = pins.get("claude").expect("pinned");
+        assert!(
+            files.iter().all(|f| f.size > 0 && f.sha256.len() == 64),
+            "{files:?}"
+        );
+        // The pin is what lets the sign-in run a program outside the system folders.
+        assert!(login::verify_engine("claude", &env, Some(files)).is_ok());
+        assert!(login::verify_engine("claude", &env, None).is_err());
+
+        std::fs::remove_file(&claude).unwrap();
+        assert!(record_cli_install_pin(&data, &env, "claude"));
+        assert!(!read_pins(&data).contains_key("claude"));
+    }
+
+    /// The pins say which programs the service may later run: a user who does not own the data
+    /// folder (an SSH user running `bot cli install` by mistake) must not be able to write them.
+    #[cfg(unix)]
+    #[test]
+    fn a_terminal_install_by_another_user_records_no_pin() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = cli_provider::PathEnv::for_test(dir.path().join("bin"));
+        // `/usr` belongs to root. (Running the tests as root would own it: nothing to prove then.)
+        let other = std::path::Path::new("/usr");
+        if rustix::process::geteuid().as_raw() != 0 {
+            assert!(!record_cli_install_pin(other, &env, "claude"));
+            assert!(!other.join(PINS_FILE).exists());
+        }
+        // A data folder that is not there yet is created by the user who installs.
+        assert!(data_dir_is_ours(&dir.path().join("fresh")));
+        assert!(data_dir_is_ours(dir.path()));
     }
 }
