@@ -16,6 +16,7 @@
 //! original wire name to disambiguate.
 
 pub mod agentmail;
+pub mod attachment;
 pub mod channel;
 pub mod config;
 pub mod connector;
@@ -39,12 +40,14 @@ use std::sync::Arc;
 use tool_registry::{Tool, ToolRegistry};
 
 pub use agentmail::{AgentMailClient, AgentMailEndpoint, AgentMailProvider, ApiKey};
+pub use attachment::AttachmentPlace;
 pub use config::{
     AccountConfig, AccountKind, IdentitySettings, ImapSettings, SendMode, SmtpSecurity,
     SmtpSettings, normalize_sender, validate_account_name, validate_host,
 };
 pub use connector::{
-    ATTACHMENTS_DIR_NAME, EmailConnector, MAX_ATTACHMENT_BYTES, Scoped, SearchResult,
+    ATTACHMENTS_DIR_NAME, EmailConnector, MAX_ATTACHMENT_BYTES, SavedAttachment, Scoped,
+    SearchResult,
 };
 pub use error::{EmailError, ProviderError};
 pub use guard::{GuardReport, GuardSettings, MailGuard, OptOut, SendLogEntry, Warning};
@@ -59,9 +62,9 @@ pub use provider::{
 pub use smtp::{CalendarPart, OutgoingMail};
 pub use tools::TOOL_NAMES;
 pub use wait::{
-    LinkBasis, MailHandle, PageOrigin, PageOriginSlot, TrackingResolver, WaitBinding, WaitEnd,
-    WaitFilter, WaitOwner, WaitPlan, WaitProgress, Waiters, WebResolver, expand_tracking_links,
-    found_json, junk_folders, link_basis, timed_out_json, wait_for_mail,
+    JunkCandidate, LinkBasis, MailHandle, PageOrigin, PageOriginSlot, TrackingResolver,
+    WaitBinding, WaitEnd, WaitFilter, WaitOwner, WaitPlan, WaitProgress, Waiters, WebResolver,
+    expand_tracking_links, found_json, junk_folders, link_basis, timed_out_json, wait_for_mail,
 };
 pub use wait_store::WaitStore;
 
@@ -83,11 +86,15 @@ pub fn register(registry: &ToolRegistry, connector: &Arc<EmailConnector>) -> usi
 #[cfg(test)]
 mod bot_tests;
 #[cfg(test)]
+mod completeness_tests;
+#[cfg(test)]
 mod fake_imap;
 #[cfg(test)]
 mod guard_tests;
 #[cfg(test)]
 mod identity_tests;
+#[cfg(test)]
+mod junk_tests;
 #[cfg(test)]
 mod kind_tests;
 #[cfg(test)]

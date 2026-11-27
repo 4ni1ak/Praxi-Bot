@@ -32,6 +32,8 @@ fn summary(uid: u32, from: &str, subject: &str) -> MessageSummary {
         size: Some(500),
         automation_headers: None,
         has_attachment: None,
+        folder: None,
+        from_junk: None,
     }
 }
 
@@ -118,6 +120,7 @@ impl MailboxProvider for Fake {
             recipients: Vec::new(),
             found_in: None,
             from_junk: None,
+            sender_authenticated: None,
         })
     }
     async fn send(&self, mail: &OutgoingMail) -> Result<Receipt, EmailError> {

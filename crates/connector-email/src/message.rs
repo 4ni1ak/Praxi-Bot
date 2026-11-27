@@ -49,6 +49,15 @@ pub struct MessageSummary {
     pub automation_headers: Option<AutomationHeaders>,
     /// MIME metadata only; unknown is distinct from no attachments.
     pub has_attachment: Option<bool>,
+    /// The folder the message was found in; set when a search looked in more than
+    /// one folder (a search that included the junk folder).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    /// Whether the message was in the junk/spam folder (IMAP) or carries the
+    /// provider's spam label (API mailboxes). `None` when the mailbox cannot tell.
+    /// Anyone can put mail in spam, so a match from there is judged more strictly.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_junk: Option<bool>,
 }
 
 /// Minimal metadata for preventing unattended mail loops. No body or secrets.
@@ -115,6 +124,12 @@ pub struct MessageDetail {
     /// Whether that folder is a junk folder; `None` when the mailbox has no folders.
     #[serde(skip)]
     pub from_junk: Option<bool>,
+    /// Whether the receiving server vouched for the sender's domain (SPF, DKIM or DMARC
+    /// passed for a domain that belongs to the `From` address): `Some(true)` when it did,
+    /// `Some(false)` when it reported results and none passed, `None` when the provider
+    /// reports nothing. Only a wait reads it; it is not part of the model-facing JSON.
+    #[serde(skip)]
+    pub sender_authenticated: Option<bool>,
 }
 
 /// The bare address inside a `Name <addr>` / `addr` string, lower-case; empty
@@ -216,6 +231,8 @@ pub fn parse_summary(uid: u32, header: &[u8], unread: bool, size: Option<u32>) -
                 .map_or_else(String::new, |_| "present".into()),
         }),
         has_attachment: None,
+        folder: None,
+        from_junk: None,
     }
 }
 
@@ -241,6 +258,7 @@ pub fn parse_detail(
         .parse(raw)
         .ok_or_else(|| EmailError::Imap("message could not be parsed".into()))?;
     let summary = parse_summary(uid, raw, unread, size);
+    let summary_from = summary.from_addr.clone();
     let body = readable_body(&msg);
     let links = body_links(&msg);
     let (body_text, body_truncated) = truncate_chars(&body, max_body_chars);
@@ -295,6 +313,56 @@ pub fn parse_detail(
             .collect(),
         found_in: None,
         from_junk: None,
+        // The FIRST such header (`header_raw` would return the last one, the one furthest from
+        // the receiving server and the easiest for a sender to plant).
+        sender_authenticated: msg
+            .headers_raw()
+            .find(|(name, _)| name.eq_ignore_ascii_case("Authentication-Results"))
+            .map(|(_, raw)| authenticated_sender(raw, &summary_from)),
+    })
+}
+
+/// Longest `Authentication-Results` value read.
+const MAX_AUTH_RESULTS_CHARS: usize = 2000;
+
+/// Whether the `Authentication-Results` value `raw` (RFC 8601, written by the receiving
+/// server: the topmost one is read, a sender can only plant lower ones) says SPF, DKIM or
+/// DMARC passed for a domain aligned with `from_addr`'s. Aligned: the same domain or one
+/// under the other; a bare top-level name never counts.
+fn authenticated_sender(raw: &str, from_addr: &str) -> bool {
+    let Some(from_domain) = from_addr.rsplit_once('@').map(|(_, d)| d.to_lowercase()) else {
+        return false;
+    };
+    let aligned = |d: &str| {
+        let d = d
+            .trim_matches(|c: char| c == '"' || c == '<' || c == '>' || c == '.')
+            .to_lowercase();
+        d.contains('.')
+            && (d == from_domain
+                || from_domain.ends_with(&format!(".{d}"))
+                || d.ends_with(&format!(".{from_domain}")))
+    };
+    let raw: String = raw.chars().take(MAX_AUTH_RESULTS_CHARS).collect();
+    // The first part is the server's own id; every other part is one method's verdict.
+    raw.split(';').skip(1).any(|part| {
+        let mut words = part.split_whitespace();
+        let Some((method, result)) = words.next().and_then(|w| w.split_once('=')) else {
+            return false;
+        };
+        if !result.eq_ignore_ascii_case("pass") {
+            return false;
+        }
+        let property = |name: &str| {
+            part.split_whitespace()
+                .find_map(|w| w.to_lowercase().strip_prefix(name).map(str::to_owned))
+        };
+        match method.to_ascii_lowercase().as_str() {
+            "dkim" => property("header.d=").is_some_and(|d| aligned(&d)),
+            "spf" => property("smtp.mailfrom=")
+                .is_some_and(|m| aligned(m.rsplit_once('@').map_or(m.as_str(), |(_, d)| d))),
+            "dmarc" => property("header.from=").is_some_and(|d| aligned(&d)),
+            _ => false,
+        }
     })
 }
 

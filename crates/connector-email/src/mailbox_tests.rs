@@ -330,7 +330,7 @@ async fn wait_finds_mail_that_is_already_there_and_ignores_other_senders() {
 }
 
 #[tokio::test]
-async fn wait_polls_the_junk_folder_too() {
+async fn wait_polls_the_junk_folder_too_but_spam_alone_never_completes_it() {
     let (imap, conn) = rig().await;
     imap.deliver(
         "Junk",
@@ -347,7 +347,15 @@ async fn wait_polls_the_junk_folder_too() {
     )
     .await
     .unwrap();
-    assert!(matches!(end, WaitEnd::Found(_)), "{end:?}");
+    // The junk folder was read, and the forgery-prone match is only reported.
+    let WaitEnd::TimedOut {
+        junk_candidate: Some(c),
+        ..
+    } = end
+    else {
+        panic!("{end:?}")
+    };
+    assert_eq!(c.folder, "Junk");
 }
 
 #[tokio::test]
@@ -389,7 +397,7 @@ async fn wait_times_out_without_matching_mail() {
         .await
         .unwrap();
     assert!(
-        matches!(end, WaitEnd::TimedOut { polls } if polls >= 1),
+        matches!(end, WaitEnd::TimedOut { polls, .. } if polls >= 1),
         "{end:?}"
     );
 }
@@ -785,10 +793,18 @@ async fn a_file_name_with_path_parts_comes_back_as_a_plain_name() {
     )
     .await;
     assert_eq!(out["filename"], "evil.sh");
-    // Where it was saved never depends on the declared name.
+    // Only the last component of the declared name is used, inside the account folder, and a
+    // script keeps no ending that would let it be started by a double click.
     let saved = std::path::PathBuf::from(out["saved_to"].as_str().unwrap());
-    assert!(saved.starts_with(dir.path()), "{saved:?}");
-    assert!(!saved.to_string_lossy().contains("evil"), "{saved:?}");
+    assert!(saved.starts_with(dir.path().join("own")), "{saved:?}");
+    assert_eq!(saved.file_name().unwrap(), "evil.sh.bin");
+    assert_eq!(out["saved_as"], "evil.sh.bin");
+    assert!(
+        !saved
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir)),
+        "{saved:?}"
+    );
 }
 
 #[tokio::test]
@@ -1184,18 +1200,21 @@ async fn a_found_mail_says_which_folder_it_was_in_and_whether_that_is_junk() {
         &scoped,
         Some("own"),
         &filter,
-        &patient(),
+        &quick(),
         std::future::pending(),
     )
     .await
     .unwrap();
-    let WaitEnd::Found(d) = end else {
-        panic!("expected the mail from the junk folder")
+    // Nothing vouches for a mail in the junk folder, so it is a candidate, not the mail.
+    let WaitEnd::TimedOut {
+        junk_candidate: Some(c),
+        ..
+    } = end
+    else {
+        panic!("a junk match must not end the wait: {end:?}")
     };
+    assert_eq!(c.folder, "Junk");
     let basis = link_basis(None, None);
-    let v = found_json(&d, "own", &basis, &[]);
-    assert_eq!(v["folder"], "Junk", "{v}");
-    assert_eq!(v["from_junk"], true, "{v}");
 
     imap.deliver(
         "INBOX",

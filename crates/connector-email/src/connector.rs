@@ -3,15 +3,17 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, PoisonError, RwLock};
+use std::time::Duration;
 
 use secret_store::SecretStore;
 
 use crate::agentmail::{AgentMailClient, AgentMailEndpoint, AgentMailProvider, ApiKey};
+use crate::attachment::{self, AttachmentPlace, Sniffed};
 use crate::config::{AccountConfig, AccountKind, SendMode};
 use crate::cred::resolve_secret;
 use crate::error::EmailError;
 use crate::guard::MailGuard;
-use crate::imap::{FolderInfo, SearchQuery};
+use crate::imap::{FolderInfo, MAX_LIMIT, SearchQuery};
 use crate::imap_provider::ImapSmtpProvider;
 use crate::message::{MessageDetail, MessageSummary};
 use crate::probe::ProbeReport;
@@ -35,6 +37,24 @@ pub struct SearchResult {
     pub total: usize,
     /// API mailboxes: the `page_token` that returns the next page, when there is one.
     pub next_page_token: Option<String>,
+    /// The folders that were searched, when more than the asked one was (a search
+    /// that included junk); empty otherwise.
+    pub folders_searched: Vec<String>,
+}
+
+/// An attachment that was saved.
+#[derive(Debug, Clone)]
+pub struct SavedAttachment {
+    /// Where it was written.
+    pub path: PathBuf,
+    /// The bytes and the declared type and name.
+    pub data: AttachmentData,
+    /// What the bytes show (the type that counts).
+    pub sniffed: Sniffed,
+    /// The saved file's name.
+    pub file_name: String,
+    /// The declared type names something else than the bytes are.
+    pub type_conflict: bool,
 }
 
 /// Holds account configs and resolves their credentials lazily.
@@ -51,8 +71,20 @@ pub struct EmailConnector {
     client: RwLock<Option<AgentMailClient>>,
     /// Where downloaded attachments are saved (`None` = downloads refused).
     attachments_dir: RwLock<Option<PathBuf>>,
+    /// Per-bot place for attachments (the bot's workspace), when the host has one.
+    attachment_place: RwLock<Option<Arc<dyn AttachmentPlace>>>,
     /// Outgoing-mail guardrails (send log, opt-out list, limits).
     guard: RwLock<Arc<MailGuard>>,
+}
+
+/// Longest a search that also looks in the junk folders takes, over all its folders.
+const JUNK_SEARCH_BUDGET: Duration = Duration::from_secs(30);
+
+/// `m` marked with the folder it was found in and whether that is a junk folder.
+fn tagged(mut m: MessageSummary, folder: &str, junk: bool) -> MessageSummary {
+    m.folder = Some(folder.to_owned());
+    m.from_junk = Some(junk);
+    m
 }
 
 fn is_bot(id: &str, bot: Option<&str>) -> bool {
@@ -120,6 +152,7 @@ impl EmailConnector {
             endpoint,
             client: RwLock::new(None),
             attachments_dir: RwLock::new(None),
+            attachment_place: RwLock::new(None),
             guard: RwLock::new(Arc::new(MailGuard::in_memory())),
         }
     }
@@ -142,6 +175,15 @@ impl EmailConnector {
             .attachments_dir
             .write()
             .unwrap_or_else(PoisonError::into_inner) = Some(dir);
+    }
+
+    /// Save a bot's attachments where `place` says (its workspace) instead of the
+    /// daemon's folder. A bot `place` has no folder for keeps the daemon's folder.
+    pub fn set_attachment_place(&self, place: Arc<dyn AttachmentPlace>) {
+        *self
+            .attachment_place
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(place);
     }
 
     fn agentmail_client(&self) -> Result<AgentMailClient, EmailError> {
@@ -569,6 +611,95 @@ impl Scoped<'_> {
             messages: found.messages,
             total: found.total,
             next_page_token: found.next_page_token,
+            folders_searched: Vec::new(),
+        })
+    }
+
+    /// [`Scoped::search`] that also looks in the junk folders when the query asks for
+    /// junk (`include_junk`): mailboxes with folders search the server's junk folder
+    /// (flagged `\Junk` or named like one) next to `folder` and tag every message with
+    /// the folder it is in and `from_junk`; API mailboxes pass the request on and tag by
+    /// the provider's spam label. A junk folder that cannot be searched is skipped; the
+    /// answer lists the folders that were.
+    ///
+    /// # Errors
+    /// See [`EmailError`]; only the asked folder's failure fails the call.
+    pub async fn search_with_junk(
+        &self,
+        account: Option<&str>,
+        folder: &str,
+        query: &SearchQuery,
+        limit: usize,
+    ) -> Result<SearchResult, EmailError> {
+        // One budget for the whole call: the asked folder and every junk folder after it.
+        let deadline = tokio::time::Instant::now() + JUNK_SEARCH_BUDGET;
+        let limit = limit.clamp(1, MAX_LIMIT);
+        let provider = self.provider(account).await?;
+        let req = SearchRequest {
+            folder,
+            query,
+            limit,
+        };
+        let first = tokio::time::timeout_at(deadline, provider.search(&req))
+            .await
+            .map_err(|_| EmailError::Timeout(JUNK_SEARCH_BUDGET.as_secs()))??;
+        if query.include_junk != Some(true) || !provider.capabilities().folders {
+            return Ok(SearchResult {
+                messages: first.messages,
+                total: first.total,
+                next_page_token: first.next_page_token,
+                folders_searched: Vec::new(),
+            });
+        }
+        // The one definition of "junk folder" (also the wait's): at most
+        // `MAX_JUNK_FOLDERS` of them besides the asked folder.
+        let junk = match tokio::time::timeout_at(deadline, provider.list_folders()).await {
+            Ok(Ok(list)) => crate::wait::junk_folders(&list),
+            _ => Vec::new(),
+        };
+        let asked_is_junk = junk.iter().any(|j| j == folder);
+        let mut total = first.total;
+        let mut searched = vec![folder.to_owned()];
+        let mut messages: Vec<MessageSummary> = first
+            .messages
+            .into_iter()
+            .map(|m| tagged(m, folder, asked_is_junk))
+            .collect();
+        for j in junk.iter().filter(|j| j.as_str() != folder) {
+            // A folder that is slow or cannot be searched is skipped; so is everything after
+            // the budget ran out. The answer lists the folders that were searched.
+            let Ok(Ok(more)) = tokio::time::timeout_at(
+                deadline,
+                provider.search(&SearchRequest {
+                    folder: j,
+                    query,
+                    limit,
+                }),
+            )
+            .await
+            else {
+                continue;
+            };
+            searched.push(j.clone());
+            total = total.saturating_add(more.total);
+            messages.extend(more.messages.into_iter().map(|m| tagged(m, j, true)));
+        }
+        // Newest first across folders; mail without a readable date goes last.
+        messages.sort_by_key(|m| {
+            std::cmp::Reverse(
+                m.date
+                    .as_deref()
+                    .and_then(mail_parser::DateTime::parse_rfc3339)
+                    .map(|d| d.to_timestamp()),
+            )
+        });
+        messages.truncate(limit);
+        Ok(SearchResult {
+            messages,
+            total,
+            // Folder mailboxes (IMAP) have no page tokens.
+            next_page_token: None,
+            folders_searched: searched,
         })
     }
 
@@ -713,20 +844,24 @@ impl Scoped<'_> {
         self.provider(account).await?.list_new(cursor, limit).await
     }
 
-    /// Download an attachment (at most [`MAX_ATTACHMENT_BYTES`]) and save it
-    /// under the attachments directory with a generated name (the declared
-    /// file name is never used for the path, and nothing is ever executed).
-    /// Returns the saved path and the data.
+    /// Download an attachment (at most [`MAX_ATTACHMENT_BYTES`]) and save it: in
+    /// the bot's workspace when the host has an [`AttachmentPlace`] for it
+    /// (`downloads/email/<account>/`), else under the attachments directory
+    /// (`<account>/`). The file name is the declared one reduced to plain characters
+    /// (never a path, never overwriting another file); a file that is or looks like a
+    /// program gets `.bin` added; the type is sniffed from the bytes. Nothing is
+    /// ever executed.
     ///
     /// # Errors
     /// [`EmailError::Unsupported`] without provider support,
-    /// [`EmailError::Config`] when no attachments directory is configured.
+    /// [`EmailError::Config`] when there is no place to save to or the write fails,
+    /// [`EmailError::Input`] when the bot's workspace quota forbids the write.
     pub async fn save_attachment(
         &self,
         account: Option<&str>,
         message_id: &str,
         attachment_id: &str,
-    ) -> Result<(PathBuf, AttachmentData), EmailError> {
+    ) -> Result<SavedAttachment, EmailError> {
         self.save_attachment_in(account, "INBOX", message_id, attachment_id)
             .await
     }
@@ -741,34 +876,79 @@ impl Scoped<'_> {
         folder: &str,
         message_id: &str,
         attachment_id: &str,
-    ) -> Result<(PathBuf, AttachmentData), EmailError> {
+    ) -> Result<SavedAttachment, EmailError> {
         let acct = self.account(account)?;
         // The account name is a path component here; it is checked where it is used too.
         crate::config::validate_account_name(&acct.name)?;
-        let dir = self
+        let place = self
             .conn
-            .attachments_dir
+            .attachment_place
             .read()
             .unwrap_or_else(PoisonError::into_inner)
-            .clone()
-            .ok_or_else(|| EmailError::Config("no attachments directory is configured".into()))?
-            .join(&acct.name);
+            .clone();
+        let workspace = place.as_ref().and_then(|p| p.folder_for(self.bot));
+        // `root` is the folder the host owns; the write goes to `dir` below it and refuses a
+        // link anywhere on the way.
+        let (root, dir) = if let Some(ws) = &workspace {
+            (
+                ws.clone(),
+                ws.join("downloads").join("email").join(&acct.name),
+            )
+        } else {
+            let base = self
+                .conn
+                .attachments_dir
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+                .ok_or_else(|| {
+                    EmailError::Config("no attachments directory is configured".into())
+                })?;
+            let dir = base.join(&acct.name);
+            (base, dir)
+        };
         let data = self
             .conn
             .provider_for(&acct)
             .await?
             .get_attachment_in(folder, message_id, attachment_id, MAX_ATTACHMENT_BYTES)
             .await?;
-        let path = dir.join(format!("{}.bin", uuid::Uuid::now_v7()));
+        // The provider enforces the cap while reading; this is the second line.
+        if data.bytes.len() > MAX_ATTACHMENT_BYTES {
+            return Err(EmailError::Input(format!(
+                "the attachment is larger than {} MiB",
+                MAX_ATTACHMENT_BYTES / (1024 * 1024)
+            )));
+        }
+        let sniffed = attachment::sniff(&data.bytes);
+        let file_name = attachment::safe_file_name(data.filename.as_deref(), &sniffed);
+        let type_conflict = attachment::type_conflict(data.content_type.as_deref(), &sniffed);
+        if let Some(place) = place.as_ref().filter(|_| workspace.is_some()) {
+            let len = u64::try_from(data.bytes.len()).unwrap_or(u64::MAX);
+            place
+                .allow_write(self.bot, &dir.join(&file_name), len)
+                .map_err(EmailError::Input)?;
+        }
         let bytes = data.bytes.clone();
-        let target = path.clone();
-        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-            std::fs::create_dir_all(target.parent().unwrap_or(&target))?;
-            std::fs::write(&target, bytes)
+        let name = file_name.clone();
+        let target = dir.clone();
+        let path = tokio::task::spawn_blocking(move || {
+            attachment::write_unique(&root, &target, &name, &bytes)
         })
         .await
-        .map_err(|_| EmailError::Config("cannot save the attachment".into()))?
-        .map_err(|_| EmailError::Config("cannot save the attachment".into()))?;
-        Ok((path, data))
+        .map_err(|_| EmailError::Config("cannot save the attachment".into()))??;
+        if let Some(place) = place.as_ref().filter(|_| workspace.is_some()) {
+            place.saved(&path);
+        }
+        let file_name = path
+            .file_name()
+            .map_or(file_name, |n| n.to_string_lossy().into_owned());
+        Ok(SavedAttachment {
+            path,
+            data,
+            sniffed,
+            file_name,
+            type_conflict,
+        })
     }
 }
