@@ -66,7 +66,7 @@ use **Start a mission** in the Activity panel.
 ## What you see
 
 The Activity tab shows each running mission with a progress bar: **done**,
-**blocked** and **left**. You can pause, resume or stop it there.
+**waiting**, **blocked** and **left**. You can pause, resume or stop it there.
 
 An item that needs you (a 2FA code, a question only you can answer, a payment, an
 approval nobody gave) is **parked**: it is marked blocked with the reason and the
@@ -91,11 +91,55 @@ given up, with the reason, only when the bot ends three sessions itself with it
 still unfinished, or when it eats four whole sessions (cut by the step limit, or
 interrupted by a crash, a restart or an error) without being settled.
 
+## Waiting for a mail, a timer or a webhook
+
+Some steps cannot go on at once: a site sends a verification mail, an account is
+reviewed "within a few hours", a form tool calls you back. The bot does not hold a
+session open for that. It **parks the item** with `mission_wait` and takes the next
+one; when nothing else is open, the session ends and the mission shows
+**Waiting**. Three things can wake it:
+
+* **A timer** (`after_seconds`, 30 seconds to 7 days). The item continues when it is due.
+* **A mail in the bot's own inbox** (a sender domain, a word in the subject or a
+  keyword). The daemon looks into the inbox and junk folder of the bot's **own**
+  mail identity about once a minute; the owner's mailbox is never read for this.
+  The bot gives a timeout (60 minutes by default, 3 days at most). A mail that
+  arrives is a **hint, not proof of who sent it**: anyone can forge a From line and
+  the mailbox does not say whether the sender passed SPF or DKIM, so the wake
+  says "not verified". Next to a sender domain the bot should give a keyword or
+  subject word it expects (a token from the sign-up); the keyword is checked on
+  the mail itself.
+* **A webhook you created** for that bot (Settings, incoming webhooks). The bot
+  names its id. A signed call that a mission waits for wakes the mission and does
+  **not** start a separate run. The webhook is checked again when the call comes
+  in: one you turned off since, or that belongs to another bot, wakes nothing. A
+  computer in standby answers "standby" and never starts a run for it; the sender
+  retries at the active one. Bodies over 64 KB are refused before anything reads
+  them, and the mission keeps a 4,096-character copy.
+
+The Activity tab lists each parked item: *waiting for a mail from example.com*,
+*waiting until 14:00*. If nothing happens in time, the item is **parked for you**
+(blocked, with what was missing) and the mission goes on without it; it never
+fails the mission. Waits are stored in the daemon's database, so a restart keeps
+them (a wait that ran out while the daemon was off times out at the next start).
+Only the leader of a host runs the wake loop. A mission is woken at most six times
+an hour: a flood of calls stays recorded and is delivered in the next window. A
+mission keeps at most one undelivered wake per item (a newer one replaces it) and
+50 in all; finished waits and delivered wakes are deleted after 30 days.
+
+**What a wake brings is untrusted data.** A mail summary or a webhook body is
+capped, cleaned and shown to the next session only inside a fenced data block,
+like any text from outside. It never becomes your message, never carries your
+authority, and links in it are not judged against a page: the bot opens the site
+and uses `email_wait_for`, which finds the mail at once and lists the links it
+may follow.
+
 ## When a mission stops
 
 * **Done:** the goal you set is met. The daemon checks it from the list; the
   bot cannot declare it done by saying so.
-* **Needs you:** only blocked items are left.
+* **Needs you:** only blocked items are left (items that wait for a wake are not
+  finished: the mission waits for them).
 * **Budget:** sessions (default 60), model calls (default 1500), time (default
   14 days) or an optional spend cap are used up. The report says which, with the
   numbers. The bot cannot raise a budget.
@@ -121,10 +165,10 @@ A short progress note at 25%, 50% and 75% is available but off by default.
 Missions are delivered in waves (see the [design](../design/missions-adr.md)).
 What works today: the item list, session chaining, budgets, parking of 2FA and
 approval items, giving up CAPTCHA items, starting a mission from a Full-level chat,
-the report, pause/resume/stop, restart recovery and the Activity
-panel. What does **not** exist yet: waking a mission by a timer, an incoming
-mail or a webhook (the bot cannot "check the verification mail in 10 minutes"
-without holding a run), a separate permission scope per mission, mail pacing and
+waking by a timer, a mail in the bot's own inbox or a webhook, the
+report, pause/resume/stop, restart recovery and the Activity
+panel. What does **not** exist yet: a recurring ("every weekday") wake, a wake
+when a helper bot finishes, mail reply classification (bounce, STOP), a separate permission scope per mission, mail pacing and
 opt-out handling for outreach and sub-missions for helper bots. A mission session is **not** your own typing, because its first
 message is built from a list that earlier sessions filled with text from web
 pages and mails. It runs as its own kind (`mission`): that text never counts as

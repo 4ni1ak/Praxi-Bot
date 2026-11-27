@@ -102,7 +102,8 @@ pub struct IncomingWebhookCreated {
 /// A call was accepted. The run continues in the background.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct IncomingWebhookAccepted {
-    /// Always `accepted`.
+    /// `accepted` (a run started), `queued` (the schedule that owns the webhook runs it) or
+    /// `mission_woken` (a mission was waiting for this call and continues; no separate run).
     pub status: String,
     /// Webhook that fired.
     pub webhook_id: Uuid,
@@ -646,7 +647,17 @@ pub(crate) async fn receive_webhook(
         reject(&s, &guard, now, Some(row.id), "replay");
         return Err(invalid_signature());
     }
-    let accepted = match start_run(&s, &row, text) {
+    // A mission that parked an item on this webhook (`mission_wait`) takes the call: the body
+    // is stored capped as untrusted data and the mission continues; no separate run starts.
+    // Whichever path it takes, a call that was not taken (standby, a store error, a hook turned
+    // off meanwhile) frees its signature and its rate slot so the sender can retry; a call that
+    // was taken keeps both (a replay is refused and every taken call counts against the limit).
+    let taken = match wake_missions(&s, &row, text) {
+        Ok(Some(accepted)) => Ok(accepted),
+        Ok(None) => start_run(&s, &row, text),
+        Err(err) => Err(err),
+    };
+    let accepted = match taken {
         Ok(accepted) => accepted,
         Err(err) => {
             let _ = s.storage().forget_webhook_signature(row.id, &key);
@@ -733,6 +744,58 @@ fn signature_key(signature: &str) -> String {
         .or_else(|| trimmed.strip_prefix("SHA256="))
         .unwrap_or(trimmed)
         .to_ascii_lowercase()
+}
+
+/// Hand a verified call to the missions waiting for this webhook.
+///
+/// `Ok(None)`: no mission waits for it, the call starts its normal run. When a mission DOES wait,
+/// only the active installation may take the call: a standby one answers `409` (the sender
+/// retries at the leader) and never starts a run, and a store failure is an error, never a
+/// silent fall-through to a second run. The webhook is read again here, so one turned off (or
+/// handed to another bot) since the call was looked up wakes nothing.
+pub(crate) fn wake_missions(
+    s: &AppState,
+    hook: &IncomingWebhook,
+    payload: &str,
+) -> Result<Option<IncomingWebhookAccepted>, ApiError> {
+    let Ok(store) = s.mission_store() else {
+        return Ok(None);
+    };
+    let (bot, trigger) = (hook.bot_id.0.to_string(), hook.id.to_string());
+    if !store
+        .has_webhook_wait(&bot, &trigger)
+        .map_err(|e| ApiError::internal(format!("could not look up the waiting missions: {e}")))?
+    {
+        return Ok(None);
+    }
+    // The route refuses a body over 64 KB before this runs, so the whole body is scanned for
+    // secrets here; the store then keeps a capped copy.
+    let safe_payload = s.agent().redact_host_text(payload.to_owned());
+    let woken = s.leader().with_active(|| -> Result<u32, ApiError> {
+        let fresh = s
+            .storage()
+            .get_incoming_webhook(s.user_id(), hook.id)?
+            .filter(|h| h.enabled && h.bot_id == hook.bot_id);
+        if fresh.is_none() {
+            return Err(ApiError::conflict("this webhook is turned off"));
+        }
+        s.mission_supervisor()?
+            .deliver_webhook(&bot, &trigger, &safe_payload)
+            .map_err(|e| ApiError::internal(format!("could not wake the mission: {e}")))
+    })??;
+    if woken == 0 {
+        // The leader says nothing waits any more (it was woken or timed out a moment ago).
+        return Ok(None);
+    }
+    let _ = s
+        .storage()
+        .mark_incoming_webhook_fired(hook.id, storage::now_ms());
+    Ok(Some(IncomingWebhookAccepted {
+        status: "mission_woken".into(),
+        webhook_id: hook.id,
+        run_id: None,
+        chat_id: None,
+    }))
 }
 
 fn start_run(

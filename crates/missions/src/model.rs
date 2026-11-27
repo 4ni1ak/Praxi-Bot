@@ -25,6 +25,20 @@ pub const MAX_NOTE_CHARS: usize = 400;
 pub const MAX_NOTES: usize = 60;
 /// Attempts an item gets (sessions that left it `doing`) before it is given up.
 pub const MAX_ITEM_ATTEMPTS: u32 = 3;
+/// Most waits a mission may have registered at once.
+pub const MAX_ACTIVE_WAITS: usize = 20;
+/// Most waits one item may have registered at once (the first to fire wins).
+pub const MAX_WAITS_PER_ITEM: usize = 3;
+/// Shortest timer, in seconds.
+pub const MIN_AFTER_SECS: u64 = 30;
+/// Longest timer, in seconds (7 days).
+pub const MAX_AFTER_SECS: u64 = 7 * 24 * 3600;
+/// Timeout of a mail or webhook wait when the bot names none, in minutes.
+pub const DEFAULT_TIMEOUT_MINUTES: u64 = 60;
+/// Longest timeout of a mail or webhook wait, in minutes (3 days).
+pub const MAX_TIMEOUT_MINUTES: u64 = 3 * 24 * 60;
+/// Longest text a wake carries from the outside (a webhook body, a mail summary), in characters.
+pub const MAX_WAKE_PAYLOAD_CHARS: usize = 4096;
 /// Sessions the step guard cut, or something interrupted (a crash, a restart, a provider
 /// error), while one item was being worked on, before the item is given up. Neither burns an
 /// attempt (an item may need more than one session), but an item that eats this many whole
@@ -33,13 +47,16 @@ pub const MAX_ITEM_CUTS: u32 = 4;
 
 /// Where a mission is in its life.
 ///
-/// Wave 1 has no `draft`/`intake`/`waiting` states yet: a mission starts
-/// `running` when the owner creates it (see `docs/design/missions-adr.md`).
+/// There is no `draft`/`intake` state yet: a mission starts `running` when the owner creates
+/// it (see `docs/design/missions-adr.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MissionState {
     /// There is work to do: a session is in flight or the next one is queued.
     Running,
+    /// Nothing is runnable, at least one item waits for a wake (a timer, a mail, a webhook).
+    /// The supervisor's wake loop moves it back to `running` when one fires.
+    Waiting,
     /// The owner paused it; no session starts.
     Paused,
     /// Nothing can move without the owner or a budget change.
@@ -58,6 +75,7 @@ impl MissionState {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
+            Self::Waiting => "waiting",
             Self::Paused => "paused",
             Self::Blocked => "blocked",
             Self::Done => "done",
@@ -71,6 +89,7 @@ impl MissionState {
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "running" => Self::Running,
+            "waiting" => Self::Waiting,
             "paused" => Self::Paused,
             "blocked" => Self::Blocked,
             "done" => Self::Done,
@@ -96,20 +115,27 @@ impl fmt::Display for MissionState {
 /// Whether the mission may move from `from` to `to`.
 ///
 /// ```text
-/// running --budget/deadline/stalled/model errors/owner needed--> blocked
+/// running --session ends, nothing runnable, items wait for a wake--> waiting
+/// waiting --a wake fires, the owner answers, the owner resumes------> running
+/// running|waiting --budget/deadline/stalled/model errors/owner needed--> blocked
 /// blocked --owner acts (answer, raise budget, "continue")-------> running
-/// running|blocked --owner pause--> paused --owner resume--> running
+/// running|waiting|blocked --owner pause--> paused --owner resume--> running
 /// any non-terminal --owner stop--> cancelled
-/// running|blocked --criterion met (code-checked)--> done
-/// running|blocked|paused --unrecoverable--> failed
+/// running|waiting|blocked --criterion met (code-checked)--> done
+/// running|waiting|blocked|paused --unrecoverable--> failed
 /// ```
 #[must_use]
 pub const fn can_transition(from: MissionState, to: MissionState) -> bool {
-    use MissionState::{Blocked, Cancelled, Done, Failed, Paused, Running};
+    use MissionState::{Blocked, Cancelled, Done, Failed, Paused, Running, Waiting};
     matches!(
         (from, to),
-        (Running, Blocked | Paused | Done | Failed | Cancelled)
-            | (Blocked, Running | Paused | Done | Failed | Cancelled)
+        (
+            Running,
+            Waiting | Blocked | Paused | Done | Failed | Cancelled
+        ) | (
+            Waiting,
+            Running | Blocked | Paused | Done | Failed | Cancelled
+        ) | (Blocked, Running | Paused | Done | Failed | Cancelled)
             | (Paused, Running | Failed | Cancelled)
     )
 }
@@ -126,6 +152,8 @@ pub enum ItemStatus {
     Done,
     /// Parked: needs the owner (CAPTCHA, 2FA, a question). Others go on.
     Blocked,
+    /// Parked on a wake (`mission_wait`): a timer, a mail or a webhook. Others go on.
+    Waiting,
     /// Gave up (the site refuses, needs payment, ...).
     Failed,
     /// Deliberately left out.
@@ -141,6 +169,7 @@ impl ItemStatus {
             Self::Doing => "doing",
             Self::Done => "done",
             Self::Blocked => "blocked",
+            Self::Waiting => "waiting",
             Self::Failed => "failed",
             Self::Skipped => "skipped",
         }
@@ -154,6 +183,7 @@ impl ItemStatus {
             "doing" => Self::Doing,
             "done" => Self::Done,
             "blocked" => Self::Blocked,
+            "waiting" => Self::Waiting,
             "failed" => Self::Failed,
             "skipped" => Self::Skipped,
             _ => return None,
@@ -308,6 +338,7 @@ pub struct Item {
 
 /// Item counts, the headline numbers of a mission.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Progress {
     /// All items.
     pub total: u32,
@@ -319,6 +350,8 @@ pub struct Progress {
     pub done: u32,
     /// `blocked`.
     pub blocked: u32,
+    /// `waiting` for a wake.
+    pub waiting: u32,
     /// `failed`.
     pub failed: u32,
     /// `skipped`.
@@ -333,15 +366,15 @@ impl Progress {
     }
 
     /// Items that are neither done nor given up: still to be finished
-    /// (`todo`, `doing`, `blocked`). This is the "left" number in the UI.
+    /// (`todo`, `doing`, `blocked`, `waiting`).
     #[must_use]
     pub const fn left(&self) -> u32 {
-        self.todo + self.doing + self.blocked
+        self.todo + self.doing + self.blocked + self.waiting
     }
 
     /// The success criterion is met. With a target, `done >= target`; without
     /// one, every item is finished (nothing open and nothing blocked) and the
-    /// ledger is not empty.
+    /// ledger is not empty. An item that waits for a wake is not finished.
     #[must_use]
     pub fn criterion_met(&self, target_done: Option<u32>) -> bool {
         match target_done {
@@ -515,8 +548,9 @@ pub fn looks_like_one_time_code(text: &str) -> bool {
 mod tests {
     use super::*;
 
-    const ALL: [MissionState; 6] = [
+    const ALL: [MissionState; 7] = [
         MissionState::Running,
+        MissionState::Waiting,
         MissionState::Paused,
         MissionState::Blocked,
         MissionState::Done,
@@ -535,8 +569,15 @@ mod tests {
 
     #[test]
     fn transition_table_matches_the_adr() {
-        use MissionState::{Blocked, Cancelled, Done, Failed, Paused, Running};
+        use MissionState::{Blocked, Cancelled, Done, Failed, Paused, Running, Waiting};
         let allowed = [
+            (Running, Waiting),
+            (Waiting, Running),
+            (Waiting, Blocked),
+            (Waiting, Paused),
+            (Waiting, Done),
+            (Waiting, Failed),
+            (Waiting, Cancelled),
             (Running, Blocked),
             (Running, Paused),
             (Running, Done),
@@ -572,12 +613,13 @@ mod tests {
             ItemStatus::Doing,
             ItemStatus::Done,
             ItemStatus::Blocked,
+            ItemStatus::Waiting,
             ItemStatus::Failed,
             ItemStatus::Skipped,
         ] {
             assert_eq!(ItemStatus::parse(s.as_str()), Some(s));
         }
-        assert_eq!(MissionState::parse("waiting"), None);
+        assert_eq!(MissionState::parse("sleeping"), None);
     }
 
     #[test]
@@ -590,6 +632,17 @@ mod tests {
             ..Progress::default()
         };
         assert!(!p.criterion_met(None), "a blocked item is not finished");
+        let waiting = Progress {
+            total: 2,
+            done: 1,
+            waiting: 1,
+            ..Progress::default()
+        };
+        assert!(
+            !waiting.criterion_met(None),
+            "an item that waits for a wake is not finished"
+        );
+        assert!(waiting.criterion_met(Some(1)));
         assert!(p.criterion_met(Some(3)));
         assert!(!p.criterion_met(Some(4)));
         assert!(

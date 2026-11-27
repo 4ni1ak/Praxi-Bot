@@ -66,6 +66,7 @@ pub mod memory;
 mod memory_embed;
 pub mod mission_host;
 mod mission_routes;
+mod mission_wakes;
 pub mod openapi;
 pub mod owner;
 mod owner_notify;
