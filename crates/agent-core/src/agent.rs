@@ -209,6 +209,7 @@ impl AgentLoop {
     /// Build a loop and reload the persisted "always allow" grant rules.
     /// Use [`Self::with_builtin_tools`] to register the built-in tool set.
     #[must_use]
+    #[allow(clippy::too_many_lines)] // one struct literal; the test-only hooks count too
     pub fn new(
         storage: Arc<Storage>,
         tools: ToolRegistry,
@@ -304,6 +305,8 @@ impl AgentLoop {
                 exec_commit_hook: Mutex::new(None),
                 #[cfg(test)]
                 stop_split_hook: Mutex::new(None),
+                #[cfg(test)]
+                stop_released_hook: Mutex::new(None),
                 #[cfg(test)]
                 legacy_always: AtomicBool::new(false),
             }
@@ -2573,19 +2576,34 @@ impl AgentLoop {
     /// `false` so a forced stop does not arm another supervisor.
     fn cancel_user(&self, run_id: RunId, supervise: bool) -> Result<()> {
         self.sh.user_stopped.lock().insert(run_id);
+        // The stop signal comes before anything that can release work the run is
+        // waiting on (a handover, a `wait`, the run's computer). Released work
+        // ends its step on another thread; if the token were still live the
+        // drive loop would record that as a failed or finished step, or plan the
+        // next model call, and only then see the stop.
+        let signalled = self.rt.signal_cancel(run_id);
         builtin_tools::handover_hub().forget(&run_id.to_string());
         self.cancel_wait_pc_timer(run_id);
         // A `wait` in flight ends now (Stop must not sit out the pause).
         builtin_tools::wait::cancel_run_waits(&run_id.to_string());
         self.sh.run_computers.lock().remove(&run_id);
         self.sh.directives.lock().remove(&run_id);
+        #[cfg(test)]
+        self.sh.run_stop_released_hook();
         let idle_paused = !self.sh.tasks.lock().contains_key(&run_id)
             && self.rt.state(run_id).ok() == Some(RunState::Paused);
         // The token is cancelled first: releasing an approval wakes the step,
         // and a woken step must already find the run stopped (no further model
         // call). It also keeps this call from racing the drive task to the
         // terminal state.
-        let result = self.rt.cancel(run_id);
+        // A run this Stop just signalled may already have wound down to
+        // `Cancelled`; asking the runtime again would report that as a stop of a
+        // finished run.
+        let result = if signalled {
+            Ok(())
+        } else {
+            self.rt.cancel(run_id)
+        };
         // Every open card of the run is denied now (a forced stop concludes
         // before the aborted task unwinds; the denial is recorded once either way).
         self.sh.deny_open_for_stop(run_id);
