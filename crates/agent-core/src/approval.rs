@@ -473,7 +473,8 @@ impl Shared {
         // Document converters are shell-free writers too. In particular a
         // one-column CSV can be a valid SKILL.md or workflow/config document.
         let output_field = match name {
-            "docx_write" | "xlsx_write" => Some("path"),
+            "docx_write" | "xlsx_write" | "docx_append" | "xlsx_append_rows"
+            | "xlsx_update_cells" => Some("path"),
             "csv_transform" | "doc_convert" => Some("output_path"),
             "doc_preview" => Some("output_dir"),
             _ => None,
@@ -586,6 +587,22 @@ impl Shared {
                 InitiatorKind::ExternalAgent | InitiatorKind::ExternalSchedule
             )
         {
+            if d == Decision::Allow {
+                d = Decision::ask();
+            }
+            return (d, None);
+        }
+        // A commit (under the owner's identity) or a branch switch (it rewrites work tree files)
+        // after the run read untrusted content asks on every level but the owner's Full, where
+        // only money asks: the lane, a plain policy allow and a remembered grant sit below this.
+        // Like the egress gate, a standing "always" does not waive it. "The owner's Full" is
+        // the Full level's usual waiver rule: a run the owner started, not a webhook, a schedule,
+        // a channel message, a mission session, a subagent or a helper bot.
+        let owner_full = ctx.profile.permissions.mode() == AutonomyMode::Full
+            && ctx.parent_run_id.is_none()
+            && ctx.delegation().is_none()
+            && self.full_owner_started(ctx);
+        if taint::git_mutation(name, input) && !owner_full && ctx.taint.lock().exposure.untrusted {
             if d == Decision::Allow {
                 d = Decision::ask();
             }
