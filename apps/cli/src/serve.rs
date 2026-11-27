@@ -86,6 +86,7 @@ const BUILTIN_CATALOG_SOURCES: &[&str] = &[
     include_str!("../../../providers/catalog/gemini.toml"),
     include_str!("../../../providers/catalog/groq.toml"),
     include_str!("../../../providers/catalog/lmstudio.toml"),
+    include_str!("../../../providers/catalog/meta.toml"),
     include_str!("../../../providers/catalog/mistral.toml"),
     include_str!("../../../providers/catalog/ollama.toml"),
     include_str!("../../../providers/catalog/openrouter.toml"),
@@ -1247,6 +1248,7 @@ pub fn serve(
         }
     }
     let composio_tools = mcp_tools.clone();
+    let openapi_registry = mcp_tools.clone();
     // Safe mode registers no connector at all: no email, Home Assistant, calendar or web
     // tools (their settings routes answer "not configured" until a normal start).
     let (email, calendar, homeassistant) = if safe_mode {
@@ -1574,6 +1576,16 @@ pub fn serve(
                 Err(e) => support_logs::tracing::warn!(target: "praxi_support", reason = "component_warning", "warning: composio: {e}; app connections are off"),
             }
         }
+        // REST APIs from OpenAPI documents: credentials stay in the secret store, only the
+        // operations the owner enabled become tools, each for the bots they chose.
+        if let Some(store) = telegram_store.clone().filter(|_| !safe_mode) {
+            let register: Arc<dyn Fn(&str) + Send + Sync> = {
+                let handle = redactor.clone();
+                Arc::new(move |value| handle.register(value))
+            };
+            let host = crate::openapi_host::OpenApiHost::start(data_dir, openapi_registry, store, register);
+            state.set_openapi_apps(host as Arc<dyn daemon_api::OpenApiAppsControl>);
+        }
         let email_for_channel = email.clone();
         if let Some(email) = email {
             state.set_email(email as Arc<dyn daemon_api::EmailControl>);
@@ -1852,7 +1864,10 @@ paths:
 ";
         let (_api, imported) = openapi_tools::import_tools(
             openapi,
-            &openapi_tools::ImportOptions::default(),
+            &openapi_tools::ImportOptions {
+                server_host: Some("api.example.com".to_string()),
+                ..openapi_tools::ImportOptions::default()
+            },
             &openapi_tools::OpenApiConfig::new(secrets),
         )
         .unwrap();

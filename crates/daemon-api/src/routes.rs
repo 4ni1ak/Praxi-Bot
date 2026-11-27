@@ -218,7 +218,10 @@ fn run_approvals(s: &AppState, run: &storage::Run) -> Result<Vec<ApprovalDto>, A
                 requested_at_ms: ms(env.ts_ms),
                 decided_at_ms: None,
             }),
-            Event::ToolCallApproved(d) => decide(&mut out, d.call_id, "approved", ms(env.ts_ms)),
+            // An automatic grant is no one's answer to a card.
+            Event::ToolCallApproved(d) if d.is_owner_answer() => {
+                decide(&mut out, d.call_id, "approved", ms(env.ts_ms));
+            }
             Event::ToolCallDenied(d) => decide(&mut out, d.call_id, "denied", ms(env.ts_ms)),
             _ => {}
         }
@@ -948,6 +951,10 @@ pub(crate) async fn forget_bot_links(s: &AppState, bot: &Bot) {
     // the next edit of the list.
     if let Some(mcp) = s.mcp() {
         let _ = mcp.forget_bot(&bot.id.to_string()).await;
+    }
+    // Likewise in the enabled-operation lists of connected REST APIs.
+    if let Some(apps) = s.openapi_apps() {
+        let _ = apps.forget_bot(&bot.id.to_string()).await;
     }
     // Accounts bound to the bot are removed, never unbound: an unbound account
     // is usable by every bot, so unbinding would silently widen access.  Ids

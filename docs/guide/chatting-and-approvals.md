@@ -411,8 +411,9 @@ so the bot can type them into forms.
 | --- | --- |
 | No private data in the run: opens any public site (new ones too), deep pages, query strings, goes back, switches tabs, clicks, scrolls, types the details you gave it, picks options, presses keys, submits forms | No |
 | Private data in the run, and it read a web page: deep pages, subdomains and forms of a site **you named** (or approved on an earlier card) | No |
-| Private data in the run, and it read a web page: a new site, a search query, or a form on a page that is not yours, **when the address or text contains a word of 6 or more letters (or three words in a row) of the private data, even split by dashes or dots, percent-encoded or accented differently**, looks like a key, access code, hash or encoded string, is long (over 120 characters of address, over 39 characters of form text, 160 characters of search query), carries a `#fragment`, or the run has already sent more than about 1500 characters to such places | **Yes** |
+| Private data in the run, and it read a web page: a new site, a search query, or a form on a page that is not yours, **when the address or text contains a word of 6 or more letters (or three words in a row) of the private data, even split by dashes or dots, percent-encoded or accented differently**, looks like a key, access code, hash or encoded string, is long (over 120 characters of address, over 239 characters of form text, 160 characters of search query), carries a `#fragment`, or the run has already sent more than about 1500 characters to the same site (a site is its main domain: `a.example.com` and `b.example.com` count as one; about 6000 characters to all such sites together, and about 18000 over all sessions of one mission) | **Yes** |
 | Private data in the run and it read a web page, but nothing in the address or text comes from the private data | No |
+| A mission session, or a run that read the bot's own AgentMail inbox, with nothing else private in it: the mission brief and the mail from strangers are not your private data (they still count as untrusted content), and the bot's own mail address is not copied text. Only an inbox made for the bot through AgentMail counts here: your own mailboxes (IMAP) and inboxes shared by every bot still count as private data | No |
 | Types a card-like number or something shaped like a key into a page, in any run | **Yes** |
 | Types an owner-stored secret (`browser_fill` with `secret`) | **Yes**, every time |
 | A shell command on the bot's own host computer after it read a page that is **entirely on the allow-list** (read-only tools such as `ls`, `cat`, `grep`, `git status`, and the local build and test tools `cargo build`, `npm test`, `make`, `python build.py`, with every path inside the bot's workspace), when the run holds no private data, or only private data whose words the command does not copy; at most 60 such commands per run | No |
@@ -643,17 +644,43 @@ app become one row ("Playwright ×9"), a finished run shows one summary line
 or refused steps and the step running right now are always visible. Opening a
 row shows the individual steps with their times.
 
+### Who allowed a step
+
+A step that needed a decision says who or what made it, in the step line of the
+opened row:
+
+| Line | What it means |
+| --- | --- |
+| You approved · 3 s into run | You answered the approval card for this very call. |
+| Full access — no question needed | The bot is on Full access and you started the run, so the call ran without a card. |
+| Full access, your scheduled run — no question needed | The same, in a run that a schedule, rule, webhook or mail you set up started. |
+| Full access, your mission — no question needed | The same, in an unattended session of your mission. |
+| Balanced level — no question needed | The Balanced level lets this kind of call through. |
+| Your standing permission | A standing permission you created covered exactly this call. |
+| Remembered: always allow … | A choice you made earlier on a card (always, for this chat, for this task) covered the call. The line names the tool or category. |
+| Your site rule allowed it | One of your per-site or per-app rules allowed it. |
+
+Only calls that would otherwise have asked carry a line: a read the level
+allows anyway shows nothing. The line comes from the daemon's own record of the
+decision, never from anything a page, a mail or a tool said. A step approved
+before this record existed shows a plain "Approved". In the daemon's event
+journal an automatic grant carries the all-zero system user id as its approver
+(`00000000-0000-0000-0000-000000000000`), never yours, so a tool that reads the
+journal without knowing `granted_by` cannot mistake it for a click of yours. Calls made by a coding
+engine on its own steps, and calls from a script, have no step to attach a line
+to.
+
 ### Save a diagnostic timeline
 
 The timeline for a finished run can be saved as text (Markdown), a web page
 (HTML), or a JSON file. Saving a report downloads a local file; it does not
 send the run anywhere.
 
-#### JSON format, version 3
+#### JSON format, version 4
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "outcome": "done",
   "duration_ms": 1400,
   "steps": [
@@ -677,7 +704,10 @@ send the run anywhere.
       "step_id": "step-1",
       "kind": "approval_recorded",
       "offset_ms": 150,
-      "outcome": "approved"
+      "outcome": "approved",
+      "granted_by": "owner_card",
+      "level": "balanced",
+      "rule": null
     },
     {
       "step_id": "step-1",
@@ -703,18 +733,45 @@ send the run anywhere.
   is known, or `null` when unknown. The current timeline does not retain causal
   links, so the field is `null`; it is not an assertion of no dependencies.
 - `approval_events` is grouped by export-local `step_id`. An observed waiting
-  card gives `waiting_for_approval` with a `null` outcome. Version 3 keeps a
-  recorded decision as `approval_recorded` (`approved` or `denied`) even after the
-  tool finishes. A completed gated call separately gives `tool_outcome`
+  card gives `waiting_for_approval` with a `null` outcome. Version 3 and later keep
+  a recorded decision as `approval_recorded` (`approved` or `denied`) even after
+  the tool finishes. A completed gated call separately gives `tool_outcome`
   (`done` or `error`). Decision times use the daemon event's time relative to
   the start of the run, not the time someone clicked; unavailable or invalid
   offsets are `null`.
+- Version 4 adds three fields, each `null` when the daemon did not say:
+  `granted_by` (`owner_card`, `full_access`, `owner_schedule`, `owner_mission`,
+  `balanced_level`, `standing_grant`, `remembered_choice` or `site_rule`),
+  `level` (`ask`, `balanced` or `full`, the bot's level when the call was
+  decided) and `rule` (the remembered rule that covered the call,
+  `<scope>:<name>` with scope `chat`, `always`, `category`, `task` or `standing`
+  and a tool or category name of at most 64 characters from `A-Z a-z 0-9 _ . -`;
+  never a path, address or command; the export checks this shape again, so
+  anything else becomes `null`). The fields sit on `approval_recorded`, which
+  stays what it was in version 3: **you answered a card** (`granted_by` is
+  `owner_card`, or `null` for an approval recorded before version 4: it was an
+  approval, but its source is not claimed).
+- Version 4 also adds the event kind `automatic_grant` for a call that an
+  automatic rule allowed in place of a card (Full access, the Balanced level, a
+  standing permission, a remembered choice, a site rule). It has `outcome`
+  `null`, the same three fields (`granted_by` is never `owner_card`), and no
+  `waiting_for_approval` before it, because there was no card. It is a separate
+  kind on purpose: a reader written for version 3 counts `approval_recorded`
+  events as answers of yours, and keeps doing so correctly. Such a reader must
+  ignore event kinds it does not know; it then simply does not see the
+  automatic grants. A step that
+  version 3 exported with no approval events at all (no card was shown) now
+  also gives an `automatic_grant` when the daemon recorded one.
+- Only `schema_version` changed for a reader that ignores unknown kinds and
+  fields, so a version 3 reader keeps working on a version 4 file. Version 3
+  files stay valid version 3 files: the new fields and kind are never required.
 - A denial is reported as a decision only when the corresponding gate was
   observed. Expiry and policy veto aren't owner denials. The daemon sends the
   reason as text, so if an owner types a reason that looks like expiry or
   matches the reserved policy-veto reason, the export can't tell them apart and
   omits the decision. A missing event means no retained evidence, not proof
-  that it didn't happen. Version 2 had approval events but did not retain an
+  that it didn't happen. Version 3 had `approval_recorded` without the three
+  provenance fields. Version 2 had approval events but did not retain an
   approval after completion; version 1 had no `approval_events`.
 
 JSON excludes free text and internal IDs, including bot names, prompts, tool

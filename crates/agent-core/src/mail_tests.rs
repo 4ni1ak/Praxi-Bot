@@ -26,7 +26,7 @@ use crate::tests::{
 
 const FULL: &str = "[permissions]\npreset = \"full\"\n";
 const GOOD: &str = "https://app.example.com/verify?token=abc";
-const EVIL: &str = "https://evil.example.net/steal";
+const EVIL: &str = "https://evil.example.net/steal?d=tail4242";
 
 pub(crate) fn account(
     name: &str,
@@ -86,7 +86,9 @@ fn mail_fake(name: &str) -> Arc<WaitFake> {
             effect: Effect::Read,
             category: PermissionCategory::Messaging,
             platforms: vec![Platform::All],
-            content: ContentClass::all(),
+            // As the real tool declares it.
+            content: builtin_tools::classify(builtin_tools::mail_wait::EMAIL_WAIT_FOR)
+                .expect("a built-in tool"),
         },
         count: Arc::new(AtomicUsize::new(0)),
         site: Some("example.com"),
@@ -133,7 +135,7 @@ fn page_tool() -> Arc<TestTool> {
         Effect::Read,
         PermissionCategory::Fs,
         ContentClass::untrusted_private(),
-        "a sign-up page",
+        "a sign-up page; the owner's iban ends in tail4242",
     ))
 }
 
@@ -705,4 +707,125 @@ async fn a_remembered_link_never_opens_wider_than_its_wait_allowed() {
         .await,
         GOOD
     );
+}
+
+/// Run: read a page (so the run holds untrusted content), then `email_mark_read`. Returns whether
+/// the mark-as-read asked.
+async fn mark_read_asks(source: &'static str, own: bool, extra: &str) -> bool {
+    let env = setup();
+    let bot = env.bot.to_string();
+    let conn = connector(vec![account(
+        "bot-mail",
+        own.then(|| bot.clone()),
+        "me@agentmail.to",
+        SendMode::Ask,
+    )]);
+    let page = page_tool();
+    let mark = Arc::new(with_class(
+        "email_mark_read",
+        Effect::Write,
+        PermissionCategory::Messaging,
+        ContentClass::egress(),
+        "marked",
+    ));
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+        calls(&[("c2", "email_mark_read", json!({"message_id": "msg-1"}))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&mark)],
+        profile(extra),
+        cfg(Policy::full()),
+    );
+    lp.mail_handle().set(conn);
+    let mut rx = lp.subscribe();
+    lp.send_user_message_from(env.chat, "sign up", crate::MessageMode::Steer, source)
+        .unwrap();
+    let ev = until(&mut rx, |e| {
+        matches!(e, Event::ApprovalNeeded(_) | Event::RunFinished(_))
+    })
+    .await;
+    match ev {
+        Event::ApprovalNeeded(a) => {
+            assert_eq!(a.tool_name, "email_mark_read");
+            true
+        }
+        _ => false,
+    }
+}
+
+#[tokio::test]
+async fn marking_a_mail_of_the_own_inbox_as_read_needs_no_card_for_an_owner_run_on_full() {
+    assert!(!mark_read_asks("owner", true, FULL).await);
+    // The same call asks wherever a read of that inbox asks.
+    assert!(
+        mark_read_asks("owner", false, FULL).await,
+        "not the bot's own inbox"
+    );
+    assert!(
+        mark_read_asks("telegram", true, FULL).await,
+        "not an owner run"
+    );
+    assert!(mark_read_asks("owner", true, "").await, "below Full");
+}
+
+/// Run: read a page (so the run holds private data and untrusted content), then type the bot's
+/// address, which looks like a key to the data-shape check, into a form. Returns whether it asked.
+async fn typing_the_address_asks(own: bool) -> bool {
+    let env = setup();
+    let bot = env.bot.to_string();
+    let address = "praxi-8f3a9c1d2e4b@agentmail.to";
+    let conn = connector(vec![account(
+        "bot-mail",
+        own.then(|| bot.clone()),
+        address,
+        SendMode::Ask,
+    )]);
+    let page = page_tool();
+    let fill = Arc::new(with_class(
+        "browser_fill",
+        Effect::Write,
+        PermissionCategory::Browser,
+        builtin_tools::classify("browser_fill").expect("a built-in tool"),
+        "ok",
+    ));
+    let fake = Fake::new(vec![
+        calls(&[("c1", "fs_read", json!({"path": "page.html"}))]),
+        calls(&[("c2", "browser_fill", json!({"ref": "e1", "text": address}))]),
+        text("done"),
+    ]);
+    let lp = make_loop(
+        &env.storage,
+        env.bot,
+        &fake,
+        &[t(&page), t(&fill)],
+        profile(FULL),
+        cfg(Policy::full()),
+    );
+    lp.mail_handle().set(conn);
+    let mut rx = lp.subscribe();
+    lp.send_user_message_from(env.chat, "sign up", crate::MessageMode::Steer, "owner")
+        .unwrap();
+    let ev = until(&mut rx, |e| {
+        matches!(e, Event::ApprovalNeeded(_) | Event::RunFinished(_))
+    })
+    .await;
+    match ev {
+        Event::ApprovalNeeded(a) => {
+            assert_eq!(a.tool_name, "browser_fill");
+            true
+        }
+        _ => false,
+    }
+}
+
+#[tokio::test]
+async fn the_bots_own_address_is_typed_into_a_stranger_form_without_a_card() {
+    assert!(!typing_the_address_asks(true).await);
+    // The same text is a key-shaped string when the inbox is not this bot's own.
+    assert!(typing_the_address_asks(false).await);
 }

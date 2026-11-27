@@ -44,6 +44,7 @@
       "Uygulamayı bağla ve yönet",
       "Hangi işlem çalışmadan önce sorar",
       "Home Assistant",
+      "REST API'ler",
       "MCP sunucuları",
       "MCP sunucusunun durumu",
       "Bağlantıları yönetmek ve oturumu kapatmak",
@@ -176,6 +177,7 @@
       "Tur başına sınırlar",
       "Bildirimler ve onaylar",
       "Sohbetteki adım listesi",
+      "Bir adıma kim izin verdi",
       "Tanılama zaman çizelgesini kaydetmek"
     ],
     "summary": "Her konuşma, tek bir botla yapılan bir sohbettir. Sohbetler saklanır, yani sonra geri dönebilirsin. Bir mesaj bir çalışma başlatır (buna tur da denir): bot düşünür, araçları çağırır ve yanıtını akıta…"
@@ -729,6 +731,19 @@
       "Sunucuyu işletme"
     ],
     "summary": "Bu rehber Praxi'yi ucuz bir Linux sunucuda her an açık bir sunucu olarak kurar. Örneğin Oracle Cloud"
+  },
+  {
+    "doc": "tr/rest-apis.md",
+    "title": "REST API bağlama (OpenAPI)",
+    "headings": [
+      "API bağla",
+      "İşlemleri bot başına aç",
+      "Hangi işlemler onay ister",
+      "Praxi neyi korur",
+      "Sınırlar ve bilinmesi gerekenler",
+      "HTTP API"
+    ],
+    "summary": "gerekmeden botların kullanabileceği araçlara dönüşebilir. Praxi'ye belgeyi, API'nin adresini ve"
   },
   {
     "doc": "tr/scheduled-tasks.md",

@@ -13,7 +13,8 @@ use permission_engine::{
     Policy, balanced_lane, egress_must_ask, executes_must_ask,
 };
 use protocol::event::{
-    ApprovalNeeded, HandoverKind, QuestionAsked, ToolCallApproved, ToolCallDenied,
+    ApprovalNeeded, AutonomyLevel, GrantedBy, HandoverKind, QuestionAsked, ToolCallApproved,
+    ToolCallDenied,
 };
 use protocol::{BotId, Event, InitiatorKind, PermissionCategory, RunId, ToolCallId};
 use serde_json::{Value, json};
@@ -61,6 +62,53 @@ impl Drop for ClosedGuard {
         if let Some(t) = self.tool.take() {
             t.approval_closed(&self.ctx, &self.input, self.token.as_deref());
         }
+    }
+}
+
+/// What let a call run without a card, as recorded on its `tool_call_approved` event.
+///
+/// Built only from daemon facts at the place the decision is made: the bot's level, the run's
+/// recorded initiator and message sources, and which rule covered the call. `rule_id` is
+/// `<scope>:<name>` with a registry tool name or a category name, never text of the call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Provenance {
+    pub granted_by: GrantedBy,
+    pub level: AutonomyLevel,
+    pub rule_id: Option<String>,
+}
+
+/// A decision with the reason code the audit log records and, when an automatic rule stood in
+/// for a card, the provenance the run journal records.
+pub(crate) struct Decided {
+    pub decision: Decision,
+    /// Audit code of an autonomy mode's allow.
+    pub reason: Option<&'static str>,
+    /// Set only when a card was replaced: a plain policy allow and the read shortcut ask no
+    /// question, so there is nothing to attribute.
+    pub grant: Option<Provenance>,
+}
+
+/// A rule id from a registry name: `<scope>:<name>`, or the bare scope when the name is not a
+/// plain identifier (an MCP server picks its tool names).
+pub(crate) fn rule_id(scope: &str, name: &str) -> String {
+    let plain = !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'));
+    if plain {
+        format!("{scope}:{name}")
+    } else {
+        scope.to_owned()
+    }
+}
+
+/// The wire spelling of an autonomy mode.
+fn level_of_mode(mode: AutonomyMode) -> AutonomyLevel {
+    match mode {
+        AutonomyMode::Ask => AutonomyLevel::Ask,
+        AutonomyMode::Balanced => AutonomyLevel::Balanced,
+        AutonomyMode::Full => AutonomyLevel::Full,
     }
 }
 
@@ -409,6 +457,20 @@ impl Shared {
         input: &Value,
         target: Option<&ControlTarget>,
     ) -> (Decision, Option<&'static str>) {
+        let decided = self.decide_with_grant(ctx, name, effect, category, input, target);
+        (decided.decision, decided.reason)
+    }
+
+    /// [`Self::decide_with_reason`] plus who or what replaced the card ([`Provenance`]).
+    pub(crate) fn decide_with_grant(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        effect: Effect,
+        category: PermissionCategory,
+        input: &Value,
+        target: Option<&ControlTarget>,
+    ) -> Decided {
         // Taint is kept on the top-level run so subagents spawned after a
         // tainted replay inherit it and no per-child entry has to be cleaned up.
         let root = self.root_run_id(ctx);
@@ -431,27 +493,67 @@ impl Shared {
             self.router.tainted_runs.lock().insert(root);
         }
         let category = Self::money_category(name, effect, category, input);
+        let mut grant = None;
         let (decision, reason) =
-            self.decide_with_reason_inner(ctx, name, effect, category, input, target);
+            self.decide_with_reason_inner(ctx, name, effect, category, input, target, &mut grant);
         // An unreadable parent chain counts as tainted: ask, never allow.
         let tainted = root.is_none_or(|r| self.router.tainted_runs.lock().contains(&r));
         if tainted {
-            return if decision == Decision::Allow {
-                (Decision::ask(), None)
-            } else {
-                (decision, None)
+            return Decided {
+                decision: if decision == Decision::Allow {
+                    Decision::ask()
+                } else {
+                    decision
+                },
+                reason: None,
+                grant: None,
             };
         }
         // The Full level: the one place a plain ask becomes an allow for every call except the
         // ones that spend money. It sits after every deny, floor and workflow taint above.
         if decision.is_ask() && self.full_lane_allows(ctx, name, category, input, target, &decision)
         {
-            return (Decision::Allow, Some(FULL_POLICY_REASON));
+            return Decided {
+                decision: Decision::Allow,
+                reason: Some(FULL_POLICY_REASON),
+                grant: Some(self.full_provenance(ctx)),
+            };
         }
         let reason = reason.or_else(|| {
             (decision == Decision::Allow && self.full_access(ctx)).then_some(FULL_POLICY_REASON)
         });
-        (decision, reason)
+        Decided {
+            decision,
+            reason,
+            grant,
+        }
+    }
+
+    /// The level the call is decided under: Full also when the bot has no policy of its own and
+    /// the global preset is Full.
+    pub(crate) fn level_of(&self, ctx: &RunCtx) -> AutonomyLevel {
+        if self.full_access(ctx) {
+            AutonomyLevel::Full
+        } else {
+            level_of_mode(ctx.profile.permissions.mode())
+        }
+    }
+
+    /// Who the Full level's waiver served: the owner at the keyboard, an unattended session of
+    /// their mission, or else a schedule, rule, webhook or mail they set up.
+    fn full_provenance(&self, ctx: &RunCtx) -> Provenance {
+        let granted_by = if self.full_owner_started(ctx) {
+            GrantedBy::FullAccess
+        } else if self.mission_full_started(ctx) {
+            GrantedBy::OwnerMission
+        } else {
+            GrantedBy::OwnerSchedule
+        };
+        Provenance {
+            granted_by,
+            level: AutonomyLevel::Full,
+            rule_id: None,
+        }
     }
 
     /// The category a call is judged under: [`PermissionCategory::Money`] when the daemon
@@ -722,7 +824,9 @@ impl Shared {
         }
     }
 
-    #[allow(clippy::too_many_lines)] // One decision pipeline: deny floors, policy, gate, grants.
+    // One decision pipeline: deny floors, policy, gate, grants. `grant` is where it says which
+    // rule stood in for a card.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn decide_with_reason_inner(
         &self,
         ctx: &RunCtx,
@@ -731,6 +835,7 @@ impl Shared {
         category: PermissionCategory,
         input: &Value,
         target: Option<&ControlTarget>,
+        grant: &mut Option<Provenance>,
     ) -> (Decision, Option<&'static str>) {
         // Scoped admission allows only two active runs per credential. Until
         // child admission shares that counter, external agents cannot fan out.
@@ -831,6 +936,7 @@ impl Shared {
             }
         }
         let must_ask = self.gate_must_ask(ctx, name, input);
+        let gate_asked = must_ask;
         // Only a call that already has to ask can be covered, so the lookup is
         // skipped for every other call.
         let control_covered =
@@ -845,6 +951,12 @@ impl Shared {
         // decided below before it is looked at.
         let run_tool_covered = self.run_tool_covers(ctx, name, input);
         let must_ask = must_ask && !control_covered && !remembered && !run_tool_covered;
+        // The remembered choice that took the place of the untrusted-content gate's card.
+        let gate_rule = || Provenance {
+            granted_by: GrantedBy::RememberedChoice,
+            level: self.level_of(ctx),
+            rule_id: Some(rule_id(if remembered { "chat" } else { "task" }, name)),
+        };
         // The two-factor key and codes of the bot's OWN accounts: on the owner's Full level
         // nothing asks except money, so the always-ask test below is skipped for exactly these
         // two calls (the tools still refuse every account that is not this bot's own, and the
@@ -919,9 +1031,13 @@ impl Shared {
                     } else {
                         FULL_BROWSE_REASON
                     };
+                    *grant = Some(self.full_provenance(ctx));
                     return (Decision::Allow, Some(reason));
                 }
                 return (Decision::ask(), None);
+            }
+            if d == Decision::Allow && gate_asked && !must_ask {
+                *grant = Some(gate_rule());
             }
             return (d, None);
         }
@@ -944,10 +1060,8 @@ impl Shared {
         if must_ask {
             return (d, None);
         }
-        let granted = control_covered
-            || run_tool_covered
-            || profile_allows
-            || self.plain_granted(ctx, name, category, input);
+        let plain_rule = self.plain_grant_rule(ctx, name, category, input);
+        let granted = control_covered || run_tool_covered || profile_allows || plain_rule.is_some();
         if profile_allows
             && !control_covered
             && !run_tool_covered
@@ -962,13 +1076,35 @@ impl Shared {
                 self.cfg.read_tools_skip_ask
             };
         if granted || read_skip {
+            // The first rule that applies is the one named, in the order the checks above run.
+            if granted {
+                let (granted_by, rule) = if control_covered || run_tool_covered {
+                    (GrantedBy::RememberedChoice, Some(rule_id("task", name)))
+                } else if profile_allows {
+                    (GrantedBy::SiteRule, None)
+                } else {
+                    (GrantedBy::RememberedChoice, plain_rule)
+                };
+                *grant = Some(Provenance {
+                    granted_by,
+                    level: self.level_of(ctx),
+                    rule_id: rule,
+                });
+            }
             return (Decision::Allow, None);
         }
         // The autonomy mode's lane. It sits after every floor, the taint gate
         // and the grants, so it can only turn a plain policy-level ask into an
         // allow, never override one of those.
         match self.mode_lane(ctx, name, effect, category, input) {
-            Some(reason) => (Decision::Allow, Some(reason.code())),
+            Some(reason) => {
+                *grant = Some(Provenance {
+                    granted_by: GrantedBy::BalancedLevel,
+                    level: AutonomyLevel::Balanced,
+                    rule_id: None,
+                });
+                (Decision::Allow, Some(reason.code()))
+            }
             None => (d, None),
         }
     }
@@ -982,25 +1118,46 @@ impl Shared {
         category: PermissionCategory,
         input: &Value,
     ) -> bool {
+        self.plain_grant_rule(ctx, name, category, input).is_some()
+    }
+
+    /// The remembered rule that covers the call, as [`ToolCallApproved::rule_id`] spells it.
+    /// The first match wins, narrowest first: a target, this chat, then a persisted tool or
+    /// category rule.
+    fn plain_grant_rule(
+        &self,
+        ctx: &RunCtx,
+        name: &str,
+        category: PermissionCategory,
+        input: &Value,
+    ) -> Option<String> {
         // A helper bot never inherits a standing, chat or scoped grant of
         // either bot: its approvals are once-only.
         if ctx.delegation().is_some() {
-            return false;
+            return None;
         }
-        self.scoped_covers(ctx, name, category, input) || {
-            let g = self.grants.lock();
-            g.this_chat.contains(&(
-                ctx.chat_id,
-                ctx.bot_id,
-                name.to_owned(),
-                ctx.tool_grant_scope(name, category),
-            )) || g.covers(
-                ctx.bot_id,
-                name,
-                category,
-                ctx.tool_grant_scope(name, category).as_deref(),
-            )
+        if let Some(scope) = self.scoped_rule(ctx, name, category, input) {
+            return Some(rule_id(scope, name));
         }
+        let computer = ctx.tool_grant_scope(name, category);
+        let g = self.grants.lock();
+        if g.this_chat
+            .contains(&(ctx.chat_id, ctx.bot_id, name.to_owned(), computer.clone()))
+        {
+            return Some(rule_id("chat", name));
+        }
+        g.covering(ctx.bot_id, name, category, computer.as_deref())
+            .map(|target| match target {
+                GrantTarget::Category(c) => rule_id(
+                    "category",
+                    serde_json::to_value(c)
+                        .ok()
+                        .as_ref()
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                ),
+                _ => rule_id("always", name),
+            })
     }
 
     /// The run (or the top-level run of a subagent) was started by the owner
@@ -1096,6 +1253,26 @@ impl Shared {
         .await
     }
 
+    /// Journal that an automatic rule stood in for the card of `call_id`
+    /// ([`ToolCallApproved`] with the provenance; nobody answered, so `approved_by` is
+    /// [`protocol::UserId::SYSTEM`], never the run's user: a reader that ignores `granted_by` must not
+    /// read it as the owner's click). Called once the call is committed to run. The event is
+    /// journaled with a barrier like every approval, so a crash after the tool starts cannot
+    /// lose who allowed it.
+    pub(crate) fn emit_grant(&self, ctx: &RunCtx, call_id: ToolCallId, grant: Provenance) {
+        self.emit(
+            ctx,
+            Event::ToolCallApproved(ToolCallApproved {
+                run_id: ctx.run_id,
+                call_id,
+                approved_by: protocol::UserId::SYSTEM,
+                granted_by: Some(grant.granted_by),
+                level: Some(grant.level),
+                rule_id: grant.rule_id,
+            }),
+        );
+    }
+
     /// Record that the autonomy mode, not an approval, let this call run: the
     /// reason code and the mode, so "why did it not ask?" has an answer.
     pub(crate) fn audit_auto_allow(
@@ -1126,21 +1303,22 @@ impl Shared {
         Ok(())
     }
 
-    /// A remembered rule (this chat, or persisted for this bot) covers this call's one target.
-    /// Never wider than the rule: a site, a folder or a command prefix, compared strictly.
-    fn scoped_covers(
+    /// A remembered rule (this chat, or persisted for this bot) covers this call's one target:
+    /// `"chat"` or `"always"`, the scope of the rule. Never wider than the rule: a site, a
+    /// folder or a command prefix, compared strictly.
+    fn scoped_rule(
         &self,
         ctx: &RunCtx,
         name: &str,
         category: PermissionCategory,
         input: &Value,
-    ) -> bool {
+    ) -> Option<&'static str> {
         let Derived::Scope(call) = scoped_grant::derive(name, input) else {
-            return false;
+            return None;
         };
         let computer = ctx.tool_grant_scope(name, category);
         let g = self.grants.lock();
-        g.this_chat_scoped
+        if g.this_chat_scoped
             .iter()
             .any(|(chat, bot, tool, rule, comp)| {
                 *chat == ctx.chat_id
@@ -1149,7 +1327,13 @@ impl Shared {
                     && *comp == computer
                     && rule.covers(&call)
             })
-            || g.covers_scoped(ctx.bot_id, name, &call, computer.as_deref())
+        {
+            Some("chat")
+        } else if g.covers_scoped(ctx.bot_id, name, &call, computer.as_deref()) {
+            Some("always")
+        } else {
+            None
+        }
     }
 
     /// A persisted rule names this navigation's origin.
@@ -1523,11 +1707,28 @@ impl Shared {
             .collect()
     }
 
-    /// Every word the owner typed in this chat (not copied content when it shows up in a URL).
+    /// The bot's OWN mail addresses: the identities bound to it or shared with it (never an
+    /// account every bot may use). The address a sign-up types is the bot's own, set up by the
+    /// owner in its mail settings, not text it copied from anywhere.
+    fn own_addresses(&self, ctx: &RunCtx) -> Vec<String> {
+        self.mail.get().map_or_else(Vec::new, |c| {
+            c.scoped(Some(&ctx.bot_id.to_string()))
+                .own_identities()
+                .into_iter()
+                .map(|(a, _)| a.address)
+                .collect()
+        })
+    }
+
+    /// Every word the owner typed in this chat (not copied content when it shows up in a URL),
+    /// and the words of the bot's own mail addresses.
     fn owner_words(&self, ctx: &RunCtx) -> HashSet<String> {
-        self.storage
+        let mut texts = self
+            .storage
             .owner_message_texts(ctx.chat_id)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        texts.extend(self.own_addresses(ctx));
+        texts
             .iter()
             .flat_map(|m| crate::full_autonomy::words(m))
             .collect()
@@ -1582,6 +1783,7 @@ impl Shared {
     /// typed text, hidden characters and anything the redactor would change. A run that is not
     /// owner-started (schedule, webhook, mail, channel, a peer, a subagent, an external agent)
     /// is unchanged, and so are the Normal, Ask and custom levels.
+    #[allow(clippy::too_many_lines)] // One rule read top to bottom; its checks share the call's state.
     fn full_mode_waives(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
         if name == "shell_run" {
             return self.full_shell_waives(ctx, input);
@@ -1613,6 +1815,13 @@ impl Shared {
             return self.full_upload_waives(ctx, input);
         }
         let (urls, texts) = crate::full_autonomy::split_input(input);
+        // The bot's own mail address is not text that leaves: it is cut out before the text is
+        // judged (and counted), so a sign-up that types it asks no more than one that does not.
+        let own = self.own_addresses(ctx);
+        let texts: Vec<String> = texts
+            .iter()
+            .map(|t| crate::full_autonomy::without_addresses(t, &own))
+            .collect();
         // A key, a card number or an encoded blob is never typed or sent silently.
         if texts
             .iter()
@@ -1630,11 +1839,26 @@ impl Shared {
         if !restricted {
             return true;
         }
+        // A link a stranger's mail carried (read from the bot's own inbox, returned by a wait, or
+        // remembered by an earlier session) is not ordinary browsing: it opens only through the
+        // verifier-judged path (`own_mail_waived`), so a remembered link of site A is never
+        // followed while the browser is on site B, and a mail cannot talk the model into opening
+        // its sites unasked. It asks here.
+        if urls.iter().any(|u| Self::mail_given_site(ctx, u)) {
+            return false;
+        }
         let named = self.owner_named_hosts(ctx);
-        // What this call would send to places the owner did not name.
+        // What this call would send to places the owner did not name, and to which site.
         let mut checked: Vec<String> = Vec::new();
-        let mut sent = 0usize;
+        let mut spend: Vec<(String, usize)> = Vec::new();
+        let mut spent_on =
+            |site: &str, chars: usize| match spend.iter_mut().find(|(s, _)| s == site) {
+                Some((_, n)) => *n += chars,
+                None => spend.push((site.to_owned(), chars)),
+            };
         for url in &urls {
+            // The host is the one the call really goes to, read from the address as given. Only
+            // its data shape and size are judged with the bot's own address cut out.
             let Some(host) = url::Url::parse(url.trim())
                 .ok()
                 .and_then(|u| u.host_str().map(str::to_owned))
@@ -1644,33 +1868,43 @@ impl Shared {
             if self.trusted_host(ctx, &host, &named) {
                 continue;
             }
-            if crate::full_autonomy::url_carries_data(url) {
+            let url = crate::full_autonomy::without_addresses(url, &own);
+            if crate::full_autonomy::url_carries_data(&url) {
                 return false;
             }
-            sent += crate::full_autonomy::url_sent_chars(url);
-            checked.push(crate::full_autonomy::decoded(url));
+            spent_on(
+                &budget_site(&host),
+                crate::full_autonomy::url_sent_chars(&url),
+            );
+            checked.push(crate::full_autonomy::decoded(&url));
         }
         // Text typed into a page the owner trusts is the owner's business. A search query goes
         // to the search provider whatever page is open, so it is always judged.
+        let page_host = ctx.page_origin.lock().as_deref().and_then(host_of_origin);
         let page_is_owners = !web_read
-            && ctx
-                .page_origin
-                .lock()
+            && page_host
                 .as_deref()
-                .and_then(host_of_origin)
-                .is_some_and(|h| self.trusted_host(ctx, &h, &named));
+                .is_some_and(|h| self.trusted_host(ctx, h, &named));
         if !texts.is_empty() && !page_is_owners {
             let limit = if web_read {
                 WEB_QUERY_LIMIT
             } else {
                 crate::full_autonomy::FOREIGN_TEXT_LIMIT
             };
+            // A query goes to the search provider, text typed into a page goes to that page's site.
+            let site = if web_read {
+                "web search".to_owned()
+            } else {
+                page_host
+                    .as_deref()
+                    .map_or_else(|| "the browser".to_owned(), budget_site)
+            };
             for text in &texts {
                 let len = text.chars().count();
                 if len >= limit {
                     return false;
                 }
-                sent += len;
+                spent_on(&site, len);
                 checked.push(text.clone());
             }
         }
@@ -1680,14 +1914,29 @@ impl Shared {
         let owner_words = self.owner_words(ctx);
         let mut taint = ctx.taint.lock();
         // Private data that could not be hashed (memory without text, an earlier turn), copied
-        // private words, and the run's running total all ask.
+        // private words, and a site's (or the run's) running total all ask.
         if taint.seen.unhashed
-            || taint.seen.sent + sent > crate::full_autonomy::SEND_BUDGET
+            || !taint.seen.within_send_budget(&spend)
             || checked.iter().any(|c| taint.seen.copied(c, &owner_words))
         {
             return false;
         }
-        taint.seen.sent += sent;
+        // The same send counts against the whole mission, which no session can reset. A mission
+        // whose total cannot be read or kept asks, like every other doubt.
+        let total: usize = spend.iter().map(|(_, n)| n).sum();
+        if let Some(mission) = &ctx.mission
+            && !self.mission_store.read().as_ref().is_some_and(|s| {
+                s.take_send_budget(
+                    mission,
+                    total as u64,
+                    crate::full_autonomy::MISSION_SEND_BUDGET as u64,
+                )
+                .unwrap_or(false)
+            })
+        {
+            return false;
+        }
+        taint.seen.record_sent(&spend);
         true
     }
 
@@ -1951,11 +2200,12 @@ impl Shared {
         )
     }
 
-    /// The two calls of a sign-up that the egress gate would ask about after the
+    /// The calls of a sign-up that the egress gate would ask about after the
     /// run read a page or a mail, waived for an OWNER-started run of a bot on the
-    /// Full level: reading the bot's OWN inbox (`email_search`, `email_read`,
-    /// `email_list_folders`, `email_wait_for` on an identity bound to or shared
-    /// with it, never an account every bot may use), and opening exactly a link
+    /// Full level: reading the bot's OWN inbox and marking what it read as read
+    /// (`email_search`, `email_read`, `email_list_folders`, `email_mark_read`,
+    /// `email_wait_for` on an `AgentMail` identity bound to or shared
+    /// with it, never an IMAP mailbox or an account every bot may use), and opening exactly a link
     /// `email_wait_for` returned as followable in this run (https, on the site the
     /// sign-up started on or an owner-listed domain). A run started by mail, a
     /// webhook, a schedule or a channel is never waived here: it keeps asking.
@@ -1967,13 +2217,13 @@ impl Shared {
             return false;
         }
         match name {
+            // Only the bot's own `AgentMail` inbox: an IMAP mailbox bound to the bot (it can be
+            // the owner's) and an account every bot may use keep the card path.
             "email_search"
             | "email_read"
             | "email_list_folders"
-            | builtin_tools::mail_wait::EMAIL_WAIT_FOR => self.mail.get().is_some_and(|c| {
-                c.scoped(Some(&ctx.bot_id.to_string()))
-                    .owns(input.get("account").and_then(Value::as_str))
-            }),
+            | "email_mark_read"
+            | builtin_tools::mail_wait::EMAIL_WAIT_FOR => self.own_agentmail(ctx, input),
             "browser_open" => {
                 input.as_object().is_some_and(|o| o.len() == 1)
                     && input.get("url").and_then(Value::as_str).is_some_and(|u| {
@@ -1984,6 +2234,25 @@ impl Shared {
             }
             _ => false,
         }
+    }
+
+    /// Whether `url` is on a site a link from the bot's own mail pointed to in this run: in a
+    /// mail it read, in what `email_wait_for` returned, or in what an earlier session remembered.
+    fn mail_given_site(ctx: &RunCtx, url: &str) -> bool {
+        use builtin_tools::connector_email::verify::site_domain;
+        let Some(site) = site_domain(url.trim()) else {
+            return false;
+        };
+        ctx.taint.lock().names_mail_site(url)
+            || ctx
+                .mail_links
+                .lock()
+                .iter()
+                .any(|l| site_domain(l).as_deref() == Some(site.as_str()))
+            || ctx
+                .restored_mail_links
+                .iter()
+                .any(|l| site_domain(&l.url).as_deref() == Some(site.as_str()))
     }
 
     /// A link a session before remembered (not one this run's own `email_wait_for`
@@ -2111,7 +2380,56 @@ impl Shared {
         if tool.egress_for(Some(&ctx.bot_id.to_string())) == Some(true) {
             class.egress = true;
         }
+        if self.own_inbox_call(ctx, name, input) {
+            class.reads_private = false;
+        } else if name == builtin_tools::mail_wait::EMAIL_WAIT_FOR {
+            // Its static class says "not private" because it only answers for the bot's own
+            // identity. An IMAP mailbox bound to the bot is the one such identity that can be
+            // the owner's own: waiting on it reads private data.
+            class.reads_private = true;
+        }
         class
+    }
+
+    /// Whether the account a mail call names (the named one, else the bot's default, resolved
+    /// the way the tool resolves it) is the bot's OWN `AgentMail` inbox: an identity bound to
+    /// this bot or shared with it AND made through the `AgentMail` API for the bot. Fails
+    /// closed: any doubt is "not own". The one place that decides it, from identity and kind;
+    /// no label, stored or derived, is consulted.
+    fn own_agentmail(&self, ctx: &RunCtx, input: &Value) -> bool {
+        self.mail.get().is_some_and(|c| {
+            let bot = ctx.bot_id.to_string();
+            let scoped = c.scoped(Some(&bot));
+            let account = input.get("account").and_then(Value::as_str);
+            scoped.owns(account)
+                && scoped
+                    .kind(account)
+                    .is_ok_and(|k| k == builtin_tools::connector_email::AccountKind::AgentMail)
+        })
+    }
+
+    /// A read of the bot's OWN `AgentMail` inbox: `email_search`, `email_read`,
+    /// `email_list_folders` or `email_wait_for` on an identity that is bound to this bot or
+    /// shared with it and is an `AgentMail` inbox (made through the API, for the bot); see
+    /// [`Self::own_agentmail`].
+    ///
+    /// What is in such an inbox is mail from strangers: the sign-up confirmations, codes and
+    /// newsletters the bot's own accounts bring. It stays untrusted content (the exposure still
+    /// says so, so egress still asks wherever it asked after a page read), but it is not the
+    /// OWNER's private data, so reading it does not mark the run as holding any. A run that
+    /// did, after the first confirmation mail, would quarantine every later page, hide its
+    /// screenshots and treat every word of a mail as a secret to keep out of the next form.
+    ///
+    /// Not covered, so they still count as private: an IMAP/SMTP mailbox (it can be the
+    /// owner's own mailbox, bound to the bot), an account every bot may use, another bot's.
+    pub(crate) fn own_inbox_call(&self, ctx: &RunCtx, name: &str, input: &Value) -> bool {
+        matches!(
+            name,
+            "email_search"
+                | "email_read"
+                | "email_list_folders"
+                | builtin_tools::mail_wait::EMAIL_WAIT_FOR
+        ) && self.own_agentmail(ctx, input)
     }
 
     /// A host-status command (`uptime`, `df -h`, ... see
@@ -4312,6 +4630,9 @@ impl ExecPermit {
                 run_id: self.ctx.run_id,
                 call_id: self.call_id,
                 approved_by: self.by,
+                granted_by: Some(GrantedBy::OwnerCard),
+                level: Some(self.sh.level_of(&self.ctx)),
+                rule_id: None,
             }),
         );
         self.closed.disarm();
@@ -4755,6 +5076,16 @@ pub(crate) fn always_allowed(
         return origin_scoped;
     }
     effect == Effect::Read && ALWAYS_READ_ONLY_TOOLS.contains(&name)
+}
+
+/// The site a send is counted against: the registrable domain of the host (eTLD+1, with the
+/// platforms that give every customer a sub-domain of their own counted as one site each), so
+/// `a.evil.example`, `b.evil.example` and `www.evil.example` share ONE budget and a sub-domain
+/// cannot buy a fresh one. A host with no registrable domain (an IP address, a single label, a
+/// public suffix itself) is its own site.
+pub(crate) fn budget_site(host: &str) -> String {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    builtin_tools::connector_email::verify::registrable_domain(&host).unwrap_or(host)
 }
 
 fn host_of_origin(origin: &str) -> Option<String> {

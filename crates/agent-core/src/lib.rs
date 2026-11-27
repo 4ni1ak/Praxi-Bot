@@ -60,6 +60,8 @@ mod account_register_tests;
 #[cfg(test)]
 mod approval_expiry_tests;
 #[cfg(test)]
+mod approval_provenance_tests;
+#[cfg(test)]
 mod auto_continue_tests;
 #[cfg(test)]
 mod automation_author_tests;
@@ -85,6 +87,8 @@ mod mail_tests;
 mod mission_session_tests;
 #[cfg(test)]
 mod mission_start_tests;
+#[cfg(test)]
+mod mission_taint_tests;
 #[cfg(test)]
 mod mode_tests;
 #[cfg(test)]

@@ -336,6 +336,12 @@ export type DaemonEvent =
       run_id: string;
       call_id: string;
       approved_by: string;
+      /** What granted the call (`GrantedBy` in crates/protocol); absent on events recorded before it existed. */
+      granted_by?: string;
+      /** The bot's permission level when the call was decided: `ask`, `balanced` or `full`. */
+      level?: string;
+      /** The remembered rule that covered the call, `<scope>:<name>`; never text of the call. */
+      rule_id?: string;
     }
   | {
       type: "tool_call_denied";
@@ -582,6 +588,13 @@ export type ComposioApp = S["ComposioAppDto"];
 export type ComposioConnect = S["ComposioConnectDto"];
 export type ComposioLogin = S["ComposioLoginDto"];
 export type ComposioLoginStatus = S["ComposioLoginStatusDto"];
+export type OpenApiApp = S["OpenApiAppDto"];
+export type OpenApiOperation = S["OpenApiOperationDto"];
+export type OpenApiAuthKind = S["OpenApiAuthKind"];
+export type OpenApiAuthInput = S["OpenApiAuthInput"];
+export type OpenApiAppInput = S["OpenApiAppInput"];
+export type OpenApiAppUpdate = S["OpenApiAppUpdate"];
+export type OpenApiEnabledOperation = S["OpenApiEnabledOperation"];
 export type Component = S["ComponentDto"];
 export type ComponentId = S["ComponentId"];
 export type ComposioDisconnect = S["ComposioDisconnectDto"];
