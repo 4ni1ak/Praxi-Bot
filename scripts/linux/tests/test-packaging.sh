@@ -113,6 +113,39 @@ printf '0.1.0-fixture\n' > "${TMP_ROOT}/pkg/praxi-linux-x86_64/VERSION"
 tar -czf "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" -C "${TMP_ROOT}/pkg" praxi-linux-x86_64
 sha256sum "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" > "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz.sha256"
 printf 'fixture-sigstore\n' > "${RELEASE_DIR}/praxi-linux.sigstore.json"
+# The same fixture release for arm64 (its own file name inside the archive).
+cp -a "${TMP_ROOT}/pkg/praxi-linux-x86_64" "${TMP_ROOT}/pkg/praxi-linux-aarch64"
+tar -czf "${RELEASE_DIR}/praxi-linux-aarch64.tar.gz" -C "${TMP_ROOT}/pkg" praxi-linux-aarch64
+
+# A fake Node.js distribution: the layout of the official archive (bin/node, bin/npm -> lib/...), tiny.
+# The sandboxed installer copy pins ITS version and SHA-256 (the real pins are checked separately).
+mk_node_fixture() { # <version> <out tarball> [platform]
+  local ver="$1" out="$2" platform="${3:-linux-x64}" root
+  root="${TMP_ROOT}/nodepkg-$1-${platform}/node-v$1-${platform}"
+  mkdir -p "${root}/bin" "${root}/lib/node_modules/npm/bin"
+  printf '#!/bin/sh\necho v%s\n' "${ver}" > "${root}/bin/node"
+  printf '#!/bin/sh\necho 10.9.0\n' > "${root}/lib/node_modules/npm/bin/npm-cli.js"
+  printf '%s\n' "${platform}" > "${root}/lib/platform"
+  chmod +x "${root}/bin/node" "${root}/lib/node_modules/npm/bin/npm-cli.js"
+  ln -s ../lib/node_modules/npm/bin/npm-cli.js "${root}/bin/npm"
+  tar -czf "${out}" -C "${TMP_ROOT}/nodepkg-${ver}-${platform}" "node-v${ver}-${platform}"
+}
+# One fixture per CPU (different bytes, so a different pinned SHA-256 each).
+make_node_fixtures() { # <version>
+  NODE_FIX_VERSION="$1"
+  export NODE_FIXTURE_TARBALL="${TMP_ROOT}/node-fixture-x64-$1.tar.gz"
+  export NODE_FIXTURE_TARBALL_ARM64="${TMP_ROOT}/node-fixture-arm64-$1.tar.gz"
+  # Built once per version: switching back to an earlier version keeps its checksum (scripts made for it
+  # still match).
+  [[ -f "${NODE_FIXTURE_TARBALL}" ]] || mk_node_fixture "$1" "${NODE_FIXTURE_TARBALL}" linux-x64
+  [[ -f "${NODE_FIXTURE_TARBALL_ARM64}" ]] || mk_node_fixture "$1" "${NODE_FIXTURE_TARBALL_ARM64}" linux-arm64
+  NODE_FIX_SHA="$(sha256sum "${NODE_FIXTURE_TARBALL}" | awk '{print $1}')"
+  NODE_FIX_SHA_ARM64="$(sha256sum "${NODE_FIXTURE_TARBALL_ARM64}" | awk '{print $1}')"
+  [[ "${NODE_FIX_SHA}" != "${NODE_FIX_SHA_ARM64}" ]] || fail "node fixtures must differ per CPU"
+}
+make_node_fixtures "22.99.0"
+NODE_OTHER_TARBALL="${TMP_ROOT}/node-fixture-other.tar.gz"
+mk_node_fixture "22.98.0" "${NODE_OTHER_TARBALL}" linux-x64
 
 # Fake system tools
 #
@@ -154,7 +187,7 @@ write_fake_shim() {
 write_fake_shim uname <<'EOF'
 case "${1:-}" in
   -s) echo "Linux" ;;
-  -m) echo "x86_64" ;;
+  -m) echo "${FAKE_UNAME_M:-x86_64}" ;;
   *) echo "Linux" ;;
 esac
 EOF
@@ -180,6 +213,32 @@ exec "${REAL_ID}" "\$@"
 EOF
 write_fake_shim useradd <<'EOF'
 touch "${SANDBOX_STATE}/user_created"
+EOF
+# runuser: the sandbox is not root, so "as the service user" is the test user; the call is logged, and
+# FAKE_RUNUSER_FAIL_VERSION=1 makes a `--version` run fail (a Node.js that does not start for that user).
+write_fake_shim runuser <<'EOF'
+user=""
+if [[ "${1:-}" == "-u" ]]; then user="$2"; shift 2; fi
+[[ "${1:-}" != "--" ]] || shift
+printf 'runuser -u %s -- %s\n' "${user}" "$(printf '%s ' "$@" | tr '\n' ' ' | cut -c1-240)" >> "${SANDBOX_STATE}/perms.log"
+if [[ "${FAKE_RUNUSER_FAIL_VERSION:-0}" -eq 1 && " $* " == *" --version "* ]]; then exit 1; fi
+exec "$@"
+EOF
+# systemd-run: records one argument per line (the praxi doctor wrapper must not split a property).
+write_fake_shim systemd-run <<'EOF'
+printf '%s\n' "$@" > "${SANDBOX_STATE}/systemd-run.args"
+EOF
+# mv: FAKE_FAIL_MV_DEST=<path> with FAKE_FAIL_ONCE_FLAG=<file> fails ONE rename onto that path (the flag
+# file is removed by it), to prove the Node.js swap puts the previous runtime back.
+REAL_MV="$(command -v mv)"
+write_fake_shim mv <<EOF
+last="\${!#}"
+if [[ -n "\${FAKE_FAIL_MV_DEST:-}" && "\${last}" == "\${FAKE_FAIL_MV_DEST}" && -f "\${FAKE_FAIL_ONCE_FLAG:-/nonexistent}" ]]; then
+  rm -f "\${FAKE_FAIL_ONCE_FLAG}"
+  echo "mv: simulated failure" >&2
+  exit 1
+fi
+exec "${REAL_MV}" "\$@"
 EOF
 write_fake_shim chown <<'EOF'
 printf 'chown %s\n' "$*" >> "${SANDBOX_STATE}/perms.log"
@@ -375,7 +434,13 @@ while [[ $# -gt 0 ]]; do
     *) url="$1"; shift ;;
   esac
 done
-if [[ -n "${out}" ]]; then
+if [[ "${url}" == *"nodejs.org/"* ]]; then
+  printf '%s\n' "${url}" >> "${SANDBOX_STATE}/node-urls.log"
+  [[ "${FAKE_FAIL_NODE_DOWNLOAD:-0}" -eq 0 ]] || exit 22
+  fixture="${NODE_FIXTURE_TARBALL}"
+  [[ "${url}" != *linux-arm64* ]] || fixture="${NODE_FIXTURE_TARBALL_ARM64}"
+  cp -f "${FAKE_NODE_TARBALL:-${fixture}}" "${out}"
+elif [[ -n "${out}" ]]; then
   printf 'fake-download\n' > "${out}"
 elif [[ "${url}" == *"/v1/health"* ]]; then
   if [[ "${FAKE_FAIL_HEALTH:-0}" -eq 1 ]]; then
@@ -447,6 +512,9 @@ make_sandboxed_script() {
     -e "s|@SB_O@|${SANDBOX}/etc/os-release|g" \
     -e "s|@SB_A@|${SANDBOX}/etc/apparmor.d|g" \
     -e "s|@SB_J@|${SANDBOX}/etc/systemd/journald.conf.d|g" \
+    -e "s|^readonly NODE_VERSION=.*|readonly NODE_VERSION=\"${NODE_FIX_VERSION}\"|" \
+    -e "s|^readonly NODE_SHA256_X64=.*|readonly NODE_SHA256_X64=\"${NODE_FIX_SHA}\"|" \
+    -e "s|^readonly NODE_SHA256_ARM64=.*|readonly NODE_SHA256_ARM64=\"${NODE_FIX_SHA_ARM64}\"|" \
     -e "s|^readonly TRUSTED_GH=.*|readonly TRUSTED_GH=\"${SANDBOX}/usr/bin/gh\"|" \
     -e "s|^readonly TRUSTED_UID=.*|readonly TRUSTED_UID=${REAL_UID}|" \
     -e "s|^readonly TRUSTED_ROOT_DIR=.*|readonly TRUSTED_ROOT_DIR=\"${SANDBOX}\"|" \
@@ -457,7 +525,9 @@ make_sandboxed_script() {
 # The installer verifies with the system's /usr/bin/gh only (root-owned, no group/other write). The
 # sandbox maps that path, "root" (the test user) and the trust anchor into the sandbox; the shim on PATH
 # stays what a caller's PATH offers and must never be used for an installation.
-chmod 755 "${SANDBOX}" "${SANDBOX}/usr" "${SANDBOX}/usr/bin"
+chmod 755 "${SANDBOX}" "${SANDBOX}/usr" "${SANDBOX}/usr/bin" "${SANDBOX}/opt" "${SANDBOX}/var" "${SANDBOX}/var/lib"
+# The data directory as the installer makes it (0750); a root-run installer refuses anything looser.
+chmod 750 "${SANDBOX}/var/lib/praxi"
 cp "${FAKE_BIN}/gh" "${SANDBOX}/usr/bin/gh"
 chmod 755 "${SANDBOX}/usr/bin/gh"
 
@@ -1029,7 +1099,12 @@ assert_file_not_contains "${SESSION_EXEC}" "openbox"
 assert_file_contains "${SANDBOX}/usr/local/bin/praxi" "Slice=praxi.slice"
 # The doctor wrapper must keep the space-separated ReadWritePaths= list in one
 # argument; unquoted, systemd-run takes the second path as the command.
-assert_file_contains "${SANDBOX}/usr/local/bin/praxi" "--property='ReadWritePaths=${SANDBOX}/var/lib/praxi ${SANDBOX}/var/lib/praxi-work'"
+assert_file_contains "${SANDBOX}/usr/local/bin/praxi" "'--property=ReadWritePaths=${SANDBOX}/var/lib/praxi ${SANDBOX}/var/lib/praxi-work'"
+# Run as root, the wrapper hands systemd-run exactly one argument per property, none of them split.
+run_ok "${TMP_ROOT}/doctor-wrapper.log" "${SANDBOX}/usr/local/bin/praxi" doctor
+assert_file_contains "${SANDBOX_STATE}/systemd-run.args" "--property=ReadWritePaths=${SANDBOX}/var/lib/praxi ${SANDBOX}/var/lib/praxi-work"
+assert_file_contains "${SANDBOX_STATE}/systemd-run.args" "--property=Slice=praxi.slice"
+assert_file_not_contains "${SANDBOX_STATE}/systemd-run.args" "'"
 
 # Verify praxi-xauth-init.sh reuses existing cookie on subsequent starts and preserves 0600 mode
 : > "${SANDBOX_STATE}/xauth.log"
@@ -1365,6 +1440,239 @@ assert_file_contains "${JOURNALD_FILE}" "SystemMaxUse=2G"
 assert_file_not_contains "${SANDBOX_STATE}/systemctl.log" "journald"
 rm -f "${JOURNALD_FILE}"
 pass "host polish: restart limits, per-unit log limit, no journald changes, dry-run, --update, uninstall cleanup"
+
+# 10b. Node.js for the coding CLIs: a pinned, SHA-256-verified runtime in a Praxi-owned prefix and an npm
+#      for the service user that needs no root (dry-run output, install, re-run, update, failures, uninstall).
+NODE_DIR_SB="${SANDBOX}/opt/praxi-nodejs"
+NPM_PREFIX_SB="${SANDBOX}/var/lib/praxi/.npm-global"
+NPMRC_SB="${SANDBOX}/var/lib/praxi/.npmrc"
+INSTALL_ARGS=(--version v0.1.0 --file "${RELEASE_DIR}/praxi-linux-x86_64.tar.gz" --no-start)
+node_leftovers() { compgen -G "${NODE_DIR_SB}.new.*" >/dev/null || compgen -G "${NODE_DIR_SB}.old" >/dev/null; }
+reset_node_state() {
+  rm -rf "${NODE_DIR_SB}" "${NODE_DIR_SB}.old" "${NODE_DIR_SB}".new.* "${NPM_PREFIX_SB}" "${NPMRC_SB}"
+  : > "${SANDBOX_STATE}/node-urls.log"
+}
+reset_node_state
+
+# The real pins are well-formed and differ per CPU (the sandbox copies carry fixture pins instead).
+grep -Eq '^readonly NODE_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$' "${INSTALL_SH}" || fail "NODE_VERSION pin is not x.y.z"
+real_x64="$(sed -n 's/^readonly NODE_SHA256_X64="\([0-9a-f]\{64\}\)"$/\1/p' "${INSTALL_SH}")"
+real_arm64="$(sed -n 's/^readonly NODE_SHA256_ARM64="\([0-9a-f]\{64\}\)"$/\1/p' "${INSTALL_SH}")"
+[[ -n "${real_x64}" && -n "${real_arm64}" && "${real_x64}" != "${real_arm64}" ]] || fail "NODE_SHA256_X64/ARM64 pins missing, malformed or identical"
+
+# Dry-run says what would happen, per CPU, and changes nothing.
+run_ok "${TMP_ROOT}/dry-node.log" bash "${SB_INSTALL}" --dry-run
+assert_file_contains "${TMP_ROOT}/dry-node.log" "Node.js: would install v${NODE_FIX_VERSION} (linux-x64, SHA-256 verified) into ${NODE_DIR_SB}"
+assert_file_contains "${TMP_ROOT}/dry-node.log" "npm for praxi: global prefix ${NPM_PREFIX_SB} (no root needed)"
+# System directories first, the ones the service user can write last.
+SB_SERVICE_PATH="${SANDBOX}/usr/local/bin:/usr/bin:/bin:${NODE_DIR_SB}/bin:${SANDBOX}/var/lib/praxi/.local/bin:${NPM_PREFIX_SB}/bin"
+assert_file_contains "${TMP_ROOT}/dry-node.log" "${SB_SERVICE_PATH}"
+assert_file_contains "${TMP_ROOT}/dry-node.log" "registry pinned to https://registry.npmjs.org/ in ${SANDBOX}/etc/praxi/npmrc"
+FAKE_UNAME_M=aarch64 run_ok "${TMP_ROOT}/dry-node-arm.log" bash "${SB_INSTALL}" --dry-run
+assert_file_contains "${TMP_ROOT}/dry-node-arm.log" "(linux-arm64, SHA-256 verified)"
+run_ok "${TMP_ROOT}/dry-node-skip.log" bash "${SB_INSTALL}" --dry-run --skip-packages
+assert_file_contains "${TMP_ROOT}/dry-node-skip.log" "--skip-packages, would NOT install the runtime"
+# An unsupported CPU is an error (not a guess at the x64 or arm64 build); --skip-packages is the way out.
+if FAKE_UNAME_M=riscv64 run_timed bash "${SB_INSTALL}" --dry-run > "${TMP_ROOT}/dry-node-riscv.log" 2>&1; then
+  fail "--dry-run on an unsupported CPU must be an error"
+fi
+assert_file_contains "${TMP_ROOT}/dry-node-riscv.log" "unsupported architecture 'riscv64' for the Node.js runtime"
+FAKE_UNAME_M=riscv64 run_ok "${TMP_ROOT}/dry-node-riscv-skip.log" bash "${SB_INSTALL}" --dry-run --skip-packages
+run_ok "${TMP_ROOT}/dry-node-uninstall.log" bash "${SB_INSTALL}" --dry-run --uninstall
+assert_file_contains "${TMP_ROOT}/dry-node-uninstall.log" "would remove ${SANDBOX}/opt/praxi, ${NODE_DIR_SB} and"
+[[ ! -e "${NODE_DIR_SB}" && ! -e "${NPMRC_SB}" ]] || fail "--dry-run changed the node runtime or npm config"
+
+# Fresh install: runtime downloaded from the pinned URL, verified, unpacked, owned by root; npm configured.
+run_ok "${TMP_ROOT}/node-install.log" bash "${SB_INSTALL}" "${INSTALL_ARGS[@]}"
+assert_file_contains "${TMP_ROOT}/node-install.log" "Node.js checksum OK"
+assert_file_contains "${SANDBOX_STATE}/node-urls.log" "https://nodejs.org/dist/v${NODE_FIX_VERSION}/node-v${NODE_FIX_VERSION}-linux-x64.tar.gz"
+[[ "$("${NODE_DIR_SB}/bin/node" --version)" == "v${NODE_FIX_VERSION}" ]] || fail "installed node is not the pinned version"
+[[ -x "${NODE_DIR_SB}/bin/npm" ]] || fail "npm is missing next to node"
+[[ "$(stat -c %a "${NODE_DIR_SB}")" == "755" ]] || fail "node dir is not 0755"
+assert_file_contains "${SANDBOX_STATE}/perms.log" "chown -R root:root ${NODE_DIR_SB}.new."
+! node_leftovers || fail "staging directory left behind"
+assert_file_contains "${NPMRC_SB}" "prefix=${NPM_PREFIX_SB}"
+[[ "$(stat -c %a "${NPMRC_SB}")" == "600" ]] || fail ".npmrc is not 0600"
+[[ -d "${NPM_PREFIX_SB}/bin" ]] || fail "npm global prefix was not created"
+[[ "$(stat -c %a "${NPM_PREFIX_SB}" "${NPM_PREFIX_SB}/bin" | sort -u)" == "750" ]] || fail "npm prefix folders are not 0750"
+# Everything inside the service user's folder is made BY that user (so a link it plants gains nothing from
+# root), never by root and chown afterwards.
+assert_file_contains "${SANDBOX_STATE}/perms.log" "runuser -u praxi -- env -i PATH=/usr/bin:/bin HOME=${SANDBOX}/var/lib/praxi sh -c"
+assert_file_not_contains "${SANDBOX_STATE}/perms.log" "chown -h praxi:praxi ${NPMRC_SB}"
+assert_file_not_contains "${SANDBOX_STATE}/perms.log" "install -d owner=praxi group=praxi mode=0750 ${NPM_PREFIX_SB}"
+# The downloaded program's first run is as the service user, in the staging folder, before the swap.
+assert_file_contains "${SANDBOX_STATE}/perms.log" "runuser -u praxi -- env -i PATH=/usr/bin:/bin HOME=${SANDBOX}/var/lib/praxi timeout 20 ${NODE_DIR_SB}.new."
+# The registry pin: a root-owned file the service user reads; the daemon and the command point npm at it.
+NPM_PIN_SB="${SANDBOX}/etc/praxi/npmrc"
+assert_file_contains "${NPM_PIN_SB}" "registry=https://registry.npmjs.org/"
+assert_file_contains "${SANDBOX_STATE}/perms.log" "install owner=root group=praxi mode=0640 ${NPM_PIN_SB}"
+assert_file_contains "${SANDBOX}/etc/systemd/system/praxi.service" "Environment=NPM_CONFIG_GLOBALCONFIG=${NPM_PIN_SB}"
+assert_file_contains "${SANDBOX}/usr/local/bin/praxi" "NPM_CONFIG_GLOBALCONFIG=${NPM_PIN_SB}"
+# The daemon, the app's terminal (HOME's .npmrc) and the praxi command all see node and the prefix.
+assert_file_contains "${SANDBOX}/etc/systemd/system/praxi.service" "Environment=PATH=${SB_SERVICE_PATH}"
+assert_file_contains "${SANDBOX}/usr/local/bin/praxi" "PATH=${SB_SERVICE_PATH} "
+assert_file_contains "${SANDBOX}/usr/local/bin/praxi" "NPM_CONFIG_PREFIX=${NPM_PREFIX_SB}"
+assert_file_contains "${SANDBOX}/etc/systemd/system/praxi.service" "Environment=NPM_CONFIG_PREFIX=${NPM_PREFIX_SB}"
+# The node-agent wrapper gets the same PATH (its install flow is the same account).
+assert_file_contains "${SANDBOX}/usr/local/bin/praxi-node" "${NODE_DIR_SB}/bin"
+
+# Re-run: the pinned runtime is kept, nothing is downloaded again, and npm config is not duplicated.
+: > "${SANDBOX_STATE}/node-urls.log"
+run_ok "${TMP_ROOT}/node-rerun.log" bash "${SB_INSTALL}" "${INSTALL_ARGS[@]}"
+assert_file_contains "${TMP_ROOT}/node-rerun.log" "is already installed in ${NODE_DIR_SB}; skipping the download"
+[[ ! -s "${SANDBOX_STATE}/node-urls.log" ]] || fail "re-run downloaded Node.js again"
+[[ "$(grep -c '^prefix=' "${NPMRC_SB}")" -eq 1 ]] || fail "re-run duplicated the npm prefix"
+
+# --update moves to a newer pin (a release that bumped it) and leaves no old tree behind.
+NODE_FIX_VERSION_OLD="${NODE_FIX_VERSION}"
+make_node_fixtures "22.99.1"
+SB_INSTALL_NEWPIN="${TMP_ROOT}/install-linux-newpin.sh"
+make_sandboxed_script "${INSTALL_SH}" "${SB_INSTALL_NEWPIN}"
+run_ok "${TMP_ROOT}/node-update.log" bash "${SB_INSTALL_NEWPIN}" --update "${INSTALL_ARGS[@]}"
+[[ "$("${NODE_DIR_SB}/bin/node" --version)" == "v${NODE_FIX_VERSION}" ]] || fail "--update did not move node to the new pin (was v${NODE_FIX_VERSION_OLD})"
+! node_leftovers || fail "--update left the old or staging tree behind"
+
+# A server that cannot reach nodejs.org is an error (before anything is changed), with the way out.
+reset_node_state
+rm -f "${SANDBOX}/opt/praxi/bin/bot"
+if FAKE_FAIL_NODE_DOWNLOAD=1 run_timed bash "${SB_INSTALL_NEWPIN}" "${INSTALL_ARGS[@]}" > "${TMP_ROOT}/node-offline.log" 2>&1; then
+  fail "a Node.js download failure must fail the install unless --skip-packages"
+fi
+assert_file_contains "${TMP_ROOT}/node-offline.log" "could not download Node.js v${NODE_FIX_VERSION}"
+assert_file_contains "${TMP_ROOT}/node-offline.log" "re-run with --skip-packages to install without Node.js"
+[[ ! -e "${NODE_DIR_SB}/bin/node" ]] || fail "a failed download left a runtime behind"
+! node_leftovers || fail "failed download left a staging directory"
+[[ ! -e "${SANDBOX}/opt/praxi/bin/bot" ]] || fail "the daemon was installed although Node.js could not be fetched"
+
+# A Node.js that does not start as the service user is refused, and the runtime that was there stays.
+reset_node_state
+run_ok "${TMP_ROOT}/node-first.log" bash "${SB_INSTALL_NEWPIN}" "${INSTALL_ARGS[@]}"
+make_node_fixtures "22.99.2"
+SB_INSTALL_NEWPIN2="${TMP_ROOT}/install-linux-newpin2.sh"
+make_sandboxed_script "${INSTALL_SH}" "${SB_INSTALL_NEWPIN2}"
+if FAKE_RUNUSER_FAIL_VERSION=1 run_timed bash "${SB_INSTALL_NEWPIN2}" --update "${INSTALL_ARGS[@]}" > "${TMP_ROOT}/node-nostart.log" 2>&1; then
+  fail "a Node.js that does not start as the service user must fail the install"
+fi
+assert_file_contains "${TMP_ROOT}/node-nostart.log" "does not start on this system"
+[[ "$("${NODE_DIR_SB}/bin/node" --version)" == "v22.99.1" ]] || fail "the previous runtime was not kept"
+! node_leftovers || fail "a refused runtime left a staging directory"
+make_node_fixtures "22.99.1"
+
+# Safe swap: a link planted at the swap name is unlinked (never followed, nothing behind it is touched),
+# and a link at the runtime's own path is refused outright.
+reset_node_state
+run_ok "${TMP_ROOT}/node-swap-1.log" bash "${SB_INSTALL_NEWPIN}" "${INSTALL_ARGS[@]}"
+make_node_fixtures "22.99.3"
+SB_INSTALL_NEWPIN3="${TMP_ROOT}/install-linux-newpin3.sh"
+make_sandboxed_script "${INSTALL_SH}" "${SB_INSTALL_NEWPIN3}"
+CANARY_DIR="${TMP_ROOT}/canary"
+mkdir -p "${CANARY_DIR}"
+printf 'keep me\n' > "${CANARY_DIR}/precious"
+ln -s "${CANARY_DIR}" "${NODE_DIR_SB}.old"
+run_ok "${TMP_ROOT}/node-swap-link.log" bash "${SB_INSTALL_NEWPIN3}" --update "${INSTALL_ARGS[@]}"
+[[ "$("${NODE_DIR_SB}/bin/node" --version)" == "v22.99.3" ]] || fail "the update did not go through with a link at the swap name"
+[[ "$(cat "${CANARY_DIR}/precious")" == "keep me" && "$(ls "${CANARY_DIR}")" == "precious" ]] \
+  || fail "the swap followed a link planted at ${NODE_DIR_SB}.old"
+[[ ! -e "${NODE_DIR_SB}.old" && ! -L "${NODE_DIR_SB}.old" ]] || fail "the swap name was left behind"
+# A rename that fails half way puts the previous runtime back (never a server with no Node.js).
+make_node_fixtures "22.99.4"
+SB_INSTALL_NEWPIN4="${TMP_ROOT}/install-linux-newpin4.sh"
+make_sandboxed_script "${INSTALL_SH}" "${SB_INSTALL_NEWPIN4}"
+: > "${TMP_ROOT}/mv-once.flag"
+if FAKE_FAIL_MV_DEST="${NODE_DIR_SB}" FAKE_FAIL_ONCE_FLAG="${TMP_ROOT}/mv-once.flag" \
+  run_timed bash "${SB_INSTALL_NEWPIN4}" --update "${INSTALL_ARGS[@]}" > "${TMP_ROOT}/node-swap-fail.log" 2>&1; then
+  fail "a failed swap must fail the install"
+fi
+assert_file_contains "${TMP_ROOT}/node-swap-fail.log" "the previous one was put back"
+[[ "$("${NODE_DIR_SB}/bin/node" --version)" == "v22.99.3" ]] || fail "a failed swap did not restore the previous runtime"
+! node_leftovers || fail "a failed swap left a staging or .old directory"
+make_node_fixtures "22.99.3"
+rm -rf "${NODE_DIR_SB}"
+ln -s "${CANARY_DIR}" "${NODE_DIR_SB}"
+if run_timed bash "${SB_INSTALL_NEWPIN3}" "${INSTALL_ARGS[@]}" > "${TMP_ROOT}/node-dir-link.log" 2>&1; then
+  fail "a link at ${NODE_DIR_SB} must be refused"
+fi
+assert_file_contains "${TMP_ROOT}/node-dir-link.log" "${NODE_DIR_SB} is a symbolic link; refusing to install Node.js through it"
+[[ "$(ls "${CANARY_DIR}")" == "precious" ]] || fail "the installer wrote through a link at the runtime path"
+rm -f "${NODE_DIR_SB}"
+# A parent the group or others can write is not trusted for root to work in.
+reset_node_state
+chmod 775 "${SANDBOX}/opt"
+if run_timed bash "${SB_INSTALL_NEWPIN3}" "${INSTALL_ARGS[@]}" > "${TMP_ROOT}/node-parent-open.log" 2>&1; then
+  fail "a group-writable parent of the runtime folder must be refused"
+fi
+assert_file_contains "${TMP_ROOT}/node-parent-open.log" "is writable by group or others"
+chmod 755 "${SANDBOX}/opt"
+make_node_fixtures "22.99.1"
+
+# A download that is not the pinned build is refused before anything is unpacked.
+reset_node_state
+if FAKE_NODE_TARBALL="${NODE_OTHER_TARBALL}" run_timed bash "${SB_INSTALL_NEWPIN}" "${INSTALL_ARGS[@]}" > "${TMP_ROOT}/node-mismatch.log" 2>&1; then
+  fail "a Node.js archive with the wrong SHA-256 must fail the install"
+fi
+assert_file_contains "${TMP_ROOT}/node-mismatch.log" "Node.js SHA-256 mismatch for linux-x64"
+[[ ! -e "${NODE_DIR_SB}" ]] || fail "a mismatching archive was unpacked"
+! node_leftovers || fail "mismatch left a staging directory"
+
+# A user-chosen npm prefix is kept (and other lines); a link planted at the config path is refused.
+reset_node_state
+printf 'registry=https://registry.example.test/\nprefix=/srv/custom-npm\n' > "${NPMRC_SB}"
+run_ok "${TMP_ROOT}/node-npmrc-keep.log" bash "${SB_INSTALL_NEWPIN}" "${INSTALL_ARGS[@]}"
+assert_file_contains "${NPMRC_SB}" "prefix=/srv/custom-npm"
+assert_file_contains "${NPMRC_SB}" "registry=https://registry.example.test/"
+assert_file_not_contains "${NPMRC_SB}" "prefix=${NPM_PREFIX_SB}"
+rm -f "${NPMRC_SB}"
+ln -s "${TMP_ROOT}/not-the-npmrc" "${NPMRC_SB}"
+if run_timed bash "${SB_INSTALL_NEWPIN}" "${INSTALL_ARGS[@]}" > "${TMP_ROOT}/node-npmrc-link.log" 2>&1; then
+  fail "a symbolic link at ${NPMRC_SB} must be refused"
+fi
+assert_file_contains "${TMP_ROOT}/node-npmrc-link.log" "is a symbolic link; refusing to configure npm through it"
+[[ ! -e "${TMP_ROOT}/not-the-npmrc" ]] || fail "the installer wrote through a planted link"
+rm -f "${NPMRC_SB}"
+# Nor through a link at the npm prefix, nor below a parent of the data directory that others can write.
+reset_node_state
+ln -s "${CANARY_DIR}" "${NPM_PREFIX_SB}"
+if run_timed bash "${SB_INSTALL_NEWPIN}" "${INSTALL_ARGS[@]}" > "${TMP_ROOT}/node-prefix-link.log" 2>&1; then
+  fail "a symbolic link at ${NPM_PREFIX_SB} must be refused"
+fi
+assert_file_contains "${TMP_ROOT}/node-prefix-link.log" "${NPM_PREFIX_SB} is a symbolic link; refusing to configure npm through it"
+[[ "$(ls "${CANARY_DIR}")" == "precious" ]] || fail "npm was configured through a link at the prefix"
+rm -f "${NPM_PREFIX_SB}"
+# (The data directory itself is set to 0750 by the installer just before, so only its parents can be open.)
+chmod 777 "${SANDBOX}/var/lib"
+if run_timed bash "${SB_INSTALL_NEWPIN}" "${INSTALL_ARGS[@]}" > "${TMP_ROOT}/node-data-parent-open.log" 2>&1; then
+  fail "an others-writable parent of the data directory must be refused"
+fi
+assert_file_contains "${TMP_ROOT}/node-data-parent-open.log" "the folder that holds ${SANDBOX}/var/lib/praxi: ${SANDBOX}/var/lib is writable by group or others"
+chmod 755 "${SANDBOX}/var/lib"
+[[ ! -e "${NPMRC_SB}" ]] || fail "npm config was written although a parent was refused"
+
+# --skip-packages leaves Node.js to the admin: nothing is downloaded, npm config is still prepared.
+reset_node_state
+run_ok "${TMP_ROOT}/node-skip.log" bash "${SB_INSTALL_NEWPIN}" "${INSTALL_ARGS[@]}" --skip-packages
+[[ ! -s "${SANDBOX_STATE}/node-urls.log" && ! -e "${NODE_DIR_SB}" ]] || fail "--skip-packages downloaded Node.js"
+assert_file_contains "${NPMRC_SB}" "prefix=${NPM_PREFIX_SB}"
+# --update --skip-packages keeps an out-of-date runtime and says so (it is the admin's call).
+reset_node_state
+run_ok "${TMP_ROOT}/node-stale-1.log" bash "${SB_INSTALL_NEWPIN}" "${INSTALL_ARGS[@]}"
+run_ok "${TMP_ROOT}/node-stale-2.log" bash "${SB_INSTALL_NEWPIN3}" --update "${INSTALL_ARGS[@]}" --skip-packages
+assert_file_contains "${TMP_ROOT}/node-stale-2.log" "is not the pinned v22.99.3 and was left as it is"
+[[ "$("${NODE_DIR_SB}/bin/node" --version)" == "v22.99.1" ]] || fail "--skip-packages replaced the runtime"
+
+# arm64 hosts fetch the arm64 build.
+reset_node_state
+FAKE_UNAME_M=aarch64 run_ok "${TMP_ROOT}/node-arm.log" bash "${SB_INSTALL_NEWPIN}" --version v0.1.0 \
+  --file "${RELEASE_DIR}/praxi-linux-aarch64.tar.gz" --no-start
+assert_file_contains "${SANDBOX_STATE}/node-urls.log" "node-v${NODE_FIX_VERSION}-linux-arm64.tar.gz"
+[[ "$(cat "${NODE_DIR_SB}/lib/platform")" == "linux-arm64" ]] || fail "the arm64 host did not get the arm64 build"
+
+# Uninstall removes the runtime; the data directory (and its npm prefix) stays without --purge.
+mkdir -p "${NPM_PREFIX_SB}/bin"
+run_ok "${TMP_ROOT}/node-uninstall.log" bash "${SB_INSTALL_NEWPIN}" --uninstall
+[[ ! -e "${NODE_DIR_SB}" ]] || fail "--uninstall left the node runtime"
+[[ -d "${NPM_PREFIX_SB}/bin" ]] || fail "--uninstall without --purge removed the npm prefix"
+reset_node_state
+pass "node runtime: pinned and verified, per CPU, npm prefix for the service user, update, failures, uninstall"
 
 # 11. systemd-analyze verify check on remaining service unit when available
 if command -v systemd-analyze >/dev/null 2>&1; then

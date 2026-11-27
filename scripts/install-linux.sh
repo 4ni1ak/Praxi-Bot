@@ -44,12 +44,14 @@
 #   --without-desktop    Remove praxi-xvfb.service, praxi-desktop.service and DISPLAY (updates keep both otherwise)
 #   --display <:N>       X display for --with-desktop (default: :99)
 #   --screen <WxHxD>     Xvfb screen (default: 1920x1080x24)
-#   --skip-packages      Do not install OS packages (you provide curl, tar, libdbus, libssl, ...)
+#   --skip-packages      Do not install OS packages or the Node.js runtime (you provide curl, tar, libdbus,
+#                        libssl, ...; the coding CLIs then need your own Node.js 20+ on the service PATH)
 #   --no-start           Install and enable, but do not start the services
 #   --headless           Always-on server preset: --host-mode --with-desktop (Xvfb 1920x1080x24)
 #   --update             Update an existing install in place; keeps data, config, display and mode
+#                        (also moves the Node.js runtime to the version pinned in this script)
 #   --dry-run            Print what would be done and change nothing (no root, any OS)
-#   --uninstall          Remove the services and /opt/praxi (keeps data and the praxi user)
+#   --uninstall          Remove the services, /opt/praxi and /opt/praxi-nodejs (keeps data and the praxi user)
 #   --purge              With --uninstall: also delete /var/lib/praxi, /etc/praxi and the praxi user
 #   -h, --help           Show this help
 
@@ -75,7 +77,23 @@ UNIT_DIR="/etc/systemd/system"
 SLICE_NAME="praxi.slice"
 SVC_USER="praxi"
 UPDATE_UNITS=(praxi-update.socket praxi-update@.service praxi-update-check.timer praxi-update-check.service)
-SERVICE_PATH="${DATA_DIR}/.local/bin:${DATA_DIR}/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
+# Node.js for the coding CLIs (npm install -g as the service user, no root): an official LTS build pinned
+# below, kept OUTSIDE ${PREFIX} on purpose. The release tree is replaced on every update, and a program
+# that lives inside the daemon's WorkingDirectory (${PREFIX}) is never run as an installer or a CLI.
+# The user-writable global prefix lives in the data directory. Update the pins with the Node.js 22 LTS
+# line (https://nodejs.org/dist/v<version>/SHASUMS256.txt, the .tar.gz entries).
+NODE_DIR="/opt/praxi-nodejs"
+NPM_PREFIX="${DATA_DIR}/.npm-global"
+# The registry installer-driven npm installs use, pinned in a root-owned file the service user can read
+# but not change (the daemon and the praxi command point npm's global config at it).
+readonly NPM_REGISTRY="https://registry.npmjs.org/"
+NPM_GLOBAL_RC="${CONF_DIR}/npmrc"
+readonly NODE_VERSION="22.23.5"
+readonly NODE_SHA256_X64="c54118104acc524633b5abe106bbf44a53126ec8b4e5fa105cb92b5d7de8a1a1"
+readonly NODE_SHA256_ARM64="8bd3dc69eee8f3f226315a80d7d1d4faccf217a4c8fae500168ac2e38f3bdba3"
+# Root-owned directories first, the ones the service user can write last: a program the user (or a model
+# running as it) installs never shadows a system one. Mirrors identity::path_with_install_dirs (append only).
+SERVICE_PATH="/usr/local/bin:/usr/bin:/bin:${NODE_DIR}/bin:${DATA_DIR}/.local/bin:${NPM_PREFIX}/bin"
 
 VERSION="latest"
 LOCAL_FILE=""
@@ -203,12 +221,14 @@ Options:
   --without-desktop    Remove praxi-xvfb.service, praxi-desktop.service and DISPLAY (updates keep both otherwise)
   --display <:N>       X display for --with-desktop (default: :99; kept on re-install unless given)
   --screen <WxHxD>     Xvfb screen (default: 1920x1080x24)
-  --skip-packages      Do not install OS packages (you provide curl, tar, libdbus, libssl, ...)
+  --skip-packages      Do not install OS packages or the Node.js runtime (you provide curl, tar, libdbus,
+                       libssl, ...; the coding CLIs then need your own Node.js 20+ on the service PATH)
   --no-start           Install and enable, but do not start the services
   --headless           Always-on server preset: --host-mode --with-desktop (Xvfb 1920x1080x24)
   --update             Update an existing install in place; keeps data, config, display and mode
+                       (also moves the Node.js runtime to the version pinned in this script)
   --dry-run            Print what would be done and change nothing (no root, any OS)
-  --uninstall          Remove the services and /opt/praxi (keeps data and the praxi user)
+  --uninstall          Remove the services, /opt/praxi and /opt/praxi-nodejs (keeps data and the praxi user)
   --purge              With --uninstall: also delete /var/lib/praxi, /etc/praxi and the praxi user
   -h, --help           Show this help
 USAGE
@@ -253,6 +273,14 @@ reject_unsafe_tar_members() {
       fi
     done
   done < "${WORK}/members.txt"
+}
+
+# Node.js download platform for a machine name (uname -m), or nothing when there is no pinned build.
+node_platform_of() {
+  case "$1" in
+    x86_64|amd64) printf 'linux-x64' ;;
+    aarch64|arm64) printf 'linux-arm64' ;;
+  esac
 }
 
 while [[ $# -gt 0 ]]; do
@@ -319,7 +347,7 @@ fi
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   if [[ "${UNINSTALL}" -eq 1 ]]; then
     log "[dry-run] would stop and remove praxi.service, praxi-node.service, praxi-desktop.service, praxi-xvfb.service, ${SLICE_NAME}"
-    log "[dry-run] would remove ${PREFIX} and the praxi command wrappers (plus ${JOURNALD_DIR}/50-praxi.conf only if an older installer wrote it)"
+    log "[dry-run] would remove ${PREFIX}, ${NODE_DIR} and the praxi command wrappers (plus ${JOURNALD_DIR}/50-praxi.conf only if an older installer wrote it)"
     if [[ "${PURGE}" -eq 1 ]]; then
       log "[dry-run] would DELETE ${DATA_DIR}, ${CONF_DIR} and the ${SVC_USER} user (--purge)"
     else
@@ -331,6 +359,15 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
     else
       log "[dry-run] install: version=${VERSION} port=127.0.0.1:${PORT} host_mode=${HOST_MODE}"
     fi
+    dry_run_node_platform="$(node_platform_of "$(uname -m)")"
+    if [[ "${SKIP_PACKAGES}" -eq 1 ]]; then
+      log "[dry-run] Node.js: --skip-packages, would NOT install the runtime (provide Node.js 20+ on the service PATH yourself)"
+    else
+      [[ -n "${dry_run_node_platform}" ]] \
+        || die "unsupported architecture '$(uname -m)' for the Node.js runtime (need x86_64 or aarch64); use --skip-packages and provide Node.js 20+ on the service PATH yourself"
+      log "[dry-run] Node.js: would install v${NODE_VERSION} (${dry_run_node_platform}, SHA-256 verified) into ${NODE_DIR}; --update refreshes it to this version"
+    fi
+    log "[dry-run] npm for ${SVC_USER}: global prefix ${NPM_PREFIX} (no root needed), registry pinned to ${NPM_REGISTRY} in ${NPM_GLOBAL_RC}; PATH of the daemon, the app's terminal and the praxi command (system directories first): ${SERVICE_PATH}"
     if [[ "${WITH_DESKTOP}" -eq 1 ]]; then
       log "[dry-run] virtual display: Xvfb ${DISPLAY_NUM} screen ${SCREEN_SPEC} (praxi-xvfb.service)"
     fi
@@ -387,7 +424,7 @@ if [[ "${UNINSTALL}" -eq 1 ]]; then
     "${UNIT_DIR:?}/praxi-desktop.service.d" "${UNIT_DIR:?}/praxi-xvfb.service.d"
   systemctl daemon-reload
   remove_legacy_journald_dropin
-  rm -rf "${PREFIX:?}"
+  rm -rf "${PREFIX:?}" "${NODE_DIR:?}"
   rm -f /usr/local/bin/praxi /usr/local/bin/praxi-node
   if [[ "${PURGE}" -eq 1 ]]; then
     log "purging data (${DATA_DIR}), config (${CONF_DIR}) and the ${SVC_USER} user"
@@ -556,6 +593,183 @@ PROFILE
   fi
   /opt/praxi-browser/chrome --version >/dev/null 2>&1 \
     || die "the browser at /opt/praxi-browser/chrome does not start on this CPU (${ARCH}). Remove /opt/praxi-browser and re-run this installer to download the matching build."
+}
+
+# Run a command as the service user with a clean environment. Anything the installer has to execute or
+# write inside what that user controls runs as that user: root never follows what it could have planted.
+as_service_user() {
+  runuser -u "${SVC_USER}" -- env -i "PATH=/usr/bin:/bin" "HOME=${DATA_DIR}" "$@"
+}
+
+# `<node> --version`, run as the service user (never as root), or nothing when it does not run.
+node_version_of() { # <node binary>
+  as_service_user timeout 20 "$1" --version 2>/dev/null || true
+}
+
+# A directory root writes into or runs programs from: every component of its real path is a directory
+# owned by root that neither the group nor others can write (a link in the path is followed once and the
+# directory it leads to is what gets checked, so a root-made link is fine and a planted one is not).
+require_root_owned_chain() { # <dir> <what>
+  local real root p owner mode
+  real="$(readlink -f -- "$1")" || die "cannot resolve $2 ($1)"
+  root="$(readlink -f -- "${TRUSTED_ROOT_DIR}")"
+  p="${real}"
+  while :; do
+    [[ -d "${p}" && ! -L "${p}" ]] || die "$2: ${p} is not a directory"
+    read -r owner mode < <(stat -c '%u %a' -- "${p}") || die "cannot inspect ${p}"
+    [[ "${owner}" == "${TRUSTED_UID}" ]] || die "$2: ${p} is not owned by root; refusing to continue as root through it"
+    (( (8#${mode} & 8#022) == 0 )) || die "$2: ${p} is writable by group or others; refusing to continue as root through it"
+    [[ "${p}" != "${root}" && "${p}" != "/" ]] || break
+    p="$(dirname -- "${p}")"
+  done
+}
+
+# Delete a leftover of an earlier run. A link is unlinked and never followed; only a real directory is
+# removed recursively (rm -rf does not follow links inside it either).
+remove_leftover() { # <path>
+  if [[ -L "$1" ]]; then
+    rm -f -- "$1"
+  elif [[ -d "$1" ]]; then
+    rm -rf -- "$1"
+  elif [[ -e "$1" ]]; then
+    rm -f -- "$1"
+  fi
+}
+
+# Put the staged runtime in place with two renames (`mv -T` never moves into a directory a link points
+# to). The window with no ${NODE_DIR} is the time between them; if the second rename fails the first is
+# undone.
+swap_in_node_dir() { # <staged directory>
+  local old="${NODE_DIR}.old"
+  remove_leftover "${old}"
+  if [[ -e "${NODE_DIR}" ]]; then
+    mv -T -- "${NODE_DIR}" "${old}" || die "could not move the old Node.js out of the way (${NODE_DIR}); nothing was changed"
+  fi
+  if ! mv -T -- "$1" "${NODE_DIR}"; then
+    if [[ -e "${old}" ]] && mv -T -- "${old}" "${NODE_DIR}"; then
+      die "could not move the new Node.js into ${NODE_DIR}; the previous one was put back"
+    fi
+    die "could not move the new Node.js into ${NODE_DIR}, and putting the previous one back failed; it stays in ${old} (the installer tries once more as it exits)"
+  fi
+  remove_leftover "${old}"
+}
+
+# The pinned, SHA-256-verified Node.js runtime (npm included) for the service user's coding CLIs.
+# A download that cannot be fetched or does not match the pin is an error: a server without Node.js
+# cannot install the npm-based coding CLIs, and an install that quietly lacks it is a surprise later.
+# --skip-packages is the explicit way to install without it.
+install_node_runtime() {
+  local platform expected_sha actual_sha node_work stage have
+  platform="$(node_platform_of "${ARCH}")"
+  case "${platform}" in
+    linux-x64) expected_sha="${NODE_SHA256_X64}" ;;
+    linux-arm64) expected_sha="${NODE_SHA256_ARM64}" ;;
+    *) die "unsupported architecture ${ARCH} for the Node.js runtime (need x86_64 or aarch64). Re-run with --skip-packages and provide Node.js 20+ on the service PATH yourself." ;;
+  esac
+  local url="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-${platform}.tar.gz"
+  require_root_owned_chain "$(dirname -- "${NODE_DIR}")" "the folder that holds ${NODE_DIR}"
+  [[ ! -L "${NODE_DIR}" ]] || die "${NODE_DIR} is a symbolic link; refusing to install Node.js through it. Remove it and re-run the installer."
+  if [[ -e "${NODE_DIR}" ]]; then
+    require_root_owned_chain "${NODE_DIR}" "${NODE_DIR}"
+  fi
+  # Idempotent: a re-run keeps the pinned runtime; an update to a newer pin replaces it.
+  if [[ -x "${NODE_DIR}/bin/node" && -x "${NODE_DIR}/bin/npm" ]]; then
+    have="$(node_version_of "${NODE_DIR}/bin/node")"
+    if [[ "${have}" == "v${NODE_VERSION}" ]]; then
+      log "Node.js v${NODE_VERSION} (${platform}) is already installed in ${NODE_DIR}; skipping the download"
+      return 0
+    fi
+    [[ "${UPDATE}" -eq 0 ]] || log "refreshing the Node.js in ${NODE_DIR} (${have:-unknown version}) to v${NODE_VERSION}"
+  fi
+  node_work="$(mktemp -d "${WORK}/node.XXXXXX")"
+  log "installing official Node.js v${NODE_VERSION} (${platform}) into ${NODE_DIR}"
+  if ! curl -fSL --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 300 \
+    --retry 3 --retry-delay 5 --retry-connrefused "${url}" -o "${node_work}/node.tar.gz"; then
+    rm -rf "${node_work}"
+    die "could not download Node.js v${NODE_VERSION} (${platform}) from nodejs.org. Nothing was changed. Check that this server can reach https://nodejs.org (for example: curl -I ${url}) and re-run the same command, or re-run with --skip-packages to install without Node.js (the coding CLIs that install with npm then need a Node.js 20+ on the service PATH)."
+  fi
+  actual_sha="$(sha256_hex "$(sha256sum "${node_work}/node.tar.gz")")"
+  if [[ "${actual_sha}" != "${expected_sha}" ]]; then
+    rm -rf "${node_work}"
+    die "Node.js SHA-256 mismatch for ${platform} (expected ${expected_sha}, got ${actual_sha}). The download was corrupted or altered; nothing was installed. Re-run to retry, and report it if it keeps failing."
+  fi
+  log "Node.js checksum OK"
+  reject_unsafe_tar_members "${node_work}/node.tar.gz"
+  # Staged next to the target (same filesystem), checked, then swapped in with renames.
+  stage="$(mktemp -d "${NODE_DIR}.new.XXXXXX")"
+  if ! tar -xzf "${node_work}/node.tar.gz" -C "${stage}" --strip-components=1 --no-same-owner; then
+    rm -rf "${node_work}" "${stage}"
+    die "could not unpack the Node.js archive into ${stage} (is the disk full?). Nothing was changed; re-run to retry."
+  fi
+  rm -rf "${node_work}"
+  chown -R root:root "${stage}"
+  chmod -R go-w "${stage}"
+  chmod 0755 "${stage}"
+  # The first run of the downloaded program is as the service user, never as root.
+  if [[ "$(node_version_of "${stage}/bin/node")" != "v${NODE_VERSION}" || ! -x "${stage}/bin/npm" ]]; then
+    rm -rf "${stage}"
+    die "the downloaded Node.js does not start on this system (${ARCH}) as the ${SVC_USER} user. Nothing was changed; ${NODE_DIR} is as it was."
+  fi
+  swap_in_node_dir "${stage}"
+  log "Node.js v${NODE_VERSION} installed in ${NODE_DIR}"
+}
+
+# --skip-packages leaves the runtime alone, an out-of-date one included: say so instead of staying quiet.
+warn_if_node_runtime_stale() {
+  local have
+  [[ -x "${NODE_DIR}/bin/node" && ! -L "${NODE_DIR}" ]] || return 0
+  have="$(node_version_of "${NODE_DIR}/bin/node")"
+  [[ "${have}" == "v${NODE_VERSION}" ]] \
+    || warn "--skip-packages: the Node.js in ${NODE_DIR} (${have:-unknown version}) is not the pinned v${NODE_VERSION} and was left as it is. Run the installer without --skip-packages to refresh it."
+}
+
+# The pinned npm registry, in a root-owned file the service user can read but not change.
+write_npm_global_rc() {
+  local tmp="${WORK}/npmrc.pin"
+  printf '# Written by the Praxi installer. The registry the installer and the app use for npm installs.\nregistry=%s\n' "${NPM_REGISTRY}" > "${tmp}"
+  rm -f -- "${NPM_GLOBAL_RC}"
+  install -m 0640 -o root -g "${SVC_USER}" "${tmp}" "${NPM_GLOBAL_RC}"
+}
+
+# The service user's npm: global installs go to ${NPM_PREFIX} (user-writable), so no root is needed. The units
+# and the wrappers say so with NPM_CONFIG_PREFIX, and ~/.npmrc says it too: the app's terminal starts its
+# shell with a cleaned environment that does not carry NPM_CONFIG_PREFIX.
+# The data directory belongs to the service user, who can swap anything inside it at any moment. So root only
+# checks what it can (the directory itself and every parent are real, root-controlled places) and the files
+# in it are made BY the service user: a link planted there leads nowhere the user could not already write.
+configure_service_npm() {
+  local rc="${DATA_DIR}/.npmrc" real_data owner mode svc_uid d
+  real_data="$(readlink -f -- "${DATA_DIR}")" || die "cannot resolve ${DATA_DIR}"
+  require_root_owned_chain "$(dirname -- "${real_data}")" "the folder that holds ${DATA_DIR}"
+  [[ -d "${real_data}" ]] || die "${DATA_DIR} is not a directory"
+  svc_uid="$(id -u "${SVC_USER}")" || die "the ${SVC_USER} user does not exist"
+  read -r owner mode < <(stat -c '%u %a' -- "${real_data}") || die "cannot inspect ${DATA_DIR}"
+  [[ "${owner}" == "${svc_uid}" || "${owner}" == "${TRUSTED_UID}" ]] \
+    || die "${DATA_DIR} is owned by user ${owner}, not by ${SVC_USER} or root; refusing to configure npm in it"
+  (( (8#${mode} & 8#022) == 0 )) || die "${DATA_DIR} is writable by group or others (mode ${mode}); refusing to configure npm in it. Run: chmod 0750 ${DATA_DIR}"
+  for d in "${NPM_PREFIX}" "${NPM_PREFIX}/bin" "${rc}"; do
+    [[ ! -L "${d}" ]] || die "${d} is a symbolic link; refusing to configure npm through it. Remove it and re-run the installer."
+  done
+  write_npm_global_rc
+  # shellcheck disable=SC2016  # the script runs in the service user's shell
+  as_service_user sh -c '
+    set -eu
+    umask 077
+    prefix="$1"; rc="$2"
+    for d in "$prefix" "$prefix/bin" "$rc"; do
+      if [ -L "$d" ]; then echo "$d is a symbolic link" >&2; exit 3; fi
+    done
+    mkdir -p "$prefix/bin"
+    chmod 0750 "$prefix" "$prefix/bin"
+    if [ ! -e "$rc" ] || ! grep -Eq "^[[:space:]]*prefix[[:space:]]*=" "$rc"; then
+      printf "prefix=%s\n" "$prefix" >> "$rc"
+    fi
+    chmod 0600 "$rc"
+  ' sh "${NPM_PREFIX}" "${rc}" \
+    || die "could not set npm up for ${SVC_USER} in ${DATA_DIR} (see the message above)"
+  if [[ ! -x "${NODE_DIR}/bin/node" ]] && ! command -v node >/dev/null 2>&1; then
+    warn "no Node.js on this server: the coding CLIs that install with npm need Node.js 20+. Re-run the installer without --skip-packages to get ${NODE_DIR}."
+  fi
 }
 
 # Turkish needs nothing beyond Noto Sans; emoji and CJK pages need these two
@@ -838,7 +1052,11 @@ on_exit() {
   elif [[ "${INSTALL_SUCCEEDED:-0}" -eq 0 && "${PACKAGES_PHASE:-0}" -eq 1 ]]; then
     disable_print_services || true
   fi
-  rm -rf "${WORK:?}"
+  # Killed between the two renames of the Node.js swap: put the previous runtime back before cleaning up.
+  if [[ ! -e "${NODE_DIR}" && ! -L "${NODE_DIR}" && -d "${NODE_DIR}.old" && ! -L "${NODE_DIR}.old" ]]; then
+    mv -T -- "${NODE_DIR}.old" "${NODE_DIR}" 2>/dev/null || true
+  fi
+  rm -rf "${WORK:?}" "${NODE_DIR:?}".new.* "${NODE_DIR:?}.old"
   exit "${exit_rc}"
 }
 trap on_exit EXIT
@@ -1007,6 +1225,13 @@ fi
 install -d -m 0750 -o "${SVC_USER}" -g "${SVC_USER}" "${DATA_DIR}"
 install -d -m 0750 -o root -g "${SVC_USER}" "${CONF_DIR}"
 
+# Node.js comes after the user exists: the downloaded program is first run as that user.
+if [[ "${SKIP_PACKAGES}" -eq 0 ]]; then
+  install_node_runtime
+else
+  warn_if_node_runtime_stale
+fi
+
 # ----------------------------------------------------------------- binaries
 mkdir -p "${WORK}/backup/units" "${WORK}/backup/conf" "${WORK}/backup/localbin"
 if [[ -d "${PREFIX}" ]]; then
@@ -1099,28 +1324,40 @@ for f in VERSION LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
   if [[ -f "${SRC}/${f}" ]]; then install -m 0644 "${SRC}/${f}" "${PREFIX}/${f}"; fi
 done
 log "installed to ${PREFIX} ($(cat "${PREFIX}/VERSION" 2>/dev/null || echo unknown version))"
+configure_service_npm
+
+sh_quote() { # <word>: the word as one single-quoted /bin/sh word
+  local q="'"
+  printf "'%s'" "${1//"${q}"/"${q}\\${q}${q}"}"
+}
 
 # Wrapper commands: run a binary as the service user with that service's env file.
 # praxi-node must source praxi-node.env so it does not receive the daemon passphrase.
 write_wrapper() { # <command name> <binary name> <env file>
-  local cmd="$1" bin="$2" envf="$3" property doctor_properties=""
+  local cmd="$1" bin="$2" envf="$3" property
+  local -a doctor_props=()
   if [[ "${DESKTOP_ACTIVE:-0}" -eq 1 ]]; then
-    doctor_properties+=" --property=Slice=${SLICE_NAME:-praxi.slice}"
+    doctor_props+=("--property=Slice=${SLICE_NAME:-praxi.slice}")
   fi
-  # Single-quoted in the wrapper: ReadWritePaths= holds a space-separated list.
+  # One word per property: ReadWritePaths= holds a space-separated list.
   while IFS= read -r property; do
-    doctor_properties+=" --property='${property}'"
+    doctor_props+=("--property=${property}")
   done <<< "${HARDENING}"
   if [[ -f "${UNIT_DIR}/praxi-xvfb.service" ]]; then
-    doctor_properties+=" --property=JoinsNamespaceOf=praxi-xvfb.service --property=After=praxi-xvfb.service"
+    doctor_props+=("--property=JoinsNamespaceOf=praxi-xvfb.service" "--property=After=praxi-xvfb.service")
   fi
   if [[ -f "${UNIT_DIR}/praxi-desktop.service" ]]; then
-    doctor_properties+=" --property=After=praxi-desktop.service"
+    doctor_props+=("--property=After=praxi-desktop.service")
   fi
+  # The wrapper is a /bin/sh script, which has no arrays: write each property as one single-quoted word.
+  local doctor_words="" word
+  for word in "${doctor_props[@]}"; do
+    doctor_words+=" $(sh_quote "${word}")"
+  done
   cat > "/usr/local/bin/${cmd}" <<WRAP
 #!/bin/sh
 # Runs ${PREFIX}/bin/${bin} as the ${SVC_USER} user with ${envf}.
-inner='export PATH=${SERVICE_PATH} NPM_CONFIG_PREFIX=${DATA_DIR}/.npm-global; set -a; . ${envf}; set +a; exec "\$@"'
+inner='export PATH=${SERVICE_PATH} NPM_CONFIG_PREFIX=${NPM_PREFIX} NPM_CONFIG_GLOBALCONFIG=${NPM_GLOBAL_RC}; set -a; . ${envf}; set +a; exec "\$@"'
 if [ "\$(id -u)" -eq 0 ]; then
   if [ "${cmd}" = praxi ] && [ "\${1:-}" = self-update ]; then
     # Only this explicit maintenance command retains root. Do not source the
@@ -1131,8 +1368,9 @@ if [ "\$(id -u)" -eq 0 ]; then
     exec systemd-run --quiet --wait --pipe --collect --unit="praxi-doctor-\$\$" \
       --property=User=${SVC_USER} --property=Group=${SVC_USER} \
       --property=WorkingDirectory=${PREFIX} --property=EnvironmentFile=${envf} \
-      --setenv=PATH=${SERVICE_PATH} --setenv=NPM_CONFIG_PREFIX=${DATA_DIR}/.npm-global \
-      ${doctor_properties} ${PREFIX}/bin/${bin} "\$@"
+      --setenv=PATH=${SERVICE_PATH} --setenv=NPM_CONFIG_PREFIX=${NPM_PREFIX} \
+      --setenv=NPM_CONFIG_GLOBALCONFIG=${NPM_GLOBAL_RC} \
+      ${doctor_words} ${PREFIX}/bin/${bin} "\$@"
   fi
   exec runuser -u ${SVC_USER} -- sh -c "\$inner" sh ${PREFIX}/bin/${bin} "\$@"
 fi
@@ -1317,7 +1555,8 @@ ${SLICE_LINE:+${SLICE_LINE}
 Group=${SVC_USER}
 WorkingDirectory=${PREFIX}
 Environment=PATH=${SERVICE_PATH}
-Environment=NPM_CONFIG_PREFIX=${DATA_DIR}/.npm-global
+Environment=NPM_CONFIG_PREFIX=${NPM_PREFIX}
+Environment=NPM_CONFIG_GLOBALCONFIG=${NPM_GLOBAL_RC}
 EnvironmentFile=${ENV_FILE}
 ExecStart=${PREFIX}/bin/bot ${SERVE_ARGS}
 Restart=on-failure
@@ -2150,6 +2389,7 @@ Praxi-Bot is installed.
             ${NODE_ENV_FILE} (mode 0640; node-agent, no BOT_SECRETS_PASSPHRASE)
   Logs:     journalctl -u praxi -f   (rate-limited per unit; disk use: journalctl --disk-usage)
   CLI:      praxi <command>        (wrapper for 'bot' running as the ${SVC_USER} user)
+  Node.js:  ${NODE_DIR} (npm for the ${SVC_USER} user; global installs go to ${NPM_PREFIX}, no root needed)
 
 Next steps:
   1. Configure a provider and your first bot:   sudo praxi setup
