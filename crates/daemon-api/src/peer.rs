@@ -279,7 +279,7 @@ fn host_mode_desktop_denial(method: &Method, check_path: &str) -> Option<&'stati
     if (under("/v1/mcp") || under("/v1/skills") || is_bot_skills_path(check_path)) && mutating {
         return Some("tool servers and skills are managed on the host itself");
     }
-    if (under("/v1/email") || under("/v1/web/search")) && mutating {
+    if (under("/v1/email") || under("/v1/web/search") || under("/v1/calendar")) && mutating {
         return Some("account credentials are managed on the host itself");
     }
     // The dictation key and endpoint: audio could be redirected to another service.
@@ -1034,6 +1034,8 @@ mod tests {
             (Method::GET, "/v1/audit"),
             (Method::GET, "/v1/chats/search"),
             (Method::PUT, "/v1/web/search"),
+            (Method::POST, "/v1/calendar/accounts"),
+            (Method::POST, "/v1/calendar/test"),
             (Method::PUT, "/v1/voice"),
             (Method::PUT, "/v1/spend-limit"),
             (Method::POST, "/v1/bots/abc/incoming-webhooks"),
@@ -1127,6 +1129,47 @@ mod tests {
                 "/v1/chats/x/skill-draft",
                 true,
             ),
+            // Calendar logins are credentials, like the mail accounts: a phone never changes
+            // them and an ordinary desktop of a host does not either. Reading the list is fine.
+            (PeerRole::Phone, Method::POST, "/v1/calendar/accounts", true),
+            (
+                PeerRole::Phone,
+                Method::PUT,
+                "/v1/calendar/accounts/home",
+                true,
+            ),
+            (
+                PeerRole::Phone,
+                Method::DELETE,
+                "/v1/calendar/accounts/home",
+                true,
+            ),
+            (PeerRole::Phone, Method::POST, "/v1/calendar/test", true),
+            (
+                PeerRole::Desktop,
+                Method::POST,
+                "/v1/calendar/accounts",
+                true,
+            ),
+            (
+                PeerRole::Desktop,
+                Method::PUT,
+                "/v1/calendar/accounts/home",
+                true,
+            ),
+            (
+                PeerRole::Desktop,
+                Method::DELETE,
+                "/v1/calendar/accounts/home",
+                true,
+            ),
+            (PeerRole::Desktop, Method::POST, "/v1/calendar/test", true),
+            (
+                PeerRole::Desktop,
+                Method::GET,
+                "/v1/calendar/accounts",
+                false,
+            ),
         ] {
             assert_eq!(
                 owner_denial(&method, path, role, true).is_some(),
@@ -1137,6 +1180,14 @@ mod tests {
         // A desktop of a daemon that is not a host keeps its older reach.
         assert!(owner_denial(&Method::PUT, "/v1/policy", PeerRole::Desktop, false).is_none());
         assert!(owner_denial(&Method::PUT, "/v1/policy", PeerRole::Phone, false).is_some());
+        // The calendar is no different from the mail accounts there: the paired desktop is the
+        // owner's other computer. What it cannot do is read a saved password back by pointing
+        // the account elsewhere (the daemon refuses an update that moves the address or the
+        // login without the password typed again), so it needs no extra wall here.
+        for path in ["/v1/calendar/accounts/home", "/v1/email/accounts/work"] {
+            assert!(owner_denial(&Method::PUT, path, PeerRole::Desktop, false).is_none());
+            assert!(owner_denial(&Method::PUT, path, PeerRole::Phone, false).is_some());
+        }
     }
 
     #[test]
