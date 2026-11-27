@@ -251,6 +251,71 @@ ssh -L 47821:127.0.0.1:47821 user@your-server
 The API token lives in `/var/lib/praxi` (readable only by `praxi`); clients on
 the tunnel authenticate with it like on a local install.
 
+### Coding CLIs on a server (Claude Code, Codex, Antigravity, ...)
+
+Praxi runs as the `praxi` user, and so does everything it starts. That decides where a coding CLI
+must live: **a CLI is only seen by Praxi if it is installed, and signed in, as `praxi`**, in
+`praxi`'s home folder (`/var/lib/praxi`). A CLI you install as `ubuntu` (or as root) over SSH
+lands in `ubuntu`'s home, and Praxi will list it as not installed. `/var/lib/praxi` is private
+(mode `0750`) on purpose; do not loosen it to make a check pass. Instead, do the work as `praxi`:
+
+- **In the app.** *Settings → Home → Coding CLIs on <server>* is answered by the server's own
+  daemon, so it shows exactly what the server's bots can run, and says at the top which user and
+  home folder that is. **Install on server** and **Sign in on <server>** run as `praxi`; the sign-in
+  shows the link and the one-time code in the app. A CLI that is installed but has no sign-in shows
+  *Installed · sign-in needed* (or *sign-in unknown* when its own state cannot be read) together with
+  the button, never *Install*.
+- **In the in-app terminal** (the status-chip menu → *Terminal on the server*). It already runs as
+  `praxi`, with the CLI folders (`~/.local/bin`, the npm prefix) on its `PATH`, so `agy` or `vibe
+  --setup` work there as typed.
+- **Over SSH**, with the installer's `praxi` command, which switches to the `praxi` user for you:
+
+  ```sh
+  sudo praxi cli status          # which CLIs, where, signed in or not; names the user it checked as
+  sudo praxi cli install agy     # the same fixed installer the app runs (Node.js is fetched if missing)
+  sudo praxi cli login agy       # the CLI's own sign-in, in this terminal, as praxi
+  ```
+
+  Without the `praxi` command, `sudo -u praxi -H bot cli login agy` does the same.
+
+`sudo praxi doctor` runs the check as the service user too. Plain `bot doctor` typed as `ubuntu`
+reports for `ubuntu`, not for Praxi, and says so (*this check ran as ubuntu, but Praxi runs as
+praxi*) instead of printing a result that looks healthy. Which CLIs the app can sign in by itself
+(link and code in the window) and which need the terminal is listed in
+[Coding CLI engines](cli-engines.md#install-and-sign-in-on-a-server).
+
+A server installed before this release may still start the daemon with its home as working
+directory and without `~/.local/bin` on `PATH`. Praxi now finds the CLIs there anyway; running the
+installer again with `--update` (step 2 above) also fixes the unit itself.
+
+### What is a "desktop peer", and does a server need one?
+
+A *peer* is a device paired with the server: your Windows or Mac desktop app, a phone, a node. The
+**server does not need any peer to run**. Its daemon, schedules, Telegram channel and shell-based
+tasks work with no desktop connected, and a bot you moved to the server keeps working when your
+computer is off. A paired *Praxi desktop* is only online while the Praxi app is open on that
+computer; nothing on a headless server starts one. So `bot host status` and `sudo praxi doctor` list
+it as *not connected (never seen)* and call that normal. What needs a connected desktop is only the
+things that use that computer: watching or driving *its* screen, or letting a server bot use *this
+computer* for files and apps. If the app says *"<server> is not answering"*, the problem is between
+your computer and the server (the server is off, has no internet, or your own connection is down),
+not a missing peer.
+
+### First-run checklist for a new server
+
+1. **Image and user.** Ubuntu images use `ubuntu`, Oracle Linux images `opc`; log in as that user and
+   use `sudo` for the installer. The service user `praxi` is created by the installer and has no
+   password or shell login.
+2. **Port 22.** Only SSH (22/TCP) must be reachable from your computer: open it in the provider's
+   security list or firewall. Never open 47821.
+3. **SSH key on Windows.** OpenSSH refuses a key file other users can read (*UNPROTECTED PRIVATE KEY
+   FILE*) and then falls back to a password prompt. Right-click the key file → Properties → Security →
+   Advanced: disable inheritance and leave only your own user. Praxi reports this case as *your key
+   file is readable by others*, not as "server only accepts passwords".
+4. **Install and check.** After the install, `sudo praxi doctor` must show no failures; the
+   `daemon`, `peer link` and `cli accounts` rows each say what to do when they are not green.
+5. **Coding CLIs.** Install and sign in as `praxi` (section above), then pick the CLI's model for a bot.
+
 ### Using the host from the desktop app
 
 The desktop app can show the host's screen (the Xvfb desktop and the bot's
@@ -425,7 +490,11 @@ platforms (`linux64` and `linux-arm64`) from
 `https://storage.googleapis.com/chrome-for-testing-public/<version>/<platform>/chrome-<platform>.zip`,
 compute their hashes using `sha256sum`, and update `version`,
 `sha256_linux64`, and `sha256_linux_arm64` together at the top of
-`install_cft`.
+`install_cft`, and the same version, checksums and archive sizes in
+`crates/daemon-api/src/browser_install.rs` (a test fails when the checksums or the
+version in the two places differ). That Rust copy is what `bot browser install` and
+Settings > Diagnostics > Install browser download into the data folder on a computer that was not set
+up with the installer script.
 
 Fedora/RHEL uses `chromium` from the administrator's enabled RPM repos, without
 weak dependencies. When those repos have no `chromium` (Oracle Linux, for
@@ -440,7 +509,12 @@ never selected by the installer. Snap-only discovery and snap overrides are
 unsupported and produce a clear diagnostic. With `--skip-packages`, provide a
 working non-snap browser yourself. `BOT_BROWSER_PATH` overrides discovery;
 `PRAXI_BROWSER_PATH` remains a compatible fallback. An invalid override fails
-instead of silently choosing a different browser.
+instead of silently choosing a different browser. Discovery only trusts places that only you or
+root can change: besides the usual distro paths it searches the `PATH` folders that are owned by
+root or the service user and not writable by group or others (a link leading out of such a folder is
+skipped), a browser or folder that every user can write to is refused (also for `BOT_BROWSER_PATH`,
+whose resolved path is logged), and a browser Praxi downloaded is used only while every file of it
+still matches its install manifest.
 
 Re-running the installer (`bot host repair`, upgrades) is idempotent for the
 browser: a working `/opt/praxi-browser` at the pinned version is kept and not

@@ -89,6 +89,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/cli-environment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_cli_environment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/default-provider": {
         parameters: {
             query?: never;
@@ -903,6 +919,28 @@ export interface paths {
         put: operations["triggers_update"];
         post?: never;
         delete: operations["triggers_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bots/{bot}/triggers/{trigger}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm that you wrote this trigger rule (one click for an `unknown` one). From then on it
+         *     counts as your own automation: on a bot at the Full level its runs go without cards (money
+         *     still asks) while the event data stays untrusted. The call names the `revision` of the rule
+         *     you looked at and changes nothing when it was edited since (409).
+         */
+        post: operations["triggers_confirm"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -4705,6 +4743,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/schedules/{id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm that you wrote this schedule: one click for a schedule whose author the daemon
+         *     could not prove (made before authorship was recorded, on a paired phone, or moved from
+         *     another computer). From then on it counts as your own automation, so on a bot at the Full
+         *     level it runs without cards (money still asks). The call names the `revision` of the
+         *     definition you looked at and changes nothing when the schedule was edited since (409): an
+         *     edit from a phone or a bot is never blessed unseen. A schedule a bot made is not confirmed
+         *     this way: edit and save it, which takes it over.
+         */
+        post: operations["confirm_schedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/schedules/{id}/history": {
         parameters: {
             query?: never;
@@ -5666,9 +5729,28 @@ export interface components {
             /** @description How the app can drive that sign-in: `device_code`, `paste_code`, `browser` or `manual`. */
             login_flow: string;
             name: string;
+            /** @description Where the CLI was found on the host (the program the app would run), when it is installed. */
+            path?: string | null;
             /** @description `None` when the CLI offers no safe way to check. */
             signed_in?: boolean | null;
             version?: string | null;
+        };
+        /**
+         * @description Who the host's coding CLIs run as. Installs, sign-ins and checks all happen as this account,
+         *     whoever opened the terminal. Only what the desktop shows: no list of the host's folders.
+         */
+        AdminCliEnvironmentDto: {
+            /** @description Its home folder, where CLIs keep their installs and sign-in files. */
+            home?: string | null;
+            /** @description That account is the administrator: a CLI installed or signed in by anyone else is invisible. */
+            is_root: boolean;
+            /**
+             * @description Start of a terminal command that runs one CLI step as that account
+             *     (`sudo praxi cli`), for a person who is logged in over SSH as somebody else.
+             */
+            terminal_command: string;
+            /** @description Account the service (and every CLI it starts) runs as; `null` when the system did not say. */
+            user?: string | null;
         };
         /** @description `GET/POST /v1/admin/cli-engines/{id}/install`: where the install stands. */
         AdminCliInstallDto: {
@@ -6003,11 +6085,17 @@ export interface components {
             consent_full_access?: boolean;
             /** @description The owner confirms that a CLI runs this bot's file and shell actions. */
             consent_native_tools?: boolean;
+            /**
+             * @description The app applied this engine without a dialog because the bot is on Full access (the owner's
+             *     pick of the engine is the consent). The daemon checks the stored permission preset itself:
+             *     anything but Full is refused (403), and the level must be `full`.
+             */
+            full_access_bot?: boolean;
             /** @description `praxi_governed` (Praxi runs files and shell) or `native_tools` (the CLI does). */
             mode: string;
             /**
-             * @description Absolute workspace folder for `native_tools`; when omitted the daemon creates
-             *     `<home>/Praxi/<bot>` for the bot.
+             * @description Absolute workspace folder for `native_tools`; when omitted the bot keeps the folder it
+             *     has, else the daemon uses the bot's own workspace folder under the workspaces root.
              */
             workspace?: string | null;
         };
@@ -6614,8 +6702,16 @@ export interface components {
          * @enum {string}
          */
         ComponentInstallState: "idle" | "installing" | "done" | "failed";
+        /**
+         * @description How risky an action is. Decided by the host, never by the model. Reads run
+         *     without a card; writes and deletes follow the bot's level; money always asks.
+         * @enum {string}
+         */
+        ComposioActionClass: "read" | "write" | "destructive" | "money";
         /** @description A catalog action available after connecting a toolkit. */
         ComposioActionDto: {
+            /** @description Risk class the host decided from Composio's metadata. */
+            class: components["schemas"]["ComposioActionClass"];
             /** @description Short description from Composio. */
             description: string;
             /** @description Action name, scoped to the toolkit. */
@@ -6843,6 +6939,18 @@ export interface components {
              *     last-resort fallback the UI marks as such).
              */
             models_source?: string | null;
+        };
+        /**
+         * @description Body of the confirm calls (`POST /v1/schedules/{id}/confirm`,
+         *     `POST /v1/bots/{bot}/triggers/{trigger}/confirm`).
+         */
+        ConfirmAuthorInput: {
+            /**
+             * Format: int64
+             * @description The `revision` of the definition you looked at; the confirmation applies to that
+             *     version only.
+             */
+            revision: number;
         };
         /**
          * @description What a connection test found. The UI maps each value to a message and a next step.
@@ -11083,7 +11191,7 @@ export interface components {
          *     a shell command, and regenerating the API token is not offered.
          * @enum {string}
          */
-        Repair: "create_data_dir" | "reload_providers" | "restart_browser";
+        Repair: "create_data_dir" | "reload_providers" | "restart_browser" | "install_browser";
         /** @description `POST /v1/doctor/repair/{id}` response. */
         RepairResult: {
             /** @description What it did. */
@@ -11327,6 +11435,13 @@ export interface components {
         /** @description A schedule (`/v1/schedules`). */
         ScheduleDto: {
             /**
+             * @description Who wrote the definition, as the daemon recorded it: `owner` (the local app or your
+             *     administrator desktop), `bot` (its schedule tools) or `unknown` (older schedules,
+             *     other paired devices, imports). Only an `owner` schedule runs without cards on a bot
+             *     at the Full level; confirm an `unknown` one with `POST /v1/schedules/{id}/confirm`.
+             */
+            author: string;
+            /**
              * Format: uuid
              * @description Bot that runs it.
              */
@@ -11408,6 +11523,12 @@ export interface components {
             payload: unknown;
             /** @description Read-only deterministic condition, including full script source. */
             precheck?: unknown;
+            /**
+             * Format: int64
+             * @description Version of the definition (it grows with every change to it). `POST
+             *     /v1/schedules/{id}/confirm` names the one you looked at.
+             */
+            revision: number;
             /**
              * Format: int64
              * @description Firings skipped before an agent run was created.
@@ -12352,6 +12473,12 @@ export interface components {
             text: string;
         };
         TriggerDto: {
+            /**
+             * @description Who wrote the rule: `owner`, `bot` or `unknown` (made before authorship was
+             *     recorded). Only an `owner` rule runs without cards on a bot at the Full level;
+             *     `POST /v1/bots/{bot}/triggers/{trigger}/confirm` confirms an `unknown` one.
+             */
+            author: string;
             /** Format: uuid */
             bot_id: string;
             config: unknown;
@@ -12368,6 +12495,12 @@ export interface components {
             /** @description `rule`, or an existing `schedule` / `webhook` ready for owner adoption. */
             origin: string;
             queued?: number | null;
+            /**
+             * Format: int64
+             * @description Version of the rule (it grows with every change). `POST
+             *     /v1/bots/{bot}/triggers/{trigger}/confirm` names the one you looked at.
+             */
+            revision: number;
         };
         TriggerInput: {
             /** @description Source, filters, `quiet_hours`, limits and `bot_limits`. Never credentials. */
@@ -13121,6 +13254,33 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    admin_cli_environment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCliEnvironmentDto"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15249,6 +15409,56 @@ export interface operations {
                 content?: never;
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    triggers_confirm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bot: string;
+                trigger: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmAuthorInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18538,7 +18748,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Repair id: create_data_dir, reload_providers or restart_browser */
+                /** @description Repair id: create_data_dir, reload_providers, restart_browser or install_browser */
                 id: string;
             };
             cookie?: never;
@@ -24199,6 +24409,57 @@ export interface operations {
                 content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    confirm_schedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Schedule id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmAuthorInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description changed since you looked, or not an unconfirmed schedule of yours */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

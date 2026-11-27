@@ -236,6 +236,8 @@ const SCHEDULES = [
   {
     id: "sch-1",
     origin: "user",
+    author: "unknown",
+    revision: 1,
     bot_id: ATLAS,
     name: "Haftalık özet",
     enabled: true,
@@ -255,6 +257,8 @@ const SCHEDULES = [
   {
     id: "sch-2",
     origin: "bot",
+    author: "bot",
+    revision: 1,
     bot_id: NOVA,
     name: "Kaynak taraması",
     enabled: true,
@@ -274,6 +278,8 @@ const SCHEDULES = [
   {
     id: "sch-3",
     origin: "user",
+    author: "owner",
+    revision: 1,
     bot_id: "bot-milo",
     name: "Yedek kontrolü",
     enabled: false,
@@ -291,6 +297,8 @@ const SCHEDULES = [
   {
     id: "sch-4",
     origin: "user",
+    author: "owner",
+    revision: 1,
     bot_id: ATLAS,
     name: "Gelen kutusu özeti",
     enabled: true,
@@ -307,6 +315,8 @@ const SCHEDULES = [
   {
     id: "sch-5",
     origin: "bot",
+    author: "bot",
+    revision: 1,
     bot_id: ATLAS,
     name: "Yeni faturaları dosyala",
     enabled: true,
@@ -2260,11 +2270,22 @@ export class MockApiClient extends ApiClient {
         if (seg[1] && seg[2] === "run-now") {
           return ok({ status: "accepted", schedule_id: seg[1] });
         }
+        if (seg[1] && seg[2] === "confirm") {
+          const row = this.schedules.find((s) => s.id === seg[1]);
+          if (!row) throw new ApiError(404, "not_found", "schedule not found");
+          const asked = (opts.body as { revision?: number } | undefined)?.revision;
+          if (asked !== row.revision) throw new ApiError(409, "conflict", "this schedule changed after you looked at it");
+          row.author = "owner";
+          row.revision += 1;
+          return ok(structuredClone(row));
+        }
         const input = opts.body as import("./types").ScheduleInput;
         const now = Date.now();
         const created = {
           id: `sch-${this.schedules.length + 1}`,
           origin: "user",
+          author: "owner",
+          revision: 1,
           bot_id: input.bot_id,
           chat_id: input.chat_id ?? null,
           name: input.name,
@@ -2489,7 +2510,7 @@ export class MockApiClient extends ApiClient {
         })] });
       case "POST /doctor": {
         const id = seg[1] === "repair" ? (seg[2] ?? "") : "";
-        if (!["create_data_dir", "reload_providers", "restart_browser"].includes(id)) {
+        if (!["create_data_dir", "reload_providers", "restart_browser", "install_browser"].includes(id)) {
           throw new ApiError(404, "not_found", `repair ${id} not found`);
         }
         this.repairs.push(id);

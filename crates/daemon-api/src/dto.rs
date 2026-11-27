@@ -82,7 +82,7 @@ impl HostInfo {
             os: std::env::consts::OS.into(),
             arch: std::env::consts::ARCH.into(),
             has_display: browser_cdp::host::has_display(),
-            has_browser: browser_cdp::find_browser().is_ok(),
+            has_browser: browser_cdp::find_browser_cached().is_ok(),
             total_ram_mb: browser_cdp::host::total_ram_bytes() / (1024 * 1024),
         }
     }
@@ -1090,6 +1090,14 @@ pub struct ScheduleDto {
     /// Who created it: `user`, or `bot` (a bot's schedule tools, after you
     /// approved it). A bot may change only its own `bot` schedules.
     pub origin: String,
+    /// Who wrote the definition, as the daemon recorded it: `owner` (the local app or your
+    /// administrator desktop), `bot` (its schedule tools) or `unknown` (older schedules,
+    /// other paired devices, imports). Only an `owner` schedule runs without cards on a bot
+    /// at the Full level; confirm an `unknown` one with `POST /v1/schedules/{id}/confirm`.
+    pub author: String,
+    /// Version of the definition (it grows with every change to it). `POST
+    /// /v1/schedules/{id}/confirm` names the one you looked at.
+    pub revision: i64,
     /// Occurrences that never ran because the daemon stopped (for example the
     /// computer was off or asleep). They are not replayed; shown as "missed".
     #[serde(default)]
@@ -1141,6 +1149,15 @@ pub struct ScheduleInput {
 
 fn present_json<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
     Value::deserialize(d).map(Some)
+}
+
+/// Body of the confirm calls (`POST /v1/schedules/{id}/confirm`,
+/// `POST /v1/bots/{bot}/triggers/{trigger}/confirm`).
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
+pub struct ConfirmAuthorInput {
+    /// The `revision` of the definition you looked at; the confirmation applies to that
+    /// version only.
+    pub revision: i64,
 }
 
 /// Body of `POST /v1/schedules/parse`.

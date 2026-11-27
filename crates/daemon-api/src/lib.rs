@@ -82,6 +82,7 @@ pub mod trusted_folders;
 pub(crate) mod workspace_routes;
 pub use peer::{PeerIdentity, PeerRole, peer_router};
 mod bot_limits_routes;
+pub mod browser_install;
 mod browser_profiles;
 pub mod calendar;
 mod calendar_routes;
@@ -139,6 +140,7 @@ pub use auth::{
     load_or_create_token, read_owner_key, read_token, token_path,
 };
 pub use calendar::{CalendarControl, CalendarControlError};
+pub use cli_login::record_cli_install_pin;
 pub use components::{ComponentControl, ComponentError};
 pub use composio::{ComposioControl, ComposioControlError};
 pub use control::{ControlConfig, ControlHub};
@@ -588,6 +590,7 @@ impl AppState {
             state.downgrade(),
         ));
         state.install_unset_file_access();
+        state.install_external_source_check();
         knowledge_runtime::install(&state);
         Ok(state)
     }
@@ -600,6 +603,31 @@ impl AppState {
             weak.upgrade()
                 .is_some_and(|s| s.leader().config().mode == host::HostMode::Host)
         });
+    }
+
+    /// The Full lane serves a run that came in through an incoming webhook or the mail channel
+    /// (no schedule behind it) only while the daemon's own records show the owner set that
+    /// source up for this bot. Both are written only by owner-key routes. Fails closed.
+    fn install_external_source_check(&self) {
+        let weak = self.downgrade();
+        self.agent()
+            .set_external_source_check(Arc::new(move |bot, source| {
+                let Some(s) = weak.upgrade() else {
+                    return false;
+                };
+                match source {
+                    agent_core::ExternalSource::Webhook(id) => s
+                        .storage()
+                        .get_incoming_webhook(s.user_id(), id)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|hook| hook.bot_id == bot),
+                    agent_core::ExternalSource::MailChannel => s
+                        .email_channel()
+                        .map(|channel| channel.get().settings)
+                        .is_some_and(|c| c.enabled && c.bot == Some(bot.to_string())),
+                }
+            }));
     }
 
     /// Configure the shared workspaces root directory on both daemon state and agent loop.
@@ -942,6 +970,16 @@ impl AppState {
             return Ok(Arc::clone(s));
         }
         let store = Arc::new(ScheduleStore::from_storage(self.storage())?);
+        // The agent loop asks the store, live, whether the owner wrote the schedule behind a
+        // run (the Full level serves the owner's own automation without cards).
+        let authors = Arc::clone(&store);
+        self.0.agent.set_schedule_owner_check(Arc::new(move |id| {
+            authors
+                .get(id)
+                .ok()
+                .flatten()
+                .is_some_and(|sc| sc.stored_author() == scheduler::ScheduleAuthor::Owner)
+        }));
         *g = Some(Arc::clone(&store));
         Ok(store)
     }
@@ -1667,6 +1705,10 @@ fn api_routes() -> Router<AppState> {
             axum::routing::put(triggers::update).delete(triggers::delete),
         )
         .route(
+            "/v1/bots/{id}/triggers/{trigger}/confirm",
+            post(triggers::confirm),
+        )
+        .route(
             "/v1/bots/{id}/incoming-webhooks",
             get(incoming_webhook::list_webhooks).post(incoming_webhook::create_webhook),
         )
@@ -1848,6 +1890,7 @@ fn api_routes() -> Router<AppState> {
             post(r::retry_schedule_occurrence),
         )
         .route("/v1/schedules/{id}/run-now", post(r::run_schedule_now))
+        .route("/v1/schedules/{id}/confirm", post(r::confirm_schedule))
         .route("/v1/schedules/{id}/reclaim", post(host_import::reclaim))
         .route(
             "/v1/webhooks/{id}",

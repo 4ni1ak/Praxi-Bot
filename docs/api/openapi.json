@@ -402,6 +402,41 @@
         ]
       }
     },
+    "/v1/admin/cli-environment": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_cli_environment",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCliEnvironmentDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/admin/default-provider": {
       "put": {
         "tags": [
@@ -3832,6 +3867,91 @@
             "description": ""
           },
           "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/bots/{bot}/triggers/{trigger}/confirm": {
+      "post": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "Confirm that you wrote this trigger rule (one click for an `unknown` one). From then on it\ncounts as your own automation: on a bot at the Full level its runs go without cards (money\nstill asks) while the event data stays untrusted. The call names the `revision` of the rule\nyou looked at and changes nothing when it was edited since (409).",
+        "operationId": "triggers_confirm",
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trigger",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmAuthorInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
             "description": "",
             "content": {
               "application/json": {
@@ -8824,7 +8944,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Repair id: create_data_dir, reload_providers or restart_browser",
+            "description": "Repair id: create_data_dir, reload_providers, restart_browser or install_browser",
             "required": true,
             "schema": {
               "type": "string"
@@ -17185,6 +17305,84 @@
         ]
       }
     },
+    "/v1/schedules/{id}/confirm": {
+      "post": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Confirm that you wrote this schedule: one click for a schedule whose author the daemon\ncould not prove (made before authorship was recorded, on a paired phone, or moved from\nanother computer). From then on it counts as your own automation, so on a bot at the Full\nlevel it runs without cards (money still asks). The call names the `revision` of the\ndefinition you looked at and changes nothing when the schedule was edited since (409): an\nedit from a phone or a bot is never blessed unseen. A schedule a bot made is not confirmed\nthis way: edit and save it, which takes it over.",
+        "operationId": "confirm_schedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Schedule id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmAuthorInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "changed since you looked, or not an unconfirmed schedule of yours",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/schedules/{id}/history": {
       "get": {
         "tags": [
@@ -20811,6 +21009,13 @@
           "name": {
             "type": "string"
           },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the CLI was found on the host (the program the app would run), when it is installed."
+          },
           "signed_in": {
             "type": [
               "boolean",
@@ -20823,6 +21028,38 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "AdminCliEnvironmentDto": {
+        "type": "object",
+        "description": "Who the host's coding CLIs run as. Installs, sign-ins and checks all happen as this account,\nwhoever opened the terminal. Only what the desktop shows: no list of the host's folders.",
+        "required": [
+          "is_root",
+          "terminal_command"
+        ],
+        "properties": {
+          "home": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its home folder, where CLIs keep their installs and sign-in files."
+          },
+          "is_root": {
+            "type": "boolean",
+            "description": "That account is the administrator: a CLI installed or signed in by anyone else is invisible."
+          },
+          "terminal_command": {
+            "type": "string",
+            "description": "Start of a terminal command that runs one CLI step as that account\n(`sudo praxi cli`), for a person who is logged in over SSH as somebody else."
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Account the service (and every CLI it starts) runs as; `null` when the system did not say."
           }
         }
       },
@@ -21590,6 +21827,10 @@
             "type": "boolean",
             "description": "The owner confirms that a CLI runs this bot's file and shell actions."
           },
+          "full_access_bot": {
+            "type": "boolean",
+            "description": "The app applied this engine without a dialog because the bot is on Full access (the owner's\npick of the engine is the consent). The daemon checks the stored permission preset itself:\nanything but Full is refused (403), and the level must be `full`."
+          },
           "mode": {
             "type": "string",
             "description": "`praxi_governed` (Praxi runs files and shell) or `native_tools` (the CLI does)."
@@ -21599,7 +21840,7 @@
               "string",
               "null"
             ],
-            "description": "Absolute workspace folder for `native_tools`; when omitted the daemon creates\n`<home>/Praxi/<bot>` for the bot."
+            "description": "Absolute workspace folder for `native_tools`; when omitted the bot keeps the folder it\nhas, else the daemon uses the bot's own workspace folder under the workspaces root."
           }
         },
         "additionalProperties": false
@@ -23253,14 +23494,29 @@
           "failed"
         ]
       },
+      "ComposioActionClass": {
+        "type": "string",
+        "description": "How risky an action is. Decided by the host, never by the model. Reads run\nwithout a card; writes and deletes follow the bot's level; money always asks.",
+        "enum": [
+          "read",
+          "write",
+          "destructive",
+          "money"
+        ]
+      },
       "ComposioActionDto": {
         "type": "object",
         "description": "A catalog action available after connecting a toolkit.",
         "required": [
           "name",
-          "description"
+          "description",
+          "class"
         ],
         "properties": {
+          "class": {
+            "$ref": "#/components/schemas/ComposioActionClass",
+            "description": "Risk class the host decided from Composio's metadata."
+          },
           "description": {
             "type": "string",
             "description": "Short description from Composio."
@@ -23753,6 +24009,20 @@
               "null"
             ],
             "description": "Coding CLIs only: where the list came from (`cli`, `local_cache` or `bundled`, the\nlast-resort fallback the UI marks as such)."
+          }
+        }
+      },
+      "ConfirmAuthorInput": {
+        "type": "object",
+        "description": "Body of the confirm calls (`POST /v1/schedules/{id}/confirm`,\n`POST /v1/bots/{bot}/triggers/{trigger}/confirm`).",
+        "required": [
+          "revision"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `revision` of the definition you looked at; the confirmation applies to that\nversion only."
           }
         }
       },
@@ -34839,7 +35109,8 @@
         "enum": [
           "create_data_dir",
           "reload_providers",
-          "restart_browser"
+          "restart_browser",
+          "install_browser"
         ]
       },
       "RepairResult": {
@@ -35455,9 +35726,15 @@
           "created_at_ms",
           "misfire_policy",
           "has_webhook",
-          "origin"
+          "origin",
+          "author",
+          "revision"
         ],
         "properties": {
+          "author": {
+            "type": "string",
+            "description": "Who wrote the definition, as the daemon recorded it: `owner` (the local app or your\nadministrator desktop), `bot` (its schedule tools) or `unknown` (older schedules,\nother paired devices, imports). Only an `owner` schedule runs without cards on a bot\nat the Full level; confirm an `unknown` one with `POST /v1/schedules/{id}/confirm`."
+          },
           "bot_id": {
             "type": "string",
             "format": "uuid",
@@ -35558,6 +35835,11 @@
           },
           "precheck": {
             "description": "Read-only deterministic condition, including full script source."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Version of the definition (it grows with every change to it). `POST\n/v1/schedules/{id}/confirm` names the one you looked at."
           },
           "skipped_by_precheck": {
             "type": "integer",
@@ -37764,9 +38046,15 @@
           "name",
           "instruction",
           "config",
-          "enabled"
+          "enabled",
+          "author",
+          "revision"
         ],
         "properties": {
+          "author": {
+            "type": "string",
+            "description": "Who wrote the rule: `owner`, `bot` or `unknown` (made before authorship was\nrecorded). Only an `owner` rule runs without cards on a bot at the Full level;\n`POST /v1/bots/{bot}/triggers/{trigger}/confirm` confirms an `unknown` one."
+          },
           "bot_id": {
             "type": "string",
             "format": "uuid"
@@ -37816,6 +38104,11 @@
               "null"
             ],
             "minimum": 0
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Version of the rule (it grows with every change). `POST\n/v1/bots/{bot}/triggers/{trigger}/confirm` names the one you looked at."
           }
         }
       },

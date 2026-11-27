@@ -50,6 +50,7 @@ import type {
   AuditVerify,
   AcceptedResponse,
   AdminCliEngine,
+  AdminCliEnvironment,
   AdminCliInstall,
   AdminCliLogin,
   AdminProvider,
@@ -545,7 +546,7 @@ export class ApiClient {
   protected async request<T>(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal; headers?: Record<string, string>; raw?: Blob; keepalive?: boolean; localOwnerOnly?: boolean } = {}
+    opts: { body?: unknown; query?: Query; auth?: boolean; signal?: AbortSignal; noTimeout?: boolean; headers?: Record<string, string>; raw?: Blob; keepalive?: boolean; localOwnerOnly?: boolean } = {}
   ): Promise<T> {
     const res = await this.send(method, path, opts);
     if (res.status === 204) {
@@ -755,6 +756,10 @@ export class ApiClient {
   }
   adminCliEngines(): Promise<AdminCliEngine[]> {
     return this.request("GET", "/admin/cli-engines");
+  }
+  /** Which user the host's coding CLIs run as, and where (older hosts answer 404). */
+  adminCliEnvironment(): Promise<AdminCliEnvironment> {
+    return this.request("GET", "/admin/cli-environment");
   }
   /** Install one CLI engine ON THE HOST (admin desktop only; the host runs its registry command). */
   adminCliEngineInstall(id: string): Promise<AdminCliInstall> {
@@ -1329,6 +1334,17 @@ export class ApiClient {
   /** Fire a schedule now (409 while a run of it is still in flight). */
   runScheduleNow(id: string): Promise<AcceptedResponse> {
     return this.request("POST", `/schedules/${id}/run-now`);
+  }
+  /**
+   * Confirm you wrote this schedule: from then on a Full bot runs it without cards (money still
+   * asks). `revision` is the version you looked at; an edit since then answers 409 and confirms nothing.
+   */
+  confirmSchedule(id: string, revision: number): Promise<Schedule> {
+    return this.request("POST", `/schedules/${id}/confirm`, { body: { revision } });
+  }
+  /** Confirm you wrote this event rule (same effect and revision rule as `confirmSchedule`). */
+  confirmTrigger(bot: string, id: string, revision: number): Promise<import("../lib/triggers").BotTrigger> {
+    return this.request("POST", `/bots/${bot}/triggers/${id}/confirm`, { body: { revision } });
   }
   /**
    * Bring a schedule that moved to a server back to this computer. The server's copy is
@@ -1989,7 +2005,8 @@ export class ApiClient {
   }
   /** Run one allow-listed repair; only ever called from a user click. */
   doctorRepair(id: RepairId): Promise<RepairResult> {
-    return this.request("POST", `/doctor/repair/${encodeURIComponent(id)}`);
+    // Installing the browser downloads about 200 MB: it must not be cut by the request timeout.
+    return this.request("POST", `/doctor/repair/${encodeURIComponent(id)}`, { noTimeout: id === "install_browser" });
   }
   /** Redacted Markdown support report. */
   doctorReport(): Promise<string> {

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { CliEngineDto } from "../api/types.ts";
 import { DEFAULT_ENGINE, type EngineState } from "./botEngine.ts";
 import { configFromDraft, draftFromBot, parseModelRef } from "./botProfile.ts";
-import { engineChoiceRequest, engineStatus } from "./engineConsent.ts";
+import { botEngineStatus, engineChoiceRequest, engineStatus, isFullBot, needsEngineCheck, normalizePreset } from "./engineConsent.ts";
 
 function engine(id: string, over: { runnable?: boolean; installed?: boolean; auth?: string; levels?: string[] }): CliEngineDto {
   return {
@@ -89,4 +89,85 @@ test("a freshly added engine with default settings ends up runnable: ready, or o
     const applied: EngineState = { mode: "native_tools", approvalLevel: status.defaultLevel, workspace: "" };
     assert.deepEqual(engineStatus(`cli:${id}/default`, applied, list), { kind: "ready" }, id);
   }
+});
+
+test("a Full-access bot gets its engine's own tools switched on at Full without a question", () => {
+  const engines = [engine("agy", { levels: ["ask", "accept_edits", "auto", "full"] }), engine("claude", { runnable: true, levels: ["ask", "full"] }), engine("kimi", { levels: ["auto"] })];
+  // The owner's rule: on Full a bot asks nothing except before spending money.
+  assert.deepEqual(engineStatus("cli:agy/gemini-4-hydrogen-medium", DEFAULT_ENGINE, engines, true), { kind: "auto", cliId: "agy", name: "agy", level: "full" });
+  // What the daemon is sent is the owner-consented Full request.
+  assert.deepEqual(engineChoiceRequest({ cliId: "agy", level: "full" }), { mode: "native_tools", approval_level: "full", consent_native_tools: true, consent_full_access: true });
+  // Any other bot still gets the one consent dialog.
+  assert.equal(engineStatus("cli:agy/gemini-4-hydrogen-medium", DEFAULT_ENGINE, engines, false).kind, "consent");
+  // An engine that runs confined (Claude Code) needs nothing; one without a Full level cannot be auto-enabled.
+  assert.deepEqual(engineStatus("cli:claude/sonnet", DEFAULT_ENGINE, engines, true), { kind: "ready" });
+  assert.equal(engineStatus("cli:kimi/x", DEFAULT_ENGINE, engines, true).kind, "consent");
+  // The stored permission preset decides: only `full` is Full access.
+  const bot = (preset?: string) => ({ models: { executor: "cli:agy/gemini-4-hydrogen-medium" }, permissions: preset ? { preset } : {} });
+  assert.equal(isFullBot(bot("full")), true);
+  assert.equal(isFullBot(bot("approve-destructive")), false);
+  assert.equal(isFullBot(bot()), false);
+  assert.equal(isFullBot(null), false);
+  assert.equal(botEngineStatus(bot("full"), engines).kind, "auto");
+  assert.equal(botEngineStatus(bot("read-only"), engines).kind, "consent");
+});
+
+test("a cli that is not installed blocks the first message with a reason, also for a bot that already works natively", () => {
+  const missing = [engine("agy", { installed: false })];
+  const native = { models: { executor: "cli:agy/x" }, permissions: { preset: "full" }, engine: { mode: "native_tools", approval_level: "full" } };
+  const governed = { models: { executor: "cli:agy/x" }, permissions: { preset: "full" } };
+  for (const bot of [native, governed]) {
+    assert.equal(needsEngineCheck(bot), true);
+    assert.deepEqual(botEngineStatus(bot, missing), { kind: "blocked", cliId: "agy", name: "agy", reason: "not_installed" });
+  }
+});
+
+test("an API model never waits for the engine check, whatever an earlier CLI left in the bot", () => {
+  // Switching the executor from a CLI to an API model leaves a stale native engine table behind
+  // until the daemon resets it: the composer must not stay blocked by it.
+  const stale = { models: { executor: "openai/gpt-5" }, permissions: { preset: "full" }, engine: { mode: "native_tools", approval_level: "full", workspace: "/var/lib/praxi-work/main" } };
+  assert.equal(needsEngineCheck(stale), false);
+  assert.deepEqual(botEngineStatus(stale, [engine("agy", { installed: false })]), { kind: "ready" });
+  assert.equal(needsEngineCheck({ models: { executor: "cli:agy/x" } }), true);
+  assert.equal(needsEngineCheck({}), false);
+  assert.equal(needsEngineCheck(undefined), false);
+});
+
+test("Full access never switches on an engine that cannot start: not installed, out of date and signed out stay blocked", () => {
+  const levels = ["ask", "accept_edits", "auto", "full"];
+  const fullBot = { models: { executor: "cli:agy/x" }, permissions: { preset: "full" } };
+  const cases: Array<[string, CliEngineDto, string]> = [
+    ["not installed", engine("agy", { installed: false, levels }), "not_installed"],
+    ["out of date", { ...engine("agy", { levels }), outdated: true } as CliEngineDto, "outdated"],
+    ["signed out", engine("agy", { auth: "signed_out", levels }), "sign_in"]
+  ];
+  for (const [name, cli, reason] of cases) {
+    assert.deepEqual(botEngineStatus(fullBot, [cli]), { kind: "blocked", cliId: "agy", name: "agy", reason }, name);
+    assert.deepEqual(engineStatus("cli:agy/x", DEFAULT_ENGINE, [cli], true), { kind: "blocked", cliId: "agy", name: "agy", reason }, name);
+  }
+  // Only a working engine is switched on.
+  assert.equal(botEngineStatus(fullBot, [engine("agy", { levels })]).kind, "auto");
+});
+
+test("the preset spelling rule is the daemon's: case, edge spaces and underscores do not matter", () => {
+  const bot = (preset: string) => ({ permissions: { preset } });
+  for (const spelled of ["full", "Full", " FULL ", "\tfull\n"]) {
+    assert.equal(isFullBot(bot(spelled)), true, JSON.stringify(spelled));
+  }
+  for (const spelled of ["fu_ll", "full access", "approve_destructive", "", "read-only"]) {
+    assert.equal(isFullBot(bot(spelled)), false, JSON.stringify(spelled));
+  }
+  assert.equal(normalizePreset(" Approve_Destructive "), "approve-destructive");
+});
+
+test("only the no-dialog Full access pick tells the daemon so; the dialog's own answer never does", () => {
+  assert.deepEqual(engineChoiceRequest({ cliId: "agy", level: "full", fullAccessBot: true }), {
+    mode: "native_tools",
+    approval_level: "full",
+    consent_native_tools: true,
+    consent_full_access: true,
+    full_access_bot: true
+  });
+  assert.equal("full_access_bot" in engineChoiceRequest({ cliId: "agy", level: "full" }), false);
+  assert.equal("full_access_bot" in engineChoiceRequest({ cliId: "agy", level: "ask" }), false);
 });

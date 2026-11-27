@@ -22,7 +22,7 @@ use std::time::{Duration, SystemTime};
 
 use axum::Json;
 use axum::extract::{Extension, Path, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
@@ -183,6 +183,7 @@ fn link_runtime(s: &AppState) -> LinkRuntime {
                     last_seen_secs: net.last_seen(&key).map(|t| t.elapsed().as_secs()),
                     key: d.id,
                     role: d.role.to_string(),
+                    name: Some(d.name),
                 })
             })
             .collect(),
@@ -327,10 +328,11 @@ pub(crate) async fn run_checks(s: &AppState, deadline: Instant, permit: &RunPerm
         Box::new(move || doctor::check_providers_loaded(&d, &active)),
     );
     let det = detected.clone();
+    let cli_ctx = doctor::CliContext::current(s.detector().environment(), &data_dir);
     add(
         "cli_accounts",
         "cli accounts",
-        Box::new(move || doctor::check_cli_accounts(det.as_deref().map(Vec::as_slice))),
+        Box::new(move || doctor::check_cli_accounts(det.as_deref().map(Vec::as_slice), &cli_ctx)),
     );
     if has_catalog {
         let (d, app) = (data_dir.clone(), s.clone());
@@ -353,13 +355,21 @@ pub(crate) async fn run_checks(s: &AppState, deadline: Instant, permit: &RunPerm
         "browser",
         "browser",
         Box::new(move || {
-            let found = browser_cdp::find_browser();
+            let found = browser_cdp::find_browser_cached();
             let c = match &found {
                 Ok(p) => doctor::check_browser_found(Ok(p)),
                 Err(e) => doctor::check_browser_found(Err(&e.to_string())),
             };
             if can_restart && c.status == doctor::Status::Ok {
                 c.repair(Repair::RestartBrowser)
+            } else if found.is_err()
+                && crate::browser_install::offered(
+                    std::env::consts::OS,
+                    std::env::consts::ARCH,
+                    browser_override_set(),
+                )
+            {
+                c.repair(Repair::InstallBrowser)
             } else {
                 c
             }
@@ -437,7 +447,7 @@ pub(crate) async fn get_doctor(State(s): State<AppState>) -> Result<Json<DoctorR
 /// before anything runs (no record, no repair), and `doctor.repair` records
 /// the outcome.
 #[utoipa::path(post, path = "/v1/doctor/repair/{id}", tag = "doctor", security(("bearer" = [])),
-    params(("id" = String, Path, description = "Repair id: create_data_dir, reload_providers or restart_browser")),
+    params(("id" = String, Path, description = "Repair id: create_data_dir, reload_providers, restart_browser or install_browser")),
     responses((status = 200, body = RepairResult), (status = 401, body = ErrorBody),
               (status = 403, body = ErrorBody, description = "not the local user"),
               (status = 404, body = ErrorBody, description = "not an allow-listed repair"),
@@ -447,6 +457,7 @@ pub(crate) async fn get_doctor(State(s): State<AppState>) -> Result<Json<DoctorR
 pub(crate) async fn repair(
     State(s): State<AppState>,
     Extension(actor): Extension<Actor>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<RepairResult>, ApiError> {
     let Some(repair) = Repair::parse(&id) else {
@@ -458,6 +469,10 @@ pub(crate) async fn repair(
             "repairs are run by the local user from this computer's Settings",
         ));
     }
+    // Defence in depth: `/v1/doctor/repair/{}` is an owner route, so the owner gate has already
+    // asked for the owner key. A repair downloads and runs software; it never relies on the
+    // gate alone.
+    s.require_owner(&headers)?;
     let who = actor.key;
     s.storage()
         .append_audit(
@@ -516,6 +531,7 @@ async fn run_repair(s: &AppState, repair: Repair) -> Result<String, ApiError> {
             let r = crate::routes::reload_from_host(s).await?;
             Ok(format!("{} provider(s) loaded", r.active.len()))
         }
+        Repair::InstallBrowser => install_browser(s).await,
         Repair::RestartBrowser => {
             let host = s
                 .doctor_host()
@@ -525,6 +541,50 @@ async fn run_repair(s: &AppState, repair: Repair) -> Result<String, ApiError> {
                 .await
                 .map_err(|e| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "repair_failed", e))
         }
+    }
+}
+
+/// Whether the owner pinned a browser with `BOT_BROWSER_PATH` (an install would change nothing).
+fn browser_override_set() -> bool {
+    [browser_cdp::launch::BROWSER_ENV, "BOT_BROWSER_PATH"]
+        .iter()
+        .any(|k| std::env::var(k).is_ok_and(|v| !v.trim().is_empty()))
+}
+
+/// `install_browser`: download, verify and unpack Chrome for Testing, then start it once. Takes
+/// a few minutes on a slow link (about 200 MB), so the Settings page sends this call without
+/// its usual time limit; the server bounds it instead (`browser_install::FETCH_TIMEOUT` for the
+/// download, one minute for the test start) and runs one install at a time (a second call gets
+/// 409).
+async fn install_browser(s: &AppState) -> Result<String, ApiError> {
+    use crate::browser_install::{self as bi, InstallError};
+    let result = bi::install(
+        &s.data_dir(),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        &bi::System,
+        &|_| {},
+    )
+    .await;
+    // The status check remembers what it found; what is on disk just changed.
+    browser_cdp::launch::forget_managed_check();
+    match result {
+        Ok(done) if done.already_there => Ok(format!(
+            "a verified browser was already installed: {}",
+            done.binary.display()
+        )),
+        Ok(done) => Ok(format!(
+            "browser installed and started once: {}",
+            done.binary.display()
+        )),
+        Err(e @ (InstallError::Busy | InstallError::Unsupported { .. })) => {
+            Err(ApiError::conflict(e.to_string()))
+        }
+        Err(e) => Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "repair_failed",
+            e.to_string(),
+        )),
     }
 }
 

@@ -913,6 +913,7 @@ dependencies = [
  "process-wrap",
  "protocol",
  "pty-session",
+ "rustix",
  "script-runtime",
  "secret-store",
  "serde",
@@ -1497,6 +1498,7 @@ dependencies = [
  "pty-session",
  "regex",
  "reqwest 0.12.28",
+ "rustix",
  "secret-store",
  "serde",
  "serde_json",
@@ -2104,6 +2106,7 @@ dependencies = [
  "wiremock",
  "workflow-replay",
  "zeroize",
+ "zip",
 ]
 
 [[package]]

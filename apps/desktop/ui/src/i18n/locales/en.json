@@ -843,6 +843,18 @@
     "composioHub": {
       "accountConnected": "Composio account connected",
       "accountHint": "Connect a Composio account once to browse and connect apps.",
+      "actionClass": {
+        "destructive": "Deletes",
+        "money": "Moves money",
+        "read": "Read only",
+        "write": "Changes things"
+      },
+      "actionClassHint": {
+        "destructive": "Deletes or removes things. Asks as your bot’s access level says; on Full it runs without asking.",
+        "money": "Spends or moves money. Always asks you first, on every access level.",
+        "read": "Looks things up. Runs without asking.",
+        "write": "Creates or changes things. Asks as your bot’s access level says; on Full it runs without asking."
+      },
       "actionsEmpty": "There are no actions available for bots in this app.",
       "actionsLoading": "Loading actions…",
       "actionsNeedAccount": "Connect your Composio account to see this app’s actions.",
@@ -1257,6 +1269,12 @@
         "time": "At a set time",
         "webhook": "When an app calls in"
       }
+    },
+    "confirm": {
+      "action": "This is mine",
+      "done": "“{{name}}” now runs without asking (money still asks).",
+      "label": "Confirm that you wrote “{{name}}”",
+      "line": "Not confirmed as yours. On Full access it still asks first."
     },
     "day": {
       "today": "today {{time}}",
@@ -2316,6 +2334,8 @@
     },
     "chain": {
       "allowed": "Allowed by you",
+      "approvedAt": "Approved · {{time}} into run",
+      "deniedAt": "Denied · {{time}} into run",
       "details": "Details",
       "groupApp": "{{app}} ×{{count}}",
       "groupSame": "{{what}} ×{{count}}",
@@ -3271,6 +3291,8 @@
     },
     "lead": "Your bots, their model keys and settings move to the server, so they keep working when this computer is off. You stay in the same app.",
     "nameTaken": "A bot named {{name}} already exists on {{server}}.",
+    "nothingToMove": "There is nothing to move: this computer has no bot, schedule or setting that the server lacks.",
+    "pickFirst": "Tick at least one item above to enable “Move to the server”.",
     "result": {
       "admin_rate_limit": "Server asked to wait; run it again to continue",
       "bot_not_moved": "Its bot is not on the server",
@@ -3452,12 +3474,17 @@
     "title": "{{server}} asks for information"
   },
   "engineConsent": {
+    "action": {
+      "install": "Install",
+      "signIn": "Sign in",
+      "update": "Update"
+    },
     "allow": "Allow {{cli}}",
     "blocked": {
-      "not_installed": "{{cli}} is not installed here. Install it in Settings, AI.",
-      "outdated": "{{cli}} needs an update before Praxi can use it. Update it in Settings, AI.",
-      "sign_in": "{{cli}} is signed out. Sign in to it in Settings, AI.",
-      "unsupported": "Praxi cannot run {{cli}} on this computer."
+      "not_installed": "{{cli}} is not installed here, so this bot cannot answer yet. Install it, or pick another model.",
+      "outdated": "{{cli}} needs an update before Praxi can use it. Update it, or pick another model.",
+      "sign_in": "{{cli}} is signed out, so this bot cannot answer yet. Sign in to it, or pick another model.",
+      "unsupported": "Praxi cannot run {{cli}} on this computer. Pick another model."
     },
     "fixed": "Done. Send your message again.",
     "fullConsent": "I understand {{cli}} will not ask before changing files or running commands on this computer.",
@@ -3481,6 +3508,11 @@
     },
     "levelLabel": "How much it may do without asking",
     "notNow": "Not now",
+    "notice": {
+      "folder": "Its own tools work in this folder: {{folder}}",
+      "noPreviousModel": "the bot has no current model to go back to",
+      "rollbackFailed": "Could not switch to {{model}} ({{reason}}), and the bot could not go back to its old model either. Pick a model again."
+    },
     "onlyFull": "{{cli}} cannot ask before changes, so Full access is the only way it works with its own tools.",
     "text": "{{cli}} reads, edits and runs commands itself, in a folder Praxi makes for this bot. Praxi's own tools (browser, apps, memory) keep Praxi's approvals.",
     "title": "{{cli}} will work with its own tools"
@@ -4647,6 +4679,7 @@
     },
     "copy": "Copy",
     "engines": {
+      "foundAt": "Found at {{path}}",
       "installFailed": "The install did not finish ({{code}}). Check the output or run the command by hand.",
       "installOnServer": "Install on server",
       "installedUnknown": "Installed · sign-in state unknown",
@@ -4661,8 +4694,12 @@
       "ready": "Ready",
       "readyAs": "Ready · {{account}}",
       "reinstall": "Reinstall on server",
+      "runAsUser": "As “{{user}}” on the server run:",
       "runOnServer": "On the server run:",
+      "runsAs": "Coding CLIs on {{name}} are installed, checked and signed in as the user “{{user}}” (home folder {{home}}), the same user Praxi runs as. Over SSH as another user, use the commands below: they switch to “{{user}}”.",
+      "runsAsRoot": "Praxi on {{name}} runs as the administrator account (“{{user}}”, home folder {{home}}). Coding CLIs are installed and signed in as that account.",
       "signIn": "To sign in, run on the server:",
+      "signInAsUser": "To sign in by hand, in the terminal here or over SSH, as “{{user}}”:",
       "signInNote": "Signing in shows a web address on the server (often with a code). Open the address on this computer, sign in there and, if asked, paste the code into the server's terminal. Sign-ins on this computer are never copied to the server.",
       "signInOnServer": "Sign in on {{server}}",
       "title": "Coding CLIs on {{name}}"
@@ -5842,8 +5879,8 @@
     "detail": "Your model services are not reachable. Praxi checks again automatically.",
     "full": "The queue is full (20 messages or 32,000 characters). Cancel a queued message or keep this draft.",
     "held": "Waiting for you to send",
-    "host": "Your selected computer cannot be reached.",
-    "hostDetail": "Praxi will check the connection again automatically.",
+    "host": "“{{name}}” is not answering.",
+    "hostDetail": "A server that is running keeps its bots working even when this computer cannot reach it. Praxi checks again every 20 seconds. If it stays this way, check that the server is switched on and online, then open Servers and choose “Switch to it”.",
     "keepDraft": "Keep this draft and send it when the connection returns. Files and commands are not queued offline.",
     "localAnswer": "Answered by local model",
     "memory": "Queued messages stay in this app until sent or cancelled. Closing the app clears them.",
@@ -6586,6 +6623,7 @@
   },
   "servers": {
     "add": "Add a server",
+    "alreadyHere": "You are already on {{name}}.",
     "checkNow": "Switch to it",
     "empty": "No server yet. This is fine: your bots run on this computer.",
     "lead": "Servers keep your bots running when this computer is off.",
@@ -6602,6 +6640,7 @@
       "offline": "Offline",
       "unreachable": "Cannot be reached"
     },
+    "switched": "Now showing {{name}}. Its bots and settings are on screen.",
     "title": "Your servers",
     "updateHelp": "Servers added with the app can be updated here. For any other server, Update server shows the exact commands to run on it."
   },
@@ -7078,11 +7117,15 @@
       "problems_other": "{{count}} items need attention",
       "repair": {
         "create_data_dir": "Create folder",
+        "install_browser": "Install browser",
         "reload_providers": "Reload providers",
         "restart_browser": "Restart browser"
       },
       "repairDone": "Repair finished",
       "repairFailed": "The repair did not succeed",
+      "repairRunning": {
+        "install_browser": "Downloading Chrome (about 200 MB) and checking it. This can take a few minutes; you can keep working."
+      },
       "reportCopied": "Support report copied. Keys, passwords, e-mail addresses and your user folder are masked.",
       "reportFailed": "Could not create the support report",
       "rerun": "Run again",
@@ -8166,7 +8209,7 @@
     "unknown": "Version unknown (the server may be off).",
     "upToDate": "Up to date",
     "versionLine": "Server version {{server}} · this app {{app}}",
-    "versionUnknown": "Exact version unknown (an older server)",
+    "versionUnknown": "Exact version unknown: the server reports no release tag. Update it to match this app.",
     "whatHappens": "What will happen"
   },
   "usage": {

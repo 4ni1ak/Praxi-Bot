@@ -37,6 +37,8 @@ On a headless server (a paired host) the engine list under Settings → Home sho
 
 **Sign in on server** runs the vendor's own login command on the server and shows what it asks of you in the app: a link with an **Open the page** and a **Copy link** button, the one-time code to type there (device flows), or a box to paste the code the page shows (paste flows). When it finishes, the server confirms the sign-in and the app shows the account. The login runs on a terminal (a PTY), because these CLIs only print their link when they think a person is typing. Only the link, the code and the account name leave the server; the rest of the output stays private and a pasted code goes straight to the CLI and is never kept. The link is the first one the CLI prints, and only when its host is exactly one of the vendor's sign-in hosts (no subdomains: not `*.amazonaws.com`, not `google.com`) and its path is the one expected; the window shows that host above the buttons. A sign-in is confirmed by the CLI's own status, by a success line ("not logged in" is not one), or by a credential file that appeared or changed after the link was shown (never a symlink, never a folder). If the desktop loses host administration while a sign-in waits, the sign-in stops and its process tree is killed.
 
+**Which user.** All of this runs as the user the Praxi service runs as (`praxi` on an installer-managed server), in that user's home folder. The engine list says so at its top and shows where each CLI was found. A CLI installed over SSH as `ubuntu` is a different install and is not seen; use the app, the in-app terminal, or `sudo praxi cli install <engine>` / `sudo praxi cli login <engine>` / `sudo praxi cli status` (they switch to the service user; see [Coding CLIs on a server](remote-host.md#coding-clis-on-a-server-claude-code-codex-antigravity-)). Engines without a flow below (Qwen Code, GitHub Copilot CLI, Mistral Vibe, Goose) are signed in by hand with the same commands, because their sign-in cannot be driven from a window (Vibe asks for an API key; the others are not verified here).
+
 | Engine | Command (on the server) | What the app shows | Confirmed by |
 | --- | --- | --- | --- |
 | Claude Code | `claude auth login` | Link, then paste the code | `claude auth status --json` (account) |
@@ -154,6 +156,23 @@ Each bot has an engine mode, set by the local owner only (bot settings, "Engine"
 
 The default level is **Ask**. **Full access** needs its own consent per bot. Switching
 a bot to native tools needs a consent too; both are recorded in the audit log.
+
+Praxi makes the work folder for the bot, so picking a model never asks for one:
+`<Documents>/Praxi/<bot>` on a desktop and `/var/lib/praxi-work/<bot>` on an always-on
+host (outside Praxi's data folder, where the folder rule below accepts it). Choose a
+folder yourself only when you want a specific one.
+
+A bot on **Full access** asks nothing except before spending money, so when you pick a
+CLI that only works with its own tools (every one in the table except Claude Code and
+Codex, which can also run confined) for a Full bot, the app switches native tools on at
+the Full level without a dialog. Your pick of the engine is the consent: it goes through
+the owner-only engine setting and the audit log records it like any other change. A turn,
+the model or another caller never switches it on; a bot left on such a CLI without it is
+refused with a plain message, and the app applies your pick again at the next message you
+send from it. The CLI's own tools do not go through Praxi's money card; Praxi's tools
+(browser, apps, memory) still do. If the CLI is not installed, signed out or out of date
+on that computer, the composer says so before sending and offers Install (Settings, AI)
+or another model, and nothing is switched on for an engine that cannot start.
 
 | CLI | Ask | Accept edits | Auto | Full access |
 | --- | --- | --- | --- | --- |

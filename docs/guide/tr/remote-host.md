@@ -234,6 +234,71 @@ ssh -L 47821:127.0.0.1:47821 user@your-server
 API token'ı `/var/lib/praxi` içinde durur (yalnızca `praxi` okuyabilir). Tüneldeki istemciler, yerel bir
 kurulumdaki gibi onunla kimlik doğrular.
 
+### Sunucuda kodlama CLI'ları (Claude Code, Codex, Antigravity, ...)
+
+Praxi `praxi` kullanıcısıyla çalışır, başlattığı her şey de öyle. Bu, bir kodlama CLI'ının nerede olması
+gerektiğini belirler: **Praxi bir CLI'ı ancak `praxi` olarak kurulmuş ve giriş yapılmışsa görür**; yani
+`praxi`'nin ev klasöründe (`/var/lib/praxi`). SSH ile `ubuntu` (ya da root) olarak kurduğun bir CLI
+`ubuntu`'nun ev klasörüne gider ve Praxi onu kurulu değil olarak gösterir. `/var/lib/praxi` bilerek
+özeldir (`0750`); bir denetim geçsin diye izinlerini gevşetme. Bunun yerine işi `praxi` olarak yap:
+
+- **Uygulamada.** *Ayarlar → Ev → <sunucu> üzerindeki kodlama CLI'ları* sunucunun kendi servisi
+  tarafından yanıtlanır; yani sunucudaki botların gerçekten çalıştırabildiğini gösterir ve en üstte
+  hangi kullanıcı ve ev klasörü olduğunu söyler. **Sunucuya kur** ve **<sunucu> üzerinde giriş yap**
+  `praxi` olarak çalışır; giriş, bağlantıyı ve tek kullanımlık kodu uygulamada gösterir. Kurulu ama
+  girişi olmayan bir CLI, düğmeyle birlikte *Kurulu · giriş gerekli* (CLI kendi durumunu okuyamıyorsa
+  *giriş durumu bilinmiyor*) olarak görünür, asla *Kur* olarak görünmez.
+- **Uygulamadaki terminalde** (durum çipi menüsü → *Sunucuda terminal*). Zaten `praxi` olarak çalışır ve
+  CLI klasörleri (`~/.local/bin`, npm öneki) `PATH`'indedir; `agy` ya da `vibe --setup` yazdığın gibi çalışır.
+- **SSH ile**, senin yerine `praxi` kullanıcısına geçen kurulum komutu `praxi` ile:
+
+  ```sh
+  sudo praxi cli status          # hangi CLI'lar, nerede, girişli mi; hangi kullanıcı olarak baktığını söyler
+  sudo praxi cli install agy     # uygulamanın çalıştırdığı aynı sabit kurucu (Node.js yoksa indirilir)
+  sudo praxi cli login agy       # CLI'ın kendi girişi, bu terminalde, praxi olarak
+  ```
+
+  `praxi` komutu yoksa `sudo -u praxi -H bot cli login agy` aynı işi yapar.
+
+`sudo praxi doctor` denetimi de servis kullanıcısı olarak çalıştırır. `ubuntu` olarak yazılan düz
+`bot doctor`, Praxi için değil `ubuntu` için rapor verir ve bunu söyler (*bu denetim ubuntu olarak
+çalıştı ama Praxi praxi olarak çalışıyor*); sağlıklı görünen bir sonuç yazmaz. Hangi CLI'lara uygulamanın
+kendisinin giriş yaptırabildiği (pencerede bağlantı ve kod) ve hangilerinin terminal istediği
+[Kodlama CLI motorları](cli-engines.md) sayfasında.
+
+Bu sürümden önce kurulmuş bir sunucu servisi hâlâ ev klasörünü çalışma klasörü olarak ve `~/.local/bin`
+`PATH`'te olmadan başlatıyor olabilir. Praxi CLI'ları yine de orada bulur; kurucuyu `--update` ile yeniden
+çalıştırmak (yukarıdaki 2. adım) servis tanımının kendisini de düzeltir.
+
+### "Masaüstü eşi" nedir, sunucunun buna ihtiyacı var mı?
+
+*Eş*, sunucuyla eşleştirilmiş bir cihazdır: Windows ya da Mac masaüstü uygulaman, bir telefon, bir düğüm.
+**Sunucunun çalışması için hiçbir eşe ihtiyacı yoktur.** Servisi, planları, Telegram kanalı ve kabuk tabanlı
+görevleri hiçbir masaüstü bağlı olmadan çalışır; sunucuya taşıdığın bir bot, bilgisayarın kapalıyken de
+çalışmaya devam eder. Eşleşmiş bir *Praxi desktop* yalnızca o bilgisayarda Praxi uygulaması açıkken
+çevrimiçidir; başsız bir sunucuda onu başlatan bir şey yoktur. Bu yüzden `bot host status` ve
+`sudo praxi doctor` onu *bağlı değil (hiç görülmedi)* diye listeler ve bunu normal sayar. Bağlı bir
+masaüstü gerektiren yalnızca o bilgisayarı kullanan işlerdir: *onun* ekranını izlemek ya da yönetmek, ya da
+bir sunucu botunun *bu bilgisayarı* dosyalar ve uygulamalar için kullanmasına izin vermek. Uygulama
+*"<sunucu> yanıt vermiyor"* diyorsa sorun bilgisayarınla sunucu arasındadır (sunucu kapalı, internetsiz
+ya da senin bağlantın kopuk); eksik bir eş değildir.
+
+### Yeni sunucu için ilk çalıştırma kontrol listesi
+
+1. **İmaj ve kullanıcı.** Ubuntu imajlarında `ubuntu`, Oracle Linux imajlarında `opc` kullanılır; bu
+   kullanıcıyla bağlan, kurucu için `sudo` kullan. `praxi` servis kullanıcısını kurucu oluşturur; parolası
+   ve kabuk girişi yoktur.
+2. **22 numaralı bağlantı noktası.** Bilgisayarından yalnızca SSH (22/TCP) erişilebilir olmalı: sağlayıcının
+   güvenlik listesinde ya da güvenlik duvarında aç. 47821'i asla açma.
+3. **Windows'ta SSH anahtarı.** OpenSSH, başkalarının okuyabildiği bir anahtar dosyasını reddeder
+   (*UNPROTECTED PRIVATE KEY FILE*) ve parola sormaya geçer. Anahtar dosyasına sağ tıkla → Özellikler →
+   Güvenlik → Gelişmiş: devralmayı kapat ve yalnızca kendi kullanıcını bırak. Praxi bu durumu "sunucu
+   yalnızca şifre kabul ediyor" diye değil, *anahtar dosyan başkaları tarafından okunabiliyor* diye bildirir.
+4. **Kur ve denetle.** Kurulumdan sonra `sudo praxi doctor` hata göstermemeli; `daemon`, `peer link` ve
+   `cli accounts` satırları yeşil değilse ne yapılacağını söyler.
+5. **Kodlama CLI'ları.** `praxi` olarak kur ve giriş yap (yukarıdaki bölüm), sonra bir bot için CLI'ın
+   modelini seç.
+
 ### Sunucuyu masaüstü uygulamasından kullanma
 
 Masaüstü uygulaması sunucunun ekranını (Xvfb masaüstünü ve botun tarayıcısını) gösterebilir, ekranı
@@ -388,7 +453,11 @@ programını yeniden çalıştır. Chrome for Testing kendiliğinden güncellenm
 güncellemek için, yeni sürümün arşivlerini iki platform için de (`linux64` ve `linux-arm64`)
 `https://storage.googleapis.com/chrome-for-testing-public/<version>/<platform>/chrome-<platform>.zip`
 adresinden indir, `sha256sum` ile özetlerini hesapla ve `install_cft` işlevinin başındaki `version`,
-`sha256_linux64` ve `sha256_linux_arm64` değerlerini birlikte güncelle.
+`sha256_linux64` ve `sha256_linux_arm64` değerlerini birlikte güncelle; aynı sürümü, sağlama
+toplamlarını ve arşiv boyutlarını `crates/daemon-api/src/browser_install.rs` içinde de güncelle
+(iki yerdeki sağlama toplamları ya da sürüm farklıysa bir test başarısız olur). Kurulum betiğiyle
+kurulmamış bir bilgisayarda `bot browser install` ve Ayarlar > Tanılama > Tarayıcıyı kur'un veri
+klasörüne indirdiği, bu Rust kopyasıdır.
 
 Fedora/RHEL, yöneticinin etkinleştirdiği RPM depolarından zayıf bağımlılıklar olmadan `chromium`
 kullanır. Bu depolarda `chromium` yoksa (örneğin Oracle Linux), kurulum programı her iki işlemci için
@@ -401,7 +470,12 @@ Ubuntu'nun `chromium-browser` ve sanal `chromium` paketleri snap'e çözülebili
 asla seçmez. Yalnızca snap bulan keşif ve snap geçersiz kılmaları desteklenmez ve net bir tanılama
 üretir. `--skip-packages` ile snap olmayan, çalışan bir tarayıcıyı kendin sağla. `BOT_BROWSER_PATH`
 keşfi geçersiz kılar. `PRAXI_BROWSER_PATH` uyumlu bir yedek olarak kalır. Geçersiz bir geçersiz kılma,
-sessizce başka bir tarayıcı seçmek yerine başarısız olur.
+sessizce başka bir tarayıcı seçmek yerine başarısız olur. Keşif yalnızca senin ya da root'un
+değiştirebildiği yerlere güvenir: olağan dağıtım yollarının yanında, sahibi root ya da servis
+kullanıcısı olan ve grup veya diğer kullanıcılara yazma izni vermeyen `PATH` klasörlerine bakar
+(böyle bir klasörden dışarı çıkan bağlantı atlanır). Herkesin yazabildiği bir tarayıcı ya da klasör
+reddedilir (`BOT_BROWSER_PATH` için de; onun çözülmüş yolu günlüğe yazılır). Praxi'nin indirdiği bir
+tarayıcı da yalnızca tüm dosyaları kurulum manifestiyle hâlâ eşleştiği sürece kullanılır.
 
 Kurulum programını yeniden çalıştırmak (`bot host repair`, yükseltmeler) tarayıcı için idempotenttir:
 sabitlenmiş sürümde çalışan bir `/opt/praxi-browser` korunur ve yeniden indirilmez, paylaşılan
